@@ -27,12 +27,11 @@ export default defineConfig({
 		server: {
 			deps: {
 				inline: [
-					'@context-dot-dev/convex',
+					'@firecrawl/firecrawl-convex',
 					'@convex-dev/rate-limiter',
 					'@exalabs/convex-exa',
 					'@convex-dev/migrations',
 					'@convex-dev/aggregate',
-					'@convex-dev/workflow',
 					'@convex-dev/action-retrier',
 					'@convex-dev/workpool'
 				]

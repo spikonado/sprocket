@@ -1,12 +1,13 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
 
-export const subscriptionTierIds = ['free', 'pro', 'admin'] as const;
+export const subscriptionTierIds = ['free', 'pro', 'max', 'admin'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
 
 export const tierLabels = {
 	free: 'Free',
 	pro: 'Pro',
+	max: 'Max',
 	admin: 'Admin'
 } as const satisfies Record<SubscriptionTier, string>;
 
@@ -25,11 +26,18 @@ const proLimits: TierLimits = {
 	}
 };
 
+const modelUsageUnitsPerDollar = 1_000;
 const adminQuota = 1_000_000_000;
 
 export const tierLimits = {
 	free: freeLimits,
 	pro: proLimits,
+	max: {
+		modelUsage: {
+			weekly: 170 * modelUsageUnitsPerDollar,
+			monthly: 500 * modelUsageUnitsPerDollar
+		}
+	},
 	admin: {
 		modelUsage: { weekly: adminQuota, monthly: adminQuota }
 	}

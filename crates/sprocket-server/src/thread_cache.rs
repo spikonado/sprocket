@@ -23,7 +23,7 @@ pub struct CachedThreadRecord {
     pub title: Option<String>,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub service_tier: String,
+    pub fast_mode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,7 +102,7 @@ mod tests {
             title: Some("Thread".into()),
             selected_model: "gpt-5.6-sol".into(),
             reasoning_effort: "medium".into(),
-            service_tier: "standard".into(),
+            fast_mode: false,
             context_summary: None,
             context_summary_through_run_id: None,
             last_message_at: 10.0,

@@ -11,6 +11,7 @@ use crate::repo_env::repo_env_vars;
 #[serde(rename_all = "camelCase")]
 struct ConfigResponse {
     env: BTreeMap<String, String>,
+    machine: bool,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -20,5 +21,6 @@ pub fn routes() -> axum::Router<AppState> {
 async fn config() -> Json<ConfigResponse> {
     Json(ConfigResponse {
         env: repo_env_vars(),
+        machine: true,
     })
 }

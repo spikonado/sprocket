@@ -1,10 +1,12 @@
 import electron from 'electron';
+import electronUpdater from 'electron-updater';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
+import { createAppImageUpdater, DesktopUpdater, stopUpdateProcess } from './updater.mjs';
 
 const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 
@@ -15,7 +17,6 @@ const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
 const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
 // Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
 const serverHost = '127.0.0.1';
-const desktopLoginCallbackUrl = `http://${serverHost}:${serverPort}/api/auth/desktop-login/callback`;
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
 const rendererUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
 const rendererOrigin = new URL(rendererUrl).origin;
@@ -23,11 +24,24 @@ const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
 let serverBaseUrl = null;
-let serverPairingCredential = null;
-let serverDesktopLoginCallbackUrl = null;
 let mainWindowRef = null;
 let serverReadyPromise = null;
 let isQuitting = false;
+const updates = new DesktopUpdater(
+	process.platform === 'linux' && process.env.APPIMAGE
+		? createAppImageUpdater(electronUpdater.AppImageUpdater)
+		: electronUpdater.autoUpdater,
+	app.getVersion(),
+	app.isPackaged && (process.platform !== 'linux' || Boolean(process.env.APPIMAGE))
+);
+let updateTimer = null;
+let updateConfirmationOpen = false;
+let shutdownPromise = null;
+updates.subscribe((state) => {
+	if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+		mainWindowRef.webContents.send('sprocket:update-state', state);
+	}
+});
 const initialWorkspaceLaunch = app.commandLine.getSwitchValue('sprocket-workspace').trim() || null;
 const pendingWorkspaceLaunches = initialWorkspaceLaunch ? [initialWorkspaceLaunch] : [];
 
@@ -77,14 +91,8 @@ function parseDesktopBootstrap(value) {
 	if (!isPlainObject(value)) {
 		return null;
 	}
-	const pairingCredential = parseNonEmptyString(value.pairingCredential);
-	if (pairingCredential === null) {
-		return null;
-	}
 	return {
-		pairingCredential,
-		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl),
-		desktopLoginCallbackUrl: parseNonEmptyString(value.desktopLoginCallbackUrl)
+		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl)
 	};
 }
 
@@ -215,8 +223,6 @@ async function attachToRunningServer(baseUrl, dataDir) {
 	}
 
 	serverBaseUrl = pairingProof.httpBaseUrl;
-	serverPairingCredential = pairingCredential;
-	serverDesktopLoginCallbackUrl = desktopLoginCallbackUrl;
 	return true;
 }
 
@@ -257,6 +263,9 @@ async function startLocalServer() {
 		SPROCKET_DATA_DIR: dataDir,
 		SPROCKET_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken
 	};
+	delete serverEnv.SPROCKET_UPDATE_NODE;
+	delete serverEnv.SPROCKET_UPDATE_SCRIPT;
+	delete serverEnv.SPROCKET_UPDATE_MANAGED;
 	if (staticDir) {
 		serverEnv.SPROCKET_STATIC_DIR = staticDir;
 	}
@@ -317,20 +326,17 @@ async function startLocalServer() {
 	if (bootstrap === null) {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
-	serverPairingCredential = bootstrap.pairingCredential;
 	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
-	serverDesktopLoginCallbackUrl = bootstrap.desktopLoginCallbackUrl ?? desktopLoginCallbackUrl;
-
 	return serverBaseUrl;
 }
 
-function stopLocalServer() {
-	if (!serverProcess || serverProcess.killed) {
-		return;
-	}
-
-	serverProcess.kill();
+async function stopServerBeforeUpdate() {
+	const child = serverProcess;
+	if (!child) return;
+	await stopUpdateProcess(child);
 	serverProcess = null;
+	serverBaseUrl = null;
+	serverReadyPromise = null;
 }
 
 function queueWorkspaceLaunch(workspacePath) {
@@ -452,22 +458,75 @@ function createMainWindow() {
 	}
 }
 
-ipcMain.handle('sprocket:get-local-bootstrap', (event) => {
-	requireTrustedRenderer(event);
-	if (!serverBaseUrl || !serverPairingCredential) {
-		throw new Error('Local server bootstrap is unavailable.');
-	}
-
-	return {
-		httpBaseUrl: serverBaseUrl,
-		desktopLoginCallbackUrl: serverDesktopLoginCallbackUrl ?? desktopLoginCallbackUrl,
-		pairingCredential: serverPairingCredential
-	};
-});
-
 ipcMain.handle('sprocket:take-workspace-launch', (event) => {
 	requireTrustedRenderer(event);
 	return pendingWorkspaceLaunches.shift() ?? null;
+});
+
+function requireUpdateRenderer(event) {
+	requireTrustedRenderer(event);
+	if (event.sender !== mainWindowRef?.webContents || event.senderFrame !== event.sender.mainFrame) {
+		throw new Error('Untrusted update request.');
+	}
+}
+
+ipcMain.handle('sprocket:get-update-state', (event) => {
+	requireUpdateRenderer(event);
+	return updates.getState();
+});
+
+ipcMain.handle('sprocket:download-update', (event) => {
+	requireUpdateRenderer(event);
+	void updates.download();
+	return updates.getState();
+});
+
+ipcMain.handle('sprocket:install-update', async (event) => {
+	requireUpdateRenderer(event);
+	if (updateConfirmationOpen || updates.getState().status !== 'downloaded') {
+		return updates.getState();
+	}
+	updateConfirmationOpen = true;
+	try {
+		const { response } = await dialog.showMessageBox(mainWindowRef, {
+			type: 'question',
+			buttons: ['Cancel', 'Restart and update'],
+			defaultId: 0,
+			cancelId: 0,
+			message: 'Restart Sprocket to install the update?',
+			detail: serverProcess
+				? 'This stops the local server and interrupts any agents it is running. Wait for active work to finish before restarting.'
+				: 'This restarts the desktop app. The local server was started separately and will keep running.'
+		});
+		if (response === 1 && !isQuitting) {
+			if (process.platform === 'darwin') {
+				// Squirrel validates the staged update asynchronously and may reject it without quitting.
+				updates.install();
+				return updates.getState();
+			}
+			isQuitting = true;
+			try {
+				await stopServerBeforeUpdate();
+				// AppImage can launch its replacement before the old Electron process exits.
+				app.releaseSingleInstanceLock();
+				if (!updates.install()) {
+					isQuitting = false;
+					if (!app.requestSingleInstanceLock()) {
+						app.quit();
+					} else {
+						serverReadyPromise = startLocalServer();
+						await serverReadyPromise;
+					}
+				}
+			} catch (error) {
+				isQuitting = false;
+				reportFatalError('Failed to install Sprocket update', error);
+			}
+		}
+		return updates.getState();
+	} finally {
+		updateConfirmationOpen = false;
+	}
 });
 
 function openWithXdgOpen(url) {
@@ -576,6 +635,9 @@ if (hasSingleInstanceLock) {
 	serverReadyPromise = app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
 		await startLocalServer();
+		void updates.check();
+		updateTimer = setInterval(() => void updates.check(), 60 * 60 * 1000);
+		updateTimer.unref();
 	});
 
 	void serverReadyPromise
@@ -598,7 +660,21 @@ app.on('window-all-closed', () => {
 	}
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
 	isQuitting = true;
-	stopLocalServer();
+	clearInterval(updateTimer);
+	if (!serverProcess) return;
+	event.preventDefault();
+	shutdownPromise ??= stopServerBeforeUpdate()
+		.then(() => {
+			if (process.platform === 'darwin' && updates.getState().status === 'installing') {
+				electronUpdater.autoUpdater.quitAndInstall();
+			} else {
+				app.quit();
+			}
+		})
+		.catch((error) => {
+			reportFatalError('Failed to stop Sprocket server', error);
+			app.exit(1);
+		});
 });

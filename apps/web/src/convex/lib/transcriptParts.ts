@@ -21,22 +21,6 @@ export function normalizeCompletionTiming(
 	};
 }
 
-function transcriptPartForClient(part: Doc<'threadTranscriptParts'>): Doc<'threadTranscriptParts'> {
-	if (!part.completion) return part;
-	return {
-		...part,
-		completion: {
-			...part.completion,
-			items: part.completion.items.map((item) => {
-				const projected = { ...item };
-				if (projected.startedAt == null) delete projected.startedAt;
-				if (projected.completedAt == null) delete projected.completedAt;
-				return projected;
-			})
-		}
-	};
-}
-
 export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
 }
@@ -199,7 +183,7 @@ export async function loadTranscriptPartsByNumbers(
 	);
 	return numbers.flatMap((number) => {
 		const part = byNumber.get(number);
-		return part ? [transcriptPartForClient(part)] : [];
+		return part ? [part] : [];
 	});
 }
 
@@ -218,7 +202,6 @@ export async function attachmentMetaForUploads(
 					return null;
 				}
 				return {
-					imageUploadId: upload._id,
 					name: upload.name,
 					mediaType: upload.mediaType,
 					size: upload.size,
@@ -250,4 +233,32 @@ export async function hydrateTranscriptPartUrls(
 			};
 		})
 	);
+}
+
+export function stripLegacyAttachmentImageUploadIds(
+	parts: Doc<'threadTranscriptParts'>[]
+): Doc<'threadTranscriptParts'>[] {
+	return parts.map((part) => {
+		if (!part.prompt || part.prompt.imageUploads.length === 0) {
+			return part;
+		}
+		return {
+			...part,
+			prompt: {
+				...part.prompt,
+				imageUploads: part.prompt.imageUploads.map((upload) => {
+					const attachment = { ...upload };
+					delete attachment.imageUploadId;
+					return attachment;
+				})
+			}
+		};
+	});
+}
+
+export async function transcriptPartsForClient(
+	ctx: MutationCtx | QueryCtx,
+	parts: Doc<'threadTranscriptParts'>[]
+): Promise<Doc<'threadTranscriptParts'>[]> {
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, parts));
 }

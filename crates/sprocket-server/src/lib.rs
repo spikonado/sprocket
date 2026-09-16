@@ -1,8 +1,13 @@
+mod artifact_watch;
 mod auth;
+pub mod cli_protocol;
+mod cli_sessions;
 mod config;
 mod machine_identity;
 mod machines;
 mod native_auth;
+mod package_update;
+mod profile;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -12,8 +17,10 @@ mod thread_cache;
 mod thread_sync;
 mod transcript_client;
 mod transcript_watch;
+mod work_sync;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
+pub use profile::read_server_address;
 use static_dir::is_valid_static_dir;
 pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
@@ -31,6 +38,7 @@ use sprocket_agent::{LiveCompletionHub, TranscriptStore};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 
+use crate::artifact_watch::ArtifactWatchers;
 use crate::transcript_watch::TranscriptWatchers;
 
 pub(crate) fn now_ms() -> u64 {
@@ -46,23 +54,19 @@ pub struct RunOptions {
     pub quiet: bool,
     pub open_browser: bool,
     pub workspace_path: Option<String>,
+    pub temporary: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct StartupInfo {
     pub listen_url: String,
-    pub pairing_credential: String,
     pub web_ui_enabled: bool,
     pub workspace_path: Option<String>,
 }
 
 impl StartupInfo {
     pub fn browser_url(&self, base_url: &str) -> String {
-        browser_launch_url(
-            base_url,
-            &self.pairing_credential,
-            self.workspace_path.as_deref(),
-        )
+        browser_launch_url(base_url, self.workspace_path.as_deref())
     }
 
     pub fn print_startup(&self, dev_web_url: Option<&str>) {
@@ -70,7 +74,7 @@ impl StartupInfo {
             eprintln!("Sprocket API is running at {}", self.listen_url);
             eprintln!("Open the web app (Vite dev server):");
             eprintln!("{dev_web_url}");
-            eprintln!("Pair in the browser if needed:");
+            eprintln!("Open in your browser:");
             eprintln!("{}", self.browser_url(dev_web_url));
             return;
         }
@@ -82,21 +86,78 @@ impl StartupInfo {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub(crate) lifetime: Arc<cli_sessions::ServerLifetime>,
     pub auth: Arc<auth::AuthState>,
     pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
+    pub artifact_watchers: Arc<ArtifactWatchers>,
     pub thread_cache: Arc<thread_sync::ThreadCacheSync>,
     pub machines: Arc<machines::MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
     pub http_base_url: String,
-    pub desktop_login_callback_url: String,
     pub loopback_desktop_login_supported: bool,
     pub convex_deployment_url: String,
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
     pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
+    pub package_updates: Arc<package_update::PackageUpdateManager>,
+}
+
+#[cfg(test)]
+impl AppState {
+    pub(crate) fn for_test(
+        auth: Arc<auth::AuthState>,
+        native_auth: Arc<native_auth::NativeAuthManager>,
+        data_dir: PathBuf,
+        loopback_desktop_login_supported: bool,
+        package_updates: Arc<package_update::PackageUpdateManager>,
+    ) -> Self {
+        let project_attachments =
+            project_attachments::ProjectAttachmentStore::new(data_dir.clone());
+        let transcript = TranscriptStore::new(data_dir.join("transcripts"));
+        let transcript_watchers = TranscriptWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            transcript.clone(),
+            Arc::clone(&native_auth),
+        );
+        let artifact_watchers = ArtifactWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            Arc::clone(&native_auth),
+            data_dir.join("artifact-bindings"),
+        );
+        let thread_cache = thread_sync::ThreadCacheSync::new(
+            "https://example.convex.cloud".to_string(),
+            thread_cache::ThreadCacheStore::new(data_dir.clone()),
+            Arc::clone(&native_auth),
+        );
+        let machine_identity =
+            Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
+        Self {
+            lifetime: cli_sessions::ServerLifetime::new(false),
+            auth,
+            native_auth: Arc::clone(&native_auth),
+            project_attachments,
+            transcript,
+            transcript_watchers,
+            artifact_watchers,
+            thread_cache,
+            machines: machines::MachineManager::new(
+                "https://example.convex.cloud".to_string(),
+                Arc::clone(&native_auth),
+                Arc::clone(&machine_identity),
+            ),
+            live_completions: Arc::new(LiveCompletionHub::new()),
+            http_base_url: "http://127.0.0.1:7731".to_string(),
+            loopback_desktop_login_supported,
+            convex_deployment_url: "https://example.convex.cloud".to_string(),
+            web_ui_enabled: true,
+            desktop_bootstrap_token: None,
+            machine_identity,
+            package_updates,
+        }
+    }
 }
 
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
@@ -104,10 +165,13 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::health::routes())
         .merge(routes::config::routes())
         .merge(routes::auth::routes())
+        .merge(routes::cli::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
         .merge(routes::transcript::routes())
         .merge(routes::threads::routes())
+        .merge(routes::update::routes())
+        .merge(routes::artifacts::routes())
         .fallback(api_not_found)
         .with_state(state);
 
@@ -120,25 +184,32 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
+    let profile = profile::ProfileLock::acquire(&data_dir)?;
+    let auth = auth::AuthState::load(&data_dir)?;
     let native_auth = native_auth::NativeAuthManager::new(
         convex_deployment_url.clone(),
         auth::desktop_login_callback_url(config.port),
         &data_dir,
+        Arc::clone(&auth),
     );
-    let auth = auth::AuthState::load(&data_dir)?;
+    let lifetime = cli_sessions::ServerLifetime::new(options.temporary);
     let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
     let machines = machines::MachineManager::new(
         convex_deployment_url.clone(),
         Arc::clone(&native_auth),
         Arc::clone(&machine_identity),
     );
-    let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
     let transcript_watchers = TranscriptWatchers::new(
         convex_deployment_url.clone(),
         Arc::clone(&transcript),
         Arc::clone(&native_auth),
+    );
+    let artifact_watchers = ArtifactWatchers::new(
+        convex_deployment_url.clone(),
+        Arc::clone(&native_auth),
+        data_dir.join("artifact-bindings"),
     );
     let thread_cache = thread_sync::ThreadCacheSync::new(
         convex_deployment_url.clone(),
@@ -158,26 +229,27 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
     let state = AppState {
+        lifetime: Arc::clone(&lifetime),
         auth,
-        native_auth,
+        native_auth: Arc::clone(&native_auth),
         project_attachments,
         transcript,
         transcript_watchers,
+        artifact_watchers,
         thread_cache,
         machines: Arc::clone(&machines),
         live_completions: Arc::new(LiveCompletionHub::new()),
         http_base_url: http_base_url.clone(),
-        desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
         convex_deployment_url,
         web_ui_enabled,
         desktop_bootstrap_token,
         machine_identity,
+        package_updates: package_update::PackageUpdateManager::from_env(),
     };
 
     let startup = StartupInfo {
         listen_url: config.listen_url(),
-        pairing_credential,
         web_ui_enabled,
         workspace_path: options.workspace_path.clone(),
     };
@@ -208,6 +280,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         startup.print_startup(dev_web_url.as_deref());
     }
 
+    profile.publish(http_base_url.clone())?;
+
     if options.open_browser {
         let open_target =
             startup.browser_url(dev_web_url.as_deref().unwrap_or(&startup.listen_url));
@@ -219,14 +293,55 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     }
 
+    let cleanup_store = Arc::clone(&state.transcript);
+    let cleanup = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
+            if let Err(error) = cleanup_store.prune_pending_attachments(cutoff).await {
+                eprintln!("sprocket-server: failed to expire pending attachments: {error}");
+            }
+        }
+    });
+    let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
+    let shutdown_machines = Arc::clone(&machines);
 
-    let result = axum::serve(
+    let shutdown = lifetime.shutdown.clone();
+    let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await;
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = shutdown_signal() => {},
+            _ = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let (stop, expired) = lifetime.tick(std::time::Instant::now());
+                    for session in expired {
+                        native_auth.cancel_device_login(&session).await;
+                        let _ = lease_auth.end_session(&session).await;
+                    }
+                    if stop { break; }
+                }
+            } => {},
+        }
+        lifetime.shutdown.cancel();
+        shutdown_machines.stop_registration();
+    })
+    .into_future();
+    tokio::pin!(server);
+    let result = tokio::select! {
+        result = &mut server => result,
+        _ = shutdown.cancelled() => {
+            tokio::time::timeout(Duration::from_secs(10), &mut server).await.unwrap_or(Ok(()))
+        }
+    };
+    cleanup.abort();
+    let _ = cleanup.await;
     machines.shutdown().await;
     result?;
     Ok(())
@@ -290,21 +405,18 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
-pub fn browser_launch_url(
-    base_url: &str,
-    pairing_credential: &str,
-    workspace_path: Option<&str>,
-) -> String {
+pub fn browser_launch_url(base_url: &str, workspace_path: Option<&str>) -> String {
     let mut fragment = url::form_urlencoded::Serializer::new(String::new());
-    fragment.append_pair("token", pairing_credential);
     if let Some(workspace_path) = workspace_path {
         fragment.append_pair("workspace", workspace_path);
     }
-    format!(
-        "{}/pair#{}",
-        base_url.trim_end_matches('/'),
-        fragment.finish()
-    )
+    let fragment = fragment.finish();
+    let base_url = base_url.trim_end_matches('/');
+    if fragment.is_empty() {
+        base_url.to_string()
+    } else {
+        format!("{base_url}/#{fragment}")
+    }
 }
 
 pub fn pairing_proof_message(challenge: &str, http_base_url: &str, web_ui_enabled: bool) -> String {
@@ -329,7 +441,7 @@ pub fn read_pairing_credential(config: &ServerConfig) -> anyhow::Result<Option<S
     auth::read_pairing_credential(&config.resolve_data_dir())
 }
 
-pub use auth::verify_pairing_proof;
+pub use auth::{sign_pairing_proof, verify_pairing_proof};
 pub use repo_env::load_repo_env;
 
 #[cfg(test)]
@@ -339,8 +451,16 @@ mod tests {
     #[test]
     fn browser_launch_url_encodes_the_workspace() {
         assert_eq!(
-            browser_launch_url("http://localhost:5173/", "secret", Some("/robot & tools")),
-            "http://localhost:5173/pair#token=secret&workspace=%2Frobot+%26+tools"
+            browser_launch_url("http://localhost:5173/", Some("/robot & tools")),
+            "http://localhost:5173/#workspace=%2Frobot+%26+tools"
+        );
+    }
+
+    #[test]
+    fn browser_launch_url_contains_no_pairing_material() {
+        assert_eq!(
+            browser_launch_url("http://127.0.0.1:17731", None),
+            "http://127.0.0.1:17731"
         );
     }
 }

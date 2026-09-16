@@ -1,44 +1,75 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import {
+	internalMutation,
+	mutation,
+	query,
+	type MutationCtx,
+	type QueryCtx
+} from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
-import { vArtifactType } from '@convex/lib/validators';
+import {
+	MAX_FILE_NAME_LENGTH,
+	vArtifactScope,
+	vArtifactType,
+	vListArtifactsResult
+} from '@convex/lib/validators';
 import schema from '@convex/schema';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 
-const MAX_TITLE_LENGTH = 200;
-// Content also lives in the executor job payload; stay well under Convex's 1 MiB document cap.
-const MAX_CONTENT_LENGTH = 500_000;
+const MAX_TITLE_LENGTH = MAX_FILE_NAME_LENGTH;
+const MAX_ARTIFACT_CONTENT_BYTES = 500_000;
 
 const vArtifactMutationResult = v.object({
 	artifactId: v.id('artifacts'),
-	version: v.number(),
+	revision: v.number(),
 	title: v.string(),
-	contentType: vArtifactType
+	contentType: vArtifactType,
+	scope: vArtifactScope
 });
 
-function validateArtifactTitle(title: string) {
-	if (!title) {
+function utf8ByteLength(value: string): number {
+	return new TextEncoder().encode(value).byteLength;
+}
+
+function requireRepositoryKey(thread: Doc<'threadRecords'>): string {
+	const repositoryKey = thread.repositoryKey?.trim();
+	if (!repositoryKey) {
+		throw new Error('Repository key is required.');
+	}
+	return repositoryKey;
+}
+
+function validateRepositoryKey(repositoryKey: string): string {
+	const trimmed = repositoryKey.trim();
+	if (!trimmed) {
+		throw new Error('Repository key is required.');
+	}
+	return trimmed;
+}
+
+function validateArtifactTitle(title: string): string {
+	const trimmed = title.trim();
+	if (!trimmed) {
 		throw new Error('Artifact title cannot be empty.');
 	}
-	if (title.length > MAX_TITLE_LENGTH) {
+	if (trimmed.length > MAX_TITLE_LENGTH) {
 		throw new Error(`Artifact title cannot exceed ${MAX_TITLE_LENGTH} characters.`);
 	}
+	return trimmed;
 }
 
 function validateArtifactContent(content: string) {
-	if (!content) {
-		throw new Error('Artifact content cannot be empty.');
-	}
-	if (content.length > MAX_CONTENT_LENGTH) {
-		throw new Error(`Artifact content cannot exceed ${MAX_CONTENT_LENGTH} characters.`);
+	if (utf8ByteLength(content) > MAX_ARTIFACT_CONTENT_BYTES) {
+		throw new Error(`Artifact content cannot exceed ${MAX_ARTIFACT_CONTENT_BYTES} bytes.`);
 	}
 }
 
 async function requireActiveRun(
-	ctx: MutationCtx,
+	ctx: QueryCtx | MutationCtx,
 	runId: Id<'runs'>,
 	claimId: string,
 	executionSecret: string
@@ -50,141 +81,393 @@ async function requireActiveRun(
 	return run;
 }
 
-function latestArtifactVersion(ctx: QueryCtx | MutationCtx, artifactId: Id<'artifacts'>) {
-	return ctx.db
-		.query('artifactVersions')
-		.withIndex('by_artifactId_version', (q) => q.eq('artifactId', artifactId))
-		.order('desc')
-		.first();
+async function registryState(ctx: QueryCtx, userId: string, repositoryKey: string) {
+	return await ctx.db
+		.query('artifactRegistries')
+		.withIndex('by_userId_and_repositoryKey', (q) =>
+			q.eq('userId', userId).eq('repositoryKey', repositoryKey)
+		)
+		.unique();
 }
 
-/** Stores `content` as the artifact's next version and points the artifact at it. */
-async function insertNextVersion(
-	ctx: MutationCtx,
-	artifact: Doc<'artifacts'>,
-	userId: string,
-	latest: Doc<'artifactVersions'> | null,
-	content: string
-): Promise<number> {
-	const version = Math.max(artifact.currentVersion, latest?.version ?? 0) + 1;
-	const now = Date.now();
-
-	await ctx.db.insert('artifactVersions', {
-		artifactId: artifact._id,
-		userId,
-		version,
-		content,
-		createdAt: now
-	});
-
-	await ctx.db.patch('artifacts', artifact._id, {
-		currentVersion: version,
-		updatedAt: now
-	});
-
-	return version;
+async function bumpRegistry(ctx: MutationCtx, userId: string, repositoryKey: string) {
+	const state = await registryState(ctx, userId, repositoryKey);
+	if (state) await ctx.db.patch('artifactRegistries', state._id, { revision: state.revision + 1 });
+	else await ctx.db.insert('artifactRegistries', { userId, repositoryKey, revision: 1 });
 }
 
-function mutationResult(artifact: Doc<'artifacts'>, version: number) {
+function mutationResult(artifact: Doc<'artifacts'>) {
 	return {
 		artifactId: artifact._id,
-		version,
+		revision: artifact.revision,
 		title: artifact.title,
-		contentType: artifact.type
+		contentType: artifact.type,
+		scope: artifact.scope
 	};
 }
 
-export const createArtifact = mutation({
+async function loadThreadForRun(ctx: QueryCtx | MutationCtx, run: Doc<'runs'>): Promise<string> {
+	const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+	return requireRepositoryKey(thread);
+}
+
+async function listVisibleArtifacts(
+	ctx: QueryCtx | MutationCtx,
+	userId: string,
+	repositoryKey: string,
+	threadId: Id<'threadRecords'> | undefined,
+	cursor: string | null
+) {
+	const result = await ctx.db
+		.query('artifacts')
+		.withIndex('by_userId_and_repositoryKey_and_scope', (q) =>
+			q.eq('userId', userId).eq('repositoryKey', repositoryKey)
+		)
+		.paginate({ cursor, numItems: 8, maximumRowsRead: 8, maximumBytesRead: 1_000_000 });
+	return {
+		page: result.page.filter((artifact) =>
+			canAccessArtifact(artifact, userId, repositoryKey, threadId)
+		),
+		isDone: result.isDone,
+		continueCursor: result.continueCursor,
+		revision: (await registryState(ctx, userId, repositoryKey))?.revision ?? 0
+	};
+}
+
+const pageFields = { isDone: v.boolean(), continueCursor: v.string(), revision: v.number() };
+
+async function authorizeScope(
+	ctx: QueryCtx,
+	repositoryKey: string,
+	threadId?: Id<'threadRecords'>
+) {
+	const userId = await getUserId(ctx);
+	if (threadId !== undefined) {
+		const thread = await getOwnedThreadRecord(ctx.db, userId, threadId);
+		if (requireRepositoryKey(thread) !== repositoryKey) throw new Error('Thread not found.');
+	}
+	return userId;
+}
+
+function canAccessArtifact(
+	artifact: Doc<'artifacts'>,
+	userId: string,
+	repositoryKey: string,
+	threadId: Id<'threadRecords'> | undefined
+): boolean {
+	if (artifact.userId !== userId || artifact.repositoryKey !== repositoryKey) {
+		return false;
+	}
+	if (artifact.scope === 'project') {
+		return true;
+	}
+	return artifact.scope === 'thread' && threadId !== undefined && artifact.threadId === threadId;
+}
+
+async function requireAccessibleArtifact(
+	ctx: QueryCtx | MutationCtx,
+	artifactId: Id<'artifacts'>,
+	userId: string,
+	repositoryKey: string,
+	threadId: Id<'threadRecords'> | undefined
+): Promise<Doc<'artifacts'>> {
+	const artifact = await ctx.db.get('artifacts', artifactId);
+	if (!artifact || !canAccessArtifact(artifact, userId, repositoryKey, threadId)) {
+		throw new Error('Artifact not found.');
+	}
+	return artifact;
+}
+
+async function writeArtifactFields(
+	ctx: MutationCtx,
+	artifact: Doc<'artifacts'>,
+	fields: {
+		content: string;
+		title: string;
+		contentType: Doc<'artifacts'>['type'];
+	}
+): Promise<Doc<'artifacts'>> {
+	const unchanged =
+		artifact.content === fields.content &&
+		artifact.title === fields.title &&
+		artifact.type === fields.contentType;
+	if (unchanged) {
+		return artifact;
+	}
+	const now = Date.now();
+	const revision = artifact.revision + 1;
+	await ctx.db.patch('artifacts', artifact._id, {
+		content: fields.content,
+		title: fields.title,
+		type: fields.contentType,
+		revision,
+		updatedAt: now
+	});
+	await bumpRegistry(ctx, artifact.userId, artifact.repositoryKey);
+	return {
+		...artifact,
+		content: fields.content,
+		title: fields.title,
+		type: fields.contentType,
+		revision,
+		updatedAt: now
+	};
+}
+
+export async function rekeyOwnedArtifacts(
+	ctx: MutationCtx,
+	userId: string,
+	from: string,
+	to: string
+): Promise<void> {
+	if (from === to) return;
+	await bumpRegistry(ctx, userId, from);
+	const source = await registryState(ctx, userId, from);
+	if (!source) throw new Error('Artifact registry not found.');
+	await ctx.db.patch('artifactRegistries', source._id, { rekeyTo: to });
+	const destination = await registryState(ctx, userId, to);
+	if (destination?.rekeyTo)
+		await ctx.db.patch('artifactRegistries', destination._id, { rekeyTo: undefined });
+	await rekeyArtifactBatch(ctx, userId, from, to);
+}
+
+async function rekeyArtifactBatch(
+	ctx: MutationCtx,
+	userId: string,
+	from: string,
+	to: string
+): Promise<void> {
+	if ((await registryState(ctx, userId, from))?.rekeyTo !== to) return;
+	let destination = to;
+	const visited = new Set([from]);
+	for (;;) {
+		if (visited.has(destination)) throw new Error('Artifact repository rename cycle.');
+		visited.add(destination);
+		const redirected = (await registryState(ctx, userId, destination))?.rekeyTo;
+		if (!redirected) break;
+		destination = redirected;
+	}
+	const artifacts = await ctx.db
+		.query('artifacts')
+		.withIndex('by_userId_and_repositoryKey_and_scope', (q) =>
+			q.eq('userId', userId).eq('repositoryKey', from)
+		)
+		.take(8);
+	for (const artifact of artifacts) {
+		await ctx.db.patch('artifacts', artifact._id, { repositoryKey: destination });
+	}
+	if (artifacts.length > 0) {
+		await bumpRegistry(ctx, userId, from);
+		await bumpRegistry(ctx, userId, destination);
+	}
+	if (artifacts.length === 8) {
+		await ctx.scheduler.runAfter(0, internal.artifacts.continueRekey, { userId, from, to });
+	}
+}
+
+export const continueRekey = internalMutation({
+	args: { userId: v.string(), from: v.string(), to: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await rekeyArtifactBatch(ctx, args.userId, args.from, args.to);
+	}
+});
+
+export const addArtifact = mutation({
 	args: {
 		runId: v.id('runs'),
 		claimId: v.string(),
-		title: v.string(),
-		contentType: vArtifactType,
+		executionSecret: v.string(),
+		scope: vArtifactScope,
+		registrationId: v.string(),
 		content: v.string(),
-		executionSecret: v.string()
+		title: v.string(),
+		contentType: vArtifactType
 	},
 	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const userId = run.userId;
-			const threadId = run.threadId;
-			await getOwnedThreadRecord(ctx.db, userId, threadId);
-
-			const title = args.title.trim();
-			validateArtifactTitle(title);
+			const repositoryKey = await loadThreadForRun(ctx, run);
+			if (!args.registrationId || args.registrationId.length > 128)
+				throw new Error('Invalid registration ID.');
+			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
+			const threadId = args.scope === 'thread' ? run.threadId : undefined;
 
-			// A repeated title in the same thread updates the existing artifact
-			// instead of silently dropping the new content.
 			const existing = await ctx.db
 				.query('artifacts')
-				.withIndex('by_threadId_title', (q) => q.eq('threadId', threadId).eq('title', title))
-				.first();
-
+				.withIndex('by_userId_and_registrationId', (q) =>
+					q.eq('userId', run.userId).eq('registrationId', args.registrationId)
+				)
+				.unique();
 			if (existing) {
-				const latest = await latestArtifactVersion(ctx, existing._id);
-				const version =
-					latest?.content === args.content
-						? existing.currentVersion
-						: await insertNextVersion(ctx, existing, userId, latest, args.content);
-
-				return mutationResult(existing, version);
+				if (
+					!canAccessArtifact(existing, run.userId, repositoryKey, run.threadId) ||
+					existing.scope !== args.scope ||
+					existing.threadId !== threadId
+				) {
+					throw new Error('Artifact not found.');
+				}
+				return mutationResult(existing);
 			}
 
 			const now = Date.now();
-			const artifactId = await ctx.db.insert('artifacts', {
-				threadId,
-				userId,
-				title,
+			const record: Omit<Doc<'artifacts'>, '_id' | '_creationTime'> = {
+				userId: run.userId,
+				scope: args.scope,
+				repositoryKey,
+				registrationId: args.registrationId,
+				content: args.content,
 				type: args.contentType,
-				currentVersion: 1,
-				createdById: run._id,
+				title,
+				revision: 1,
 				createdAt: now,
 				updatedAt: now
-			});
-
-			await ctx.db.insert('artifactVersions', {
-				artifactId,
-				userId,
-				version: 1,
-				content: args.content,
-				createdAt: now
-			});
-
-			return { artifactId, version: 1, title, contentType: args.contentType };
+			};
+			if (threadId) record.threadId = threadId;
+			const artifactId = await ctx.db.insert('artifacts', record);
+			await bumpRegistry(ctx, run.userId, repositoryKey);
+			const created = await ctx.db.get('artifacts', artifactId);
+			if (!created) {
+				throw new Error('Failed to create the artifact.');
+			}
+			return mutationResult(created);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
 	}
 });
 
-export const appendArtifactVersion = mutation({
+export const editArtifact = mutation({
 	args: {
-		artifactId: v.id('artifacts'),
 		runId: v.id('runs'),
 		claimId: v.string(),
+		executionSecret: v.string(),
+		artifactId: v.id('artifacts'),
+		expectedRevision: v.number(),
 		content: v.string(),
-		executionSecret: v.string()
+		title: v.string(),
+		contentType: vArtifactType
 	},
 	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
 		try {
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-			const userId = run.userId;
-
-			const artifact: Doc<'artifacts'> | null = await ctx.db.get('artifacts', args.artifactId);
-			if (!artifact || artifact.userId !== userId || artifact.threadId !== run.threadId) {
-				throw new Error('Artifact not found.');
-			}
-			await getOwnedThreadRecord(ctx.db, userId, artifact.threadId);
-
+			const repositoryKey = await loadThreadForRun(ctx, run);
+			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
 
-			const latest = await latestArtifactVersion(ctx, args.artifactId);
-			const version = await insertNextVersion(ctx, artifact, userId, latest, args.content);
+			const artifact = await requireAccessibleArtifact(
+				ctx,
+				args.artifactId,
+				run.userId,
+				repositoryKey,
+				run.threadId
+			);
 
-			return mutationResult(artifact, version);
+			if (artifact.revision !== args.expectedRevision)
+				throw new Error('Artifact changed; reload it before editing.');
+
+			return mutationResult(
+				await writeArtifactFields(ctx, artifact, {
+					content: args.content,
+					title,
+					contentType: args.contentType
+				})
+			);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
+export const listArtifactsForRun = query({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		cursor: v.optional(v.union(v.string(), v.null()))
+	},
+	returns: v.object({ ...pageFields, page: vListArtifactsResult.fields.artifacts }),
+	handler: async (ctx, args) => {
+		try {
+			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+			const repositoryKey = await loadThreadForRun(ctx, run);
+			const result = await listVisibleArtifacts(
+				ctx,
+				run.userId,
+				repositoryKey,
+				run.threadId,
+				args.cursor ?? null
+			);
+			return {
+				...result,
+				page: result.page.map(
+					({ _id, _creationTime, content, userId, registrationId, ...metadata }) => {
+						void _creationTime;
+						void content;
+						void userId;
+						void registrationId;
+						return { artifactId: _id, ...metadata };
+					}
+				)
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
+export const listArtifacts = query({
+	args: {
+		threadId: v.optional(v.id('threadRecords')),
+		repositoryKey: v.string(),
+		cursor: v.optional(v.union(v.string(), v.null()))
+	},
+	returns: v.object({ ...pageFields, page: v.array(schema.doc('artifacts')) }),
+	handler: async (ctx, args) => {
+		const repositoryKey = validateRepositoryKey(args.repositoryKey);
+		const userId = await authorizeScope(ctx, repositoryKey, args.threadId);
+		return await listVisibleArtifacts(
+			ctx,
+			userId,
+			repositoryKey,
+			args.threadId,
+			args.cursor ?? null
+		);
+	}
+});
+
+export const getArtifactState = query({
+	args: { repositoryKey: v.string(), threadId: v.optional(v.id('threadRecords')) },
+	returns: v.number(),
+	handler: async (ctx, args) => {
+		const repositoryKey = validateRepositoryKey(args.repositoryKey);
+		const userId = await authorizeScope(ctx, repositoryKey, args.threadId);
+		return (await registryState(ctx, userId, repositoryKey))?.revision ?? 0;
+	}
+});
+
+export const getArtifactForRun = query({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		artifactId: v.id('artifacts')
+	},
+	returns: schema.doc('artifacts'),
+	handler: async (ctx, args) => {
+		try {
+			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+			const repositoryKey = await loadThreadForRun(ctx, run);
+			return await requireAccessibleArtifact(
+				ctx,
+				args.artifactId,
+				run.userId,
+				repositoryKey,
+				run.threadId
+			);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -193,61 +476,60 @@ export const appendArtifactVersion = mutation({
 
 export const getArtifact = query({
 	args: {
-		artifactId: v.id('artifacts')
+		artifactId: v.id('artifacts'),
+		repositoryKey: v.string(),
+		threadId: v.optional(v.id('threadRecords'))
 	},
-	returns: v.object({
-		artifact: schema.doc('artifacts'),
-		versions: v.array(schema.doc('artifactVersions'))
-	}),
+	returns: schema.doc('artifacts'),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const artifact = await ctx.db.get('artifacts', args.artifactId);
-		if (!artifact || artifact.userId !== userId) {
-			throw new Error('Artifact not found.');
-		}
-		await getOwnedThreadRecord(ctx.db, userId, artifact.threadId);
-
-		const versions = await ctx.db
-			.query('artifactVersions')
-			.withIndex('by_artifactId_version', (q) => q.eq('artifactId', args.artifactId))
-			.order('asc')
-			.collect();
-
-		return { artifact, versions };
+		const repositoryKey = validateRepositoryKey(args.repositoryKey);
+		const userId = await authorizeScope(ctx, repositoryKey, args.threadId);
+		return await requireAccessibleArtifact(
+			ctx,
+			args.artifactId,
+			userId,
+			repositoryKey,
+			args.threadId
+		);
 	}
 });
 
-export const listArtifactsForThread = query({
+export const syncArtifact = mutation({
 	args: {
-		threadId: v.id('threadRecords')
+		artifactId: v.id('artifacts'),
+		repositoryKey: v.string(),
+		threadId: v.optional(v.id('threadRecords')),
+		expectedRevision: v.number(),
+		content: v.string()
 	},
-	returns: v.array(
-		v.object({
-			artifact: schema.doc('artifacts'),
-			currentContent: v.string()
-		})
-	),
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const repositoryKey = validateRepositoryKey(args.repositoryKey);
+		validateArtifactContent(args.content);
 
-		const artifacts = await ctx.db
-			.query('artifacts')
-			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
-			.order('desc')
-			.collect();
-
-		const results = [];
-		for (const artifact of artifacts) {
-			const latest = await latestArtifactVersion(ctx, artifact._id);
-			if (latest) {
-				results.push({
-					artifact,
-					currentContent: latest.content
-				});
+		if (args.threadId !== undefined) {
+			const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+			if (requireRepositoryKey(thread) !== repositoryKey) {
+				throw new Error('Thread not found.');
 			}
 		}
 
-		return results;
+		const artifact = await requireAccessibleArtifact(
+			ctx,
+			args.artifactId,
+			userId,
+			repositoryKey,
+			args.threadId
+		);
+		if (artifact.revision !== args.expectedRevision) {
+			return false;
+		}
+		await writeArtifactFields(ctx, artifact, {
+			content: args.content,
+			title: artifact.title,
+			contentType: artifact.type
+		});
+		return true;
 	}
 });

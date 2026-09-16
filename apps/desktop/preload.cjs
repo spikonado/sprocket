@@ -1,7 +1,16 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('sprocketDesktopBridge', {
-	getLocalBootstrap: () => ipcRenderer.invoke('sprocket:get-local-bootstrap'),
+	updates: {
+		getState: () => ipcRenderer.invoke('sprocket:get-update-state'),
+		download: () => ipcRenderer.invoke('sprocket:download-update'),
+		install: () => ipcRenderer.invoke('sprocket:install-update'),
+		onState: (callback) => {
+			const listener = (_event, state) => callback(state);
+			ipcRenderer.on('sprocket:update-state', listener);
+			return () => ipcRenderer.removeListener('sprocket:update-state', listener);
+		}
+	},
 	takeWorkspaceLaunch: () => ipcRenderer.invoke('sprocket:take-workspace-launch'),
 	onWorkspaceLaunch: (callback) => {
 		const listener = () => callback();

@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -9,16 +10,16 @@ import {
 } from '@convex/lib/validators';
 import {
 	vAgentQuestionStatus,
+	vArtifactScope,
 	vArtifactType,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
-	vExecutorJobKind,
+	vStoredExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
 	vReasoningEffort,
 	vRunStatus,
-	vServiceTier,
 	vSubscriptionStatus,
 	vSubscriptionTier,
 	vTranscriptCompletionBody,
@@ -40,9 +41,9 @@ export default defineSchema({
 		machineId: v.string(),
 		friendlyName: v.string(),
 		platform: v.string(),
-		platformVersion: v.optional(v.string()),
+		platformVersion: v.string(),
 		architecture: v.string(),
-		hostname: v.optional(v.string()),
+		hostname: v.string(),
 		appVersion: v.string(),
 		credentialHash: v.string(),
 		lastSeenAt: v.optional(v.number()),
@@ -66,9 +67,13 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
-	// Stored-only. New clients do not write these tables. Kept so existing
-	// documents and leftover `projectId` fields validate until the rewrite
-	// unsets them. See BACKWARDS_COMPATIBILITY.md.
+	migrationSchedules: defineTable({
+		name: v.string(),
+		notBefore: v.number(),
+		startedAt: v.optional(v.number()),
+		completedAt: v.optional(v.number())
+	}).index('by_name', ['name']),
+	// Stored-only until the production rollout cleanup deletes old rows and references.
 	projects: defineTable({
 		userId: v.string(),
 		repositoryKey: v.string(),
@@ -91,18 +96,13 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		// Optional until migrations:backfillThreadStatus has removed runless rows
-		// and populated existing threads. New threads always write this field.
 		status: v.optional(vRunStatus),
-		// Leftover optionality after the repository-key backfill. Current
-		// inserts always write it.
-		repositoryKey: v.optional(v.string()),
-		// Deprecated: present on rows written before threads stored repositoryKey.
+		repositoryKey: v.string(),
 		projectId: v.optional(v.id('projects')),
 		title: v.optional(v.string()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		contextSummary: v.optional(v.string()),
 		// Legacy previous-run cutoff for released agents. Transcript reads use
 		// contextSummaryThroughPartNumber when that field is present.
@@ -127,10 +127,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		contextTokens: v.optional(v.number()),
-		// Denormalized cache of the Aggregate ledger. See
-		// BACKWARDS_COMPATIBILITY.md (stored schema, usage ledger).
-		totalTokensProcessed: v.number(),
-		// Leftover after the usage-ledger backfill.
+		totalTokensProcessed: v.optional(v.number()),
 		usageLedgerMigratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadUsageEvents: defineTable({
@@ -144,21 +141,16 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
-		// Deprecated: leftover on rows written when runs belonged to a cloud project.
 		projectId: v.optional(v.id('projects')),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
-		claimId: v.optional(v.string()),
-		claimExpiresAt: v.optional(v.number()),
-		completionAttemptSeq: v.number(),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		catalogVersion: v.optional(v.string()),
-		// Stored historical rows may still say `convex-action`; new inserts are `gateway`.
 		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
@@ -169,23 +161,27 @@ export default defineSchema({
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number()),
-		activeJobId: v.optional(v.id('executorJobs')),
-		// Deprecated: prompts now live in threadTranscriptParts.
-		promptMessageId: v.optional(v.string()),
-		completionStreamStateId: v.optional(v.id('completionStreamStates')),
-		lifecycleWorkflowId: v.optional(v.string())
+		promptMessageId: v.optional(v.string())
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
-		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
+	runExecutionStates: defineTable({
+		runId: v.id('runs'),
+		claimId: v.optional(v.string()),
+		claimExpiresAt: v.optional(v.number()),
+		completionAttemptSeq: v.number(),
+		activeJobId: v.optional(v.id('executorJobs')),
+		lifecycleCheckId: v.optional(v.id('_scheduled_functions')),
+		lifecycleGeneration: v.optional(v.number())
+	}).index('by_runId', ['runId']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		totalParts: v.number(),
-		// Leftover after the numbered-transcript backfill.
+		workThrough: v.optional(workPosition),
 		migratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
@@ -197,36 +193,89 @@ export default defineSchema({
 		runId: v.id('runs'),
 		prompt: v.optional(vTranscriptPromptBody),
 		completion: v.optional(vTranscriptCompletionBody),
-		tool: v.optional(vTranscriptToolBody)
+		tool: v.optional(vTranscriptToolBody),
+		work: v.optional(workMembership)
 	})
 		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
-	completionStreamStates: defineTable({
-		runId: v.id('runs'),
-		userId: v.string(),
-		sequence: v.number(),
-		streamAttemptId: v.optional(v.string())
-	}),
+	threadTranscriptWorkSections: defineTable({
+		threadId: v.id('threadRecords'),
+		linkedParts: v.number(),
+		...workSectionFields
+	}).index('by_threadId_and_key', ['threadId', 'key']),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
-		// Deprecated: attachment retention uses `attached`.
 		messageIds: v.optional(v.array(v.string())),
-		attached: v.boolean()
+		attached: v.boolean(),
+		threadId: v.optional(v.id('threadRecords')),
+		storageDeletedAt: v.optional(v.number())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_storageId', ['storageId'])
-		.index('by_attached', ['attached']),
+		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt']),
+	hostedParseRequests: defineTable({
+		jobId: v.id('executorJobs'),
+		runId: v.id('runs'),
+		userId: v.string(),
+		claimId: v.string(),
+		status: v.union(
+			v.literal('awaiting_upload'),
+			v.literal('pending'),
+			v.literal('completed'),
+			v.literal('failed')
+		),
+		uploadUrl: v.optional(v.string()),
+		inputStorageId: v.optional(v.id('_storage')),
+		resultStorageId: v.optional(v.id('_storage')),
+		filename: v.optional(v.string()),
+		error: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		.index('by_jobId', ['jobId'])
+		.index('by_inputStorageId', ['inputStorageId'])
+		.index('by_resultStorageId', ['resultStorageId'])
+		.index('by_expiresAt', ['expiresAt']),
+	firecrawlRequests: defineTable({
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.optional(v.id('executorJobs')),
+		kind: v.union(
+			v.literal('scrape'),
+			v.literal('screenshot'),
+			v.literal('browser_interact'),
+			v.literal('browser_screenshot')
+		),
+		command: v.optional(v.string()),
+		enforce_saving: v.optional(v.boolean()),
+		status: v.union(
+			v.literal('queued'),
+			v.literal('running'),
+			v.literal('completed'),
+			v.literal('failed')
+		),
+		workId: v.optional(v.string()),
+		resultStorageId: v.optional(v.id('_storage')),
+		error: v.optional(v.string()),
+		expiresAt: v.number()
+	}).index('by_runId', ['runId']),
+	browserCapacity: defineTable({
+		reservationId: v.string(),
+		sessionId: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		.index('by_reservationId', ['reservationId'])
+		.index('by_sessionId', ['sessionId'])
+		.index('by_expiresAt', ['expiresAt']),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
-		// Deprecated: leftover on rows written when jobs belonged to a cloud project.
 		projectId: v.optional(v.id('projects')),
-		kind: vExecutorJobKind,
+		kind: vStoredExecutorJobKind,
 		callId: v.optional(v.string()),
 		// Set on jobs created after tool progress events. Legacy rows omit it;
 		// transcript writes fall back to the job document id.
@@ -240,7 +289,8 @@ export default defineSchema({
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
 		sequence: v.number(),
-		cloudWorkId: v.optional(v.string())
+		cloudWorkId: v.optional(v.string()),
+		cloudWorkPool: v.optional(v.literal('firecrawlScrape'))
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
@@ -254,6 +304,7 @@ export default defineSchema({
 		options: v.array(vAskQuestionOption),
 		status: vAgentQuestionStatus,
 		answer: v.optional(vAskQuestionAnswer),
+		requiresContinuation: v.optional(v.boolean()),
 		createdAt: v.number(),
 		timeoutAt: v.number(),
 		answeredAt: v.optional(v.number()),
@@ -262,25 +313,28 @@ export default defineSchema({
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_threadId_status_sequence', ['threadId', 'status', 'sequence']),
-	artifacts: defineTable({
-		threadId: v.id('threadRecords'),
+	artifactRegistries: defineTable({
 		userId: v.string(),
-		title: v.string(),
+		repositoryKey: v.string(),
+		revision: v.number(),
+		rekeyTo: v.optional(v.string())
+	}).index('by_userId_and_repositoryKey', ['userId', 'repositoryKey']),
+	artifacts: defineTable({
+		userId: v.string(),
+		scope: vArtifactScope,
+		repositoryKey: v.string(),
+		// Present only for thread-scoped artifacts.
+		threadId: v.optional(v.id('threadRecords')),
+		registrationId: v.string(),
+		content: v.string(),
 		type: vArtifactType,
-		currentVersion: v.number(),
-		createdById: v.id('runs'),
+		title: v.string(),
+		revision: v.number(),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	})
-		.index('by_threadId', ['threadId'])
-		.index('by_threadId_title', ['threadId', 'title']),
-	artifactVersions: defineTable({
-		artifactId: v.id('artifacts'),
-		userId: v.string(),
-		version: v.number(),
-		content: v.string(),
-		createdAt: v.number()
-	}).index('by_artifactId_version', ['artifactId', 'version']),
+		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
+		.index('by_userId_and_repositoryKey_and_scope', ['userId', 'repositoryKey', 'scope']),
 	mandates: defineTable({
 		userId: v.string(),
 		// Present only after the owner approves in Prava.
@@ -330,13 +384,29 @@ export default defineSchema({
 	})
 		.index('by_mandate_reference', ['mandateId', 'reference'])
 		.index('by_reportRetrierRunId', ['reportRetrierRunId']),
-	browserSessions: defineTable({
-		threadId: v.id('threadRecords'),
-		runId: v.id('runs'),
-		lastUsedRunId: v.id('runs'),
+	browserProfiles: defineTable({
 		userId: v.string(),
-		browserbaseSessionId: v.string(),
+		name: v.string(),
+		savingEnabled: v.boolean()
+	}).index('by_userId', ['userId']),
+	browserSessions: defineTable({
+		humanControl: v.optional(v.boolean()),
+		attachedAt: v.optional(v.number()),
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		profileName: v.string(),
+		saveChanges: v.boolean(),
+		lastUsedRunId: v.id('runs'),
+		startedAt: v.number(),
+		expiresAt: v.number(),
+		sessionId: v.optional(v.string()),
 		liveViewUrl: v.optional(v.string()),
-		startedAt: v.number()
-	}).index('by_thread', ['threadId'])
+		interactiveLiveViewUrl: v.optional(v.string()),
+		operationId: v.optional(v.string()),
+		operationExpiresAt: v.number(),
+		closing: v.boolean()
+	})
+		.index('by_threadId', ['threadId'])
+		.index('by_userId', ['userId'])
+		.index('by_expiresAt', ['expiresAt'])
 });

@@ -12,9 +12,9 @@ use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::{sleep, timeout};
 
-use crate::compaction::{ContextCompactionHook, HANDOFF_PROMPT, context_summary_text};
+use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
-use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
+use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -70,6 +70,8 @@ pub(crate) struct AgentProvider {
 }
 
 pub(crate) struct AgentProviderRequest {
+    pub(crate) allow_interaction: bool,
+    pub(crate) cancellation: sprocket_workspace::WorkspaceCancellation,
     pub(crate) run_id: String,
     pub(crate) claim_id: String,
     pub(crate) thread_id: String,
@@ -82,10 +84,13 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
-    pub(crate) service_tier: String,
+    pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
+    pub(crate) supports_images: bool,
+    pub(crate) transcript_dir: PathBuf,
+    pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
-    pub(crate) defer_prompt_for_compaction: bool,
+    pub(crate) defer_prompt_for_context_handoff: bool,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -148,44 +153,81 @@ where
     C: CompletionClient + AgentClientExt,
     C::CompletionModel: 'static,
 {
+    let reasoning_effort = match serde_json::from_value::<openai::responses_api::ReasoningEffort>(
+        serde_json::Value::String(request.reasoning_effort.clone()),
+    ) {
+        Ok(reasoning_effort) => reasoning_effort,
+        Err(error) => {
+            return AgentProviderResult::Failed {
+                text: String::new(),
+                error: anyhow!("invalid OpenAI Responses API reasoning effort: {error}"),
+            };
+        }
+    };
+    let additional_params = openai::responses_api::AdditionalParameters {
+        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
+        service_tier: request
+            .fast_mode
+            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
+        ..Default::default()
+    }
+    .to_json();
     let tool_call_tracker = ToolCallTracker::default();
     let tools = agent_tools(
         runtime.clone(),
         request.run_id.clone(),
         request.claim_id.clone(),
         request.workspace_root.clone(),
+        request.transcript_dir.clone(),
+        request.artifact_bindings.clone(),
+        request.thread_id.clone(),
+        request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),
     );
     let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
-    let compaction_hook = ContextCompactionHook::new(
-        request.context_budget.auto_compact_token_limit,
+    let context_handoff_hook = ContextHandoffHook::new(
+        request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
-        request.defer_prompt_for_compaction,
+        request.defer_prompt_for_context_handoff,
+        available_agent_tool_names(request.allow_interaction, request.supports_images),
     );
     let agent = completion_client
         .agent(model)
         .preamble(&request.base_instructions)
+        .additional_params(additional_params)
         .tool(tools.apply_patch)
-        .tool(tools.ask_question)
-        .tool(tools.await_question)
         .tool(tools.exec_command)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)
         .tool(tools.write_stdin)
-        .tool(tools.create_artifact)
-        .tool(tools.update_artifact)
-        .tool(tools.browser_act)
-        .tool(tools.browser_observe)
-        .tool(tools.browser_extract)
-        .tool(tools.mandate_setup)
+        .tool(tools.add_artifact)
+        .tool(tools.list_artifacts)
+        .tool(tools.edit_artifact)
+        .tool(tools.save_artifact)
+        .tool(tools.browser_interact)
+        .tool(tools.browser_screenshot)
         .tool(tools.mandate_status)
         .tool(tools.mandate_list)
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
-        .tool(compaction_hook.tool())
-        .build();
+        .tool(tools.parse_file)
+        .tool(context_handoff_hook.tool());
+    let agent = if request.allow_interaction {
+        agent
+            .tool(tools.ask_question)
+            .tool(tools.await_question)
+            .tool(tools.mandate_setup)
+    } else {
+        agent
+    };
+    let agent = if request.supports_images {
+        agent.tool(tools.screenshot_url)
+    } else {
+        agent
+    }
+    .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
@@ -219,11 +261,6 @@ where
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker);
     let initial_context: Arc<[Message]> = request.initial_context.into();
-    let gateway_hook = GatewayRequestHook::new(
-        request.reasoning_effort.clone(),
-        request.service_tier.clone(),
-    );
-
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -256,13 +293,17 @@ where
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(prompt_hook.clone())
-                .add_hook(gateway_hook.clone())
-                .add_hook(compaction_hook.clone())
+                .add_hook(context_handoff_hook.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .await;
             loop {
                 tokio::select! {
                     biased;
+                    _ = request.cancellation.cancelled() => {
+                        break 'agent_run AgentProviderResult::Cancelled {
+                            text: if final_text.is_empty() { streamed_text } else { final_text },
+                        };
+                    }
                     _ = sleep(transcript.publish_delay()), if transcript.has_unpublished() => {
                         transcript.publish_if_needed(true);
                     }
@@ -295,7 +336,7 @@ where
                         }
                     }
                     item = stream.next() => {
-                        let calls = compaction_hook.completion_calls();
+                        let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
                             if recorded_attempt == Some(transcript.attempt_seq) {
                                 if let Err(error) = transcript.advance_attempt().await {
@@ -307,10 +348,10 @@ where
                         match item {
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(_)))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(_)))
-                                if compaction_hook.is_writing() => {}
+                                if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 recorded_attempt = Some(transcript.attempt_seq);
-                                let tokens = compaction_hook.record_usage(call.usage);
+                                let tokens = context_handoff_hook.record_usage(call.usage);
                                 if tokens == 0 {
                                     continue;
                                 }
@@ -363,8 +404,8 @@ where
                                 );
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
-                                if compaction_hook.is_writing() {
-                                    let Some(summary) = compaction_hook.take_summary() else {
+                                if context_handoff_hook.is_writing() {
+                                    let Some(summary) = context_handoff_hook.take_summary() else {
                                         break 'agent_run AgentProviderResult::Failed {
                                             text: streamed_text,
                                             error: anyhow!("Context handoff failed: no valid document was submitted."),
@@ -387,7 +428,7 @@ where
                                         Some(pending) => { history.push(handoff); pending }
                                         None => handoff,
                                     };
-                                    compaction_hook.restart();
+                                    context_handoff_hook.restart();
                                     final_text.clear();
                                     streamed_text.clear();
                                     completion_error = None;
@@ -405,15 +446,15 @@ where
                             | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))) => {}
                             Some(Err(error)) => {
-                                if let Some(handoff) = compaction_hook.take_request() {
+                                if let Some(handoff) = context_handoff_hook.take_request() {
                                     history = handoff.history;
                                     prompt = Message::user(HANDOFF_PROMPT);
                                     deferred_prompt = handoff.deferred_prompt;
                                     before_prompt = handoff.before_prompt;
-                                    compaction_hook.start_handoff();
+                                    context_handoff_hook.start_handoff();
                                     continue 'generations;
                                 }
-                                if compaction_hook.is_writing() {
+                                if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff failed. Retry to continue the conversation."),
@@ -439,7 +480,7 @@ where
                                 break 'agent_run result;
                             }
                             None => {
-                                if compaction_hook.is_writing() {
+                                if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff ended without submitting a document."),
@@ -659,15 +700,19 @@ impl TranscriptSink {
     fn publish(&mut self) {
         self.unpublished = 0;
         self.last_publish = Instant::now();
-        self.live.publish(LiveCompletionOverlay {
+        let overlay = LiveCompletionOverlay {
             thread_id: self.thread_id.clone(),
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
-            stream_id: Some(self.stream_id.clone()),
+            stream_id: self.stream_id.clone(),
             text: join_assistant_text_parts(&self.parts.parts),
             parts: visible_live_parts(&self.parts.parts),
             run_started_at: self.run_started_at,
-        });
+        };
+        self.live.publish(overlay);
+        if let Some(output) = &self.runtime.output {
+            output.notify_live_update();
+        }
     }
 
     fn apply_text_delta(
@@ -702,6 +747,9 @@ impl Drop for TranscriptSink {
     fn drop(&mut self) {
         self.publish_if_needed(true);
         self.live.clear(&self.thread_id);
+        if let Some(output) = &self.runtime.output {
+            output.notify_live_update();
+        }
     }
 }
 

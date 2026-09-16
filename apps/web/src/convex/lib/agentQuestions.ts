@@ -19,6 +19,11 @@ export type AgentQuestionAnswer = {
 	text?: string;
 };
 
+export type AnsweredAgentQuestion = {
+	question: string;
+	answer: AgentQuestionAnswer;
+};
+
 function agentDecideOption(): AgentQuestionOption {
 	return {
 		id: AGENT_DECIDE_OPTION_ID,
@@ -104,6 +109,25 @@ export function normalizeQuestionAnswer(args: {
 	};
 	if (text) answer.text = text;
 	return answer;
+}
+
+function formatAnswer(answer: AgentQuestionAnswer): string {
+	return [answer.optionLabel, answer.text]
+		.filter((part): part is string => Boolean(part))
+		.join(': ');
+}
+
+export function formatQuestionContinuationPrompt(questions: AnsweredAgentQuestion[]): string {
+	if (questions.length === 1) {
+		return formatAnswer(questions[0].answer);
+	}
+
+	const entries = questions.map((question, index) => {
+		const questionText = question.question.replaceAll('\n', '\n   ');
+		const answerText = formatAnswer(question.answer).replaceAll('\n', '\n   ');
+		return `${index + 1}. ${questionText}\n   ${answerText}`;
+	});
+	return `Answers to your questions:\n\n${entries.join('\n\n')}`;
 }
 
 export function canSubmitQuestionAnswer(args: {

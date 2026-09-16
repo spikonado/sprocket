@@ -1,5 +1,6 @@
 import { isRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 import { ConvexError } from 'convex/values';
+import { z } from 'zod';
 import type { Infer } from 'convex/values';
 
 /** Recognized by sprocket-agent (`provider.rs`) for clean run cancellation. */
@@ -7,11 +8,10 @@ export const RUN_CANCELLED_BY_USER = 'Run is cancelled.';
 
 export const RUN_NO_LONGER_ACTIVE = 'Run is no longer active.';
 
+export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSEDED';
+
 export const RUN_ABANDONED_BY_AGENT =
 	'The local agent stopped responding before this run finished.';
-
-/** Convex prefixes thrown Error messages with "Uncaught Error:" in production builds. */
-const UNCAUGHT_ERROR_PREFIX = 'Uncaught Error: ';
 
 // Sentinels are ConvexErrors so production keeps their text: the executor
 // classifies runs by these exact messages.
@@ -28,8 +28,8 @@ export function assertRunAcceptsModelCompletion(run: {
 }
 
 function stripUncaughtPrefix(message: string): string {
-	if (!message.startsWith(UNCAUGHT_ERROR_PREFIX)) return message;
-	const stripped = message.slice(UNCAUGHT_ERROR_PREFIX.length);
+	const stripped = message.replace(/^(?:Uncaught (?:Convex)?Error: )+/, '');
+	if (stripped === message) return message;
 	const newline = stripped.indexOf('\n');
 	return newline === -1 ? stripped : stripped.slice(0, newline);
 }
@@ -40,7 +40,12 @@ function stripUncaughtPrefix(message: string): string {
  * are masked to "[Request ID] Server Error" for both audiences in production.
  */
 export function toAgentToolConvexError(error: Error): Error {
-	if (error instanceof ConvexError) return error;
+	if (error instanceof ConvexError) {
+		const data = z.string().safeParse(error.data);
+		if (!data.success) return error;
+		const message = stripUncaughtPrefix(data.data);
+		return message === data.data ? error : new ConvexError(message);
+	}
 	const message = stripUncaughtPrefix(error.message) || error.name;
 	return new ConvexError(message);
 }

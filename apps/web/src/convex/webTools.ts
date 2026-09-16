@@ -2,56 +2,147 @@
 
 import { ConvexError, v, type Infer } from 'convex/values';
 import { z } from 'zod';
-import { ContextDev } from '@context-dot-dev/convex';
+import { FirecrawlClient, type ScrapeOptions } from '@firecrawl/firecrawl-convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
-	vScrapeUrlResult,
+	vScrapeUrlTransport,
+	vScreenshotUrlTransport,
 	vWebSearchResult,
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
+import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { NonRetryableError } from '@convex-dev/workpool';
+import type { Doc } from '@convex/_generated/dataModel';
 
-const contextDev = new ContextDev(components.contextDev);
+const firecrawl = new FirecrawlClient(components.firecrawl);
 const exa = new ExaClient(components.exa);
 
 const DEFAULT_SEARCH_RESULTS = 5;
 const MAX_SEARCH_RESULTS = 10;
-// Bounds the persisted executor-job result; Convex documents are capped at 1 MiB.
-const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
-const SCRAPE_TIMEOUT_MS = 60_000;
+const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
+export const SCRAPE_INLINE_MAX_CHARS = 40_000;
+export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
+export const SCRAPE_TIMEOUT_MS = 60_000;
+export const SCRAPE_FORMATS = ['markdown', 'summary', 'images'] as const;
+export const SCREENSHOT_FORMATS = ['screenshot'] as const;
+export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
+const SCRAPE_JSON_BLOB_TYPE = 'application/json; charset=utf-8';
+const CONVEX_ARRAY_MAX_LENGTH = 8_192;
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 const SEARCH_TIMEOUT_MS = 30_000;
+const SCRAPE_URL_SIZE_PLACEHOLDER = 'https://example.convex.cloud/api/storage/scrape.json';
 
 class WebToolTimeout extends Error {}
 
-// Context.dev validates its scrape result against a bounded-depth JSON schema,
-// so pages whose metadata nests deeper than the bound fail inside the component
-// before any content reaches us (#208).
-export function isUnparseablePageFailure(error: Error): boolean {
-	return error.message.includes('ReturnsValidationError');
-}
-
-const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and could not be parsed as Markdown.';
 const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
+const firecrawlApiErrorSchema = z.object({
+	code: z.literal('firecrawl_request_failed'),
+	status: z.int().min(400).max(599)
+});
+const firecrawlMissingKeySchema = z.object({
+	code: z.literal('firecrawl_missing_api_key')
+});
 const scrapeHttpErrorSchema = z.object({ status: z.int().min(400).max(599) });
+const providerErrorSchema = z.union([
+	firecrawlApiErrorSchema,
+	firecrawlMissingKeySchema,
+	scrapeHttpErrorSchema
+]);
+type ProviderError = z.infer<typeof providerErrorSchema>;
+const firecrawlDocumentSchema = z.object({
+	markdown: z.string().nullish(),
+	summary: z.string().nullish(),
+	images: z.array(z.string()).nullish(),
+	screenshot: z.string().nullish(),
+	metadata: z
+		.object({
+			url: z.string().optional(),
+			sourceURL: z.string().optional(),
+			statusCode: z.number().optional(),
+			error: z.string().optional()
+		})
+		.passthrough()
+		.optional()
+});
+type FirecrawlDocument = z.infer<typeof firecrawlDocumentSchema>;
 
-export function scrapeHttpErrorStatus(error: Error): number | undefined {
+export type ScrapedPage = {
+	url: string;
+	markdown: string;
+	summary: string;
+	images: string[];
+};
+
+function convexErrorData(error: Error): ProviderError | undefined {
+	if (error instanceof ConvexError) {
+		return providerErrorSchema.safeParse(error.data).data;
+	}
 	let message = error.message.split('\n', 1)[0] ?? '';
 	while (message.startsWith(UNCAUGHT_CONVEX_ERROR_PREFIX)) {
 		message = message.slice(UNCAUGHT_CONVEX_ERROR_PREFIX.length);
 	}
-
-	let payload: unknown;
 	try {
-		payload = JSON.parse(message);
+		return providerErrorSchema.safeParse(JSON.parse(message)).data;
 	} catch {
 		return undefined;
 	}
-	const result = scrapeHttpErrorSchema.safeParse(payload);
+}
+
+/** Firecrawl API HTTP status, not the scraped page's `metadata.statusCode`. */
+export function scrapeHttpErrorStatus(error: Error): number | undefined {
+	const data = convexErrorData(error);
+	const firecrawlError = firecrawlApiErrorSchema.safeParse(data);
+	if (firecrawlError.success) {
+		return firecrawlError.data.status;
+	}
+	const result = scrapeHttpErrorSchema.safeParse(data);
 	return result.success ? result.data.status : undefined;
+}
+
+function isCleanPageStatus(status: number): boolean {
+	return status === 304 || (status >= 200 && status < 300);
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+	return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function throwHttpFailure(message: string, status: number, cause?: Error): never {
+	if (isRetryableHttpStatus(status)) {
+		throw new ConvexError(message);
+	}
+	throw new NonRetryableError(message, cause ? { cause } : undefined);
+}
+
+function summaryFitsTransport(page: ScrapedPage): boolean {
+	return (
+		JSON.stringify({
+			url: page.url,
+			summary: page.summary,
+			scrapeUrl: SCRAPE_URL_SIZE_PLACEHOLDER
+		}).length <= SCRAPE_INLINE_MAX_CHARS
+	);
+}
+
+function localInlineFits(page: ScrapedPage): boolean {
+	return (
+		page.images.length <= CONVEX_ARRAY_MAX_LENGTH &&
+		JSON.stringify(page).length <= SCRAPE_INLINE_MAX_CHARS
+	);
+}
+
+function rejectOversizedSummary(): never {
+	throw new NonRetryableError('Scrape summary is too large.');
+}
+
+function scrapeSummary(value: string | null | undefined): string {
+	if (value === undefined || value === null || value.trim() === '') {
+		return DEFAULT_SCRAPE_SUMMARY;
+	}
+	return value;
 }
 
 async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise<T>): Promise<T> {
@@ -74,7 +165,7 @@ type WebSearchJobArgs = {
 	numResults?: number;
 };
 
-function scrapeUrlFromPayload(payload: ExecutorJobPayload): string {
+function urlFromPayload(payload: ExecutorJobPayload): string {
 	if (!('url' in payload)) return '';
 	return payload.url;
 }
@@ -88,10 +179,7 @@ function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
 	return { query, numResults: payload.numResults };
 }
 
-async function runScrape(
-	ctx: ActionCtx,
-	urlValue: string
-): Promise<Infer<typeof vScrapeUrlResult>> {
+function requireHttpUrl(urlValue: string): URL {
 	let url: URL;
 	try {
 		url = new URL(urlValue.trim());
@@ -101,43 +189,122 @@ async function runScrape(
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 		throw new NonRetryableError('Only http(s) URLs can be scraped.');
 	}
+	return url;
+}
 
-	let response: Awaited<ReturnType<typeof contextDev.scrapeMarkdown>>;
+async function requestFirecrawlScrape(
+	ctx: ActionCtx,
+	url: URL,
+	options: ScrapeOptions
+): Promise<FirecrawlDocument> {
+	let document: unknown;
 	try {
-		response = await withTimeout(
-			'Context.dev scrape',
+		document = await withTimeout(
+			'Firecrawl scrape',
 			SCRAPE_TIMEOUT_MS,
-			contextDev.scrapeMarkdown(ctx, {
-				params: {
-					url: url.toString(),
-					useMainContentOnly: true,
-					timeoutMS: SCRAPE_TIMEOUT_MS
-				}
+			firecrawl.scrape(ctx, url.toString(), {
+				...options,
+				maxAge: 0,
+				storeInCache: false,
+				timeout: SCRAPE_TIMEOUT_MS
 			})
 		);
 	} catch (error) {
 		if (error instanceof Error) {
+			if (firecrawlMissingKeySchema.safeParse(convexErrorData(error)).success) {
+				throw new NonRetryableError('FIRECRAWL_API_KEY is not configured.', { cause: error });
+			}
 			const status = scrapeHttpErrorStatus(error);
 			if (status !== undefined) {
-				const message = `This webpage returned a ${status} error.`;
-				if (status === 408 || status === 429 || status >= 500) {
-					throw new ConvexError(message);
-				}
-				throw new NonRetryableError(message, { cause: error });
-			}
-			if (isUnparseablePageFailure(error)) {
-				throw new NonRetryableError(UNPARSEABLE_PAGE_ERROR, { cause: error });
+				throwHttpFailure(`Firecrawl scrape failed (${status}).`, status, error);
 			}
 		}
 		throw error;
 	}
+	const parsed = firecrawlDocumentSchema.safeParse(document);
+	if (!parsed.success) {
+		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
+	}
+	const statusCode = parsed.data.metadata?.statusCode;
+	if (statusCode !== undefined && !isCleanPageStatus(statusCode)) {
+		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
+	}
+	return parsed.data;
+}
 
-	const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
-	return {
-		url: response.url,
-		markdown: truncated ? response.markdown.slice(0, SCRAPE_MARKDOWN_MAX_CHARS) : response.markdown,
-		truncated
+async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPage> {
+	const url = requireHttpUrl(urlValue);
+	const document = await requestFirecrawlScrape(ctx, url, {
+		formats: [...SCRAPE_FORMATS],
+		onlyMainContent: true
+	});
+	const page: ScrapedPage = {
+		url: document.metadata?.sourceURL ?? document.metadata?.url ?? url.toString(),
+		markdown: document.markdown ?? '',
+		summary: scrapeSummary(document.summary),
+		images: document.images ?? []
 	};
+	return page;
+}
+
+async function fetchScreenshot(
+	ctx: ActionCtx,
+	urlValue: string
+): Promise<Infer<typeof vScreenshotUrlTransport>> {
+	const url = requireHttpUrl(urlValue);
+	const document = await requestFirecrawlScrape(ctx, url, {
+		formats: [...SCREENSHOT_FORMATS]
+	});
+	const screenshot = document.screenshot?.trim() ?? '';
+	if (!screenshot) {
+		throw new NonRetryableError('Firecrawl screenshot is unavailable.');
+	}
+	try {
+		requireHttpUrl(screenshot);
+	} catch {
+		throw new NonRetryableError('Firecrawl screenshot returned an invalid URL.');
+	}
+	return {
+		url: url.toString(),
+		screenshotUrl: screenshot
+	};
+}
+
+async function localScrapeTransport(
+	ctx: ActionCtx,
+	page: ScrapedPage
+): Promise<Infer<typeof vScrapeUrlTransport>> {
+	if (!summaryFitsTransport(page)) {
+		rejectOversizedSummary();
+	}
+	if (localInlineFits(page)) {
+		return page;
+	}
+	return { url: page.url, summary: page.summary, scrapeUrl: await storeTemporaryScrape(ctx, page) };
+}
+
+async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<string> {
+	const blob = new Blob([JSON.stringify(page)], { type: SCRAPE_JSON_BLOB_TYPE });
+	if (blob.size > SCRAPE_MAX_BYTES) {
+		throw new NonRetryableError('Scrape exceeds the 64 MiB download limit.');
+	}
+	const storageId = await ctx.storage.store(blob);
+	try {
+		await ctx.scheduler.runAfter(
+			SCRAPE_STORAGE_TTL_MS,
+			internal.webToolPool.deleteTemporaryStorage,
+			{ storageId }
+		);
+	} catch (error) {
+		await ctx.storage.delete(storageId);
+		throw error;
+	}
+	const scrapeUrl = await ctx.storage.getUrl(storageId);
+	if (!scrapeUrl) {
+		await ctx.storage.delete(storageId);
+		throw new Error('Stored scrape is unavailable.');
+	}
+	return scrapeUrl;
 }
 
 async function runSearch(
@@ -218,27 +385,61 @@ const executeArgs = {
 	claimId: v.string()
 };
 
-export const executeScrapeUrl = internalAction({
-	args: executeArgs,
-	returns: vScrapeUrlResult,
-	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlResult>> => {
-		const job = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
-		if (!job || job.kind !== 'scrape_url') {
-			throw new NonRetryableError('Run is no longer active.');
-		}
-		return await runScrape(ctx, scrapeUrlFromPayload(job.payload));
-	}
-});
-
 export const executeWebSearch = internalAction({
 	args: executeArgs,
 	returns: vWebSearchResult,
 	handler: async (ctx, args): Promise<Infer<typeof vWebSearchResult>> => {
-		const job = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
+		const job = await ctx.runMutation(internal.webToolPool.getWebToolJob, args);
 		if (!job || job.kind !== 'web_search') {
-			throw new NonRetryableError('Run is no longer active.');
+			throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 		}
 		const search = webSearchFromPayload(job.payload);
 		return await runSearch(ctx, search.query, search.numResults);
 	}
 });
+
+/** Retired blocking scrape action. Current agents use the Firecrawl request subscription. */
+export const scrapeForTool = action({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.id('executorJobs'),
+		executionSecret: v.string()
+	},
+	returns: vScrapeUrlTransport,
+	handler: async () => {
+		unsupportedClient();
+	}
+});
+
+/** Retired blocking screenshot action. Current agents use the Firecrawl request subscription. */
+export const screenshotForTool = action({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.id('executorJobs'),
+		executionSecret: v.string()
+	},
+	returns: vScreenshotUrlTransport,
+	handler: async () => {
+		unsupportedClient();
+	}
+});
+
+export async function executeQueuedScrape(
+	ctx: ActionCtx,
+	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind'>
+) {
+	const job = request.jobId
+		? await ctx.runMutation(internal.firecrawlRequests.scrapeJob, {
+				jobId: request.jobId,
+				runId: request.runId,
+				claimId: request.claimId
+			})
+		: null;
+	if (!job || job.kind !== `${request.kind}_url`) throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	if (request.kind === 'scrape') {
+		return await localScrapeTransport(ctx, await fetchScrape(ctx, urlFromPayload(job.payload)));
+	}
+	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
+}

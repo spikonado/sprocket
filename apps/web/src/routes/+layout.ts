@@ -7,22 +7,24 @@ export const ssr = false;
 
 export type RuntimeConfig = {
 	env: Record<string, string>;
+	machine: boolean;
 };
 
 const runtimeConfigSchema = z.object({
-	env: z.record(z.string(), z.string())
+	env: z.record(z.string(), z.string()),
+	machine: z.boolean().optional().default(false)
 });
 
 export async function load({ fetch }): Promise<RuntimeConfig> {
 	if (!browser) {
-		return { env: {} };
+		return { env: {}, machine: false };
 	}
 
 	if (dev) {
 		const canonicalUrl = canonicalDevWebUrl(window.location.href);
 		if (canonicalUrl) {
 			window.location.replace(canonicalUrl);
-			return { env: {} };
+			return { env: {}, machine: false };
 		}
 	}
 

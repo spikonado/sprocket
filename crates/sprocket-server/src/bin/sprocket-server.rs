@@ -20,6 +20,7 @@ fn main() -> anyhow::Result<()> {
         .block_on(run(
             ServerConfig::parse(),
             RunOptions {
+                temporary: false,
                 quiet: true,
                 ..RunOptions::default()
             },

@@ -28,20 +28,6 @@ export function isSettledExecutorJobStatus(
 	return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
-export function executorFailureRunPatch(args: {
-	runStatus: Infer<typeof vRunStatus>;
-	activeJobId?: string;
-	failedJobId: string;
-}): { status: 'running'; activeJobId: undefined } | undefined {
-	if (isRunFinalStatus(args.runStatus) || args.activeJobId !== args.failedJobId) {
-		return undefined;
-	}
-	return {
-		status: 'running',
-		activeJobId: undefined
-	};
-}
-
 export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(args: {
 	jobs: readonly T[];
 	runStatus: Infer<typeof vRunStatus>;

@@ -87,6 +87,7 @@ describe('numbered transcript parts', () => {
 			}
 		];
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-complete',
 			attemptSeq: 1,
@@ -96,6 +97,7 @@ describe('numbered transcript parts', () => {
 		});
 		expect(number).toBe(1);
 		const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-complete',
 			attemptSeq: 1,
@@ -111,7 +113,7 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
 
-	it('normalizes missing timing from older agents on new completion writes', async () => {
+	it('normalizes missing timing on completion writes', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-no-begin-secret';
@@ -135,6 +137,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-no-begin',
 			attemptSeq: 1,
@@ -148,12 +151,11 @@ describe('numbered transcript parts', () => {
 		const stored = await t.run(
 			async (ctx) => await ctx.db.get('threadTranscriptParts', parts.parts[1]!._id)
 		);
-		expect(stored?.completion?.items).toEqual([
+		const expectedItems = [
 			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1', startedAt: null, completedAt: null }
-		]);
-		expect(parts.parts[1]?.completion?.items).toEqual([
-			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1' }
-		]);
+		];
+		expect(stored?.completion?.items).toEqual(expectedItems);
+		expect(parts.parts[1]?.completion?.items).toEqual(expectedItems);
 		const agentParts = await t.query(api.transcript.getPartsForRun, {
 			runId,
 			executionSecret,
@@ -247,6 +249,7 @@ describe('numbered transcript parts', () => {
 		});
 		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-tool-order',
 			attemptSeq: 1,
@@ -303,12 +306,13 @@ describe('numbered transcript parts', () => {
 		});
 		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [1] });
 		const invocationId = started.parts[0]?.tool?.toolInvocationId;
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			expectedStatus: 'awaiting_executor',
 			expectedClaimId: 'claim-tool-cancel',
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret
 		});
 		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
 		expect(afterCancel.totalParts).toBe(3);
@@ -420,6 +424,7 @@ describe('numbered transcript parts', () => {
 		});
 
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-exact-tool',
 			attemptSeq: 1,
@@ -449,11 +454,12 @@ describe('numbered transcript parts', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			text: 'partial',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret
 		});
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(1);
@@ -485,6 +491,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-continue',
 			attemptSeq: 1,
@@ -499,11 +506,12 @@ describe('numbered transcript parts', () => {
 			],
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			text: '',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret
 		});
 		const continuation = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -522,10 +530,11 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const first = await createQueuedRun(t, asUser, threadId, 'sub-a', 'secret-a', 'A');
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: first.runId,
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret: 'secret-a'
 		});
 		await createQueuedRun(t, asUser, threadId, 'sub-b', 'secret-b', 'B');
 		const parts = await asUser.query(api.transcript.getParts, {
@@ -586,6 +595,7 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-keep-history',
 			attemptSeq: 1,
@@ -617,5 +627,122 @@ describe('numbered transcript parts', () => {
 			[0, 'prompt'],
 			[1, 'completion']
 		]);
+	});
+});
+
+describe('transcript attachment identity', () => {
+	it('returns storage-only attachment metadata', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'storage-only-parts-secret';
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: false
+			});
+			return { storageId, imageUploadId };
+		});
+		const created = await insertQueuedRun(t, asUser, {
+			submissionId: 'storage-only-parts',
+			threadId,
+			prompt: 'Read this',
+			imageUploadIds: [file.imageUploadId],
+			executionSecret
+		});
+
+		const parts = await asUser.query(api.transcript.getParts, {
+			threadId,
+			numbers: [0]
+		});
+		expect(parts.parts[0]?.prompt?.imageUploads[0]).toEqual({
+			name: 'file.txt',
+			mediaType: 'text/plain',
+			size: 4,
+			storageId: file.storageId,
+			url: expect.any(String)
+		});
+		expect(parts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+
+		const runParts = await t.query(api.transcript.getPartsForRun, {
+			runId: created.runId,
+			executionSecret,
+			numbers: [0]
+		});
+		expect(runParts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+	});
+
+	it('downloads an owned file by storageId and hides foreign files', async () => {
+		const t = initConvexTest();
+		const { asUser, subject } = await seedOwnedThread(t);
+		const bob = t.withIdentity({ subject: 'bob' });
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: false
+			});
+			return storageId;
+		});
+		expect(
+			await asUser.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })
+		).toMatchObject({
+			storageId: file,
+			name: 'file.txt',
+			mediaType: 'text/plain',
+			size: 4
+		});
+		expect(await bob.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })).toBe(
+			null
+		);
+	});
+
+	it('strips leftover stored imageUploadId', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true,
+				threadId
+			});
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.first();
+			if (!run) throw new Error('Missing fixture run');
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: subject,
+				number: 0,
+				sourceKey: `prompt:${run._id}`,
+				kind: 'prompt',
+				runId: run._id,
+				prompt: {
+					text: 'Read',
+					imageUploads: [
+						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
+					]
+				}
+			});
+		});
+		const current = await asUser.query(api.transcript.getParts, {
+			threadId,
+			numbers: [0]
+		});
+		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 	});
 });

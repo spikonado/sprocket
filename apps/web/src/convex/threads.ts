@@ -1,13 +1,14 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
+import { rekeyOwnedArtifacts } from '@convex/artifacts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import schema from '@convex/schema';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
-import { vReasoningEffort, vRunStatus, vServiceTier } from '@convex/lib/validators';
+import { vReasoningEffort, vRunStatus } from '@convex/lib/validators';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -59,6 +60,7 @@ async function rekeyOwnedThreads(ctx: MutationCtx, fromArg: string, toArg: strin
 	for (const thread of threads) {
 		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
 	}
+	await rekeyOwnedArtifacts(ctx, userId, from, to);
 	return { userId, from, to, count: threads.length };
 }
 
@@ -68,7 +70,7 @@ export const create = mutation({
 		repositoryKey: v.string(),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier
+		serviceTier: v.string()
 	},
 	returns: v.object({
 		threadId: v.id('threadRecords'),
@@ -167,7 +169,7 @@ export const renameForLocalCache = mutation({
 		const { userId, record } = await renameOwnedThread(ctx, args.threadId, args.title);
 		return {
 			userId,
-			repositoryKey: record.repositoryKey ?? ''
+			repositoryKey: record.repositoryKey
 		};
 	}
 });
@@ -190,7 +192,7 @@ export const archiveForLocalCache = mutation({
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
 		const { userId, record } = await archiveOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey ?? '' };
+		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
 
@@ -212,7 +214,7 @@ export const restoreForLocalCache = mutation({
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
 		const { userId, record } = await restoreOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey ?? '' };
+		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
 

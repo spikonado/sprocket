@@ -1,8 +1,12 @@
 pub mod agent;
 mod api_error;
+pub mod artifacts;
+mod attachment_upload;
 pub mod auth;
+pub(crate) mod cli;
 pub mod config;
 pub mod health;
 pub mod threads;
 pub mod transcript;
+pub mod update;
 pub mod workspace;

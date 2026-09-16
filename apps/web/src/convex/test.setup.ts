@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 
-import contextDevTest from '@context-dot-dev/convex/test';
+import firecrawlTest from '@firecrawl/firecrawl-convex/test';
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
 import aggregateTest from '@convex-dev/aggregate/test';
-import workflowTest from '@convex-dev/workflow/test';
+import batchWorkerTest from '@convex-dev/batch-worker/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -39,13 +39,15 @@ export function initConvexTest(): ConvexTestInstance {
 	// TestConvex variance; the convex-test backend object is the same instance.
 	const backend = t as never;
 	rateLimiterTest.register(backend);
-	contextDevTest.register(backend);
+	firecrawlTest.register(backend);
 	exaTest.register(backend);
 	migrationsTest.register(backend);
 	aggregateTest.register(backend);
-	workflowTest.register(backend);
+	batchWorkerTest.register(backend, 'aggregate/batchWorker');
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webToolWorkpool');
+	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
+	workpoolTest.register(backend, 'firecrawlBrowserWorkpool');
 	return t;
 }
 
@@ -94,27 +96,26 @@ export async function seedThreadRecord(
 			repositoryKey,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			lastMessageAt: Date.now()
 		});
 		await ctx.db.insert('threadUsage', {
 			threadId,
-			userId,
-			totalTokensProcessed: 0
+			userId
 		});
-		await ctx.db.insert('runs', {
+		const runId = await ctx.db.insert('runs', {
 			threadId,
 			userId,
 			submissionId,
 			status: 'completed',
 			executionSecretHash: 'fixture',
-			completionAttemptSeq: 0,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			startedAt: Date.now(),
 			completedAt: Date.now()
 		});
+		await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 		return threadId;
 	});
 }
@@ -130,7 +131,7 @@ export async function insertQueuedRun(
 		imageUploadIds?: Id<'imageUploads'>[];
 		selectedModel?: string;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-		serviceTier?: 'standard' | 'fast';
+		fastMode?: boolean;
 		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
 	}
@@ -144,7 +145,7 @@ export async function insertQueuedRun(
 		imageUploadIds: args.imageUploadIds ?? [],
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
 		reasoningEffort: args.reasoningEffort ?? 'medium',
-		serviceTier: args.serviceTier ?? 'standard',
+		fastMode: args.fastMode ?? false,
 		executionSecret: args.executionSecret,
 		protocolVersion: 1,
 		machineId: args.machineId
@@ -167,4 +168,45 @@ export async function createQueuedRun(
 		executionSecret,
 		prompt
 	});
+}
+
+export async function seedStartedWebJob(
+	t: ConvexTestInstance,
+	options: {
+		executionSecret: string;
+		kind: 'web_search' | 'scrape_url' | 'screenshot_url';
+		payload: { query: string } | { url: string };
+		prompt?: string;
+		claimId?: string;
+	}
+) {
+	const { asUser, threadId } = await seedOwnedThread(t);
+	const claimId = options.claimId ?? 'claim-a';
+	const created = await createQueuedRun(
+		t,
+		asUser,
+		threadId,
+		options.executionSecret,
+		options.executionSecret,
+		options.prompt ?? 'Search'
+	);
+	await asUser.mutation(api.agentRuntime.start, {
+		runId: created.runId,
+		claimId,
+		executionSecret: options.executionSecret
+	});
+	const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
+		runId: created.runId,
+		claimId,
+		kind: options.kind,
+		payload: options.payload,
+		executionSecret: options.executionSecret
+	});
+	return {
+		asUser,
+		runId: created.runId,
+		claimId,
+		jobId: job.jobId,
+		executionSecret: options.executionSecret
+	};
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-	getBrowseLeafPathSegment,
 	isFilesystemBrowseQuery,
 	isWindowsVolumeListQuery,
 	resolveWorkspacePathFromBrowse,
@@ -16,11 +15,6 @@ describe('workspace paths', () => {
 		expect(isFilesystemBrowseQuery('\\\\server\\share')).toBe(true);
 		expect(isFilesystemBrowseQuery('\\')).toBe(true);
 		expect(isFilesystemBrowseQuery('my-project')).toBe(false);
-	});
-
-	it('extracts browse leaf segments', () => {
-		expect(getBrowseLeafPathSegment('~/projects/demo/')).toBe('');
-		expect(getBrowseLeafPathSegment('~/projects/demo')).toBe('demo');
 	});
 
 	it('adds a trailing separator without rewriting drive roots', () => {

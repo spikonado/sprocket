@@ -8,23 +8,22 @@ export type CatalogModel = {
 	provider: string;
 	supportsImages: boolean;
 	contextWindowTokens: number;
-	autoCompactTokenLimit: number;
+	autoHandoffTokenLimit: number;
 	reasoningEfforts: readonly string[];
 	defaultReasoningEffort: string;
-	serviceTiers: readonly string[];
+	supportsFastMode: boolean;
 	usagePolicy?: UsagePolicy;
 };
 
-/** Shape of `sprocket` from `GET /api/v1/models`. */
+/** UI catalog mapped from `sprocket` on `GET /api/v1/models`. */
 export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;
-	defaultServiceTier: string;
 	models: readonly CatalogModel[];
 	tierAllowedModels: Readonly<Record<SubscriptionTier, readonly string[]>>;
-	tierAllowedServiceTiers: Readonly<Record<SubscriptionTier, readonly string[]>>;
+	tierAllowsFastMode: Readonly<Record<SubscriptionTier, boolean>>;
 	modelLockUpgradeMessage: string;
-	serviceTierLockUpgradeMessage: string;
+	fastModeLockUpgradeMessage: string;
 	protocolVersion?: number;
 	catalogVersion?: string;
 };

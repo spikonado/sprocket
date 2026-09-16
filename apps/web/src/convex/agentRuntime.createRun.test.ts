@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
@@ -14,7 +15,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'new-thread-secret',
 			protocolVersion: 1
 		});
@@ -25,8 +26,19 @@ describe('agentRuntime.insertGatewayRun', () => {
 				ctx.db.get('runs', created.runId)
 			])
 		);
-		expect(thread).toMatchObject({ userId, repositoryKey: 'alpha', status: 'queued' });
-		expect(run).toMatchObject({ threadId: created.threadId, status: 'queued' });
+		expect(thread).toMatchObject({
+			userId,
+			repositoryKey: 'alpha',
+			status: 'queued',
+			fastMode: false
+		});
+		expect(run).toMatchObject({
+			threadId: created.threadId,
+			status: 'queued',
+			fastMode: false
+		});
+		expect(thread).not.toHaveProperty('serviceTier');
+		expect(run).not.toHaveProperty('serviceTier');
 	});
 
 	it('rejects an empty prompt with no images', async () => {
@@ -41,7 +53,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'empty-prompt-secret'
 			})
 		).rejects.toThrow('Message cannot be empty.');
@@ -68,14 +80,13 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [imageUploadId],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const,
+			fastMode: false,
 			executionSecret: 'idempotent-secret'
 		};
 
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({
-			created: true,
-			promptMessageId: `prompt:${created.runId}`
+			created: true
 		});
 
 		const again = await insertQueuedRun(t, asUser, args);
@@ -83,7 +94,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			created: false,
 			runId: created.runId,
 			threadId: created.threadId,
-			promptMessageId: `prompt:${created.runId}`,
 			userId: created.userId,
 			promptPart: created.promptPart
 		});
@@ -96,7 +106,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 				text: 'Hello',
 				imageUploads: [
 					{
-						imageUploadId,
 						name: 'robot.png',
 						mediaType: 'image/png',
 						size: 5,
@@ -106,11 +115,11 @@ describe('agentRuntime.insertGatewayRun', () => {
 			}
 		});
 
+		expect(created.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run).toMatchObject({
 			status: 'queued',
-			submissionId: 'sub-1',
-			completionTransport: 'gateway'
+			submissionId: 'sub-1'
 		});
 		expect(await t.run(async (ctx) => ctx.db.get('imageUploads', imageUploadId))).toMatchObject({
 			attached: true
@@ -128,7 +137,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret
 		});
 
@@ -153,7 +162,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 
 		const expiredAt = await t.run(async (ctx) => {
 			const claimExpiresAt = Date.now() - 1;
-			await ctx.db.patch('runs', created.runId, { claimExpiresAt });
+			await patchRunExecution(ctx, created.runId, { claimExpiresAt });
 			return claimExpiresAt;
 		});
 		await expect(
@@ -164,7 +173,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			})
 		).resolves.toMatchObject({ renewed: false });
 		expect(
-			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.claimExpiresAt)
+			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, created.runId))?.claimExpiresAt)
 		).toBe(expiredAt);
 	});
 
@@ -178,7 +187,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -208,10 +217,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-capability-cleanup',
 			threadId,
 			prompt: 'Reconcile me',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -221,6 +229,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret,
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'
@@ -240,10 +249,10 @@ describe('agentRuntime.insertGatewayRun', () => {
 				submissionId: 'sub-not-created-yet',
 				threadId,
 				prompt: 'Reconcile me',
-				imageUploadIds: [],
+				storageIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'some-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'
@@ -258,10 +267,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-rebound-anonymous',
 			threadId,
 			prompt: 'Two launches, one submission',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		await insertQueuedRun(t, asUser, {
 			...args,
@@ -273,6 +281,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret: 'loser-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'original launch failed'
@@ -287,10 +296,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-raced',
 			threadId,
 			prompt: 'Two launches, one submission',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -303,6 +311,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret: 'winner-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'lost the launch race'
@@ -321,10 +330,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-claimed',
 			threadId,
 			prompt: 'Already running',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -339,6 +347,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret,
 				text: 'Run failed before the model started.',
 				lastError: 'late cleanup'
@@ -369,7 +378,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'intruder-secret'
 			})
 		).rejects.toThrow('Submission belongs to a different executor.');
@@ -386,7 +395,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'active-first-secret'
 		});
 
@@ -398,7 +407,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'active-second-secret'
 			})
 		).rejects.toThrow('Finish or cancel the active run before sending another message.');
@@ -415,7 +424,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', abandoned.runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, abandoned.runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
 		const next = await insertQueuedRun(t, asUser, {
@@ -425,7 +434,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'after-abandoned-secret'
 		});
 		expect(next.created).toBe(true);
@@ -465,7 +474,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'during-active-claim-secret'
 			})
 		).rejects.toThrow('Finish or cancel the active run before sending another message.');
@@ -482,7 +491,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'completed-first-secret'
 		});
 		await t.run(async (ctx) => {
@@ -496,10 +505,135 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'completed-second-secret'
 		});
 		expect(second.created).toBe(true);
 		expect(second.runId).not.toBe(first.runId);
 	});
+});
+
+describe('agentRuntime.createGatewayRun attachment identity', () => {
+	const gatewayUrl = 'https://preview.gateway.example';
+
+	beforeEach(() => {
+		process.env.MODEL_GATEWAY_URL = gatewayUrl;
+		process.env.MODEL_GATEWAY_TOKEN_SECRET = 'test-gateway-token-secret';
+	});
+
+	afterEach(() => {
+		delete process.env.MODEL_GATEWAY_URL;
+		delete process.env.MODEL_GATEWAY_TOKEN_SECRET;
+	});
+
+	it('resolves storageIds and stores storage-only prompt metadata', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const storageId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+			await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				attached: false
+			});
+			return storageId;
+		});
+
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'storage-ids-run',
+			transcriptProtocol: 2,
+			threadId,
+			prompt: 'Hello',
+			storageIds: [storageId],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret: 'storage-ids-secret'
+		});
+		expect(created.promptPart?.prompt?.imageUploads).toEqual([
+			{
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				storageId
+			}
+		]);
+		const stored = await t.run(async (ctx) => {
+			if (!created.promptPart) throw new Error('missing prompt part');
+			return await ctx.db.get('threadTranscriptParts', created.promptPart._id);
+		});
+		expect(stored?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+				submissionId: 'storage-ids-run',
+				threadId,
+				prompt: 'Hello',
+				storageIds: [storageId],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				fastMode: false,
+				executionSecret: 'storage-ids-secret',
+				text: 'Run failed before the model started.',
+				lastError: 'startup timed out'
+			})
+		).resolves.toBe('finalized');
+	}, 15_000);
+
+	it('strips leftover stored imageUploadId from the returned promptPart', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				attached: false
+			});
+			return { storageId, imageUploadId };
+		});
+
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'legacy-ids-run',
+			transcriptProtocol: 2,
+			threadId,
+			prompt: 'Hello',
+			storageIds: [file.storageId],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret: 'legacy-ids-secret'
+		});
+		expect(created.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		await t.run(async (ctx) => {
+			if (!created.promptPart?.prompt) throw new Error('missing prompt part');
+			await ctx.db.patch('threadTranscriptParts', created.promptPart._id, {
+				prompt: {
+					...created.promptPart.prompt,
+					imageUploads: created.promptPart.prompt.imageUploads.map((upload) => ({
+						...upload,
+						imageUploadId: file.imageUploadId
+					}))
+				}
+			});
+		});
+		const retried = await asUser.action(api.agentRuntime.createGatewayRun, {
+			transcriptProtocol: 2,
+			submissionId: 'legacy-ids-run',
+			threadId,
+			prompt: 'Hello',
+			storageIds: [file.storageId],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret: 'legacy-ids-secret'
+		});
+		expect(retried.runId).toBe(created.runId);
+		expect(retried.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+	}, 15_000);
 });

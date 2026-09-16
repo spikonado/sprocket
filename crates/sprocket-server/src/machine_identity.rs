@@ -8,7 +8,6 @@ use anyhow::Context;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-const INSTALLATION_ID_FILE: &str = "installation-id";
 const INSTALLATION_IDENTITY_FILE: &str = "installation.json";
 const INSTALLATION_IDENTITY_VERSION: u32 = 1;
 
@@ -64,12 +63,9 @@ fn load_or_create_installation_identity(
         return Ok(identity);
     }
 
-    let legacy_path = data_dir.join(INSTALLATION_ID_FILE);
-    let installation_id =
-        read_installation_id(&legacy_path)?.unwrap_or_else(|| Uuid::new_v4().to_string());
     let identity = StoredInstallationIdentity {
         version: INSTALLATION_IDENTITY_VERSION,
-        installation_id,
+        installation_id: Uuid::new_v4().to_string(),
         friendly_name: None,
     };
     let encoded = serde_json::to_vec_pretty(&identity)?;
@@ -161,20 +157,6 @@ fn platform_version() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn read_installation_id(path: &Path) -> anyhow::Result<Option<String>> {
-    let value = match fs::read_to_string(path) {
-        Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!("failed to read installation identity {}", path.display())
-            });
-        }
-    };
-    let value = value.trim();
-    Ok(Uuid::parse_str(value).ok().map(|id| id.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -198,18 +180,6 @@ mod tests {
 
         assert_eq!(first.installation_id, second.installation_id);
         assert_ne!(first.credential, second.credential);
-        assert!(identity_path(&dir).is_file());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn migrates_legacy_plain_installation_id() {
-        let dir = temp_dir();
-        fs::create_dir_all(&dir).unwrap();
-        let id = Uuid::new_v4().to_string();
-        fs::write(dir.join(INSTALLATION_ID_FILE), &id).unwrap();
-
-        assert_eq!(MachineIdentity::load(&dir).unwrap().installation_id, id);
         assert!(identity_path(&dir).is_file());
         fs::remove_dir_all(dir).unwrap();
     }

@@ -2,12 +2,7 @@ import { createClient, type User } from '@workos-inc/authkit-js';
 import { z } from 'zod';
 import { api } from '$convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
-import {
-	ensureLocalSession,
-	readDesktopBootstrap,
-	resolveLocalApiBaseUrl,
-	type LocalBootstrap
-} from '$lib/local/client';
+import { ensureLocalSession, resolveLocalApiBaseUrl } from '$lib/local/client';
 import { derived, get, writable } from 'svelte/store';
 
 export type AuthUser = Pick<User, 'id' | 'email' | 'firstName' | 'lastName' | 'profilePictureUrl'>;
@@ -52,7 +47,6 @@ type AuthBootstrapClient = {
 		args: Record<string, never>
 	) => Promise<{ workosClientId: string }>;
 };
-type InstalledAuthMode = 'undecided' | 'native' | 'legacy';
 type AuthFlow = 'signIn' | 'signUp';
 type DesktopSignInAttempt = {
 	abort: AbortController;
@@ -62,17 +56,13 @@ type NativeTokenOutcome =
 	| { kind: 'session'; accessToken: string; user: AuthUser }
 	| { kind: 'signedOut' }
 	| { kind: 'transient'; error: string }
-	| { kind: 'pairing'; error: string }
+	| { kind: 'unauthorized'; error: string }
 	| { kind: 'mismatch'; error: string }
-	| { kind: 'legacyUnavailable' }
 	| { kind: 'error'; error: string }
 	| { kind: 'stale' };
 
 const DESKTOP_LOGIN_POLL_INTERVAL_MS = 1_500;
 const DESKTOP_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
-const MISMATCH_ERROR =
-	'The browser and native sessions use different accounts. Sign out, then sign in with the same account.';
-const NATIVE_SETUP_ERROR = 'Finish setting up sign-in before starting an agent.';
 const TRANSIENT_AUTH_ERROR = 'Native sign-in is temporarily unavailable. Try again.';
 let convexRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 const ACCOUNT_BINDING_ERROR =
@@ -81,18 +71,17 @@ const ACCOUNT_BINDING_ERROR =
 export type AuthRuntime = {
 	createAuthKitClient: (...args: Parameters<typeof createClient>) => Promise<AuthClient>;
 	resolveLocalApiBaseUrl: () => string | null;
-	readDesktopBootstrap: (baseUrl: string) => Promise<LocalBootstrap | null>;
-	ensureLocalSession: (baseUrl: string, bootstrap?: LocalBootstrap | null) => Promise<void>;
+	ensureLocalSession: (baseUrl: string) => Promise<void>;
 };
 
 const productionAuthRuntime: AuthRuntime = {
 	createAuthKitClient: createClient,
 	resolveLocalApiBaseUrl,
-	readDesktopBootstrap,
 	ensureLocalSession
 };
 
 let authRuntime: AuthRuntime = productionAuthRuntime;
+let machineAuthEnabled = false;
 
 export function setAuthRuntime(nextRuntime: AuthRuntime) {
 	authRuntime = nextRuntime;
@@ -108,8 +97,8 @@ let bootstrapClient: AuthBootstrapClient | null = null;
 let isSigningOut = false;
 let desktopSignInAttempt: DesktopSignInAttempt | null = null;
 let desktopLoginStartQueue: Promise<void> = Promise.resolve();
-let installedAuthMode: InstalledAuthMode = 'undecided';
 let authGeneration = 0;
+let nativeAuthEvents: EventSource | null = null;
 let nativeTokenInflight: {
 	generation: number;
 	forceRefreshToken: boolean;
@@ -117,6 +106,8 @@ let nativeTokenInflight: {
 } | null = null;
 
 export function resetAuthRuntime() {
+	nativeAuthEvents?.close();
+	nativeAuthEvents = null;
 	clearConvexRecovery();
 	desktopSignInAttempt?.abort.abort();
 	desktopSignInAttempt = null;
@@ -125,10 +116,10 @@ export function resetAuthRuntime() {
 	authConfigPromise = null;
 	bootstrapClient = null;
 	isSigningOut = false;
-	installedAuthMode = 'undecided';
 	authGeneration = 0;
 	nativeTokenInflight = null;
 	authRuntime = productionAuthRuntime;
+	machineAuthEnabled = false;
 	convexAuthRetryVersion.set(0);
 	convexAuthRetryPending.set(false);
 	authState.set(initialState);
@@ -201,12 +192,12 @@ function isTransientHttpStatus(status: number) {
 	);
 }
 
-function isLegacyMissingEndpoint(status: number) {
-	return status === 404 || status === 405;
+function isMachineApp() {
+	return Boolean(machineAuthEnabled || getDesktopBridge() || isLoopbackBrowserApp());
 }
 
-function isInstalledApp() {
-	return Boolean(getDesktopBridge() || isInstalledBrowserApp());
+function isRemoteMachineApp() {
+	return machineAuthEnabled && !getDesktopBridge() && !isLoopbackBrowserApp();
 }
 
 function invalidateAuthGeneration() {
@@ -250,14 +241,14 @@ function getDesktopBridge() {
 	}
 
 	const bridge = appWindow.sprocketDesktopBridge;
-	if (!bridge?.getLocalBootstrap || !bridge.openExternal || !bridge.focusWindow) {
+	if (!bridge?.openExternal || !bridge.focusWindow) {
 		return null;
 	}
 
 	return bridge;
 }
 
-function isInstalledBrowserApp() {
+function isLoopbackBrowserApp() {
 	const appWindow = currentWindow();
 	if (!appWindow) {
 		return false;
@@ -265,14 +256,13 @@ function isInstalledBrowserApp() {
 	return usesLoopbackBrowserAuth(appWindow.location.hostname, false);
 }
 
-async function pairLocalSession() {
+async function establishLocalSession() {
 	const baseUrl = authRuntime.resolveLocalApiBaseUrl();
 	if (!baseUrl) {
 		throw new Error('Unable to resolve the Sprocket server URL.');
 	}
 
-	const bootstrap = await authRuntime.readDesktopBootstrap(baseUrl);
-	await authRuntime.ensureLocalSession(baseUrl, bootstrap);
+	await authRuntime.ensureLocalSession(baseUrl);
 }
 
 async function getAuthClient() {
@@ -343,23 +333,31 @@ async function getAuthClient() {
 	return await authClientPromise;
 }
 
-export async function initializeAuth(convexClient: AuthBootstrapClient) {
+export async function initializeAuth(
+	convexClient: AuthBootstrapClient,
+	options: { machine?: boolean } = {}
+) {
+	machineAuthEnabled = options.machine === true;
 	bootstrapClient = convexClient;
 	const generation = authGeneration;
 	const previous = get(authState);
 	authState.set({
 		...previous,
 		isLoading: true,
-		nativeSession: isInstalledApp() && !previous.user ? 'loading' : previous.nativeSession
+		nativeSession: isMachineApp() && !previous.user ? 'loading' : previous.nativeSession
 	});
 
 	try {
-		if (isInstalledApp()) {
-			await pairLocalSession();
+		if (isMachineApp()) {
+			if (isRemoteMachineApp() && currentWindow()?.location.protocol !== 'https:') {
+				throw new Error('Remote Sprocket access requires HTTPS.');
+			}
+			await establishLocalSession();
 			if (generation !== authGeneration) {
 				return;
 			}
 			await initializeInstalledAuth(generation);
+			watchNativeAuthentication();
 			return;
 		}
 
@@ -378,6 +376,18 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 			error: error instanceof Error ? error.message : 'Failed to initialize authentication.'
 		}));
 	}
+}
+
+function watchNativeAuthentication() {
+	if (nativeAuthEvents || !globalThis.EventSource) return;
+	const events = new EventSource('/api/auth/changes');
+	nativeAuthEvents = events;
+	events.onmessage = () => {
+		if (nativeAuthEvents !== events || isSigningOut) return;
+		invalidateAuthGeneration();
+		const generation = authGeneration;
+		void initializeInstalledAuth(generation);
+	};
 }
 
 async function initializeHostedAuth() {
@@ -406,20 +416,9 @@ async function initializeHostedAuth() {
 }
 
 async function initializeInstalledAuth(generation: number) {
-	if (installedAuthMode !== 'legacy') {
-		const outcome = await requestNativeSessionToken(false, generation);
-		if (generation !== authGeneration) {
-			return;
-		}
-		if (outcome.kind !== 'legacyUnavailable') {
-			installedAuthMode = 'native';
-			applyNativeInitializeOutcome(outcome);
-			return;
-		}
-		installedAuthMode = 'legacy';
-	}
-
-	await initializeLegacyInstalledAuth();
+	const outcome = await requestNativeSessionToken(false, generation);
+	if (generation !== authGeneration) return;
+	applyNativeInitializeOutcome(outcome);
 }
 
 function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
@@ -448,7 +447,7 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 				error: current.nativeSession === 'loading' ? outcome.error : current.error
 			}));
 			return;
-		case 'pairing':
+		case 'unauthorized':
 			authState.update((current) => ({
 				...current,
 				isLoading: false,
@@ -468,8 +467,6 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 			return;
 		case 'stale':
 			return;
-		case 'legacyUnavailable':
-			return;
 		case 'error':
 			authState.update((current) => ({
 				...current,
@@ -479,71 +476,6 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 				error: outcome.error
 			}));
 	}
-}
-
-function nativeSessionAfterLegacyBrowserUser(
-	current: AuthStatus['nativeSession'],
-	hasBrowserUser: boolean
-): AuthStatus['nativeSession'] {
-	if (hasBrowserUser) {
-		return current === 'notRequired' || current === 'loading' ? 'loading' : current;
-	}
-	return current === 'ready' ? 'ready' : 'notRequired';
-}
-
-async function initializeLegacyInstalledAuth() {
-	const client = await getAuthClient();
-	const user = client?.getUser() ?? null;
-	authState.update((current) => {
-		if (!current.isConfigured) {
-			return {
-				...current,
-				isLoading: false,
-				isReady: true,
-				nativeSession: 'notRequired'
-			};
-		}
-
-		return {
-			isLoading: false,
-			isReady: true,
-			isConfigured: true,
-			isWaitingForBrowserSignIn: false,
-			browserSignInUrl: null,
-			user: user ? toAuthUser(user) : null,
-			nativeSession: nativeSessionAfterLegacyBrowserUser(current.nativeSession, Boolean(user)),
-			error: null
-		};
-	});
-	if (user) {
-		await reconcileNativeSession(user.id);
-		return;
-	}
-	await repairLegacyNativeSessionWithoutBrowserUser();
-}
-
-async function fetchNativeSessionStatus() {
-	let response: Response;
-	try {
-		response = await fetch('/api/auth/native-session', { credentials: 'include' });
-	} catch (error) {
-		throw Object.assign(new Error(error instanceof Error ? error.message : TRANSIENT_AUTH_ERROR), {
-			name: 'TransientAuthError'
-		});
-	}
-	if (isTransientHttpStatus(response.status)) {
-		throw Object.assign(new Error(TRANSIENT_AUTH_ERROR), { name: 'TransientAuthError' });
-	}
-	if (!response.ok) {
-		throw new Error(
-			await errorMessageFromFailedResponse(response, 'Failed to check native sign-in.')
-		);
-	}
-	const payload = desktopLoginResultSchema.safeParse(await response.json());
-	if (!payload.success) {
-		throw new Error('Local server returned an invalid native sign-in status.');
-	}
-	return payload.data;
 }
 
 async function clearNativeSession() {
@@ -558,115 +490,26 @@ async function clearNativeSession() {
 	}
 }
 
-async function reconcileNativeSession(browserUserId: string) {
-	try {
-		const result = await fetchNativeSessionStatus();
-		if (result.status === 'authenticated') {
-			const matches = result.user.id === browserUserId;
-			authState.update((current) => ({
-				...current,
-				nativeSession: matches ? 'ready' : 'mismatch',
-				error: matches ? null : MISMATCH_ERROR
-			}));
-			return;
-		}
-		authState.update((current) => ({
-			...current,
-			nativeSession: result.status === 'signedOut' ? 'missing' : 'unavailable',
-			error:
-				result.status === 'signedOut'
-					? NATIVE_SETUP_ERROR
-					: result.status === 'unavailable' || result.status === 'failed'
-						? result.error
-						: 'Native sign-in is still pending.'
-		}));
-	} catch (error) {
-		if (error instanceof Error && error.name === 'TransientAuthError') {
-			authState.update((current) => ({
-				...current,
-				isLoading: false,
-				isReady: true,
-				nativeSession: current.nativeSession === 'loading' ? 'unavailable' : current.nativeSession
-			}));
-			return;
-		}
-		authState.update((current) => ({
-			...current,
-			nativeSession: 'unavailable',
-			error: error instanceof Error ? error.message : 'Failed to check native sign-in.'
-		}));
-	}
-}
-
-async function repairLegacyNativeSessionWithoutBrowserUser() {
-	try {
-		const result = await fetchNativeSessionStatus();
-		if (result.status === 'authenticated') {
-			authState.update((current) => ({
-				...current,
-				nativeSession: 'missing',
-				error: NATIVE_SETUP_ERROR
-			}));
-			return;
-		}
-		if (result.status === 'signedOut') {
-			authState.update((current) => ({
-				...current,
-				user: null,
-				nativeSession: 'notRequired',
-				error: null
-			}));
-			return;
-		}
-		authState.update((current) => ({
-			...current,
-			nativeSession: 'unavailable',
-			error:
-				result.status === 'unavailable' || result.status === 'failed'
-					? result.error
-					: 'Native sign-in is still pending.'
-		}));
-	} catch (error) {
-		if (error instanceof Error && error.name === 'TransientAuthError') {
-			authState.update((current) => ({
-				...current,
-				isLoading: false,
-				isReady: true,
-				nativeSession: current.nativeSession === 'loading' ? 'unavailable' : current.nativeSession
-			}));
-			return;
-		}
-		authState.update((current) => ({
-			...current,
-			nativeSession: 'unavailable',
-			error: error instanceof Error ? error.message : 'Failed to check native sign-in.'
-		}));
+async function clearBrowserSession() {
+	const response = await fetch('/api/auth/session', {
+		method: 'DELETE',
+		credentials: 'include'
+	});
+	if (!response.ok) {
+		throw new Error(
+			await errorMessageFromFailedResponse(response, 'Failed to clear browser session.')
+		);
 	}
 }
 
 export async function reconcileNativeAuthentication() {
-	if (!isInstalledApp()) {
+	if (!isMachineApp()) {
 		return;
 	}
 	const generation = authGeneration;
-	if (installedAuthMode !== 'legacy') {
-		const outcome = await requestNativeSessionToken(false, generation);
-		if (generation !== authGeneration) {
-			return;
-		}
-		if (outcome.kind !== 'legacyUnavailable') {
-			installedAuthMode = 'native';
-			applyNativeInitializeOutcome(outcome);
-			return;
-		}
-		installedAuthMode = 'legacy';
-	}
-	const user = get(authState).user;
-	if (user) {
-		await reconcileNativeSession(user.id);
-		return;
-	}
-	await repairLegacyNativeSessionWithoutBrowserUser();
+	const outcome = await requestNativeSessionToken(false, generation);
+	if (generation !== authGeneration) return;
+	applyNativeInitializeOutcome(outcome);
 }
 
 async function requestNativeSessionToken(
@@ -720,15 +563,12 @@ async function fetchNativeSessionToken(forceRefreshToken: boolean): Promise<Nati
 		};
 	}
 
-	if (isLegacyMissingEndpoint(response.status)) {
-		return { kind: 'legacyUnavailable' };
-	}
 	if (response.status === 401) {
 		return {
-			kind: 'pairing',
+			kind: 'unauthorized',
 			error: await errorMessageFromFailedResponse(
 				response,
-				'Pair with your Sprocket server to continue.'
+				'Your local Sprocket session is unavailable. Reload the app to reconnect.'
 			)
 		};
 	}
@@ -835,6 +675,7 @@ async function fetchDesktopLoginResult(signal: AbortSignal) {
 	let response: Response;
 	try {
 		response = await fetch('/api/auth/desktop-login/result', {
+			method: 'POST',
 			credentials: 'include',
 			signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)])
 		});
@@ -887,12 +728,11 @@ async function pollDesktopLoginResult(signal: AbortSignal): Promise<{ id: string
 	throw new DOMException('Aborted', 'AbortError');
 }
 
-async function authenticateWithLoopbackBrowser(flow: AuthFlow) {
+async function authenticateWithMachineBrowser(flow: AuthFlow) {
 	const bridge = getDesktopBridge();
-	if (!bridge && !isInstalledBrowserApp()) {
-		throw new Error('Loopback browser sign-in is unavailable.');
+	if (!isMachineApp()) {
+		throw new Error('Machine browser sign-in is unavailable.');
 	}
-
 	stopDesktopSignInPolling();
 
 	const attempt: DesktopSignInAttempt = {
@@ -909,6 +749,8 @@ async function authenticateWithLoopbackBrowser(flow: AuthFlow) {
 	}));
 
 	try {
+		await establishLocalSession();
+		requireCurrentDesktopSignIn(attempt);
 		const authorizeUrl = await startDesktopLoginInOrder(attempt, flow);
 		requireCurrentDesktopSignIn(attempt);
 
@@ -955,7 +797,7 @@ async function authenticateWithLoopbackBrowser(flow: AuthFlow) {
 			}
 		}
 		requireCurrentDesktopSignIn(attempt);
-		await completeInstalledSignIn(flow, attempt, nativeUser);
+		await completeInstalledSignIn(attempt, nativeUser);
 	} catch (error) {
 		if (desktopSignInAttempt !== attempt) {
 			return;
@@ -985,29 +827,16 @@ async function authenticateWithLoopbackBrowser(flow: AuthFlow) {
 }
 
 async function completeInstalledSignIn(
-	flow: AuthFlow,
 	attempt: DesktopSignInAttempt,
 	nativeUser: { id: string; email: string }
 ) {
 	invalidateAuthGeneration();
-	if (installedAuthMode === 'legacy') {
-		await completeLegacyBrowserLogin(flow, attempt, nativeUser);
-		return;
-	}
-
 	const generation = authGeneration;
 	const outcome = await requestNativeSessionToken(false, generation);
 	requireCurrentDesktopSignIn(attempt);
 	if (outcome.kind === 'stale') {
 		return;
 	}
-	if (outcome.kind === 'legacyUnavailable') {
-		installedAuthMode = 'legacy';
-		await completeLegacyBrowserLogin(flow, attempt, nativeUser);
-		return;
-	}
-
-	installedAuthMode = 'native';
 	applyNativeLoginOutcome(outcome, toAuthUser(nativeUser));
 }
 
@@ -1044,7 +873,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				})
 			);
 			return;
-		case 'pairing':
+		case 'unauthorized':
 			authState.update((current) => ({
 				...current,
 				isWaitingForBrowserSignIn: false,
@@ -1071,49 +900,9 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				error: outcome.error
 			}));
 			return;
-		case 'legacyUnavailable':
 		case 'stale':
 			return;
 	}
-}
-
-async function completeLegacyBrowserLogin(
-	flow: AuthFlow,
-	attempt: DesktopSignInAttempt,
-	nativeUser: { id: string; email: string }
-) {
-	const client = await getAuthClient();
-	requireCurrentDesktopSignIn(attempt);
-	const browserUser = client?.getUser() ?? null;
-	if (browserUser) {
-		if (nativeUser.id !== browserUser.id) {
-			authState.update((current) => ({
-				...current,
-				isWaitingForBrowserSignIn: false,
-				browserSignInUrl: null,
-				nativeSession: 'mismatch',
-				error: MISMATCH_ERROR
-			}));
-			return;
-		}
-		authState.update((current) => ({
-			...current,
-			isWaitingForBrowserSignIn: false,
-			browserSignInUrl: null,
-			user: toAuthUser(browserUser),
-			nativeSession: 'ready',
-			error: null
-		}));
-		return;
-	}
-
-	if (!client) {
-		throw new Error('Browser authentication is not configured.');
-	}
-	const browserAuthorizeUrl =
-		flow === 'signUp' ? await client.getSignUpUrl() : await client.getSignInUrl();
-	requireCurrentDesktopSignIn(attempt);
-	window.location.href = browserAuthorizeUrl;
 }
 
 function stopDesktopSignInPolling() {
@@ -1165,8 +954,8 @@ export function clearDesktopSignInOpenError() {
 }
 
 async function authenticate(flow: AuthFlow) {
-	if (isInstalledApp()) {
-		await authenticateWithLoopbackBrowser(flow);
+	if (isMachineApp()) {
+		await authenticateWithMachineBrowser(flow);
 		return;
 	}
 
@@ -1206,26 +995,15 @@ export async function signOut() {
 	let browserSignOutFailed = false;
 	let remainingBrowserUser: AuthUser | null = null;
 	try {
-		if (isInstalledApp()) {
+		if (isMachineApp()) {
 			try {
-				await clearNativeSession();
+				if (isRemoteMachineApp()) {
+					await clearBrowserSession();
+				} else {
+					await clearNativeSession();
+				}
 			} catch (error) {
 				errors.push(error instanceof Error ? error.message : 'Failed to clear native session.');
-			}
-			if (installedAuthMode === 'legacy') {
-				const client = await getAuthClient();
-				if (client) {
-					try {
-						await client.signOut({ navigate: false, returnTo: window.location.origin });
-					} catch (error) {
-						browserSignOutFailed = true;
-						const sdkUser = client.getUser();
-						remainingBrowserUser = sdkUser ? toAuthUser(sdkUser) : null;
-						errors.push(
-							error instanceof Error ? error.message : 'Failed to clear browser session.'
-						);
-					}
-				}
 			}
 		} else {
 			const client = await getAuthClient();
@@ -1264,17 +1042,12 @@ export async function signOut() {
 export async function getAccessToken({
 	forceRefreshToken = false
 }: { forceRefreshToken?: boolean } = {}) {
-	if (isInstalledApp() && installedAuthMode !== 'legacy') {
+	if (isMachineApp()) {
 		const generation = authGeneration;
 		const outcome = await requestNativeSessionToken(forceRefreshToken, generation);
 		if (generation !== authGeneration || outcome.kind === 'stale') {
 			return null;
 		}
-		if (outcome.kind === 'legacyUnavailable') {
-			installedAuthMode = 'legacy';
-			return await getAuthKitAccessToken({ forceRefreshToken });
-		}
-		installedAuthMode = 'native';
 		return applyNativeAccessTokenOutcome(outcome, generation);
 	}
 
@@ -1291,8 +1064,8 @@ function clearConvexRecovery() {
 export async function getConvexAccessToken(options: { forceRefreshToken: boolean }) {
 	const generation = authGeneration;
 	try {
-		if (isInstalledApp() && get(authState).nativeSession === 'unavailable') {
-			await pairLocalSession();
+		if (isMachineApp() && get(authState).nativeSession === 'unavailable') {
+			await establishLocalSession();
 			if (generation !== authGeneration) return null;
 		}
 		const token = await getAccessToken(options);
@@ -1343,7 +1116,7 @@ function applyNativeAccessTokenOutcome(outcome: NativeTokenOutcome, generation: 
 			return null;
 		case 'transient':
 			throw new Error(outcome.error);
-		case 'pairing':
+		case 'unauthorized':
 			authState.update((current) => ({
 				...current,
 				nativeSession: 'unavailable',
@@ -1359,7 +1132,6 @@ function applyNativeAccessTokenOutcome(outcome: NativeTokenOutcome, generation: 
 			throw new Error(outcome.error);
 		case 'error':
 			throw new Error(outcome.error);
-		case 'legacyUnavailable':
 		case 'stale':
 			return null;
 	}
@@ -1419,8 +1191,8 @@ export async function retryConvexAuthentication() {
 	convexAuthRetryPending.set(true);
 
 	try {
-		if (isInstalledApp()) {
-			await pairLocalSession();
+		if (isMachineApp()) {
+			await establishLocalSession();
 			if (generation !== authGeneration) return;
 		}
 		const token = await getAccessToken({ forceRefreshToken: true });

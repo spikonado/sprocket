@@ -5,9 +5,10 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
-	areImageUploadIdsEqual,
 	getOwnedImageUploads,
-	markImageUploadsAttached
+	markImageUploadsAttached,
+	areStorageIdsEqual,
+	storageIdsForImageUploadIds
 } from '@convex/lib/imageUploads';
 import {
 	attachRunToMachine,
@@ -20,9 +21,10 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { startRunLifecycle } from '@convex/runLifecycle';
-import { getPromptPart, promptSourceKey } from '@convex/lib/transcriptParts';
+import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
-import { isRunFinalStatus, type vReasoningEffort, type vServiceTier } from '@convex/lib/validators';
+import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
+import { withRunExecution } from '@convex/lib/runExecution';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -33,7 +35,7 @@ export type QueuedRunRequest = {
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
-	serviceTier: Infer<typeof vServiceTier>;
+	fastMode: boolean;
 	executionSecret: string;
 	protocolVersion: number;
 	agentVersion?: string;
@@ -46,12 +48,10 @@ type CreatedGatewayRun = {
 	runId: Id<'runs'>;
 	threadId: Id<'threadRecords'>;
 	userId: string;
-	promptMessageId?: string;
 	promptPart?: Doc<'threadTranscriptParts'>;
 };
 
 type GatewayRunTelemetry = {
-	completionTransport: 'gateway';
 	gatewayProtocolVersion: number;
 	agentVersion?: string;
 };
@@ -72,9 +72,8 @@ export async function createQueuedRunRecord(
 	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
 		throw new Error('Message cannot be empty.');
 	}
-	const imageUploads = continuationOfRunId
-		? []
-		: await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
+	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
+	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || imageUploads.length > 0;
 	const machineId = args.machineId;
 	let machine = null;
 	if (machineId) {
@@ -109,21 +108,18 @@ export async function createQueuedRunRecord(
 			title: fallbackTitle,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
+			fastMode: args.fastMode,
 			lastMessageAt: now
 		});
-		await ctx.db.insert('threadUsage', {
-			threadId,
-			userId: args.userId,
-			totalTokensProcessed: 0
-		});
+		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 	}
-	let latestRun = await ctx.db
+	const latestRunRecord = await ctx.db
 		.query('runs')
 		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
 		.order('desc')
 		.first();
+	let latestRun = latestRunRecord ? await withRunExecution(ctx.db, latestRunRecord) : null;
 	if (
 		latestRun &&
 		isClaimedRunStatus(latestRun.status) &&
@@ -134,7 +130,8 @@ export async function createQueuedRunRecord(
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
-		latestRun = (await ctx.db.get('runs', latestRun._id)) ?? latestRun;
+		const finalizedRun = await ctx.db.get('runs', latestRun._id);
+		if (finalizedRun) latestRun = await withRunExecution(ctx.db, finalizedRun);
 		if (machine) {
 			machine = (await ctx.db.get('machines', machine._id)) ?? machine;
 		}
@@ -142,14 +139,13 @@ export async function createQueuedRunRecord(
 		assertThreadCanStartRun(latestRun?.status);
 	}
 	if (continuationOfRunId) {
-		assertContinuableParent(latestRun, continuationOfRunId);
+		assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
 	}
 	if (machine && machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs.');
 	}
 
 	const gatewayFields: GatewayRunTelemetry = {
-		completionTransport: 'gateway',
 		gatewayProtocolVersion: args.protocolVersion
 	};
 	if (args.agentVersion) {
@@ -161,33 +157,27 @@ export async function createQueuedRunRecord(
 		submissionId: args.submissionId,
 		status: 'queued' as const,
 		executionSecretHash: secretHash,
-		completionAttemptSeq: 0,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
+		fastMode: args.fastMode,
 		startedAt: Date.now(),
 		...gatewayFields
 	};
 	if (machineId) runRecord.machineId = machineId;
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 	const runId = await ctx.db.insert('runs', runRecord);
+	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);
 	}
-	const completionStreamStateId = await ctx.db.insert('completionStreamStates', {
-		runId,
-		userId: args.userId,
-		sequence: 0
-	});
 	const created: CreatedGatewayRun = {
 		created: true,
 		runId,
 		threadId: threadRecord._id,
 		userId: args.userId
 	};
-	if (!continuationOfRunId) {
-		await markImageUploadsAttached(ctx, imageUploads);
-		created.promptMessageId = promptSourceKey(runId);
+	if (recordsPrompt) {
+		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
 			userId: args.userId,
@@ -196,18 +186,16 @@ export async function createQueuedRunRecord(
 			imageUploadIds: args.imageUploadIds
 		});
 	}
-	await ctx.db.patch('runs', runId, { completionStreamStateId });
 	const threadUpdates = {
 		status: 'queued' as const,
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
-		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
+		fastMode: args.fastMode,
+		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
-	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
-	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
+	await startRunLifecycle(ctx, runId);
 	return created;
 }
 
@@ -232,54 +220,51 @@ async function reconcileExistingQueuedRun(
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
-		existingRun.serviceTier !== args.serviceTier ||
-		!existingRun.completionStreamStateId ||
-		existingRun.completionTransport !== 'gateway' ||
+		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches
 	) {
 		throw new ConvexError('Submission belongs to a different or incomplete run.');
 	}
 
-	if (!existingRun.lifecycleWorkflowId && !isRunFinalStatus(existingRun.status)) {
-		const lifecycleWorkflowId = await startRunLifecycle(ctx, existingRun._id);
-		await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
-	}
-
-	if (args.continuationOfRunId) {
-		return {
-			created: false,
-			runId: existingRun._id,
-			threadId: existingRun.threadId,
-			userId: args.userId
-		};
+	if (!isRunFinalStatus(existingRun.status)) {
+		await startRunLifecycle(ctx, existingRun._id);
 	}
 
 	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);
-	if (
-		!existingPrompt?.prompt ||
-		existingPrompt.prompt.text !== prompt ||
-		!areImageUploadIdsEqual(
-			existingPrompt.prompt.imageUploads.map((upload) => upload.imageUploadId),
-			args.imageUploadIds
-		)
-	) {
+	const requestedStorageIds = await storageIdsForImageUploadIds(ctx, args.imageUploadIds);
+	const recordsPrompt =
+		!args.continuationOfRunId || Boolean(prompt) || args.imageUploadIds.length > 0;
+	if (recordsPrompt) {
+		if (
+			!existingPrompt?.prompt ||
+			existingPrompt.prompt.text !== prompt ||
+			requestedStorageIds === null ||
+			!areStorageIdsEqual(
+				existingPrompt.prompt.imageUploads.map((upload) => upload.storageId),
+				requestedStorageIds
+			)
+		) {
+			throw new Error('Submission prompt does not match the existing run.');
+		}
+	} else if (existingPrompt !== null || requestedStorageIds === null) {
 		throw new Error('Submission prompt does not match the existing run.');
 	}
-	const promptPart = await recordPromptTranscript(ctx, {
-		threadId: existingRun.threadId,
-		userId: args.userId,
-		runId: existingRun._id,
-		text: prompt,
-		imageUploadIds: args.imageUploadIds
-	});
-	return {
+	const reconciled: CreatedGatewayRun = {
 		created: false,
 		runId: existingRun._id,
 		threadId: existingRun.threadId,
-		promptMessageId: promptSourceKey(existingRun._id),
-		userId: args.userId,
-		promptPart
+		userId: args.userId
 	};
+	if (recordsPrompt) {
+		reconciled.promptPart = await recordPromptTranscript(ctx, {
+			threadId: existingRun.threadId,
+			userId: args.userId,
+			runId: existingRun._id,
+			text: prompt,
+			imageUploadIds: args.imageUploadIds
+		});
+	}
+	return reconciled;
 }
 
 export async function finalizeFailedQueuedStart(
@@ -288,10 +273,10 @@ export async function finalizeFailedQueuedStart(
 		submissionId: string;
 		threadId?: Id<'threadRecords'>;
 		prompt: string;
-		imageUploadIds: Id<'imageUploads'>[];
+		storageIds: Id<'_storage'>[];
 		selectedModel: string;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
-		serviceTier: Infer<typeof vServiceTier>;
+		fastMode: boolean;
 		text: string;
 		lastError: string;
 		executionSecret: string;
@@ -328,24 +313,28 @@ export async function finalizeFailedQueuedStart(
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
 		run.reasoningEffort !== args.reasoningEffort ||
-		run.serviceTier !== args.serviceTier
+		run.fastMode !== args.fastMode
 	) {
 		return 'standDown';
 	}
-	if (!isContinuation) {
-		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+	const prompt = args.prompt.trim();
+	const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+	const recordsPrompt = !isContinuation || Boolean(prompt) || args.storageIds.length > 0;
+	if (recordsPrompt) {
 		if (
 			!promptPart?.prompt ||
-			promptPart.prompt.text !== args.prompt.trim() ||
-			!areImageUploadIdsEqual(
-				promptPart.prompt.imageUploads.map((upload) => upload.imageUploadId),
-				args.imageUploadIds
+			promptPart.prompt.text !== prompt ||
+			!areStorageIdsEqual(
+				promptPart.prompt.imageUploads.map((upload) => upload.storageId),
+				args.storageIds
 			)
 		) {
 			return 'standDown';
 		}
+	} else if (promptPart !== null) {
+		return 'standDown';
 	}
-	await finalizeRunRecord(ctx, run, {
+	await finalizeRunRecord(ctx, await withRunExecution(ctx.db, run), {
 		text: args.text,
 		status: 'failed',
 		lastError: args.lastError

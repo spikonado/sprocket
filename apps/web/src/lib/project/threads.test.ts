@@ -3,26 +3,18 @@ import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
 	dataForThread,
-	findProjectByRepositoryKey,
 	getProjectThreadGroups,
-	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	makeUnconfirmedCreatedThread,
-	mergeUnconfirmedCreatedThread,
-	mergeUnconfirmedCreatedThreads,
-	pickThreadToRestore,
 	resolveExpiredAgentLaunch,
+	resolveInitialDraftSelection,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
-	retainUnconfirmedCreatedThreads,
-	shouldDropUnconfirmedCreatedThread,
-	toThreadSummary,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
-import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadSummary, Project } from '$lib/types/sprocket';
 
@@ -62,7 +54,7 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		title: 'Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
-		serviceTier: overrides.serviceTier ?? defaultServiceTier,
+		fastMode: overrides.fastMode ?? false,
 		lastMessageAt: 0,
 		threadStatus: 'active',
 		status: 'completed',
@@ -148,30 +140,6 @@ describe('project thread helpers', () => {
 		expect(groups.map((group) => group.project.repositoryKey)).toEqual(['ws-older', 'ws-newer']);
 	});
 
-	it('restores the most recently active thread, ignoring run state', () => {
-		const runningOlder = makeThreadSummary({
-			threadId: threadId('thread-record-running'),
-			lastMessageAt: 10,
-			status: 'running'
-		});
-		const idleNewer = makeThreadSummary({
-			threadId: threadId('thread-record-idle'),
-			lastMessageAt: 20
-		});
-		const archivedNewest = makeThreadSummary({
-			threadId: threadId('thread-record-archived'),
-			lastMessageAt: 30,
-			threadStatus: 'archived'
-		});
-
-		// Running-first sidebar order must not leak into session restore.
-		expect(pickThreadToRestore([runningOlder, idleNewer, archivedNewest])?.threadId).toBe(
-			'thread-record-idle'
-		);
-		expect(pickThreadToRestore([archivedNewest])).toBeNull();
-		expect(pickThreadToRestore([])).toBeNull();
-	});
-
 	it('excludes archived threads from project groups', () => {
 		const active = makeThreadSummary({
 			repositoryKey: 'sprocket',
@@ -183,9 +151,6 @@ describe('project thread helpers', () => {
 			lastMessageAt: 20,
 			threadStatus: 'archived'
 		});
-
-		expect(isActiveThread(active)).toBe(true);
-		expect(isActiveThread(archived)).toBe(false);
 
 		const groups = getProjectThreadGroups(
 			[
@@ -230,69 +195,6 @@ describe('project thread helpers', () => {
 		]);
 	});
 
-	it('finds a project by repository key', () => {
-		const match = makeProject({
-			repositoryKey: 'github.com/spikonado/sprocket',
-			displayName: 'sprocket'
-		});
-		const projects = [
-			match,
-			makeProject({
-				repositoryKey: 'local-sprocket',
-				displayName: 'sprocket'
-			})
-		];
-
-		expect(findProjectByRepositoryKey(projects, 'github.com/spikonado/sprocket')).toBe(match);
-		expect(findProjectByRepositoryKey(projects, 'sprocket')).toBeNull();
-	});
-
-	it('maps a persisted thread row onto ThreadSummary fields', () => {
-		const row = {
-			threadId: threadA,
-			repositoryKey: 'ws-1',
-			title: 'Checkout',
-			selectedModel: 'gpt-5.6-luna',
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			lastMessageAt: 42,
-			threadStatus: 'active' as const,
-			status: 'running' as const
-		};
-
-		expect(toThreadSummary(row)).toEqual({
-			threadId: threadA,
-			repositoryKey: 'ws-1',
-			title: 'Checkout',
-			selectedModel: 'gpt-5.6-luna',
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			lastMessageAt: 42,
-			threadStatus: 'active',
-			status: 'running'
-		});
-	});
-
-	it('keeps project fields on the group rather than copying them', () => {
-		const project = makeProject({
-			repositoryKey: 'github.com/spikonado/sprocket',
-			displayName: 'sprocket-checkout'
-		});
-		const groups = getProjectThreadGroups(
-			[project],
-			[
-				makeThreadSummary({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					lastMessageAt: 10
-				})
-			]
-		);
-
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.project).toBe(project);
-		expect(groups[0]?.project.displayName).toBe('sprocket-checkout');
-	});
-
 	it('preserves a blank draft selection for the current repository', () => {
 		expect(
 			resolveProjectThreadSelection({
@@ -300,6 +202,38 @@ describe('project thread helpers', () => {
 				currentThreadId: null,
 				currentWorkspacePath: '/workspaces/ws-1',
 				draftWorkspacePath: '/workspaces/ws-1'
+			})
+		).toBeNull();
+	});
+
+	it('opens a blank draft once startup projects load and keeps it when threads arrive', () => {
+		const project = makeProject();
+		const startup = {
+			hasResolvedInitialSelection: false,
+			initialProjectLaunchResolved: true,
+			hasPendingProjectLaunches: false,
+			projectLaunchInFlight: false,
+			hasLoadedProjects: false,
+			signedInUserId: 'user-1',
+			projects: [project]
+		};
+
+		expect(resolveInitialDraftSelection(startup)).toBeNull();
+		const selection = resolveInitialDraftSelection({ ...startup, hasLoadedProjects: true });
+		expect(selection).toEqual({ workspacePath: project.workspacePath });
+		expect(
+			resolveInitialDraftSelection({
+				...startup,
+				hasLoadedProjects: true,
+				hasResolvedInitialSelection: true
+			})
+		).toBeNull();
+		expect(
+			resolveProjectThreadSelection({
+				threads: [makeThreadSummary()],
+				currentThreadId: null,
+				currentWorkspacePath: selection?.workspacePath ?? null,
+				draftWorkspacePath: selection?.workspacePath ?? null
 			})
 		).toBeNull();
 	});
@@ -387,49 +321,6 @@ describe('project thread helpers', () => {
 				threads: [created, existing]
 			})
 		).toBeNull();
-	});
-
-	it('prepends an unconfirmed thread and overlays placeholder titles until confirmed', () => {
-		const unconfirmed = makeUnconfirmedCreatedThread({
-			threadId: threadId('thread-record-new'),
-			repositoryKey: 'ws-1',
-			selectedModel: defaultModelId,
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			title: '  Hello from the first prompt  ',
-			lastMessageAt: 50
-		});
-		const existing = makeThreadSummary({
-			threadId: threadId('thread-record-old')
-		});
-		const placeholder = makeThreadSummary({
-			threadId: unconfirmed.threadId,
-			title: 'New thread'
-		});
-		const confirmed = makeThreadSummary({
-			threadId: unconfirmed.threadId,
-			title: 'Hello from the first prompt'
-		});
-
-		expect(unconfirmed.title).toBe('Hello from the first prompt');
-		expect(mergeUnconfirmedCreatedThread([existing], null)).toEqual([existing]);
-		expect(mergeUnconfirmedCreatedThread([existing], unconfirmed)).toEqual([unconfirmed, existing]);
-		expect(mergeUnconfirmedCreatedThread([placeholder, existing], unconfirmed)).toEqual([
-			{ ...placeholder, title: unconfirmed.title },
-			existing
-		]);
-		expect(mergeUnconfirmedCreatedThread([confirmed, existing], unconfirmed)).toEqual([
-			confirmed,
-			existing
-		]);
-		expect(shouldDropUnconfirmedCreatedThread([existing], unconfirmed)).toBe(false);
-		expect(shouldDropUnconfirmedCreatedThread([placeholder], unconfirmed)).toBe(false);
-		expect(shouldDropUnconfirmedCreatedThread([confirmed], unconfirmed)).toBe(true);
-		expect(mergeUnconfirmedCreatedThreads([existing], [unconfirmed, existing])).toEqual([
-			unconfirmed,
-			existing
-		]);
-		expect(retainUnconfirmedCreatedThreads([confirmed, existing], [unconfirmed])).toEqual([]);
 	});
 
 	it('tracks pending launches independently by thread and clears only progressed ones', () => {

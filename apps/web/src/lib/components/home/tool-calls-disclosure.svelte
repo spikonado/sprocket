@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronRight, type LucideIcon } from '@lucide/svelte';
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 
 	type Props = {
@@ -11,14 +11,26 @@
 		tools: AssistantTimelineTool[];
 		/** When set, overrides the default open-when-≤2 rule. */
 		defaultExpanded?: boolean;
+		preserveExpansion?: boolean;
 		toolRow: Snippet<[AssistantTimelineTool]>;
 	};
 
-	let { label, icon: Icon, iconClass, tools, defaultExpanded, toolRow }: Props = $props();
+	let {
+		label,
+		icon: Icon,
+		iconClass,
+		tools,
+		defaultExpanded,
+		preserveExpansion = false,
+		toolRow
+	}: Props = $props();
 
 	let manual = $state<boolean | null>(null);
 
-	const expanded = $derived(manual ?? defaultExpanded ?? tools.length <= 2);
+	const initiallyExpanded = untrack(() => defaultExpanded ?? tools.length <= 2);
+	const expanded = $derived(
+		manual ?? (preserveExpansion ? initiallyExpanded : (defaultExpanded ?? tools.length <= 2))
+	);
 
 	function toggle() {
 		manual = !expanded;
@@ -42,7 +54,7 @@
 	{#if expanded}
 		<div class="text-muted-foreground mt-1.5 space-y-1.5 text-[13px] leading-6">
 			{#each tools as tool (tool.callId)}
-				{@render toolRow(tool)}
+				<div data-work-detail>{@render toolRow(tool)}</div>
 			{/each}
 		</div>
 	{/if}

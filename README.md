@@ -26,6 +26,25 @@ npx @spikonado/sprocket
 ```
 
 The above runs Sprocket through your browser unless you have the desktop app installed.
+Browser launch URLs contain workspace navigation state only. The local server
+creates the browser session after checking the socket peer, Origin, and Host.
+
+### Remote browser access
+
+Keep Sprocket on its default loopback address and put an HTTPS reverse proxy in
+front of it. For example, Tailscale Serve can expose the local server inside
+your tailnet:
+
+```sh
+tailscale serve --bg http://127.0.0.1:17731
+```
+
+Open the HTTPS URL printed by Tailscale. Remote browser sign-in uses WorkOS
+device authorization and accepts only the account already signed in by
+`sprocket login` on the host. Signing out in that browser revokes its browser
+session without signing the host out. Plain remote HTTP is rejected. Other
+reverse proxies must connect to Sprocket over loopback and preserve the
+browser-facing `Host` header.
 
 ### Desktop app
 
@@ -46,6 +65,18 @@ To always open a tab in your browser when using Sprocket, use the `--web` flag:
 sprocket --web
 ```
 
+### Run an agent from the CLI
+
+```sh
+sprocket login
+sprocket run "Fix the failing tests"
+sprocket run --thread <thread-id> "Add regression coverage"
+```
+
+Inline prompts, `--prompt-file`, and stdin report only the current run. `--thread`
+uses its history as context without replaying it. Progress goes to stderr, the
+final answer to stdout, and full transcripts remain in the data directory and app.
+
 ### Workspaces
 
 Pass a directory to open or reconnect that workspace in a new thread:
@@ -63,6 +94,9 @@ Override with `SPROCKET_DATA_DIR`.
 
 | Command                     | Behavior                                                                       |
 | --------------------------- | ------------------------------------------------------------------------------ |
+| `sprocket update`           | Update a global npm, bun, pnpm, or yarn install on the current channel.        |
+| `sprocket update --check`   | Report whether an update is available without installing.                      |
+| `sprocket upgrade`          | Alias for `update`.                                                            |
 | `sprocket serve`            | Run the local server in the foreground without launching a client.             |
 | `sprocket serve --api-only` | Serve only `/api`; intended for development (see [Development](#development)). |
 
@@ -70,21 +104,21 @@ Run `sprocket --help` or `sprocket serve --help` for all options.
 
 Common Sprocket server overrides are available as environment variables:
 
-| Variable                      | Purpose                                                             |
-| ----------------------------- | ------------------------------------------------------------------- |
-| `SPROCKET_DATA_DIR`           | Directory for pairing, sessions, and workspace state.               |
-| `SPROCKET_PORT`               | Local server port; defaults to `17731` for installed use.           |
-| `SPROCKET_HOST`               | Bind host; defaults to `127.0.0.1`.                                 |
-| `SPROCKET_DESKTOP_EXECUTABLE` | Full path to the desktop executable to be used by the Sprocket CLI. |
-| `PUBLIC_CONVEX_URL`           | Convex deployment used by the agent runtime.                        |
-| `PUBLIC_MODEL_GATEWAY_URL`    | Public AI gateway origin for the UI catalog (`GET /api/v1/models`). |
-| `SPROCKET_STATIC_DIR`         | Web build to serve instead of the bundled build.                    |
+| Variable                      | Purpose                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `SPROCKET_DATA_DIR`           | Directory for internal process identity, sessions, and workspace state. |
+| `SPROCKET_PORT`               | Local server port; defaults to `17731` for installed use.               |
+| `SPROCKET_HOST`               | Bind host; defaults to `127.0.0.1`.                                     |
+| `SPROCKET_DESKTOP_EXECUTABLE` | Full path to the desktop executable to be used by the Sprocket CLI.     |
+| `PUBLIC_CONVEX_URL`           | Convex deployment used by the agent runtime.                            |
+| `PUBLIC_MODEL_GATEWAY_URL`    | Public AI gateway origin for the UI catalog (`GET /api/v1/models`).     |
+| `SPROCKET_STATIC_DIR`         | Web build to serve instead of the bundled build.                        |
 
 ## Development
 
 ### Requirements
 
-- Bun 1.x, version 1.3.9 or newer
+- Bun 1.x, version 1.4.2 or newer
 - Node.js 24.x, version 24.14 or newer
 - A current stable Rust toolchain
 
@@ -137,6 +171,10 @@ bun run build:release
 
 Artifacts are written to `apps/desktop/dist/` as `sprocket-desktop-*` (`.AppImage` / `.dmg` / `.exe` depending on the host OS).
 Published installers come from GitHub Releases; the `sprocket` CLI is published separately on npm.
+
+## License
+
+Sprocket is licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md). Third-party material remains under the licenses listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Troubleshooting
 

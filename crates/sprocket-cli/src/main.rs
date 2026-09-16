@@ -1,31 +1,28 @@
+mod commands;
+
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use sprocket_server::{
     INSTALLED_WEB_DIR, PairingProofRequest, PairingProofResponse, RunOptions, ServerConfig,
     browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
     verify_pairing_proof,
 };
-use sprocket_workspace::resolve_workspace_root;
+use sprocket_workspace::{SPROCKET_VERSION, resolve_workspace_root};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
-const VERSION: &str = match option_env!("SPROCKET_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
-};
-
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
-    about = "Agentic platform for streamlining hardware and software development",
-    version = VERSION,
+    about = "The best and only AI agent for developing both hardware and software",
+    version = SPROCKET_VERSION,
     arg_required_else_help = false
 )]
 struct Cli {
@@ -43,12 +40,26 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Run an agent locally and wait for its result
+    Run(commands::RunArgs),
+
+    /// Sign in using a browser on any device
+    Login(commands::LoginArgs),
+
+    /// Sign out of this local profile in the app and CLI
+    Logout,
     /// Start only the local Sprocket server
     Serve(ServeArgs),
+
+    /// Update a global npm, bun, pnpm, or yarn installation on its current channel
+    #[command(visible_alias = "upgrade")]
+    Update(UpdateArgs),
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct ServeArgs {
+    #[arg(long, hide = true)]
+    cli_temporary: bool,
     #[command(flatten)]
     server: ServerConfig,
 
@@ -57,13 +68,31 @@ struct ServeArgs {
     quiet: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Report whether an update is available without installing it
+    #[arg(long)]
+    check: bool,
+}
+
+fn main() -> std::process::ExitCode {
+    match entry() {
+        Ok(code) => std::process::ExitCode::from(code),
+        Err(error) => {
+            eprintln!("{error:#}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn entry() -> anyhow::Result<u8> {
     // SAFETY: this runs before the Tokio runtime is constructed.
     unsafe {
         load_repo_env();
     }
 
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             EnvFilter::from_default_env().add_directive("sprocket_server=error".parse()?),
         )
@@ -76,6 +105,27 @@ fn main() -> anyhow::Result<()> {
         .map(resolve_launch_workspace)
         .transpose()?;
     match cli.command {
+        Some(Commands::Run(args)) => {
+            anyhow::ensure!(
+                !cli.web && workspace_path.is_none(),
+                "run does not accept app launch arguments; use run --directory instead"
+            );
+            return commands::run(args);
+        }
+        Some(Commands::Login(args)) => {
+            anyhow::ensure!(
+                !cli.web && workspace_path.is_none(),
+                "login does not accept app launch arguments"
+            );
+            return commands::login(args);
+        }
+        Some(Commands::Logout) => {
+            anyhow::ensure!(
+                !cli.web && workspace_path.is_none(),
+                "logout does not accept app launch arguments"
+            );
+            return commands::logout();
+        }
         Some(Commands::Serve(serve)) => {
             if cli.web {
                 anyhow::bail!("`--web` cannot be combined with `serve`; run `sprocket --web`");
@@ -83,15 +133,18 @@ fn main() -> anyhow::Result<()> {
             if workspace_path.is_some() {
                 anyhow::bail!("a workspace directory cannot be combined with `serve`");
             }
-            serve_local(serve.server, serve.quiet, false, None)
+            serve_local(serve.server, serve.quiet, false, None, serve.cli_temporary)
+        }
+        Some(Commands::Update(_)) => {
+            anyhow::bail!("`sprocket update` requires the @spikonado/sprocket package launcher")
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true, workspace_path)
+            serve_local(server, false, true, workspace_path, false)
         }
         None => {
             if launch_desktop(workspace_path.as_deref())? {
-                return Ok(());
+                return Ok(0);
             }
 
             eprintln!(
@@ -99,9 +152,10 @@ fn main() -> anyhow::Result<()> {
                  Note: This has no impact on Sprocket's capabilities or performance."
             );
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true, workspace_path)
+            serve_local(server, false, true, workspace_path, false)
         }
-    }
+    }?;
+    Ok(0)
 }
 
 fn resolve_launch_workspace(path: &Path) -> anyhow::Result<String> {
@@ -119,6 +173,7 @@ fn serve_local(
     quiet: bool,
     open_browser: bool,
     workspace_path: Option<String>,
+    temporary: bool,
 ) -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -140,6 +195,7 @@ fn serve_local(
             run(
                 server,
                 RunOptions {
+                    temporary,
                     quiet,
                     open_browser,
                     workspace_path,
@@ -218,7 +274,7 @@ async fn open_running_web_app(
         );
     }
 
-    let target = browser_launch_url(&expected_base_url, &credential, workspace_path);
+    let target = browser_launch_url(&expected_base_url, workspace_path);
     eprintln!("Sprocket is already running. Opening it in your browser…");
     open::that_detached(&target)
         .with_context(|| format!("failed to open the browser; open {target} manually"))?;
@@ -295,7 +351,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_desktop_web_and_server_modes() {
+    fn run_requires_one_explicit_prompt_source() {
+        assert!(Cli::try_parse_from(["sprocket", "run"]).is_err());
+        assert!(
+            Cli::try_parse_from(["sprocket", "run", "task", "--prompt-file", "task.md"]).is_err()
+        );
+        assert!(Cli::try_parse_from(["sprocket", "run", "--prompt-file", "-"]).is_ok());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--directory", "."]).is_ok());
+        let list_models = Cli::try_parse_from(["sprocket", "run", "--list-models"]).unwrap();
+        assert!(matches!(
+            list_models.command,
+            Some(Commands::Run(commands::RunArgs {
+                prompt: None,
+                list_models: true,
+                ..
+            }))
+        ));
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--list-models"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--stream-json"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--fast", "--no-fast"]).is_err());
+    }
+
+    #[test]
+    fn parses_launch_server_and_update_modes() {
         let desktop = Cli::try_parse_from(["sprocket"]).unwrap();
         assert!(!desktop.web);
         assert!(desktop.directory.is_none());
@@ -314,5 +393,11 @@ mod tests {
         assert!(!server.web);
         assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
+
+        let update = Cli::try_parse_from(["sprocket", "upgrade", "--check"]).unwrap();
+        assert!(matches!(
+            update.command,
+            Some(Commands::Update(UpdateArgs { check: true }))
+        ));
     }
 }

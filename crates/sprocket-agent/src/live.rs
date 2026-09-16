@@ -224,8 +224,7 @@ pub struct LiveCompletionOverlay {
     pub thread_id: String,
     pub run_id: String,
     pub run_status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream_id: Option<String>,
+    pub stream_id: String,
     pub text: String,
     pub parts: Vec<LiveAssistantPart>,
     pub run_started_at: u64,
@@ -362,7 +361,7 @@ mod tests {
             thread_id: thread_id.to_string(),
             run_id: "run-1".to_string(),
             run_status: "running".to_string(),
-            stream_id: Some("stream-1".to_string()),
+            stream_id: "stream-1".to_string(),
             text: text.to_string(),
             parts: vec![LiveAssistantPart::Text {
                 id: "t".to_string(),

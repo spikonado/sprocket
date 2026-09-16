@@ -23,6 +23,10 @@ pub(super) struct AgentToolContext {
     pub(super) run_id: String,
     pub(super) claim_id: String,
     pub(super) workspace_root: PathBuf,
+    pub(super) transcript_dir: PathBuf,
+    pub(super) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
+    pub(super) thread_id: String,
+    pub(super) supports_images: bool,
     pub(super) tool_call_tracker: ToolCallTracker,
     pub(super) command_sessions: CommandSessionManager,
 }
@@ -33,6 +37,10 @@ impl AgentToolContext {
         run_id: String,
         claim_id: String,
         workspace_root: PathBuf,
+        transcript_dir: PathBuf,
+        artifact_bindings: crate::artifact_bindings::ArtifactBindings,
+        thread_id: String,
+        supports_images: bool,
         tool_call_tracker: ToolCallTracker,
         command_sessions: CommandSessionManager,
     ) -> Self {
@@ -41,6 +49,10 @@ impl AgentToolContext {
             run_id,
             claim_id,
             workspace_root,
+            transcript_dir,
+            artifact_bindings,
+            thread_id,
+            supports_images,
             tool_call_tracker,
             command_sessions,
         }

@@ -1,6 +1,7 @@
 use anyhow::anyhow;
+use futures::StreamExt;
 use rig::completion::Message;
-use rig::message::{ImageMediaType, UserContent};
+use rig::message::UserContent;
 use sprocket_workspace::{
     BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
@@ -12,13 +13,14 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
-use crate::catalog::context_budget_for_model;
+use crate::attachments::cache_prompt_attachments;
+use crate::catalog::catalog_capabilities_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::transcript::{
     TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts,
+    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
@@ -39,6 +41,8 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 /// apps/web/src/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
 const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
+const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
+const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 
 fn submission_owned_by_another_executor(error: &str) -> bool {
     error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
@@ -56,6 +60,23 @@ pub struct AgentRun {
 }
 
 impl AgentRun {
+    pub async fn observe_output(
+        &mut self,
+        output: Arc<crate::RunOutput>,
+        store: Arc<TranscriptStore>,
+    ) {
+        output.initialize(
+            store,
+            self.user_id.clone(),
+            self.request.thread_id.clone(),
+            self.run_id.clone(),
+        );
+        if let Some(part) = &self.prompt_part {
+            output.record_part(part.clone()).await;
+        }
+        self.runtime.output = Some(output);
+    }
+
     pub fn run_id(&self) -> &str {
         &self.run_id
     }
@@ -99,6 +120,8 @@ fn build_workspace_prompt_context(
     workspace_path: &str,
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
+    model_label: &str,
+    model_id: &str,
 ) -> WorkspacePromptContext {
     let user_instructions = workspace_instructions
         .iter()
@@ -143,75 +166,10 @@ fn build_workspace_prompt_context(
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
-    let base_instructions = [
-        "# System Instructions",
-        "",
-        "## Identity",
-        "",
-        "Your name is Sprocket.",
-        "You are an engineering agent operating in the user's real local workspace.",
-        "You are a careful senior engineer.",
-        "You like debating with the user when you feel there is a better way to achieve an end goal.",
-        "",
-        "## Working on Tasks",
-        "",
-        "Fix the root cause of problems.",
-        "Do not guess about the project's state; always inspect before editing.",
-        "If the workspace is already dirty, do not revert the changes. Try to work around them. If they conflict with the changes you need to make, ask the user what to do with them.",
-        "Don't hesitate to ask the user questions before, after, or while working. Don't assume what the user wants. This is to avoid cases similar to the following happening:",
-        "  - The user asked you to delete some virtual machines, you couldn't find the exact ones and assumed that the ones you were seeing are the ones that need to be deleted and deleted them.",
-        "  - You had to make some breaking changes to the schema of a project's dev database and assumed by yourself that the current data in the database was important and had to be migrated instead of just being deleted.",
-        "",
-        "### Working on Software",
-        "",
-        "Validate your work when the repo has relevant tests or build checks. Start with the most targeted checks for the code you changed.",
-        "When you finish, respond with a concise summary of what changed and which checks you ran.",
-        "",
-        "#### Writing Comments",
-        "",
-        "Comments are never absolutely necessary.",
-        "Be extremely judicious with writing comments, prefer less in both amount and size.",
-        "Don't write comments that just narrate what the code does. Comments should only explain non-obvious intent, constraints, or trade-offs.",
-        "Instead of writing comments, prefer having clear naming and structure in the code.",
-        "",
-        "#### Writing Tests",
-        "",
-        "It's a good practice to write tests.",
-        "This doesn't mean that you should write a test for every change.",
-        "Tests shouldn't be written as a necessity; they should truly verify some behaviour or edge case that isn't directly obvious looking at the code.",
-        "",
-        "## Your Training Data May Be Stale",
-        "",
-        "Your training data is many months out of date and may no longer be relevant for the tasks you work on.",
-        "By \"may no longer be relevant\", we mean that newer best practices for the work you do, versions of a particular hardware product or software library, etc. may have come out.",
-        "You should use the tools given to you to fetch the latest documentation/information in relation to your work.",
-        "",
-        "## Tool Usage",
-        "",
-        "Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.",
-        "Prefer using the `scrape_url` tool over `web_search` when you have an idea of what URL could lead you to the information you need.",
-        "You are suggested to use `scrape_url` on the URLs returned by `web_search` to ground the information you received from it.",
-        "Prefer `web_search` and `scrape_url` over the browser tools (`browser_act`, `browser_observe`, `browser_extract`) whenever the information you need is publicly accessible — they are far cheaper and faster. Reserve the browser tools for interactive or session-bound pages such as merchant checkouts.",
-        "",
-        "",
-        "## Skills",
-        "",
-        "Skills are reusable instruction packages.",
-        "The available skills are listed in the initial conversation context.",
-        "When a task matches a skill's description, call the read_skill tool with its name before proceeding, and follow the returned instructions as needed.",
-        "If the user writes $skill-name in their message (for example $code-review), they are explicitly invoking that skill: read it with read_skill and apply it, even if you would not have selected it yourself.",
-        "Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_command when needed.",
-        "",
-        "## AGENTS.md Spec",
-        "",
-        "AGENTS.md files can appear anywhere in the repository tree.",
-        "Each AGENTS.md file applies to the directory tree rooted at the folder that contains it.",
-        "Follow all applicable AGENTS.md instructions, with deeper files taking precedence.",
-        "The user's `AGENTS.md`, located at `~/.agents/AGENTS.md`, applies to every workspace.",
-        "The user's AGENTS.md and the AGENTS.md for the current workspace path are included in the initial conversation context and do not need to be re-read.",
-        "If you move into a deeper subdirectory before editing, check for additional nested AGENTS.md files there.",
-    ]
-    .join("\n");
+    let model_identity = format!("Your model is {model_label} ({model_id}).");
+    let base_instructions = SYSTEM_PROMPT_TEMPLATE
+        .trim_end()
+        .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity);
     let initial_context = Message::user(
         [
             "# Thread-Scoped Workspace Context",
@@ -728,6 +686,15 @@ pub async fn finalize_failed_start(
 struct PriorHistory {
     messages: Vec<Message>,
     continue_from_finished_turns: bool,
+    current_prompt: Option<String>,
+}
+
+fn should_continue_without_prompt(
+    continue_from_finished_turns: bool,
+    is_continuation: bool,
+    prompt_text: &str,
+) -> bool {
+    continue_from_finished_turns || (is_continuation && prompt_text.is_empty())
 }
 
 async fn load_prior_history(
@@ -735,6 +702,7 @@ async fn load_prior_history(
     store: &TranscriptStore,
     context: &RunContextResponse,
     run_id: &str,
+    supports_images: bool,
 ) -> anyhow::Result<PriorHistory> {
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
@@ -754,7 +722,7 @@ async fn load_prior_history(
     )
     .await?;
     let state = store.load_state(user_id, thread_id).await?;
-    let current_run_was_compacted =
+    let current_run_had_context_handoff =
         if state.context_summary.is_some() && state.history_from_number > 0 {
             runtime
                 .transcript_parts_for_run(run_id, &[state.history_from_number - 1])
@@ -777,7 +745,7 @@ async fn load_prior_history(
             missing
         );
     }
-    let parts = match fetch_parts_by_numbers(&numbers, |batch| {
+    let mut parts = match fetch_parts_by_numbers(&numbers, |batch| {
         let runtime = runtime.clone();
         let run_id = run_id.to_string();
         async move { runtime.transcript_parts_for_run(&run_id, &batch).await }
@@ -793,19 +761,26 @@ async fn load_prior_history(
         }
         Ok(_) | Err(_) => local_parts,
     };
+    cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
+    let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
+    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
-        messages: deserialize_agent_history(agent_history_from_parts(
-            &state,
-            &parts,
-            Some(run_id),
-        ))?,
-        continue_from_finished_turns: context.run.continuation_of_run_id.is_some()
-            || current_run_was_compacted
+        current_prompt: parts
+            .iter()
+            .find(|part| part.run_id == run_id && part.prompt.is_some())
+            .and_then(|part| part.prompt.as_ref())
+            .map(prompt_text_with_attachments),
+        messages: deserialize_agent_history(history)?,
+        continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
 }
 
-pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::Result<()> {
+pub async fn run_agent(
+    run: AgentRun,
+    live: Arc<LiveCompletionHub>,
+    store: Arc<TranscriptStore>,
+) -> anyhow::Result<()> {
     let AgentRun {
         request,
         runtime,
@@ -823,13 +798,50 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
     eprintln!("sprocket-agent: loaded run context {}", run_id);
 
     let reasoning_effort = context.run.reasoning_effort.clone();
-    let service_tier = context.run.service_tier.clone();
-    let context_budget =
-        match context_budget_for_model(&gateway_url, &context.run.selected_model).await {
+    let fast_mode = context.run.fast_mode;
+    let capabilities =
+        match catalog_capabilities_for_model(&gateway_url, &context.run.selected_model).await {
             Ok(budget) => budget,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
 
+    let prepare_history = load_prior_history(
+        &runtime,
+        &store,
+        &context,
+        &run_id,
+        capabilities.supports_images,
+    );
+    let prior_history = {
+        let mut updates = match runtime.run_finished_subscription(&run_id).await {
+            Ok(updates) => updates,
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        };
+        tokio::pin!(prepare_history);
+        loop {
+            tokio::select! {
+                biased;
+                _ = request.cancellation.cancelled() => {
+                    runtime.finalize_queued_run(&run_id, "", RunFinalStatus::Cancelled.as_str(), None).await?;
+                    return Ok(());
+                }
+                update = updates.next() => {
+                    match update.map(RuntimeClient::decode_run_finished_update) {
+                        Some(Ok(true)) => return Ok(()),
+                        Some(Ok(false)) => {},
+                        Some(Err(error)) => return abort_before_start(&runtime, &run_id, error).await,
+                        None => return abort_before_start(&runtime, &run_id, anyhow!("run status subscription closed during history preparation")).await,
+                    }
+                }
+                history = &mut prepare_history => {
+                    match history {
+                        Ok(history) => break history,
+                        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+                    }
+                }
+            }
+        }
+    };
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
         let workspace_skills =
@@ -840,20 +852,18 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
         let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
         let is_continuation = context.run.continuation_of_run_id.is_some()
             || request.continuation_of_run_id.is_some();
-        let prompt_text = context.prompt.trim();
-        if prompt_text.is_empty() && context.prompt_attachments.is_empty() && !is_continuation {
+        let prompt_text = prior_history
+            .current_prompt
+            .as_deref()
+            .unwrap_or(&context.prompt)
+            .trim();
+        if prompt_text.is_empty() && !is_continuation && !prior_history.continue_from_finished_turns
+        {
             return Err(anyhow!("run does not contain a user prompt"));
         }
         let mut prompt_contents = Vec::new();
         if !prompt_text.is_empty() {
             prompt_contents.push(UserContent::text(prompt_text));
-        }
-        for attachment in &context.prompt_attachments {
-            prompt_contents.push(UserContent::image_url(
-                attachment.url.clone(),
-                Some(image_media_type(&attachment.media_type)?),
-                None,
-            ));
         }
         let prompt = Message::User {
             content: prompt_contents,
@@ -863,33 +873,45 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             &request.workspace_path,
             &workspace_instructions,
             &skills,
+            &capabilities.label,
+            &context.run.selected_model,
         );
-        Ok((prompt, provider, prompt_context, skills))
+        let continue_without_prompt = should_continue_without_prompt(
+            prior_history.continue_from_finished_turns,
+            is_continuation,
+            prompt_text,
+        );
+        Ok((
+            prompt,
+            provider,
+            prompt_context,
+            skills,
+            continue_without_prompt,
+        ))
     })();
 
-    let (prompt, provider, prompt_context, skills) = match prepared {
+    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
-    let store = TranscriptStore::new(request.transcript_root.clone());
-    let prior_history = match load_prior_history(&runtime, &store, &context, &run_id).await {
-        Ok(history) => history,
-        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    let prompt = if continue_without_prompt {
+        Message::User {
+            content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
+        }
+    } else {
+        prompt
     };
-    let prompt =
-        if prior_history.continue_from_finished_turns || request.continuation_of_run_id.is_some() {
-            Message::User {
-                content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
-            }
-        } else {
-            prompt
-        };
 
     eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     let Some(lease_started_at) = claim_run(&runtime, &run_id, &claim_id).await? else {
         return Ok(());
     };
+
+    if request.cancellation.is_cancelled() {
+        acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+        return Ok(());
+    }
 
     eprintln!("sprocket-agent: selected provider gateway for run {run_id}");
 
@@ -916,6 +938,8 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             .run(
                 runtime.clone(),
                 AgentProviderRequest {
+                    allow_interaction: request.allow_interaction,
+                    cancellation: request.cancellation,
                     run_id: run_id.clone(),
                     claim_id: claim_id.clone(),
                     thread_id: request.thread_id.clone(),
@@ -925,15 +949,21 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                     base_instructions: prompt_context.base_instructions,
                     initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
+                    artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
+                        &store.root().with_file_name("artifact-bindings"),
+                        &request.deployment_url,
+                        &context.run.user_id,
+                        &workspace_root,
+                    ),
                     workspace_root,
                     skills,
                     reasoning_effort,
-                    service_tier,
-                    context_budget,
+                    fast_mode,
+                    context_budget: capabilities.context_budget,
+                    supports_images: capabilities.supports_images,
+                    transcript_dir: store.thread_dir(&context.run.user_id, &context.run.thread_id),
                     context_tokens: context.context_tokens,
-                    defer_prompt_for_compaction: !prior_history.continue_from_finished_turns
-                        && context.run.continuation_of_run_id.is_none()
-                        && request.continuation_of_run_id.is_none(),
+                    defer_prompt_for_context_handoff: !continue_without_prompt,
                 },
             )
             .await;
@@ -961,16 +991,6 @@ fn collapse_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
-    match media_type {
-        "image/jpeg" => Ok(ImageMediaType::JPEG),
-        "image/png" => Ok(ImageMediaType::PNG),
-        "image/gif" => Ok(ImageMediaType::GIF),
-        "image/webp" => Ok(ImageMediaType::WEBP),
-        _ => Err(anyhow!("unsupported image media type: {media_type}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rig::completion::Message;
@@ -979,7 +999,20 @@ mod tests {
         SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     };
 
-    use super::{build_workspace_prompt_context, submission_owned_by_another_executor};
+    use super::{
+        build_workspace_prompt_context, should_continue_without_prompt,
+        submission_owned_by_another_executor,
+    };
+
+    const MODEL_LABEL: &str = "GPT-5.6 Sol";
+    const MODEL_ID: &str = "gpt-5.6-sol";
+
+    #[test]
+    fn prompted_continuations_use_their_user_prompt() {
+        assert!(!should_continue_without_prompt(false, true, "Ship it"));
+        assert!(should_continue_without_prompt(false, true, ""));
+        assert!(should_continue_without_prompt(true, true, "Ship it"));
+    }
 
     fn initial_context_text(message: &Message) -> &str {
         match message {
@@ -989,6 +1022,19 @@ mod tests {
             },
             other => panic!("expected initial context user message, got {other:?}"),
         }
+    }
+
+    fn build_test_prompt_context(
+        workspace_instructions: &[WorkspaceInstruction],
+        skills: &[WorkspaceSkill],
+    ) -> super::WorkspacePromptContext {
+        build_workspace_prompt_context(
+            "/tmp/project",
+            workspace_instructions,
+            skills,
+            MODEL_LABEL,
+            MODEL_ID,
+        )
     }
 
     #[test]
@@ -1008,6 +1054,20 @@ mod tests {
     }
 
     #[test]
+    fn base_instructions_include_the_selected_model_identity() {
+        let prompt_context =
+            build_workspace_prompt_context("/tmp/project", &[], &[], MODEL_LABEL, MODEL_ID);
+
+        assert!(
+            prompt_context
+                .base_instructions
+                .contains(
+                    "Your name is Sprocket.\nYour model is GPT-5.6 Sol (gpt-5.6-sol).\nYou are an engineering agent"
+                )
+        );
+    }
+
+    #[test]
     fn initial_context_renders_skills_block() {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),
@@ -1016,7 +1076,7 @@ mod tests {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
         }];
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
+        let prompt_context = build_test_prompt_context(&[], &skills);
         let initial_context = initial_context_text(&prompt_context.initial_context);
         assert!(initial_context.starts_with("# Thread-Scoped Workspace Context\n"));
         assert!(initial_context.contains("## Available Skills"));
@@ -1029,7 +1089,7 @@ mod tests {
 
     #[test]
     fn initial_context_renders_empty_skills_line() {
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &[]);
+        let prompt_context = build_test_prompt_context(&[], &[]);
         let initial_context = initial_context_text(&prompt_context.initial_context);
         assert!(initial_context.contains("## Available Skills"));
         assert!(initial_context.contains("No skills are installed."));
@@ -1045,7 +1105,7 @@ mod tests {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },
         }];
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
+        let prompt_context = build_test_prompt_context(&[], &skills);
         let initial_context = initial_context_text(&prompt_context.initial_context);
         assert!(initial_context.contains("description: Line one line two"));
         assert!(!initial_context.contains("description: Line one\n"));
@@ -1070,7 +1130,7 @@ mod tests {
             },
         ];
 
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &instructions, &[]);
+        let prompt_context = build_test_prompt_context(&instructions, &[]);
         let initial_context = initial_context_text(&prompt_context.initial_context);
 
         let user_heading = "### The user's AGENTS.md";

@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +19,8 @@ const MAX_PERSISTED_PROJECT_ATTACHMENTS: usize = 200;
 pub struct ProjectAttachmentRecord {
     pub workspace_path: String,
     pub repository_key: String,
+    #[serde(default)]
+    pub attachment_key: String,
     pub display_name: String,
     pub availability: WorkspaceAvailability,
     pub last_validated_at: u64,
@@ -27,24 +30,6 @@ pub struct ProjectAttachmentRecord {
     /// Last persisted key when git identity changed, until the client rekeys threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_repository_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredProjectAttachment {
-    #[serde(default)]
-    workspace_path: String,
-    #[serde(default)]
-    repository_key: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    availability: WorkspaceAvailability,
-    last_validated_at: u64,
-    last_used_at: u64,
-    #[serde(default)]
-    unavailable_reason: Option<String>,
-    #[serde(default)]
-    previous_repository_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,13 +55,14 @@ pub struct WorkspacePathResolution {
     pub display_name: String,
     /// Stable repository identity from git origin, or the directory name when unset.
     pub repository_key: String,
+    pub attachment_key: String,
 }
 
 pub struct ProjectAttachmentStore {
     data_dir: PathBuf,
     attachments: RwLock<HashMap<String, ProjectAttachmentRecord>>,
     loaded: RwLock<bool>,
-    refresh_lock: Mutex<()>,
+    update_lock: Mutex<()>,
 }
 
 impl ProjectAttachmentStore {
@@ -85,7 +71,7 @@ impl ProjectAttachmentStore {
             data_dir,
             attachments: RwLock::new(HashMap::new()),
             loaded: RwLock::new(false),
-            refresh_lock: Mutex::new(()),
+            update_lock: Mutex::new(()),
         })
     }
 
@@ -100,43 +86,94 @@ impl ProjectAttachmentStore {
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
-        let now = crate::now_ms();
-        let validated = validate_session_async(ProjectAttachmentRecord {
-            workspace_path: request.workspace_path,
-            repository_key: String::new(),
-            display_name: String::new(),
-            availability: WorkspaceAvailability::Available,
-            last_validated_at: now,
-            last_used_at: now,
-            unavailable_reason: None,
-            previous_repository_key: None,
-        })
-        .await?;
+        let validated = resolve_attachment(request.workspace_path).await?;
+        let replace_workspace_path = request
+            .replace_workspace_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty() && *path != validated.workspace_path)
+            .map(str::to_owned);
 
-        if validated.availability == WorkspaceAvailability::Unavailable {
-            if let Some(reason) = &validated.unavailable_reason {
-                anyhow::bail!("{reason}");
-            }
-            anyhow::bail!("workspace path is unavailable");
-        }
-
+        let _update_guard = self.update_lock.lock().await;
         {
             let mut sessions = self.attachments.write().await;
-            sessions.insert(validated.workspace_path.clone(), validated.clone());
-            if let Some(previous_path) = request
-                .replace_workspace_path
-                .as_deref()
-                .map(str::trim)
-                .filter(|path| !path.is_empty() && *path != validated.workspace_path)
+            if let Some(previous_path) = replace_workspace_path.as_deref()
+                && !sessions.contains_key(previous_path)
             {
+                anyhow::bail!("Replacement workspace is not attached");
+            }
+            if let Some(existing) = sessions.values().find(|attachment| {
+                same_attachment_identity(attachment, &validated)
+                    && match replace_workspace_path.as_deref() {
+                        Some(previous_path) => attachment.workspace_path != previous_path,
+                        None => attachment.workspace_path != validated.workspace_path,
+                    }
+            }) {
+                anyhow::bail!(
+                    "Repository is already attached to {}",
+                    existing.workspace_path
+                );
+            }
+            sessions.insert(validated.workspace_path.clone(), validated.clone());
+            if let Some(previous_path) = replace_workspace_path.as_deref() {
                 sessions.remove(previous_path);
             }
+            deduplicate_repository_attachments(
+                &mut sessions,
+                Some(validated.workspace_path.as_str()),
+            );
         }
         self.save_to_disk().await?;
         Ok(validated)
     }
 
+    pub async fn resolve_run_workspace(
+        &self,
+        workspace_path: String,
+    ) -> Result<ProjectAttachmentRecord> {
+        self.ensure_loaded().await?;
+        let mut resolved = resolve_attachment(workspace_path).await?;
+        let _update_guard = self.update_lock.lock().await;
+        let changed = {
+            let mut attachments = self.attachments.write().await;
+            let mut changed = deduplicate_repository_attachments(&mut attachments, None);
+            let existing = attachments
+                .values()
+                .find(|attachment| same_attachment_identity(attachment, &resolved))
+                .cloned();
+
+            match existing {
+                Some(existing) => {
+                    resolved.previous_repository_key = existing.previous_repository_key;
+                    if existing.workspace_path == resolved.workspace_path {
+                        attachments.insert(resolved.workspace_path.clone(), resolved.clone());
+                        changed = true;
+                    }
+                }
+                None => {
+                    attachments.insert(resolved.workspace_path.clone(), resolved.clone());
+                    changed = true;
+                }
+            }
+            changed
+        };
+        if changed {
+            self.save_to_disk().await?;
+        }
+        Ok(resolved)
+    }
+
     pub async fn workspace_path(&self, workspace_path: &str) -> Result<String> {
+        Ok(self
+            .require_available_workspace(workspace_path)
+            .await?
+            .workspace_path)
+    }
+
+    pub async fn require_available_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
         let session = self.get_or_error(workspace_path).await?;
         let validated = validate_session_async(session).await?;
@@ -147,7 +184,19 @@ impl ProjectAttachmentStore {
                     .unwrap_or_else(|| "workspace path is unavailable".to_string())
             );
         }
-        Ok(validated.workspace_path)
+        Ok(validated)
+    }
+
+    pub async fn require_matching_workspace(
+        &self,
+        workspace_path: &str,
+        repository_key: &str,
+    ) -> Result<ProjectAttachmentRecord> {
+        let attachment = self.require_available_workspace(workspace_path).await?;
+        if !repository_key_matches(&attachment, repository_key) {
+            anyhow::bail!("repositoryKey does not match the attached workspace");
+        }
+        Ok(attachment)
     }
 
     async fn get_or_error(&self, workspace_path: &str) -> Result<ProjectAttachmentRecord> {
@@ -169,14 +218,14 @@ impl ProjectAttachmentStore {
             let contents = tokio::fs::read_to_string(&store_path)
                 .await
                 .with_context(|| format!("failed to read {}", store_path.display()))?;
-            let stored: Vec<StoredProjectAttachment> = serde_json::from_str(&contents)
+            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_str(&contents)
                 .with_context(|| "failed to parse project attachments")?;
             let mut sessions = self.attachments.write().await;
-            for entry in stored {
-                if entry.workspace_path.trim().is_empty() {
+            for attachment in stored {
+                if attachment.workspace_path.trim().is_empty() {
                     continue;
                 }
-                let record = hydrate_stored_attachment(entry);
+                let record = validate_session_path(attachment);
                 sessions.insert(record.workspace_path.clone(), record);
             }
         }
@@ -186,7 +235,7 @@ impl ProjectAttachmentStore {
     }
 
     async fn refresh_all(&self) -> Result<()> {
-        let _refresh_guard = self.refresh_lock.lock().await;
+        let _update_guard = self.update_lock.lock().await;
         let snapshot: Vec<(String, ProjectAttachmentRecord)> = self
             .attachments
             .read()
@@ -220,6 +269,9 @@ impl ProjectAttachmentStore {
                 sessions.remove(&previous_key);
             }
             sessions.insert(refreshed.workspace_path.clone(), refreshed);
+        }
+        if deduplicate_repository_attachments(&mut sessions, None) {
+            changed = true;
         }
         drop(sessions);
 
@@ -264,18 +316,66 @@ impl ProjectAttachmentStore {
     }
 }
 
-fn hydrate_stored_attachment(stored: StoredProjectAttachment) -> ProjectAttachmentRecord {
-    let fallback_name = directory_name(&stored.workspace_path);
-    validate_session_path(ProjectAttachmentRecord {
-        workspace_path: stored.workspace_path,
-        repository_key: stored.repository_key.unwrap_or_default(),
-        display_name: stored.display_name.unwrap_or(fallback_name),
-        availability: stored.availability,
-        last_validated_at: stored.last_validated_at,
-        last_used_at: stored.last_used_at,
-        unavailable_reason: stored.unavailable_reason,
-        previous_repository_key: stored.previous_repository_key,
-    })
+fn deduplicate_repository_attachments(
+    attachments: &mut HashMap<String, ProjectAttachmentRecord>,
+    preferred_workspace_path: Option<&str>,
+) -> bool {
+    let mut winners = HashMap::<String, String>::new();
+
+    for (workspace_path, attachment) in attachments.iter() {
+        if attachment.attachment_key.is_empty() {
+            continue;
+        }
+        let Some(current_path) = winners.get(&attachment.attachment_key) else {
+            winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
+            continue;
+        };
+        let current = &attachments[current_path];
+
+        if attachment_is_preferred(attachment, current, preferred_workspace_path) {
+            winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
+        }
+    }
+
+    let previous_len = attachments.len();
+    attachments.retain(|workspace_path, attachment| {
+        attachment.attachment_key.is_empty()
+            || winners.get(&attachment.attachment_key) == Some(workspace_path)
+    });
+    attachments.len() != previous_len
+}
+
+fn same_attachment_identity(
+    left: &ProjectAttachmentRecord,
+    right: &ProjectAttachmentRecord,
+) -> bool {
+    !left.attachment_key.is_empty() && left.attachment_key == right.attachment_key
+}
+
+fn attachment_is_preferred(
+    candidate: &ProjectAttachmentRecord,
+    current: &ProjectAttachmentRecord,
+    preferred_workspace_path: Option<&str>,
+) -> bool {
+    match preferred_workspace_path {
+        Some(path) if candidate.workspace_path == path => return true,
+        Some(path) if current.workspace_path == path => return false,
+        _ => {}
+    }
+
+    if candidate.availability != current.availability {
+        return candidate.availability == WorkspaceAvailability::Available;
+    }
+    match candidate.last_used_at.cmp(&current.last_used_at) {
+        Ordering::Equal => {
+            candidate
+                .workspace_path
+                .encode_utf16()
+                .cmp(current.workspace_path.encode_utf16())
+                == Ordering::Less
+        }
+        ordering => ordering == Ordering::Less,
+    }
 }
 
 fn directory_name(workspace_path: &str) -> String {
@@ -293,6 +393,7 @@ fn mark_available(
 ) -> ProjectAttachmentRecord {
     ProjectAttachmentRecord {
         workspace_path: resolution.workspace_path,
+        attachment_key: resolution.attachment_key,
         previous_repository_key: previous_repository_key_after_resolve(
             &session,
             &resolution.repository_key,
@@ -304,6 +405,13 @@ fn mark_available(
         unavailable_reason: None,
         last_used_at: session.last_used_at,
     }
+}
+
+pub(crate) fn repository_key_matches(record: &ProjectAttachmentRecord, requested: &str) -> bool {
+    let requested = requested.trim();
+    !requested.is_empty()
+        && (record.repository_key == requested
+            || record.previous_repository_key.as_deref() == Some(requested))
 }
 
 fn previous_repository_key_after_resolve(
@@ -323,6 +431,7 @@ fn mark_unavailable(
     error: &anyhow::Error,
 ) -> ProjectAttachmentRecord {
     let fallback_name = directory_name(&session.workspace_path);
+    let attachment_key = unavailable_attachment_key(&session);
     ProjectAttachmentRecord {
         availability: WorkspaceAvailability::Unavailable,
         last_validated_at: crate::now_ms(),
@@ -337,8 +446,24 @@ fn mark_unavailable(
         } else {
             session.display_name
         },
+        attachment_key,
         ..session
     }
+}
+
+fn unavailable_attachment_key(session: &ProjectAttachmentRecord) -> String {
+    if !session.attachment_key.is_empty() {
+        return session.attachment_key.clone();
+    }
+    let fallback_name = directory_name(&session.workspace_path);
+    if !session.repository_key.is_empty()
+        && !session.display_name.is_empty()
+        && (session.repository_key != session.display_name
+            || session.repository_key != fallback_name)
+    {
+        return format!("remote:{}", session.repository_key);
+    }
+    format!("directory:{}", session.workspace_path)
 }
 
 fn validate_session_path(session: ProjectAttachmentRecord) -> ProjectAttachmentRecord {
@@ -354,6 +479,7 @@ fn session_record_changed(
 ) -> bool {
     previous.workspace_path != current.workspace_path
         || previous.repository_key != current.repository_key
+        || previous.attachment_key != current.attachment_key
         || previous.previous_repository_key != current.previous_repository_key
         || previous.display_name != current.display_name
         || previous.availability != current.availability
@@ -366,6 +492,30 @@ async fn validate_session_async(
     tokio::task::spawn_blocking(move || validate_session_path(session))
         .await
         .context("workspace validation task failed")
+}
+
+async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentRecord> {
+    let now = crate::now_ms();
+    let resolved = validate_session_async(ProjectAttachmentRecord {
+        workspace_path,
+        repository_key: String::new(),
+        attachment_key: String::new(),
+        display_name: String::new(),
+        availability: WorkspaceAvailability::Available,
+        last_validated_at: now,
+        last_used_at: now,
+        unavailable_reason: None,
+        previous_repository_key: None,
+    })
+    .await?;
+
+    if resolved.availability == WorkspaceAvailability::Unavailable {
+        if let Some(reason) = &resolved.unavailable_reason {
+            anyhow::bail!("{reason}");
+        }
+        anyhow::bail!("workspace path is unavailable");
+    }
+    Ok(resolved)
 }
 
 pub fn resolve_workspace_path(
@@ -387,6 +537,7 @@ pub fn resolve_workspace_path(
         workspace_path,
         display_name: identity.display_name,
         repository_key: identity.repository_key,
+        attachment_key: identity.attachment_key,
     })
 }
 
@@ -394,6 +545,33 @@ pub fn resolve_workspace_path(
 mod tests {
     use super::*;
     use std::fs;
+
+    fn init_repo_with_origin(path: &std::path::Path, origin: &str) {
+        fs::create_dir_all(path).expect("project dir");
+        gix::init(path).expect("gix init");
+        let config_path = path.join(".git/config");
+        let mut config = fs::read_to_string(&config_path).expect("read config");
+        config.push_str(&format!("\n[remote \"origin\"]\n\turl = {origin}\n"));
+        fs::write(config_path, config).expect("write config");
+    }
+
+    fn attachment_record(
+        workspace_path: impl Into<String>,
+        repository_key: &str,
+        last_used_at: u64,
+    ) -> ProjectAttachmentRecord {
+        ProjectAttachmentRecord {
+            workspace_path: workspace_path.into(),
+            repository_key: repository_key.into(),
+            attachment_key: format!("remote:{repository_key}"),
+            display_name: repository_key.into(),
+            availability: WorkspaceAvailability::Available,
+            last_validated_at: last_used_at,
+            last_used_at,
+            unavailable_reason: None,
+            previous_repository_key: None,
+        }
+    }
 
     #[tokio::test]
     async fn attach_and_list_project_attachment() {
@@ -500,40 +678,339 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_rewrites_legacy_project_id_rows() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "sprocket-project-attachments-legacy-{}",
-            crate::now_ms()
-        ));
-        fs::create_dir_all(&temp_root).expect("temp dir");
-        let workspace = temp_root.join("checkout");
-        fs::create_dir_all(&workspace).expect("workspace dir");
-        let store_path = temp_root.join(PROJECT_ATTACHMENTS_FILE);
-        fs::write(
-            store_path,
-            serde_json::json!([{
-                "projectId": "obsolete-convex-id",
-                "workspacePath": workspace.to_string_lossy(),
-                "availability": "available",
-                "lastValidatedAt": 1,
-                "lastUsedAt": 2
-            }])
-            .to_string(),
-        )
-        .expect("write legacy attachments");
+    async fn attach_keeps_the_first_directory_for_a_repository() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("main");
+        let second = temp_root.path().join("feature");
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
 
-        let listed = ProjectAttachmentStore::new(temp_root.clone())
+        let attached_first = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first worktree");
+        let error = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect_err("reject second worktree");
+
+        let listed = store.list().await.expect("list");
+        assert!(error.to_string().contains(&attached_first.workspace_path));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_first.workspace_path);
+        assert_eq!(listed[0].repository_key, attached_first.repository_key);
+    }
+
+    #[tokio::test]
+    async fn attach_keeps_unrelated_directories_with_the_same_name() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("clients/project");
+        let second = temp_root.path().join("archive/project");
+        fs::create_dir_all(&first).expect("first project");
+        fs::create_dir_all(&second).expect("second project");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+
+        let attached_first = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first project");
+        let attached_second = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach second project");
+
+        let listed = store.list().await.expect("list");
+        assert_eq!(
+            attached_first.repository_key,
+            attached_second.repository_key
+        );
+        assert_ne!(
+            attached_first.attachment_key,
+            attached_second.attachment_key
+        );
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn explicit_reconnect_replaces_the_directory_for_a_repository() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("main");
+        let second = temp_root.path().join("feature");
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+
+        let attached_first = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first worktree");
+        let attached_second = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().to_string(),
+                replace_workspace_path: Some(attached_first.workspace_path),
+            })
+            .await
+            .expect("reconnect to second worktree");
+
+        let listed = store.list().await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
+        assert_eq!(listed[0].repository_key, attached_second.repository_key);
+    }
+
+    #[tokio::test]
+    async fn reconnect_rejects_a_repository_attached_at_another_path() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("first");
+        let second = temp_root.path().join("second");
+        let duplicate_second = temp_root.path().join("duplicate-second");
+        init_repo_with_origin(&first, "https://github.com/spikonado/first.git");
+        init_repo_with_origin(&second, "https://github.com/spikonado/second.git");
+        init_repo_with_origin(&duplicate_second, "https://github.com/spikonado/second.git");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+
+        let attached_first = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first repository");
+        let attached_second = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach second repository");
+
+        let error = store
+            .attach(AttachProjectRequest {
+                workspace_path: duplicate_second.to_string_lossy().to_string(),
+                replace_workspace_path: Some(attached_first.workspace_path.clone()),
+            })
+            .await
+            .expect_err("reject already attached replacement repository");
+
+        let listed = store.list().await.expect("list");
+        assert!(error.to_string().contains(&attached_second.workspace_path));
+        assert_eq!(listed.len(), 2);
+        assert!(
+            listed
+                .iter()
+                .any(|attachment| attachment.workspace_path == attached_first.workspace_path)
+        );
+        assert!(
+            listed
+                .iter()
+                .any(|attachment| attachment.workspace_path == attached_second.workspace_path)
+        );
+    }
+
+    #[tokio::test]
+    async fn run_workspace_does_not_replace_the_first_attached_directory() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("main");
+        let second = temp_root.path().join("feature");
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+
+        let attached_first = store
+            .resolve_run_workspace(first.to_string_lossy().to_string())
+            .await
+            .expect("resolve first worktree");
+        let resolved_second = store
+            .resolve_run_workspace(second.to_string_lossy().to_string())
+            .await
+            .expect("resolve second worktree");
+
+        let listed = store.list().await.expect("list");
+        assert_eq!(resolved_second.workspace_path, second.to_string_lossy());
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_first.workspace_path);
+    }
+
+    #[tokio::test]
+    async fn list_migrates_duplicate_repository_attachments() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("main");
+        let second = temp_root.path().join("feature");
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![
+                attachment_record(first.to_string_lossy(), "github.com/spikonado/sprocket", 1),
+                attachment_record(second.to_string_lossy(), "github.com/spikonado/sprocket", 2),
+            ])
+            .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
             .list()
             .await
             .expect("list");
-        let expected =
-            resolve_workspace_path(&workspace.to_string_lossy(), false).expect("resolve");
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].workspace_path, expected.workspace_path);
-        assert_eq!(listed[0].repository_key, expected.repository_key);
-        assert_eq!(listed[0].display_name, expected.display_name);
+        assert_eq!(listed[0].workspace_path, first.to_string_lossy());
 
-        let _ = fs::remove_dir_all(temp_root);
+        let persisted: Vec<ProjectAttachmentRecord> = serde_json::from_str(
+            &fs::read_to_string(temp_root.path().join(PROJECT_ATTACHMENTS_FILE))
+                .expect("read attachments"),
+        )
+        .expect("parse attachments");
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].workspace_path, first.to_string_lossy());
+    }
+
+    #[tokio::test]
+    async fn list_migrates_an_unavailable_legacy_duplicate() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let missing = temp_root.path().join("removed");
+        let available = temp_root.path().join("current");
+        let repository_key = "github.com/spikonado/sprocket";
+        init_repo_with_origin(&available, "https://github.com/spikonado/sprocket.git");
+        let mut missing_record = attachment_record(missing.to_string_lossy(), repository_key, 1);
+        missing_record.attachment_key.clear();
+        missing_record.display_name = "sprocket".to_string();
+        let mut available_record =
+            attachment_record(available.to_string_lossy(), repository_key, 2);
+        available_record.attachment_key.clear();
+        available_record.display_name = "sprocket".to_string();
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![missing_record, available_record])
+                .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, available.to_string_lossy());
+        assert_eq!(listed[0].availability, WorkspaceAvailability::Available);
+    }
+
+    #[tokio::test]
+    async fn list_migrates_a_single_component_remote_legacy_duplicate() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let missing = temp_root.path().join("removed");
+        let available = temp_root.path().join("current");
+        init_repo_with_origin(&available, "sprocket.git");
+        let mut missing_record = attachment_record(missing.to_string_lossy(), "sprocket", 1);
+        missing_record.attachment_key.clear();
+        missing_record.display_name = "sprocket".to_string();
+        let mut available_record = attachment_record(available.to_string_lossy(), "sprocket", 2);
+        available_record.attachment_key.clear();
+        available_record.display_name = "sprocket".to_string();
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![missing_record, available_record])
+                .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, available.to_string_lossy());
+        assert_eq!(listed[0].attachment_key, "remote:sprocket");
+    }
+
+    #[tokio::test]
+    async fn list_keeps_legacy_local_directories_that_match_a_remote_key() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("clients/project");
+        let second = temp_root.path().join("archive/project");
+        let remote = temp_root.path().join("current");
+        init_repo_with_origin(&remote, "project.git");
+        let mut first_record = attachment_record(first.to_string_lossy(), "project", 1);
+        first_record.attachment_key.clear();
+        first_record.display_name = "project".to_string();
+        let mut second_record = attachment_record(second.to_string_lossy(), "project", 2);
+        second_record.attachment_key.clear();
+        second_record.display_name = "project".to_string();
+        let mut remote_record = attachment_record(remote.to_string_lossy(), "project", 3);
+        remote_record.attachment_key.clear();
+        remote_record.display_name = "project".to_string();
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![first_record, second_record, remote_record])
+                .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 3);
+        assert_eq!(
+            listed
+                .iter()
+                .filter(|attachment| {
+                    attachment.availability == WorkspaceAvailability::Unavailable
+                        && attachment.attachment_key
+                            == format!("directory:{}", attachment.workspace_path)
+                })
+                .count(),
+            2
+        );
+        assert!(listed.iter().any(|attachment| {
+            attachment.availability == WorkspaceAvailability::Available
+                && attachment.attachment_key == "remote:project"
+        }));
+    }
+
+    #[test]
+    fn duplicate_winner_does_not_depend_on_hash_map_order() {
+        let earlier = attachment_record("/worktrees/earlier", "repository", 1);
+        let lexical_tie = attachment_record("/worktrees/a-first", "repository", 1);
+        let later = attachment_record("/worktrees/later", "repository", 1);
+
+        for records in [
+            [&earlier, &lexical_tie, &later],
+            [&later, &earlier, &lexical_tie],
+        ] {
+            let mut attachments = records
+                .into_iter()
+                .map(|record| (record.workspace_path.clone(), record.clone()))
+                .collect();
+
+            assert!(deduplicate_repository_attachments(&mut attachments, None));
+            assert_eq!(
+                attachments.keys().collect::<Vec<_>>(),
+                vec![&lexical_tie.workspace_path]
+            );
+        }
     }
 
     #[tokio::test]

@@ -54,9 +54,15 @@ The system has three main planes:
 
 WorkOS establishes cloud user identity. Installed clients share one Rust-owned
 WorkOS session across the renderer, agent runs, and machine registration.
-Hosted web clients use AuthKit JS. A separate local
-pairing mechanism authorizes the browser or Electron renderer to access the
-machine-facing API.
+Hosted web clients use AuthKit JS. The machine-served web app accepts loopback
+HTTP and same-origin HTTPS, including TLS terminated by a reverse proxy such as
+Tailscale Serve. HTTPS proxy connections must reach the server through its
+loopback listener. The Rust-owned WorkOS session must bind a persistent browser
+session to a user before it can access machine-facing APIs. Remote HTTPS clients
+use a separate WorkOS device flow and must authenticate as the current host
+owner. CLI sessions remain ephemeral and use signed process-pairing proofs.
+Electron uses its own bootstrap token and the internal pairing credential to
+authenticate the server process.
 
 ## Component boundaries
 
@@ -70,7 +76,7 @@ machine-facing API.
 | Workspace crate   | Paths, commands, patches, workspace instructions                                                                     | Authentication or networking                                                          |
 | Convex RPC client | Generic Convex query/mutation/action/subscribe                                                                       | Completion translation                                                                |
 | AI gateway        | Provider routing, OpenAI API, catalog, usage rates                                                                   | Subscription limits or remaining quota                                                |
-| Convex backend    | User data, run coordination, transcript, remaining quota                                                             | Local paths, process execution, rates                                                 |
+| Convex backend    | User data, run coordination, transcript, artifact registry, remaining quota                                          | Local filesystem access, process execution, rates                                     |
 
 The Rust dependency direction follows these boundaries:
 
@@ -116,11 +122,14 @@ Sprocket deliberately separates cloud and machine-local state.
 | Local folder list (`workspacePath` + `repositoryKey`)                        | Local server         |
 | Installation identity and this process’s machine credential                  | Local server         |
 | Machine presence                                                             | Convex               |
-| Pairing credential and local browser sessions                                | Local server         |
+| Internal process credential and browser sessions                             | Local server         |
 | Native WorkOS access token and user                                          | Local process memory |
 | Native WorkOS refresh token                                                  | OS credential store  |
 | Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
 | Source files and build artifacts                                             | User workspace       |
+| Artifact identity, scope, and synced content                                 | Convex               |
+| Artifact/file bindings and synchronization baselines                         | Sprocket data dir    |
+| Artifact file reads, change detection, and preview feed                      | Local server         |
 | Model and authentication provider secrets                                    | Cloud deployment     |
 
 The local server owns this machine’s folder list and the account-isolated
@@ -133,6 +142,50 @@ are added.
 Rename, archive, restore, rekey, and cancellation go through the local server
 so it can refresh the affected cache files before the UI reads them again.
 Thread creation and selected-thread lifecycle still talk to Convex directly.
+
+### Artifacts and local bindings
+
+The agent writes a file with its normal tools, then publishes it through
+`add_artifact`. `edit_artifact` binds another existing file and explicitly replaces
+the artifact's content. `list_artifacts` returns metadata for the current thread
+and project. `save_artifact({artifactId, path})` saves cloud content and binds the
+destination for future edits. It accepts an existing file only when its content
+is identical; differing content is never overwritten.
+
+The `artifacts` table stores content, scope, and an opaque registration ID, not local paths.
+Project identity is the same `repositoryKey` used by threads, not an ID from the
+retired cloud project catalog. Thread artifacts also store `threadId`.
+
+Bindings live under `artifact-bindings` in Sprocket's data directory, isolated by
+deployment, account, and workspace. Each binding records the artifact ID, path,
+and last synchronized content hash. File locking serializes saves, retargets,
+and sync acknowledgements; atomic replacement persists binding changes. A
+registration ID is reserved locally before publication so a lost response can
+be retried without creating duplicate artifacts.
+
+Rust polls a lightweight repository revision and loads artifacts in byte-bounded
+pages. The browser subscribes to that revision directly and can load cloud
+artifacts without a local server or workspace. Readers retry if the revision changes between pages; tool
+list results contain metadata only. Repository renames move registrations in
+bounded batches and follow subsequent renames while those batches drain.
+
+Rust reads only bound files in the selected scope. A watch lives while a UI connection
+or active agent run needs it. A headless run makes a final, bounded sync attempt
+before releasing its watch. Local previews arrive over `/api/artifacts/watch`
+before cloud synchronization finishes; unbound artifacts render from Convex.
+An unchanged local copy never overwrites newer cloud content. If both sides
+changed from the persisted baseline, the preview reports a conflict and pauses
+sync. Revision CAS and a locked binding check protect in-flight writes from
+concurrent cloud edits and local retargets.
+
+Relative paths resolve against the attached workspace. Absolute paths remain
+absolute. Files must contain UTF-8 text and fit within 500,000 bytes. Missing or
+unreadable files report an error while retaining their last readable content.
+The server does not recreate missing files from the cloud copy.
+
+The artifact cutover discards the previous versioned data. The operator clears
+`artifacts` and `artifactVersions` before deploying the new schema with the normal
+Convex deployment workflow. There is no archive or automated data migration.
 
 ## Agent run flow
 
@@ -205,9 +258,11 @@ Cloud and local authorization solve different problems:
 
 - **Browser cloud identity:** AuthKit JS owns the hosted web session. Installed
   renderers obtain short-lived access tokens from the Rust-owned session through
-  the paired, same-origin, loopback-only native token endpoint. Convex validates them
-  as JWTs (`apps/web/src/convex/auth.config.ts`) and checks ownership before
-  reading or changing user records.
+  the same-origin native token endpoint. Remote browser sessions must first
+  prove the same WorkOS identity through an isolated device authorization. That
+  flow does not replace the host session or persist its returned tokens. Convex
+  validates the host token as a JWT (`apps/web/src/convex/auth.config.ts`) and
+  checks ownership before reading or changing user records.
 - **Native cloud identity:** Rust owns the installed client's WorkOS authorization-code
   session. It generates PKCE and state, exchanges the
   code on the loopback callback, keeps the access token in memory, and stores
@@ -215,8 +270,12 @@ Cloud and local authorization solve different problems:
   public WorkOS client ID from the unauthenticated Convex query
   `authBootstrap:getClientConfig` when it first needs WorkOS. Convex being
   unavailable therefore does not prevent the local server from starting.
-- **Local authorization:** a machine-local pairing credential bootstraps a
-  local session used for filesystem, cache, and agent endpoints.
+- **Local authorization:** the browser bootstraps an unbound persistent session
+  over loopback HTTP or same-origin HTTPS. Native login endpoints accept that
+  session so WorkOS can bind it to a user. Plain remote HTTP is rejected.
+  Filesystem, cache, agent, and other machine-facing endpoints reject the
+  session until binding succeeds. The machine-local pairing credential remains
+  internal to CLI and Electron server authentication.
 - **Agent delegation:** the local server mints a random run-scoped execution
   secret when it starts a run. Convex stores only the hash. Executor
   queries and mutations authorize with that secret (`getExecutionRun`), not
@@ -291,7 +350,7 @@ in the Rust agent and Convex backend together.
 | `packages/`                  | Shared JavaScript configuration       |
 
 The AI gateway (`spikonado/ai-gateway`) is a separate private repository. Its
-public origin is `https://ai-gateway.spikonado.com`, with OpenAI-compatible
+public origin is `https://ai-gateway.spikonado.com`, with Responses API and catalog
 routes under `/api/`.
 
 ## Build and deployment

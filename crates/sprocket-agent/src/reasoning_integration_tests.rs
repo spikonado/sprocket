@@ -1,4 +1,4 @@
-//! Native Rig streaming, durable transcript reload, and Responses serialization.
+//! Native Rig streaming, durable transcript reload, and Responses API serialization.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -56,6 +56,19 @@ fn gateway_response(status: &str, output: Vec<JsonValue>) -> JsonValue {
             "total_tokens": 2
         }
     })
+}
+
+fn responses_api_params(fast_mode: bool) -> JsonValue {
+    openai::responses_api::AdditionalParameters {
+        reasoning: Some(
+            openai::responses_api::Reasoning::new()
+                .with_effort(openai::responses_api::ReasoningEffort::Medium),
+        ),
+        service_tier: fast_mode
+            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
+        ..Default::default()
+    }
+    .to_json()
 }
 
 /// Gateway wire order: empty encrypted reasoning item, summary delta, then
@@ -310,6 +323,7 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
             Message::user("earlier request"),
             Message::assistant("earlier response"),
         ])
+        .additional_params(responses_api_params(false))
         .build();
     let wire =
         openai::responses_api::CompletionRequest::try_from(("gateway-model".to_string(), request))
@@ -317,6 +331,10 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
     let wire = serde_json::to_value(wire).expect("serialize responses request");
 
     assert_eq!(wire["instructions"], BASE_INSTRUCTIONS);
+    assert!(wire.get("service_tier").is_none());
+    assert!(wire.get("store").is_none());
+    assert_eq!(wire["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(responses_api_params(true)["service_tier"], "fast");
     assert!(
         !wire["instructions"]
             .as_str()
@@ -533,7 +551,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         model
             .completion_request(Message::user("next"))
             .messages(std::iter::once(Message::user("hello")).chain(history))
-            .additional_params(json!({ "reasoning": { "effort": "medium" } }))
+            .additional_params(responses_api_params(false))
             .build(),
     ))
     .expect("native responses replay request");
@@ -546,6 +564,9 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         .expect("replay should carry the native reasoning item");
     assert_eq!(reasoning_input["id"], ITEM_ID);
     assert_eq!(reasoning_input["encrypted_content"], ENVELOPE);
+    assert!(replay.get("service_tier").is_none());
+    assert!(replay.get("store").is_none());
+    assert_eq!(replay["include"], json!(["reasoning.encrypted_content"]));
     assert_eq!(
         reasoning_input["summary"],
         json!([{ "type": "summary_text", "text": DONE_SUMMARY }])
@@ -572,6 +593,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
             value.get("stream") == Some(&json!(true))
                 && value.get("model") == Some(&json!("gateway-model"))
         }),
-        "mocked Responses POST should be a stream request, got {requests:?}"
+        "mocked Responses API POST should be a stream request, got {requests:?}"
     );
 }

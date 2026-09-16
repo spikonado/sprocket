@@ -2,30 +2,48 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
-    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, RequestPatch, StepEventKind, ToolCallAction,
+    AgentHook, HookContext, InvalidToolCallAction, InvalidToolCallContext, StepEventKind,
+    ToolCallAction,
 };
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
+    "add_artifact",
     "apply_patch",
     "ask_question",
     "await_question",
-    "browser_act",
-    "browser_extract",
-    "browser_observe",
-    "create_artifact",
+    "browser_interact",
+    "browser_screenshot",
+    "edit_artifact",
     "exec_command",
+    "list_artifacts",
     "mandate_charge",
     "mandate_list",
     "mandate_report",
     "mandate_setup",
     "mandate_status",
+    "parse_file",
     "read_skill",
+    "save_artifact",
     "scrape_url",
-    "update_artifact",
+    "screenshot_url",
     "web_search",
     "write_stdin",
 ];
+
+pub(crate) fn available_agent_tool_names(
+    allow_interaction: bool,
+    supports_images: bool,
+) -> Vec<&'static str> {
+    AGENT_TOOL_NAMES
+        .iter()
+        .copied()
+        .filter(|name| {
+            (allow_interaction
+                || !matches!(*name, "ask_question" | "await_question" | "mandate_setup"))
+                && (supports_images || *name != "screenshot_url")
+        })
+        .collect()
+}
 
 #[derive(Clone, Debug)]
 struct TrackedToolCall {
@@ -223,49 +241,6 @@ fn levenshtein(left: &str, right: &str) -> usize {
     previous[right_chars.len()]
 }
 
-#[derive(Clone)]
-pub(crate) struct GatewayRequestHook {
-    reasoning_effort: String,
-    service_tier: String,
-}
-
-impl GatewayRequestHook {
-    pub(crate) fn new(reasoning_effort: String, service_tier: String) -> Self {
-        Self {
-            reasoning_effort,
-            service_tier,
-        }
-    }
-}
-
-/// Rig 0.42 OpenAI Responses keeps typed additional_params:
-/// `reasoning` and `service_tier`.
-pub(crate) fn gateway_additional_params(
-    reasoning_effort: &str,
-    service_tier: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "reasoning": { "effort": reasoning_effort },
-        "service_tier": if service_tier == "fast" { "priority" } else { "standard" }
-    })
-}
-
-impl AgentHook for GatewayRequestHook {
-    async fn on_completion_call(
-        &self,
-        _context: &HookContext,
-        _event: CompletionCallEvent<'_>,
-    ) -> CompletionCallAction {
-        CompletionCallAction::patch(RequestPatch::new().additional_params(
-            gateway_additional_params(&self.reasoning_effort, &self.service_tier),
-        ))
-    }
-
-    fn observes(&self, kind: StepEventKind) -> bool {
-        matches!(kind, StepEventKind::CompletionCall)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +264,19 @@ mod tests {
         assert_repaired("exec-command", "exec_command");
         assert_repaired("apply-patch", "apply_patch");
         assert_repaired("writestdin", "write_stdin");
+        assert_repaired("parse-file", "parse_file");
+    }
+
+    #[test]
+    fn available_tools_match_run_capabilities() {
+        let cli = available_agent_tool_names(false, false);
+        assert!(!cli.contains(&"ask_question"));
+        assert!(!cli.contains(&"await_question"));
+        assert!(!cli.contains(&"mandate_setup"));
+        assert!(!cli.contains(&"screenshot_url"));
+        assert!(cli.contains(&"exec_command"));
+
+        assert_eq!(available_agent_tool_names(true, true), AGENT_TOOL_NAMES);
     }
 
     #[test]
@@ -336,21 +324,6 @@ mod tests {
         assert_eq!(
             tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
             Some("call-2".to_string())
-        );
-    }
-
-    #[test]
-    fn gateway_additional_params_use_typed_openai_fields() {
-        assert_eq!(
-            gateway_additional_params("high", "fast"),
-            serde_json::json!({
-                "reasoning": { "effort": "high" },
-                "service_tier": "priority"
-            })
-        );
-        assert_eq!(
-            gateway_additional_params("medium", "standard")["service_tier"],
-            "standard"
         );
     }
 

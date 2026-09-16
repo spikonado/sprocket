@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 
-use crate::types::{ContextBudget, gateway_api_v1_url};
+use crate::types::{CatalogModelCapabilities, ContextBudget, gateway_api_v1_url};
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
 const CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
@@ -47,14 +47,44 @@ struct GatewaySprocketCatalog {
 #[serde(rename_all = "camelCase")]
 struct GatewayCatalogModel {
     id: String,
+    label: String,
+    supports_images: bool,
     context_window_tokens: u64,
-    auto_compact_token_limit: u64,
+    #[serde(rename = "autoCompactTokenLimit")]
+    auto_handoff_token_limit: u64,
 }
 
-pub async fn context_budget_for_model(
+fn select_catalog_model(
+    payload: GatewayModelsResponse,
+    model_id: &str,
+) -> anyhow::Result<CatalogModelCapabilities> {
+    if payload.sprocket.protocol_version != GATEWAY_PROTOCOL_VERSION {
+        anyhow::bail!(
+            "unsupported AI gateway protocol version {}",
+            payload.sprocket.protocol_version
+        );
+    }
+    let model = payload
+        .sprocket
+        .models
+        .iter()
+        .find(|model| model.id == model_id)
+        .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
+    Ok(CatalogModelCapabilities {
+        label: model.label.clone(),
+        context_budget: ContextBudget {
+            context_window_tokens: model.context_window_tokens,
+            auto_handoff_token_limit: model.auto_handoff_token_limit,
+        },
+        supports_images: model.supports_images,
+    })
+}
+
+/// Fetch context budget and `supportsImages` for `model_id` from one catalog GET.
+pub async fn catalog_capabilities_for_model(
     gateway_url: &str,
     model_id: &str,
-) -> anyhow::Result<ContextBudget> {
+) -> anyhow::Result<CatalogModelCapabilities> {
     let url = format!("{}/models", gateway_api_v1_url(gateway_url));
     let response = catalog_client(gateway_url)?
         .get(url)
@@ -69,20 +99,57 @@ pub async fn context_budget_for_model(
         .json()
         .await
         .context("AI gateway catalog was not valid JSON")?;
-    if payload.sprocket.protocol_version != GATEWAY_PROTOCOL_VERSION {
-        anyhow::bail!(
-            "unsupported AI gateway protocol version {}",
-            payload.sprocket.protocol_version
-        );
+    select_catalog_model(payload, model_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog_payload() -> GatewayModelsResponse {
+        serde_json::from_value(serde_json::json!({
+            "sprocket": {
+                "protocolVersion": 1,
+                "models": [
+                    {
+                        "id": "vision-model",
+                        "label": "Vision Model",
+                        "supportsImages": true,
+                        "contextWindowTokens": 100000,
+                        "autoCompactTokenLimit": 80000
+                    },
+                    {
+                        "id": "long-context-model",
+                        "label": "Long Context Model",
+                        "supportsImages": false,
+                        "contextWindowTokens": 1000000,
+                        "autoCompactTokenLimit": 900000
+                    }
+                ]
+            }
+        }))
+        .expect("catalog payload")
     }
-    let model = payload
-        .sprocket
-        .models
-        .iter()
-        .find(|model| model.id == model_id)
-        .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
-    Ok(ContextBudget {
-        context_window_tokens: model.context_window_tokens,
-        auto_compact_token_limit: model.auto_compact_token_limit,
-    })
+
+    #[test]
+    fn reports_selected_model_metadata_from_one_payload() {
+        let vision = select_catalog_model(catalog_payload(), "vision-model").expect("vision model");
+        assert!(vision.supports_images);
+        assert_eq!(vision.label, "Vision Model");
+        assert_eq!(vision.context_budget.context_window_tokens, 100_000);
+        assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
+
+        let long_context = select_catalog_model(catalog_payload(), "long-context-model")
+            .expect("long-context model");
+        assert!(!long_context.supports_images);
+        assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
+    }
+
+    #[test]
+    fn missing_catalog_model_is_an_error() {
+        let error = select_catalog_model(catalog_payload(), "no-such-model")
+            .expect_err("unknown model")
+            .to_string();
+        assert!(error.contains("no-such-model"));
+    }
 }

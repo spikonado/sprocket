@@ -6,12 +6,9 @@ import type {
 	AssistantTextPart,
 	AssistantToolCallPart,
 	AssistantToolResultErrorOutput,
-	AssistantToolResultErrorStatus,
 	AssistantToolResultPart,
 	ExecutorJobPayload,
-	ExecutorJobResult,
-	vExecutorJobKind,
-	vExecutorJobStatus
+	vExecutorJobKind
 } from '@convex/lib/validators';
 
 export type {
@@ -21,7 +18,7 @@ export type {
 	AssistantToolResultPart
 };
 
-export type { AssistantToolResultErrorOutput, AssistantToolResultErrorStatus };
+export type { AssistantToolResultErrorOutput };
 
 export function parseAssistantToolResultError(
 	output: JsonValue | undefined
@@ -35,65 +32,14 @@ export function parseAssistantToolResultError(
 	return { error: output.error, status: output.status };
 }
 
-function assistantToolResultErrorOutput(
-	status: AssistantToolResultErrorStatus,
-	error: string
-): AssistantToolResultErrorOutput {
-	return { error, status };
-}
-
 export type AssistantPart = AssistantMessagePart;
 
-export type PersistableExecutorToolJob = {
+export type MatchableExecutorToolJob = {
 	id: string;
 	kind: Infer<typeof vExecutorJobKind>;
 	callId?: string;
 	payload: ExecutorJobPayload;
-	status: Infer<typeof vExecutorJobStatus>;
-	result?: ExecutorJobResult;
-	error?: string;
 };
-
-export type MatchableExecutorToolJob = Pick<
-	PersistableExecutorToolJob,
-	'id' | 'kind' | 'callId' | 'payload'
->;
-
-type PersistableExecutorJobSource = {
-	_id: string;
-	hidden?: boolean;
-	sequence: number;
-	kind: Infer<typeof vExecutorJobKind>;
-	callId?: string;
-	payload: ExecutorJobPayload;
-	status: Infer<typeof vExecutorJobStatus>;
-	result?: ExecutorJobResult;
-	error?: string;
-};
-
-export function toPersistableExecutorToolJobs(
-	jobs: readonly PersistableExecutorJobSource[]
-): PersistableExecutorToolJob[] {
-	return jobs
-		.filter((job) => !job.hidden)
-		.sort((left, right) => left.sequence - right.sequence)
-		.map((job) => {
-			const persistable: PersistableExecutorToolJob = {
-				id: job._id,
-				kind: job.kind,
-				payload: job.payload,
-				status: job.status,
-				result: job.result,
-				error: job.error
-			};
-			if (job.callId) persistable.callId = job.callId;
-			return persistable;
-		});
-}
-
-function cloneAssistantToolPayload<T>(value: T): T {
-	return value === undefined ? value : structuredClone(value);
-}
 
 export function joinAssistantTextParts(parts: AssistantPart[]): string {
 	let text = '';
@@ -192,176 +138,4 @@ function assistantToolPayloadsEqual(left: JsonValue, right: JsonValue): boolean 
 			(key) => Object.hasOwn(right, key) && assistantToolPayloadsEqual(left[key], right[key])
 		)
 	);
-}
-
-export function ensureAssistantToolPartsFromJobs(
-	parts: AssistantPart[],
-	jobs: PersistableExecutorToolJob[]
-): AssistantPart[] {
-	const nextParts = parts.map((part) => cloneAssistantToolPayload(part));
-	const resultCallIds = new Set(
-		nextParts
-			.filter((part): part is AssistantToolResultPart => part.type === 'tool-result')
-			.map((part) => part.callId)
-	);
-
-	if (jobs.length === 0) {
-		return removeAbandonedAssistantTurns(nextParts, resultCallIds);
-	}
-
-	const unmatchedCalls = nextParts.filter(
-		(part): part is AssistantToolCallPart => part.type === 'tool-call'
-	);
-	const matchedCallIds = matchAssistantToolCallsToJobs(unmatchedCalls, jobs);
-	const matchedCallIdSet = new Set(matchedCallIds.values());
-	const ambiguousAnchors = unmatchedCalls.filter((call) => !matchedCallIdSet.has(call.callId));
-	const usedAnchorCallIds = new Set<string>();
-	const replacedAnchorCallIds = new Set<string>();
-	const usedCallIds = new Set<string>();
-
-	for (const job of jobs) {
-		const matchedCallId = matchedCallIds.get(job.id);
-		let streamedCall = matchedCallId
-			? unmatchedCalls.find((part) => part.callId === matchedCallId)
-			: undefined;
-		const callId = job.callId ?? streamedCall?.callId ?? `executor-job:${job.id}`;
-		if (!streamedCall && !job.callId) {
-			const anchor = ambiguousAnchors.find(
-				(call) => call.name === job.kind && !usedAnchorCallIds.has(call.callId)
-			);
-			if (anchor) {
-				usedAnchorCallIds.add(anchor.callId);
-				replacedAnchorCallIds.add(anchor.callId);
-				const anchorIndex = nextParts.indexOf(anchor);
-				const replacement: AssistantToolCallPart = {
-					type: 'tool-call',
-					callId,
-					name: job.kind,
-					input: cloneAssistantToolPayload(job.payload)
-				};
-				if (anchor.turnId) replacement.turnId = anchor.turnId;
-				nextParts[anchorIndex] = replacement;
-				streamedCall = replacement;
-			}
-		}
-		usedCallIds.add(callId);
-		let insertAt: number;
-		if (streamedCall) {
-			streamedCall.name = job.kind;
-			streamedCall.input = cloneAssistantToolPayload(job.payload);
-			insertAt = nextParts.indexOf(streamedCall) + 1;
-		} else {
-			nextParts.push({
-				type: 'tool-call',
-				callId,
-				name: job.kind,
-				input: cloneAssistantToolPayload(job.payload)
-			});
-			insertAt = nextParts.length;
-		}
-
-		if (resultCallIds.has(callId)) {
-			continue;
-		}
-
-		if (job.status === 'completed' && job.result !== undefined) {
-			nextParts.splice(insertAt, 0, {
-				type: 'tool-result',
-				callId,
-				name: job.kind,
-				output: cloneAssistantToolPayload(job.result)
-			});
-			resultCallIds.add(callId);
-			continue;
-		}
-
-		if (job.status === 'failed') {
-			nextParts.splice(insertAt, 0, {
-				type: 'tool-result',
-				callId,
-				name: job.kind,
-				output: assistantToolResultErrorOutput('failed', job.error ?? 'Executor job failed.')
-			});
-			resultCallIds.add(callId);
-			continue;
-		}
-
-		if (job.status === 'cancelled') {
-			nextParts.splice(insertAt, 0, {
-				type: 'tool-result',
-				callId,
-				name: job.kind,
-				output: assistantToolResultErrorOutput(
-					'cancelled',
-					job.error ?? 'Executor job cancelled before completion.'
-				)
-			});
-			resultCallIds.add(callId);
-		}
-	}
-
-	const reconciledParts = nextParts.filter(
-		(part) => part.type !== 'tool-result' || !replacedAnchorCallIds.has(part.callId)
-	);
-	return removeAbandonedAssistantTurns(
-		reconciledParts,
-		new Set([...usedCallIds, ...resultCallIds])
-	);
-}
-
-function removeAbandonedAssistantTurns(
-	parts: AssistantPart[],
-	retainedCallIds: ReadonlySet<string>
-): AssistantPart[] {
-	const abandonedCalls = parts.filter(
-		(part): part is AssistantToolCallPart =>
-			part.type === 'tool-call' && !retainedCallIds.has(part.callId)
-	);
-	const callsByTurnId = new Map<string, AssistantToolCallPart[]>();
-	for (const part of parts) {
-		if (part.type !== 'tool-call' || part.turnId === undefined) continue;
-		const turnCalls = callsByTurnId.get(part.turnId) ?? [];
-		turnCalls.push(part);
-		callsByTurnId.set(part.turnId, turnCalls);
-	}
-	const abandonedTurnIds = new Set(
-		[...callsByTurnId]
-			.filter(([, calls]) => calls.every((call) => !retainedCallIds.has(call.callId)))
-			.map(([turnId]) => turnId)
-	);
-	const removedCallIds = new Set(abandonedCalls.map((part) => part.callId));
-
-	const retainedParts = parts.filter((part) => {
-		if (part.type === 'tool-result') {
-			return !removedCallIds.has(part.callId);
-		}
-		if (part.turnId !== undefined && abandonedTurnIds.has(part.turnId)) {
-			return false;
-		}
-		return part.type !== 'tool-call' || !removedCallIds.has(part.callId);
-	});
-
-	// Providers reject replaying a tool call without its result; pair dangling
-	// calls with an interrupted result instead of dropping the work.
-	const answeredCallIds = new Set(
-		retainedParts
-			.filter((part): part is AssistantToolResultPart => part.type === 'tool-result')
-			.map((part) => part.callId)
-	);
-	const pairedParts: AssistantPart[] = [];
-	for (const part of retainedParts) {
-		pairedParts.push(part);
-		if (part.type === 'tool-call' && !answeredCallIds.has(part.callId)) {
-			pairedParts.push({
-				type: 'tool-result',
-				callId: part.callId,
-				name: part.name,
-				output: assistantToolResultErrorOutput(
-					'cancelled',
-					'The agent stopped before this tool call finished.'
-				)
-			});
-		}
-	}
-	return pairedParts;
 }

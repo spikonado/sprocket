@@ -9,19 +9,13 @@ import { z } from 'zod';
 
 export type { CatalogModel, ModelCatalog };
 export type CatalogModelId = CatalogModel['id'];
+export type FastModeAccess = 'unsupported' | 'locked' | 'available';
 export { CATALOG_UNAVAILABLE_MESSAGE };
 
 export type ModelSelectorOption = {
 	id: CatalogModelId;
 	label: string;
 	provider: string;
-	locked?: boolean;
-	lockTooltip?: string;
-};
-
-export type ServiceTierSelectorOption = {
-	id: string;
-	label: string;
 	locked?: boolean;
 	lockTooltip?: string;
 };
@@ -50,41 +44,13 @@ export function resolveModelForTier(
 	return catalog.tierAllowedModels[tier]?.[0] ?? catalog.defaultModelId;
 }
 
-export function isServiceTierAllowedForTier(
-	catalog: ModelCatalog,
-	tier: SubscriptionTier,
-	serviceTier: string
-): boolean {
-	return (catalog.tierAllowedServiceTiers[tier] ?? []).includes(serviceTier);
-}
-
-export function serviceTiersForModelAndTier(
+export function fastModeAccessForModelAndTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
 	model: CatalogModel
-): readonly string[] {
-	return model.serviceTiers.filter((serviceTier) =>
-		isServiceTierAllowedForTier(catalog, tier, serviceTier)
-	);
-}
-
-export function serviceTierOptionsForModelAndTier(
-	catalog: ModelCatalog,
-	tier: SubscriptionTier,
-	model: CatalogModel
-): ServiceTierSelectorOption[] {
-	return model.serviceTiers.map((serviceTier) => {
-		const option: ServiceTierSelectorOption = {
-			id: serviceTier,
-			label: serviceTierLabel(serviceTier)
-		};
-		if (isServiceTierAllowedForTier(catalog, tier, serviceTier)) return option;
-		return {
-			...option,
-			locked: true,
-			lockTooltip: catalog.serviceTierLockUpgradeMessage
-		};
-	});
+): FastModeAccess {
+	if (!model.supportsFastMode) return 'unsupported';
+	return catalog.tierAllowsFastMode[tier] ? 'available' : 'locked';
 }
 
 export function modelOptionsForTier(
@@ -128,17 +94,6 @@ export function reasoningEffortLabel(effort: string): string {
 	}
 }
 
-export function serviceTierLabel(tier: string): string {
-	switch (tier) {
-		case 'standard':
-			return 'Standard';
-		case 'fast':
-			return 'Fast';
-		default:
-			return tier;
-	}
-}
-
 const gatewayModelSchema = z.looseObject({
 	id: z.string().min(1),
 	label: z.string().min(1),
@@ -163,11 +118,13 @@ const gatewayModelsResponseSchema = z.object({
 		tierAllowedModels: z.object({
 			free: z.array(z.string()),
 			pro: z.array(z.string()),
+			max: z.array(z.string()),
 			admin: z.array(z.string())
 		}),
 		tierAllowedServiceTiers: z.object({
 			free: z.array(z.string()),
 			pro: z.array(z.string()),
+			max: z.array(z.string()),
 			admin: z.array(z.string())
 		}),
 		modelLockUpgradeMessage: z.string().min(1),
@@ -189,23 +146,27 @@ function catalogFromGatewayPayload(
 		catalogVersion: sprocket.catalogVersion,
 		defaultModelId: sprocket.defaultModelId,
 		defaultReasoningEffort: sprocket.defaultReasoningEffort,
-		defaultServiceTier: sprocket.defaultServiceTier,
 		models: sprocket.models.map((model) => ({
 			id: model.id,
 			label: model.label,
 			provider: model.provider,
 			supportsImages: model.supportsImages,
 			contextWindowTokens: model.contextWindowTokens,
-			autoCompactTokenLimit: model.autoCompactTokenLimit,
+			autoHandoffTokenLimit: model.autoCompactTokenLimit,
 			reasoningEfforts: model.reasoningEfforts,
 			defaultReasoningEffort: model.defaultReasoningEffort,
-			serviceTiers: model.serviceTiers,
+			supportsFastMode: model.serviceTiers.includes('fast'),
 			usagePolicy: model.usagePolicy
 		})),
 		tierAllowedModels: sprocket.tierAllowedModels,
-		tierAllowedServiceTiers: sprocket.tierAllowedServiceTiers,
+		tierAllowsFastMode: {
+			free: sprocket.tierAllowedServiceTiers.free.includes('fast'),
+			pro: sprocket.tierAllowedServiceTiers.pro.includes('fast'),
+			max: sprocket.tierAllowedServiceTiers.max.includes('fast'),
+			admin: sprocket.tierAllowedServiceTiers.admin.includes('fast')
+		},
 		modelLockUpgradeMessage: sprocket.modelLockUpgradeMessage,
-		serviceTierLockUpgradeMessage: sprocket.serviceTierLockUpgradeMessage
+		fastModeLockUpgradeMessage: sprocket.serviceTierLockUpgradeMessage
 	};
 }
 

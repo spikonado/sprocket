@@ -1,19 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import {
-	isRunBlockingAgentLaunch,
+	buildDesktopProjectAttachmentsByPath,
 	launchAgentRun,
-	lifecycleResumeKind,
-	resolveDraftRunSubmissionId,
 	resolveSubmissionId,
-	runResumeKind
+	upsertDesktopProjectAttachment
 } from '$lib/home/desktop';
-import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
-import type { DesktopApi, RunState } from '$lib/types/sprocket';
+import type { DesktopApi, ProjectAttachment } from '$lib/types/sprocket';
 
-function imageUploadId(value: string): Id<'imageUploads'> {
+function storageId(value: string): Id<'_storage'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'imageUploads'>;
+	return value as Id<'_storage'>;
 }
 
 function threadRecordId(value: string): Id<'threadRecords'> {
@@ -32,11 +29,12 @@ function unusedDesktopCall(): Promise<never> {
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
-	imageUploadIds: [imageUploadId('image-1')],
+	storageIds: [storageId('storage-1')],
 	reasoningEffort: 'medium' as const,
-	serviceTier: 'standard' as const,
+	fastMode: false,
 	selectedModel: 'gpt-5.6-sol' as const,
-	submissionId: 'recovered-id'
+	submissionId: 'recovered-id',
+	continuationOfRunId: runId('parent-run')
 };
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
@@ -47,21 +45,42 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		listProjectAttachments: unusedDesktopCall,
 		attachProject: unusedDesktopCall,
 		runAgent,
-		fetchTranscriptPage: unusedDesktopCall,
-		fetchTranscriptDetails: unusedDesktopCall,
+		fetchTranscriptDisplay: unusedDesktopCall,
+		fetchTranscriptDisplayDetails: unusedDesktopCall,
 		watchTranscript: unusedDesktopCall,
 		watchLiveCompletion: unusedDesktopCall,
 		clearTranscriptReplica: unusedDesktopCall,
 		fetchTranscriptAttachment: unusedDesktopCall,
+		uploadTranscriptAttachment: unusedDesktopCall,
+		discardTranscriptAttachment: unusedDesktopCall,
 		registerThreadCache: unusedDesktopCall,
 		fetchThreadSnapshot: unusedDesktopCall,
 		watchThreadCache: unusedDesktopCall,
+		watchArtifacts: unusedDesktopCall,
 		renameThread: unusedDesktopCall,
 		archiveThread: unusedDesktopCall,
 		restoreThread: unusedDesktopCall,
 		rekeyRepository: unusedDesktopCall,
 		requestRunCancellation: unusedDesktopCall,
 		endAccountSession: unusedDesktopCall
+	};
+}
+
+function projectAttachment(
+	workspacePath: string,
+	repositoryKey: string,
+	lastUsedAt: number,
+	availability: ProjectAttachment['availability'] = 'available',
+	attachmentKey: string = `remote:${repositoryKey}`
+): ProjectAttachment {
+	return {
+		workspacePath,
+		repositoryKey,
+		attachmentKey,
+		displayName: repositoryKey,
+		availability,
+		lastValidatedAt: lastUsedAt,
+		lastUsedAt
 	};
 }
 
@@ -75,10 +94,10 @@ function launchArgs(
 		onStarted: vi.fn(),
 		threadId: threadRecordId('thread-1'),
 		prompt: 'Inspect src/lib.rs',
-		imageUploadIds: [imageUploadId('image-1')],
+		storageIds: [storageId('storage-1')],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
-		serviceTier: 'standard',
+		fastMode: false,
 		submissionId: 'submission-1',
 		workspacePath: '/workspaces/workspace-1',
 		...overrides
@@ -92,9 +111,10 @@ function resolveRecoveredSubmission(
 		latestRun: null,
 		newSubmissionId: 'new-id',
 		prompt: recoveredSubmission.prompt,
-		imageUploadIds: recoveredSubmission.imageUploadIds,
+		storageIds: recoveredSubmission.storageIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
-		serviceTier: recoveredSubmission.serviceTier,
+		fastMode: recoveredSubmission.fastMode,
+		continuationOfRunId: recoveredSubmission.continuationOfRunId,
 		recoveredSubmission,
 		selectedModel: recoveredSubmission.selectedModel,
 		...overrides
@@ -113,11 +133,11 @@ describe('launchAgentRun', () => {
 			userId: 'user-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
-			imageUploadIds: ['image-1'],
+			storageIds: ['storage-1'],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			workspacePath: '/workspaces/workspace-1'
 		});
 		expect(onStarted).toHaveBeenCalledWith('run-1', 'thread-1');
@@ -131,7 +151,7 @@ describe('launchAgentRun', () => {
 			launchArgs({
 				desktopApi,
 				prompt: '',
-				imageUploadIds: [],
+				storageIds: [],
 				continuationOfRunId: runId('run-1')
 			})
 		);
@@ -140,11 +160,11 @@ describe('launchAgentRun', () => {
 			userId: 'user-1',
 			threadId: 'thread-1',
 			prompt: '',
-			imageUploadIds: [],
+			storageIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			workspacePath: '/workspaces/workspace-1',
 			continuationOfRunId: 'run-1'
 		});
@@ -166,27 +186,35 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission()).toBe('recovered-id');
 		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ serviceTier: 'fast' })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ fastMode: true })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ continuationOfRunId: undefined })).toBe('new-id');
 	});
 
-	it('reuses a submission only when its image attachments are unchanged', () => {
-		expect(resolveRecoveredSubmission({ imageUploadIds: [] })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ imageUploadIds: [imageUploadId('image-2')] })).toBe(
-			'new-id'
-		);
+	it('reuses a submission only when its attachments are unchanged', () => {
+		expect(resolveRecoveredSubmission({ storageIds: [] })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ storageIds: [storageId('storage-2')] })).toBe('new-id');
 		expect(
 			resolveRecoveredSubmission({
-				imageUploadIds: [imageUploadId('image-1'), imageUploadId('image-2')]
+				storageIds: [storageId('storage-1'), storageId('storage-2')]
 			})
 		).toBe('new-id');
 	});
 
-	it('uses a fresh id when the visible latest submission has finished or supersedes recovery', () => {
+	it('reuses only for the expected parent or the same unfinished run', () => {
 		expect(
 			resolveRecoveredSubmission({
 				latestRun: { status: 'failed', submissionId: 'recovered-id' }
 			})
 		).toBe('new-id');
+		expect(
+			resolveRecoveredSubmission({
+				latestRun: {
+					runId: recoveredSubmission.continuationOfRunId,
+					status: 'completed',
+					submissionId: 'parent-id'
+				}
+			})
+		).toBe('recovered-id');
 		expect(
 			resolveRecoveredSubmission({
 				latestRun: { status: 'queued', submissionId: 'recovered-id' }
@@ -200,79 +228,52 @@ describe('resolveSubmissionId', () => {
 	});
 });
 
-describe('resolveDraftRunSubmissionId', () => {
-	it.each(['completed', 'failed', 'cancelled'] as const)(
-		'uses a fresh run submission after draft creation reveals a %s run',
-		(submissionRunStatus) => {
-			expect(
-				resolveDraftRunSubmissionId({
-					freshSubmissionId: 'fresh-id',
-					submissionRunStatus,
-					threadSubmissionId: 'recovered-id'
-				})
-			).toBe('fresh-id');
-		}
-	);
+describe('local project attachments', () => {
+	it('indexes one preferred directory per repository', () => {
+		const indexed = buildDesktopProjectAttachmentsByPath([
+			projectAttachment('/worktrees/main', 'github.com/acme/robot', 1),
+			projectAttachment('/worktrees/feature', 'github.com/acme/robot', 2),
+			projectAttachment('/worktrees/removed', 'github.com/acme/other', 1, 'unavailable'),
+			projectAttachment('/worktrees/other', 'github.com/acme/other', 2)
+		]);
 
-	it.each([null, 'queued', 'running', 'awaiting_executor'] as const)(
-		'reuses the draft submission when its run is %s',
-		(submissionRunStatus) => {
-			expect(
-				resolveDraftRunSubmissionId({
-					freshSubmissionId: 'fresh-id',
-					submissionRunStatus,
-					threadSubmissionId: 'recovered-id'
-				})
-			).toBe('recovered-id');
-		}
-	);
-});
+		expect(Object.keys(indexed)).toEqual(['/worktrees/main', '/worktrees/other']);
+	});
 
-describe('isRunBlockingAgentLaunch', () => {
-	it('blocks queued and actively leased runs', () => {
-		const run = (
-			status: RunState['status'],
-			claimExpiresAt?: number
-		): Pick<RunState, 'status' | 'claimExpiresAt'> => {
-			const next: Pick<RunState, 'status' | 'claimExpiresAt'> = { status };
-			if (claimExpiresAt !== undefined) {
-				next.claimExpiresAt = claimExpiresAt;
-			}
-			return next;
+	it('selects the same directory when duplicate input order changes', () => {
+		const older = projectAttachment('/worktrees/older', 'github.com/acme/robot', 1);
+		const lexicalTie = projectAttachment('/worktrees/a-first', 'github.com/acme/robot', 1);
+		const newer = projectAttachment('/worktrees/newer', 'github.com/acme/robot', 1);
+
+		for (const attachments of [
+			[older, lexicalTie, newer],
+			[newer, older, lexicalTie]
+		]) {
+			expect(Object.keys(buildDesktopProjectAttachmentsByPath(attachments))).toEqual([
+				'/worktrees/a-first'
+			]);
+		}
+	});
+
+	it('keeps unrelated local directories with the same display repository key', () => {
+		const indexed = buildDesktopProjectAttachmentsByPath([
+			projectAttachment('/clients/acme', 'acme', 1, 'available', 'directory:/clients/acme'),
+			projectAttachment('/archive/acme', 'acme', 2, 'available', 'directory:/archive/acme')
+		]);
+
+		expect(Object.keys(indexed)).toEqual(['/clients/acme', '/archive/acme']);
+	});
+
+	it('replaces the displayed directory when the same repository is attached again', () => {
+		const current = {
+			'/worktrees/main': projectAttachment('/worktrees/main', 'github.com/acme/robot', 2),
+			'/projects/other': projectAttachment('/projects/other', 'github.com/acme/other', 1)
 		};
+		const feature = projectAttachment('/worktrees/feature', 'github.com/acme/robot', 3);
 
-		expect(isRunBlockingAgentLaunch(run('queued'), 100)).toBe(true);
-		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
-		expect(isRunBlockingAgentLaunch(run('awaiting_executor', 100), 100)).toBe(false);
-	});
-});
-
-describe('runResumeKind', () => {
-	it('classifies crashed, failed, and cancelled latest runs', () => {
-		expect(runResumeKind({ status: 'running', claimExpiresAt: 50 }, 100)).toBe('crash');
-		expect(
-			runResumeKind(
-				{
-					status: 'failed',
-					lastError: RUN_ABANDONED_BY_AGENT
-				},
-				100
-			)
-		).toBe('crash');
-		expect(runResumeKind({ status: 'failed', lastError: 'boom' }, 100)).toBe('failed');
-		expect(runResumeKind({ status: 'cancelled' }, 100)).toBe('cancelled');
-		expect(runResumeKind({ status: 'completed' }, 100)).toBeNull();
-		expect(runResumeKind({ status: 'running', claimExpiresAt: 150 }, 100)).toBeNull();
-	});
-});
-
-describe('lifecycleResumeKind', () => {
-	it('classifies failed, crashed, and cancelled projection phases', () => {
-		expect(lifecycleResumeKind('cancelled')).toBe('cancelled');
-		expect(lifecycleResumeKind('failed', RUN_ABANDONED_BY_AGENT)).toBe('crash');
-		expect(lifecycleResumeKind('failed', 'boom')).toBe('failed');
-		expect(lifecycleResumeKind('completed')).toBeNull();
-		expect(lifecycleResumeKind('running')).toBeNull();
-		expect(lifecycleResumeKind('cancellation_requested')).toBeNull();
+		expect(upsertDesktopProjectAttachment(current, feature)).toEqual({
+			'/projects/other': current['/projects/other'],
+			'/worktrees/feature': feature
+		});
 	});
 });

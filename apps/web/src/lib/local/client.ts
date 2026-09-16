@@ -1,13 +1,13 @@
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { DataModel, Id } from '$convex/_generated/dataModel';
 import type {
+	ArtifactsWatchEvent,
+	ArtifactsWatchRequest,
 	DesktopApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
-	LocalTranscriptPage,
-	LocalTranscriptPart,
+	LocalArtifact,
 	ProjectAttachment,
-	ThreadMessage,
 	ThreadCacheSnapshot,
 	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
@@ -16,19 +16,8 @@ import type {
 import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
 
-export type LocalBootstrap = {
-	httpBaseUrl: string;
-	desktopLoginCallbackUrl?: string;
-	pairingCredential: string;
-};
-
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
-const localBootstrapSchema = z.object({
-	httpBaseUrl: z.url(),
-	desktopLoginCallbackUrl: z.url().optional(),
-	pairingCredential: z.string()
-});
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
 	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
@@ -46,6 +35,7 @@ const workspacePathResolutionSchema = z.object({
 const projectAttachmentSchema = z.object({
 	workspacePath: z.string(),
 	repositoryKey: z.string(),
+	attachmentKey: z.string().optional(),
 	displayName: z.string(),
 	availability: z.enum(['available', 'unavailable']),
 	lastValidatedAt: z.int(),
@@ -58,40 +48,89 @@ const agentRunStartSchema = z.object({
 	threadId: z.string()
 });
 const localTranscriptAttachmentSchema = z.object({
-	imageUploadId: z.string(),
+	storageId: z.string(),
 	name: z.string(),
 	mediaType: z.string(),
 	size: z.int(),
-	storageId: z.string(),
 	url: z.url().optional()
 });
-const transcriptMessageSchema = z.object({
-	id: z.string(),
-	threadId: z.string(),
-	runId: z.string(),
-	userId: z.string(),
-	type: z.enum(['prompt', 'response']),
-	text: z.string(),
-	attachments: z.array(localTranscriptAttachmentSchema),
-	parts: z.array(z.unknown()),
-	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
-	runStartedAt: z.int(),
-	sourceNumbers: z.array(z.int()),
-	streamIds: z.array(z.string()),
-	detailsLoaded: z.boolean()
+const transcriptUploadSuccessSchema = z.object({
+	storageId: z.string(),
+	name: z.string(),
+	mediaType: z.string(),
+	size: z.number(),
+	url: z.string()
 });
-const localTranscriptPartSchema = z.object({
-	number: z.int().nonnegative(),
-	kind: z.enum(['prompt', 'completion', 'tool']),
-	message: transcriptMessageSchema.nullable()
-});
-const localTranscriptPageSchema = z.object({
-	threadId: z.string(),
-	totalParts: z.int(),
-	historyFromNumber: z.int(),
+const transcriptUploadResultSchema = z.union([
+	transcriptUploadSuccessSchema,
+	z.object({ error: z.string() })
+]);
+
+function transcriptUploadPath(args: { userId: string; name: string; threadId?: string }): string {
+	let query = `userId=${encodeURIComponent(args.userId)}&name=${encodeURIComponent(args.name)}`;
+	if (args.threadId) {
+		query += `&threadId=${encodeURIComponent(args.threadId)}`;
+	}
+	return `/api/transcript/upload?${query}`;
+}
+
+const displayRowSchema = z
+	.object({
+		id: z.string(),
+		threadId: z.string(),
+		runId: z.string(),
+		sequence: z.int().nonnegative(),
+		kind: z.enum(['prompt', 'text', 'work', 'approval']),
+		text: z.string().optional(),
+		attachments: z.array(localTranscriptAttachmentSchema).optional(),
+		mandateId: z.string().optional(),
+		approvalUrl: z.string().optional(),
+		itemCount: z.int().nonnegative(),
+		pendingTools: z.int().nonnegative(),
+		provisional: z.boolean().optional(),
+		startedAt: z.number().optional(),
+		completedAt: z.number().optional(),
+		closed: z.boolean(),
+		revision: z.int().nonnegative()
+	})
+	.transform((row) => ({
+		...row,
+		threadId: asConvexId<'threadRecords'>(row.threadId),
+		runId: asConvexId<'runs'>(row.runId),
+		attachments: row.attachments?.map((attachment) => ({
+			...attachment,
+			storageId: asConvexId<'_storage'>(attachment.storageId)
+		}))
+	}));
+
+const displayPageSchema = z.object({
+	replicaId: z.string(),
+	rows: z.array(displayRowSchema),
+	indexing: z.boolean(),
 	stale: z.boolean(),
-	parts: z.array(localTranscriptPartSchema),
-	nextBefore: z.int().optional()
+	nextBefore: z.int().nonnegative().optional(),
+	endSequence: z.int().nonnegative(),
+	revision: z.int().nonnegative(),
+	persistedStreams: z.array(
+		z.object({ runId: z.string().transform((id) => asConvexId<'runs'>(id)), streamId: z.string() })
+	),
+	changes: z.array(
+		z.object({
+			id: z.string(),
+			row: displayRowSchema.nullable()
+		})
+	),
+	changesCursor: z.object({ revision: z.int().nonnegative(), sequence: z.int().min(-1) }),
+	moreChanges: z.boolean()
+});
+
+const displayDetailsSchema = z.object({
+	parts: z.array(z.unknown()),
+	indexing: z.boolean(),
+	nextAfter: z.int().nonnegative().optional(),
+	previousBefore: z.int().nonnegative().optional(),
+	revision: z.int().nonnegative(),
+	stale: z.boolean()
 });
 const transcriptWatchEventSchema = z.object({
 	eventType: z.string(),
@@ -102,7 +141,7 @@ const liveCompletionOverlaySchema = z.object({
 	threadId: z.string(),
 	runId: z.string(),
 	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
-	streamId: z.string().optional(),
+	streamId: z.string().min(1),
 	text: z.string(),
 	parts: z.array(z.unknown()),
 	runStartedAt: z.int()
@@ -116,12 +155,11 @@ const threadSummarySchema = z.object({
 	_creationTime: z.number(),
 	userId: z.string(),
 	submissionId: z.string(),
-	repositoryKey: z.string().optional(),
-	projectId: z.string().optional(),
+	repositoryKey: z.string(),
 	title: z.string().optional(),
 	selectedModel: z.string(),
 	reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']),
-	serviceTier: z.enum(['standard', 'fast']),
+	fastMode: z.boolean(),
 	contextSummary: z.string().optional(),
 	contextSummaryThroughRunId: z.string().optional(),
 	lastMessageAt: z.number(),
@@ -137,8 +175,29 @@ const threadCacheWatchEventSchema = z.object({
 const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
 	threads: z.array(threadSummarySchema)
 });
+const artifactScopeSchema = z.enum(['thread', 'project']);
+const localArtifactSchema = z.object({
+	_id: z.string(),
+	userId: z.string(),
+	scope: artifactScopeSchema,
+	repositoryKey: z.string(),
+	threadId: z.string().optional(),
+	localPath: z.string().optional(),
+	content: z.string(),
+	type: z.enum(['markdown', 'html', 'react']),
+	title: z.string(),
+	revision: z.number(),
+	createdAt: z.number(),
+	updatedAt: z.number(),
+	localError: z.string().optional()
+});
+const artifactsWatchEventSchema = z.object({
+	artifacts: z.array(localArtifactSchema),
+	stale: z.boolean(),
+	error: z.string().optional()
+});
 
-function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
+function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
 	value: string
 ): Id<TableName> {
 	// SAFETY: the local API returns Convex document ids; branding is compile-time only.
@@ -149,54 +208,6 @@ function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
 	return attachment;
-}
-
-function parseLocalTranscriptPage(
-	page: z.infer<typeof localTranscriptPageSchema>
-): LocalTranscriptPage {
-	return {
-		threadId: asConvexId(page.threadId),
-		totalParts: page.totalParts,
-		historyFromNumber: page.historyFromNumber,
-		stale: page.stale,
-		nextBefore: page.nextBefore,
-		parts: page.parts.map(parseLocalTranscriptPart)
-	};
-}
-
-function parseLocalTranscriptPart(
-	part: z.infer<typeof localTranscriptPartSchema>
-): LocalTranscriptPart {
-	return {
-		number: part.number,
-		kind: part.kind,
-		message: part.message ? parseTranscriptMessage(part.message) : null
-	};
-}
-
-function parseTranscriptMessage(message: z.infer<typeof transcriptMessageSchema>): ThreadMessage {
-	return {
-		_id: message.id,
-		threadId: asConvexId(message.threadId),
-		runId: asConvexId(message.runId),
-		userId: message.userId,
-		type: message.type,
-		text: message.text,
-		attachments: message.attachments.map((attachment) => ({
-			imageUploadId: asConvexId(attachment.imageUploadId),
-			name: attachment.name,
-			mediaType: attachment.mediaType,
-			size: attachment.size,
-			url: attachment.url ?? null
-		})),
-		// SAFETY: the local Rust API emits transcript parts in the shared assistant-part shape.
-		parts: message.parts as AssistantPart[],
-		runStatus: message.runStatus,
-		runStartedAt: message.runStartedAt,
-		sourceNumbers: message.sourceNumbers,
-		streamIds: message.streamIds,
-		detailsLoaded: message.detailsLoaded
-	};
 }
 
 function parseLiveCompletionOverlay(
@@ -220,7 +231,6 @@ function parseThreadRecord(
 	return {
 		...thread,
 		_id: asConvexId(thread._id),
-		projectId: thread.projectId ? asConvexId(thread.projectId) : undefined,
 		contextSummaryThroughRunId: thread.contextSummaryThroughRunId
 			? asConvexId(thread.contextSummaryThroughRunId)
 			: undefined
@@ -252,6 +262,24 @@ function parseLiveCompletionWatchEvent(
 		return { eventType: 'updated', live: parseLiveCompletionOverlay(event.live) };
 	}
 	return { eventType: 'cleared' };
+}
+
+function parseLocalArtifact(artifact: z.infer<typeof localArtifactSchema>): LocalArtifact {
+	const { threadId, ...rest } = artifact;
+	if (artifact.scope === 'thread' && threadId) {
+		return { ...rest, threadId };
+	}
+	return rest;
+}
+
+function parseArtifactsWatchEvent(
+	event: z.infer<typeof artifactsWatchEventSchema>
+): ArtifactsWatchEvent {
+	return {
+		artifacts: event.artifacts.map(parseLocalArtifact),
+		stale: event.stale,
+		error: event.error
+	};
 }
 
 async function readSseEvents(
@@ -292,6 +320,7 @@ async function readSseEvents(
 		}
 		throw error;
 	} finally {
+		await reader.cancel().catch(() => undefined);
 		reader.releaseLock();
 	}
 }
@@ -310,7 +339,7 @@ async function errorFromFailedResponse(response: Response): Promise<Error> {
 
 async function postSse(
 	url: string,
-	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest,
+	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest | ArtifactsWatchRequest,
 	signal: AbortSignal,
 	onData: (data: string) => void
 ) {
@@ -352,10 +381,6 @@ function readLaunchHashParameter(name: string): string | null {
 	return new URLSearchParams(hash).get(name);
 }
 
-export function readPairingTokenFromHash(): string | null {
-	return readLaunchHashParameter('token');
-}
-
 export function readWorkspaceLaunchFromHash(): string | null {
 	return readLaunchHashParameter('workspace');
 }
@@ -374,17 +399,10 @@ export function clearLaunchHash() {
 	globalThis.window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
-export async function bootstrapLocalSession(
-	baseUrl: string,
-	pairingCredential: string
-): Promise<void> {
+export async function bootstrapLocalSession(baseUrl: string): Promise<void> {
 	const response = await fetch(`${baseUrl}/api/auth/bootstrap`, {
 		method: 'POST',
-		headers: {
-			'content-type': 'application/json'
-		},
-		credentials: 'include',
-		body: JSON.stringify({ credential: pairingCredential })
+		credentials: 'include'
 	});
 
 	if (!response.ok) {
@@ -412,12 +430,12 @@ export async function hasLocalSession(baseUrl: string): Promise<boolean> {
 
 const localSessionRequests = new Map<string, Promise<void>>();
 
-export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
+export async function ensureLocalSession(baseUrl: string) {
 	const pending = localSessionRequests.get(baseUrl);
 	if (pending) {
 		return await pending;
 	}
-	const request = establishLocalSession(baseUrl, bootstrap);
+	const request = establishLocalSession(baseUrl);
 	localSessionRequests.set(baseUrl, request);
 	try {
 		await request;
@@ -426,52 +444,12 @@ export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBoots
 	}
 }
 
-async function establishLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
+async function establishLocalSession(baseUrl: string) {
 	if (await hasLocalSession(baseUrl)) {
 		return;
 	}
 
-	const hashToken = readPairingTokenFromHash();
-	if (hashToken) {
-		await bootstrapLocalSession(baseUrl, hashToken);
-		clearLaunchHash();
-		return;
-	}
-
-	if (bootstrap?.pairingCredential) {
-		await bootstrapLocalSession(baseUrl, bootstrap.pairingCredential);
-		return;
-	}
-
-	const localBootstrap = await fetchLocalBootstrap(baseUrl);
-	if (localBootstrap?.pairingCredential) {
-		await bootstrapLocalSession(baseUrl, localBootstrap.pairingCredential);
-		return;
-	}
-
-	throw new Error('Pair with your Sprocket server to continue.');
-}
-
-export async function fetchLocalBootstrap(baseUrl: string): Promise<LocalBootstrap | null> {
-	try {
-		const response = await fetch(`${baseUrl}/api/auth/desktop-bootstrap`);
-		if (!response.ok) {
-			return null;
-		}
-
-		const parsed = localBootstrapSchema.safeParse(await response.json());
-		return parsed.success ? parsed.data : null;
-	} catch {
-		return null;
-	}
-}
-
-export async function readDesktopBootstrap(baseUrl: string): Promise<LocalBootstrap | null> {
-	if (globalThis.window?.sprocketDesktopBridge?.getLocalBootstrap) {
-		return await globalThis.window.sprocketDesktopBridge.getLocalBootstrap();
-	}
-
-	return await fetchLocalBootstrap(baseUrl);
+	await bootstrapLocalSession(baseUrl);
 }
 
 async function parseJsonResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
@@ -585,22 +563,21 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
-		fetchTranscriptPage: async (requestBody, signal) => {
-			const page = await request('/api/transcript/parts', localTranscriptPageSchema, {
+		fetchTranscriptDisplay: async (requestBody, signal) =>
+			await request('/api/transcript/display', displayPageSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody),
+				signal
+			}),
+		fetchTranscriptDisplayDetails: async (requestBody, signal) => {
+			const page = await request('/api/transcript/display-details', displayDetailsSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody),
 				signal
 			});
-			return parseLocalTranscriptPage(page);
+			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
+			return { ...page, parts: page.parts as AssistantPart[] };
 		},
-		fetchTranscriptDetails: async (requestBody, signal) =>
-			(
-				await request('/api/transcript/part-details', z.array(localTranscriptPartSchema), {
-					method: 'POST',
-					body: JSON.stringify(requestBody),
-					signal
-				})
-			).map(parseLocalTranscriptPart),
 		watchTranscript: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
@@ -643,6 +620,42 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			}
 			return await response.blob();
 		},
+		uploadTranscriptAttachment: async (requestBody) => {
+			const result = await request(
+				transcriptUploadPath({
+					userId: requestBody.userId,
+					name: requestBody.name,
+					threadId: requestBody.threadId
+				}),
+				transcriptUploadResultSchema,
+				{
+					method: 'POST',
+					headers: {
+						'content-type': requestBody.file.type.trim() || 'application/octet-stream'
+					},
+					body: requestBody.file
+				}
+			);
+			if ('error' in result) {
+				return result;
+			}
+			return {
+				storageId: asConvexId<'_storage'>(result.storageId),
+				name: result.name,
+				mediaType: result.mediaType,
+				size: result.size,
+				url: result.url
+			};
+		},
+		discardTranscriptAttachment: async (requestBody) =>
+			await request('/api/transcript/discard', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify({
+					userId: requestBody.userId,
+					storageId: requestBody.storageId,
+					threadId: requestBody.threadId
+				})
+			}),
 		registerThreadCache: async (requestBody) =>
 			parseThreadCacheWatchEvent(
 				await request('/api/threads/register', threadCacheWatchEventSchema, {
@@ -663,6 +676,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				if (parsed.success) {
 					handlers.onEvent(parseThreadCacheWatchEvent(parsed.data));
 				}
+			});
+		},
+		watchArtifacts: async (requestBody, handlers) => {
+			await postSse(`${baseUrl}/api/artifacts/watch`, requestBody, handlers.signal, (data) => {
+				const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
+				handlers.onEvent(parseArtifactsWatchEvent(parsed));
 			});
 		},
 		renameThread: async (requestBody) =>
@@ -706,7 +725,6 @@ export async function resolveDesktopApi(): Promise<DesktopApi> {
 		throw new Error('Unable to resolve the Sprocket server URL.');
 	}
 
-	const bootstrap = await readDesktopBootstrap(baseUrl);
-	await ensureLocalSession(baseUrl, bootstrap);
+	await ensureLocalSession(baseUrl);
 	return createLocalClient(baseUrl);
 }

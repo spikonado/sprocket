@@ -7,7 +7,7 @@ export type ThreadSummaryRow = {
 	title: string;
 	selectedModel: string;
 	reasoningEffort: ThreadSummary['reasoningEffort'];
-	serviceTier: ThreadSummary['serviceTier'];
+	fastMode: ThreadSummary['fastMode'];
 	lastMessageAt: number;
 	threadStatus: ThreadSummary['threadStatus'];
 	status: ThreadSummary['status'];
@@ -16,11 +16,11 @@ export type ThreadSummaryRow = {
 export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 	return {
 		threadId: row.threadId,
-		repositoryKey: row.repositoryKey ?? '',
+		repositoryKey: row.repositoryKey,
 		title: row.title,
 		selectedModel: row.selectedModel,
 		reasoningEffort: row.reasoningEffort,
-		serviceTier: row.serviceTier,
+		fastMode: row.fastMode,
 		lastMessageAt: row.lastMessageAt,
 		threadStatus: row.threadStatus,
 		status: row.status
@@ -30,11 +30,11 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSummary {
 	return toThreadSummary({
 		threadId: record._id,
-		repositoryKey: record.repositoryKey ?? '',
+		repositoryKey: record.repositoryKey,
 		title: record.title ?? 'New thread',
 		selectedModel: record.selectedModel,
 		reasoningEffort: record.reasoningEffort,
-		serviceTier: record.serviceTier,
+		fastMode: record.fastMode ?? false,
 		lastMessageAt: record.lastMessageAt,
 		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
 		status: record.status ?? 'completed'
@@ -124,22 +124,27 @@ export function findThreadById(
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
 }
 
-/**
- * Session-restore target: the non-archived thread the user most recently
- * prompted or got a response in. Deliberately ignores run state. A
- * background run in another project should not hijack the session on load.
- */
-export function pickThreadToRestore(threads: ThreadSummary[]): ThreadSummary | null {
-	let latest: ThreadSummary | null = null;
-	for (const thread of threads) {
-		if (!isActiveThread(thread)) {
-			continue;
-		}
-		if (!latest || thread.lastMessageAt > latest.lastMessageAt) {
-			latest = thread;
-		}
+export function resolveInitialDraftSelection(args: {
+	hasResolvedInitialSelection: boolean;
+	initialProjectLaunchResolved: boolean;
+	hasPendingProjectLaunches: boolean;
+	projectLaunchInFlight: boolean;
+	hasLoadedProjects: boolean;
+	signedInUserId: string | null;
+	projects: Pick<Project, 'workspacePath'>[];
+}): { workspacePath: string | null } | null {
+	if (
+		args.hasResolvedInitialSelection ||
+		!args.initialProjectLaunchResolved ||
+		args.hasPendingProjectLaunches ||
+		args.projectLaunchInFlight ||
+		!args.hasLoadedProjects ||
+		!args.signedInUserId
+	) {
+		return null;
 	}
-	return latest;
+
+	return { workspacePath: args.projects[0]?.workspacePath ?? null };
 }
 
 export function dataForThread<
@@ -158,91 +163,6 @@ export function resolvePendingCreatedThreadId(args: {
 	}
 
 	return pendingCreatedThreadId;
-}
-
-const PLACEHOLDER_THREAD_TITLE = 'New thread';
-const MAX_THREAD_TITLE_LENGTH = 72;
-
-export function threadTitleFromPrompt(prompt: string) {
-	return prompt.trim().slice(0, MAX_THREAD_TITLE_LENGTH) || PLACEHOLDER_THREAD_TITLE;
-}
-
-export function isPlaceholderThreadTitle(title: string) {
-	const trimmed = title.trim();
-	return trimmed === '' || trimmed === PLACEHOLDER_THREAD_TITLE;
-}
-
-export function makeUnconfirmedCreatedThread(args: {
-	threadId: ThreadSummary['threadId'];
-	repositoryKey: string;
-	selectedModel: ThreadSummary['selectedModel'];
-	reasoningEffort: ThreadSummary['reasoningEffort'];
-	serviceTier: ThreadSummary['serviceTier'];
-	title?: string;
-	lastMessageAt?: number;
-}): ThreadSummary {
-	return toThreadSummary({
-		threadId: args.threadId,
-		repositoryKey: args.repositoryKey,
-		title: threadTitleFromPrompt(args.title ?? ''),
-		selectedModel: args.selectedModel,
-		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
-		lastMessageAt: args.lastMessageAt ?? Date.now(),
-		threadStatus: 'active',
-		status: 'queued'
-	});
-}
-
-function needsUnconfirmedTitleOverlay(existing: ThreadSummary, unconfirmed: ThreadSummary) {
-	return isPlaceholderThreadTitle(existing.title) && !isPlaceholderThreadTitle(unconfirmed.title);
-}
-
-export function mergeUnconfirmedCreatedThread(
-	threads: ThreadSummary[],
-	unconfirmed: ThreadSummary | null
-): ThreadSummary[] {
-	if (!unconfirmed) {
-		return threads;
-	}
-	const existing = findThreadById(threads, unconfirmed.threadId);
-	if (!existing) {
-		return [unconfirmed, ...threads];
-	}
-	if (needsUnconfirmedTitleOverlay(existing, unconfirmed)) {
-		return threads.map((thread) =>
-			thread.threadId === existing.threadId ? { ...thread, title: unconfirmed.title } : thread
-		);
-	}
-	return threads;
-}
-
-export function shouldDropUnconfirmedCreatedThread(
-	threads: ThreadSummary[],
-	unconfirmed: ThreadSummary | null
-) {
-	if (!unconfirmed) {
-		return false;
-	}
-	const existing = findThreadById(threads, unconfirmed.threadId);
-	if (!existing) {
-		return false;
-	}
-	return !needsUnconfirmedTitleOverlay(existing, unconfirmed);
-}
-
-export function retainUnconfirmedCreatedThreads(
-	threads: ThreadSummary[],
-	unconfirmed: ThreadSummary[]
-) {
-	return unconfirmed.filter((row) => !shouldDropUnconfirmedCreatedThread(threads, row));
-}
-
-export function mergeUnconfirmedCreatedThreads(
-	threads: ThreadSummary[],
-	unconfirmed: ThreadSummary[]
-) {
-	return unconfirmed.reduce((list, row) => mergeUnconfirmedCreatedThread(list, row), threads);
 }
 
 export function isLatestRunReadyForThread(args: {

@@ -10,6 +10,8 @@ pub struct GitRepositoryIdentity {
     /// Stable key used to match the same repository across directory moves/clones.
     /// Prefer a normalized `origin` remote; fall back to the workspace directory name.
     pub repository_key: String,
+    /// Machine-local identity used to distinguish unrelated paths with the same name.
+    pub attachment_key: String,
     /// Short label for UI grouping (repo name or directory name).
     pub display_name: String,
 }
@@ -21,11 +23,19 @@ pub struct GitRepositoryIdentity {
 /// git metadata. Reads `remote.origin.url` when present; otherwise falls back to
 /// the workspace directory name.
 pub fn resolve_git_repository_identity(workspace_root: &Path) -> GitRepositoryIdentity {
-    let directory_name = directory_display_name(workspace_root);
+    let repository = discover_repository(workspace_root);
+    let directory_name = repository
+        .as_ref()
+        .map(|repo| local_git_display_name(repo, workspace_root))
+        .unwrap_or_else(|| directory_display_name(workspace_root));
 
-    let Some(origin_url) = read_origin_remote_url(workspace_root) else {
+    let Some(origin_url) = repository.as_ref().and_then(read_origin_remote_url) else {
         return GitRepositoryIdentity {
             repository_key: directory_name.clone(),
+            attachment_key: repository
+                .as_ref()
+                .map(local_git_attachment_key)
+                .unwrap_or_else(|| local_directory_attachment_key(workspace_root)),
             display_name: directory_name,
         };
     };
@@ -36,6 +46,7 @@ pub fn resolve_git_repository_identity(workspace_root: &Path) -> GitRepositoryId
         display_name_from_repository_key(&repository_key).unwrap_or_else(|| directory_name.clone());
 
     GitRepositoryIdentity {
+        attachment_key: format!("remote:{repository_key}"),
         repository_key,
         display_name,
     }
@@ -48,10 +59,37 @@ fn directory_display_name(path: &Path) -> String {
         .unwrap_or_else(|| "workspace".to_string())
 }
 
-fn read_origin_remote_url(workspace_root: &Path) -> Option<gix::Url> {
-    let repo = discover_repository(workspace_root)?;
+fn read_origin_remote_url(repo: &gix::Repository) -> Option<gix::Url> {
     let remote = repo.find_remote("origin").ok()?;
     remote.url(gix::remote::Direction::Fetch).cloned()
+}
+
+fn local_git_attachment_key(repo: &gix::Repository) -> String {
+    let common_dir = canonical_common_dir(repo);
+    format!("git:{}", common_dir.to_string_lossy())
+}
+
+fn local_git_display_name(repo: &gix::Repository, workspace_root: &Path) -> String {
+    let common_dir = canonical_common_dir(repo);
+    common_dir
+        .file_name()
+        .filter(|name| *name == ".git")
+        .and_then(|_| common_dir.parent())
+        .map(directory_display_name)
+        .unwrap_or_else(|| directory_display_name(workspace_root))
+}
+
+fn canonical_common_dir(repo: &gix::Repository) -> std::path::PathBuf {
+    repo.common_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| repo.common_dir().to_path_buf())
+}
+
+fn local_directory_attachment_key(workspace_root: &Path) -> String {
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    format!("directory:{}", root.to_string_lossy())
 }
 
 /// Build a stable repository key from a parsed git remote URL.
@@ -196,6 +234,8 @@ mod tests {
         let main = root.join("main");
         let worktree = root.join("feature");
         init_repo(&main);
+        let config_without_origin =
+            fs::read_to_string(main.join(".git/config")).expect("read config");
         set_origin(&main, "git@github.com:spikonado/sprocket.git");
 
         // Fabricate a linked-worktree layout (gix has no worktree-add API).
@@ -226,6 +266,19 @@ mod tests {
         let identity = resolve_git_repository_identity(&worktree);
         assert_eq!(identity.repository_key, "github.com/spikonado/sprocket");
         assert_eq!(identity.display_name, "sprocket");
+
+        fs::write(main.join(".git/config"), config_without_origin).expect("remove origin");
+        let main_identity = resolve_git_repository_identity(&main);
+        let worktree_identity = resolve_git_repository_identity(&worktree);
+        assert_eq!(main_identity.repository_key, "main");
+        assert_eq!(
+            worktree_identity.repository_key,
+            main_identity.repository_key
+        );
+        assert_eq!(
+            worktree_identity.attachment_key,
+            main_identity.attachment_key
+        );
         let _ = fs::remove_dir_all(root);
     }
 

@@ -13,6 +13,8 @@ pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
 
 #[derive(Clone)]
 pub struct RunAgentRequest {
+    pub allow_interaction: bool,
+    pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,
     pub auth_token_fetcher: AuthTokenFetcher,
     pub execution_secret: String,
@@ -20,12 +22,11 @@ pub struct RunAgentRequest {
     pub thread_id: String,
     pub repository_key: Option<String>,
     pub prompt: String,
-    pub image_upload_ids: Vec<String>,
+    pub storage_ids: Vec<String>,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub service_tier: String,
+    pub fast_mode: bool,
     pub workspace_path: String,
-    pub transcript_root: std::path::PathBuf,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
 }
@@ -36,8 +37,6 @@ pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
     pub thread_id: String,
-    #[serde(default)]
-    pub prompt_message_id: Option<String>,
     pub user_id: String,
     #[serde(default)]
     pub prompt_part: Option<serde_json::Value>,
@@ -70,11 +69,7 @@ pub struct RenewClaimResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RunContextResponse {
     pub run: RunSnapshot,
-    pub thread_record: ThreadRecordSnapshot,
     pub prompt: String,
-    pub prompt_attachments: Vec<ResolvedImageAttachment>,
-    pub agent_history: Vec<AgentHistoryMessage>,
-    pub context_budget: ContextBudget,
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub context_tokens: u64,
 }
@@ -84,15 +79,19 @@ pub struct RunContextResponse {
 pub struct ContextBudget {
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub context_window_tokens: u64,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
-    pub auto_compact_token_limit: u64,
+    #[serde(
+        rename = "autoCompactTokenLimit",
+        deserialize_with = "deserialize_convex_u64"
+    )]
+    pub auto_handoff_token_limit: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolvedImageAttachment {
-    pub media_type: String,
-    pub url: String,
+/// Live catalog fields for the selected model. Fetched once with the budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogModelCapabilities {
+    pub label: String,
+    pub context_budget: ContextBudget,
+    pub supports_images: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -180,21 +179,11 @@ pub struct RunSnapshot {
     pub user_id: String,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub service_tier: String,
+    pub fast_mode: bool,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub started_at: u64,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadRecordSnapshot {
-    #[serde(rename = "_id")]
-    pub id: String,
-    #[serde(default)]
-    pub repository_key: String,
-    pub title: Option<String>,
 }
 
 fn require_non_empty<T>(items: Vec<T>, what: &str) -> anyhow::Result<Vec<T>> {
@@ -499,7 +488,6 @@ mod tests {
             "created": true,
             "runId": "jd7run",
             "threadId": "jd7thread",
-            "promptMessageId": "prompt:jd7run",
             "userId": "user_1",
             "promptPart": {
                 "number": 0.0,
@@ -509,7 +497,6 @@ mod tests {
                 "prompt": {
                     "text": "hello",
                     "imageUploads": [{
-                        "imageUploadId": "image_1",
                         "name": "robot.png",
                         "mediaType": "image/png",
                         "size": 42.0,
@@ -538,6 +525,24 @@ mod tests {
     }
 
     #[test]
+    fn context_handoff_budget_preserves_the_released_wire_field() {
+        let budget: super::ContextBudget = serde_json::from_value(serde_json::json!({
+            "contextWindowTokens": 272000.0,
+            "autoCompactTokenLimit": 258000.0
+        }))
+        .expect("released context budget");
+
+        assert_eq!(budget.auto_handoff_token_limit, 258000);
+        assert_eq!(
+            serde_json::to_value(budget).expect("serialized context budget"),
+            serde_json::json!({
+                "contextWindowTokens": 272000,
+                "autoCompactTokenLimit": 258000
+            })
+        );
+    }
+
+    #[test]
     fn deserializes_a_continuation_create_run_response_without_a_prompt() {
         use super::CreateRunResponse;
 
@@ -552,16 +557,7 @@ mod tests {
         .expect("continuation create run response");
 
         assert_eq!(created.run_id, "jd7cont");
-        assert!(created.prompt_message_id.is_none());
         assert!(created.prompt_part.is_none());
-    }
-
-    #[test]
-    fn gateway_api_v1_url_uses_the_public_api_prefix() {
-        assert_eq!(
-            super::gateway_api_v1_url("https://ai-gateway.spikonado.com/"),
-            "https://ai-gateway.spikonado.com/api/v1"
-        );
     }
 
     #[test]

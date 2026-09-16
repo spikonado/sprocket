@@ -1,6 +1,6 @@
 import { v, type Infer } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
-import { reasoningEffortIds, serviceTierIds } from '@convex/lib/models';
+import { reasoningEffortIds } from '@convex/lib/models';
 import { subscriptionTierIds } from '@convex/lib/tiers';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
@@ -11,8 +11,6 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 }
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
-
-export const vServiceTier = v.union(...literals(serviceTierIds));
 
 export const vSubscriptionTier = v.union(...literals(subscriptionTierIds));
 
@@ -48,6 +46,9 @@ export const vScrapeUrlPayload = v.object({
 	url: v.string()
 });
 
+/** screenshot_url job payload. */
+export const vScreenshotUrlPayload = vScrapeUrlPayload.pick('url');
+
 export const vWebSearchPayload = v.object({
 	query: v.string(),
 	numResults: v.optional(v.number())
@@ -62,6 +63,17 @@ export const vWriteStdinPayload = v.object({
 
 export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
 
+export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
+
+export const vAddArtifactPayload = v.object({
+	scope: vArtifactScope
+});
+
+export const vEditArtifactPayload = v.object({
+	artifactId: v.string()
+});
+
+// Stored leftover executorJobs from create_artifact / update_artifact.
 export const vCreateArtifactPayload = v.object({
 	title: v.string(),
 	contentType: vArtifactType,
@@ -77,7 +89,7 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
-export const vBrowserActPayload = v.object({
+const vHistoricalBrowserActPayload = v.object({
 	instruction: v.optional(v.string()),
 	action: v.optional(
 		v.object({
@@ -88,6 +100,11 @@ export const vBrowserActPayload = v.object({
 		})
 	),
 	startUrl: v.optional(v.string())
+});
+
+export const vBrowserInteractPayload = v.object({
+	command: v.string(),
+	enforce_saving: v.optional(v.boolean())
 });
 
 const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
@@ -170,23 +187,37 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
-export const vExecutorJobPayload = v.union(
+export const vParseFilePayload = v.union(
+	v.object({ path: v.string() }),
+	v.object({ url: v.string() })
+);
+
+export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
+	vParseFilePayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
 	vExecCommandPayload,
 	vReadSkillPayload,
 	vScrapeUrlPayload,
+	vScreenshotUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload,
+	vAddArtifactPayload,
+	vEditArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
-	vBrowserActPayload,
+	vBrowserInteractPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
 	vMandateReportPayload
+);
+
+export const vExecutorJobPayload = v.union(
+	vCurrentExecutorJobPayload,
+	vHistoricalBrowserActPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -204,7 +235,7 @@ export const vApplyPatchResult = v.object({
 	)
 });
 
-export const vCommandExecResult = v.object({
+const vLegacyCommandResult = v.object({
 	command: v.string(),
 	cwd: v.string(),
 	output: v.string(),
@@ -217,10 +248,64 @@ export const vCommandExecResult = v.object({
 	error: v.optional(v.string())
 });
 
+const vCommandOutput = v.object({
+	output: v.string(),
+	exitCode: v.optional(v.number()),
+	success: v.boolean(),
+	running: v.boolean(),
+	timedOut: v.boolean(),
+	completeLogPath: v.string(),
+	eventsPath: v.string(),
+	error: v.optional(v.string())
+});
+
+export const vCommandExecResult = vCommandOutput.extend({
+	sessionId: v.optional(v.string())
+});
+
+export const vCommandStdinResult = vCommandOutput.extend({
+	command: v.string(),
+	workdir: v.string()
+});
+
+/** Stored scrape_url job result. Historical rows may include `truncated`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
-	truncated: v.boolean()
+	truncated: v.optional(v.boolean()),
+	summary: v.optional(v.string()),
+	images: v.optional(v.array(v.string()))
+});
+
+/** Local scrapeForTool transport. Oversized pages return a temporary JSON download URL. */
+export const vScrapeUrlTransport = v.union(
+	v.object({
+		url: v.string(),
+		markdown: v.string(),
+		summary: v.string(),
+		images: v.array(v.string())
+	}),
+	v.object({
+		url: v.string(),
+		summary: v.string(),
+		scrapeUrl: v.string()
+	})
+);
+
+/** Local screenshotForTool transport. `url` is the page; `screenshotUrl` is the provider image. */
+export const vScreenshotUrlTransport = v.object({
+	url: v.string(),
+	screenshotUrl: v.string()
+});
+
+export const vWebImageResult = v.object({
+	outputType: v.literal('image'),
+	url: v.string(),
+	path: v.string(),
+	mediaType: v.string(),
+	byteSize: v.number(),
+	width: v.number(),
+	height: v.number()
 });
 
 export const vWebSearchResult = v.object({
@@ -297,15 +382,27 @@ export const vBrowserTaskResult = v.object({
 	truncated: v.boolean()
 });
 
-export const vBrowserObservedAction = v.object({
+export const vBrowserScreenshotResult = v.object({
+	mediaType: v.literal('image/png'),
+	dataBase64: v.string(),
+	byteLength: v.number(),
+	truncated: v.boolean(),
+	url: v.optional(v.string())
+});
+
+const vCachedBrowserScreenshotResult = vWebImageResult.omit('url').extend({
+	mediaType: v.literal('image/png')
+});
+
+const vHistoricalBrowserObservedAction = v.object({
 	selector: v.string(),
 	description: v.string(),
 	method: v.optional(v.string()),
 	arguments: v.optional(v.array(v.string()))
 });
 
-export const vBrowserObserveResult = v.object({
-	actions: v.array(vBrowserObservedAction),
+const vHistoricalBrowserObserveResult = v.object({
+	actions: v.array(vHistoricalBrowserObservedAction),
 	text: v.string(),
 	truncated: v.boolean()
 });
@@ -335,23 +432,75 @@ export const vAskQuestionResult = v.object({
 
 export const vArtifactResult = v.object({
 	artifactId: v.string(),
-	version: v.number(),
+	revision: v.optional(v.number()),
+	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),
-	contentType: v.optional(vArtifactType)
+	contentType: v.optional(vArtifactType),
+	// Stored leftover create_artifact / update_artifact job results.
+	version: v.optional(v.number())
 });
+
+export const vListArtifactsResult = v.object({
+	artifacts: v.array(
+		v.object({
+			artifactId: v.string(),
+			scope: vArtifactScope,
+			repositoryKey: v.string(),
+			threadId: v.optional(v.id('threadRecords')),
+			type: vArtifactType,
+			title: v.string(),
+			revision: v.number(),
+			createdAt: v.number(),
+			updatedAt: v.number()
+		})
+	)
+});
+
+const vParsedFileSource = v.union(
+	v.object({ type: v.literal('path'), path: v.string() }),
+	v.object({ type: v.literal('url'), url: v.string() })
+);
+
+export const vParsedFileResult = v.union(
+	v.object({
+		outputType: v.literal('image'),
+		mediaType: v.string(),
+		path: v.string(),
+		source: vParsedFileSource,
+		byteSize: v.number(),
+		width: v.number(),
+		height: v.number()
+	}),
+	v.object({
+		outputType: v.literal('text'),
+		path: v.string(),
+		source: vParsedFileSource,
+		format: v.string(),
+		charCount: v.number(),
+		preview: v.string(),
+		truncated: v.boolean()
+	})
+);
 
 export const vExecutorJobResult = v.union(
 	v.string(),
+	vParsedFileResult,
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
 	vAskQuestionResult,
 	vCommandExecResult,
+	vCommandStdinResult,
+	vLegacyCommandResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
+	vWebImageResult,
 	vWebSearchResult,
 	vArtifactResult,
+	vListArtifactsResult,
 	vBrowserTaskResult,
-	vBrowserObserveResult,
+	vBrowserScreenshotResult,
+	vCachedBrowserScreenshotResult,
+	vHistoricalBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
 	vMandateListResult,
@@ -378,13 +527,12 @@ export function isRunFinalStatus(
 	return runFinalStatus.some((allowed) => allowed === status);
 }
 
-export const vExecutorJobKind = v.union(
+export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
-	v.literal('browser_observe'),
-	v.literal('browser_act'),
-	v.literal('browser_extract'),
+	v.literal('browser_interact'),
+	v.literal('browser_screenshot'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
@@ -393,9 +541,26 @@ export const vExecutorJobKind = v.union(
 	v.literal('mandate_charge'),
 	v.literal('mandate_report'),
 	v.literal('read_skill'),
+	v.literal('parse_file'),
 	v.literal('scrape_url'),
+	v.literal('screenshot_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
+	v.literal('add_artifact'),
+	v.literal('list_artifacts'),
+	v.literal('edit_artifact'),
+	v.literal('save_artifact')
+);
+
+export const vExecutorJobKind = v.union(
+	vCurrentExecutorJobKind,
+	v.literal('browser_observe'),
+	v.literal('browser_act'),
+	v.literal('browser_extract')
+);
+
+export const vStoredExecutorJobKind = v.union(
+	vExecutorJobKind,
 	v.literal('create_artifact'),
 	v.literal('update_artifact')
 );
@@ -415,16 +580,15 @@ export const vExecutorJobStatus = v.union(
 	v.literal('cancelled')
 );
 
-export const supportedImageMediaTypes = [
-	'image/jpeg',
-	'image/png',
-	'image/gif',
-	'image/webp'
-] as const;
+export const MAX_FILE_NAME_LENGTH = 255;
 
-export const MAX_IMAGE_ATTACHMENTS = 4;
-export const MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export const MAX_IMAGE_ATTACHMENT_LABEL = '10 MiB';
+export function registeredFileUploadError(name: string): string | null {
+	const trimmed = name.trim();
+	if (!trimmed || trimmed.length > MAX_FILE_NAME_LENGTH) {
+		return 'Filename must be between 1 and 255 characters.';
+	}
+	return null;
+}
 
 const vAssistantTimestamp = v.optional(v.union(v.number(), v.null()));
 
@@ -500,7 +664,8 @@ export const vTranscriptPartKind = v.union(
 );
 
 export const vTranscriptAttachmentMeta = v.object({
-	imageUploadId: v.id('imageUploads'),
+	// Historical rows. New writes omit it; readers strip it from responses.
+	imageUploadId: v.optional(v.id('imageUploads')),
 	name: v.string(),
 	mediaType: v.string(),
 	size: v.number(),
@@ -623,3 +788,4 @@ export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultEr
 export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
 export type ArtifactType = Infer<typeof vArtifactType>;
+export type ArtifactScope = Infer<typeof vArtifactScope>;

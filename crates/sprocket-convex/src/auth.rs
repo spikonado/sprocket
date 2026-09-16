@@ -8,7 +8,7 @@ use anyhow::Context;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
 use crate::{AuthSignedOut, AuthTokenFetcher};
@@ -19,9 +19,14 @@ const REFRESH_LEEWAY_SECS: u64 = 10;
 const MIN_TOKEN_LIFETIME_SECS: u64 = 2;
 /// Matches Convex JS `MAXIMUM_REFRESH_DELAY` (setTimeout's 32-bit cap).
 const MAXIMUM_REFRESH_DELAY: Duration = Duration::from_secs(20 * 24 * 60 * 60);
+const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+const AUTH_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(crate) type ApplyRefresh =
     Arc<dyn Fn(u64) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub(crate) type AuthFailureHandler =
+    Arc<dyn Fn(u64, String) -> Pin<Box<dyn Future<Output = bool> + Send>> + Send + Sync>;
 
 struct AuthSlots {
     fetcher: Option<AuthTokenFetcher>,
@@ -29,17 +34,19 @@ struct AuthSlots {
 }
 
 pub(crate) struct AuthState {
-    generation: AtomicU64,
+    generation: watch::Sender<u64>,
     fetch_epoch: AtomicU64,
     slots: Mutex<AuthSlots>,
     refresh: std::sync::Mutex<Option<JoinHandle<()>>>,
     on_apply: std::sync::OnceLock<ApplyRefresh>,
+    on_failure: std::sync::OnceLock<AuthFailureHandler>,
+    failure: watch::Sender<Option<String>>,
 }
 
 impl AuthState {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            generation: AtomicU64::new(0),
+            generation: watch::channel(0).0,
             fetch_epoch: AtomicU64::new(0),
             slots: Mutex::new(AuthSlots {
                 fetcher: None,
@@ -47,6 +54,8 @@ impl AuthState {
             }),
             refresh: std::sync::Mutex::new(None),
             on_apply: std::sync::OnceLock::new(),
+            on_failure: std::sync::OnceLock::new(),
+            failure: watch::channel(None).0,
         })
     }
 
@@ -54,20 +63,40 @@ impl AuthState {
         let _ = self.on_apply.set(on_apply);
     }
 
+    pub(crate) fn set_on_failure(&self, on_failure: AuthFailureHandler) {
+        let _ = self.on_failure.set(on_failure);
+    }
+
+    pub(crate) fn report_failure(&self, error: String) {
+        self.failure.send_replace(Some(error));
+        self.abort_refresh();
+    }
+
+    pub(crate) async fn wait_for_failure(&self) -> String {
+        self.failure
+            .subscribe()
+            .wait_for(Option::is_some)
+            .await
+            .expect("auth state owns the failure sender")
+            .as_ref()
+            .expect("failure is present")
+            .clone()
+    }
+
     pub(crate) fn shutdown(&self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.generation.send_modify(|generation| *generation += 1);
         self.fetch_epoch.fetch_add(1, Ordering::SeqCst);
         self.abort_refresh();
     }
 
     pub(crate) fn generation(&self) -> u64 {
-        self.generation.load(Ordering::SeqCst)
+        *self.generation.borrow()
     }
 
     pub(crate) async fn install(self: &Arc<Self>, fetcher: AuthTokenFetcher) -> u64 {
-        self.abort_refresh();
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.fetch_epoch.fetch_add(1, Ordering::SeqCst);
+        self.shutdown();
+        self.failure.send_replace(None);
+        let generation = self.generation();
         let mut slots = self.slots.lock().await;
         slots.fetcher = Some(fetcher);
         slots.pending_user_token = None;
@@ -86,12 +115,58 @@ impl AuthState {
         generation: u64,
         force_refresh: bool,
     ) -> anyhow::Result<String> {
-        if self.generation.load(Ordering::SeqCst) != generation {
+        let mut generations = self.generation.subscribe();
+        let mut last_error = None;
+        let retry = async {
+            let mut delay = INITIAL_RETRY_DELAY;
+            loop {
+                match self.resolve_once(generation, force_refresh).await {
+                    Ok(token) => return Ok(token),
+                    Err(error) if error.is::<AuthSignedOut>() => return Err(error),
+                    Err(error) => last_error = Some(format!("{error:#}")),
+                }
+                // Convex 0.10.4 sends queued requests anonymously if its fetcher returns an error.
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(MAX_RETRY_DELAY);
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = generations.wait_for(|current| *current != generation) => {
+                anyhow::bail!("stale auth callback");
+            }
+            result = tokio::time::timeout(AUTH_RECOVERY_TIMEOUT, retry) => result,
+        };
+        match result {
+            Ok(result) => result,
+            Err(_) => {
+                let error = recovery_timeout_error(last_error.as_deref());
+                if let Some(on_failure) = self.on_failure.get()
+                    && on_failure(generation, error).await
+                {
+                    // Only aborting the closed SDK worker may release this callback, even after clear_auth.
+                    std::future::pending().await
+                } else {
+                    anyhow::bail!("stale auth callback");
+                }
+            }
+        }
+    }
+
+    async fn resolve_once(
+        self: &Arc<Self>,
+        generation: u64,
+        force_refresh: bool,
+    ) -> anyhow::Result<String> {
+        if self.generation() != generation {
             anyhow::bail!("stale auth callback");
         }
 
         let (fetcher, pending, epoch) = {
             let mut slots = self.slots.lock().await;
+            if self.generation() != generation {
+                anyhow::bail!("stale auth callback");
+            }
             if force_refresh {
                 slots.pending_user_token = None;
             }
@@ -108,24 +183,20 @@ impl AuthState {
             (slots.fetcher.clone(), pending, epoch)
         };
 
-        let token = if let Some(token) = pending {
-            token?
+        let result = if let Some(token) = pending {
+            token.map_err(Into::into)
         } else {
             let fetcher = fetcher.context("auth fetcher missing")?;
-            let token = fetcher(force_refresh).await?;
-            if self.generation.load(Ordering::SeqCst) != generation
-                || self.fetch_epoch.load(Ordering::SeqCst) != epoch
-            {
-                anyhow::bail!("stale auth callback");
-            }
-            token
+            fetcher(force_refresh).await
         };
-
-        Ok(token)
+        if self.generation() != generation || self.fetch_epoch.load(Ordering::SeqCst) != epoch {
+            anyhow::bail!("stale auth callback");
+        }
+        result
     }
 
     pub(crate) async fn arm(self: &Arc<Self>, generation: u64, token: &str) {
-        if self.generation.load(Ordering::SeqCst) != generation {
+        if self.generation() != generation {
             return;
         }
         self.abort_refresh();
@@ -151,16 +222,7 @@ impl AuthState {
 
 impl Drop for AuthState {
     fn drop(&mut self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        self.fetch_epoch.fetch_add(1, Ordering::SeqCst);
-        if let Some(handle) = self
-            .refresh
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-        {
-            handle.abort();
-        }
+        self.shutdown();
     }
 }
 
@@ -178,7 +240,7 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
         let Some(auth) = weak.upgrade() else {
             return;
         };
-        if auth.generation.load(Ordering::SeqCst) != generation {
+        if auth.generation() != generation {
             return;
         }
         // Capture, don't bump: bumping here would make a concurrent SDK
@@ -190,28 +252,41 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
     let Some(fetcher) = fetcher else {
         return;
     };
-    let mut retry_delay = Duration::from_secs(1);
-    let token = loop {
-        match fetcher(true).await {
-            Ok(token) => break Ok(token),
-            Err(error) if error.is::<AuthSignedOut>() => break Err(AuthSignedOut),
-            Err(_) => {}
+    let mut last_error = None;
+    let refresh = async {
+        let mut retry_delay = INITIAL_RETRY_DELAY;
+        loop {
+            match fetcher(true).await {
+                Ok(token) => return Some(Ok(token)),
+                Err(error) if error.is::<AuthSignedOut>() => return Some(Err(AuthSignedOut)),
+                Err(error) => last_error = Some(format!("{error:#}")),
+            }
+            tokio::time::sleep(retry_delay).await;
+            retry_delay = (retry_delay * 2).min(MAX_RETRY_DELAY);
+            let auth = weak.upgrade()?;
+            if auth.generation() != generation || auth.fetch_epoch.load(Ordering::SeqCst) != epoch {
+                return None;
+            }
         }
-        tokio::time::sleep(retry_delay).await;
-        retry_delay = (retry_delay * 2).min(Duration::from_secs(30));
-        let Some(auth) = weak.upgrade() else {
-            return;
-        };
-        if auth.generation() != generation || auth.fetch_epoch.load(Ordering::SeqCst) != epoch {
+    };
+    let token = match tokio::time::timeout(AUTH_RECOVERY_TIMEOUT, refresh).await {
+        Ok(Some(token)) => token,
+        Ok(None) => return,
+        Err(_) => {
+            if let Some(auth) = weak.upgrade()
+                && auth.generation() == generation
+                && auth.fetch_epoch.load(Ordering::SeqCst) == epoch
+                && let Some(on_failure) = auth.on_failure.get()
+            {
+                on_failure(generation, recovery_timeout_error(last_error.as_deref())).await;
+            }
             return;
         }
     };
     let Some(auth) = weak.upgrade() else {
         return;
     };
-    if auth.generation.load(Ordering::SeqCst) != generation
-        || auth.fetch_epoch.load(Ordering::SeqCst) != epoch
-    {
+    if auth.generation() != generation || auth.fetch_epoch.load(Ordering::SeqCst) != epoch {
         return;
     }
     auth.slots.lock().await.pending_user_token = Some(token);
@@ -220,6 +295,14 @@ async fn scheduled_refresh(weak: Weak<AuthState>, generation: u64, delay: Durati
     if let Some(on_apply) = on_apply {
         on_apply(generation).await;
     }
+}
+
+fn recovery_timeout_error(last_error: Option<&str>) -> String {
+    format!(
+        "Convex authentication did not recover within {} seconds: {}",
+        AUTH_RECOVERY_TIMEOUT.as_secs(),
+        last_error.unwrap_or("token fetch did not complete")
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

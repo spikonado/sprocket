@@ -1,36 +1,30 @@
 <script lang="ts">
-	import { ArrowUp, CircleAlert, ImagePlus, Square, X } from '@lucide/svelte';
+	import { ArrowUp, CircleAlert, Paperclip, Square } from '@lucide/svelte';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import type { Id } from '$convex/_generated/dataModel';
 	import OptionSelector from '$lib/components/option-selector.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
-	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
+	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
+	import AgentQuestion from '$lib/components/home/agent-question.svelte';
+	import ComposerAttachments from '$lib/components/home/composer-attachments.svelte';
+	import ComposerSkillMenu from '$lib/components/home/composer-skill-menu.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
 	import { formatCountdownDuration } from '$lib/format';
+	import { canSubmitQuestionAnswer, type AgentQuestionOption } from '$convex/lib/agentQuestions';
+	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 	import {
-		AGENT_DECIDE_OPTION_ID,
-		canSubmitQuestionAnswer,
-		type AgentQuestionOption
-	} from '$convex/lib/agentQuestions';
-	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
-	import {
+		fastModeAccessForModelAndTier,
 		getCatalogModel,
 		isModelAllowedForTier,
 		modelOptionsForTier,
 		resolveModelForTier,
-		serviceTierOptionsForModelAndTier,
-		serviceTiersForModelAndTier,
 		type CatalogModelId,
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
-	import {
-		MAX_IMAGE_ATTACHMENTS,
-		SUPPORTED_IMAGE_MEDIA_TYPES,
-		type ComposerAttachment
-	} from '$lib/chat/attachments';
+	import type { ComposerAttachment } from '$lib/chat/attachments';
 	export type PendingAgentQuestion = {
 		questionId: Id<'agentQuestions'>;
 		question: string;
@@ -46,7 +40,7 @@
 		selectedModel?: CatalogModelId;
 		onModelChange?: (modelId: CatalogModelId) => void;
 		selectedReasoningEffort?: string;
-		selectedServiceTier?: string;
+		fastMode?: boolean;
 		pendingQuestion?: PendingAgentQuestion | null;
 		showContinueWorking?: boolean;
 		onContinueWorking?: () => void;
@@ -56,12 +50,6 @@
 		isStarting: boolean;
 		isRunning: boolean;
 		elapsedLabel: string | null;
-		contextUsage: {
-			inputTokens: number;
-			totalTokensProcessed: number;
-			contextWindowTokens: number;
-			autoCompactTokenLimit: number;
-		};
 		/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 		projectSkills?: {
 			workspacePath: string | null;
@@ -80,7 +68,7 @@
 		selectedModel = $bindable(defaultModelId),
 		onModelChange,
 		selectedReasoningEffort = $bindable<string>(defaultReasoningEffort),
-		selectedServiceTier = $bindable<string>(defaultServiceTier),
+		fastMode = $bindable(false),
 		pendingQuestion = null,
 		showContinueWorking = false,
 		onContinueWorking,
@@ -90,7 +78,6 @@
 		isStarting,
 		isRunning,
 		elapsedLabel,
-		contextUsage,
 		projectSkills = null,
 		onSubmit,
 		onCancel
@@ -109,15 +96,12 @@
 	const selectedCatalogModel = $derived(
 		modelCatalog ? getCatalogModel(modelCatalog, selectedModel) : undefined
 	);
-	const selectedServiceTierOptions = $derived(
-		modelCatalog && selectedCatalogModel
-			? serviceTierOptionsForModelAndTier(
-					modelCatalog,
-					subscriptionTier ?? 'free',
-					selectedCatalogModel
-				)
-			: undefined
-	);
+	const selectedFastModeAccess = $derived.by(() => {
+		if (!modelCatalog || !selectedCatalogModel) return undefined;
+		if (!selectedCatalogModel.supportsFastMode) return 'unsupported';
+		if (!subscriptionTier) return undefined;
+		return fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, selectedCatalogModel);
+	});
 	// Block send until a catalog model is selected. If the usage query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
@@ -138,7 +122,6 @@
 	let caretPosition = $state(0);
 	let skillsRequestId = 0;
 	let skillsCacheKey: string | null | undefined = undefined;
-	let optionElements = $state<Array<HTMLElement | null>>([]);
 
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
@@ -181,10 +164,6 @@
 		return `Your limit resets in ${formatCountdownDuration(usageQuery.data.resetsAt - now)}. ${keepGoing}`;
 	});
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
-	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
-	const hasUnsupportedAttachments = $derived(
-		attachments.length > 0 && selectedCatalogModel?.supportsImages === false
-	);
 	const canAnswerQuestion = $derived(
 		canSubmitQuestionAnswer({
 			selectedOptionId: selectedQuestionOptionId,
@@ -195,12 +174,7 @@
 	const attachmentsPending = $derived(
 		attachments.some((attachment) => attachment.status !== 'ready')
 	);
-	const canAttachMore = $derived(
-		selectedModelSupportsImages &&
-			attachments.length < MAX_IMAGE_ATTACHMENTS &&
-			!composerLocked &&
-			!answeringQuestion
-	);
+	const canAttachMore = $derived(!composerLocked && !answeringQuestion);
 
 	let trackedPendingQuestionId = $state<string | null>(null);
 	$effect(() => {
@@ -215,25 +189,8 @@
 			}
 		}
 	});
-	const attachTooltipLabel = $derived(
-		selectedCatalogModel?.supportsImages === false
-			? `${selectedCatalogModel.label} does not support image input`
-			: `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`
-	);
+	const attachTooltipLabel = 'Attach files';
 	const supportsFieldSizing = Boolean(globalThis.CSS?.supports('field-sizing', 'content'));
-	const contextPercent = $derived(
-		contextUsage.contextWindowTokens > 0
-			? Math.min(
-					100,
-					Math.round((contextUsage.inputTokens / contextUsage.contextWindowTokens) * 100)
-				)
-			: 0
-	);
-	const contextCompactPercent = $derived(
-		contextUsage.contextWindowTokens > 0
-			? Math.round((contextUsage.autoCompactTokenLimit / contextUsage.contextWindowTokens) * 100)
-			: 0
-	);
 	const dollarQuery = $derived(getActiveDollarQuery(prompt, caretPosition));
 	const skillsPopupOpen = $derived(dollarQuery !== null && !skillsDismissed && !answeringQuestion);
 	const filteredSkills = $derived(dollarQuery === null ? [] : filterSkills(skills, dollarQuery));
@@ -321,29 +278,19 @@
 	}
 
 	function handleComposerPaste(event: ClipboardEvent) {
-		const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
-			file.type.startsWith('image/')
-		);
-		if (
-			files.length === 0 ||
-			isRunning ||
-			isSubmitting ||
-			answeringQuestion ||
-			!selectedModelSupportsImages
-		) {
+		const files = Array.from(event.clipboardData?.files ?? []);
+		if (files.length === 0 || isRunning || isSubmitting || answeringQuestion) {
 			return;
 		}
-		event.preventDefault();
+		if (!event.clipboardData?.getData('text/plain')) {
+			event.preventDefault();
+		}
 		onAttachFiles(files);
 	}
 
 	function showAttachTooltip(event: MouseEvent | FocusEvent) {
 		const target = event.currentTarget;
-		if (!(target instanceof HTMLButtonElement)) {
-			return;
-		}
-		// Disabled attach still explains no-image models; skip other disabled reasons.
-		if (target.disabled && selectedCatalogModel?.supportsImages !== false) {
+		if (!(target instanceof HTMLButtonElement) || target.disabled) {
 			return;
 		}
 		const rect = target.getBoundingClientRect();
@@ -406,7 +353,7 @@
 			isSubmitting ||
 			composerLocked ||
 			!canSubmitContent ||
-			(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))
+			(!answeringQuestion && attachmentsPending)
 		) {
 			return;
 		}
@@ -431,22 +378,12 @@
 		onModelChange?.(modelId);
 	}
 
-	function formatTokens(value: number): string {
-		if (value >= 1_000_000) {
-			return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`;
-		}
-		if (value >= 1_000) {
-			return `${Math.round(value / 1_000)}k`;
-		}
-		return String(value);
-	}
-
 	$effect(() => {
 		if (!modelCatalog) return;
 		if (!selectedModel || !getCatalogModel(modelCatalog, selectedModel)) {
 			selectedModel = modelCatalog.defaultModelId;
 			selectedReasoningEffort = modelCatalog.defaultReasoningEffort;
-			selectedServiceTier = modelCatalog.defaultServiceTier;
+			fastMode = false;
 		}
 	});
 
@@ -463,14 +400,8 @@
 		}
 		const catalogModel = getCatalogModel(modelCatalog, allowedModel);
 		if (!catalogModel) return;
-		const allowedServiceTiers = serviceTiersForModelAndTier(
-			modelCatalog,
-			subscriptionTier,
-			catalogModel
-		);
-		if (!allowedServiceTiers.includes(selectedServiceTier)) {
-			selectedServiceTier = allowedServiceTiers[0] ?? modelCatalog.defaultServiceTier;
-		}
+		if (fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, catalogModel) !== 'available')
+			fastMode = false;
 	});
 
 	$effect(() => {
@@ -498,13 +429,6 @@
 	$effect(() => {
 		void filteredSkills;
 		highlightedIndex = 0;
-	});
-
-	$effect(() => {
-		if (!skillsPopupOpen || filteredSkills.length === 0) {
-			return;
-		}
-		optionElements[highlightedIndex]?.scrollIntoView({ block: 'nearest' });
 	});
 
 	const composerShellClass =
@@ -538,7 +462,7 @@
 		{/if}
 
 		{#if showContinueWorking && onContinueWorking}
-			<div class="mb-3 px-4">
+			<div class="mx-auto mb-3 w-full max-w-[48rem] px-4">
 				<button
 					type="button"
 					class="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
@@ -573,145 +497,32 @@
 						</div>
 					{/if}
 					{#if pendingQuestion}
-						<div class="mb-3" role="group" aria-label="Agent question">
-							<p class="text-foreground text-[14px] leading-6 font-medium">
-								{pendingQuestion.question}
-							</p>
-							<ul class="mt-2 flex flex-col gap-1.5" aria-label="Answer options">
-								{#each pendingQuestion.options as option (option.id)}
-									{@const isAgentDecide = option.id === AGENT_DECIDE_OPTION_ID}
-									{@const isSelected = selectedQuestionOptionId === option.id}
-									<li>
-										<button
-											type="button"
-											class={`w-full rounded-lg border px-3 py-2 text-left text-[13px] leading-5 transition ${
-												isSelected
-													? 'border-foreground/40 bg-hover-fill-strong text-foreground'
-													: isAgentDecide
-														? 'border-border/70 text-muted-foreground/80 hover:text-muted-foreground hover:bg-hover-fill'
-														: 'border-border text-muted-foreground hover:text-foreground hover:bg-hover-fill'
-											}`}
-											aria-pressed={isSelected}
-											onclick={() => {
-												toggleQuestionOption(option.id);
-											}}
-										>
-											{option.label}
-										</button>
-									</li>
-								{/each}
-							</ul>
-						</div>
+						<AgentQuestion
+							question={pendingQuestion.question}
+							options={pendingQuestion.options}
+							selectedOptionId={selectedQuestionOptionId}
+							onToggleOption={toggleQuestionOption}
+						/>
 					{/if}
 					{#if attachments.length > 0 && !answeringQuestion}
-						<ul class="mb-3 flex flex-wrap items-center gap-2" aria-label="Attached images">
-							{#each attachments as attachment (attachment.localId)}
-								<li
-									class="group relative size-14 overflow-hidden rounded-xl border {attachment.status ===
-									'error'
-										? 'border-rose-500/60'
-										: 'border-border'}"
-									title={attachment.error ?? attachment.name}
-								>
-									<img
-										src={attachment.previewUrl}
-										alt={attachment.name}
-										class="size-full object-cover {attachment.status === 'uploading'
-											? 'opacity-50'
-											: ''}"
-									/>
-									{#if attachment.status === 'uploading'}
-										<span
-											class="absolute inset-0 flex items-center justify-center"
-											role="status"
-											aria-label="Uploading {attachment.name}"
-										>
-											<span
-												class="border-border border-t-foreground/80 size-3.5 animate-spin rounded-full border-2"
-											></span>
-										</span>
-									{:else if attachment.status === 'error'}
-										<span
-											class="text-destructive absolute inset-x-0 bottom-0 bg-rose-950/80 px-1 py-0.5 text-center text-[9px] leading-3"
-											role="alert"
-										>
-											Failed
-										</span>
-									{/if}
-									<button
-										type="button"
-										class="bg-foreground/70 text-background hover:bg-foreground/90 absolute top-1 right-1 flex size-4.5 cursor-pointer items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-40"
-										aria-label="Remove {attachment.name}"
-										disabled={composerLocked}
-										onclick={() => onRemoveAttachment(attachment.localId)}
-									>
-										<X class="size-3" aria-hidden="true" />
-									</button>
-								</li>
-							{/each}
-						</ul>
-						{#if hasUnsupportedAttachments && selectedCatalogModel}
-							<p class="text-destructive mb-3 text-xs" role="alert">
-								{selectedCatalogModel.label} does not support image input. Remove the images or choose
-								another model.
-							</p>
-						{/if}
+						<ComposerAttachments
+							{attachments}
+							disabled={composerLocked}
+							onRemove={onRemoveAttachment}
+						/>
 					{/if}
 					<div class="relative min-h-0 flex-1">
 						{#if skillsPopupOpen}
-							<div
-								class="border-border bg-popover absolute inset-x-0 bottom-full z-30 mb-2 max-h-56 overflow-y-auto rounded-xl border py-1 shadow-2xl"
-								id="composer-skills-listbox"
-								aria-label="Available skills"
-								role={skillsLoadState === 'ready' && filteredSkills.length > 0
-									? 'listbox'
-									: 'status'}
-							>
-								{#if skillsLoadState === 'loading'}
-									<p class="text-muted-foreground px-3 py-2 text-sm">Loading skills…</p>
-								{:else if skillsLoadState === 'error'}
-									<div class="flex items-center justify-between gap-3 px-3 py-2">
-										<p class="text-muted-foreground text-sm">Couldn’t load skills</p>
-										<button
-											type="button"
-											class="text-muted-foreground hover:text-foreground text-sm underline-offset-2 hover:underline"
-											onclick={() => {
-												void ensureSkillsLoaded(true);
-											}}
-										>
-											Retry
-										</button>
-									</div>
-								{:else if filteredSkills.length === 0}
-									<p class="text-muted-foreground px-3 py-2 text-sm">No matching skills</p>
-								{:else}
-									{#each filteredSkills as skill, index (skill.name)}
-										<button
-											type="button"
-											bind:this={optionElements[index]}
-											id="composer-skill-option-{index}"
-											class={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition ${
-												highlightedIndex === index
-													? 'text-foreground bg-hover-fill-strong'
-													: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
-											}`}
-											role="option"
-											aria-selected={highlightedIndex === index}
-											onpointerenter={() => {
-												highlightedIndex = index;
-											}}
-											onclick={() => {
-												selectSkill(skill);
-											}}
-										>
-											<span class="text-sm font-medium">${skill.name}</span>
-											<span class="text-muted-foreground line-clamp-2 text-[12px]"
-												>{skill.description}</span
-											>
-										</button>
-									{/each}
-								{/if}
-							</div>
+							<ComposerSkillMenu
+								loadState={skillsLoadState}
+								skills={filteredSkills}
+								{highlightedIndex}
+								onRetry={() => void ensureSkillsLoaded(true)}
+								onHighlight={(index) => {
+									highlightedIndex = index;
+								}}
+								onSelect={selectSkill}
+							/>
 						{/if}
 						<textarea
 							bind:this={composerTextarea}
@@ -721,7 +532,7 @@
 							placeholder={answeringQuestion
 								? 'Add detail, or type a custom answer'
 								: 'Ask anything, @tag files/directories, or use $ to show available skills'}
-							disabled={composerLocked}
+							disabled={isSubmitting}
 							role="combobox"
 							aria-autocomplete="list"
 							aria-haspopup="listbox"
@@ -749,7 +560,6 @@
 								bind:this={attachmentInput}
 								type="file"
 								class="hidden"
-								accept={SUPPORTED_IMAGE_MEDIA_TYPES.join(',')}
 								multiple
 								onchange={handleAttachmentInputChange}
 							/>
@@ -767,7 +577,7 @@
 									attachmentInput?.click();
 								}}
 							>
-								<ImagePlus class="size-4" aria-hidden="true" />
+								<Paperclip class="size-4" aria-hidden="true" />
 							</button>
 
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
@@ -791,11 +601,12 @@
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							{#if selectedCatalogModel}
-								<ReasoningServiceSelector
+								<ReasoningSelector
 									model={selectedCatalogModel}
-									serviceTierOptions={selectedServiceTierOptions}
 									bind:reasoningEffort={selectedReasoningEffort}
-									bind:serviceTier={selectedServiceTier}
+									bind:fastMode
+									fastModeAccess={selectedFastModeAccess}
+									fastModeLockTooltip={modelCatalog?.fastModeLockUpgradeMessage}
 									disabled={composerLocked || answeringQuestion}
 									className="z-20 shrink-0"
 								/>
@@ -803,50 +614,6 @@
 						</div>
 
 						<div class="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
-							<div class="group/context relative">
-								<button
-									type="button"
-									class="focus-visible:ring-ring/60 relative flex size-8 cursor-help items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none"
-									aria-label={`Context window ${contextPercent}% full`}
-									aria-describedby="context-window-details"
-									style={`background: conic-gradient(var(--accent) ${contextPercent * 3.6}deg, var(--hover-fill-strong) 0deg);`}
-									onkeydown={(event) => {
-										if (event.key === 'Escape') event.currentTarget.blur();
-									}}
-								>
-									<span class="bg-muted size-5.5 rounded-full"></span>
-								</button>
-								<div
-									id="context-window-details"
-									class="border-border bg-popover invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border p-4 opacity-0 shadow-(--composer-shadow) transition duration-150 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100"
-									role="tooltip"
-								>
-									<div class="flex items-center justify-between gap-4 text-[13px]">
-										<span class="text-foreground font-medium">Context window</span>
-										<span class="text-muted-foreground"
-											>{contextPercent}% · {formatTokens(contextUsage.inputTokens)}/{formatTokens(
-												contextUsage.contextWindowTokens
-											)}</span
-										>
-									</div>
-									<div class="bg-hover-fill mt-3 h-1.5 overflow-hidden rounded-full">
-										<div
-											class="bg-accent h-full rounded-full transition-[width] duration-300"
-											style={`width: ${contextPercent}%`}
-										></div>
-									</div>
-									<div
-										class="text-muted-foreground mt-3 flex items-center justify-between text-[12px]"
-									>
-										<span>Total processed</span>
-										<span>{formatTokens(contextUsage.totalTokensProcessed)}</span>
-									</div>
-									<p class="text-muted-foreground mt-4 text-[12px] leading-5">
-										Sprocket automatically compacts context at about {contextCompactPercent}% so
-										long-running work can continue.
-									</p>
-								</div>
-							</div>
 							{#if isRunning}
 								<button
 									type="button"
@@ -868,7 +635,7 @@
 										(!answeringQuestion && usageBlocked) ||
 										isSubmitting ||
 										!canSubmitContent ||
-										(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))}
+										(!answeringQuestion && attachmentsPending)}
 									aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
 								>
 									<ArrowUp class="size-4" />

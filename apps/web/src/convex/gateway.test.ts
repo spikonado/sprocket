@@ -21,13 +21,14 @@ describe('gateway quota', () => {
 		const { asUser, threadId, subject } = await seedOwnedThread(t);
 		const executionSecret = 'gateway-secret';
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			transcriptProtocol: 2,
 			submissionId: 'gateway-run',
 			threadId,
 			prompt: 'Ship it',
-			imageUploadIds: [],
+			storageIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret,
 			agentVersion: '0.3.2'
 		});
@@ -54,13 +55,12 @@ describe('gateway quota', () => {
 		);
 	}, 15_000);
 
-	it('snapshots gateway transport on new runs', async () => {
+	it('snapshots the gateway protocol on new runs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const created = await createQueuedRun(t, asUser, threadId, 'gateway-run', 'gateway-secret');
 		expect(created.created).toBe(true);
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
-		expect(run?.completionTransport).toBe('gateway');
 		expect(run?.gatewayProtocolVersion).toBe(1);
 	});
 });

@@ -31,7 +31,9 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				machineId: 'install-lifecycle',
 				friendlyName: 'Workshop',
 				platform: 'linux',
+				platformVersion: '6.12.1',
 				architecture: 'x86_64',
+				hostname: 'workbench',
 				appVersion: '0.3.2',
 				credentialHash: 'a'.repeat(64),
 				runIds: [created.runId],
@@ -164,25 +166,5 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			status: 'cancelled',
 			lastError: 'model exploded'
 		});
-	});
-
-	it('keeps immediate finalizeRun cancellation as a compatibility shim', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'shim-cancel-secret';
-		const created = await createQueuedRun(t, asUser, threadId, 'shim-cancel', executionSecret);
-		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-shim',
-			runId: created.runId,
-			executionSecret
-		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
-			runId: created.runId,
-			text: '',
-			status: 'cancelled'
-		});
-		expect(await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status)).toBe(
-			'cancelled'
-		);
 	});
 });

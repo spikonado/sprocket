@@ -2,4 +2,4 @@
 
 import { launch } from '../lib/launcher.js';
 
-launch(process.argv.slice(2));
+await launch(process.argv.slice(2));

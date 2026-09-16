@@ -1,18 +1,15 @@
-import type { Doc, Id } from '@convex/_generated/dataModel';
 import { action, internalMutation, mutation, query } from '@convex/_generated/server';
+import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
-import {
-	getCompletionStreamState,
-	registerCompletionAttemptForRun
-} from '@convex/lib/assistantStreamWrites';
 import {
 	contextHandoffKey,
 	existingThroughPartNumber,
@@ -24,19 +21,24 @@ import {
 	recordThreadUsageEvent,
 	usageEventId
 } from '@convex/lib/threadUsage';
-import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
+import {
+	executorFinalizationResult,
+	finalizeRunRecord,
+	matchesFinalizeExpectations,
+	vExecutorFinalizationResult
+} from '@convex/lib/runFinalize';
 import { requestRunCancellation } from './runLifecycle';
 import {
 	recordCompletionTranscript,
 	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
+	COMPLETION_STREAM_SUPERSEDED,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
-import { compareRunStartedAt } from '@convex/lib/runs';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
@@ -44,7 +46,7 @@ import {
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
-import { getPromptPart } from '@convex/lib/transcriptParts';
+import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -55,14 +57,11 @@ import {
 	isRunClaimLeaseActive,
 	ownsActiveRunClaim
 } from '@convex/lib/runLease';
-import { COMPLETION_STREAM_SUPERSEDED, vCompletionStreamEvent } from '@convex/lib/completionStream';
 import {
 	isRunFinalStatus,
-	runFinalStatus,
-	vExecutorJobKind,
-	vExecutorJobPayload,
+	vCurrentExecutorJobKind,
+	vCurrentExecutorJobPayload,
 	vReasoningEffort,
-	vServiceTier,
 	vRunFinalStatus,
 	vRunStatus,
 	vTranscriptCompletionItem
@@ -71,10 +70,7 @@ import {
 type RunClaimPatch = {
 	claimId: string;
 	claimExpiresAt: number;
-	status: Doc<'runs'>['status'];
-	lastError: undefined;
 	completionAttemptSeq?: number;
-	activeJobId?: undefined;
 };
 
 /** Retired Convex createRun. Kept so older agents get an update message. */
@@ -100,7 +96,6 @@ const vCreatedGatewayRun = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
 	threadId: v.id('threadRecords'),
-	promptMessageId: v.optional(v.string()),
 	userId: v.string(),
 	promptPart: v.optional(schema.doc('threadTranscriptParts'))
 });
@@ -120,7 +115,7 @@ export const insertGatewayRun = internalMutation({
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		executionSecret: v.string(),
 		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
@@ -135,14 +130,15 @@ export const insertGatewayRun = internalMutation({
 
 export const createGatewayRun = action({
 	args: {
+		transcriptProtocol: v.optional(v.literal(2)),
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
@@ -150,7 +146,12 @@ export const createGatewayRun = action({
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
+		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const userId = await getUserId(ctx);
+		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
+			userId,
+			storageIds: args.storageIds
+		});
 		const gatewayUrl = modelGatewayUrl();
 		const request: QueuedRunRequest = {
 			userId,
@@ -158,10 +159,10 @@ export const createGatewayRun = action({
 			threadId: args.threadId,
 			repositoryKey: args.repositoryKey,
 			prompt: args.prompt,
-			imageUploadIds: args.imageUploadIds,
+			imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
+			fastMode: args.fastMode,
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
@@ -169,6 +170,9 @@ export const createGatewayRun = action({
 		};
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+		if (created.promptPart) {
+			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
+		}
 		return {
 			...created,
 			gatewayUrl,
@@ -225,12 +229,11 @@ export const start = mutation({
 
 		const claimPatch: RunClaimPatch = {
 			claimId: args.claimId,
-			claimExpiresAt: nextClaimExpiresAt,
-			status: isSameClaimRenewal ? run.status : 'running',
-			lastError: undefined
+			claimExpiresAt: nextClaimExpiresAt
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
-		await setRunAndThreadStatus(ctx, run, claimPatch.status, claimPatch);
+		await patchRunExecution(ctx, run._id, claimPatch);
+		await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -254,26 +257,28 @@ export const renewClaim = mutation({
 		}
 
 		const nextClaimExpiresAt = claimExpiresAt(Date.now());
-		await ctx.db.patch('runs', run._id, { claimExpiresAt: nextClaimExpiresAt });
+		await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
 		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
 
 function getContextResult(args: {
 	run: Doc<'runs'>;
-	threadRecord: Doc<'threadRecords'>;
 	prompt: string;
-	promptAttachments: Infer<typeof vGetContextResult>['promptAttachments'];
-	contextBudget: Infer<typeof vGetContextResult>['contextBudget'];
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
-		run: args.run,
-		threadRecord: args.threadRecord,
-		prompt: args.prompt,
-		promptAttachments: args.promptAttachments,
-		agentHistory: [],
-		contextBudget: args.contextBudget
+		run: {
+			_id: args.run._id,
+			threadId: args.run.threadId,
+			userId: args.run.userId,
+			selectedModel: args.run.selectedModel,
+			reasoningEffort: args.run.reasoningEffort,
+			fastMode: args.run.fastMode,
+			startedAt: args.run.startedAt,
+			continuationOfRunId: args.run.continuationOfRunId
+		},
+		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
 		result.contextTokens = args.contextTokens;
@@ -288,14 +293,8 @@ export const getContext = query({
 	},
 	returns: vGetContextResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const userId = run.userId;
-		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
-		const contextTokens = await getThreadContextTokens(ctx, threadRecord._id);
-		const contextBudget = {
-			contextWindowTokens: run.contextWindowTokens ?? 0,
-			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
-		};
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
@@ -303,31 +302,13 @@ export const getContext = query({
 			}
 			return getContextResult({
 				run,
-				threadRecord,
 				prompt: '',
-				promptAttachments: [],
-				contextBudget,
 				contextTokens
 			});
 		}
-		const promptAttachments = (
-			await Promise.all(
-				promptPart.prompt.imageUploads.map(async (upload) => {
-					const url = await ctx.storage.getUrl(upload.storageId);
-					return url ? { mediaType: upload.mediaType, url } : null;
-				})
-			)
-		).filter((attachment) => attachment !== null);
-		if (promptPart.prompt.imageUploads.length !== promptAttachments.length) {
-			throw new Error('One or more image attachments are unavailable.');
-		}
-
 		return getContextResult({
 			run,
-			threadRecord,
 			prompt: promptPart.prompt.text,
-			promptAttachments,
-			contextBudget,
 			contextTokens
 		});
 	}
@@ -340,7 +321,7 @@ export const isFinished = query({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
 	}
 });
@@ -354,22 +335,18 @@ export const completionActor = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
-		const streamState = await getCompletionStreamState(ctx, run);
 		const actor: Infer<typeof vCompletionActor> = {
 			userId,
 			threadId: run.threadId,
-			status: run.status,
-			completionAttemptSeq: run.completionAttemptSeq,
-			streamSequence: streamState.sequence
+			status: run.status
 		};
 		if (run.claimId) actor.claimId = run.claimId;
 		if (run.claimExpiresAt) actor.claimExpiresAt = run.claimExpiresAt;
-		if (streamState.streamAttemptId) actor.streamAttemptId = streamState.streamAttemptId;
 		return actor;
 	}
 });
 
-/** Legacy previous-run cutoff for released agents. New agents call saveContextHandoff. */
+/** Retired run-scoped compaction API. Current agents save part-bounded handoffs. */
 export const saveContextCompaction = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -380,55 +357,8 @@ export const saveContextCompaction = mutation({
 		persistForFutureRuns: v.boolean()
 	},
 	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
-		if (!args.summary.trim()) {
-			throw new Error('Invalid context compaction.');
-		}
-		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
-		await recordThreadUsageEvent(ctx, thread, {
-			eventId: usageEventId('compaction', run._id, args.claimId, run.completionAttemptSeq),
-			processedTokens: args.processedTokens
-		});
-		let durableSummary:
-			{ contextSummary: string; contextSummaryThroughRunId: Id<'runs'> } | undefined;
-		if (args.persistForFutureRuns) {
-			const previousRun = (
-				await Promise.all(
-					runFinalStatus.map((status) =>
-						ctx.db
-							.query('runs')
-							.withIndex('by_threadId_status_startedAt', (query) =>
-								query
-									.eq('threadId', run.threadId)
-									.eq('status', status)
-									.lte('startedAt', run.startedAt)
-							)
-							.order('desc')
-							.take(4)
-					)
-				)
-			)
-				.flat()
-				.filter((candidate) => compareRunStartedAt(candidate, run) < 0)
-				.sort((left, right) => compareRunStartedAt(right, left))[0];
-			// Require a real cutoff run so transcript reads can skip covered parts.
-			if (previousRun) {
-				durableSummary = {
-					contextSummary: args.summary,
-					contextSummaryThroughRunId: previousRun._id
-				};
-			}
-		}
-		if (durableSummary) {
-			await ctx.db.patch('threadRecords', thread._id, {
-				...durableSummary,
-				contextSummaryThroughPartNumber: undefined,
-				contextSummaryHandoffKey: undefined
-			});
-		}
-		return true;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -523,29 +453,13 @@ export const registerCompletionAttempt = mutation({
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
-		await registerCompletionAttemptForRun(ctx, run, args.attemptSeq);
-	}
-});
-
-/** Retired Convex live-token merge. Kept so older agents get an update message. */
-export const mergeAssistantStreamEvents = mutation({
-	args: {
-		runId: v.optional(v.id('runs')),
-		claimId: v.optional(v.string()),
-		attemptSeq: v.optional(v.number()),
-		streamId: v.optional(v.string()),
-		sequence: v.optional(v.number()),
-		events: v.optional(v.array(vCompletionStreamEvent)),
-		executionSecret: v.optional(v.string())
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
+		await patchRunExecution(ctx, run._id, { completionAttemptSeq: args.attemptSeq });
 	}
 });
 
 export const finalizeCompletionCall = mutation({
 	args: {
+		transcriptProtocol: v.optional(v.literal(2)),
 		runId: v.id('runs'),
 		claimId: v.string(),
 		attemptSeq: v.number(),
@@ -555,6 +469,7 @@ export const finalizeCompletionCall = mutation({
 	},
 	returns: v.union(v.number(), v.null()),
 	handler: async (ctx, args) => {
+		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
@@ -580,6 +495,7 @@ export const finalizeCompletionCall = mutation({
 	}
 });
 
+/** Retired user-authenticated finalizer. Current agents use finalizeExecutorRun. */
 export const finalizeRun = mutation({
 	args: {
 		expectedStatus: v.optional(vRunStatus),
@@ -590,13 +506,8 @@ export const finalizeRun = mutation({
 		lastError: v.optional(v.string())
 	},
 	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const run = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!matchesFinalizeExpectations(run, args)) {
-			return false;
-		}
-		return finalizeRunRecord(ctx, run, args);
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -623,6 +534,7 @@ export const reopenRun = mutation({
 
 export const finalizeExecutorRun = mutation({
 	args: {
+		includeOutput: v.optional(v.boolean()),
 		expectedStatus: v.optional(vRunStatus),
 		expectedClaimId: v.optional(v.string()),
 		runId: v.id('runs'),
@@ -631,13 +543,12 @@ export const finalizeExecutorRun = mutation({
 		lastError: v.optional(v.string()),
 		executionSecret: v.string()
 	},
-	returns: v.boolean(),
+	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!matchesFinalizeExpectations(run, args)) {
-			return false;
-		}
-		return finalizeRunRecord(ctx, run, args);
+		const accepted =
+			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));
+		return executorFinalizationResult(ctx, run, accepted, args.includeOutput);
 	}
 });
 
@@ -646,10 +557,10 @@ export const finalizeFailedStart = mutation({
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		text: v.string(),
 		lastError: v.string(),
 		executionSecret: v.string()
@@ -666,23 +577,24 @@ export const finalizeFailedStart = mutation({
 
 export const finalizeClaimFailure = mutation({
 	args: {
+		includeOutput: v.optional(v.boolean()),
 		claimId: v.string(),
 		runId: v.id('runs'),
 		text: v.string(),
 		lastError: v.string(),
 		executionSecret: v.string()
 	},
-	returns: v.boolean(),
+	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!canFinalizeAfterClaimFailure(run, args.claimId)) {
-			return false;
-		}
-		return finalizeRunRecord(ctx, run, {
-			text: args.text,
-			status: 'failed',
-			lastError: args.lastError
-		});
+		const accepted =
+			canFinalizeAfterClaimFailure(run, args.claimId) &&
+			(await finalizeRunRecord(ctx, run, {
+				text: args.text,
+				status: 'failed',
+				lastError: args.lastError
+			}));
+		return executorFinalizationResult(ctx, run, accepted, args.includeOutput);
 	}
 });
 
@@ -690,9 +602,9 @@ export const beginToolJob = mutation({
 	args: {
 		claimId: v.string(),
 		runId: v.id('runs'),
-		kind: vExecutorJobKind,
+		kind: vCurrentExecutorJobKind,
 		callId: v.optional(v.string()),
-		payload: vExecutorJobPayload,
+		payload: vCurrentExecutorJobPayload,
 		hidden: v.optional(v.boolean()),
 		executionSecret: v.string()
 	},

@@ -1,10 +1,12 @@
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
+import type { displayRowValidator } from '$convex/lib/transcriptDisplayTypes';
 import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
 	vRunStatus,
+	type ArtifactType,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
 	type WorkspaceInstruction
@@ -30,7 +32,7 @@ export type ThreadSummary = {
 	title: string;
 	selectedModel: string;
 	reasoningEffort: string;
-	serviceTier: string;
+	fastMode: boolean;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
 	status: RunState['status'];
@@ -68,7 +70,7 @@ export type RunState = {
 	claimExpiresAt?: number;
 	selectedModel: string;
 	reasoningEffort: string;
-	serviceTier: string;
+	fastMode: boolean;
 	startedAt: number;
 	completedAt?: number;
 	lastError?: string;
@@ -77,30 +79,20 @@ export type RunState = {
 };
 
 export type MessageAttachment = {
-	imageUploadId: Id<'imageUploads'>;
+	storageId: Id<'_storage'>;
 	name: string;
 	mediaType: string;
 	size: number;
 	url: string | null;
 };
 
-export type ThreadMessage = {
-	_id: string;
-	_creationTime?: number;
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	userId: string;
-	type: 'prompt' | 'response';
-	text: string;
-	attachments: MessageAttachment[];
-	parts: AssistantPart[];
-	runStatus: Infer<typeof vRunStatus>;
-	runStartedAt: number;
+export type LiveTranscriptMessage = Omit<LiveCompletionOverlay, 'streamId'> & {
+	kind: 'live';
+	id: string;
 	runCompletedAt?: number;
-	sourceNumbers?: number[];
-	streamIds?: string[];
-	detailsLoaded?: boolean;
 };
+
+export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;
 
 export type AgentRunRequest = {
 	userId: string;
@@ -108,10 +100,10 @@ export type AgentRunRequest = {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	selectedModel: string;
 	reasoningEffort: string;
-	serviceTier: string;
+	fastMode: boolean;
 	workspacePath: string;
 	continuationOfRunId?: Id<'runs'>;
 };
@@ -121,35 +113,11 @@ export type AgentRunStart = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type LocalTranscriptAttachment = {
-	imageUploadId: Id<'imageUploads'>;
-	name: string;
-	mediaType: string;
-	size: number;
-	storageId: string;
-	url?: string;
-};
-
-export type LocalTranscriptPart = {
-	number: number;
-	kind: 'prompt' | 'completion' | 'tool';
-	message: ThreadMessage | null;
-};
-
-export type LocalTranscriptPage = {
-	threadId: Id<'threadRecords'>;
-	totalParts: number;
-	historyFromNumber: number;
-	stale: boolean;
-	parts: LocalTranscriptPart[];
-	nextBefore?: number;
-};
-
 export type LiveCompletionOverlay = {
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	runStatus: Infer<typeof vRunStatus>;
-	streamId?: string;
+	streamId: string;
 	text: string;
 	parts: AssistantPart[];
 	runStartedAt: number;
@@ -180,19 +148,67 @@ export type ThreadCacheUserRequest = {
 export type LiveCompletionWatchEvent =
 	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
 
+export type TranscriptUploadRequest = {
+	userId: string;
+	name: string;
+	file: File;
+	threadId?: Id<'threadRecords'>;
+};
+
+export type TranscriptUploadResult =
+	| {
+			storageId: Id<'_storage'>;
+			name: string;
+			mediaType: string;
+			size: number;
+			url: string;
+	  }
+	| { error: string };
+
+export type TranscriptDiscardRequest = {
+	userId: string;
+	storageId: Id<'_storage'>;
+	threadId?: Id<'threadRecords'>;
+};
+
 export type TranscriptScopeRequest = {
 	userId: string;
 	threadId: Id<'threadRecords'>;
 };
 
-export type TranscriptPageRequest = {
-	userId: string;
-	threadId: Id<'threadRecords'>;
+export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
+export type TranscriptDisplayPage = {
+	replicaId: string;
+	rows: TranscriptDisplayRow[];
+	indexing: boolean;
+	stale: boolean;
+	nextBefore?: number;
+	endSequence: number;
+	revision: number;
+	persistedStreams: TranscriptDisplayStream[];
+	changes: Array<{ id: TranscriptDisplayRow['id']; row: TranscriptDisplayRow | null }>;
+	changesCursor: TranscriptChangeCursor;
+	moreChanges: boolean;
+};
+export type TranscriptChangeCursor = { revision: number; sequence: number };
+export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
+export type TranscriptDisplayRequest = TranscriptScopeRequest & {
 	before?: number;
 	limit?: number;
+	streams?: TranscriptDisplayStream[];
+	changesAfter?: TranscriptChangeCursor;
 };
-
-export type TranscriptDetailsRequest = TranscriptScopeRequest & { numbers: number[] };
+export type TranscriptDisplayDetails = {
+	parts: AssistantPart[];
+	indexing: boolean;
+	nextAfter?: number;
+	previousBefore?: number;
+	revision: number;
+	stale: boolean;
+};
+export type TranscriptDetailCursor = { after?: number; before?: number; latest?: boolean };
+export type TranscriptDisplayDetailsRequest = TranscriptScopeRequest &
+	TranscriptDetailCursor & { rowId: TranscriptDisplayRow['id']; limit?: number };
 
 export type FilesystemBrowseEntry = {
 	name: string;
@@ -215,6 +231,39 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
+export type ArtifactScope = 'thread' | 'project';
+
+/** Local file-backed artifact snapshot from POST /api/artifacts/watch. */
+export type LocalArtifact = {
+	_id: string;
+	userId: string;
+	scope: ArtifactScope;
+	repositoryKey: string;
+	/** Present only for thread-scoped artifacts. */
+	threadId?: string;
+	localPath?: string;
+	content: string;
+	type: ArtifactType;
+	title: string;
+	revision: number;
+	createdAt: number;
+	updatedAt: number;
+	localError?: string;
+};
+
+export type ArtifactsWatchRequest = {
+	userId: string;
+	repositoryKey: string;
+	workspacePath: string;
+	threadId?: string;
+};
+
+export type ArtifactsWatchEvent = {
+	artifacts: LocalArtifact[];
+	stale: boolean;
+	error?: string;
+};
+
 export type DesktopApi = {
 	browseFilesystem: (input: {
 		partialPath: string;
@@ -228,14 +277,14 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	fetchTranscriptPage: (
-		request: TranscriptPageRequest,
+	fetchTranscriptDisplay: (
+		request: TranscriptDisplayRequest,
 		signal?: AbortSignal
-	) => Promise<LocalTranscriptPage>;
-	fetchTranscriptDetails: (
-		request: TranscriptDetailsRequest,
+	) => Promise<TranscriptDisplayPage>;
+	fetchTranscriptDisplayDetails: (
+		request: TranscriptDisplayDetailsRequest,
 		signal?: AbortSignal
-	) => Promise<LocalTranscriptPart[]>;
+	) => Promise<TranscriptDisplayDetails>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,
 		handlers: {
@@ -252,14 +301,23 @@ export type DesktopApi = {
 	) => Promise<void>;
 	clearTranscriptReplica: (request: TranscriptScopeRequest) => Promise<void>;
 	fetchTranscriptAttachment: (
-		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
+		request: TranscriptScopeRequest & { storageId: Id<'_storage'> }
 	) => Promise<Blob | null>;
+	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
+	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
 	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
 	watchThreadCache: (
 		request: ThreadCacheUserRequest,
 		handlers: {
 			onEvent: (event: ThreadCacheWatchEvent) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
+	watchArtifacts: (
+		request: ArtifactsWatchRequest,
+		handlers: {
+			onEvent: (event: ArtifactsWatchEvent) => void;
 			signal: AbortSignal;
 		}
 	) => Promise<void>;
@@ -293,6 +351,7 @@ export type ProjectAttachmentRequest = {
 export type ProjectAttachment = {
 	workspacePath: string;
 	repositoryKey: string;
+	attachmentKey?: string;
 	displayName: string;
 	availability: LocalAttachmentAvailability;
 	lastValidatedAt: number;

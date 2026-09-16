@@ -24,12 +24,15 @@ full process topology.
 
 The server does not store conversations or model credentials. Durable user,
 thread, run, and transcript state belongs to Convex. The server keeps local
-pairing/session data and this machine’s folder list (`workspacePath` plus
+session data, an internal process-pairing credential, and this machine’s folder list (`workspacePath` plus
 `repositoryKey`). Convex threads store `repositoryKey`; the web app groups
 those threads onto local folders whose key matches.
 
-Local authorization and cloud authentication are separate. A local session
-permits access to machine-facing operations. Rust owns one WorkOS session for
+Local authorization and cloud authentication are separate. A browser may create
+an unbound session through loopback HTTP or same-origin HTTPS from a reverse
+proxy connected over loopback. Plain remote HTTP and direct non-loopback
+connections are rejected. That session permits native login but not
+machine-facing operations. Rust owns one WorkOS session for
 the installed renderer, agent runs, and machine registration. Hosted web pages
 use AuthKit JS instead. Rust keeps the access token in memory and stores its refresh
 token in the operating system credential store. It scopes the credential by
@@ -43,10 +46,14 @@ rotation in Rust; neither the authorization code nor native refresh token is
 returned to the renderer.
 
 The installed renderer obtains a short-lived access token and user from
-`POST /api/auth/native-session/token`. This endpoint requires a paired local
-session, a loopback socket peer, and matching loopback Origin and Host headers.
-It returns `Cache-Control: no-store`. An unbound local session binds to the
-native user on first use; an existing binding to another user is rejected.
+`POST /api/auth/native-session/token`. This endpoint requires a browser session
+and either loopback HTTP or matching HTTPS Origin and Host headers. It returns
+`Cache-Control: no-store`. An unbound loopback session binds to the native user
+on first use. An HTTPS session must first complete a separate WorkOS device flow
+as the current host owner. The server discards the tokens returned by that flow,
+binds the browser session to the matching user ID, and then returns the host's
+short-lived access token. Remote browser sign-out removes only that browser
+session.
 The renderer does not persist the access token. Missing browser AuthKit cookies
 never delete native credentials.
 

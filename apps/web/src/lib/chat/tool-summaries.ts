@@ -24,8 +24,16 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Waiting for Answers';
 		case 'check_docs':
 			return 'Checked Docs';
+		case 'add_artifact':
 		case 'create_artifact':
 			return 'Created Artifacts';
+		case 'edit_artifact':
+		case 'update_artifact':
+			return 'Updated Artifacts';
+		case 'list_artifacts':
+			return 'Listed Artifacts';
+		case 'save_artifact':
+			return 'Saved Artifacts';
 		case 'exec_command':
 			return 'Ran Commands';
 		case 'get_workspace_instructions':
@@ -42,10 +50,12 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Checked Mandate';
 		case 'read_skill':
 			return 'Read Skill';
+		case 'parse_file':
+			return 'Parsed Files';
 		case 'scrape_url':
-			return 'Read Pages';
-		case 'update_artifact':
-			return 'Updated Artifacts';
+			return 'Read URLs';
+		case 'screenshot_url':
+			return 'Captured Screenshots';
 		case 'web_search':
 			return 'Searched Web';
 		case 'write_stdin':
@@ -82,8 +92,13 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return 'Waiting for answer';
 		case 'check_docs':
 			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
+		case 'add_artifact':
 		case 'create_artifact':
-			return jsonString(fields?.title) ?? 'Artifact';
+		case 'edit_artifact':
+		case 'save_artifact':
+			return summarizeArtifactTool(input);
+		case 'list_artifacts':
+			return 'Artifacts';
 		case 'exec_command': {
 			const cmd = jsonString(fields?.cmd);
 			return cmd ? `${cmd}${describeExecCommandOptions(input)}` : 'Command';
@@ -105,9 +120,12 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return name ? `$${name}` : 'Skill';
 		}
 		case 'scrape_url':
-			return jsonString(fields?.url) ?? 'Web page';
+		case 'screenshot_url':
+			return jsonString(fields?.url) ?? 'URL';
+		case 'parse_file':
+			return jsonString(fields?.path) ?? jsonString(fields?.url) ?? 'File';
 		case 'update_artifact':
-			return 'Updated artifact';
+			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
 		case 'write_stdin': {
@@ -162,6 +180,34 @@ function gitDiffPath(line: string) {
 	const plainMarker = ' b/';
 	const plainMarkerIndex = line.lastIndexOf(plainMarker);
 	return plainMarkerIndex >= 0 ? line.slice(plainMarkerIndex + plainMarker.length) : null;
+}
+
+function summarizeArtifactTool(input: JsonValue | undefined, result?: JsonValue) {
+	const fields = isJsonObject(input) ? input : undefined;
+	const resultFields = isJsonObject(result) ? result : undefined;
+	return (
+		jsonString(fields?.path) ??
+		jsonString(fields?.localPath) ??
+		jsonString(resultFields?.localPath) ??
+		jsonString(resultFields?.path) ??
+		jsonString(resultFields?.title) ??
+		jsonString(fields?.title) ??
+		jsonString(fields?.artifactId) ??
+		'Artifact'
+	);
+}
+
+function summarizeArtifactListResult(result: JsonValue | undefined) {
+	const artifacts = Array.isArray(result)
+		? result
+		: isJsonObject(result) && Array.isArray(result.artifacts)
+			? result.artifacts
+			: undefined;
+	if (artifacts === undefined) {
+		return 'Artifacts';
+	}
+	const count = artifacts.length;
+	return count === 1 ? '1 artifact' : `${count} artifacts`;
 }
 
 function summarizePatchInput(input: JsonValue | undefined) {
@@ -230,9 +276,6 @@ function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
 		const count = result.results.length;
 		return ` (${count} result${count === 1 ? '' : 's'})`;
 	}
-	if (kind === 'scrape_url' && isJsonObject(result) && result.truncated === true) {
-		return ' (truncated)';
-	}
 	return '';
 }
 
@@ -245,6 +288,20 @@ export function toolItemSummary(
 		return (
 			resolveCommandSessionLabel(toolLog, sessionCommands) ??
 			summarizeTool('write_stdin', toolLog.job?.payload ?? toolLog.input)
+		);
+	}
+	if (kind === 'list_artifacts') {
+		return summarizeArtifactListResult(toolLog.job?.result ?? toolLog.output);
+	}
+	if (
+		kind === 'add_artifact' ||
+		kind === 'edit_artifact' ||
+		kind === 'save_artifact' ||
+		kind === 'create_artifact'
+	) {
+		return summarizeArtifactTool(
+			toolLog.job?.payload ?? toolLog.input,
+			toolLog.job?.result ?? toolLog.output
 		);
 	}
 	if (toolLog.job) {

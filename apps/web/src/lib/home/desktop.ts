@@ -8,11 +8,10 @@ import type {
 	ProjectAttachmentRequest,
 	RunState
 } from '$lib/types/sprocket';
-import { isClaimedRunStatus, isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import { isRunFinalStatus } from '$convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '$convex/lib/runCancellation';
-import { areImageUploadIdsEqual } from '$lib/chat/attachments';
+import { areStorageIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
 	localAttachmentAvailability: LocalAttachmentAvailability;
@@ -31,74 +30,46 @@ export function projectFromAttachment(attachment: ProjectAttachment): ProjectSta
 export function resolveSubmissionId(args: {
 	newSubmissionId: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
-	serviceTier: AgentRunRequest['serviceTier'];
+	fastMode: AgentRunRequest['fastMode'];
 	recoveredSubmission?: {
 		prompt: string;
-		imageUploadIds?: Id<'imageUploads'>[];
+		storageIds?: Id<'_storage'>[];
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
-		serviceTier: AgentRunRequest['serviceTier'];
+		fastMode: AgentRunRequest['fastMode'];
 		selectedModel: AgentRunRequest['selectedModel'];
 		submissionId: string;
+		continuationOfRunId?: Id<'runs'>;
 	};
 	latestRun: {
+		runId?: Id<'runs'>;
 		status: RunState['status'];
 		submissionId: string;
 	} | null;
 	selectedModel: AgentRunRequest['selectedModel'];
+	continuationOfRunId?: Id<'runs'>;
 }) {
 	const recoveredSubmission = args.recoveredSubmission;
 	const latestRun = args.latestRun;
 	const canReuseRecoveredSubmission =
 		latestRun === null ||
+		(latestRun.runId !== undefined &&
+			latestRun.runId === recoveredSubmission?.continuationOfRunId) ||
 		(latestRun.submissionId === recoveredSubmission?.submissionId &&
 			!isRunFinalStatus(latestRun.status));
 	return canReuseRecoveredSubmission &&
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
-		recoveredSubmission.serviceTier === args.serviceTier &&
-		areImageUploadIdsEqual(recoveredSubmission.imageUploadIds, args.imageUploadIds)
+		recoveredSubmission.fastMode === args.fastMode &&
+		recoveredSubmission.continuationOfRunId === args.continuationOfRunId &&
+		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
 }
 
-export function resolveDraftRunSubmissionId(args: {
-	freshSubmissionId: string;
-	submissionRunStatus: RunState['status'] | null;
-	threadSubmissionId: string;
-}) {
-	return args.submissionRunStatus && isRunFinalStatus(args.submissionRunStatus)
-		? args.freshSubmissionId
-		: args.threadSubmissionId;
-}
-
-export function isRunBlockingAgentLaunch(
-	run: Pick<RunState, 'status' | 'claimExpiresAt'> | null,
-	now: number
-): boolean {
-	if (!run) return false;
-	if (run.status === 'queued') return true;
-	return isRunClaimLeaseActive(run, now);
-}
-
 export type RunResumeKind = 'crash' | 'failed' | 'cancelled';
-
-export function runResumeKind(
-	run: Pick<RunState, 'status' | 'claimExpiresAt' | 'lastError'> | null,
-	now: number
-): RunResumeKind | null {
-	if (!run) return null;
-	if (run.status === 'cancelled') return 'cancelled';
-	if (run.status === 'failed') {
-		return run.lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
-	}
-	if (isClaimedRunStatus(run.status) && !isRunClaimLeaseActive(run, now)) {
-		return 'crash';
-	}
-	return null;
-}
 
 export function lifecycleResumeKind(
 	phase: SelectedThreadLifecyclePhase,
@@ -119,10 +90,10 @@ export function launchAgentRun(args: {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
-	serviceTier: AgentRunRequest['serviceTier'];
+	fastMode: AgentRunRequest['fastMode'];
 	submissionId: string;
 	workspacePath: string;
 	continuationOfRunId?: Id<'runs'>;
@@ -130,10 +101,10 @@ export function launchAgentRun(args: {
 	const request: AgentRunRequest = {
 		userId: args.userId,
 		prompt: args.prompt,
-		imageUploadIds: args.imageUploadIds,
+		storageIds: args.storageIds,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
+		fastMode: args.fastMode,
 		submissionId: args.submissionId,
 		workspacePath: args.workspacePath
 	};
@@ -154,12 +125,52 @@ export function launchAgentRun(args: {
 		});
 }
 
-function buildDesktopProjectAttachmentsByPath(
+function attachmentIsPreferred(candidate: ProjectAttachment, current: ProjectAttachment) {
+	if (candidate.availability !== current.availability) {
+		return candidate.availability === 'available';
+	}
+	if (candidate.lastUsedAt !== current.lastUsedAt) {
+		return candidate.lastUsedAt < current.lastUsedAt;
+	}
+	return candidate.workspacePath < current.workspacePath;
+}
+
+export function buildDesktopProjectAttachmentsByPath(
 	desktopProjectAttachments: ProjectAttachment[]
 ): Record<string, ProjectAttachment> {
+	const attachmentsByRepository = new Map<string, ProjectAttachment>();
+	for (const attachment of desktopProjectAttachments) {
+		const attachmentKey = attachment.attachmentKey ?? `path:${attachment.workspacePath}`;
+		const current = attachmentsByRepository.get(attachmentKey);
+		if (!current || attachmentIsPreferred(attachment, current)) {
+			attachmentsByRepository.set(attachmentKey, attachment);
+		}
+	}
 	return Object.fromEntries(
-		desktopProjectAttachments.map((attachment) => [attachment.workspacePath, attachment])
+		[...attachmentsByRepository.values()].map((attachment) => [
+			attachment.workspacePath,
+			attachment
+		])
 	);
+}
+
+export function upsertDesktopProjectAttachment(
+	desktopProjectAttachmentsByPath: Record<string, ProjectAttachment>,
+	attachment: ProjectAttachment,
+	replaceWorkspacePath?: string
+): Record<string, ProjectAttachment> {
+	const nextAttachments = Object.fromEntries(
+		Object.entries(desktopProjectAttachmentsByPath).filter(
+			([workspacePath, existing]) =>
+				workspacePath !== replaceWorkspacePath &&
+				workspacePath !== attachment.workspacePath &&
+				(existing.attachmentKey === undefined ||
+					attachment.attachmentKey === undefined ||
+					existing.attachmentKey !== attachment.attachmentKey)
+		)
+	);
+	nextAttachments[attachment.workspacePath] = attachment;
+	return nextAttachments;
 }
 
 export async function refreshDesktopProjectAttachments(desktopApi: DesktopApi | null) {

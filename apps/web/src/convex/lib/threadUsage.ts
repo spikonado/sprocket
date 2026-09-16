@@ -30,12 +30,7 @@ export const threadProcessedTokens = new TableAggregate<{
 	sumValue: (doc) => doc.processedTokens
 });
 
-export function usageEventId(
-	kind: 'usage' | 'compaction',
-	runId: Id<'runs'>,
-	claimId: string,
-	seq: number
-) {
+export function usageEventId(kind: 'usage', runId: Id<'runs'>, claimId: string, seq: number) {
 	return `${kind}:${runId}:${claimId}:${seq}`;
 }
 
@@ -43,14 +38,6 @@ function assertValidTokenCount(value: number): void {
 	if (!Number.isSafeInteger(value) || value < 0) {
 		throw new Error('Invalid token count.');
 	}
-}
-
-function addTokenCounts(left: number, right: number): number {
-	assertValidTokenCount(left);
-	assertValidTokenCount(right);
-	const total = left + right;
-	assertValidTokenCount(total);
-	return total;
 }
 
 async function getUsageRow(
@@ -63,15 +50,11 @@ async function getUsageRow(
 		.unique();
 }
 
-async function aggregatedProcessedTokens(
+async function staleAggregatedProcessedTokens(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
-): Promise<number | null> {
-	try {
-		return await threadProcessedTokens.sum(ctx, { namespace: threadId });
-	} catch {
-		return null;
-	}
+): Promise<number> {
+	return await threadProcessedTokens.sum(ctx, { namespace: threadId, stale: true });
 }
 
 /** Latest provider-reported context size. Does not read the processed-token ledger. */
@@ -92,21 +75,19 @@ export async function clearThreadContextTokens(
 	await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: undefined });
 }
 
-/** Current counters for a thread. Reads the Aggregate ledger. */
+/** Latest context size and the eventually consistent processed-token total. */
 export async function getThreadUsageValues(
 	ctx: QueryCtx | MutationCtx,
 	thread: Doc<'threadRecords'>
 ): Promise<ThreadUsageValues> {
 	const usageRow = await getUsageRow(ctx.db, thread._id);
-	const fieldTotal = usageRow?.totalTokensProcessed ?? 0;
-	const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
 	return {
 		contextTokens: usageRow?.contextTokens,
-		totalTokensProcessed: aggregated ?? fieldTotal
+		totalTokensProcessed: await staleAggregatedProcessedTokens(ctx, thread._id)
 	};
 }
 
-/** Insert an idempotent usage event and dual-write the additive field. */
+/** Insert an idempotent usage event. */
 export async function recordThreadUsageEvent(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>,
@@ -144,20 +125,19 @@ export async function recordThreadUsageEvent(
 	if (!inserted) {
 		throw new Error('Failed to insert usage event.');
 	}
-	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
+	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted, { async: true });
 
 	const usageRow = await getUsageRow(ctx.db, thread._id);
-	const next: ThreadUsageValues = {
-		contextTokens: args.contextTokens ?? usageRow?.contextTokens,
-		totalTokensProcessed: addTokenCounts(usageRow?.totalTokensProcessed ?? 0, args.processedTokens)
-	};
+	const nextContextTokens = args.contextTokens ?? usageRow?.contextTokens;
 	if (usageRow) {
-		await ctx.db.patch('threadUsage', usageRow._id, next);
+		if (nextContextTokens !== undefined) {
+			await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: nextContextTokens });
+		}
 	} else {
 		await ctx.db.insert('threadUsage', {
 			threadId: thread._id,
 			userId: thread.userId,
-			...next
+			contextTokens: nextContextTokens
 		});
 	}
 	return true;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -53,7 +54,9 @@ async function seedRunWithJob(
 			sequence: 1
 		});
 		await ctx.db.patch('runs', created.runId, {
-			status: options.runStatus ?? 'awaiting_executor',
+			status: options.runStatus ?? 'running'
+		});
+		await patchRunExecution(ctx, created.runId, {
 			claimId,
 			claimExpiresAt: options.claimExpiresAt ?? Date.now() + 60_000,
 			activeJobId: options.activeJobMatches === false ? otherJobId : jobId
@@ -76,7 +79,118 @@ const commandResult = {
 };
 
 describe('executor', () => {
-	it('completes the active job and releases the run back to running', async () => {
+	it.each(['text', 'image'] as const)(
+		'persists parse_file path jobs and %s results',
+		async (mode) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = `parse-${mode}`;
+			const claimId = `claim-${mode}`;
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				`submission-${mode}`,
+				executionSecret,
+				'Parse this file'
+			);
+			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				runId,
+				claimId,
+				executionSecret,
+				kind: 'parse_file',
+				callId: `call-${mode}`,
+				payload: { path: '/cache/attachments/source' }
+			});
+			await expect(
+				asUser.mutation(api.executor.complete, {
+					runId,
+					claimId,
+					executionSecret,
+					jobId,
+					result:
+						mode === 'text'
+							? {
+									outputType: 'text',
+									path: '/cache/parse_file/result.md',
+									source: { type: 'path', path: '/cache/attachments/source' },
+									format: 'rtf',
+									charCount: 5,
+									preview: 'hello',
+									truncated: false
+								}
+							: {
+									outputType: 'image',
+									path: '/cache/parse_file/result.png',
+									source: { type: 'path', path: '/cache/attachments/source' },
+									mediaType: 'image/png',
+									byteSize: 123,
+									width: 1,
+									height: 1
+								}
+				})
+			).resolves.toBe(true);
+			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+			expect(
+				parts.parts.some(
+					(part) => part.tool?.name === 'parse_file' && part.tool.status === 'completed'
+				)
+			).toBe(true);
+		}
+	);
+
+	it.each(['scrape_url', 'screenshot_url'] as const)(
+		'persists %s local image references without file bytes',
+		async (kind) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = 'web-image-secret';
+			const claimId = 'claim-image';
+			const result = {
+				outputType: 'image' as const,
+				url: 'https://example.com/image',
+				path: '/threads/thread/parse_file/image.png',
+				mediaType: 'image/png',
+				byteSize: 80,
+				width: 1280,
+				height: 720
+			};
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'web-image',
+				executionSecret,
+				'Read this image'
+			);
+			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				runId,
+				claimId,
+				executionSecret,
+				kind,
+				payload: { url: result.url }
+			});
+			await expect(
+				asUser.mutation(api.executor.complete, {
+					runId,
+					claimId,
+					executionSecret,
+					jobId,
+					result
+				})
+			).resolves.toBe(true);
+			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+			expect(job?.result).toEqual(result);
+			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+			expect(parts.parts.find((part) => part.tool?.status === 'completed')?.tool?.output).toEqual(
+				result
+			);
+		}
+	);
+
+	it('completes the active job without changing the running status', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
 			executionSecret: 'executor-complete-secret'
@@ -94,7 +208,7 @@ describe('executor', () => {
 
 		const state = await t.run(async (ctx) => ({
 			job: await ctx.db.get('executorJobs', jobId),
-			run: await ctx.db.get('runs', runId)
+			run: await getRunWithExecution(ctx.db, runId)
 		}));
 		expect(state.job).toMatchObject({
 			status: 'completed',
@@ -120,7 +234,6 @@ describe('executor', () => {
 			executionSecret: 'executor-browser-result-secret'
 		});
 
-		// browser_act / browser_extract
 		const taskResult = { text: 'success: true', truncated: false };
 		await expect(
 			asUser.mutation(api.executor.complete, {
@@ -132,19 +245,19 @@ describe('executor', () => {
 			})
 		).resolves.toBe(true);
 
-		// browser_observe, on a fresh job
-		const observeResult = {
-			actions: [{ selector: 'xpath=/html/body/button', description: 'Pay' }],
-			text: '[]',
+		const screenshotResult = {
+			mediaType: 'image/png' as const,
+			dataBase64: '',
+			byteLength: 123,
 			truncated: false
 		};
 		const second = await seedRunWithJob(t, {
-			executionSecret: 'executor-browser-observe-secret'
+			executionSecret: 'executor-browser-screenshot-secret'
 		});
 		await expect(
 			second.asUser.mutation(api.executor.complete, {
 				jobId: second.jobId,
-				result: observeResult,
+				result: screenshotResult,
 				runId: second.runId,
 				claimId: second.claimId,
 				executionSecret: second.executionSecret
@@ -216,22 +329,23 @@ describe('executor', () => {
 		expect(
 			await t.run(async (ctx) => ({
 				job: await ctx.db.get('executorJobs', matching.jobId),
-				run: await ctx.db.get('runs', matching.runId)
+				run: await getRunWithExecution(ctx.db, matching.runId)
 			}))
 		).toMatchObject({
 			job: { status: 'failed', error: 'boom' },
 			run: { status: 'running' }
 		});
 		expect(
-			(await t.run(async (ctx) => (await ctx.db.get('runs', matching.runId))?.activeJobId)) ??
-				undefined
+			(await t.run(
+				async (ctx) => (await getRunWithExecution(ctx.db, matching.runId))?.activeJobId
+			)) ?? undefined
 		).toBeUndefined();
 
 		const mismatched = await seedRunWithJob(t, {
 			activeJobMatches: false,
 			executionSecret: 'executor-fail-mismatch-secret'
 		});
-		const before = await t.run(async (ctx) => ctx.db.get('runs', mismatched.runId));
+		const before = await t.run(async (ctx) => getRunWithExecution(ctx.db, mismatched.runId));
 		await expect(
 			mismatched.asUser.mutation(api.executor.fail, {
 				jobId: mismatched.jobId,
@@ -241,7 +355,7 @@ describe('executor', () => {
 				executionSecret: mismatched.executionSecret
 			})
 		).resolves.toBe(true);
-		const after = await t.run(async (ctx) => ctx.db.get('runs', mismatched.runId));
+		const after = await t.run(async (ctx) => getRunWithExecution(ctx.db, mismatched.runId));
 		expect(after?.status).toBe(before?.status);
 		expect(after?.activeJobId).toBe(before?.activeJobId);
 		expect(
@@ -267,7 +381,7 @@ describe('executor', () => {
 		expect(
 			await t.run(async (ctx) => ({
 				jobStatus: (await ctx.db.get('executorJobs', completeCase.jobId))?.status,
-				activeJobId: (await ctx.db.get('runs', completeCase.runId))?.activeJobId
+				activeJobId: (await getRunWithExecution(ctx.db, completeCase.runId))?.activeJobId
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: completeCase.jobId });
 
@@ -287,7 +401,7 @@ describe('executor', () => {
 		expect(
 			await t.run(async (ctx) => ({
 				jobStatus: (await ctx.db.get('executorJobs', failCase.jobId))?.status,
-				activeJobId: (await ctx.db.get('runs', failCase.runId))?.activeJobId
+				activeJobId: (await getRunWithExecution(ctx.db, failCase.runId))?.activeJobId
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: failCase.jobId });
 	});

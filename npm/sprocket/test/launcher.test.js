@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureExecutable, nativePackage, run } from '../lib/launcher.js';
+import { ensureExecutable, launch, nativePackage } from '../lib/launcher.js';
 
 test('selects the native package for supported platforms', () => {
 	assert.deepEqual(nativePackage('linux', 'x64'), [
@@ -35,21 +35,48 @@ test('restores execute bits on unix binaries', { skip: process.platform === 'win
 	}
 });
 
-test('runs the native executable with unchanged arguments and environment', () => {
-	const expectedEnv = { SPROCKET_STATIC_DIR: '/tmp/web' };
+test('overrides inherited update helper environment for the native child', async () => {
 	let invocation;
-	const status = run('/tmp/sprocket', ['--web', './robot'], {
-		env: expectedEnv,
+	await launch(['--web'], {
+		env: {
+			SPROCKET_STATIC_DIR: '/tmp/web',
+			SPROCKET_UPDATE_NODE: '/evil/node',
+			SPROCKET_UPDATE_SCRIPT: '/evil/update-api.js',
+			SPROCKET_UPDATE_MANAGED: '1'
+		},
+		execPath: '/usr/bin/node',
+		libDir: '/pkg/lib',
+		resolveBinary: () => '/tmp/sprocket',
+		ensureExecutable: () => {},
 		spawn(binary, args, options) {
 			invocation = { binary, args, options };
 			return { status: 0 };
 		}
 	});
+	assert.equal(invocation.options.env.SPROCKET_UPDATE_NODE, '/usr/bin/node');
+	assert.equal(
+		invocation.options.env.SPROCKET_UPDATE_SCRIPT,
+		path.resolve('/pkg/lib', 'update-api.js')
+	);
+	assert.equal(invocation.options.env.SPROCKET_STATIC_DIR, '/tmp/web');
+	assert.equal(Object.hasOwn(invocation.options.env, 'SPROCKET_UPDATE_MANAGED'), false);
+});
 
-	assert.deepEqual(invocation, {
-		binary: '/tmp/sprocket',
-		args: ['--web', './robot'],
-		options: { stdio: 'inherit', env: expectedEnv }
-	});
-	assert.equal(status, 0);
+test('update and upgrade help is delegated to the native CLI', async () => {
+	for (const args of [
+		['update', '--help'],
+		['upgrade', '-h']
+	]) {
+		let invocation;
+		const code = await launch(args, {
+			resolveBinary: () => '/tmp/sprocket',
+			ensureExecutable: () => {},
+			spawn(binary, childArgs) {
+				invocation = { binary, args: childArgs };
+				return { status: 0 };
+			}
+		});
+		assert.equal(code, 0);
+		assert.deepEqual(invocation, { binary: '/tmp/sprocket', args });
+	}
 });

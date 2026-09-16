@@ -24,35 +24,45 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::auth::require_session_user;
+use crate::cli_protocol::RunStarted;
 use crate::routes::api_error::ApiError;
 
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RunAgentApiRequest {
-    user_id: String,
-    submission_id: String,
-    #[serde(default)]
-    thread_id: Option<String>,
-    #[serde(default)]
-    repository_key: Option<String>,
-    prompt: String,
-    image_upload_ids: Vec<String>,
-    selected_model: String,
-    reasoning_effort: String,
-    service_tier: String,
-    workspace_path: String,
-    #[serde(default)]
-    continuation_of_run_id: Option<String>,
+struct FinishedOnDrop(Option<Arc<sprocket_agent::RunOutput>>);
+
+#[derive(Clone, Copy)]
+pub(crate) enum WorkspaceAccess {
+    Attached,
+    RunDirectory,
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RunAgentStartResponse {
-    run_id: String,
-    thread_id: String,
+impl Drop for FinishedOnDrop {
+    fn drop(&mut self) {
+        if let Some(finished) = &self.0 {
+            finished.finish(None);
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RunAgentApiRequest {
+    pub user_id: String,
+    pub submission_id: String,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub repository_key: Option<String>,
+    pub prompt: String,
+    pub storage_ids: Vec<String>,
+    pub selected_model: String,
+    pub reasoning_effort: String,
+    pub fast_mode: bool,
+    pub workspace_path: String,
+    #[serde(default)]
+    pub continuation_of_run_id: Option<String>,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -66,21 +76,61 @@ async fn run_agent_handler(
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<RunAgentApiRequest>,
-) -> Result<(StatusCode, Json<RunAgentStartResponse>), ApiError> {
+) -> Result<(StatusCode, Json<RunStarted>), ApiError> {
     require_session_user(&state.auth, &headers, &jar, &payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
+    let started = launch_agent(
+        state,
+        payload,
+        WorkspaceAccess::Attached,
+        true,
+        Default::default(),
+        None,
+    )
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+pub(crate) async fn launch_agent(
+    state: AppState,
+    payload: RunAgentApiRequest,
+    workspace_access: WorkspaceAccess,
+    allow_interaction: bool,
+    cancellation: sprocket_workspace::WorkspaceCancellation,
+    output: Option<Arc<sprocket_agent::RunOutput>>,
+) -> Result<RunStarted, ApiError> {
+    let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
     state
         .native_auth
         .require_user(&payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
 
-    let workspace_path = state
-        .project_attachments
-        .workspace_path(&payload.workspace_path)
-        .await
-        .map_err(ApiError::bad_request)?;
+    let attachment = match workspace_access {
+        WorkspaceAccess::Attached => {
+            state
+                .project_attachments
+                .require_available_workspace(&payload.workspace_path)
+                .await
+        }
+        WorkspaceAccess::RunDirectory => {
+            state
+                .project_attachments
+                .resolve_run_workspace(payload.workspace_path.clone())
+                .await
+        }
+    }
+    .map_err(ApiError::bad_request)?;
+    let workspace_path = attachment.workspace_path.clone();
+    let artifact_workspace_path = workspace_path.clone();
+    let artifact_repository_key = payload
+        .repository_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| crate::project_attachments::repository_key_matches(&attachment, key))
+        .unwrap_or(attachment.repository_key.as_str())
+        .to_string();
 
     state
         .machines
@@ -91,6 +141,8 @@ async fn run_agent_handler(
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
     let request = RunAgentRequest {
+        allow_interaction,
+        cancellation,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
         execution_secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
@@ -98,12 +150,11 @@ async fn run_agent_handler(
         thread_id: payload.thread_id.unwrap_or_default(),
         repository_key: payload.repository_key,
         prompt: payload.prompt,
-        image_upload_ids: payload.image_upload_ids,
+        storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
-        service_tier: payload.service_tier,
+        fast_mode: payload.fast_mode,
         workspace_path,
-        transcript_root: state.transcript.root(),
         installation_id: state.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
     };
@@ -112,12 +163,15 @@ async fn run_agent_handler(
     let live = Arc::clone(&state.live_completions);
     let transcript = Arc::clone(&state.transcript);
     let transcript_watchers = Arc::clone(&state.transcript_watchers);
+    let artifact_watchers = Arc::clone(&state.artifact_watchers);
     let (start_result_sender, start_result_receiver) = oneshot::channel();
 
     // Detach the complete launch before waiting for its acknowledgement. Hyper
     // may drop this handler when the browser closes the tab; the executor must
     // still either run or durably reconcile the submitted run.
     tokio::spawn(async move {
+        let _guard = guard;
+        let _finished = FinishedOnDrop(output.clone());
         let run = await_agent_start(
             start_agent_run(request),
             AGENT_START_TIMEOUT,
@@ -131,7 +185,11 @@ async fn run_agent_handler(
         .await;
 
         match run {
-            Ok(run) => {
+            Ok(mut run) => {
+                if let Some(output) = &output {
+                    run.observe_output(Arc::clone(output), Arc::clone(&transcript))
+                        .await;
+                }
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
@@ -157,8 +215,48 @@ async fn run_agent_handler(
                         }
                     }
                 }
-                let _ = start_result_sender.send(Ok((run_id, thread_id)));
-                if let Err(error) = run_agent(run, live).await {
+                let artifact_watch = if artifact_repository_key.is_empty() {
+                    None
+                } else {
+                    Some(
+                        artifact_watchers
+                            .open(
+                                &user_id,
+                                &artifact_repository_key,
+                                &artifact_workspace_path,
+                                (!thread_id.is_empty()).then_some(thread_id.as_str()),
+                            )
+                            .await,
+                    )
+                };
+                let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
+                let mut transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
+                let result = run_agent(run, live, transcript).await;
+                if let Some(output) = &output {
+                    output.finish(result.as_ref().err().map(ToString::to_string));
+                }
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    transcript_watch.wait_for_run(&run_id),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        tracing::warn!("transcript sync after run {run_id} failed: {error:#}")
+                    }
+                    Err(_) => tracing::warn!(
+                        "transcript sync after run {run_id} timed out; it will resume when reopened"
+                    ),
+                }
+                if let Some(watch) = &artifact_watch {
+                    if let Err(error) = watch.flush().await {
+                        tracing::warn!("artifact sync after run {run_id} failed: {error:#}");
+                    }
+                }
+                drop(artifact_watch);
+                drop(transcript_watch);
+                if let Err(error) = result {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }
             }
@@ -180,10 +278,7 @@ async fn run_agent_handler(
             )
         })?
         .map_err(|error| ApiError::internal_with("failed to start agent run", anyhow!(error)))?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(RunAgentStartResponse { run_id, thread_id }),
-    ))
+    Ok(RunStarted { run_id, thread_id })
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,6 +392,38 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+
+    fn request(json: serde_json::Value) -> RunAgentApiRequest {
+        serde_json::from_value(json).expect("valid agent request")
+    }
+
+    fn base_request() -> serde_json::Value {
+        serde_json::json!({
+            "userId": "user-1",
+            "submissionId": "submission-1",
+            "prompt": "Build it",
+            "storageIds": [],
+            "selectedModel": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "fastMode": false,
+            "workspacePath": "/workspace"
+        })
+    }
+
+    #[test]
+    fn accepts_fast_mode_requests() {
+        let mut json = base_request();
+        json["fastMode"] = true.into();
+        assert!(request(json).fast_mode);
+    }
+
+    #[test]
+    fn requires_fast_mode() {
+        let mut json = base_request();
+        json.as_object_mut().unwrap().remove("fastMode");
+        json["serviceTier"] = "fast".into();
+        assert!(serde_json::from_value::<RunAgentApiRequest>(json).is_err());
+    }
 
     struct DropSignal(Arc<AtomicBool>);
 

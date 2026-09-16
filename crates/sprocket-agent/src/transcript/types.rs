@@ -4,8 +4,6 @@ use serde_json::Value as JsonValue;
 pub const TRANSCRIPT_CHUNK_SIZE: u32 = 100;
 pub const TRANSCRIPT_PAGE_SIZE: u32 = 40;
 pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 1;
-/// Projected when no real run start timestamp exists. Never a sequence number.
-pub const UNKNOWN_RUN_STARTED_AT: u64 = 0;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -136,13 +134,14 @@ pub struct TranscriptPromptBody {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptAttachmentMeta {
-    pub image_upload_id: String,
     pub name: String,
     pub media_type: String,
     pub size: u64,
     pub storage_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -167,64 +166,13 @@ pub struct TranscriptToolBody {
     pub status: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptPage {
-    pub thread_id: String,
-    pub total_parts: u32,
-    pub history_from_number: u32,
-    pub stale: bool,
-    pub messages: Vec<TranscriptMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_before: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptPartsPage {
-    pub thread_id: String,
-    pub total_parts: u32,
-    pub history_from_number: u32,
-    pub stale: bool,
-    pub parts: Vec<TranscriptPartRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_before: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptPartRecord {
-    pub number: u32,
-    pub kind: TranscriptPartKind,
-    pub message: Option<TranscriptMessage>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptMessage {
-    pub id: String,
-    pub thread_id: String,
-    pub run_id: String,
-    pub user_id: String,
-    #[serde(rename = "type")]
-    pub message_type: String,
-    pub text: String,
-    pub attachments: Vec<TranscriptAttachmentMeta>,
-    pub parts: Vec<JsonValue>,
-    pub run_status: String,
-    /// Unix milliseconds. `0` means the run start was never recorded.
-    pub run_started_at: u64,
-    pub source_numbers: Vec<u32>,
-    pub stream_ids: Vec<String>,
-    pub details_loaded: bool,
-}
-
 impl TranscriptPart {
     pub fn without_ephemeral_urls(&self) -> Self {
         let mut part = self.clone();
         if let Some(prompt) = part.prompt.as_mut() {
             for upload in &mut prompt.image_uploads {
                 upload.url = None;
+                upload.local_path = None;
             }
         }
         part
@@ -267,18 +215,5 @@ mod tests {
             part.prompt.as_ref().map(|prompt| prompt.text.as_str()),
             Some("hi")
         );
-    }
-
-    #[test]
-    fn part_record_serializes_null_message() {
-        let json = serde_json::to_value(&TranscriptPartRecord {
-            number: 3,
-            kind: TranscriptPartKind::Tool,
-            message: None,
-        })
-        .unwrap();
-        assert_eq!(json["number"], 3);
-        assert_eq!(json["kind"], "tool");
-        assert!(json["message"].is_null());
     }
 }
