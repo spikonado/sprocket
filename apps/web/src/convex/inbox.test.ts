@@ -43,14 +43,14 @@ describe('thread inbox', () => {
 		expect(result.page.map((thread) => thread._id)).toEqual([threadId]);
 	});
 
-	it('accepts more than 100 attached projects in the global view', async () => {
+	it('accepts 200 distinct projects after removing duplicates', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		const repositoryKeys = Array.from({ length: 101 }, (_, index) => `project-${index}`);
+		const repositoryKeys = Array.from({ length: 200 }, (_, index) => `project-${index}`);
 
 		const result = await asUser.query(api.inbox.list, {
 			state: 'unsettled',
-			repositoryKeys,
+			repositoryKeys: [...repositoryKeys, ...repositoryKeys],
 			paginationOpts: { numItems: 10, cursor: null }
 		});
 
