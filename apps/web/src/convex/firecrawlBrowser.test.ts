@@ -670,6 +670,47 @@ describe('Firecrawl browser lifecycle', () => {
 		await expect(interact(t, args)).rejects.toThrow('Command failed');
 	});
 
+	it('replaces a worker whose Chrome wrapper cannot open its process-substitution fd', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		let startupFailed = false;
+		fetch.mockImplementation(async (url, options) => {
+			if (String(url).endsWith('/execute') && !startupFailed) {
+				startupFailed = true;
+				return new Response(
+					JSON.stringify({
+						success: true,
+						exitCode: 1,
+						stderr: '/usr/bin/google-chrome-stable: line 26: /dev/fd/63: No such file or directory'
+					})
+				);
+			}
+			return defaultResponse(url, options);
+		});
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const command = 'agent-browser open https://example.com';
+		expect(await interact(t, { runId, claimId, executionSecret, command })).toEqual({
+			text: 'Done',
+			truncated: false
+		});
+		const requests = fetch.mock.calls.map(([url, options]) => ({
+			url: String(url),
+			method: options.method,
+			body: options.body ? JSON.parse(String(options.body)) : undefined
+		}));
+		expect(
+			requests.filter(({ url }) => url.endsWith('/execute')).map(({ body }) => body.code)
+		).toEqual([command, command]);
+		expect(requests.filter(({ method }) => method === 'DELETE').map(({ url }) => url)).toEqual([
+			'https://api.firecrawl.dev/v2/interact/session-1'
+		]);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-2',
+			closing: false
+		});
+	});
+
 	it('fences in-flight creation when the profile is reset', async () => {
 		const t = initConvexTest();
 		const { asUser, userId, threadId, runId, claimId } = await fixture(t);

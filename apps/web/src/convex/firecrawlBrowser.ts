@@ -18,6 +18,8 @@ const MAX_SCREENSHOT_BYTES = 600_000;
 const SAVING_IN_USE_ERROR =
 	"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session.";
 const GONE_STATUSES = new Set([404, 410]);
+const CHROME_WRAPPER_DEV_FD_FAILURE =
+	/\/usr\/bin\/google-chrome-stable: line \d+: \/dev\/fd\/\d+: No such file or directory/;
 
 const envelopeSchema = z.object({
 	success: z.boolean(),
@@ -59,6 +61,8 @@ class FirecrawlError extends Error {
 		);
 	}
 }
+
+class BrowserWorkerStartupError extends Error {}
 
 function retryAfterSeconds(response: Response): number | undefined {
 	const value = response.headers.get('retry-after')?.trim();
@@ -196,6 +200,12 @@ function commandFailure(result: z.infer<typeof executionSchema>): string | undef
 	return undefined;
 }
 
+function isBrowserWorkerStartupFailure(result: z.infer<typeof executionSchema>): boolean {
+	return [result.stderr, result.error].some(
+		(message) => message && CHROME_WRAPPER_DEV_FD_FAILURE.test(message)
+	);
+}
+
 function outputText(result: z.infer<typeof executionSchema>): string | undefined {
 	return result.stdout || result.result || undefined;
 }
@@ -322,6 +332,23 @@ async function execute(
 		const failure = commandFailure(parsed.data);
 		if (failure) {
 			executing = false;
+			if (isBrowserWorkerStartupFailure(parsed.data)) {
+				try {
+					await destroy(ctx, sessionId!);
+					destroyed = true;
+				} catch {
+					await ctx.runMutation(internal.browserSessions.quarantine, {
+						id: session._id,
+						operationId
+					});
+					throw new ConvexError(
+						'The browser worker could not start Chrome and its session is closing. Retry shortly.'
+					);
+				}
+				throw new BrowserWorkerStartupError(
+					'The browser worker could not start Chrome. Its broken session was closed.'
+				);
+			}
 			throw new Error(clip(failure).text);
 		}
 		if (!parsed.data.success) {
@@ -370,11 +397,23 @@ export async function interact(
 	ctx: ActionCtx,
 	args: BrowserArgs & { command: string; enforce_saving?: boolean }
 ) {
-	try {
-		const result = await execute(ctx, args, args.command, 'bash', args.enforce_saving);
-		return clip([outputText(result), result.stderr].filter(Boolean).join('\n'));
-	} catch (error) {
-		toolError(error);
+	let replacementAttempted = false;
+	for (;;) {
+		try {
+			const result = await execute(ctx, args, args.command, 'bash', args.enforce_saving);
+			return clip([outputText(result), result.stderr].filter(Boolean).join('\n'));
+		} catch (error) {
+			if (error instanceof BrowserWorkerStartupError && !replacementAttempted) {
+				replacementAttempted = true;
+				continue;
+			}
+			if (error instanceof BrowserWorkerStartupError) {
+				toolError(
+					new Error('The replacement browser worker also failed to start Chrome. Retry later.')
+				);
+			}
+			toolError(error);
+		}
 	}
 }
 
