@@ -83,7 +83,7 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_command_shell")]
     pub(crate) shell: String,
-    /// Command timeout in milliseconds. Omit to allow the command to run until it exits or is terminated.
+    /// Maximum process runtime in milliseconds. Omit to allow the command to run until it exits or is terminated.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
     /// Wait before yielding a running session, in milliseconds. Defaults to 10000.
@@ -124,7 +124,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Long-running commands yield a sessionId after yieldTimeMs. The process keeps running unless timeoutMs is set."
+        "Run a shell command with full machine access. Long-running commands yield a sessionId after yieldTimeMs. The process keeps running unless timeoutMs sets a runtime limit."
             .to_string()
     }
 
