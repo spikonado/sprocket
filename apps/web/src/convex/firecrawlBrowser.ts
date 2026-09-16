@@ -1,5 +1,6 @@
 'use node';
 
+import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import { ConvexError, v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
@@ -18,6 +19,31 @@ const MAX_SCREENSHOT_BYTES = 600_000;
 const SAVING_IN_USE_ERROR =
 	"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session.";
 const GONE_STATUSES = new Set([404, 410]);
+const CHROME_WRAPPER_DEV_FD_FAILURE =
+	/\/usr\/bin\/google-chrome-stable: line \d+: \/dev\/fd\/\d+: No such file or directory/;
+const CLOUD_BROWSER_LOCAL_URL_ERROR =
+	"browser_interact runs in a browser in the cloud, not a local browser. This URL points to localhost or a private network that the cloud browser cannot reach on the user's machine. Do not retry it. Use a publicly reachable URL or ask the user to expose the local server through a tunnel.";
+const LOCAL_ADDRESSES = new BlockList();
+
+for (const [network, prefix] of [
+	['0.0.0.0', 8],
+	['10.0.0.0', 8],
+	['100.64.0.0', 10],
+	['127.0.0.0', 8],
+	['169.254.0.0', 16],
+	['172.16.0.0', 12],
+	['192.168.0.0', 16]
+] as const) {
+	LOCAL_ADDRESSES.addSubnet(network, prefix, 'ipv4');
+}
+for (const [network, prefix] of [
+	['::', 128],
+	['::1', 128],
+	['fc00::', 7],
+	['fe80::', 10]
+] as const) {
+	LOCAL_ADDRESSES.addSubnet(network, prefix, 'ipv6');
+}
 
 const envelopeSchema = z.object({
 	success: z.boolean(),
@@ -59,6 +85,8 @@ class FirecrawlError extends Error {
 		);
 	}
 }
+
+class BrowserWorkerStartupError extends Error {}
 
 function retryAfterSeconds(response: Response): number | undefined {
 	const value = response.headers.get('retry-after')?.trim();
@@ -196,6 +224,109 @@ function commandFailure(result: z.infer<typeof executionSchema>): string | undef
 	return undefined;
 }
 
+function isBrowserWorkerStartupFailure(result: z.infer<typeof executionSchema>): boolean {
+	return [result.stderr, result.error].some(
+		(message) => message && CHROME_WRAPPER_DEV_FD_FAILURE.test(message)
+	);
+}
+
+function isLocalBrowserUrl(value: string): boolean {
+	let url: URL;
+	try {
+		url = new URL(value.includes('://') ? value : `http://${value}`);
+	} catch {
+		return false;
+	}
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+	const hostname = url.hostname
+		.toLowerCase()
+		.replace(/^\[|\]$/g, '')
+		.replace(/\.$/, '');
+	if (
+		hostname === 'localhost' ||
+		hostname.endsWith('.localhost') ||
+		hostname.endsWith('.local') ||
+		hostname === 'host.docker.internal' ||
+		hostname === 'gateway.docker.internal'
+	) {
+		return true;
+	}
+	const family = isIP(hostname);
+	return family !== 0 && LOCAL_ADDRESSES.check(hostname, family === 4 ? 'ipv4' : 'ipv6');
+}
+
+function shellCommands(value: string): string[][] {
+	const commands: string[][] = [];
+	let tokens: string[] = [];
+	let token = '';
+	let tokenStarted = false;
+	let quote: "'" | '"' | undefined;
+	let comment = false;
+
+	const endToken = () => {
+		if (!tokenStarted) return;
+		tokens.push(token);
+		token = '';
+		tokenStarted = false;
+	};
+	const endCommand = () => {
+		endToken();
+		if (tokens.length > 0) commands.push(tokens);
+		tokens = [];
+	};
+
+	for (let index = 0; index < value.length; index++) {
+		const character = value[index];
+		if (comment) {
+			if (character === '\n') {
+				comment = false;
+				endCommand();
+			}
+			continue;
+		}
+		if (quote) {
+			if (character === quote) {
+				quote = undefined;
+			} else if (character === '\\' && quote === '"' && index + 1 < value.length) {
+				const escaped = value[++index];
+				if (escaped !== '\n') token += escaped;
+			} else {
+				token += character;
+			}
+			continue;
+		}
+		if (character === "'" || character === '"') {
+			quote = character;
+			tokenStarted = true;
+		} else if (character === '\\' && index + 1 < value.length) {
+			const escaped = value[++index];
+			if (escaped !== '\n') {
+				token += escaped;
+				tokenStarted = true;
+			}
+		} else if (character === '#' && !tokenStarted) {
+			comment = true;
+		} else if (character === '\n' || ';|&()'.includes(character)) {
+			endCommand();
+		} else if (/\s/.test(character)) {
+			endToken();
+		} else {
+			token += character;
+			tokenStarted = true;
+		}
+	}
+	endCommand();
+	return commands;
+}
+
+function opensLocalBrowserUrl(command: string): boolean {
+	return shellCommands(command).some((tokens) => {
+		if (tokens[0] !== 'agent-browser') return false;
+		const commandIndex = tokens.findIndex((token, index) => index > 0 && !token.startsWith('-'));
+		return tokens[commandIndex] === 'open' && isLocalBrowserUrl(tokens[commandIndex + 1] || '');
+	});
+}
+
 function outputText(result: z.infer<typeof executionSchema>): string | undefined {
 	return result.stdout || result.result || undefined;
 }
@@ -322,6 +453,23 @@ async function execute(
 		const failure = commandFailure(parsed.data);
 		if (failure) {
 			executing = false;
+			if (isBrowserWorkerStartupFailure(parsed.data)) {
+				try {
+					await destroy(ctx, sessionId!);
+					destroyed = true;
+				} catch {
+					await ctx.runMutation(internal.browserSessions.quarantine, {
+						id: session._id,
+						operationId
+					});
+					throw new ConvexError(
+						'The browser worker could not start Chrome and its session is closing. Retry shortly.'
+					);
+				}
+				throw new BrowserWorkerStartupError(
+					'The browser worker could not start Chrome. Its broken session was closed.'
+				);
+			}
 			throw new Error(clip(failure).text);
 		}
 		if (!parsed.data.success) {
@@ -370,11 +518,24 @@ export async function interact(
 	ctx: ActionCtx,
 	args: BrowserArgs & { command: string; enforce_saving?: boolean }
 ) {
-	try {
-		const result = await execute(ctx, args, args.command, 'bash', args.enforce_saving);
-		return clip([outputText(result), result.stderr].filter(Boolean).join('\n'));
-	} catch (error) {
-		toolError(error);
+	if (opensLocalBrowserUrl(args.command)) toolError(new Error(CLOUD_BROWSER_LOCAL_URL_ERROR));
+	let replacementAttempted = false;
+	for (;;) {
+		try {
+			const result = await execute(ctx, args, args.command, 'bash', args.enforce_saving);
+			return clip([outputText(result), result.stderr].filter(Boolean).join('\n'));
+		} catch (error) {
+			if (error instanceof BrowserWorkerStartupError && !replacementAttempted) {
+				replacementAttempted = true;
+				continue;
+			}
+			if (error instanceof BrowserWorkerStartupError) {
+				toolError(
+					new Error('The replacement browser worker also failed to start Chrome. Retry later.')
+				);
+			}
+			toolError(error);
+		}
 	}
 }
 

@@ -13,6 +13,9 @@ import {
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
+const CHROME_WRAPPER_DEV_FD_ERROR =
+	'/usr/bin/google-chrome-stable: line 26: /dev/fd/63: No such file or directory';
+
 async function interact(
 	t: ConvexTestInstance,
 	args: FunctionArgs<typeof api.browserAgent.interact>
@@ -479,7 +482,14 @@ describe('Firecrawl browser lifecycle', () => {
 	it.each([
 		'agent-browser help',
 		'agent-browser --json get url',
-		'agent-browser fill @e1 "$(touch /tmp/owned); echo secret"'
+		'agent-browser fill @e1 "$(touch /tmp/owned); echo secret"',
+		'agent-browser fill @e1 "http://localhost:5173 is shown on the page"',
+		'agent-browser fill @e1 "agent-browser open http://localhost:5173"',
+		"echo 'agent-browser open http://localhost:5173'",
+		'agent-browser future-command open http://localhost:5173',
+		'agent-browser --future-option arbitrary-value open http://localhost:5173',
+		'agent-browser open https://example.com',
+		'agent-browser open https://localhost.example.com'
 	])('forwards %s to Firecrawl unchanged', async (command) => {
 		const fetch = remote();
 		const t = initConvexTest();
@@ -489,6 +499,37 @@ describe('Firecrawl browser lifecycle', () => {
 			code: command,
 			language: 'bash'
 		});
+	});
+
+	it('rejects local browser targets before creating a cloud session', async () => {
+		const fetch = remote();
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		for (const command of [
+			'agent-browser open http://localhost',
+			"agent-browser open 'http://app.localhost:5173/path'",
+			'agent-browser --json open http://127.1:3000',
+			'agent-browser open http://0.0.0.0:8080',
+			'agent-browser open http://100.64.0.1',
+			'agent-browser open http://169.254.169.254',
+			'agent-browser open http://172.31.255.255',
+			'agent-browser open http://192.168.1.20',
+			'agent-browser open http://[::1]:5173',
+			'agent-browser open http://[fc00::1]',
+			'agent-browser open http://[fe80::1]',
+			'agent-browser open http://[::ffff:127.0.0.1]:5173',
+			'agent-browser open localhost:4173',
+			String.raw`agent-browser \
+ --json open localhost:4173`,
+			'agent-browser get url;agent-browser open http://10.0.0.4',
+			'agent-browser get url || agent-browser --json open http://app.local'
+		]) {
+			await expect(interact(t, { runId, claimId, executionSecret, command })).rejects.toThrow(
+				"browser_interact runs in a browser in the cloud, not a local browser. This URL points to localhost or a private network that the cloud browser cannot reach on the user's machine. Do not retry it. Use a publicly reachable URL or ask the user to expose the local server through a tunnel."
+			);
+		}
+		expect(fetch).not.toHaveBeenCalled();
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
 	});
 
 	it('does not discard an attached session when its attachment acknowledgement is lost', async () => {
@@ -668,6 +709,113 @@ describe('Firecrawl browser lifecycle', () => {
 			new Response(JSON.stringify({ success: true, exitCode: 1, stderr: 'Command failed' }))
 		);
 		await expect(interact(t, args)).rejects.toThrow('Command failed');
+	});
+
+	it('replaces a worker whose Chrome wrapper cannot open its process-substitution fd', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		let startupFailed = false;
+		fetch.mockImplementation(async (url, options) => {
+			if (String(url).endsWith('/execute') && !startupFailed) {
+				startupFailed = true;
+				return new Response(
+					JSON.stringify({
+						success: true,
+						exitCode: 1,
+						stderr: CHROME_WRAPPER_DEV_FD_ERROR
+					})
+				);
+			}
+			return defaultResponse(url, options);
+		});
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const command = 'agent-browser open https://example.com';
+		expect(await interact(t, { runId, claimId, executionSecret, command })).toEqual({
+			text: 'Done',
+			truncated: false
+		});
+		const requests = fetch.mock.calls.map(([url, options]) => ({
+			url: String(url),
+			method: options.method,
+			body: options.body ? JSON.parse(String(options.body)) : undefined
+		}));
+		expect(
+			requests.filter(({ url }) => url.endsWith('/execute')).map(({ body }) => body.code)
+		).toEqual([command, command]);
+		expect(requests.filter(({ method }) => method === 'DELETE').map(({ url }) => url)).toEqual([
+			'https://api.firecrawl.dev/v2/interact/session-1'
+		]);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-2',
+			closing: false
+		});
+	});
+
+	it('quarantines a broken worker when deleting it cannot be confirmed', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		fetch.mockImplementation(async (url, options) => {
+			if (String(url).endsWith('/execute')) {
+				return new Response(
+					JSON.stringify({
+						success: true,
+						exitCode: 1,
+						stderr: CHROME_WRAPPER_DEV_FD_ERROR
+					})
+				);
+			}
+			if (options.method === 'DELETE') return new Response('{}', { status: 503 });
+			return defaultResponse(url, options);
+		});
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const args = {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'agent-browser open https://example.com'
+		};
+		await expect(interact(t, args)).rejects.toThrow(
+			'The browser worker could not start Chrome and its session is closing. Retry shortly.'
+		);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-1',
+			closing: true,
+			operationExpiresAt: 0
+		});
+		await expect(interact(t, args)).rejects.toThrow('The browser is closing. Retry shortly.');
+		expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('/execute'))).toHaveLength(1);
+	});
+
+	it('stops after one replacement worker has the same Chrome startup failure', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		fetch.mockImplementation(async (url, options) => {
+			if (String(url).endsWith('/execute')) {
+				return new Response(
+					JSON.stringify({
+						success: true,
+						exitCode: 1,
+						stderr: CHROME_WRAPPER_DEV_FD_ERROR
+					})
+				);
+			}
+			return defaultResponse(url, options);
+		});
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		await expect(
+			interact(t, {
+				runId,
+				claimId,
+				executionSecret,
+				command: 'agent-browser open https://example.com'
+			})
+		).rejects.toThrow('The replacement browser worker also failed to start Chrome. Retry later.');
+		expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('/execute'))).toHaveLength(2);
+		expect(fetch.mock.calls.filter(([, options]) => options.method === 'DELETE')).toHaveLength(2);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toBeNull();
 	});
 
 	it('fences in-flight creation when the profile is reset', async () => {
