@@ -23,6 +23,8 @@
 	import InboxLoadMore from './inbox-load-more.svelte';
 	import SidebarTopActions from './sidebar-top-actions.svelte';
 
+	const SETTLED_INBOX_OPEN_KEY = 'sprocket.inbox.settled-open';
+
 	type Thread = Doc<'threadRecords'>;
 	type Props = {
 		sections: InboxSectionData[];
@@ -49,7 +51,7 @@
 		models,
 		selectedProjects,
 		currentThreadId,
-		settledOpen = $bindable(true),
+		settledOpen = $bindable(false),
 		mutationsEnabled,
 		theme,
 		onThemeChange,
@@ -103,6 +105,12 @@
 	);
 
 	onMount(() => {
+		try {
+			const savedSettledOpen = localStorage.getItem(SETTLED_INBOX_OPEN_KEY);
+			if (savedSettledOpen !== null) settledOpen = savedSettledOpen === 'true';
+		} catch {
+			// Browsers can deny storage access while still allowing the app to run.
+		}
 		const timer = setInterval(() => {
 			now = Date.now();
 		}, 30_000);
@@ -136,6 +144,15 @@
 		projectMenuOpen = false;
 		projectSearch = '';
 		onAddProject();
+	}
+
+	function toggleSettled() {
+		settledOpen = !settledOpen;
+		try {
+			localStorage.setItem(SETTLED_INBOX_OPEN_KEY, String(settledOpen));
+		} catch {
+			// The collapsed state still works for this session without storage.
+		}
 	}
 
 	function age(at: number) {
@@ -365,7 +382,7 @@
 						type="button"
 						aria-expanded={settledOpen}
 						aria-controls="inbox-settled-threads"
-						onclick={() => (settledOpen = !settledOpen)}
+						onclick={toggleSettled}
 					>
 						<span>Settled Threads</span>
 						<ChevronDown class={settledOpen ? 'inbox-section-chevron-open' : undefined} size={14} />

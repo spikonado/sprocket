@@ -259,7 +259,7 @@
 	let sidebarOpen = $state(true);
 	let viewportWidth = $state(0);
 	let projectFilter = $state<string[]>([]);
-	let settledInboxOpen = $state(true);
+	let settledInboxOpen = $state(false);
 	let pendingProjectLaunches = $state<string[]>([]);
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);

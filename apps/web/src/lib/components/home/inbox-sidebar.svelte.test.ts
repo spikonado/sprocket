@@ -10,6 +10,7 @@ beforeEach(() => {
 	vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
 	Element.prototype.scrollIntoView = vi.fn();
+	localStorage.clear();
 });
 afterEach(async () => {
 	if (component) await unmount(component);
@@ -103,13 +104,40 @@ it('renders simple navigation and a collapsible settled section', async () => {
 		'#inbox-settled .inbox-section-heading'
 	)!;
 	expect(settledHeading.textContent?.trim()).toBe('Settled Threads');
-	expect(settledHeading.getAttribute('aria-expanded')).toBe('true');
-	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
-	settledHeading.click();
-	await tick();
 	expect(settledHeading.getAttribute('aria-expanded')).toBe('false');
 	expect(document.querySelector('#inbox-settled .inbox-row')).toBeNull();
-	expect(document.querySelector('[aria-label^="Actions for"]')).toBeNull();
+	settledHeading.click();
+	await tick();
+	expect(settledHeading.getAttribute('aria-expanded')).toBe('true');
+	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
+	expect(localStorage.getItem('sprocket.inbox.settled-open')).toBe('true');
+});
+
+it('restores the settled section preference from local storage', async () => {
+	localStorage.setItem('sprocket.inbox.settled-open', 'true');
+	await render([thread(true)]);
+
+	expect(
+		document.querySelector('#inbox-settled .inbox-section-heading')?.getAttribute('aria-expanded')
+	).toBe('true');
+	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
+});
+
+it('loads more threads only after the user clicks Show more', async () => {
+	const input = props([thread()]);
+	const unsettled = input.sections.find((section) => section.state === 'unsettled')!;
+	unsettled.canLoadMore = true;
+	component = mount(InboxSidebar, { target: document.body, props: input });
+	flushSync();
+	await tick();
+
+	const showMore = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+		(button) => button.textContent?.trim() === 'Show more'
+	)!;
+	expect(showMore).toBeTruthy();
+	expect(unsettled.loadMore).not.toHaveBeenCalled();
+	showMore.click();
+	expect(unsettled.loadMore).toHaveBeenCalledOnce();
 });
 
 it('starts a new thread with Alt+N', async () => {
@@ -120,11 +148,12 @@ it('starts a new thread with Alt+N', async () => {
 	expect(input.onNew).toHaveBeenCalledOnce();
 });
 
-it('does not render empty thread sections', async () => {
+it('does not render empty thread rows', async () => {
 	await render([]);
 
 	expect(document.querySelector('#inbox-unsettled')).toBeNull();
-	expect(document.querySelector('#inbox-settled')).toBeNull();
+	expect(document.querySelector('#inbox-settled .inbox-section-heading')).toBeTruthy();
+	expect(document.querySelector('#inbox-settled .inbox-row')).toBeNull();
 	expect(document.body.textContent).not.toContain('No settled threads');
 	expect(document.body.textContent).not.toContain('No unsettled threads');
 });
@@ -199,6 +228,7 @@ it('does not attach keyboard context-menu behavior to thread rows', async () => 
 });
 
 it('labels settle and unsettle controls with tooltips', async () => {
+	localStorage.setItem('sprocket.inbox.settled-open', 'true');
 	await render([thread(), thread(true)]);
 
 	expect(document.querySelector('[aria-label="Settle Thread"]')?.getAttribute('data-tooltip')).toBe(
@@ -246,6 +276,7 @@ it('does not allow a running thread to settle', async () => {
 });
 
 it('unsettles a settled thread', async () => {
+	localStorage.setItem('sprocket.inbox.settled-open', 'true');
 	const input = await render([thread(true)]);
 	const unsettleButton = document.querySelector<HTMLButtonElement>(
 		'[aria-label="Unsettle Thread"]'

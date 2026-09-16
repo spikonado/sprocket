@@ -3,6 +3,12 @@ import { api } from '$convex/_generated/api';
 import type { Doc } from '$convex/_generated/dataModel';
 import { INBOX_STATES, type InboxState } from '$convex/lib/inboxState';
 
+const INBOX_PAGE_SIZE = 10;
+
+export function normalizeRepositoryKeys(repositoryKeys: string[]): string[] {
+	return [...repositoryKeys].sort().filter((key, index, sorted) => key !== sorted[index - 1]);
+}
+
 export function useThreadInbox(input: {
 	enabled: () => boolean;
 	projects: () => string[];
@@ -13,13 +19,13 @@ export function useThreadInbox(input: {
 		query: usePaginatedQuery(
 			api.inbox.list,
 			() => {
-				const repositoryKeys = input.projects();
+				const repositoryKeys = normalizeRepositoryKeys(input.projects());
 				const sectionOpen = state === 'unsettled' || input.settledOpen();
 				return input.enabled() && sectionOpen && repositoryKeys.length > 0
 					? { state, repositoryKeys }
 					: 'skip';
 			},
-			{ initialNumItems: 25 }
+			{ initialNumItems: INBOX_PAGE_SIZE }
 		)
 	}));
 
@@ -30,7 +36,7 @@ export function useThreadInbox(input: {
 			loading: query.isLoading,
 			canLoadMore: query.status === 'CanLoadMore',
 			error: query.error?.message,
-			loadMore: () => query.loadMore(25)
+			loadMore: () => query.loadMore(INBOX_PAGE_SIZE)
 		}))
 	);
 
