@@ -81,7 +81,44 @@ Convex change before releasing the server. Remove the boolean response only when
 all supported installed servers request the checkpoint. No stored-data migration
 is needed.
 
-Historical transcripts may lack `threadTranscriptParts.work` and
+New servers submit ordinary indexing checkpoints to `transcriptSections:commitBatches`.
+Each atomic group has at most eight batches, four distinct raw parts, 256 section
+changes, 256 membership assignments, and 256 KiB of JSON. Larger individual
+batches and run finalization still use `commit`. Keep the single-batch endpoint
+for both these cases and installed clients. Deploy both endpoints before
+releasing the updated server.
+
+Memberships now live in `threadTranscriptMemberships`, not on raw transcript
+documents. `migrations:runTranscriptMembershipMigration` copies legacy
+`threadTranscriptParts.work` fields in four-document transactions and removes
+each field after preserving its membership. An existing membership row wins over
+the legacy field, so concurrent indexing cannot lose a newer assignment. The
+first `transcript:ensureMigrated` call schedules the migration. An hourly cron
+also starts or resumes it. Its final step marks `transcript-work-memberships-v1`
+complete in `migrationSchedules`.
+
+`transcriptSections:indexedMemberships` reads both representations until that
+marker is complete, then reads only the membership table. Keep the legacy field
+in the schema and its read fallback until every retained deployment has completed
+the migration and no supported backend writes the old representation. The
+migration can run while old installed clients are connected because all commit
+endpoints write the new table after the backend deploy.
+
+`transcript:getParts` and `getPartsForRun` accept optional `includeWork`. New
+clients send `false`, which avoids membership reads. Requests without the flag
+still receive current work metadata joined onto raw parts. The legacy
+`transcriptSections:memberships` endpoint also preserves unprocessed rows with
+`work: null`. Keep these response shims until all supported installed clients
+use raw-only reads and `indexedMemberships`.
+
+The SQLite work replica now stores a durable `pendingBatches` outbox. It imports
+the old `pendingBatch` entry on upgrade and removes that entry in the transaction
+that saves the queue and advanced engine state. Partial acknowledgments retain
+the uncommitted suffix. Keep the old-entry reader while direct upgrades from
+single-batch replicas remain supported; offline data directories can outlive
+the release that wrote them.
+
+Historical transcripts may lack membership records and
 `threadTranscriptStates.workThrough`. Opening a thread fills missing work metadata
 with the Rust processor without changing its raw transcript bodies.
 

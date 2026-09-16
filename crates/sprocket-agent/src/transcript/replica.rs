@@ -354,7 +354,14 @@ impl WorkReplica {
     }
 
     pub fn pending_batch(&self) -> anyhow::Result<Option<WorkBatch>> {
-        self.state("pendingBatch")
+        Ok(self.pending_batches()?.into_iter().next())
+    }
+
+    pub fn pending_batches(&self) -> anyhow::Result<Vec<WorkBatch>> {
+        if let Some(batches) = self.state("pendingBatches")? {
+            return Ok(batches);
+        }
+        Ok(self.state("pendingBatch")?.into_iter().collect())
     }
 
     pub fn run_synced(&self, run: &str) -> anyhow::Result<bool> {
@@ -383,35 +390,74 @@ impl WorkReplica {
     }
 
     pub fn acknowledge_batch(&mut self, through: WorkPosition) -> anyhow::Result<()> {
-        let pending = self.pending_batch()?.context("work batch missing")?;
-        anyhow::ensure!(pending.through == through, "work acknowledgment mismatch");
-        self.db
-            .execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
+        self.acknowledge_batches(through)
+    }
+
+    pub fn acknowledge_batches(&mut self, through: WorkPosition) -> anyhow::Result<()> {
+        let mut pending = self.pending_batches()?;
+        let acknowledged = pending
+            .iter()
+            .position(|batch| batch.through == through)
+            .context("work acknowledgment mismatch")?;
+        pending.drain(..=acknowledged);
+        let tx = self.db.transaction()?;
+        Self::put_state(&tx, "pendingBatches", &pending)?;
+        tx.execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
+        tx.commit()?;
         Ok(())
     }
 
     pub fn advance(&mut self, remote_through: WorkPosition) -> anyhow::Result<Option<WorkBatch>> {
-        if let Some(batch) = self.pending_batch()? {
-            return Ok(Some(batch));
+        Ok(self.advance_batches(remote_through, 1)?.into_iter().next())
+    }
+
+    pub fn advance_batches(
+        &mut self,
+        remote_through: WorkPosition,
+        limit: usize,
+    ) -> anyhow::Result<Vec<WorkBatch>> {
+        anyhow::ensure!(limit > 0, "work batch queue limit must be positive");
+        let mut pending = self.pending_batches()?;
+        if pending.len() >= limit
+            || pending
+                .last()
+                .is_some_and(|batch| batch.finished_run_id.is_some())
+        {
+            return Ok(pending);
         }
         let mut engine: WorkEngine = self.state("engine")?.unwrap_or_default();
-        let Some(part) = self.part(engine.through.part)? else {
-            return Ok(None);
-        };
-        let limit = if engine.through.part == remote_through.part
-            && engine.through.item < remote_through.item
-        {
-            (remote_through.item - engine.through.item) as usize
-        } else {
-            engine.batch_limit(&part)
-        };
+        let previous_count = pending.len();
         let tx = self.db.transaction()?;
-        let batch = engine.advance(&SqlWorkIndex(&tx), &part, limit)?;
+        while pending.len() < limit {
+            let body: Option<String> = tx
+                .query_row(
+                    "SELECT body FROM parts WHERE number=?",
+                    [engine.through.part],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(part) = body.map(|body| serde_json::from_str(&body)).transpose()? else {
+                break;
+            };
+            let item_limit = if engine.through.part == remote_through.part
+                && engine.through.item < remote_through.item
+            {
+                (remote_through.item - engine.through.item) as usize
+            } else {
+                engine.batch_limit(&part)
+            };
+            let batch = engine.advance(&SqlWorkIndex(&tx), &part, item_limit)?;
+            pending.push(batch);
+        }
+        if pending.len() == previous_count {
+            return Ok(pending);
+        }
         Self::put_state(&tx, "engine", &engine)?;
-        Self::put_state(&tx, "through", &batch.through)?;
-        Self::put_state(&tx, "pendingBatch", &batch)?;
+        Self::put_state(&tx, "through", &engine.through)?;
+        Self::put_state(&tx, "pendingBatches", &pending)?;
+        tx.execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
         tx.commit()?;
-        Ok(Some(batch))
+        Ok(pending)
     }
 
     pub fn finish_inactive(
@@ -459,7 +505,8 @@ impl WorkReplica {
             memberships: Vec::new(),
             finished_run_id: Some(run),
         };
-        Self::put_state(&tx, "pendingBatch", &batch)?;
+        Self::put_state(&tx, "pendingBatches", &vec![batch.clone()])?;
+        tx.execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
         tx.commit()?;
         Ok(Some(batch))
     }

@@ -4,6 +4,13 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
+	'migrate transcript work memberships',
+	{ hours: 1 },
+	internal.migrations.runTranscriptMembershipMigration,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

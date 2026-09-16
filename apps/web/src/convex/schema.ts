@@ -204,6 +204,11 @@ export default defineSchema({
 		linkedParts: v.number(),
 		...workSectionFields
 	}).index('by_threadId_and_key', ['threadId', 'key']),
+	threadTranscriptMemberships: defineTable({
+		threadId: v.id('threadRecords'),
+		number: v.number(),
+		work: workMembership
+	}).index('by_threadId_and_number', ['threadId', 'number']),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),

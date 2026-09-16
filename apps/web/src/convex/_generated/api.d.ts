@@ -66,6 +66,7 @@ import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
 import type * as lib_toolJobs from "../lib/toolJobs.js";
 import type * as lib_transcriptDisplayTypes from "../lib/transcriptDisplayTypes.js";
+import type * as lib_transcriptMemberships from "../lib/transcriptMemberships.js";
 import type * as lib_transcriptParts from "../lib/transcriptParts.js";
 import type * as lib_transcriptWrites from "../lib/transcriptWrites.js";
 import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
@@ -155,6 +156,7 @@ declare const fullApi: ApiFromModules<{
   "lib/tiers": typeof lib_tiers;
   "lib/toolJobs": typeof lib_toolJobs;
   "lib/transcriptDisplayTypes": typeof lib_transcriptDisplayTypes;
+  "lib/transcriptMemberships": typeof lib_transcriptMemberships;
   "lib/transcriptParts": typeof lib_transcriptParts;
   "lib/transcriptWrites": typeof lib_transcriptWrites;
   "lib/uiModelCatalog": typeof lib_uiModelCatalog;

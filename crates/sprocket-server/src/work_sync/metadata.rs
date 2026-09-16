@@ -25,6 +25,12 @@ impl Metadata {
         let state: WorkState =
             decode_labeled_function_result(result.clone(), "transcriptSections:state")?;
         let state_changed = self.previous.get(&Feed::State) != Some(result);
+        let tail_page = state
+            .through
+            .part
+            .saturating_sub(u32::from(state.through.item == 0))
+            / 8
+            * 8;
         let mut snapshot = WorkSnapshot {
             through: state.through,
             total: state.total_parts,
@@ -44,6 +50,12 @@ impl Metadata {
                 }
                 continue;
             };
+            if let Feed::Memberships(start) = &feed {
+                snapshot.membership_pages.push(*start);
+                if *start != tail_page {
+                    remove.push(feed.clone());
+                }
+            }
             if self.previous.get(&feed) == Some(&result) {
                 continue;
             }
@@ -74,10 +86,10 @@ impl Metadata {
                         sections: page.rows,
                     });
                 }
-                Feed::Memberships(start) => {
+                Feed::Memberships(_) => {
                     let parts: Vec<MembershipPart> = decode_labeled_function_result(
                         result.clone(),
-                        "transcriptSections:memberships",
+                        "transcriptSections:indexedMemberships",
                     )?;
                     snapshot
                         .memberships
@@ -89,13 +101,11 @@ impl Metadata {
                                 section_key: work.section_key,
                             })
                         }));
-                    snapshot.membership_pages.push(*start);
-                    remove.push(feed.clone());
                 }
             }
             self.previous.insert(feed, result);
         }
-        if !changed && self.complete == Some(snapshot.complete) {
+        if !changed && remove.is_empty() && self.complete == Some(snapshot.complete) {
             return Ok(None);
         }
         self.complete = Some(snapshot.complete);
@@ -172,9 +182,13 @@ mod tests {
                     ]))
                     .unwrap()
                     .unwrap();
-                assert!(
-                    matches!(update.remove.as_slice(), [Feed::Memberships(number)] if *number == start)
-                );
+                if start == 16 {
+                    assert!(update.remove.is_empty());
+                } else {
+                    assert!(
+                        matches!(update.remove.as_slice(), [Feed::Memberships(number)] if *number == start)
+                    );
+                }
                 replica.save_snapshot("thread", update.snapshot).unwrap();
                 if start == 16 {
                     if !raw_first {
@@ -347,5 +361,46 @@ mod tests {
             .unwrap();
         assert!(!membership.state_changed);
         assert_eq!(membership.snapshot.membership_pages, vec![16]);
+    }
+
+    #[test]
+    fn eight_checkpoint_updates_reuse_one_membership_subscription() {
+        let mut metadata = Metadata::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+        for through in 1..=8 {
+            let update = metadata
+                .apply(BTreeMap::from([
+                    (
+                        Feed::State,
+                        value(json!({"totalParts":9,"through":{"part":through,"item":0},"historyFromNumber":0})),
+                    ),
+                    (sections("", None), value(json!({"rows":[],"split":null}))),
+                    (Feed::Memberships(0), membership(0, through)),
+                ]))
+                .unwrap()
+                .unwrap();
+            assert!(update.remove.is_empty());
+            replica.save_snapshot("thread", update.snapshot).unwrap();
+            assert!(replica.pending_membership_pages(4).unwrap().is_empty());
+        }
+        let update = metadata
+            .apply(BTreeMap::from([
+                (
+                    Feed::State,
+                    value(
+                        json!({"totalParts":9,"through":{"part":9,"item":0},"historyFromNumber":0}),
+                    ),
+                ),
+                (sections("", None), value(json!({"rows":[],"split":null}))),
+                (Feed::Memberships(0), membership(0, 8)),
+            ]))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(update.remove.as_slice(), [Feed::Memberships(0)]));
+        assert_eq!(update.snapshot.membership_pages, vec![0]);
+        assert!(update.snapshot.memberships.is_empty());
+        replica.save_snapshot("thread", update.snapshot).unwrap();
+        assert_eq!(replica.pending_membership_pages(4).unwrap(), vec![8]);
     }
 }
