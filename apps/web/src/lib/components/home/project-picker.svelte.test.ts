@@ -112,8 +112,25 @@ describe('ProjectPicker', () => {
 		flushSync();
 		expect(input.value).toBe('/home/');
 
-		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 		expect(props.onClose).toHaveBeenCalledOnce();
+	});
+
+	it('stops exposing entries as soon as the path changes', async () => {
+		const { resolveWorkspacePath } = renderPicker();
+		await waitForDirectories();
+		const input = document.querySelector<HTMLInputElement>(
+			'[aria-label="Project directory path"]'
+		)!;
+
+		input.value = '/tmp/';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
+
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		expect(input.value).toBe('/tmp/');
+		expect(resolveWorkspacePath).not.toHaveBeenCalled();
 	});
 
 	it('adds the current directory with Ctrl+Enter', async () => {

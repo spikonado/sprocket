@@ -53,12 +53,20 @@
 	let errorMessage = $state<string | null>(null);
 	let pathInput = $state<HTMLInputElement | null>(null);
 	let directoryList = $state<HTMLDivElement | null>(null);
+	let browseQuery = $state<string | null>(null);
 	let browseRequestId = 0;
 	let lastBrowseQuery: string | null = null;
 	let opened = $state(false);
 
 	const browseFilterQuery = $derived(getBrowseLeafPathSegment(query).toLowerCase());
+	const browseStateIsCurrent = $derived(query === browseQuery);
+	const currentBrowseParentPath = $derived(browseStateIsCurrent ? browseParentPath : '');
+	const currentBrowseEntries = $derived(browseStateIsCurrent ? browseEntries : []);
 	const filteredEntries = $derived.by(() => {
+		if (!browseStateIsCurrent) {
+			return [];
+		}
+
 		if (volumeList) {
 			const needle = query
 				.trim()
@@ -84,26 +92,26 @@
 	const resolvedWorkspacePath = $derived(
 		resolveWorkspacePathFromBrowse({
 			query,
-			browseParentPath,
-			browseEntries
+			browseParentPath: currentBrowseParentPath,
+			browseEntries: currentBrowseEntries
 		})
 	);
 	const willCreateDirectory = $derived(
 		workspacePathRequiresCreation({
 			query,
-			browseParentPath,
-			browseEntries
+			browseParentPath: currentBrowseParentPath,
+			browseEntries: currentBrowseEntries
 		})
 	);
 	const canSubmit = $derived(
-		!volumeList &&
+		!(browseStateIsCurrent && volumeList) &&
 			resolvedWorkspacePath.length > 0 &&
-			(isFilesystemBrowseQuery(selectedPath) || browseParentPath.length > 0)
+			(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0)
 	);
 	const submitLabel = $derived(
 		mode === 'reconnect' ? 'Reconnect' : willCreateDirectory ? 'Create & add' : 'Add'
 	);
-	const parentEntry = $derived(browseEntries.find((entry) => entry.name === '..'));
+	const parentEntry = $derived(currentBrowseEntries.find((entry) => entry.name === '..'));
 	const displayedEntries = $derived.by(() => {
 		if (filteredEntries.length > 0) {
 			return filteredEntries;
@@ -114,15 +122,15 @@
 			return filteredEntries;
 		}
 
-		const parentName = browseParentPath.split(/[/\\]/).filter(Boolean).at(-1);
+		const parentName = currentBrowseParentPath.split(/[/\\]/).filter(Boolean).at(-1);
 		if (parentName && parentName.toLowerCase() === leaf.toLowerCase()) {
-			return [{ name: parentName, fullPath: browseParentPath }];
+			return [{ name: parentName, fullPath: currentBrowseParentPath }];
 		}
 
 		return filteredEntries;
 	});
 	const emptyListMessage = $derived(
-		isLoadingBrowse
+		isLoadingBrowse || !browseStateIsCurrent
 			? 'Loading directories…'
 			: volumeList
 				? 'Select a drive.'
@@ -158,17 +166,9 @@
 		highlightedPath = null;
 		errorMessage = null;
 		volumeList = false;
+		browseQuery = null;
 		void loadBrowse(query);
 		void tick().then(() => pathInput?.focus());
-	});
-
-	$effect(() => {
-		if (!open) {
-			return;
-		}
-
-		window.addEventListener('keydown', handleDialogKeydown);
-		return () => window.removeEventListener('keydown', handleDialogKeydown);
 	});
 
 	$effect(() => {
@@ -221,12 +221,18 @@
 			browseParentPath = result.parentPath;
 			browseEntries = result.entries;
 			volumeList = result.volumeList === true;
+			browseQuery = partialPath;
 			errorMessage = null;
 		} catch (error) {
 			if (requestId !== browseRequestId || partialPath !== query) {
 				return;
 			}
 
+			browseParentPath = '';
+			browseEntries = [];
+			volumeList = false;
+			browseQuery = partialPath;
+			lastBrowseQuery = null;
 			errorMessage = error instanceof Error ? error.message : 'Failed to browse directories.';
 		} finally {
 			if (requestId === browseRequestId) {
@@ -379,6 +385,7 @@
 			aria-modal="true"
 			aria-label={mode === 'reconnect' ? 'Reconnect project' : 'Add project'}
 			tabindex="-1"
+			onkeydown={handleDialogKeydown}
 		>
 			<header class="flex-none px-4 pt-3 pb-2">
 				<div class="flex min-h-10 items-center gap-1.5">
