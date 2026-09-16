@@ -235,7 +235,7 @@ export const vApplyPatchResult = v.object({
 	)
 });
 
-export const vCommandExecResult = v.object({
+const vLegacyCommandResult = v.object({
 	command: v.string(),
 	cwd: v.string(),
 	output: v.string(),
@@ -246,6 +246,26 @@ export const vCommandExecResult = v.object({
 	timedOut: v.boolean(),
 	truncated: v.boolean(),
 	error: v.optional(v.string())
+});
+
+const vCommandOutput = v.object({
+	output: v.string(),
+	exitCode: v.optional(v.number()),
+	success: v.boolean(),
+	running: v.boolean(),
+	timedOut: v.boolean(),
+	completeLogPath: v.string(),
+	eventsPath: v.string(),
+	error: v.optional(v.string())
+});
+
+export const vCommandExecResult = vCommandOutput.extend({
+	sessionId: v.optional(v.string())
+});
+
+export const vCommandStdinResult = vCommandOutput.extend({
+	command: v.string(),
+	workdir: v.string()
 });
 
 /** Stored scrape_url job result. Historical rows may include `truncated`. */
@@ -469,6 +489,8 @@ export const vExecutorJobResult = v.union(
 	vApplyPatchResult,
 	vAskQuestionResult,
 	vCommandExecResult,
+	vCommandStdinResult,
+	vLegacyCommandResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
 	vWebImageResult,

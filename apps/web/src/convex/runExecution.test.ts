@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { MutationCtx } from '@convex/_generated/server';
+import type { Infer } from 'convex/values';
+import type { vCommandExecResult } from '@convex/lib/validators';
 import type {
 	FunctionArgs,
 	FunctionReference,
@@ -48,6 +50,84 @@ async function startedRun() {
 }
 
 describe('run execution state', () => {
+	it.each([
+		{ kind: 'exec_command' as const, running: false },
+		{ kind: 'exec_command' as const, running: true },
+		{ kind: 'write_stdin' as const, running: false },
+		{ kind: 'write_stdin' as const, running: true }
+	])('records $kind results with running=$running', async ({ kind, running }) => {
+		const { t, asUser, threadId, auth } = await startedRun();
+		const callId = 'command-call';
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			...auth,
+			kind,
+			callId,
+			payload: kind === 'exec_command' ? { cmd: 'echo ok' } : { sessionId: '1' }
+		});
+		const output: Infer<typeof vCommandExecResult> = {
+			output: 'ok\n',
+			success: !running,
+			running,
+			timedOut: false,
+			completeLogPath: '/transcripts/command/output.log',
+			eventsPath: '/transcripts/command/events.jsonl'
+		};
+		if (!running) output.exitCode = 0;
+		if (kind === 'exec_command' && running) output.sessionId = '1';
+		const result =
+			kind === 'write_stdin' ? { ...output, command: 'echo ok', workdir: '/' } : output;
+		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
+		expect(
+			await asUser.query(api.executor.getJob, {
+				runId: auth.runId,
+				executionSecret: auth.executionSecret,
+				jobId
+			})
+		).toEqual({
+			jobId,
+			status: 'completed',
+			result
+		});
+		await t.run(async (ctx) => {
+			expect((await getRunWithExecution(ctx.db, auth.runId))?.activeJobId).toBeUndefined();
+		});
+		const { parts } = await asUser.query(api.transcript.getParts, {
+			threadId,
+			numbers: [0, 1, 2]
+		});
+		expect(parts.filter((part) => part.kind === 'tool').map((part) => part.tool)).toEqual([
+			expect.objectContaining({ callId, name: kind, status: 'started' }),
+			expect.objectContaining({ callId, name: kind, status: 'completed', output: result })
+		]);
+	});
+
+	it('still accepts command results from older executors', async () => {
+		const { asUser, auth } = await startedRun();
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			...auth,
+			kind: 'exec_command',
+			payload: { cmd: 'echo ok' }
+		});
+		const result = {
+			command: 'echo ok',
+			cwd: '/',
+			exitCode: 0,
+			success: true,
+			running: false,
+			timedOut: false,
+			output: 'ok\n',
+			truncated: false
+		};
+		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
+		expect(
+			await asUser.query(api.executor.getJob, {
+				runId: auth.runId,
+				executionSecret: auth.executionSecret,
+				jobId
+			})
+		).toEqual({ jobId, status: 'completed', result });
+	});
+
 	it('does not write subscribed run or thread records during execution updates', async () => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		await t.run(async (ctx) => {
