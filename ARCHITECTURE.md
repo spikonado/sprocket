@@ -66,17 +66,17 @@ authenticate the server process.
 
 ## Component boundaries
 
-| Component         | Owns                                                                                                                 | Does not own                                                                          |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Svelte app        | User interaction, reactive views, submission recovery                                                                | Thread-list cache, transcript synchronization, filesystem access, or provider secrets |
-| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process                                                     | Conversation or agent state                                                           |
-| CLI               | Process launch and server-mode selection                                                                             | Agent implementation                                                                  |
-| Local server      | Local authorization, thread summary cache, transcript replica and live stream, machine presence, agent task lifetime | Durable conversation source of truth                                                  |
-| Agent runtime     | Run claim, model/tool loop, cancellation, finalization                                                               | HTTP presentation or cloud schema                                                     |
-| Workspace crate   | Paths, commands, patches, workspace instructions                                                                     | Authentication or networking                                                          |
-| Convex RPC client | Generic Convex query/mutation/action/subscribe                                                                       | Completion translation                                                                |
-| AI gateway        | Provider routing, OpenAI API, catalog, usage rates                                                                   | Subscription limits or remaining quota                                                |
-| Convex backend    | User data, run coordination, transcript, artifact registry, remaining quota                                          | Local filesystem access, process execution, rates                                     |
+| Component         | Owns                                                                                           | Does not own                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Svelte app        | User interaction, reactive views, thread inbox, submission recovery                            | Transcript synchronization, filesystem access, or provider secrets |
+| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process                               | Conversation or agent state                                        |
+| CLI               | Process launch and server-mode selection                                                       | Agent implementation                                               |
+| Local server      | Local authorization, transcript replica and live stream, machine presence, agent task lifetime | Durable conversation source of truth                               |
+| Agent runtime     | Run claim, model/tool loop, cancellation, finalization                                         | HTTP presentation or cloud schema                                  |
+| Workspace crate   | Paths, commands, patches, workspace instructions                                               | Authentication or networking                                       |
+| Convex RPC client | Generic Convex query/mutation/action/subscribe                                                 | Completion translation                                             |
+| AI gateway        | Provider routing, OpenAI API, catalog, usage rates                                             | Subscription limits or remaining quota                             |
+| Convex backend    | User data, run coordination, transcript, artifact registry, remaining quota                    | Local filesystem access, process execution, rates                  |
 
 The Rust dependency direction follows these boundaries:
 
@@ -112,36 +112,33 @@ same paths in every runtime mode.
 
 Sprocket deliberately separates cloud and machine-local state.
 
-| State                                                                        | Owner                |
-| ---------------------------------------------------------------------------- | -------------------- |
-| Users, threads, durable transcript parts, runs, and tool-job records         | Convex               |
-| Thread snapshot revisions and paged project-thread listings                  | Convex               |
-| Local thread summary cache (active per attached project, archived on demand) | Local server         |
-| Local transcript replica                                                     | Local server         |
-| Current assistant stream                                                     | Local process memory |
-| Local folder list (`workspacePath` + `repositoryKey`)                        | Local server         |
-| Installation identity and this process’s machine credential                  | Local server         |
-| Machine presence                                                             | Convex               |
-| Internal process credential and browser sessions                             | Local server         |
-| Native WorkOS access token and user                                          | Local process memory |
-| Native WorkOS refresh token                                                  | OS credential store  |
-| Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
-| Source files and build artifacts                                             | User workspace       |
-| Artifact identity, scope, and synced content                                 | Convex               |
-| Artifact/file bindings and synchronization baselines                         | Sprocket data dir    |
-| Artifact file reads, change detection, and preview feed                      | Local server         |
-| Model and authentication provider secrets                                    | Cloud deployment     |
+| State                                                                | Owner                |
+| -------------------------------------------------------------------- | -------------------- |
+| Users, threads, durable transcript parts, runs, and tool-job records | Convex               |
+| Thread snapshot revisions and paged project-thread listings          | Convex               |
+| Local transcript replica                                             | Local server         |
+| Current assistant stream                                             | Local process memory |
+| Local folder list (`workspacePath` + `repositoryKey`)                | Local server         |
+| Installation identity and this process’s machine credential          | Local server         |
+| Machine presence                                                     | Convex               |
+| Internal process credential and browser sessions                     | Local server         |
+| Native WorkOS access token and user                                  | Local process memory |
+| Native WorkOS refresh token                                          | OS credential store  |
+| Active commands, cancellation tokens, and run execution capabilities | Local process memory |
+| Source files and build artifacts                                     | User workspace       |
+| Artifact identity, scope, and synced content                         | Convex               |
+| Artifact/file bindings and synchronization baselines                 | Sprocket data dir    |
+| Artifact file reads, change detection, and preview feed              | Local server         |
+| Model and authentication provider secrets                            | Cloud deployment     |
 
-The local server owns this machine’s folder list and the account-isolated
-thread summary cache. Convex threads store a `repositoryKey`. When a folder is
-attached here, Rust watches that key’s active snapshot and writes it locally;
-archived threads download when the UI asks. The web app reads the cache, not
-`threads.listMine`. Folders that are not attached here stay hidden until they
-are added.
+The local server owns this machine's folder list. Convex threads store a
+`repositoryKey`. The global inbox queries Convex for unsettled and settled
+threads whose repository keys match folders attached on this machine. Folders
+that are not attached here stay hidden until they are added.
 
-Rename, archive, restore, rekey, and cancellation go through the local server
-so it can refresh the affected cache files before the UI reads them again.
-Thread creation and selected-thread lifecycle still talk to Convex directly.
+Rename, settle, unsettle, and thread creation call Convex directly. Rekey and
+cancellation go through the local server because they coordinate with local
+repository identity and agent execution.
 
 ### Artifacts and local bindings
 

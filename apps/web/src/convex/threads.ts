@@ -21,19 +21,19 @@ async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	return { userId, record };
 }
 
-async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
-		throw new Error('Cannot archive a thread while a run is active.');
+	if (record.status === 'running') {
+		throw new Error('Cannot settle a running thread.');
 	}
 
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
 	return { userId, record };
 }
 
-async function restoreOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
@@ -101,7 +101,7 @@ export const setSelectedModel = mutation({
 	}
 });
 
-/** Retired UI listing. Current clients read the local summary cache. */
+/** Retired UI listing. Current clients read the paginated inbox. */
 export const listMine = query({
 	args: {},
 	returns: v.null(),
@@ -144,15 +144,15 @@ export const getByThreadId = query({
 	}
 });
 
-/** Retired direct Convex command. Current clients use the local thread routes. */
 export const rename = mutation({
 	args: {
 		threadId: v.id('threadRecords'),
 		title: v.string()
 	},
 	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
+	handler: async (ctx, args) => {
+		await renameOwnedThread(ctx, args.threadId, args.title);
+		return null;
 	}
 });
 
@@ -174,7 +174,7 @@ export const renameForLocalCache = mutation({
 	}
 });
 
-/** Retired direct Convex command. Current clients use the local thread routes. */
+/** Retired archive terminology. Current clients call `settle`. */
 export const archive = mutation({
 	args: {
 		threadId: v.id('threadRecords')
@@ -185,18 +185,30 @@ export const archive = mutation({
 	}
 });
 
+export const settle = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await settleOwnedThread(ctx, args.threadId);
+		return null;
+	}
+});
+
+/** Compatibility for released local servers using archive terminology. */
 export const archiveForLocalCache = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
-		const { userId, record } = await archiveOwnedThread(ctx, args.threadId);
+		const { userId, record } = await settleOwnedThread(ctx, args.threadId);
 		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
 
-/** Retired direct Convex command. Current clients use the local thread routes. */
+/** Retired restore terminology. Current clients call `unsettle`. */
 export const restore = mutation({
 	args: {
 		threadId: v.id('threadRecords')
@@ -207,13 +219,25 @@ export const restore = mutation({
 	}
 });
 
+export const unsettle = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await unsettleOwnedThread(ctx, args.threadId);
+		return null;
+	}
+});
+
+/** Compatibility for released local servers using restore terminology. */
 export const restoreForLocalCache = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
-		const { userId, record } = await restoreOwnedThread(ctx, args.threadId);
+		const { userId, record } = await unsettleOwnedThread(ctx, args.threadId);
 		return { userId, repositoryKey: record.repositoryKey };
 	}
 });

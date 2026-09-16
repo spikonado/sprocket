@@ -46,6 +46,18 @@ New servers take an exclusive data-directory lock. Stop older server processes
 before upgrading a profile, since those binaries do not take that lock. Separate
 profiles must use separate data directories.
 
+Older local servers call `threads:archiveForLocalCache` and
+`threads:restoreForLocalCache`. Those mutations remain aliases for settle and
+unsettle while released clients still use the archive terminology. Remove the
+aliases after the minimum supported local server version calls the direct
+`threads:settle` and `threads:unsettle` mutations. They also call
+`threads:renameForLocalCache`, which performs the same rename as
+`threads:rename` but returns repository metadata used by the old summary cache.
+Remove it after the minimum supported local server version calls the direct
+rename mutation. Older servers also subscribe to `threads:listRecent` for their
+on-disk summary cache. Keep that query until the same minimum-version gate
+passes.
+
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
 ## Local project attachments
@@ -146,8 +158,7 @@ migrations component reports that every migration finished.
 ### Thread status
 
 Production has historical `threadRecords` without `status`. Current run
-lifecycle code writes the field, but the thread cache must still ingest old
-rows. The schema and local cache parser therefore accept a missing value, and
+lifecycle code writes the field. The schema still accepts a missing value, and
 `threadRecordToSummary` treats it as `completed`.
 
 `backfillMissingThreadStatus` copies the latest run status onto each affected thread.
@@ -415,8 +426,8 @@ upgrade message.
 ## Legacy run status
 
 New runs stay `running` while tools execute. `awaiting_executor` remains accepted
-in schema and client validators for old database records and local transcript or
-thread caches. The completed backfill rewrote that status on runs and thread records.
+in schema and client validators for old database records and local transcripts.
+The completed backfill rewrote that status on runs and thread records.
 Finalization treats `running` and `awaiting_executor` as aliases while still
 checking the claim and lease. Keep the alias until `awaiting_executor` is removed
-entirely and persisted local caches no longer require it.
+entirely and persisted local transcripts no longer require it.

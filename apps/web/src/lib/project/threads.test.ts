@@ -3,7 +3,6 @@ import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
 	dataForThread,
-	getProjectThreadGroups,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
 	resolveExpiredAgentLaunch,
@@ -78,123 +77,6 @@ function beginLaunch(
 }
 
 describe('project thread helpers', () => {
-	it('groups threads by repository key and hides keys that are not local', () => {
-		const groups = getProjectThreadGroups(
-			[
-				makeProject({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					displayName: 'sprocket',
-					workspacePath: '/workspaces/sprocket'
-				}),
-				makeProject({
-					repositoryKey: 'local-sprocket',
-					displayName: 'sprocket',
-					workspacePath: '/workspaces/local'
-				})
-			],
-			[
-				makeThreadSummary({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					lastMessageAt: 10
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-2'),
-					repositoryKey: 'stale',
-					lastMessageAt: 20
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-3'),
-					repositoryKey: 'local-sprocket',
-					lastMessageAt: 30
-				})
-			]
-		);
-
-		expect(groups).toHaveLength(2);
-		expect(
-			groups.find((group) => group.project.workspacePath === '/workspaces/sprocket')?.threads
-		).toHaveLength(1);
-		expect(
-			groups.find((group) => group.project.workspacePath === '/workspaces/local')?.threads
-		).toHaveLength(1);
-	});
-
-	it('keeps projects in their given order regardless of thread activity', () => {
-		const groups = getProjectThreadGroups(
-			[
-				makeProject({ repositoryKey: 'ws-older', displayName: 'older' }),
-				makeProject({ repositoryKey: 'ws-newer', displayName: 'newer' })
-			],
-			[
-				makeThreadSummary({
-					repositoryKey: 'ws-older',
-					lastMessageAt: 100
-				}),
-				makeThreadSummary({
-					repositoryKey: 'ws-newer',
-					lastMessageAt: 1
-				})
-			]
-		);
-
-		expect(groups.map((group) => group.project.repositoryKey)).toEqual(['ws-older', 'ws-newer']);
-	});
-
-	it('excludes archived threads from project groups', () => {
-		const active = makeThreadSummary({
-			repositoryKey: 'sprocket',
-			lastMessageAt: 10
-		});
-		const archived = makeThreadSummary({
-			threadId: threadId('thread-record-2'),
-			repositoryKey: 'sprocket',
-			lastMessageAt: 20,
-			threadStatus: 'archived'
-		});
-
-		const groups = getProjectThreadGroups(
-			[
-				makeProject({
-					repositoryKey: 'sprocket',
-					displayName: 'sprocket'
-				})
-			],
-			[active, archived]
-		);
-
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.threads).toHaveLength(1);
-		expect(groups[0]?.threads[0]?.threadId).toBe('thread-record-1');
-	});
-
-	it('lists running threads before newer completed threads in each project', () => {
-		const groups = getProjectThreadGroups(
-			[makeProject({ repositoryKey: 'ws-1' })],
-			[
-				makeThreadSummary({
-					threadId: threadId('thread-record-completed-newer'),
-					lastMessageAt: 30
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-running-older'),
-					lastMessageAt: 10,
-					status: 'running'
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-running-newer'),
-					lastMessageAt: 20,
-					status: 'running'
-				})
-			]
-		);
-
-		expect(groups[0]?.threads.map((thread) => thread.threadId)).toEqual([
-			'thread-record-running-newer',
-			'thread-record-running-older',
-			'thread-record-completed-newer'
-		]);
-	});
-
 	it('preserves a blank draft selection for the current repository', () => {
 		expect(
 			resolveProjectThreadSelection({
