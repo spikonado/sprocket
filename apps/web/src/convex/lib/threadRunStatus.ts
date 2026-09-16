@@ -11,13 +11,12 @@ export async function setRunAndThreadStatus(
 ): Promise<void> {
 	const current = await ctx.db.get('runs', run._id);
 	if (!current) throw new Error('Run not found.');
-	const nextStatus = status === 'awaiting_executor' ? 'running' : status;
 	if (
-		current.status !== nextStatus ||
+		current.status !== status ||
 		('completedAt' in runPatch && current.completedAt !== runPatch.completedAt) ||
 		('lastError' in runPatch && current.lastError !== runPatch.lastError)
 	) {
-		await ctx.db.patch('runs', run._id, { ...runPatch, status: nextStatus });
+		await ctx.db.patch('runs', run._id, { ...runPatch, status });
 	}
 	const [latestRun, thread] = await Promise.all([
 		ctx.db
@@ -28,8 +27,7 @@ export async function setRunAndThreadStatus(
 		ctx.db.get('threadRecords', run.threadId)
 	]);
 	if (!latestRun || !thread) return;
-	const threadStatus = latestRun.status === 'awaiting_executor' ? 'running' : latestRun.status;
-	if (thread.status !== threadStatus) {
-		await ctx.db.patch('threadRecords', run.threadId, { status: threadStatus });
+	if (thread.status !== latestRun.status) {
+		await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
 	}
 }

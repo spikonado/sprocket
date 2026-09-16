@@ -308,7 +308,7 @@ describe('numbered transcript parts', () => {
 		const invocationId = started.parts[0]?.tool?.toolInvocationId;
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
-			expectedStatus: 'awaiting_executor',
+			expectedStatus: 'running',
 			expectedClaimId: 'claim-tool-cancel',
 			text: '',
 			status: 'cancelled',

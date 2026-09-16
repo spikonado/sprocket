@@ -422,12 +422,3 @@ Current code does not use them.
 
 Remove a stub when its retired function name no longer needs to return the
 upgrade message.
-
-## Legacy run status
-
-New runs stay `running` while tools execute. `awaiting_executor` remains accepted
-in schema and client validators for old database records and local transcripts.
-The completed backfill rewrote that status on runs and thread records.
-Finalization treats `running` and `awaiting_executor` as aliases while still
-checking the claim and lease. Keep the alias until `awaiting_executor` is removed
-entirely and persisted local transcripts no longer require it.

@@ -15,7 +15,7 @@ type CompletionAttemptRun = {
 };
 
 export function isClaimedRunStatus(status: string): boolean {
-	return status === 'running' || status === 'awaiting_executor';
+	return status === 'running';
 }
 
 export function isRunClaimLeaseActive(run: ClaimableRun, now: number): boolean {

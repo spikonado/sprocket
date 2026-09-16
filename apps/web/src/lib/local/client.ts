@@ -136,7 +136,7 @@ const transcriptWatchEventSchema = z.object({
 const liveCompletionOverlaySchema = z.object({
 	threadId: z.string(),
 	runId: z.string(),
-	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
+	runStatus: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
 	streamId: z.string().min(1),
 	text: z.string(),
 	parts: z.array(z.unknown()),

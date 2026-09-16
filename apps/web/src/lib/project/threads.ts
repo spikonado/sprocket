@@ -66,11 +66,7 @@ export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
 }
 
 export function hasActiveRun(thread: Pick<ThreadSummary, 'status'>) {
-	return (
-		thread.status === 'queued' ||
-		thread.status === 'running' ||
-		thread.status === 'awaiting_executor'
-	);
+	return thread.status === 'queued' || thread.status === 'running';
 }
 
 export function findThreadById(

@@ -120,8 +120,7 @@ export const backfillMissingThreadStatus = migrations.define({
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', thread._id))
 			.order('desc')
 			.first();
-		const status = latestRun?.status ?? 'completed';
-		return { status: status === 'awaiting_executor' ? ('running' as const) : status };
+		return { status: latestRun?.status ?? 'completed' };
 	}
 });
 
