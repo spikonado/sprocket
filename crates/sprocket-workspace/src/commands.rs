@@ -82,7 +82,7 @@ impl CommandSessionManager {
         command: &str,
         workdir: &str,
         shell: &str,
-        runtime_timeout_ms: Option<u64>,
+        timeout_ms: Option<u64>,
         yield_time_ms: u64,
         max_output_chars: usize,
     ) -> Result<CommandExecOutput> {
@@ -132,7 +132,7 @@ impl CommandSessionManager {
             stdin_task,
             capture_task,
             output.clone(),
-            runtime_timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
+            timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
         ));
 
         let session_id = self
@@ -455,10 +455,10 @@ async fn supervise_command(
     stdin_task: tokio::task::JoinHandle<()>,
     mut capture_task: tokio::task::JoinHandle<Result<()>>,
     output: Arc<Mutex<CapturedOutput>>,
-    runtime_timeout: Option<Duration>,
+    timeout: Option<Duration>,
 ) {
-    let runtime_deadline = wait_for_runtime_timeout(runtime_timeout);
-    tokio::pin!(runtime_deadline);
+    let timeout = wait_for_timeout(timeout);
+    tokio::pin!(timeout);
     let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut capture_finished = false;
@@ -480,7 +480,7 @@ async fn supervise_command(
                     }
                 }
             },
-            _ = &mut runtime_deadline => {
+            _ = &mut timeout => {
                 match terminate_child(&mut child, process_id).await {
                     Ok(status) => break (Some(status), true, None),
                     Err(error) => break (None, true, Some(error.to_string())),
@@ -522,8 +522,8 @@ async fn supervise_command(
     let _ = stdin_task.await;
 }
 
-async fn wait_for_runtime_timeout(runtime_timeout: Option<Duration>) {
-    match runtime_timeout {
+async fn wait_for_timeout(timeout: Option<Duration>) {
+    match timeout {
         Some(timeout) => tokio::time::sleep(timeout).await,
         None => std::future::pending::<()>().await,
     }
@@ -1217,7 +1217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn command_without_runtime_timeout_continues_after_yield() {
+    async fn command_without_timeout_continues_after_yield() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
@@ -1243,7 +1243,7 @@ mod tests {
                 2_000,
             )
             .await
-            .expect("command should finish without a runtime deadline");
+            .expect("command should finish without a timeout");
 
         assert!(finished.result.success);
         assert!(!finished.result.running);
