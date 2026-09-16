@@ -78,11 +78,23 @@ describe('thread inbox', () => {
 		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status: 'running' }));
 
 		await expect(asUser.mutation(api.threads.settleForLocalCache, { threadId })).rejects.toThrow(
-			'run is active'
+			'running thread'
 		);
 	});
 
-	it('refuses to settle a thread with a pending question', async () => {
+	it.each(['queued', 'awaiting_executor'] as const)('settles a %s thread', async (status) => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status }));
+
+		await asUser.mutation(api.threads.settleForLocalCache, { threadId });
+
+		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
+			'number'
+		);
+	});
+
+	it('settles a thread with a pending question', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		await t.run(async (ctx) => {
@@ -114,8 +126,10 @@ describe('thread inbox', () => {
 			});
 		});
 
-		await expect(asUser.mutation(api.threads.settleForLocalCache, { threadId })).rejects.toThrow(
-			'waiting for your answer'
+		await asUser.mutation(api.threads.settleForLocalCache, { threadId });
+
+		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
+			'number'
 		);
 	});
 

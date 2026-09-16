@@ -25,17 +25,9 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
-		throw new Error('Cannot settle a thread while a run is active.');
+	if (record.status === 'running') {
+		throw new Error('Cannot settle a running thread.');
 	}
-	const pendingQuestion = await ctx.db
-		.query('agentQuestions')
-		.withIndex('by_threadId_status_sequence', (query) =>
-			query.eq('threadId', threadId).eq('status', 'pending')
-		)
-		.first();
-	if (pendingQuestion)
-		throw new Error('Cannot settle a thread while it is waiting for your answer.');
 
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
 	return { userId, record };
