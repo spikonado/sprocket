@@ -395,4 +395,4 @@ Include the following, if needed:
 
 In your response don't include the nitty-gritty details of how you made the artifacts, etc.
 Tell the user more about the project and design decisions.
-Tell the user about what files and artifacts you wrote, and how they can view the artifacts (right sidebar in the Sprocket UI).
+Tell the user what files and artifacts you wrote. Put `artifact:<artifactId>` in its own paragraph for each artifact the user should see.
