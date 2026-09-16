@@ -196,6 +196,18 @@ export const settleForLocalCache = mutation({
 	}
 });
 
+/** Compatibility for released local servers using archive terminology. */
+export const archiveForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	handler: async (ctx, args) => {
+		const { userId, record } = await settleOwnedThread(ctx, args.threadId);
+		return { userId, repositoryKey: record.repositoryKey };
+	}
+});
+
 /** Retired direct Convex command. Current clients use the local thread routes. */
 export const restore = mutation({
 	args: {
@@ -208,6 +220,18 @@ export const restore = mutation({
 });
 
 export const unsettleForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	handler: async (ctx, args) => {
+		const { userId, record } = await unsettleOwnedThread(ctx, args.threadId);
+		return { userId, repositoryKey: record.repositoryKey };
+	}
+});
+
+/** Compatibility for released local servers using restore terminology. */
+export const restoreForLocalCache = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},

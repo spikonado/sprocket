@@ -265,6 +265,7 @@
 	let sidebarOpen = $state(true);
 	let viewportWidth = $state(0);
 	let projectFilter = $state<string[]>([]);
+	let settledInboxOpen = $state(true);
 	let pendingProjectLaunches = $state<string[]>([]);
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
@@ -424,7 +425,8 @@
 	});
 	const inbox = useThreadInbox({
 		enabled: () => authReady,
-		projects: () => inboxProjectKeys
+		projects: () => inboxProjectKeys,
+		settledOpen: () => settledInboxOpen
 	});
 	const threads = $derived(threadCache.threads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
@@ -1920,6 +1922,7 @@
 						models={modelCatalog?.models ?? []}
 						selectedProjects={projectFilter}
 						{currentThreadId}
+						bind:settledOpen={settledInboxOpen}
 						mutationsEnabled={threadCache.status !== 'offline' && threadCache.status !== 'error'}
 						theme={workspaceTheme}
 						onThemeChange={(theme) => void handleThemeChange(theme)}

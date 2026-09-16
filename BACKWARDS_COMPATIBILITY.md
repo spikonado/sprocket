@@ -46,6 +46,12 @@ New servers take an exclusive data-directory lock. Stop older server processes
 before upgrading a profile, since those binaries do not take that lock. Separate
 profiles must use separate data directories.
 
+Older local servers call `threads:archiveForLocalCache` and
+`threads:restoreForLocalCache`. Those mutations remain aliases for settle and
+unsettle while released clients still use the archive terminology. Remove the
+aliases after the minimum supported local server version calls
+`threads:settleForLocalCache` and `threads:unsettleForLocalCache`.
+
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
 ## Local project attachments

@@ -3,14 +3,21 @@ import { api } from '$convex/_generated/api';
 import type { Doc } from '$convex/_generated/dataModel';
 import { INBOX_STATES, type InboxState } from '$convex/lib/inboxState';
 
-export function useThreadInbox(input: { enabled: () => boolean; projects: () => string[] }) {
+export function useThreadInbox(input: {
+	enabled: () => boolean;
+	projects: () => string[];
+	settledOpen: () => boolean;
+}) {
 	const queries = INBOX_STATES.map((state) => ({
 		state,
 		query: usePaginatedQuery(
 			api.inbox.list,
 			() => {
 				const repositoryKeys = input.projects();
-				return input.enabled() && repositoryKeys.length > 0 ? { state, repositoryKeys } : 'skip';
+				const sectionOpen = state === 'unsettled' || input.settledOpen();
+				return input.enabled() && sectionOpen && repositoryKeys.length > 0
+					? { state, repositoryKeys }
+					: 'skip';
 			},
 			{ initialNumItems: 25 }
 		)

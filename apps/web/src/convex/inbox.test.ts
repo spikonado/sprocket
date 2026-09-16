@@ -82,10 +82,10 @@ describe('thread inbox', () => {
 		);
 	});
 
-	it.each(['queued', 'awaiting_executor'] as const)('settles a %s thread', async (status) => {
+	it('settles a queued thread', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status }));
+		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status: 'queued' }));
 
 		await asUser.mutation(api.threads.settleForLocalCache, { threadId });
 

@@ -18,6 +18,14 @@ describe('threads local-cache commands', () => {
 			userId: subject,
 			repositoryKey
 		});
+		expect(await asUser.mutation(api.threads.archiveForLocalCache, { threadId })).toEqual({
+			userId: subject,
+			repositoryKey
+		});
+		expect(await asUser.mutation(api.threads.restoreForLocalCache, { threadId })).toEqual({
+			userId: subject,
+			repositoryKey
+		});
 	});
 });
 

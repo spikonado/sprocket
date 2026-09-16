@@ -17,7 +17,6 @@
 	import type { Project } from '$lib/types/sprocket';
 	import type { SprocketTheme } from '$lib/theme';
 	import type { InboxSectionData } from '$lib/project/inbox.svelte';
-	import { hasActiveRun } from '$lib/project/threads';
 	import BrandMark from '$lib/components/brand-mark.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import AppUpdate from './app-update.svelte';
@@ -31,6 +30,7 @@
 		models: readonly Pick<CatalogModel, 'id' | 'label' | 'provider'>[];
 		selectedProjects: string[];
 		currentThreadId: Id<'threadRecords'> | null;
+		settledOpen?: boolean;
 		mutationsEnabled: boolean;
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
@@ -49,6 +49,7 @@
 		models,
 		selectedProjects,
 		currentThreadId,
+		settledOpen = $bindable(true),
 		mutationsEnabled,
 		theme,
 		onThemeChange,
@@ -76,8 +77,6 @@
 	let now = $state(Date.now());
 	let projectMenuOpen = $state(false);
 	let projectSearch = $state('');
-	let settledOpen = $state(true);
-
 	const rows = $derived(sections.flatMap((section) => section.rows));
 	const filteredProjects = $derived(
 		projects.filter((project) =>
@@ -86,7 +85,12 @@
 	);
 	const visibleSections = $derived(
 		sections.filter(
-			(section) => section.rows.length || section.loading || section.error || section.canLoadMore
+			(section) =>
+				section.rows.length ||
+				section.loading ||
+				section.error ||
+				section.canLoadMore ||
+				(section.state === 'settled' && !settledOpen)
 		)
 	);
 	const projectFilterLabel = $derived(
@@ -143,14 +147,9 @@
 	}
 
 	function runStatus(thread: Thread) {
-		if (threadHasActiveRun(thread)) {
-			return thread.status === 'queued' ? 'Starting' : 'Working';
-		}
+		if (thread.status === 'queued') return 'Starting';
+		if (thread.status === 'running') return 'Working';
 		return thread.status === 'failed' ? 'Failed' : null;
-	}
-
-	function threadHasActiveRun(thread: Thread) {
-		return hasActiveRun({ status: thread.status ?? 'completed' });
 	}
 
 	function choose(thread: Thread) {
@@ -185,7 +184,7 @@
 	}
 
 	function canChange(thread: Thread, state: InboxState) {
-		return inboxState(thread) !== state && (state !== 'settled' || !threadHasActiveRun(thread));
+		return inboxState(thread) !== state && (state !== 'settled' || thread.status !== 'running');
 	}
 
 	async function change(thread: Thread, state: InboxState) {
@@ -451,7 +450,8 @@
 											{/if}
 											{#if stateLabel}
 												<span
-													class:inbox-working={threadHasActiveRun(thread)}
+													class:inbox-working={thread.status === 'queued' ||
+														thread.status === 'running'}
 													class:inbox-attention={thread.status === 'failed'}
 													class="inbox-status">{stateLabel}</span
 												>
