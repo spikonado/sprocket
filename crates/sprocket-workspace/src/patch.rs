@@ -635,10 +635,28 @@ async fn write_new_file(
 }
 
 async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) -> Result<()> {
-    tokio::fs::remove_file(path)
+    let parent = path
+        .parent()
+        .with_context(|| format!("no parent directory for {}", path.display()))?;
+    tokio::fs::create_dir_all(parent)
         .await
-        .with_context(|| format!("failed to replace {}", path.display()))?;
-    write_new_file(path, contents, Some(permissions)).await
+        .with_context(|| format!("failed to create {}", parent.display()))?;
+    let parent = parent.to_owned();
+    let staging = tokio::task::spawn_blocking(move || {
+        tempfile::Builder::new()
+            .prefix(".sprocket-patch-")
+            .tempdir_in(parent)
+    })
+    .await
+    .context("staging directory task failed")?
+    .with_context(|| format!("failed to stage replacement for {}", path.display()))?;
+    let staged_path = staging.path().join("replacement");
+    write_new_file(&staged_path, contents, Some(permissions))
+        .await
+        .with_context(|| format!("failed to stage replacement for {}", path.display()))?;
+    tokio::fs::rename(&staged_path, path)
+        .await
+        .with_context(|| format!("failed to replace {}", path.display()))
 }
 
 async fn file_permissions(path: &Path) -> Result<Permissions> {
@@ -658,16 +676,12 @@ async fn restore_snapshot(snapshot: &PatchSnapshot) -> Result<()> {
     let mut errors = Vec::new();
     for (path, file_snapshot) in &snapshot.files {
         let result = match file_snapshot {
-            Some(snapshot) => {
-                async {
-                    match tokio::fs::remove_file(path).await {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                    write_new_file(path, &snapshot.contents, Some(snapshot.permissions.clone()))
-                        .await
-                }
+            Some(file_snapshot) => {
+                replace_file(
+                    path,
+                    &file_snapshot.contents,
+                    file_snapshot.permissions.clone(),
+                )
                 .await
             }
             None => match tokio::fs::remove_file(path).await {
@@ -725,14 +739,289 @@ fn change_outputs(root: &Path, changes: &[PreparedChange]) -> Vec<PatchChangeOut
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::Mutex;
 
-    use super::{apply_workspace_patch, write_new_file};
+    use super::{
+        FileSnapshot, PatchSnapshot, apply_workspace_patch, restore_snapshot, write_new_file,
+    };
     use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
     use crate::test_support::temp_workspace;
+    use tempfile::tempdir;
 
     static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn replaces_file_with_240_character_name() {
+        let workspace = tempdir().unwrap();
+        let name = "a".repeat(240);
+        let target = workspace.path().join(&name);
+        fs::write(&target, "before\n").unwrap();
+        let patch =
+            format!("*** Begin Patch\n*** Update File: {name}\n@@\n-before\n+after\n*** End Patch");
+
+        apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            &patch,
+        )
+        .await
+        .expect("long filename should not be extended for staging");
+
+        assert_eq!(fs::read_to_string(target).unwrap(), "after\n");
+    }
+
+    #[tokio::test]
+    async fn leaves_legacy_staging_siblings_untouched() {
+        let workspace = tempdir().unwrap();
+        let target = workspace.path().join("file.txt");
+        let legacy_tmp = workspace.path().join("file.txt.sprocket-tmp.1.2.3");
+        let legacy_bak = workspace.path().join("file.txt.sprocket-bak.1.2.3");
+        fs::write(&target, "before\n").unwrap();
+        fs::write(&legacy_tmp, "user tmp\n").unwrap();
+        fs::write(&legacy_bak, "user bak\n").unwrap();
+
+        apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
+        )
+        .await
+        .expect("replacement should succeed");
+
+        assert_eq!(fs::read_to_string(target).unwrap(), "after\n");
+        assert_eq!(fs::read_to_string(legacy_tmp).unwrap(), "user tmp\n");
+        assert_eq!(fs::read_to_string(legacy_bak).unwrap(), "user bak\n");
+        assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 3);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn replaces_file_in_unlistable_parent_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let workspace = tempdir().unwrap();
+        let target = workspace.path().join("file.txt");
+        fs::write(&target, "before\n").unwrap();
+        let original_mode = fs::metadata(workspace.path()).unwrap().permissions().mode();
+        fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o300)).unwrap();
+
+        let result = apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
+        )
+        .await;
+        fs::set_permissions(workspace.path(), fs::Permissions::from_mode(original_mode)).unwrap();
+
+        result.expect("replacement should not require listing the parent");
+        assert_eq!(fs::read_to_string(target).unwrap(), "after\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preserves_executable_mode_when_replacing_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let workspace = tempdir().unwrap();
+        let target = workspace.path().join("script.sh");
+        fs::write(&target, "#!/bin/sh\nexit 1\n").unwrap();
+        let original_mode = fs::metadata(&target).unwrap().permissions().mode();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o751)).unwrap();
+
+        let result = apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            "*** Begin Patch\n*** Update File: script.sh\n@@\n-#!/bin/sh\n-exit 1\n+#!/bin/sh\n+exit 0\n*** End Patch",
+        )
+        .await;
+        let resulting_mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        fs::set_permissions(&target, fs::Permissions::from_mode(original_mode)).unwrap();
+
+        result.expect("executable should be replaced");
+        assert_eq!(resulting_mode, 0o751);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn staging_allocation_failure_preserves_original() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let workspace = tempdir().unwrap();
+        let target = workspace.path().join("file.txt");
+        fs::write(&target, "before\n").unwrap();
+        let original_mode = fs::metadata(workspace.path()).unwrap().permissions().mode();
+        fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
+        )
+        .await;
+        fs::set_permissions(workspace.path(), fs::Permissions::from_mode(original_mode)).unwrap();
+
+        result.expect_err("staging should fail in a non-writable parent");
+        assert_eq!(fs::read_to_string(target).unwrap(), "before\n");
+        assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn partial_staged_write_preserves_original() {
+        use std::os::unix::process::CommandExt;
+
+        const WORKSPACE_ENV: &str = "SPROCKET_PATCH_WRITE_FAILURE_TEST";
+        if let Some(root) = std::env::var_os(WORKSPACE_ENV) {
+            let root = std::path::PathBuf::from(root);
+            let target = root.join("file.txt");
+            let permissions = fs::metadata(&target).unwrap().permissions();
+            let error = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(super::replace_file(&target, &[b'x'; 4096], permissions))
+                .expect_err("replacement must exceed the child process file-size limit");
+
+            assert!(error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.raw_os_error() == Some(libc::EFBIG))
+            }));
+            assert_eq!(fs::read_to_string(target).unwrap(), "original\n");
+            assert_eq!(fs::read_dir(root).unwrap().count(), 1);
+            return;
+        }
+
+        let workspace = tempdir().unwrap();
+        fs::write(workspace.path().join("file.txt"), "original\n").unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "patch::tests::partial_staged_write_preserves_original",
+            ])
+            .env(WORKSPACE_ENV, workspace.path());
+        // Restrict only the child so parallel tests keep their normal limits.
+        unsafe {
+            child.pre_exec(|| {
+                if libc::signal(libc::SIGXFSZ, libc::SIG_IGN) == libc::SIG_ERR {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let limit = libc::rlimit {
+                    rlim_cur: 1024,
+                    rlim_max: 1024,
+                };
+                if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "child failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_restores_deleted_file_and_removes_created_file() {
+        let workspace = tempdir().unwrap();
+        let deleted = workspace.path().join("deleted.txt");
+        let created = workspace.path().join("created.txt");
+        fs::write(&deleted, "original\n").unwrap();
+        let permissions = fs::metadata(&deleted).unwrap().permissions();
+        let snapshot = PatchSnapshot {
+            files: BTreeMap::from([
+                (
+                    deleted.clone(),
+                    Some(FileSnapshot {
+                        contents: b"original\n".to_vec(),
+                        permissions,
+                    }),
+                ),
+                (created.clone(), None),
+            ]),
+            missing_directories: Vec::new(),
+        };
+        fs::remove_file(&deleted).unwrap();
+        fs::write(&created, "partial change\n").unwrap();
+
+        restore_snapshot(&snapshot)
+            .await
+            .expect("rollback should restore the snapshot");
+
+        assert_eq!(fs::read_to_string(deleted).unwrap(), "original\n");
+        assert!(!created.exists());
+    }
+
+    #[cfg(windows)]
+    fn directory_entries(path: &std::path::Path) -> std::collections::BTreeSet<std::ffi::OsString> {
+        fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect()
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_native_rename_replaces_existing_file_and_cleans_up() {
+        let workspace = tempdir().unwrap();
+        let target = workspace.path().join("file.txt");
+        fs::write(&target, "before\n").unwrap();
+        let entries_before = directory_entries(workspace.path());
+
+        apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
+        )
+        .await
+        .expect("native rename should replace an existing file");
+
+        assert_eq!(fs::read_to_string(target).unwrap(), "after\n");
+        assert_eq!(directory_entries(workspace.path()), entries_before);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_locked_target_is_preserved_and_staging_is_cleaned_up() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let workspace = tempdir().unwrap();
+        let target = workspace.path().join("file.txt");
+        fs::write(&target, "before\n").unwrap();
+        let entries_before = directory_entries(workspace.path());
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(&target)
+            .unwrap();
+
+        let result = apply_workspace_patch(
+            workspace.path().to_owned(),
+            WorkspaceCancellation::new(),
+            "*** Begin Patch\n*** Update File: file.txt\n@@\n-before\n+after\n*** End Patch",
+        )
+        .await;
+
+        result.expect_err("rename should fail while the target denies delete sharing");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "before\n");
+        assert_eq!(directory_entries(workspace.path()), entries_before);
+        drop(lock);
+    }
 
     #[tokio::test]
     async fn applies_begin_patch_format() {
