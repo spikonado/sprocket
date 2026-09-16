@@ -27,20 +27,35 @@ const AGENT_BROWSER_OPTIONS_WITH_VALUES = new Set([
 	'--action-policy',
 	'--allowed-domains',
 	'--args',
+	'--ca-cert',
 	'--cdp',
 	'--color-scheme',
 	'--config',
 	'--confirm-actions',
 	'--device',
 	'--download-path',
+	'--enable',
+	'--engine',
 	'--executable-path',
 	'--extension',
 	'--headers',
+	'--idle-timeout',
+	'--init-script',
+	'--input-mode',
 	'--max-output',
+	'--model',
+	'--namespace',
 	'--profile',
 	'--provider',
 	'--proxy',
 	'--proxy-bypass',
+	'--restore-check-fn',
+	'--restore-check-text',
+	'--restore-check-url',
+	'--restore-save',
+	'--screenshot-dir',
+	'--screenshot-format',
+	'--screenshot-quality',
 	'--session',
 	'--session-name',
 	'--state',
@@ -350,7 +365,8 @@ function agentBrowserOpenTarget(tokens: string[]): string | undefined {
 		if (token === 'open') return tokens[index + 1];
 		if (!token.startsWith('-')) return undefined;
 		const option = token.split('=', 1)[0];
-		if (!token.includes('=') && AGENT_BROWSER_OPTIONS_WITH_VALUES.has(option)) index++;
+		if (option === '--restore' && !token.includes('=') && tokens[index + 1] !== 'open') index++;
+		else if (!token.includes('=') && AGENT_BROWSER_OPTIONS_WITH_VALUES.has(option)) index++;
 		else if (tokens[index + 1] === 'true' || tokens[index + 1] === 'false') index++;
 		index++;
 	}
