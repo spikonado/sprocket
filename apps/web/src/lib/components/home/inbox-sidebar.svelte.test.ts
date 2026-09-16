@@ -101,6 +101,17 @@ it('renders simple navigation and non-collapsible sections', async () => {
 	);
 });
 
+it('shows project, title, and age without model or branch metadata', async () => {
+	await render([thread()]);
+	const row = document.querySelector('.inbox-row')!;
+
+	expect(row.querySelector('.inbox-row-meta')?.textContent).toContain('Repository');
+	expect(row.querySelector('.inbox-row-title')?.textContent).toBe('Thread');
+	expect(row.textContent).not.toContain('model');
+	expect(row.textContent).not.toContain('submission');
+	expect(row.querySelector('.inbox-row-main')?.getAttribute('title')).not.toContain('model');
+});
+
 it('does not allow a running thread to settle', async () => {
 	const input = await render([thread(false, 'running')]);
 	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;

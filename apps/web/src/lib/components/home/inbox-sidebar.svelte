@@ -379,7 +379,7 @@
 						<button
 							class="inbox-row-main"
 							type="button"
-							title={`${thread.title ?? 'New thread'}\n${projectName(thread)} · ${thread.selectedModel}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
+							title={`${thread.title ?? 'New thread'}\n${projectName(thread)}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
 							onclick={(event) => choose(event, thread)}
 							ondblclick={() => {
 								if (!mutationsEnabled || busy) return;
@@ -389,23 +389,20 @@
 							}}
 							aria-current={thread._id === currentThreadId ? 'page' : undefined}
 						>
-							<span class="inbox-row-title"
-								><span class="truncate">{thread.title ?? 'New thread'}</span></span
-							>
 							<span class="inbox-row-meta">
-								<span class="truncate">{projectName(thread)}</span>
-								<span class="truncate opacity-60">{thread.selectedModel}</span>
+								<span class="flex min-w-0 items-center gap-2">
+									<span class="truncate">{projectName(thread)}</span>
+									{#if stateLabel}
+										<span
+											class:inbox-working={threadHasActiveRun(thread)}
+											class:inbox-attention={thread.status === 'failed'}
+											class="inbox-status">{stateLabel}</span
+										>
+									{/if}
+								</span>
+								<span class="shrink-0">{age(thread.lastMessageAt)}</span>
 							</span>
-							<span class="inbox-row-bottom">
-								{#if stateLabel}
-									<span
-										class:inbox-working={threadHasActiveRun(thread)}
-										class:inbox-attention={thread.status === 'failed'}
-										class="inbox-status">{stateLabel}</span
-									>
-								{/if}
-								<span class="ml-auto">{age(thread.lastMessageAt)}</span>
-							</span>
+							<span class="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
 						</button>
 						<div class="inbox-row-actions">
 							{#if section.state === 'unsettled'}

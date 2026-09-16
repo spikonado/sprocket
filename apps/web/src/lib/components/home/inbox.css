@@ -79,12 +79,12 @@
 	position: relative;
 	display: flex;
 	align-items: center;
-	min-height: 82px;
-	margin: 3px 0 6px;
+	min-height: 62px;
+	margin: 2px 0;
 	border: 1px solid transparent;
 	border-radius: 9px;
 	content-visibility: auto;
-	contain-intrinsic-size: auto 82px;
+	contain-intrinsic-size: auto 62px;
 }
 
 .inbox-row:hover {
@@ -101,35 +101,24 @@
 	flex: 1;
 	min-width: 0;
 	flex-direction: column;
-	gap: 6px;
-	padding: 9px 10px;
+	gap: 4px;
+	padding: 8px 10px;
 	text-align: left;
 }
 
 .inbox-row-title {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-	padding-right: 52px;
 	font-weight: 500;
-	line-height: 1.35;
-}
-
-.inbox-row-meta,
-.inbox-row-bottom {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	color: var(--muted-foreground);
+	font-size: 14px;
+	line-height: 1.4;
 }
 
 .inbox-row-meta {
+	display: flex;
+	align-items: center;
 	justify-content: space-between;
+	gap: 8px;
+	color: var(--muted-foreground);
 	font-size: 11px;
-}
-
-.inbox-row-bottom {
-	font-size: 10px;
 }
 
 .inbox-row-actions {
