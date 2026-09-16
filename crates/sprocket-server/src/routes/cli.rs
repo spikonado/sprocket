@@ -22,7 +22,6 @@ use crate::cli_sessions::CliSession;
 use crate::project_attachments::repository_key_matches;
 use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
 use crate::routes::api_error::ApiError;
-use crate::thread_cache::CachedThreadRecord;
 use crate::transcript_client::UserConvexClient;
 
 pub(crate) fn routes() -> Router<AppState> {
@@ -374,23 +373,8 @@ async fn run_context(
         .await?;
     let thread = match thread_id {
         Some(thread_id) => {
-            let args = BTreeMap::from([(
-                "selectedThreadId".into(),
-                Value::String(thread_id.to_owned()),
-            )]);
-            let threads: Vec<CachedThreadRecord> = rpc.query("threads:listRecent", args).await?;
-            let thread = threads
-                .into_iter()
-                .find(|thread| thread.id == thread_id)
-                .context("thread not found")?;
-            Some(ThreadSettings {
-                repository_key: thread
-                    .repository_key
-                    .context("thread has no repository key")?,
-                selected_model: thread.selected_model,
-                reasoning_effort: thread.reasoning_effort,
-                fast_mode: thread.fast_mode,
-            })
+            let args = BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
+            Some(rpc.query("threads:getByThreadId", args).await?)
         }
         None => None,
     };

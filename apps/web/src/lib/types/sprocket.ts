@@ -1,4 +1,4 @@
-import type { Doc, Id } from '$convex/_generated/dataModel';
+import type { Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
 import type { displayRowValidator } from '$convex/lib/transcriptDisplayTypes';
@@ -123,20 +123,8 @@ export type TranscriptWatchEvent = {
 	stale: boolean;
 };
 
-export type ThreadCacheStatus = 'loading' | 'live' | 'reconnecting' | 'offline' | 'error';
-
-export type ThreadCacheWatchEvent = {
-	status: ThreadCacheStatus;
-	lastSyncedAt: number | null;
-};
-
-export type ThreadCacheSnapshot = ThreadCacheWatchEvent & {
-	threads: Doc<'threadRecords'>[];
-};
-
-export type ThreadCacheUserRequest = {
+export type LocalUserRequest = {
 	userId: string;
-	selectedThreadId?: Id<'threadRecords'>;
 };
 
 export type LiveCompletionWatchEvent =
@@ -299,15 +287,6 @@ export type DesktopApi = {
 	) => Promise<Blob | null>;
 	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
 	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
-	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
-	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
-	watchThreadCache: (
-		request: ThreadCacheUserRequest,
-		handlers: {
-			onEvent: (event: ThreadCacheWatchEvent) => void;
-			signal: AbortSignal;
-		}
-	) => Promise<void>;
 	watchArtifacts: (
 		request: ArtifactsWatchRequest,
 		handlers: {
@@ -315,20 +294,10 @@ export type DesktopApi = {
 			signal: AbortSignal;
 		}
 	) => Promise<void>;
-	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<boolean>;
-	settleThread: (request: ThreadCommandRequest) => Promise<boolean>;
-	unsettleThread: (request: ThreadCommandRequest) => Promise<boolean>;
-	rekeyRepository: (
-		request: ThreadCacheUserRequest & { from: string; to: string }
-	) => Promise<number>;
-	requestRunCancellation: (
-		request: ThreadCacheUserRequest & { runId: Id<'runs'> }
-	) => Promise<void>;
-	endAccountSession: (request: ThreadCacheUserRequest) => Promise<void>;
-};
-
-export type ThreadCommandRequest = ThreadCacheUserRequest & {
-	threadId: Id<'threadRecords'>;
+	rekeyRepository: (request: LocalUserRequest & { from: string; to: string }) => Promise<number>;
+	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
+	startAccountSession: (request: LocalUserRequest) => Promise<void>;
+	endAccountSession: (request: LocalUserRequest) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

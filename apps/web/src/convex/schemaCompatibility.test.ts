@@ -105,7 +105,7 @@ describe('schema rollout compatibility', () => {
 		});
 		expect(legacy.connection?.projectId).toBe(legacy.project?._id);
 
-		await expect(asUser.mutation(api.threads.settleForLocalCache, { threadId })).resolves.toEqual({
+		await expect(asUser.mutation(api.threads.archiveForLocalCache, { threadId })).resolves.toEqual({
 			userId: legacy.thread?.userId,
 			repositoryKey: legacy.thread?.repositoryKey
 		});

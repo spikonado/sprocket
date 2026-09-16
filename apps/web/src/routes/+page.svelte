@@ -84,7 +84,6 @@
 	import { useThreadInbox } from '$lib/project/inbox.svelte';
 	import type { InboxState } from '$convex/lib/inboxState';
 	import { TranscriptReplica } from '$lib/home/transcript-replica.svelte';
-	import { ThreadCache } from '$lib/home/thread-cache.svelte';
 	import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 	import {
 		clearLaunchHash,
@@ -147,6 +146,9 @@
 		}
 	});
 	const setThreadSelectedModel = useMutation(api.threads.setSelectedModel);
+	const renameThreadRecord = useMutation(api.threads.rename);
+	const settleThreadRecord = useMutation(api.threads.settle);
+	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
@@ -211,14 +213,6 @@
 	let composerContinuationOfRunId = $state<Id<'runs'> | null>(null);
 	let autoSubmitComposerContinuation = $state(false);
 	let currentError = $state<string | null>(null);
-	const threadCache = new ThreadCache({
-		getApi: () => desktopApi,
-		getUserId: () => getCurrentUserId(),
-		getSelectedThreadId: () => currentThreadId,
-		onError: (message) => {
-			currentError = message;
-		}
-	});
 	const composerAttachments = new ComposerAttachments({
 		getContext: () => ({
 			api: desktopApi,
@@ -403,9 +397,7 @@
 	const createThreadError = $derived(
 		currentError ??
 			$authState.error ??
-			(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-			(threadCache.status === 'error' ? 'Could not sync threads.' : null) ??
-			(threadCache.status === 'offline' ? 'Thread sync is offline.' : null)
+			(queryError instanceof Error ? convexClientErrorMessage(queryError) : null)
 	);
 	const projects = $derived.by<ProjectState[]>(() =>
 		Object.values(desktopProjectAttachmentsByPath)
@@ -428,8 +420,20 @@
 		projects: () => inboxProjectKeys,
 		settledOpen: () => settledInboxOpen
 	});
-	const threads = $derived(threadCache.threads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
+	const threads = $derived.by<ThreadSummary[]>(() => {
+		const summaries =
+			inbox.sections
+				.find((section) => section.state === 'unsettled')
+				?.rows.map(threadRecordToSummary) ?? [];
+		if (
+			!currentActiveThread ||
+			summaries.some((thread) => thread.threadId === currentActiveThread._id)
+		) {
+			return summaries;
+		}
+		return [threadRecordToSummary(currentActiveThread), ...summaries];
+	});
 	const currentLifecycle = $derived(dataForThread(lifecycleQuery.data, currentThreadId));
 	const runState = $derived(currentLifecycle?.run ?? null);
 	const pendingAgentQuestion = $derived(
@@ -641,7 +645,6 @@
 		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
 		await rekeyChangedLocalRepositories(nextAttachments);
-		await threadCache.register();
 	}
 
 	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
@@ -689,26 +692,18 @@
 	async function rekeyLocalRepository(from: string, to: string) {
 		const { api, userId } = localThreadCommandContext();
 		await api.rekeyRepository({ userId, from, to });
-		await threadCache.pull(userId);
 	}
-
-	$effect(() => {
-		const hasDesktopApi = Boolean(desktopApi);
-		const userId = signedInUserId;
-		if (!hasDesktopApi || !userId || !authReady) {
-			return;
-		}
-		return threadCache.watch(userId);
-	});
 
 	$effect(() => {
 		const api = desktopApi;
 		const userId = signedInUserId;
-		const selectedThreadId = currentThreadId;
-		if (!api || !userId || !authReady) {
-			return;
-		}
-		void threadCache.register(selectedThreadId).catch(() => {});
+		if (!api || !userId || !authReady) return;
+		void api.startAccountSession({ userId }).catch((error) => {
+			if (desktopApi === api && getCurrentUserId() === userId) {
+				currentError =
+					error instanceof Error ? error.message : 'Failed to register this Sprocket process.';
+			}
+		});
 	});
 
 	function applyProjectSelection(
@@ -922,9 +917,6 @@
 
 		try {
 			await setThreadSelectedModel({ threadId, selectedModel: modelId });
-			if (getCurrentUserId() === userId) {
-				void threadCache.pull(userId);
-			}
 		} catch (error) {
 			if (currentThreadId === threadId && getCurrentUserId() === userId) {
 				currentError =
@@ -970,10 +962,7 @@
 
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
 		try {
-			const { api, userId } = localThreadCommandContext();
-			const cacheSynchronized = await api.renameThread({ userId, threadId, title });
-			if (!cacheSynchronized) threadCache.markReconnecting();
-			await threadCache.pull(userId);
+			await renameThreadRecord({ threadId, title });
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
 			throw error;
@@ -1018,12 +1007,9 @@
 	async function changeInboxState(thread: Doc<'threadRecords'>, state: InboxState) {
 		const expectedUserId = getCurrentUserId();
 		try {
-			const { api, userId } = localThreadCommandContext();
-			const request = { userId, threadId: thread._id };
-			const cacheSynchronized =
-				state === 'settled' ? await api.settleThread(request) : await api.unsettleThread(request);
-			if (!cacheSynchronized) threadCache.markReconnecting();
-			await threadCache.pull(userId);
+			const request = { threadId: thread._id };
+			if (state === 'settled') await settleThreadRecord(request);
+			else await unsettleThreadRecord(request);
 			if (getCurrentUserId() === expectedUserId) {
 				if (state === 'settled' && currentThreadId === thread._id) {
 					currentThreadId = null;
@@ -1391,7 +1377,6 @@
 						projectSelectionGeneration += 1;
 						currentThreadId = createdThreadId;
 						draftWorkspacePath = null;
-						void threadCache.pull(submittedUserId);
 						if (repositoryKeyChanged)
 							remoteChangeNotices.set(createdThreadId, REMOTE_CHANGE_NOTICE);
 					}
@@ -1534,7 +1519,6 @@
 		pendingAgentLaunches = {};
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
-		threadCache.reset();
 		projectSelectionGeneration += 1;
 		prompt = '';
 		composerContinuationOfRunId = null;
@@ -1561,7 +1545,7 @@
 
 		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
 			pendingCreatedThreadId,
-			threads: threadCache.threads.map(threadRecordToSummary)
+			threads
 		});
 		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = nextPendingCreatedThreadId;
@@ -1923,7 +1907,7 @@
 						selectedProjects={projectFilter}
 						{currentThreadId}
 						bind:settledOpen={settledInboxOpen}
-						mutationsEnabled={threadCache.status !== 'offline' && threadCache.status !== 'error'}
+						mutationsEnabled={authReady}
 						theme={workspaceTheme}
 						onThemeChange={(theme) => void handleThemeChange(theme)}
 						onFilter={(keys) => (projectFilter = keys)}
@@ -1982,8 +1966,6 @@
 									currentError ??
 									$authState.error ??
 									(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-									(threadCache.status === 'error' ? 'Could not sync threads.' : null) ??
-									(threadCache.status === 'offline' ? 'Thread sync is offline.' : null) ??
 									null}
 								runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 								messages={visibleMessages}

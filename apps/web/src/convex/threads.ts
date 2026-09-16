@@ -101,7 +101,7 @@ export const setSelectedModel = mutation({
 	}
 });
 
-/** Retired UI listing. Current clients read the local summary cache. */
+/** Retired UI listing. Current clients read the paginated inbox. */
 export const listMine = query({
 	args: {},
 	returns: v.null(),
@@ -144,15 +144,15 @@ export const getByThreadId = query({
 	}
 });
 
-/** Retired direct Convex command. Current clients use the local thread routes. */
 export const rename = mutation({
 	args: {
 		threadId: v.id('threadRecords'),
 		title: v.string()
 	},
 	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
+	handler: async (ctx, args) => {
+		await renameOwnedThread(ctx, args.threadId, args.title);
+		return null;
 	}
 });
 
@@ -174,7 +174,7 @@ export const renameForLocalCache = mutation({
 	}
 });
 
-/** Retired direct Convex command. Current clients use the local thread routes. */
+/** Retired archive terminology. Current clients call `settle`. */
 export const archive = mutation({
 	args: {
 		threadId: v.id('threadRecords')
@@ -185,14 +185,14 @@ export const archive = mutation({
 	}
 });
 
-export const settleForLocalCache = mutation({
+export const settle = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { userId, record } = await settleOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey };
+		await settleOwnedThread(ctx, args.threadId);
+		return null;
 	}
 });
 
@@ -208,7 +208,7 @@ export const archiveForLocalCache = mutation({
 	}
 });
 
-/** Retired direct Convex command. Current clients use the local thread routes. */
+/** Retired restore terminology. Current clients call `unsettle`. */
 export const restore = mutation({
 	args: {
 		threadId: v.id('threadRecords')
@@ -219,14 +219,14 @@ export const restore = mutation({
 	}
 });
 
-export const unsettleForLocalCache = mutation({
+export const unsettle = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { userId, record } = await unsettleOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey };
+		await unsettleOwnedThread(ctx, args.threadId);
+		return null;
 	}
 });
 

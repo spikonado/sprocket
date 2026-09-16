@@ -8,9 +8,6 @@ import type {
 	LiveCompletionWatchEvent,
 	LocalArtifact,
 	ProjectAttachment,
-	ThreadCacheSnapshot,
-	ThreadCacheUserRequest,
-	ThreadCacheWatchEvent,
 	TranscriptScopeRequest
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
@@ -150,31 +147,6 @@ const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('updated'), live: liveCompletionOverlaySchema }),
 	z.object({ eventType: z.literal('cleared') })
 ]);
-const threadSummarySchema = z.object({
-	_id: z.string(),
-	_creationTime: z.number(),
-	userId: z.string(),
-	submissionId: z.string(),
-	repositoryKey: z.string(),
-	title: z.string().optional(),
-	selectedModel: z.string(),
-	reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']),
-	fastMode: z.boolean(),
-	contextSummary: z.string().optional(),
-	contextSummaryThroughRunId: z.string().optional(),
-	lastMessageAt: z.number(),
-	archivedAt: z.number().optional(),
-	status: z
-		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
-		.optional()
-});
-const threadCacheWatchEventSchema = z.object({
-	status: z.enum(['loading', 'live', 'reconnecting', 'offline', 'error']),
-	lastSyncedAt: z.int().nullable()
-});
-const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
-	threads: z.array(threadSummarySchema)
-});
 const artifactScopeSchema = z.enum(['thread', 'project']);
 const localArtifactSchema = z.object({
 	_id: z.string(),
@@ -222,36 +194,6 @@ function parseLiveCompletionOverlay(
 		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
 		parts: live.parts as AssistantPart[],
 		runStartedAt: live.runStartedAt
-	};
-}
-
-function parseThreadRecord(
-	thread: z.infer<typeof threadSummarySchema>
-): DataModel['threadRecords']['document'] {
-	return {
-		...thread,
-		_id: asConvexId(thread._id),
-		contextSummaryThroughRunId: thread.contextSummaryThroughRunId
-			? asConvexId(thread.contextSummaryThroughRunId)
-			: undefined
-	};
-}
-
-function parseThreadCacheWatchEvent(
-	event: z.infer<typeof threadCacheWatchEventSchema>
-): ThreadCacheWatchEvent {
-	return {
-		status: event.status,
-		lastSyncedAt: event.lastSyncedAt
-	};
-}
-
-function parseThreadCacheSnapshot(
-	snapshot: z.infer<typeof threadCacheSnapshotSchema>
-): ThreadCacheSnapshot {
-	return {
-		...parseThreadCacheWatchEvent(snapshot),
-		threads: snapshot.threads.map(parseThreadRecord)
 	};
 }
 
@@ -339,7 +281,7 @@ async function errorFromFailedResponse(response: Response): Promise<Error> {
 
 async function postSse(
 	url: string,
-	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest | ArtifactsWatchRequest,
+	requestBody: TranscriptScopeRequest | ArtifactsWatchRequest,
 	signal: AbortSignal,
 	onData: (data: string) => void
 ) {
@@ -656,49 +598,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					threadId: requestBody.threadId
 				})
 			}),
-		registerThreadCache: async (requestBody) =>
-			parseThreadCacheWatchEvent(
-				await request('/api/threads/register', threadCacheWatchEventSchema, {
-					method: 'POST',
-					body: JSON.stringify(requestBody)
-				})
-			),
-		fetchThreadSnapshot: async (requestBody) =>
-			parseThreadCacheSnapshot(
-				await request('/api/threads/snapshot', threadCacheSnapshotSchema, {
-					method: 'POST',
-					body: JSON.stringify(requestBody)
-				})
-			),
-		watchThreadCache: async (requestBody, handlers) => {
-			await postSse(`${baseUrl}/api/threads/watch`, requestBody, handlers.signal, (data) => {
-				const parsed = threadCacheWatchEventSchema.safeParse(JSON.parse(data));
-				if (parsed.success) {
-					handlers.onEvent(parseThreadCacheWatchEvent(parsed.data));
-				}
-			});
-		},
 		watchArtifacts: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/artifacts/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
 				handlers.onEvent(parseArtifactsWatchEvent(parsed));
 			});
 		},
-		renameThread: async (requestBody) =>
-			await request('/api/threads/rename', z.boolean(), {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
-		settleThread: async (requestBody) =>
-			await request('/api/threads/settle', z.boolean(), {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
-		unsettleThread: async (requestBody) =>
-			await request('/api/threads/unsettle', z.boolean(), {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
 		rekeyRepository: async (requestBody) =>
 			await request('/api/threads/rekey', z.int(), {
 				method: 'POST',
@@ -706,6 +611,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			}),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		startAccountSession: async (requestBody) => {
+			await request('/api/threads/account-session/start', z.null(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});

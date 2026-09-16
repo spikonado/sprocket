@@ -13,8 +13,6 @@ pub mod repo_env;
 mod routes;
 mod static_dir;
 mod static_files;
-mod thread_cache;
-mod thread_sync;
 mod transcript_client;
 mod transcript_watch;
 mod work_sync;
@@ -93,7 +91,6 @@ pub struct AppState {
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
     pub artifact_watchers: Arc<ArtifactWatchers>,
-    pub thread_cache: Arc<thread_sync::ThreadCacheSync>,
     pub machines: Arc<machines::MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
     pub http_base_url: String,
@@ -127,11 +124,6 @@ impl AppState {
             Arc::clone(&native_auth),
             data_dir.join("artifact-bindings"),
         );
-        let thread_cache = thread_sync::ThreadCacheSync::new(
-            "https://example.convex.cloud".to_string(),
-            thread_cache::ThreadCacheStore::new(data_dir.clone()),
-            Arc::clone(&native_auth),
-        );
         let machine_identity =
             Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
         Self {
@@ -142,7 +134,6 @@ impl AppState {
             transcript,
             transcript_watchers,
             artifact_watchers,
-            thread_cache,
             machines: machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
                 Arc::clone(&native_auth),
@@ -211,11 +202,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         Arc::clone(&native_auth),
         data_dir.join("artifact-bindings"),
     );
-    let thread_cache = thread_sync::ThreadCacheSync::new(
-        convex_deployment_url.clone(),
-        thread_cache::ThreadCacheStore::new(data_dir.clone()),
-        Arc::clone(&native_auth),
-    );
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -236,7 +222,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         transcript,
         transcript_watchers,
         artifact_watchers,
-        thread_cache,
         machines: Arc::clone(&machines),
         live_completions: Arc::new(LiveCompletionHub::new()),
         http_base_url: http_base_url.clone(),

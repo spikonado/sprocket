@@ -3,21 +3,18 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
 
-describe('threads local-cache commands', () => {
-	it('returns authenticated command metadata', async () => {
+describe('thread mutations', () => {
+	it('supports direct mutations and released-server aliases', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, repositoryKey, threadId } = await seedOwnedThread(t);
+		await expect(
+			asUser.mutation(api.threads.rename, { threadId, title: 'Renamed directly' })
+		).resolves.toBeNull();
+		await expect(asUser.mutation(api.threads.settle, { threadId })).resolves.toBeNull();
+		await expect(asUser.mutation(api.threads.unsettle, { threadId })).resolves.toBeNull();
 		expect(
 			await asUser.mutation(api.threads.renameForLocalCache, { threadId, title: 'Renamed locally' })
 		).toEqual({ userId: subject, repositoryKey });
-		expect(await asUser.mutation(api.threads.settleForLocalCache, { threadId })).toEqual({
-			userId: subject,
-			repositoryKey
-		});
-		expect(await asUser.mutation(api.threads.unsettleForLocalCache, { threadId })).toEqual({
-			userId: subject,
-			repositoryKey
-		});
 		expect(await asUser.mutation(api.threads.archiveForLocalCache, { threadId })).toEqual({
 			userId: subject,
 			repositoryKey

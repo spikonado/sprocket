@@ -85,9 +85,6 @@ describe('retired client APIs', () => {
 		await expect(asUser.mutation(api.agentRuntime.reopenRun, { runId })).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);
-		await expect(
-			asUser.mutation(api.threads.rename, { threadId, title: 'Old client' })
-		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 		await expect(asUser.mutation(api.threads.archive, { threadId })).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);

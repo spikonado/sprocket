@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use convex::{FunctionResult, QuerySubscription, Value};
+use convex::{QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_agent::RemoteTranscriptState;
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
@@ -61,17 +61,6 @@ impl UserConvexClient {
 
     pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
         self.client.watch_all().await
-    }
-
-    pub async fn subscribe_recent_threads(
-        &self,
-        selected_thread_id: Option<&str>,
-    ) -> anyhow::Result<QuerySubscription> {
-        let mut args = BTreeMap::new();
-        if let Some(thread_id) = selected_thread_id {
-            args.insert("selectedThreadId".to_string(), thread_id.to_string().into());
-        }
-        self.client.subscribe("threads:listRecent", args).await
     }
 
     pub async fn subscribe_artifact_state(
@@ -223,12 +212,6 @@ fn artifacts_list_args(repository_key: &str, thread_id: Option<&str>) -> BTreeMa
         args.insert("threadId".to_string(), thread_id.to_string().into());
     }
     args
-}
-
-pub fn decode_thread_records_update(
-    result: FunctionResult,
-) -> anyhow::Result<Vec<crate::thread_cache::CachedThreadRecord>> {
-    decode_labeled_function_result(result, "threads:listRecent")
 }
 
 pub async fn retry_after_failure() {

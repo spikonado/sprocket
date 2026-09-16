@@ -6,7 +6,6 @@ import {
 	readWorkspaceLaunchFromHash,
 	workspaceLaunchHash
 } from '$lib/local/client';
-import { threadRecordToSummary } from '$lib/project/threads';
 
 function threadRecordId(value: string): Id<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -273,111 +272,6 @@ describe('watchLiveCompletion', () => {
 	});
 });
 
-describe('thread cache local API', () => {
-	it('parses snapshot threads without status and watch status events', async () => {
-		const snapshot = {
-			threads: [
-				{
-					_id: 'thread-1',
-					_creationTime: 1,
-					userId: 'user-1',
-					submissionId: 'submission-1',
-					repositoryKey: 'alpha',
-					title: 'Hello',
-					selectedModel: 'gpt-5.6-sol',
-					reasoningEffort: 'medium',
-					fastMode: false,
-					lastMessageAt: 10
-				},
-				{
-					_id: 'thread-2',
-					_creationTime: 2,
-					userId: 'user-1',
-					submissionId: 'submission-2',
-					repositoryKey: 'alpha',
-					title: 'Fast thread',
-					selectedModel: 'gpt-5.6-sol',
-					reasoningEffort: 'high',
-					fastMode: true,
-					lastMessageAt: 20
-				}
-			],
-			status: 'live',
-			lastSyncedAt: 20
-		};
-		const encoder = new TextEncoder();
-		const body = new ReadableStream({
-			start(controller) {
-				controller.enqueue(
-					encoder.encode(`data: ${JSON.stringify({ status: 'live', lastSyncedAt: 20 })}\n\n`)
-				);
-				controller.close();
-			}
-		});
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async (input: RequestInfo | URL) => {
-				const url = String(input);
-				if (url.endsWith('/api/threads/snapshot')) {
-					return new Response(JSON.stringify(snapshot), {
-						status: 200,
-						headers: { 'content-type': 'application/json' }
-					});
-				}
-				return new Response(body, { status: 200 });
-			})
-		);
-
-		const client = createLocalClient('http://127.0.0.1:7731');
-		const parsedSnapshot = await client.fetchThreadSnapshot({ userId: 'user-1' });
-		expect(parsedSnapshot).toEqual({
-			threads: [
-				{
-					_id: 'thread-1',
-					_creationTime: 1,
-					userId: 'user-1',
-					submissionId: 'submission-1',
-					repositoryKey: 'alpha',
-					title: 'Hello',
-					selectedModel: 'gpt-5.6-sol',
-					reasoningEffort: 'medium',
-					fastMode: false,
-					lastMessageAt: 10
-				},
-				{
-					_id: 'thread-2',
-					_creationTime: 2,
-					userId: 'user-1',
-					submissionId: 'submission-2',
-					repositoryKey: 'alpha',
-					title: 'Fast thread',
-					selectedModel: 'gpt-5.6-sol',
-					reasoningEffort: 'high',
-					fastMode: true,
-					lastMessageAt: 20
-				}
-			],
-			status: 'live',
-			lastSyncedAt: 20
-		});
-		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).status).toBe('completed');
-		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).fastMode).toBe(false);
-		expect(threadRecordToSummary(parsedSnapshot.threads[1]!).fastMode).toBe(true);
-
-		const events: unknown[] = [];
-		await client.watchThreadCache(
-			{ userId: 'user-1' },
-			{
-				signal: new AbortController().signal,
-				onEvent: (event) => {
-					events.push(event);
-				}
-			}
-		);
-		expect(events).toEqual([{ status: 'live', lastSyncedAt: 20 }]);
-	});
-});
-
 describe('watchArtifacts', () => {
 	const artifact = {
 		_id: 'artifact-1',
@@ -525,6 +419,29 @@ describe('run cancellation local API', () => {
 				runId: runId('run-1')
 			})
 		).resolves.toBeUndefined();
+	});
+});
+
+describe('account session local API', () => {
+	it('starts and ends machine presence for the signed-in user', async () => {
+		const fetch = vi.fn(async () => Response.json(null));
+		vi.stubGlobal('fetch', fetch);
+		const client = createLocalClient('http://127.0.0.1:7731');
+		const request = { userId: 'user-1' };
+
+		await client.startAccountSession(request);
+		await client.endAccountSession(request);
+
+		expect(fetch).toHaveBeenNthCalledWith(
+			1,
+			'http://127.0.0.1:7731/api/threads/account-session/start',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
+		);
+		expect(fetch).toHaveBeenNthCalledWith(
+			2,
+			'http://127.0.0.1:7731/api/threads/account-session/end',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
+		);
 	});
 });
 

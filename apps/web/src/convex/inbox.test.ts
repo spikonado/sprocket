@@ -61,12 +61,12 @@ describe('thread inbox', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 
-		await asUser.mutation(api.threads.settleForLocalCache, { threadId });
+		await asUser.mutation(api.threads.settle, { threadId });
 		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
 			'number'
 		);
 
-		await asUser.mutation(api.threads.unsettleForLocalCache, { threadId });
+		await asUser.mutation(api.threads.unsettle, { threadId });
 		expect(
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt
 		).toBeUndefined();
@@ -77,7 +77,7 @@ describe('thread inbox', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status: 'running' }));
 
-		await expect(asUser.mutation(api.threads.settleForLocalCache, { threadId })).rejects.toThrow(
+		await expect(asUser.mutation(api.threads.settle, { threadId })).rejects.toThrow(
 			'running thread'
 		);
 	});
@@ -87,7 +87,7 @@ describe('thread inbox', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status: 'queued' }));
 
-		await asUser.mutation(api.threads.settleForLocalCache, { threadId });
+		await asUser.mutation(api.threads.settle, { threadId });
 
 		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
 			'number'
@@ -126,7 +126,7 @@ describe('thread inbox', () => {
 			});
 		});
 
-		await asUser.mutation(api.threads.settleForLocalCache, { threadId });
+		await asUser.mutation(api.threads.settle, { threadId });
 
 		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
 			'number'
@@ -138,9 +138,7 @@ describe('thread inbox', () => {
 		const { threadId } = await seedOwnedThread(t, 'user_alice');
 
 		await expect(
-			t
-				.withIdentity({ subject: 'user_bob' })
-				.mutation(api.threads.settleForLocalCache, { threadId })
+			t.withIdentity({ subject: 'user_bob' }).mutation(api.threads.settle, { threadId })
 		).rejects.toThrow();
 	});
 });
