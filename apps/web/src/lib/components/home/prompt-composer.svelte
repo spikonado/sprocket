@@ -540,7 +540,7 @@
 							placeholder={answeringQuestion
 								? 'Add detail, or type a custom answer'
 								: 'Ask anything, @tag files/directories, or use $ to show available skills'}
-							disabled={composerLocked}
+							disabled={isSubmitting}
 							role="combobox"
 							aria-autocomplete="list"
 							aria-haspopup="listbox"
