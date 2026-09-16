@@ -2,16 +2,15 @@ import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { DataModel, Id } from '$convex/_generated/dataModel';
 import type {
 	ArtifactsWatchEvent,
-	ArtifactsWatchRequest,
 	DesktopApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
 	LocalArtifact,
-	ProjectAttachment,
-	TranscriptScopeRequest
+	ProjectAttachment
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
+import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
@@ -224,80 +223,6 @@ function parseArtifactsWatchEvent(
 	};
 }
 
-async function readSseEvents(
-	response: Response,
-	signal: AbortSignal,
-	onData: (data: string) => void
-) {
-	if (!response.body) {
-		return;
-	}
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = '';
-	try {
-		while (!signal.aborted) {
-			const { done, value } = await reader.read();
-			if (done) {
-				break;
-			}
-			buffer += decoder.decode(value, { stream: true });
-			let separator = buffer.indexOf('\n\n');
-			while (separator >= 0) {
-				const chunk = buffer.slice(0, separator);
-				buffer = buffer.slice(separator + 2);
-				const dataLines = chunk
-					.split('\n')
-					.filter((line) => line.startsWith('data:'))
-					.map((line) => line.slice(5).trimStart());
-				if (dataLines.length > 0 && !signal.aborted) {
-					onData(dataLines.join('\n'));
-				}
-				separator = buffer.indexOf('\n\n');
-			}
-		}
-	} catch (error) {
-		if (signal.aborted) {
-			return;
-		}
-		throw error;
-	} finally {
-		await reader.cancel().catch(() => undefined);
-		reader.releaseLock();
-	}
-}
-
-function localRequestError(
-	status: number,
-	payload: z.infer<typeof errorPayloadSchema> | undefined
-): Error {
-	return new Error(payload?.error ?? `Local request failed (${status}).`);
-}
-
-async function errorFromFailedResponse(response: Response): Promise<Error> {
-	const parsed = errorPayloadSchema.safeParse(await response.json().catch(() => null));
-	return localRequestError(response.status, parsed.success ? parsed.data : undefined);
-}
-
-async function postSse(
-	url: string,
-	requestBody: TranscriptScopeRequest | ArtifactsWatchRequest,
-	signal: AbortSignal,
-	onData: (data: string) => void
-) {
-	const response = await fetch(url, {
-		method: 'POST',
-		credentials: 'include',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(requestBody),
-		signal
-	});
-	if (!response.ok) {
-		throw await errorFromFailedResponse(response);
-	}
-	await readSseEvents(response, signal, onData);
-}
-
 export function resolveLocalApiBaseUrl(): string | null {
 	const configured = import.meta.env.VITE_LOCAL_API_URL?.trim();
 	if (configured) {
@@ -394,72 +319,9 @@ async function establishLocalSession(baseUrl: string) {
 	await bootstrapLocalSession(baseUrl);
 }
 
-async function parseJsonResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
-	const contentType = response.headers.get('content-type') ?? '';
-	const body = await response.text();
-
-	if (!contentType.includes('application/json')) {
-		const preview = body.trim().slice(0, 120);
-		if (preview.startsWith('<!')) {
-			const baseUrl = resolveLocalApiBaseUrl();
-			throw new Error(
-				baseUrl
-					? `The Sprocket API at ${baseUrl} returned a web page instead of JSON. Make sure the server is running correctly.`
-					: 'The Sprocket API returned a web page instead of JSON. Make sure the server is running correctly.'
-			);
-		}
-
-		throw new Error(
-			preview.length > 0
-				? `Local API returned an unexpected response: ${preview}`
-				: 'Local API returned an empty response.'
-		);
-	}
-
-	const parsed = schema.safeParse(JSON.parse(body));
-	if (!parsed.success) {
-		throw new Error('Local API returned an unexpected response.');
-	}
-	return parsed.data;
-}
-
 export function createLocalClient(baseUrl: string): DesktopApi {
-	async function request<T>(
-		pathname: string,
-		schema: z.ZodType<T>,
-		init?: RequestInit
-	): Promise<T> {
-		const response = await fetch(`${baseUrl}${pathname}`, {
-			...init,
-			credentials: 'include',
-			headers: {
-				'content-type': 'application/json',
-				...init?.headers
-			}
-		});
-
-		if (!response.ok) {
-			try {
-				const payload = await parseJsonResponse(response, errorPayloadSchema);
-				throw new Error(payload.error ?? `Local request failed (${response.status}).`);
-			} catch (error) {
-				if (
-					error instanceof Error &&
-					error.message !== `Local request failed (${response.status}).`
-				) {
-					throw error;
-				}
-
-				throw new Error(`Local request failed (${response.status}).`, { cause: error });
-			}
-		}
-
-		if (response.status === 204) {
-			throw new Error('Local API returned an empty response.');
-		}
-
-		return await parseJsonResponse(response, schema);
-	}
+	const transport = createLocalTransport(baseUrl);
+	const { request } = transport;
 
 	return {
 		browseFilesystem: (input) => {
@@ -521,15 +383,20 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
 		watchTranscript: async (requestBody, handlers) => {
-			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
-				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
-				if (parsed.success) {
-					handlers.onEvent(parsed.data);
+			await transport.postEventStream(
+				'/api/transcript/watch',
+				requestBody,
+				handlers.signal,
+				(data) => {
+					const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
+					if (parsed.success) {
+						handlers.onEvent(parsed.data);
+					}
 				}
-			});
+			);
 		},
 		watchLiveCompletion: async (requestBody, handlers) => {
-			await postSse(`${baseUrl}/api/agent/live`, requestBody, handlers.signal, (data) => {
+			await transport.postEventStream('/api/agent/live', requestBody, handlers.signal, (data) => {
 				const parsed = liveCompletionWatchEventSchema.safeParse(JSON.parse(data));
 				if (parsed.success) {
 					handlers.onEvent(parseLiveCompletionWatchEvent(parsed.data));
@@ -537,15 +404,10 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 		},
 		clearTranscriptReplica: async (requestBody) => {
-			const response = await fetch(`${baseUrl}/api/transcript/clear`, {
+			await transport.response('/api/transcript/clear', {
 				method: 'POST',
-				credentials: 'include',
-				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(requestBody)
 			});
-			if (!response.ok) {
-				throw await errorFromFailedResponse(response);
-			}
 		},
 		fetchTranscriptAttachment: async (requestBody) => {
 			const response = await fetch(`${baseUrl}/api/transcript/attachment`, {
@@ -599,10 +461,15 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				})
 			}),
 		watchArtifacts: async (requestBody, handlers) => {
-			await postSse(`${baseUrl}/api/artifacts/watch`, requestBody, handlers.signal, (data) => {
-				const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
-				handlers.onEvent(parseArtifactsWatchEvent(parsed));
-			});
+			await transport.postEventStream(
+				'/api/artifacts/watch',
+				requestBody,
+				handlers.signal,
+				(data) => {
+					const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
+					handlers.onEvent(parseArtifactsWatchEvent(parsed));
+				}
+			);
 		},
 		rekeyRepository: async (requestBody) =>
 			await request('/api/threads/rekey', z.int(), {
