@@ -486,6 +486,8 @@ describe('Firecrawl browser lifecycle', () => {
 		'agent-browser fill @e1 "http://localhost:5173 is shown on the page"',
 		'agent-browser fill @e1 "agent-browser open http://localhost:5173"',
 		"echo 'agent-browser open http://localhost:5173'",
+		'agent-browser future-command open http://localhost:5173',
+		'agent-browser --future-option arbitrary-value open http://localhost:5173',
 		'agent-browser open https://example.com',
 		'agent-browser open https://localhost.example.com'
 	])('forwards %s to Firecrawl unchanged', async (command) => {
@@ -507,11 +509,6 @@ describe('Firecrawl browser lifecycle', () => {
 			'agent-browser open http://localhost',
 			"agent-browser open 'http://app.localhost:5173/path'",
 			'agent-browser --json open http://127.1:3000',
-			'agent-browser --session test open "http://host.docker.internal:3000"',
-			'agent-browser --engine chrome open http://localhost:8080',
-			'agent-browser --init-script setup.js --enable adblock --idle-timeout 30s --model claude open http://localhost:8080',
-			'agent-browser --restore saved-session open http://localhost:8080',
-			'agent-browser --restore open http://localhost:8080',
 			'agent-browser open http://0.0.0.0:8080',
 			'agent-browser open http://100.64.0.1',
 			'agent-browser open http://169.254.169.254',

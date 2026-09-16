@@ -23,45 +23,6 @@ const CHROME_WRAPPER_DEV_FD_FAILURE =
 	/\/usr\/bin\/google-chrome-stable: line \d+: \/dev\/fd\/\d+: No such file or directory/;
 const CLOUD_BROWSER_LOCAL_URL_ERROR =
 	"browser_interact runs in a browser in the cloud, not a local browser. This URL points to localhost or a private network that the cloud browser cannot reach on the user's machine. Do not retry it. Use a publicly reachable URL or ask the user to expose the local server through a tunnel.";
-const AGENT_BROWSER_OPTIONS_WITH_VALUES = new Set([
-	'--action-policy',
-	'--allowed-domains',
-	'--args',
-	'--ca-cert',
-	'--cdp',
-	'--color-scheme',
-	'--config',
-	'--confirm-actions',
-	'--device',
-	'--download-path',
-	'--enable',
-	'--engine',
-	'--executable-path',
-	'--extension',
-	'--headers',
-	'--idle-timeout',
-	'--init-script',
-	'--input-mode',
-	'--max-output',
-	'--model',
-	'--namespace',
-	'--profile',
-	'--provider',
-	'--proxy',
-	'--proxy-bypass',
-	'--restore-check-fn',
-	'--restore-check-text',
-	'--restore-check-url',
-	'--restore-save',
-	'--screenshot-dir',
-	'--screenshot-format',
-	'--screenshot-quality',
-	'--session',
-	'--session-name',
-	'--state',
-	'--user-agent',
-	'-p'
-]);
 const LOCAL_ADDRESSES = new BlockList();
 
 for (const [network, prefix] of [
@@ -358,25 +319,11 @@ function shellCommands(value: string): string[][] {
 	return commands;
 }
 
-function agentBrowserOpenTarget(tokens: string[]): string | undefined {
-	if (tokens[0] !== 'agent-browser') return undefined;
-	for (let index = 1; index < tokens.length;) {
-		const token = tokens[index];
-		if (token === 'open') return tokens[index + 1];
-		if (!token.startsWith('-')) return undefined;
-		const option = token.split('=', 1)[0];
-		if (option === '--restore' && !token.includes('=') && tokens[index + 1] !== 'open') index++;
-		else if (!token.includes('=') && AGENT_BROWSER_OPTIONS_WITH_VALUES.has(option)) index++;
-		else if (tokens[index + 1] === 'true' || tokens[index + 1] === 'false') index++;
-		index++;
-	}
-	return undefined;
-}
-
 function opensLocalBrowserUrl(command: string): boolean {
 	return shellCommands(command).some((tokens) => {
-		const target = agentBrowserOpenTarget(tokens);
-		return target !== undefined && isLocalBrowserUrl(target);
+		if (tokens[0] !== 'agent-browser') return false;
+		const commandIndex = tokens.findIndex((token, index) => index > 0 && !token.startsWith('-'));
+		return tokens[commandIndex] === 'open' && isLocalBrowserUrl(tokens[commandIndex + 1] || '');
 	});
 }
 
