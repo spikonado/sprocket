@@ -135,10 +135,27 @@
 }
 
 .inbox-section-heading {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	justify-content: space-between;
 	padding: 12px 8px 8px;
 	font-size: 11px;
 	font-weight: 500;
 	color: var(--muted-foreground);
+	text-align: left;
+}
+
+.inbox-section-heading:hover {
+	color: var(--foreground);
+}
+
+.inbox-section-heading svg {
+	transition: transform 120ms ease;
+}
+
+.inbox-section-chevron-open {
+	transform: rotate(180deg);
 }
 
 .inbox-row {
@@ -234,7 +251,31 @@
 
 .inbox-row-state-action,
 .inbox-row-state-action:hover {
+	position: relative;
 	background: transparent;
+}
+
+.inbox-row-state-action::after {
+	position: absolute;
+	top: calc(100% + 4px);
+	right: 0;
+	z-index: 2;
+	padding: 4px 6px;
+	border-radius: 5px;
+	background: var(--tooltip-bg);
+	color: var(--tooltip-fg);
+	content: attr(data-tooltip);
+	font-size: 11px;
+	font-weight: 400;
+	line-height: 1;
+	white-space: nowrap;
+	opacity: 0;
+	visibility: hidden;
+}
+
+.inbox-row-state-action:hover::after {
+	opacity: 1;
+	visibility: visible;
 }
 
 .inbox-working {
@@ -280,7 +321,6 @@
 
 .inbox-footer {
 	padding: 8px 12px;
-	border-top: 1px solid var(--hairline);
 }
 
 .inbox-context-menu {

@@ -63,7 +63,7 @@
 
 	const labels = {
 		unsettled: 'Unsettled',
-		settled: 'Settled'
+		settled: 'Settled Threads'
 	} satisfies Record<InboxState, string>;
 	let dragging = $state<Thread | null>(null);
 	let menu = $state<{ thread: Thread; x: number; y: number } | null>(null);
@@ -76,6 +76,7 @@
 	let now = $state(Date.now());
 	let projectMenuOpen = $state(false);
 	let projectSearch = $state('');
+	let settledOpen = $state(true);
 
 	const rows = $derived(sections.flatMap((section) => section.rows));
 	const filteredProjects = $derived(
@@ -222,14 +223,7 @@
 		trigger?.focus();
 	}
 
-	function openMenu(event: MouseEvent | KeyboardEvent, thread: Thread) {
-		if (event instanceof KeyboardEvent) {
-			if (event.shiftKey && event.key === 'F10') {
-				event.preventDefault();
-				return;
-			}
-			if (event.key !== 'ContextMenu') return;
-		}
+	function openMenu(event: MouseEvent, thread: Thread) {
 		event.preventDefault();
 		menuTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
 		const rect = menuTrigger?.getBoundingClientRect();
@@ -367,117 +361,131 @@
 				aria-label={labels[section.state]}
 			>
 				{#if section.state === 'settled'}
-					<h2 class="inbox-section-heading">Settled</h2>
-				{/if}
-				{#each section.rows as thread (thread._id)}
-					{@const stateLabel = runStatus(thread)}
-					{@const model = threadModel(thread)}
-					{@const isRenaming = renameThread?._id === thread._id}
-					<div
-						class:inbox-row-selected={thread._id === currentThreadId}
-						class="inbox-row"
-						draggable={mutationsEnabled && !busy && !isRenaming}
-						ondragstart={(event) => {
-							dragging = thread;
-							event.dataTransfer?.setData('text/plain', thread._id);
-						}}
-						ondragend={() => (dragging = null)}
-						oncontextmenu={(event) => openMenu(event, thread)}
-						role="group"
-						aria-label={thread.title ?? 'New thread'}
+					<button
+						class="inbox-section-heading"
+						type="button"
+						aria-expanded={settledOpen}
+						aria-controls="inbox-settled-threads"
+						onclick={() => (settledOpen = !settledOpen)}
 					>
-						{#if isRenaming}
-							<form
-								class="inbox-row-main"
-								onsubmit={(event) => {
-									event.preventDefault();
-									void commitRename();
+						<span>Settled Threads</span>
+						<ChevronDown class={settledOpen ? 'inbox-section-chevron-open' : undefined} size={14} />
+					</button>
+				{/if}
+				<div id={section.state === 'settled' ? 'inbox-settled-threads' : undefined}>
+					{#if section.state !== 'settled' || settledOpen}
+						{#each section.rows as thread (thread._id)}
+							{@const stateLabel = runStatus(thread)}
+							{@const model = threadModel(thread)}
+							{@const isRenaming = renameThread?._id === thread._id}
+							<div
+								class:inbox-row-selected={thread._id === currentThreadId}
+								class="inbox-row"
+								draggable={mutationsEnabled && !busy && !isRenaming}
+								ondragstart={(event) => {
+									dragging = thread;
+									event.dataTransfer?.setData('text/plain', thread._id);
 								}}
+								ondragend={() => (dragging = null)}
+								oncontextmenu={(event) => openMenu(event, thread)}
+								role="group"
+								aria-label={thread.title ?? 'New thread'}
 							>
-								<span class="inbox-row-meta">
-									<span class="truncate">{projectName(thread)}</span>
-									<span class="inbox-row-age shrink-0">{age(thread.lastMessageAt)}</span>
-								</span>
-								<input
-									bind:this={renameInput}
-									bind:value={renameTitle}
-									class="inbox-row-rename-input"
-									aria-label="Rename thread"
-									maxlength="300"
-									onkeydown={(event) => {
-										if (event.key !== 'Escape') return;
-										event.preventDefault();
-										cancelRename();
-									}}
-									onblur={() => void commitRename()}
-								/>
-								<span class="inbox-row-model">
-									{#if model}
-										<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-										<span class="truncate">{model.label}</span>
-									{:else}
-										<span class="truncate">Unknown model</span>
-									{/if}
-								</span>
-							</form>
-						{:else}
-							<button
-								class="inbox-row-main"
-								type="button"
-								title={`${thread.title ?? 'New thread'}\n${projectName(thread)}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
-								onclick={() => choose(thread)}
-								onkeydown={(event) => openMenu(event, thread)}
-								ondblclick={() => {
-									if (!mutationsEnabled || busy) return;
-									beginRename(thread);
-								}}
-								aria-haspopup="menu"
-								aria-current={thread._id === currentThreadId ? 'page' : undefined}
-							>
-								<span class="inbox-row-meta">
-									<span class="truncate">{projectName(thread)}</span>
-									<span class="inbox-row-age shrink-0">{age(thread.lastMessageAt)}</span>
-								</span>
-								<span class="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
-								<span class="inbox-row-model">
-									{#if model}
-										<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-										<span class="truncate">{model.label}</span>
-									{:else}
-										<span class="truncate">Unknown model</span>
-									{/if}
-									{#if stateLabel}
-										<span
-											class:inbox-working={threadHasActiveRun(thread)}
-											class:inbox-attention={thread.status === 'failed'}
-											class="inbox-status">{stateLabel}</span
-										>
-									{/if}
-								</span>
-							</button>
-						{/if}
-						{#if !isRenaming}<div class="inbox-row-actions">
-								{#if section.state === 'unsettled'}
-									<button
-										class="inbox-icon inbox-row-state-action"
-										type="button"
-										disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
-										aria-label={`Settle ${thread.title ?? 'thread'}`}
-										onclick={() => void change(thread, 'settled')}><Check size={14} /></button
+								{#if isRenaming}
+									<form
+										class="inbox-row-main"
+										onsubmit={(event) => {
+											event.preventDefault();
+											void commitRename();
+										}}
 									>
+										<span class="inbox-row-meta">
+											<span class="truncate">{projectName(thread)}</span>
+											<span class="inbox-row-age shrink-0">{age(thread.lastMessageAt)}</span>
+										</span>
+										<input
+											bind:this={renameInput}
+											bind:value={renameTitle}
+											class="inbox-row-rename-input"
+											aria-label="Rename thread"
+											maxlength="300"
+											onkeydown={(event) => {
+												if (event.key !== 'Escape') return;
+												event.preventDefault();
+												cancelRename();
+											}}
+											onblur={() => void commitRename()}
+										/>
+										<span class="inbox-row-model">
+											{#if model}
+												<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+												<span class="truncate">{model.label}</span>
+											{:else}
+												<span class="truncate">Unknown model</span>
+											{/if}
+										</span>
+									</form>
 								{:else}
 									<button
-										class="inbox-icon inbox-row-state-action"
+										class="inbox-row-main"
 										type="button"
-										disabled={!mutationsEnabled || busy}
-										aria-label={`Unsettle ${thread.title ?? 'thread'}`}
-										onclick={() => void change(thread, 'unsettled')}><RotateCcw size={14} /></button
+										title={`${thread.title ?? 'New thread'}\n${projectName(thread)}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
+										onclick={() => choose(thread)}
+										ondblclick={() => {
+											if (!mutationsEnabled || busy) return;
+											beginRename(thread);
+										}}
+										aria-current={thread._id === currentThreadId ? 'page' : undefined}
 									>
+										<span class="inbox-row-meta">
+											<span class="truncate">{projectName(thread)}</span>
+											<span class="inbox-row-age shrink-0">{age(thread.lastMessageAt)}</span>
+										</span>
+										<span class="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
+										<span class="inbox-row-model">
+											{#if model}
+												<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+												<span class="truncate">{model.label}</span>
+											{:else}
+												<span class="truncate">Unknown model</span>
+											{/if}
+											{#if stateLabel}
+												<span
+													class:inbox-working={threadHasActiveRun(thread)}
+													class:inbox-attention={thread.status === 'failed'}
+													class="inbox-status">{stateLabel}</span
+												>
+											{/if}
+										</span>
+									</button>
 								{/if}
-							</div>{/if}
-					</div>
-				{/each}
-				<InboxLoadMore {section} />
+								{#if !isRenaming}<div class="inbox-row-actions">
+										{#if section.state === 'unsettled'}
+											<button
+												class="inbox-icon inbox-row-state-action"
+												type="button"
+												disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
+												aria-label={`Settle ${thread.title ?? 'thread'}`}
+												data-tooltip="Settle"
+												onclick={() => void change(thread, 'settled')}><Check size={14} /></button
+											>
+										{:else}
+											<button
+												class="inbox-icon inbox-row-state-action"
+												type="button"
+												disabled={!mutationsEnabled || busy}
+												aria-label={`Unsettle ${thread.title ?? 'thread'}`}
+												data-tooltip="Unsettle"
+												onclick={() => void change(thread, 'unsettled')}
+												><RotateCcw size={14} /></button
+											>
+										{/if}
+									</div>{/if}
+							</div>
+						{/each}
+						<InboxLoadMore {section} />
+					{/if}
+				</div>
 			</section>
 		{/each}
 	</div>

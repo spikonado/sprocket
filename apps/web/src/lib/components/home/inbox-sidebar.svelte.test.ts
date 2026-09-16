@@ -86,7 +86,7 @@ it('settles an idle thread without offering snooze actions', async () => {
 	expect(document.querySelector('.inbox-notice')).toBeNull();
 });
 
-it('renders simple navigation and non-collapsible sections', async () => {
+it('renders simple navigation and a collapsible settled section', async () => {
 	const input = await render([thread(), thread(true)]);
 	const newThread = [...document.querySelectorAll<HTMLButtonElement>('.inbox-menu-item')].find(
 		(button) => button.textContent?.includes('New thread')
@@ -99,12 +99,16 @@ it('renders simple navigation and non-collapsible sections', async () => {
 	expect(document.querySelector('.inbox-jumps')).toBeNull();
 	expect(document.querySelector('[aria-label="Close sidebar"]')).toBeNull();
 	expect(document.querySelector('#inbox-unsettled .inbox-section-heading')).toBeNull();
-	expect(document.querySelector('#inbox-settled .inbox-section-heading')?.textContent).toBe(
-		'Settled'
-	);
-	expect(document.querySelector('#inbox-settled .inbox-section-heading')).not.toBeInstanceOf(
-		HTMLButtonElement
-	);
+	const settledHeading = document.querySelector<HTMLButtonElement>(
+		'#inbox-settled .inbox-section-heading'
+	)!;
+	expect(settledHeading.textContent?.trim()).toBe('Settled Threads');
+	expect(settledHeading.getAttribute('aria-expanded')).toBe('true');
+	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
+	settledHeading.click();
+	await tick();
+	expect(settledHeading.getAttribute('aria-expanded')).toBe('false');
+	expect(document.querySelector('#inbox-settled .inbox-row')).toBeNull();
 	expect(document.querySelector('[aria-label^="Actions for"]')).toBeNull();
 });
 
@@ -183,28 +187,26 @@ it('shows an icon for every thread menu action without selection controls', asyn
 	expect(document.body.textContent).not.toContain('Deselect thread');
 });
 
-it('opens the thread menu with the context menu key', async () => {
+it('does not attach keyboard context-menu behavior to thread rows', async () => {
 	await render([thread()]);
 	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
 
 	rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
 	await tick();
 
-	expect(document.querySelector('.inbox-context-menu')).toBeTruthy();
-	expect(document.activeElement?.getAttribute('role')).toBe('menuitem');
+	expect(rowButton.hasAttribute('aria-haspopup')).toBe(false);
+	expect(document.querySelector('.inbox-context-menu')).toBeNull();
 });
 
-it('does not open the thread menu with Shift+F10', async () => {
-	await render([thread()]);
-	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+it('labels settle and unsettle controls with tooltips', async () => {
+	await render([thread(), thread(true)]);
 
-	const allowed = rowButton.dispatchEvent(
-		new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'F10', shiftKey: true })
+	expect(document.querySelector('[aria-label="Settle Thread"]')?.getAttribute('data-tooltip')).toBe(
+		'Settle'
 	);
-	await tick();
-
-	expect(allowed).toBe(false);
-	expect(document.querySelector('.inbox-context-menu')).toBeNull();
+	expect(
+		document.querySelector('[aria-label="Unsettle Thread"]')?.getAttribute('data-tooltip')
+	).toBe('Unsettle');
 });
 
 it('renames a thread inline', async () => {
