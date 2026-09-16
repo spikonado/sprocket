@@ -475,27 +475,24 @@ where
         return LimitedOutput::default();
     };
     let mut bytes = Vec::new();
+    let mut truncated = false;
     let mut buf = [0u8; 8192];
     loop {
         match pipe.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                if bytes.len() + n > max_bytes {
-                    bytes.extend_from_slice(&buf[..max_bytes.saturating_sub(bytes.len())]);
-                    return LimitedOutput {
-                        bytes,
-                        truncated: true,
-                    };
+                let remaining = max_bytes.saturating_sub(bytes.len());
+                if n > remaining {
+                    bytes.extend_from_slice(&buf[..remaining]);
+                    truncated = true;
+                } else if !truncated {
+                    bytes.extend_from_slice(&buf[..n]);
                 }
-                bytes.extend_from_slice(&buf[..n]);
             }
             Err(_) => break,
         }
     }
-    LimitedOutput {
-        bytes,
-        truncated: false,
-    }
+    LimitedOutput { bytes, truncated }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1087,9 +1084,16 @@ echo '{"status":"idle","currentVersion":"1.0.0","version":null,"error":null,"met
         let dir = TempDir::new("sprocket-update-overflow");
         let (node, script) = write_helper(
             dir.path(),
-            r#"dd if=/dev/zero bs=1024 count=128 2>/dev/null"#,
+            r#"dd if=/dev/zero bs=1024 count=8192 2>/dev/null"#,
         );
-        let manager = PackageUpdateManager::with_helper(node, script);
+        let manager = PackageUpdateManager::with_helper_and_timeouts(
+            node,
+            script,
+            SUCCESS_CHECK_TTL,
+            FAILED_CHECK_TTL,
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+        );
         let snapshot = manager.status().await;
         assert_eq!(snapshot.status, UpdateStatus::Error);
         assert_eq!(
