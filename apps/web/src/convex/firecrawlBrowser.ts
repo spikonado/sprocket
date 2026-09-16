@@ -1,5 +1,6 @@
 'use node';
 
+import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import { ConvexError, v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
@@ -20,6 +21,53 @@ const SAVING_IN_USE_ERROR =
 const GONE_STATUSES = new Set([404, 410]);
 const CHROME_WRAPPER_DEV_FD_FAILURE =
 	/\/usr\/bin\/google-chrome-stable: line \d+: \/dev\/fd\/\d+: No such file or directory/;
+const CLOUD_BROWSER_LOCAL_URL_ERROR =
+	"browser_interact runs in a browser in the cloud, not a local browser. This URL points to localhost or a private network that the cloud browser cannot reach on the user's machine. Do not retry it. Use a publicly reachable URL or ask the user to expose the local server through a tunnel.";
+const AGENT_BROWSER_OPTIONS_WITH_VALUES = new Set([
+	'--action-policy',
+	'--allowed-domains',
+	'--args',
+	'--cdp',
+	'--color-scheme',
+	'--config',
+	'--confirm-actions',
+	'--device',
+	'--download-path',
+	'--executable-path',
+	'--extension',
+	'--headers',
+	'--max-output',
+	'--profile',
+	'--provider',
+	'--proxy',
+	'--proxy-bypass',
+	'--session',
+	'--session-name',
+	'--state',
+	'--user-agent',
+	'-p'
+]);
+const LOCAL_ADDRESSES = new BlockList();
+
+for (const [network, prefix] of [
+	['0.0.0.0', 8],
+	['10.0.0.0', 8],
+	['100.64.0.0', 10],
+	['127.0.0.0', 8],
+	['169.254.0.0', 16],
+	['172.16.0.0', 12],
+	['192.168.0.0', 16]
+] as const) {
+	LOCAL_ADDRESSES.addSubnet(network, prefix, 'ipv4');
+}
+for (const [network, prefix] of [
+	['::', 128],
+	['::1', 128],
+	['fc00::', 7],
+	['fe80::', 10]
+] as const) {
+	LOCAL_ADDRESSES.addSubnet(network, prefix, 'ipv6');
+}
 
 const envelopeSchema = z.object({
 	success: z.boolean(),
@@ -204,6 +252,116 @@ function isBrowserWorkerStartupFailure(result: z.infer<typeof executionSchema>):
 	return [result.stderr, result.error].some(
 		(message) => message && CHROME_WRAPPER_DEV_FD_FAILURE.test(message)
 	);
+}
+
+function isLocalBrowserUrl(value: string): boolean {
+	let url: URL;
+	try {
+		url = new URL(value.includes('://') ? value : `http://${value}`);
+	} catch {
+		return false;
+	}
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+	const hostname = url.hostname
+		.toLowerCase()
+		.replace(/^\[|\]$/g, '')
+		.replace(/\.$/, '');
+	if (
+		hostname === 'localhost' ||
+		hostname.endsWith('.localhost') ||
+		hostname.endsWith('.local') ||
+		hostname === 'host.docker.internal' ||
+		hostname === 'gateway.docker.internal'
+	) {
+		return true;
+	}
+	const family = isIP(hostname);
+	return family !== 0 && LOCAL_ADDRESSES.check(hostname, family === 4 ? 'ipv4' : 'ipv6');
+}
+
+function shellCommands(value: string): string[][] {
+	const commands: string[][] = [];
+	let tokens: string[] = [];
+	let token = '';
+	let tokenStarted = false;
+	let quote: "'" | '"' | undefined;
+	let comment = false;
+
+	const endToken = () => {
+		if (!tokenStarted) return;
+		tokens.push(token);
+		token = '';
+		tokenStarted = false;
+	};
+	const endCommand = () => {
+		endToken();
+		if (tokens.length > 0) commands.push(tokens);
+		tokens = [];
+	};
+
+	for (let index = 0; index < value.length; index++) {
+		const character = value[index];
+		if (comment) {
+			if (character === '\n') {
+				comment = false;
+				endCommand();
+			}
+			continue;
+		}
+		if (quote) {
+			if (character === quote) {
+				quote = undefined;
+			} else if (character === '\\' && quote === '"' && index + 1 < value.length) {
+				const escaped = value[++index];
+				if (escaped !== '\n') token += escaped;
+			} else {
+				token += character;
+			}
+			continue;
+		}
+		if (character === "'" || character === '"') {
+			quote = character;
+			tokenStarted = true;
+		} else if (character === '\\' && index + 1 < value.length) {
+			const escaped = value[++index];
+			if (escaped !== '\n') {
+				token += escaped;
+				tokenStarted = true;
+			}
+		} else if (character === '#' && !tokenStarted) {
+			comment = true;
+		} else if (character === '\n' || ';|&()'.includes(character)) {
+			endCommand();
+		} else if (/\s/.test(character)) {
+			endToken();
+		} else {
+			token += character;
+			tokenStarted = true;
+		}
+	}
+	endCommand();
+	return commands;
+}
+
+function agentBrowserOpenTarget(tokens: string[]): string | undefined {
+	if (tokens[0] !== 'agent-browser') return undefined;
+	for (let index = 1; index < tokens.length;) {
+		const token = tokens[index];
+		if (token === 'open') return tokens[index + 1];
+		if (!token.startsWith('-')) return undefined;
+		const option = token.split('=', 1)[0];
+		if (!token.includes('=') && AGENT_BROWSER_OPTIONS_WITH_VALUES.has(option)) index++;
+		else if (tokens[index + 1] === 'true' || tokens[index + 1] === 'false') index++;
+		index++;
+	}
+	return undefined;
+}
+
+function opensLocalBrowserUrl(command: string): boolean {
+	return shellCommands(command).some((tokens) => {
+		const target = agentBrowserOpenTarget(tokens);
+		return target !== undefined && isLocalBrowserUrl(target);
+	});
 }
 
 function outputText(result: z.infer<typeof executionSchema>): string | undefined {
@@ -397,6 +555,7 @@ export async function interact(
 	ctx: ActionCtx,
 	args: BrowserArgs & { command: string; enforce_saving?: boolean }
 ) {
+	if (opensLocalBrowserUrl(args.command)) toolError(new Error(CLOUD_BROWSER_LOCAL_URL_ERROR));
 	let replacementAttempted = false;
 	for (;;) {
 		try {

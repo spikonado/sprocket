@@ -482,7 +482,12 @@ describe('Firecrawl browser lifecycle', () => {
 	it.each([
 		'agent-browser help',
 		'agent-browser --json get url',
-		'agent-browser fill @e1 "$(touch /tmp/owned); echo secret"'
+		'agent-browser fill @e1 "$(touch /tmp/owned); echo secret"',
+		'agent-browser fill @e1 "http://localhost:5173 is shown on the page"',
+		'agent-browser fill @e1 "agent-browser open http://localhost:5173"',
+		"echo 'agent-browser open http://localhost:5173'",
+		'agent-browser open https://example.com',
+		'agent-browser open https://localhost.example.com'
 	])('forwards %s to Firecrawl unchanged', async (command) => {
 		const fetch = remote();
 		const t = initConvexTest();
@@ -492,6 +497,38 @@ describe('Firecrawl browser lifecycle', () => {
 			code: command,
 			language: 'bash'
 		});
+	});
+
+	it('rejects local browser targets before creating a cloud session', async () => {
+		const fetch = remote();
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		for (const command of [
+			'agent-browser open http://localhost',
+			"agent-browser open 'http://app.localhost:5173/path'",
+			'agent-browser --json open http://127.1:3000',
+			'agent-browser --session test open "http://host.docker.internal:3000"',
+			'agent-browser open http://0.0.0.0:8080',
+			'agent-browser open http://100.64.0.1',
+			'agent-browser open http://169.254.169.254',
+			'agent-browser open http://172.31.255.255',
+			'agent-browser open http://192.168.1.20',
+			'agent-browser open http://[::1]:5173',
+			'agent-browser open http://[fc00::1]',
+			'agent-browser open http://[fe80::1]',
+			'agent-browser open http://[::ffff:127.0.0.1]:5173',
+			'agent-browser open localhost:4173',
+			String.raw`agent-browser \
+ --json open localhost:4173`,
+			'agent-browser get url;agent-browser open http://10.0.0.4',
+			'agent-browser get url || agent-browser --json open http://app.local'
+		]) {
+			await expect(interact(t, { runId, claimId, executionSecret, command })).rejects.toThrow(
+				"browser_interact runs in a browser in the cloud, not a local browser. This URL points to localhost or a private network that the cloud browser cannot reach on the user's machine. Do not retry it. Use a publicly reachable URL or ask the user to expose the local server through a tunnel."
+			);
+		}
+		expect(fetch).not.toHaveBeenCalled();
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
 	});
 
 	it('does not discard an attached session when its attachment acknowledgement is lost', async () => {
