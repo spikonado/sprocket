@@ -175,6 +175,19 @@ it('shows an icon for every thread menu action without selection controls', asyn
 	expect(document.body.textContent).not.toContain('Deselect thread');
 });
 
+it('opens the thread menu from the keyboard', async () => {
+	await render([thread()]);
+	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+
+	rowButton.dispatchEvent(
+		new KeyboardEvent('keydown', { bubbles: true, key: 'F10', shiftKey: true })
+	);
+	await tick();
+
+	expect(document.querySelector('.inbox-context-menu')).toBeTruthy();
+	expect(document.activeElement?.getAttribute('role')).toBe('menuitem');
+});
+
 it('renames a thread inline', async () => {
 	const input = await render([thread()]);
 	document

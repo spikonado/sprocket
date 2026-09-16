@@ -222,14 +222,22 @@
 		trigger?.focus();
 	}
 
-	function openMenu(event: MouseEvent, thread: Thread) {
+	function openMenu(event: MouseEvent | KeyboardEvent, thread: Thread) {
+		if (
+			event instanceof KeyboardEvent &&
+			event.key !== 'ContextMenu' &&
+			!(event.shiftKey && event.key === 'F10')
+		)
+			return;
 		event.preventDefault();
 		menuTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
 		const rect = menuTrigger?.getBoundingClientRect();
+		const pointerX = event instanceof MouseEvent ? event.clientX : 0;
+		const pointerY = event instanceof MouseEvent ? event.clientY : 0;
 		menu = {
 			thread,
-			x: Math.min(event.clientX || rect?.left || 8, window.innerWidth - 230),
-			y: Math.min(event.clientY || rect?.bottom || 8, window.innerHeight - 260)
+			x: Math.min(pointerX || rect?.left || 8, window.innerWidth - 230),
+			y: Math.min(pointerY || rect?.bottom || 8, window.innerHeight - 260)
 		};
 		void tick().then(() =>
 			document
@@ -417,10 +425,12 @@
 								type="button"
 								title={`${thread.title ?? 'New thread'}\n${projectName(thread)}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
 								onclick={() => choose(thread)}
+								onkeydown={(event) => openMenu(event, thread)}
 								ondblclick={() => {
 									if (!mutationsEnabled || busy) return;
 									beginRename(thread);
 								}}
+								aria-haspopup="menu"
 								aria-current={thread._id === currentThreadId ? 'page' : undefined}
 							>
 								<span class="inbox-row-meta">
