@@ -5,6 +5,7 @@ import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
 import aggregateTest from '@convex-dev/aggregate/test';
+import batchWorkerTest from '@convex-dev/batch-worker/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -42,6 +43,7 @@ export function initConvexTest(): ConvexTestInstance {
 	exaTest.register(backend);
 	migrationsTest.register(backend);
 	aggregateTest.register(backend);
+	batchWorkerTest.register(backend, 'aggregate/batchWorker');
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webToolWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
