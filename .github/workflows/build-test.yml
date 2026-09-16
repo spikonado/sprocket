@@ -30,6 +30,8 @@ jobs:
           shared-key: native-credential-store-${{ matrix.os }}
       - name: Check native server
         run: cargo check --locked -p sprocket-server
+      - name: Test workspace patch replacement
+        run: cargo test --locked -p sprocket-workspace patch::tests
 
   build_and_test:
     runs-on: ubuntu-latest
