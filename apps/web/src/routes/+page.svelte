@@ -58,7 +58,6 @@
 	import {
 		CATALOG_UNAVAILABLE_MESSAGE,
 		fetchGatewayModelCatalog,
-		getCatalogModel,
 		type CatalogModelId,
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
@@ -410,18 +409,6 @@
 	);
 	const threads = $derived(threadCache.threads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
-	const contextUsage = $derived.by(() => {
-		const model = modelCatalog
-			? (getCatalogModel(modelCatalog, selectedModel) ??
-				getCatalogModel(modelCatalog, modelCatalog.defaultModelId))
-			: undefined;
-		return {
-			inputTokens: currentActiveThread?.contextTokens ?? 0,
-			totalTokensProcessed: currentActiveThread ? currentActiveThread.totalTokensProcessed : 0,
-			contextWindowTokens: model?.contextWindowTokens ?? 0,
-			autoHandoffTokenLimit: model?.autoHandoffTokenLimit ?? 0
-		};
-	});
 	const currentLifecycle = $derived(dataForThread(lifecycleQuery.data, currentThreadId));
 	const runState = $derived(currentLifecycle?.run ?? null);
 	const pendingAgentQuestion = $derived(
@@ -2048,7 +2035,6 @@
 								elapsedLabel={runElapsedSeconds === undefined
 									? null
 									: formatElapsedDuration(runElapsedSeconds)}
-								{contextUsage}
 								projectSkills={composerProjectSkills}
 								onSubmit={() => {
 									void submitPrompt();
