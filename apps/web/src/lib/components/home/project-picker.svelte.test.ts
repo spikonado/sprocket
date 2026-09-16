@@ -129,6 +129,9 @@ describe('ProjectPicker', () => {
 		expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
 
 		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		input.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
+		);
 		expect(input.value).toBe('/tmp/');
 		expect(resolveWorkspacePath).not.toHaveBeenCalled();
 	});

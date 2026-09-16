@@ -104,7 +104,9 @@
 		})
 	);
 	const canSubmit = $derived(
-		!(browseStateIsCurrent && volumeList) &&
+		browseStateIsCurrent &&
+			!volumeList &&
+			!errorMessage &&
 			resolvedWorkspacePath.length > 0 &&
 			(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0)
 	);
