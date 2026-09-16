@@ -50,9 +50,13 @@ Older local servers call `threads:archiveForLocalCache` and
 `threads:restoreForLocalCache`. Those mutations remain aliases for settle and
 unsettle while released clients still use the archive terminology. Remove the
 aliases after the minimum supported local server version calls the direct
-`threads:settle` and `threads:unsettle` mutations. Older servers also subscribe
-to `threads:listRecent` for their on-disk summary cache. Keep that query until
-the same minimum-version gate passes.
+`threads:settle` and `threads:unsettle` mutations. They also call
+`threads:renameForLocalCache`, which performs the same rename as
+`threads:rename` but returns repository metadata used by the old summary cache.
+Remove it after the minimum supported local server version calls the direct
+rename mutation. Older servers also subscribe to `threads:listRecent` for their
+on-disk summary cache. Keep that query until the same minimum-version gate
+passes.
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
