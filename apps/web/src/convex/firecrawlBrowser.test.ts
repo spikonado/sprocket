@@ -13,6 +13,9 @@ import {
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
+const CHROME_WRAPPER_DEV_FD_ERROR =
+	'/usr/bin/google-chrome-stable: line 26: /dev/fd/63: No such file or directory';
+
 async function interact(
 	t: ConvexTestInstance,
 	args: FunctionArgs<typeof api.browserAgent.interact>
@@ -681,7 +684,7 @@ describe('Firecrawl browser lifecycle', () => {
 					JSON.stringify({
 						success: true,
 						exitCode: 1,
-						stderr: '/usr/bin/google-chrome-stable: line 26: /dev/fd/63: No such file or directory'
+						stderr: CHROME_WRAPPER_DEV_FD_ERROR
 					})
 				);
 			}
@@ -709,6 +712,72 @@ describe('Firecrawl browser lifecycle', () => {
 			sessionId: 'session-2',
 			closing: false
 		});
+	});
+
+	it('quarantines a broken worker when deleting it cannot be confirmed', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		fetch.mockImplementation(async (url, options) => {
+			if (String(url).endsWith('/execute')) {
+				return new Response(
+					JSON.stringify({
+						success: true,
+						exitCode: 1,
+						stderr: CHROME_WRAPPER_DEV_FD_ERROR
+					})
+				);
+			}
+			if (options.method === 'DELETE') return new Response('{}', { status: 503 });
+			return defaultResponse(url, options);
+		});
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const args = {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'agent-browser open https://example.com'
+		};
+		await expect(interact(t, args)).rejects.toThrow(
+			'The browser worker could not start Chrome and its session is closing. Retry shortly.'
+		);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-1',
+			closing: true,
+			operationExpiresAt: 0
+		});
+		await expect(interact(t, args)).rejects.toThrow('The browser is closing. Retry shortly.');
+		expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('/execute'))).toHaveLength(1);
+	});
+
+	it('stops after one replacement worker has the same Chrome startup failure', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		fetch.mockImplementation(async (url, options) => {
+			if (String(url).endsWith('/execute')) {
+				return new Response(
+					JSON.stringify({
+						success: true,
+						exitCode: 1,
+						stderr: CHROME_WRAPPER_DEV_FD_ERROR
+					})
+				);
+			}
+			return defaultResponse(url, options);
+		});
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		await expect(
+			interact(t, {
+				runId,
+				claimId,
+				executionSecret,
+				command: 'agent-browser open https://example.com'
+			})
+		).rejects.toThrow('The replacement browser worker also failed to start Chrome. Retry later.');
+		expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('/execute'))).toHaveLength(2);
+		expect(fetch.mock.calls.filter(([, options]) => options.method === 'DELETE')).toHaveLength(2);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toBeNull();
 	});
 
 	it('fences in-flight creation when the profile is reset', async () => {
