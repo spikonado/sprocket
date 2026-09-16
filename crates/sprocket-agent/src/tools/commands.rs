@@ -7,7 +7,6 @@ use sprocket_workspace::default_command_shell;
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
 
-pub(super) const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 60_000;
 pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 pub(super) const DEFAULT_STDIN_YIELD_MS: u64 = 5_000;
@@ -20,10 +19,6 @@ pub(crate) struct WriteStdinTool(pub(super) AgentToolContext);
 
 fn default_workdir() -> String {
     ".".to_string()
-}
-
-fn default_timeout_ms() -> u64 {
-    DEFAULT_COMMAND_TIMEOUT_MS
 }
 
 fn default_command_yield_ms() -> u64 {
@@ -42,10 +37,6 @@ fn is_default_shell(shell: &String) -> bool {
     shell == &default_command_shell()
 }
 
-fn is_default_timeout_ms(timeout_ms: &u64) -> bool {
-    *timeout_ms == DEFAULT_COMMAND_TIMEOUT_MS
-}
-
 fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
 }
@@ -62,7 +53,6 @@ pub(super) fn exec_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
     schema["properties"]["workdir"]["default"] = json!(default_workdir());
     schema["properties"]["shell"]["default"] = json!(default_command_shell());
-    schema["properties"]["timeoutMs"]["default"] = json!(DEFAULT_COMMAND_TIMEOUT_MS);
     schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_COMMAND_YIELD_MS);
     schema
 }
@@ -93,14 +83,9 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_command_shell")]
     pub(crate) shell: String,
-    /// Command timeout in milliseconds. Defaults to 60000.
-    #[serde(
-        rename = "timeoutMs",
-        default = "default_timeout_ms",
-        skip_serializing_if = "is_default_timeout_ms"
-    )]
-    #[schemars(default = "default_timeout_ms")]
-    pub(crate) timeout_ms: u64,
+    /// Maximum process runtime in milliseconds. Omit to allow the command to run until it exits or is terminated.
+    #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_timeout_ms: Option<u64>,
     /// Wait before yielding a running session, in milliseconds. Defaults to 10000.
     #[serde(
         rename = "yieldTimeMs",
@@ -139,7 +124,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input."
+        "Run a shell command with full machine access. Long-running commands yield a sessionId after yieldTimeMs. The process keeps running unless timeoutMs sets a runtime limit."
             .to_string()
     }
 
@@ -168,7 +153,7 @@ impl rig::tool::Tool for ExecCommandTool {
                         &args.cmd,
                         &args.workdir,
                         &args.shell,
-                        args.timeout_ms,
+                        args.runtime_timeout_ms,
                         args.yield_time_ms,
                         DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
                     )
@@ -245,6 +230,7 @@ mod tests {
                 .starts_with("Working directory for this cmd")
         );
         assert_eq!(schema["required"], json!(["cmd"]));
+        assert!(properties["timeoutMs"].get("default").is_none());
     }
 
     #[test]
@@ -263,5 +249,23 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(serde_json::to_value(args).unwrap(), json!({"cmd": "pwd"}));
+    }
+
+    #[test]
+    fn runtime_timeout_is_optional_and_preserved_when_set() {
+        let without_timeout: ExecCommandArgs =
+            serde_json::from_value(json!({"cmd": "sleep 120"})).unwrap();
+        assert_eq!(without_timeout.runtime_timeout_ms, None);
+
+        let with_timeout: ExecCommandArgs = serde_json::from_value(json!({
+            "cmd": "sleep 120",
+            "timeoutMs": 1_000,
+        }))
+        .unwrap();
+        assert_eq!(with_timeout.runtime_timeout_ms, Some(1_000));
+        assert_eq!(
+            serde_json::to_value(with_timeout).unwrap(),
+            json!({"cmd": "sleep 120", "timeoutMs": 1_000})
+        );
     }
 }

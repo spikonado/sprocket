@@ -82,7 +82,7 @@ impl CommandSessionManager {
         command: &str,
         workdir: &str,
         shell: &str,
-        timeout_ms: u64,
+        runtime_timeout_ms: Option<u64>,
         yield_time_ms: u64,
         max_output_chars: usize,
     ) -> Result<CommandExecOutput> {
@@ -132,7 +132,7 @@ impl CommandSessionManager {
             stdin_task,
             capture_task,
             output.clone(),
-            timeout_ms.max(1),
+            runtime_timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
         ));
 
         let session_id = self
@@ -455,10 +455,10 @@ async fn supervise_command(
     stdin_task: tokio::task::JoinHandle<()>,
     mut capture_task: tokio::task::JoinHandle<Result<()>>,
     output: Arc<Mutex<CapturedOutput>>,
-    timeout_ms: u64,
+    runtime_timeout: Option<Duration>,
 ) {
-    let timeout = tokio::time::sleep(Duration::from_millis(timeout_ms));
-    tokio::pin!(timeout);
+    let runtime_deadline = wait_for_runtime_timeout(runtime_timeout);
+    tokio::pin!(runtime_deadline);
     let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut capture_finished = false;
@@ -480,7 +480,7 @@ async fn supervise_command(
                     }
                 }
             },
-            _ = &mut timeout => {
+            _ = &mut runtime_deadline => {
                 match terminate_child(&mut child, process_id).await {
                     Ok(status) => break (Some(status), true, None),
                     Err(error) => break (None, true, Some(error.to_string())),
@@ -520,6 +520,13 @@ async fn supervise_command(
     let _ = completion.send(Some(completed));
     stdin_task.abort();
     let _ = stdin_task.await;
+}
+
+async fn wait_for_runtime_timeout(runtime_timeout: Option<Duration>) {
+    match runtime_timeout {
+        Some(timeout) => tokio::time::sleep(timeout).await,
+        None => std::future::pending::<()>().await,
+    }
 }
 
 async fn write_command_input(
@@ -732,7 +739,7 @@ mod tests {
                 "printf 'starting\n'; sleep 0.1; printf 'failed\n' >&2; sleep 0.1; printf 'cleaning up\n'",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 20_000,
             )
@@ -766,7 +773,7 @@ mod tests {
                 command,
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 0,
                 20_000,
             )
@@ -835,7 +842,7 @@ mod tests {
                 "printf abcdefghijklmnopqrstuvwxyz",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 22,
             )
@@ -860,7 +867,7 @@ mod tests {
                 "printf head; head -c 2100000 /dev/zero | tr '\\0' x; printf tail",
                 ".",
                 &default_command_shell(),
-                20_000,
+                Some(20_000),
                 20_000,
                 26,
             )
@@ -889,7 +896,7 @@ mod tests {
                 "read start; printf abcdefghij; read value; printf klmnopqrst",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 0,
                 4,
             )
@@ -947,7 +954,7 @@ mod tests {
                 "touch ran",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 100,
             )
@@ -972,7 +979,7 @@ mod tests {
                 "touch ran",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 100,
             )
@@ -997,7 +1004,7 @@ mod tests {
                 "printf output; read value",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 100,
             )
@@ -1045,7 +1052,7 @@ mod tests {
             tokio::spawn(std::future::pending()),
             tokio::spawn(async { anyhow::bail!("injected log write failure") }),
             std::sync::Arc::new(tokio::sync::Mutex::new(output)),
-            5_000,
+            Some(Duration::from_secs(5)),
         ));
         tokio::time::timeout(Duration::from_secs(2), completed.changed())
             .await
@@ -1070,7 +1077,7 @@ mod tests {
                 "read value; printf '%s' \"$value\"",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 0,
                 20_000,
             )
@@ -1105,7 +1112,7 @@ mod tests {
                 "echo hello",
                 ".",
                 shell.to_str().unwrap(),
-                5_000,
+                Some(5_000),
                 5_000,
                 20_000,
             )
@@ -1131,7 +1138,7 @@ mod tests {
                 "pwd",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 20_000,
             )
@@ -1159,7 +1166,7 @@ mod tests {
                 "pwd",
                 "..",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 5_000,
                 20_000,
             )
@@ -1181,7 +1188,7 @@ mod tests {
                 "printf start; sleep 0.1; printf end",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 10,
                 20_000,
             )
@@ -1210,6 +1217,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn command_without_runtime_timeout_continues_after_yield() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "sleep 0.1; printf finished",
+                ".",
+                &default_command_shell(),
+                None,
+                5,
+                20_000,
+            )
+            .await
+            .expect("command should start");
+
+        assert!(started.result.running);
+        let finished = sessions
+            .write_stdin(
+                WorkspaceCancellation::new(),
+                started.session_id.as_deref().unwrap(),
+                "",
+                false,
+                2_000,
+            )
+            .await
+            .expect("command should finish without a runtime deadline");
+
+        assert!(finished.result.success);
+        assert!(!finished.result.running);
+        assert!(!finished.result.timed_out);
+        assert_eq!(finished.result.output, "finished");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn write_stdin_sends_input_to_running_command() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
@@ -1219,7 +1262,7 @@ mod tests {
                 "read value; printf 'got:%s' \"$value\"",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 10,
                 20_000,
             )
@@ -1252,7 +1295,7 @@ mod tests {
                 "sleep 5",
                 ".",
                 &default_command_shell(),
-                100,
+                Some(100),
                 10,
                 20_000,
             )
@@ -1296,7 +1339,7 @@ mod tests {
                 "while [ ! -f release ]; do sleep 0.01; done",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 10,
                 20_000,
             )
@@ -1352,7 +1395,7 @@ mod tests {
                 "sleep 5",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 10,
                 20_000,
             )
@@ -1382,7 +1425,7 @@ mod tests {
                 "sleep 0.2; touch leaked.txt",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 10,
                 20_000,
             )
@@ -1417,7 +1460,7 @@ mod tests {
                 "sleep 5",
                 ".",
                 &default_command_shell(),
-                5_000,
+                Some(5_000),
                 10,
                 20_000,
             )
@@ -1442,7 +1485,7 @@ mod tests {
                 "sleep 0.2; touch leaked.txt",
                 ".",
                 &default_command_shell(),
-                25,
+                Some(25),
                 5_000,
                 20_000,
             )
