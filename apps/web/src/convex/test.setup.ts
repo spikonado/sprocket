@@ -95,7 +95,8 @@ export async function seedThreadRecord(
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
-			lastMessageAt: Date.now()
+			lastMessageAt: Date.now(),
+			working: false
 		});
 		await ctx.db.insert('threadUsage', {
 			threadId,

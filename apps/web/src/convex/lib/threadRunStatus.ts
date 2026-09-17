@@ -2,6 +2,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
+import { ensureInboxWorkingMigration, inboxWorking } from '@convex/lib/inboxState';
 
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
@@ -27,7 +28,12 @@ export async function setRunAndThreadStatus(
 		ctx.db.get('threadRecords', run.threadId)
 	]);
 	if (!latestRun || !thread) return;
-	if (thread.status !== latestRun.status) {
-		await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
+	const working = inboxWorking(latestRun.status);
+	if (thread.status !== latestRun.status || thread.working !== working) {
+		await ctx.db.patch('threadRecords', run.threadId, {
+			status: latestRun.status,
+			working
+		});
 	}
+	await ensureInboxWorkingMigration(ctx);
 }

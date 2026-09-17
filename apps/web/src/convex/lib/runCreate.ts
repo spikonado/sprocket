@@ -25,6 +25,7 @@ import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
 import { withRunExecution } from '@convex/lib/runExecution';
+import { ensureInboxWorkingMigration } from '@convex/lib/inboxState';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -109,7 +110,8 @@ export async function createQueuedRunRecord(
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
-			lastMessageAt: now
+			lastMessageAt: now,
+			working: true
 		});
 		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
@@ -192,10 +194,12 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
-		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt
+		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt,
+		working: true
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	await startRunLifecycle(ctx, runId);
+	await ensureInboxWorkingMigration(ctx);
 	return created;
 }
 
