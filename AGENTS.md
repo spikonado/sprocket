@@ -61,8 +61,8 @@ All of these are core priorities; try your best to achieve all of them without h
 
 ### Working on stuff, main agents only
 
-- Use subagents for tasks that will benefit from your context being less polluted and you working with the subagents in parallel.
-- For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
+- Orchestrate subagents for tasks that will benefit from your context being less polluted and you working with the subagents in parallel.
+- For non bulk/mechanical/zero-brain operations, after you complete the task, always run a subagent that finds cleanup opportunities in the changed code and tests, and implements them.
 
 ### Subagent prompting
 
