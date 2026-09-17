@@ -53,6 +53,10 @@ export function fastModeAccessForModelAndTier(
 	return catalog.tierAllowsFastMode[tier] ? 'available' : 'locked';
 }
 
+export function showsReasoningControl(model: CatalogModel): boolean {
+	return model.reasoningEfforts.length !== 1 || model.reasoningEfforts[0] !== 'none';
+}
+
 export function modelOptionsForTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier

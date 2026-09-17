@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { fastModeAccessForModelAndTier, fetchGatewayModelCatalog } from './model-catalog';
+import {
+	fastModeAccessForModelAndTier,
+	fetchGatewayModelCatalog,
+	showsReasoningControl
+} from './model-catalog';
 
 const catalogPayload = {
 	sprocket: {
@@ -76,5 +80,29 @@ describe('gateway model catalog', () => {
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(catalog.models[0].supportsFastMode).toBe(false);
 		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('unsupported');
+	});
+});
+
+describe('reasoning controls', () => {
+	it('hides the internal no-reasoning marker but keeps fixed named efforts visible', () => {
+		const model = {
+			id: 'model',
+			label: 'Model',
+			provider: 'provider',
+			supportsImages: false,
+			contextWindowTokens: 100_000,
+			autoHandoffTokenLimit: 80_000,
+			reasoningEfforts: ['none'],
+			defaultReasoningEffort: 'none',
+			supportsFastMode: false
+		};
+		expect(showsReasoningControl(model)).toBe(false);
+		expect(
+			showsReasoningControl({
+				...model,
+				reasoningEfforts: ['max'],
+				defaultReasoningEffort: 'max'
+			})
+		).toBe(true);
 	});
 });
