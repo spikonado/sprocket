@@ -100,7 +100,7 @@ export function serializeUpdateInfoYaml(info) {
 		}
 		document[key] = value;
 	}
-	return dumpYaml(document, { lineWidth: -1, noRefs: true, quotingType: "'" });
+	return dumpYaml(document, { lineWidth: -1, noRefs: true, quoteStyle: 'single' });
 }
 
 function mergeFileEntry(existing, incoming, filePath) {
