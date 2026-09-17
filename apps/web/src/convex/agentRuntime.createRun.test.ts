@@ -511,6 +511,31 @@ describe('agentRuntime.insertGatewayRun', () => {
 		expect(second.created).toBe(true);
 		expect(second.runId).not.toBe(first.runId);
 	});
+
+	it('unsettles a settled thread when a new prompt is sent', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+
+		await asUser.mutation(api.threads.settle, { threadId });
+		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
+			'number'
+		);
+
+		await insertQueuedRun(t, asUser, {
+			submissionId: 'sub-unsettle',
+			threadId,
+			prompt: 'Keep going',
+			imageUploadIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret: 'unsettle-secret'
+		});
+
+		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.archivedAt).toBeUndefined();
+		expect(thread?.status).toBe('queued');
+	});
 });
 
 describe('agentRuntime.createGatewayRun attachment identity', () => {
