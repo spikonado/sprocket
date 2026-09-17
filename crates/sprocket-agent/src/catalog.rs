@@ -49,6 +49,8 @@ struct GatewayCatalogModel {
     id: String,
     label: String,
     supports_images: bool,
+    #[serde(default)]
+    supports_required_tool_choice: bool,
     context_window_tokens: u64,
     #[serde(rename = "autoCompactTokenLimit")]
     auto_handoff_token_limit: u64,
@@ -77,10 +79,11 @@ fn select_catalog_model(
             auto_handoff_token_limit: model.auto_handoff_token_limit,
         },
         supports_images: model.supports_images,
+        supports_required_tool_choice: model.supports_required_tool_choice,
     })
 }
 
-/// Fetch context budget and `supportsImages` for `model_id` from one catalog GET.
+/// Fetch model capabilities for `model_id` from one catalog GET.
 pub async fn catalog_capabilities_for_model(
     gateway_url: &str,
     model_id: &str,
@@ -115,6 +118,7 @@ mod tests {
                         "id": "vision-model",
                         "label": "Vision Model",
                         "supportsImages": true,
+                        "supportsRequiredToolChoice": true,
                         "contextWindowTokens": 100000,
                         "autoCompactTokenLimit": 80000
                     },
@@ -135,6 +139,7 @@ mod tests {
     fn reports_selected_model_metadata_from_one_payload() {
         let vision = select_catalog_model(catalog_payload(), "vision-model").expect("vision model");
         assert!(vision.supports_images);
+        assert!(vision.supports_required_tool_choice);
         assert_eq!(vision.label, "Vision Model");
         assert_eq!(vision.context_budget.context_window_tokens, 100_000);
         assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
@@ -142,6 +147,7 @@ mod tests {
         let long_context = select_catalog_model(catalog_payload(), "long-context-model")
             .expect("long-context model");
         assert!(!long_context.supports_images);
+        assert!(!long_context.supports_required_tool_choice);
         assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     }
 

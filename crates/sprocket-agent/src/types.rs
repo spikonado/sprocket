@@ -92,6 +92,7 @@ pub struct CatalogModelCapabilities {
     pub label: String,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
+    pub supports_required_tool_choice: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
