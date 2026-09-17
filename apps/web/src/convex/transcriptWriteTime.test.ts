@@ -1,9 +1,56 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 import { sectionDisplayOrder } from './lib/transcriptSectionWrites';
 
 describe('write-time transcript sections', () => {
+	it('automatically migrates unindexed history across batches without creating sections', async () => {
+		vi.useFakeTimers();
+		try {
+			const t = initConvexTest();
+			const { threadId } = await seedOwnedThread(t);
+			await t.run(async (ctx) => {
+				const run = await ctx.db.query('runs').first();
+				if (!run) throw new Error('Missing run.');
+				for (let number = 0; number < 51; number++) {
+					await ctx.db.insert('threadTranscriptParts', {
+						threadId,
+						userId: run.userId,
+						runId: run._id,
+						number,
+						sourceKey: `old-${number}`,
+						kind: 'completion',
+						completion: {
+							items: [
+								{
+									type: 'reasoning',
+									id: 'reasoning',
+									text: 'Thinking',
+									turnId: 'turn',
+									startedAt: null,
+									completedAt: null
+								}
+							]
+						}
+					});
+				}
+			});
+			await t.mutation(internal.migrations.runTranscriptWriteTimeSectionMigration, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			await t.mutation(internal.migrations.runTranscriptWriteTimeSectionMigration, {});
+			const result = await t.run(async (ctx) => ({
+				parts: await ctx.db.query('threadTranscriptParts').collect(),
+				sections: await ctx.db.query('threadTranscriptWorkSections').collect(),
+				schedule: await ctx.db.query('migrationSchedules').unique()
+			}));
+			expect(result.parts).toHaveLength(51);
+			expect(result.parts.every((part) => part.work?.ranges.length === 0)).toBe(true);
+			expect(result.sections).toEqual([]);
+			expect(result.schedule?.completedAt).toBeDefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 	it('orders sections by run start before per-run ordinal', () => {
 		const older = sectionDisplayOrder(100, 'run-a', 9);
 		const newer = sectionDisplayOrder(101, 'run-b', 1);
@@ -186,7 +233,8 @@ describe('write-time transcript sections', () => {
 			entries: await ctx.db.query('threadTranscriptMemberships').collect()
 		}));
 		expect(migrated.parts.every((part) => part.work !== undefined)).toBe(true);
-		expect(migrated.parts.flatMap((part) => part.work?.ranges ?? [])).toHaveLength(3);
-		expect(migrated.entries.filter((entry) => entry.entryKey !== undefined)).toHaveLength(3);
+		expect(migrated.parts.flatMap((part) => part.work?.ranges ?? [])).toHaveLength(2);
+		expect(migrated.parts.find((part) => part.sourceKey === 'never')?.work).toEqual({ ranges: [] });
+		expect(migrated.entries.filter((entry) => entry.entryKey !== undefined)).toHaveLength(2);
 	}, 15_000);
 });

@@ -8,7 +8,6 @@ import {
 	writeCompletionSectionData,
 	writeToolSectionData
 } from '@convex/lib/transcriptSectionWrites';
-import { historicalWork } from '@convex/lib/transcriptParts';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -20,7 +19,7 @@ export const migrations = new Migrations(components.migrations, {
 
 export const assignTranscriptSectionsAtWriteTime = migrations.define({
 	table: 'threadTranscriptParts',
-	batchSize: 4,
+	batchSize: 50,
 	migrateOne: async (ctx, part) => {
 		const legacy = await ctx.db
 			.query('threadTranscriptMemberships')
@@ -28,10 +27,10 @@ export const assignTranscriptSectionsAtWriteTime = migrations.define({
 				q.eq('threadId', part.threadId).eq('number', part.number)
 			)
 			.unique();
-		const priorWork = historicalWork(part, part.work ?? legacy?.work);
+		const priorWork = part.work ?? legacy?.work ?? { ranges: [] };
 		if (part.kind === 'completion' && part.completion) {
 			const ranges = priorWork.ranges;
-			const work = { ranges };
+			const work = { ...priorWork, ranges, processed: undefined };
 			const sections = new Map<
 				string,
 				{ sectionKey: string; sectionOrdinal: number; closed: boolean }
@@ -59,8 +58,8 @@ export const assignTranscriptSectionsAtWriteTime = migrations.define({
 			return { work };
 		}
 		if (part.kind === 'tool' && part.tool) {
-			const sectionKey =
-				priorWork.sectionKey ?? `historical-tool:${part.runId}:${part.tool.callId}`;
+			const sectionKey = priorWork.sectionKey;
+			if (!sectionKey) return { work: { ranges: [] } };
 			const old = await ctx.db
 				.query('threadTranscriptWorkSections')
 				.withIndex('by_threadId_and_key', (q) =>
@@ -84,7 +83,7 @@ export const assignTranscriptSectionsAtWriteTime = migrations.define({
 
 export const deleteLegacyTranscriptMemberships = migrations.define({
 	table: 'threadTranscriptMemberships',
-	batchSize: 16,
+	batchSize: 50,
 	migrateOne: async (ctx, row) => {
 		if (row.number === undefined) return;
 		await ctx.db.delete('threadTranscriptMemberships', row._id);
@@ -93,7 +92,7 @@ export const deleteLegacyTranscriptMemberships = migrations.define({
 
 export const backfillTranscriptSectionDisplayOrder = migrations.define({
 	table: 'threadTranscriptWorkSections',
-	batchSize: 16,
+	batchSize: 50,
 	migrateOne: async (ctx, section) => {
 		const run = await ctx.db.get('runs', section.runId);
 		if (!run) throw new Error('Transcript section run not found.');

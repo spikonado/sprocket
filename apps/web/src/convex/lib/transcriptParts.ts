@@ -335,53 +335,8 @@ export async function transcriptPartsForClient(
 					query.eq('threadId', part.threadId).eq('number', part.number)
 				)
 				.unique();
-			return { ...part, work: historicalWork(part, legacy?.work) };
+			return { ...part, work: legacy?.work ?? { ranges: [] } };
 		})
 	);
 	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, withWork));
-}
-
-export function historicalWork(
-	part: Pick<Doc<'threadTranscriptParts'>, 'kind' | 'runId' | 'number' | 'completion' | 'tool'>,
-	legacy?: NonNullable<Doc<'threadTranscriptParts'>['work']>
-): NonNullable<Doc<'threadTranscriptParts'>['work']> {
-	if (
-		legacy &&
-		(part.kind !== 'completion' ||
-			legacy.ranges.length > 0 ||
-			!part.completion?.items.some((item) => item.type !== 'text'))
-	) {
-		return legacy;
-	}
-	if (part.kind === 'tool' && part.tool) {
-		return {
-			ranges: [],
-			sectionKey: `historical-tool:${part.runId}:${part.tool.callId}`
-		};
-	}
-	if (part.kind !== 'completion' || !part.completion) return { ranges: [] };
-	const ranges: { start: number; end: number; sectionKey: string }[] = [];
-	let start: number | null = null;
-	for (let index = 0; index <= part.completion.items.length; index++) {
-		const item = part.completion.items[index];
-		const isWork = item !== undefined && item.type !== 'text';
-		if (isWork && start === null) start = index;
-		const endsAtTool = item?.type === 'tool-call';
-		if ((endsAtTool || !isWork) && start !== null) {
-			const end = endsAtTool ? index + 1 : index;
-			const toolCall = part.completion.items
-				.slice(start, end)
-				.findLast((candidate) => candidate.type === 'tool-call');
-			ranges.push({
-				start,
-				end,
-				sectionKey:
-					toolCall?.type === 'tool-call'
-						? `historical-tool:${part.runId}:${toolCall.callId}`
-						: `work-${part.number}-${start}`
-			});
-			start = null;
-		}
-	}
-	return { ranges };
 }

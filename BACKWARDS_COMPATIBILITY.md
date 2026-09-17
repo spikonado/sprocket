@@ -86,16 +86,18 @@ replacement store imports the old file before parsing the new format.
 ## Stored transcript work metadata
 
 New transcript writes embed immutable work assignments and atomically maintain
-section entries and summaries. `transcript-write-time-sections-v1` migrates four
-parts at a time. It reuses embedded or separately stored assignments, derives
-assignments for never-indexed history, then removes legacy membership rows. The
-hourly migration runner is resumable. It also backfills each section's global
-display order from the run start time, run ID, and per-run section ordinal.
+section entries and summaries. `transcript-write-time-sections-v1` migrates 50
+parts at a time. It reuses embedded or separately stored assignments and leaves
+never-indexed history without sections, then removes legacy membership rows. The
+hourly cron starts or resumes the migration automatically. Once started, the
+migration component schedules successive batches without waiting for the next
+cron tick. All three migration steps use batches of 50. It also backfills each
+section's global display order from the run start time, run ID, and per-run
+section ordinal.
 
-The local work replica uses the `display-v2` directory and records the
-`write-time-sections-v1` format marker. Older caches remain untouched because
-they do not contain embedded work assignments. Keep the separate directory
-until direct upgrades from pre-write-time replicas are no longer supported.
+Older clients and old Sprocket data directories are not supported by this cutover.
+The local work replica uses `display-v2` with a `write-time-sections-v1` format
+marker. There is no migration or metadata refresh for old local raw caches.
 
 For the coordinated two-user cutover, stop every old desktop, CLI, and server
 process before touching local data. For each user, confirm the data directory

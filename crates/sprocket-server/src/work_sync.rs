@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use convex::Value;
 use futures::StreamExt;
-use sprocket_agent::{
-    RemoteTranscriptState, TranscriptPart, TranscriptPartKind, TranscriptStore, apply_remote_state,
-};
+use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
 use sprocket_convex::decode_labeled_function_result;
 use tokio::sync::{broadcast, watch};
 
@@ -24,23 +22,6 @@ fn pop_download_page(pending: &mut Vec<(u32, u32)>) -> Option<(u32, u32)> {
         pending.push((start, lower));
     }
     Some((lower, end))
-}
-
-fn needs_work_refresh(part: &TranscriptPart) -> bool {
-    if !part.work.ranges.is_empty()
-        || part.work.section_key.is_some()
-        || !part.work.tool_invocations.is_empty()
-    {
-        return false;
-    }
-    match part.kind {
-        TranscriptPartKind::Tool => true,
-        TranscriptPartKind::Completion => part
-            .content_items()
-            .iter()
-            .any(|item| item.get("type").and_then(serde_json::Value::as_str) != Some("text")),
-        TranscriptPartKind::Prompt => false,
-    }
 }
 
 async fn metadata(
@@ -107,7 +88,6 @@ async fn download(
             continue;
         }
         let mut parts = store.read_parts(user, thread, &numbers).await?;
-        parts.retain(|part| !needs_work_refresh(part));
         let missing: Vec<_> = numbers
             .iter()
             .copied()
@@ -177,8 +157,6 @@ pub(crate) async fn synchronize(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     #[test]
@@ -191,52 +169,5 @@ mod tests {
             }
             assert_eq!(pop_download_page(&mut pending), None);
         }
-    }
-
-    #[test]
-    fn refreshes_old_cached_parts_that_need_work_assignments() {
-        let old_tool: TranscriptPart = serde_json::from_value(json!({
-            "number": 1,
-            "sourceKey": "tool:invocation:started",
-            "kind": "tool",
-            "runId": "run",
-            "tool": {
-                "toolInvocationId": "invocation",
-                "callId": "call",
-                "name": "exec_command",
-                "status": "started"
-            }
-        }))
-        .unwrap();
-        let old_reasoning: TranscriptPart = serde_json::from_value(json!({
-            "number": 2,
-            "sourceKey": "completion:run:stream",
-            "kind": "completion",
-            "runId": "run",
-            "completion": { "items": [{ "type": "reasoning", "text": "Thinking" }] }
-        }))
-        .unwrap();
-        let text: TranscriptPart = serde_json::from_value(json!({
-            "number": 3,
-            "sourceKey": "completion:run:answer",
-            "kind": "completion",
-            "runId": "run",
-            "completion": { "items": [{ "type": "text", "text": "Done" }] }
-        }))
-        .unwrap();
-        let assigned: TranscriptPart = serde_json::from_value(json!({
-            "number": 4,
-            "sourceKey": "completion:run:assigned",
-            "kind": "completion",
-            "runId": "run",
-            "completion": { "items": [{ "type": "reasoning", "text": "Thinking" }] },
-            "work": { "ranges": [{ "start": 0, "end": 1, "sectionKey": "section" }] }
-        }))
-        .unwrap();
-
-        assert!(needs_work_refresh(&old_tool));
-        assert!(needs_work_refresh(&old_reasoning));
-        assert!(!needs_work_refresh(&text));
-        assert!(!needs_work_refresh(&assigned));
     }
 }
