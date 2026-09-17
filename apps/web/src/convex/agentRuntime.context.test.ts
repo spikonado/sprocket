@@ -21,10 +21,6 @@ async function readThreadUsage(t: ConvexTestInstance, threadId: Id<'threadRecord
 	});
 }
 
-async function finishQueuedUsageWrites(t: ConvexTestInstance) {
-	await t.finishAllScheduledFunctions(() => {});
-}
-
 async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
 		const thread = await ctx.db.get('threadRecords', threadId);
@@ -138,8 +134,6 @@ describe('agentRuntime context accounting', () => {
 			})
 		).resolves.toBe(true);
 
-		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed).toBe(0);
-		await finishQueuedUsageWrites(t);
 		expect(await readThreadUsage(t, threadId)).toMatchObject({
 			contextTokens: 8_000,
 			totalTokensProcessed: 9_000
@@ -194,7 +188,6 @@ describe('agentRuntime context accounting', () => {
 		};
 		await asUser.mutation(api.agentRuntime.recordContextUsage, args);
 		await asUser.mutation(api.agentRuntime.recordContextUsage, args);
-		await finishQueuedUsageWrites(t);
 		expect(await readThreadUsage(t, threadId)).toMatchObject({
 			contextTokens: 8_000,
 			totalTokensProcessed: 9_000
@@ -255,7 +248,6 @@ describe('agentRuntime context accounting', () => {
 			contextTokens: 8_000,
 			processedTokens: 9_000
 		});
-		await finishQueuedUsageWrites(t);
 
 		await expect(asUser.query(api.threads.getByThreadId, { threadId })).resolves.toMatchObject({
 			contextTokens: 8_000,
@@ -503,7 +495,6 @@ describe('agentRuntime context accounting', () => {
 				beforePrompt: false
 			})
 		).resolves.toBe(true);
-		await finishQueuedUsageWrites(t);
 		expect(await readThreadUsage(t, threadId)).toMatchObject({
 			contextTokens: 4_000,
 			totalTokensProcessed: 5_000
@@ -561,7 +552,6 @@ describe('agentRuntime context accounting', () => {
 				beforePrompt: false
 			})
 		).resolves.toBe(true);
-		await finishQueuedUsageWrites(t);
 		expect((await readThreadUsage(t, threadId))?.contextTokens).toBeUndefined();
 		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed).toBe(9_000);
 	});

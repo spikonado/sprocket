@@ -54,7 +54,6 @@
         "zod": "^4.1.8",
       },
       "devDependencies": {
-        "@convex-dev/batch-worker": "0.3.3",
         "@edge-runtime/vm": "^5.0.0",
         "@sprocket/eslint-config": "workspace:*",
         "@sprocket/typescript-config": "workspace:*",
