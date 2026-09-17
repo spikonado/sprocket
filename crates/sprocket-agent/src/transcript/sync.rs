@@ -52,7 +52,6 @@ struct RemoteTranscriptPart {
 #[serde(rename_all = "camelCase")]
 struct RemotePrompt {
     text: String,
-    #[serde(default)]
     image_uploads: Vec<RemoteAttachment>,
 }
 
