@@ -1,4 +1,5 @@
 import { ConvexError, v } from 'convex/values';
+import { internal } from '@convex/_generated/api';
 import { internalMutation, internalQuery } from '@convex/_generated/server';
 
 export const active = internalQuery({
@@ -8,24 +9,42 @@ export const active = internalQuery({
 });
 
 export const reserve = internalMutation({
-	args: { reservationId: v.string(), expiresAt: v.number() },
-	returns: v.null(),
+	args: {
+		reservationId: v.string(),
+		expiresAt: v.number(),
+		returnIfFull: v.optional(v.boolean())
+	},
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
+		const now = Date.now();
 		const existing = await ctx.db
 			.query('browserCapacity')
 			.withIndex('by_reservationId', (q) => q.eq('reservationId', args.reservationId))
 			.unique();
-		if (existing) return null;
+		if (existing && existing.expiresAt > now) return true;
+		const expired = await ctx.db
+			.query('browserCapacity')
+			.withIndex('by_expiresAt', (q) => q.lte('expiresAt', now))
+			.take(100);
+		for (const slot of expired) await ctx.db.delete('browserCapacity', slot._id);
 		const occupied = await ctx.db
 			.query('browserCapacity')
-			.withIndex('by_expiresAt', (q) => q.gt('expiresAt', Date.now()))
+			.withIndex('by_expiresAt', (q) => q.gt('expiresAt', now))
 			.take(2);
-		if (occupied.length === 2)
+		if (occupied.length === 2) {
+			if (args.returnIfFull) return false;
 			throw new ConvexError(
 				'Both browser session slots are in use. Stop an existing browser session or wait for one to close before opening another.'
 			);
-		await ctx.db.insert('browserCapacity', args);
-		return null;
+		}
+		await ctx.db.insert('browserCapacity', {
+			reservationId: args.reservationId,
+			expiresAt: args.expiresAt
+		});
+		await ctx.scheduler.runAt(args.expiresAt, internal.browserCapacity.expireReservation, {
+			reservationId: args.reservationId
+		});
+		return true;
 	}
 });
 
@@ -69,15 +88,15 @@ export const releaseSession = internalMutation({
 	}
 });
 
-export const expire = internalMutation({
-	args: {},
+export const expireReservation = internalMutation({
+	args: { reservationId: v.string() },
 	returns: v.null(),
-	handler: async (ctx) => {
-		const expired = await ctx.db
+	handler: async (ctx, { reservationId }) => {
+		const slot = await ctx.db
 			.query('browserCapacity')
-			.withIndex('by_expiresAt', (q) => q.lte('expiresAt', Date.now()))
-			.take(100);
-		for (const slot of expired) await ctx.db.delete('browserCapacity', slot._id);
+			.withIndex('by_reservationId', (q) => q.eq('reservationId', reservationId))
+			.unique();
+		if (slot && slot.expiresAt <= Date.now()) await ctx.db.delete('browserCapacity', slot._id);
 		return null;
 	}
 });
