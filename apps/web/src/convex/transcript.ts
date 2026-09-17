@@ -1,4 +1,4 @@
-import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import { query, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -11,14 +11,13 @@ import {
 } from '@convex/lib/docs';
 import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import {
-	getOrCreateTranscriptState,
 	getTranscriptState,
 	loadTranscriptPartsByNumbers,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
 async function transcriptStateResult(
-	ctx: QueryCtx | MutationCtx,
+	ctx: QueryCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<{
 	threadId: Id<'threadRecords'>;
@@ -47,23 +46,6 @@ async function transcriptStateResult(
 async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>) {
 	await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
 }
-
-/** Name is frozen for current desktop/server callers. Creates transcript state only. */
-export const ensureMigrated = mutation({
-	args: {
-		threadId: v.id('threadRecords')
-	},
-	returns: vTranscriptStateResult,
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		await getOrCreateTranscriptState(ctx, {
-			threadId: args.threadId,
-			userId
-		});
-		return await transcriptStateResult(ctx, args.threadId);
-	}
-});
 
 export const getState = query({
 	args: {

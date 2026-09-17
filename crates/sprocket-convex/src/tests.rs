@@ -49,7 +49,7 @@ fn assert_authenticate(client: &mut BaseConvexClient, token: &str) {
 }
 
 #[tokio::test(start_paused = true)]
-async fn initial_token_failure_does_not_send_an_anonymous_transcript_mutation() {
+async fn initial_token_failure_does_not_send_an_anonymous_mutation() {
     let auth = AuthState::new();
     let (fetcher, calls) = scripted_fetcher(vec![
         Err(anyhow::anyhow!("provider unavailable")),
@@ -61,7 +61,7 @@ async fn initial_token_failure_does_not_send_an_anonymous_transcript_mutation() 
         .set_auth_fetcher(Some(sdk_fetcher(Arc::downgrade(&auth), generation)))
         .await;
     let _result = client.mutation(
-        "transcript:ensureMigrated".parse().expect("function path"),
+        "threads:settle".parse().expect("function path"),
         BTreeMap::new(),
     );
 
@@ -90,7 +90,7 @@ async fn reconnect_token_failures_do_not_replay_requests_without_authentication(
         BTreeMap::new(),
     );
     let _result = client.mutation(
-        "transcript:ensureMigrated".parse().expect("function path"),
+        "threads:settle".parse().expect("function path"),
         BTreeMap::new(),
     );
     while client.pop_next_message().is_some() {}
@@ -231,7 +231,7 @@ async fn persistent_auth_failure_closes_the_connection_and_fails_all_pending_ope
 
     let (query, mutation, action, subscription) = tokio::join!(
         client.query("transcript:getState", BTreeMap::new()),
-        client.mutation("transcript:ensureMigrated", BTreeMap::new()),
+        client.mutation("threads:settle", BTreeMap::new()),
         client.action("example:action", BTreeMap::new()),
         client.subscribe("transcript:getState", BTreeMap::new()),
     );

@@ -244,7 +244,7 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
             .auth_token_fetcher_for_user(start.user_id.clone()),
     )
     .await?;
-    let remote = client.ensure_migrated(&start.thread_id).await?;
+    let remote = client.transcript_state(&start.thread_id).await?;
     apply_and_publish(start, &remote).await?;
 
     crate::work_sync::synchronize(

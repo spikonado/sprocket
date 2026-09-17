@@ -592,14 +592,9 @@ describe('numbered transcript parts', () => {
 		).rejects.toThrow(/at most 100/);
 	});
 
-	it('ensures transcript state exists on a thread with no parts', async () => {
+	it('returns zero totalParts for a thread with no transcript state row', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
-			totalParts: 0
-		});
-		const ensured = await asUser.mutation(api.transcript.ensureMigrated, { threadId });
-		expect(ensured.totalParts).toBe(0);
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
 			totalParts: 0
 		});

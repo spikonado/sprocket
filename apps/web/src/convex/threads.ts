@@ -4,7 +4,6 @@ import { v } from 'convex/values';
 import { rekeyOwnedArtifacts } from '@convex/artifacts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import schema from '@convex/schema';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
@@ -107,27 +106,6 @@ export const listMine = query({
 	returns: v.null(),
 	handler: async () => {
 		unsupportedClient();
-	}
-});
-
-export const listRecent = query({
-	args: {
-		selectedThreadId: v.optional(v.id('threadRecords'))
-	},
-	returns: v.array(schema.doc('threadRecords')),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const recent = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
-			.order('desc')
-			.take(15);
-		if (!args.selectedThreadId || recent.some((thread) => thread._id === args.selectedThreadId)) {
-			return recent;
-		}
-
-		const selected = await ctx.db.get('threadRecords', args.selectedThreadId);
-		return selected?.userId === userId ? [...recent, selected] : recent;
 	}
 });
 
