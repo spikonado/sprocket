@@ -22,7 +22,8 @@ use crate::transcript_client::UserConvexClient;
 pub(super) struct UploadQuery {
     user_id: String,
     name: String,
-    thread_id: Option<String>,
+    #[serde(rename = "threadId")]
+    _thread_id: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -82,9 +83,6 @@ async fn upload(
             .auth_token_fetcher_for_user(query.user_id.clone()),
     )
     .await?;
-    if let Some(thread_id) = &query.thread_id {
-        client.ensure_migrated(thread_id).await?;
-    }
     let pending = state
         .transcript
         .pending_attachment_path(&query.user_id, "upload");

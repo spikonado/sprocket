@@ -38,6 +38,12 @@ impl UserConvexClient {
         );
         sprocket_agent::parse_remote_parts(self.query_json("transcript:getParts", args).await?)
     }
+
+    pub async fn transcript_state(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {
+        self.query_json("transcript:getState", thread_id_args(thread_id))
+            .await
+    }
+
     pub async fn connect_with_fetcher(
         deployment_url: &str,
         fetcher: AuthTokenFetcher,
@@ -51,11 +57,6 @@ impl UserConvexClient {
         Ok(Self {
             client: ConvexClient::new(deployment_url).await?,
         })
-    }
-
-    pub async fn ensure_migrated(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {
-        self.mutation_json("transcript:ensureMigrated", thread_id_args(thread_id))
-            .await
     }
 
     pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
