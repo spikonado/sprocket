@@ -60,26 +60,6 @@ impl WorkReplica {
             INSERT OR IGNORE INTO state VALUES ('generation', '0');"
         )?;
         ReadIndex::initialize(&db)?;
-        let format: Option<String> = db
-            .query_row("SELECT value FROM state WHERE key='format'", [], |row| {
-                row.get(0)
-            })
-            .optional()?;
-        if format.as_deref() != Some("write-time-sections-v1") {
-            let tx = db.unchecked_transaction()?;
-            tx.execute_batch(
-                "DELETE FROM parts;
-                 DELETE FROM sections;
-                 DELETE FROM coverage;
-                 DELETE FROM rows;
-                 DELETE FROM changes;
-                 DELETE FROM source_refs;
-                 INSERT INTO state(key,value) VALUES ('format','write-time-sections-v1')
-                 ON CONFLICT(key) DO UPDATE SET value=excluded.value;
-                 UPDATE state SET value='0' WHERE key='generation';",
-            )?;
-            tx.commit()?;
-        }
         db.execute(
             "INSERT OR IGNORE INTO state VALUES ('replicaId',?)",
             [serde_json::to_string(&uuid::Uuid::new_v4().to_string())?],

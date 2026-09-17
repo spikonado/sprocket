@@ -67,7 +67,7 @@ impl TranscriptStore {
             .root
             .join(display_cache_segment(user_id)?)
             .join(display_cache_segment(thread_id)?)
-            .join("display-v2")
+            .join("display")
             .join(display_cache_segment(key)?))
     }
 
