@@ -511,7 +511,6 @@ export const vExecutorJobResult = v.union(
 export const vRunStatus = v.union(
 	v.literal('queued'),
 	v.literal('running'),
-	v.literal('awaiting_executor'),
 	v.literal('completed'),
 	v.literal('failed'),
 	v.literal('cancelled')

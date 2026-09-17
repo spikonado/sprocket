@@ -31,8 +31,7 @@ export const state = query({
 			through: transcript?.workThrough ?? { part: 0, item: 0 },
 			historyFromNumber: await transcriptHistoryFromNumber(ctx, thread),
 			contextSummary: thread.contextSummary ?? null,
-			activeRunId:
-				run && ['queued', 'running', 'awaiting_executor'].includes(run.status) ? run._id : null
+			activeRunId: run && ['queued', 'running'].includes(run.status) ? run._id : null
 		};
 	}
 });

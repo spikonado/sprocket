@@ -12,7 +12,7 @@ async function seedRunWithJob(
 	t: ConvexTestInstance,
 	options: {
 		executionSecret: string;
-		runStatus?: 'queued' | 'running' | 'awaiting_executor' | 'failed' | 'completed';
+		runStatus?: 'queued' | 'running' | 'failed' | 'completed';
 		jobStatus?: 'pending' | 'claimed' | 'completed' | 'failed' | 'cancelled';
 		activeJobMatches?: boolean;
 		claimId?: string;
