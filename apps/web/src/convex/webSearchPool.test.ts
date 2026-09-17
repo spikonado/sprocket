@@ -7,7 +7,7 @@ import { initConvexTest, seedStartedWebJob } from './test.setup';
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-describe('web tool workpool fencing', () => {
+describe('web search workpool fencing', () => {
 	it(
 		'ignores onComplete callbacks after the owning claim expires',
 		{ timeout: 15_000 },
@@ -24,7 +24,7 @@ describe('web tool workpool fencing', () => {
 			await t.run(async (ctx) => {
 				await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 			});
-			await t.mutation(internal.webToolPool.completeWebTool, {
+			await t.mutation(internal.webSearchPool.completeWebSearch, {
 				// SAFETY: Workpool onComplete only uses workId for its own bookkeeping.
 				workId: (stored?.cloudWorkId ?? 'work') as WorkId,
 				context: { jobId, runId, claimId },
@@ -42,8 +42,8 @@ describe('web tool workpool fencing', () => {
 			kind: 'web_search',
 			payload: { query: 'sprocket' }
 		});
-		await t.mutation(internal.webToolPool.completeWebTool, {
-			// SAFETY: completeWebTool ignores workId and fences on job/claim state.
+		await t.mutation(internal.webSearchPool.completeWebSearch, {
+			// SAFETY: completeWebSearch ignores workId and fences on job/claim state.
 			workId: 'work-ok' as WorkId,
 			context: { jobId, runId, claimId },
 			result: { kind: 'success', returnValue: { results: [{ url: 'https://example.com' }] } }
@@ -145,7 +145,7 @@ describe('local screenshot_url dispatch', () => {
 			})
 		).rejects.toThrow('Run is no longer active');
 		expect(
-			await t.mutation(internal.webToolPool.getWebToolJob, {
+			await t.mutation(internal.webSearchPool.getWebSearchJob, {
 				runId,
 				claimId,
 				jobId
@@ -186,9 +186,13 @@ describe('temporary scrape storage', () => {
 	it('deletes unregistered blobs and is a no-op after they are gone', async () => {
 		const t = initConvexTest();
 		const storageId = await t.run(async (ctx) => ctx.storage.store(new Blob(['scrape markdown'])));
-		expect(await t.mutation(internal.webToolPool.deleteTemporaryStorage, { storageId })).toBeNull();
+		expect(
+			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
+		).toBeNull();
 		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId))).toBeNull();
-		expect(await t.mutation(internal.webToolPool.deleteTemporaryStorage, { storageId })).toBeNull();
+		expect(
+			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
+		).toBeNull();
 	});
 
 	it('leaves registered attachments in place', async () => {
@@ -205,7 +209,9 @@ describe('temporary scrape storage', () => {
 			});
 			return storageId;
 		});
-		expect(await t.mutation(internal.webToolPool.deleteTemporaryStorage, { storageId })).toBeNull();
+		expect(
+			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
+		).toBeNull();
 		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId))).not.toBeNull();
 	});
 });
