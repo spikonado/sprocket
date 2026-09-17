@@ -187,6 +187,28 @@ export const acquire = internalMutation({
 	}
 });
 
+export const needsProviderReconciliation = internalQuery({
+	args: {
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		activeAfter: v.number()
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const session = await ctx.db
+			.query('browserSessions')
+			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
+			.unique();
+		return Boolean(
+			session &&
+			session.userId === args.userId &&
+			session.sessionId &&
+			!session.closing &&
+			(session.attachedAt ?? session.startedAt) <= args.activeAfter
+		);
+	}
+});
+
 export const attach = internalMutation({
 	args: {
 		id: v.id('browserSessions'),
@@ -289,24 +311,26 @@ export const beforeExecute = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		const now = Date.now();
 		const session = await ctx.db.get('browserSessions', args.id);
 		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (
 			!session ||
 			session.closing ||
 			session.humanControl ||
-			session.expiresAt <= Date.now() ||
+			session.expiresAt <= now ||
 			session.operationId !== args.operationId ||
-			session.operationExpiresAt <= Date.now() ||
+			session.operationExpiresAt <= now ||
 			!run ||
 			run.cancellationRequestedAt !== undefined ||
 			run.claimId !== args.claimId ||
-			!isRunClaimLeaseActive(run, Date.now())
+			!isRunClaimLeaseActive(run, now)
 		) {
 			throw new ConvexError('The browser or run changed before execution. No action ran.');
 		}
 		await ctx.db.patch('browserSessions', args.id, {
-			operationExpiresAt: Date.now() + OPERATION_LEASE_MS
+			attachedAt: now,
+			operationExpiresAt: now + OPERATION_LEASE_MS
 		});
 		return null;
 	}

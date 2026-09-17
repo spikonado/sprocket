@@ -174,16 +174,53 @@ describe('Firecrawl browser lifecycle', () => {
 		const slots = await t.run((ctx) => ctx.db.query('browserCapacity').collect());
 		expect(slots).toHaveLength(2);
 		expect(slots.every((slot) => slot.sessionId === undefined)).toBe(true);
-		vi.setSystemTime(slots[0].expiresAt - 1);
+		await vi.advanceTimersByTimeAsync(slots[0].expiresAt - Date.now() - 1);
 		await expect(
 			t.mutation(internal.browserCapacity.reserve, {
 				reservationId: 'new',
 				expiresAt: Date.now() + 1_000
 			})
 		).rejects.toThrow('Both browser session slots are in use');
-		vi.setSystemTime(slots[0].expiresAt);
-		await t.mutation(internal.browserCapacity.expire, {});
+		await vi.advanceTimersByTimeAsync(1);
+		await t.finishInProgressScheduledFunctions();
 		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toEqual([]);
+	});
+
+	it('reconciles an idle provider-expired session before running the next command', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		const t = initConvexTest();
+		const auth = await fixture(t);
+		await interact(t, { ...auth, command: 'agent-browser get url' });
+		await t.run(async (ctx) => {
+			const session = await ctx.db.query('browserSessions').unique();
+			await ctx.db.patch('browserSessions', session!._id, { attachedAt: Date.now() - 450_001 });
+		});
+		fetch.mockImplementation(async (url, options) => {
+			if (options.method === 'GET') {
+				return new Response(
+					JSON.stringify({
+						success: true,
+						sessions: [{ id: 'session-1', status: 'destroyed' }]
+					})
+				);
+			}
+			return defaultResponse(url, options);
+		});
+		expect(await interact(t, { ...auth, command: 'agent-browser get url' })).toEqual({
+			text: 'Done',
+			truncated: false
+		});
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').unique())).toMatchObject({
+			sessionId: 'session-2'
+		});
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-2'
+		});
+		const executedSessions = fetch.mock.calls
+			.filter(([url, options]) => options.method === 'POST' && String(url).endsWith('/execute'))
+			.map(([url]) => String(url).match(/\/(session-[^/]+)\/execute$/)?.[1]);
+		expect(executedSessions).toEqual(['session-1', 'session-2']);
 	});
 
 	it('leaves a reader intact when no slot is available for a saving replacement', async () => {

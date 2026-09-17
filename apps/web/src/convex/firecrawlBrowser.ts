@@ -382,6 +382,17 @@ async function execute(
 	language: 'bash' | 'node',
 	enforceSaving = false
 ) {
+	const needsProviderReconciliation = await ctx.runQuery(
+		internal.browserSessions.needsProviderReconciliation,
+		{
+			threadId: args.threadId,
+			userId: args.userId,
+			activeAfter: Date.now() - ACTIVITY_TTL_SECONDS * 1_000
+		}
+	);
+	if (needsProviderReconciliation) {
+		await reconcileProviderSessions(ctx).catch(() => undefined);
+	}
 	const operationId = crypto.randomUUID();
 	const session = await ctx.runMutation(internal.browserSessions.acquire, {
 		threadId: args.threadId,
@@ -635,7 +646,6 @@ export const close = internalAction({
 
 async function reconcileProviderSessions(ctx: ActionCtx) {
 	if (!env.FIRECRAWL_BROWSER_API_KEY?.trim()) return;
-	await ctx.runMutation(internal.browserCapacity.expire, {});
 	const before = Date.now();
 	const listed = sessionsSchema.safeParse(await provider('GET', '?status=destroyed'));
 	if (!listed.success) {
