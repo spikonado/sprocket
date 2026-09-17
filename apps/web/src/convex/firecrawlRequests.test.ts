@@ -8,6 +8,7 @@ import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
+	toolTranscriptAssignment,
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
@@ -20,6 +21,7 @@ async function fixture(t: ConvexTestInstance, scrape = false) {
 	if (!scrape) return { ...auth, jobId: undefined };
 	const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
 		...auth,
+		...toolTranscriptAssignment(runId, secret),
 		kind: 'scrape_url',
 		payload: { url: 'https://example.com' }
 	});

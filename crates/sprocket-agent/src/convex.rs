@@ -1,6 +1,6 @@
 use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use sprocket_convex::{Client as ConvexRpcClient, decode_function_result};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -15,10 +15,54 @@ const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Deserialize)]
-#[serde(transparent)]
-struct CompletionPartNumber(
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")] u32,
-);
+#[serde(rename_all = "camelCase")]
+struct PersistedTranscriptPart {
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
+    number: u32,
+    source_key: String,
+    kind: crate::TranscriptPartKind,
+    run_id: String,
+    work: crate::sections::WorkAssignment,
+    #[serde(
+        rename = "_creationTime",
+        default,
+        deserialize_with = "deserialize_creation_time"
+    )]
+    created_at: Option<u64>,
+    prompt: Option<crate::transcript::types::TranscriptPromptBody>,
+    completion: Option<crate::transcript::types::TranscriptCompletionBody>,
+    tool: Option<crate::transcript::types::TranscriptToolBody>,
+}
+
+impl From<PersistedTranscriptPart> for crate::TranscriptPart {
+    fn from(part: PersistedTranscriptPart) -> Self {
+        Self {
+            number: part.number,
+            source_key: part.source_key,
+            kind: part.kind,
+            run_id: part.run_id,
+            created_at: part.created_at,
+            prompt: part.prompt,
+            completion: part.completion,
+            tool: part.tool,
+            work: part.work,
+        }
+    }
+}
+
+fn deserialize_creation_time<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer)?
+        .map(|value| {
+            if !value.is_finite() || value < 0.0 || value >= u64::MAX as f64 {
+                return Err(serde::de::Error::custom("invalid transcript creation time"));
+            }
+            Ok(value as u64)
+        })
+        .transpose()
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -253,8 +297,9 @@ impl RuntimeClient {
         attempt_seq: u64,
         stream_id: &str,
         items: Vec<serde_json::Value>,
+        assignments: crate::hooks::CompletionAssignments,
     ) -> anyhow::Result<()> {
-        let local_items = self.output.as_ref().map(|_| items.clone());
+        let empty_completion = items.is_empty();
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
         args.insert("streamId".to_string(), stream_id.to_string().into());
@@ -263,32 +308,28 @@ impl RuntimeClient {
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
         );
-        let number: Option<CompletionPartNumber> = self
+        args.insert(
+            "work".to_string(),
+            Value::try_from(serde_json::to_value(assignments.work)?)?,
+        );
+        args.insert(
+            "toolInvocations".to_string(),
+            Value::try_from(serde_json::to_value(assignments.tool_invocations)?)?,
+        );
+        args.insert(
+            "sections".to_string(),
+            Value::try_from(serde_json::to_value(assignments.sections)?)?,
+        );
+        let persisted: Option<PersistedTranscriptPart> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
-        if local_items.as_ref().is_some_and(Vec::is_empty) {
+        if empty_completion {
             if let Some(output) = &self.output {
                 output.empty_completion();
             }
         }
-        if let (Some(output), Some(CompletionPartNumber(number)), Some(items)) =
-            (&self.output, number, local_items)
-        {
-            output
-                .record_part(crate::TranscriptPart {
-                    number,
-                    source_key: format!("completion:{run_id}:{stream_id}"),
-                    kind: crate::TranscriptPartKind::Completion,
-                    run_id: run_id.into(),
-                    created_at: None,
-                    prompt: None,
-                    tool: None,
-                    completion: Some(crate::transcript::types::TranscriptCompletionBody {
-                        stream_id: Some(stream_id.into()),
-                        items,
-                    }),
-                })
-                .await;
+        if let (Some(output), Some(persisted)) = (&self.output, persisted) {
+            output.record_part(persisted.into()).await;
         }
         Ok(())
     }
@@ -527,25 +568,38 @@ mod output_tests {
     use super::*;
 
     #[test]
-    fn completion_acknowledgments_decode_convex_numbers_and_null() {
-        let number: Option<CompletionPartNumber> = decode_function_result(
-            FunctionResult::Value(Value::Float64(7.0)),
-            "finalizeCompletionCall",
-        )
+    fn completion_response_decodes_the_authoritative_persisted_part() {
+        let value = Value::try_from(serde_json::json!({
+            "_creationTime": 1_700_000_000_000.5,
+            "number": 8,
+            "sourceKey": "completion:run:stream",
+            "kind": "completion",
+            "runId": "run",
+            "work": {
+                "ranges": [{ "start": 0, "end": 2, "sectionKey": "section-1" }]
+            },
+            "completion": {
+                "streamId": "stream",
+                "items": [{ "type": "reasoning", "text": "thinking" }]
+            }
+        }))
         .unwrap();
-        assert_eq!(number.unwrap().0, 7);
-        let empty: Option<CompletionPartNumber> =
+        let part: Option<PersistedTranscriptPart> =
+            decode_function_result(FunctionResult::Value(value), "finalizeCompletionCall").unwrap();
+        let part: crate::TranscriptPart = part.unwrap().into();
+        assert_eq!(part.number, 8);
+        assert_eq!(part.created_at, Some(1_700_000_000_000));
+        let work = part.work_assignment();
+        assert_eq!(work.ranges[0].section_key, "section-1");
+        assert_eq!(work.ranges[0].end, 2);
+        assert_eq!(
+            part.completion.unwrap().stream_id.as_deref(),
+            Some("stream")
+        );
+
+        let empty: Option<PersistedTranscriptPart> =
             decode_function_result(FunctionResult::Value(Value::Null), "finalizeCompletionCall")
                 .unwrap();
         assert!(empty.is_none());
-        for value in [-1.0, 0.5, f64::from(u32::MAX) + 1.0] {
-            assert!(
-                decode_function_result::<Option<CompletionPartNumber>>(
-                    FunctionResult::Value(Value::Float64(value)),
-                    "finalizeCompletionCall"
-                )
-                .is_err()
-            );
-        }
     }
 }

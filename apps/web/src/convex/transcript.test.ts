@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	emptyCompletionAssignments,
+	initConvexTest,
+	insertQueuedRun,
+	seedOwnedThread,
+	toolTranscriptAssignment
+} from './test.setup';
 
 describe('numbered transcript parts', () => {
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
@@ -74,18 +81,14 @@ describe('numbered transcript parts', () => {
 				turnId: 'stream-1',
 				startedAt: 2_000,
 				completedAt: 3_000
-			},
-			{
-				type: 'tool-call' as const,
-				partId: 'stream-1:tool:c1',
-				callId: 'c1',
-				name: 'exec_command',
-				input: { cmd: 'ls' },
-				turnId: 'stream-1',
-				startedAt: 3_000,
-				completedAt: 3_100
 			}
 		];
+		const sectionKey = `agent:${runId}:claim-complete:1:section:1`;
+		const assignments = {
+			work: { ranges: [{ start: 0, end: 1, sectionKey }] },
+			toolInvocations: [],
+			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
+		};
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			transcriptProtocol: 2,
 			runId,
@@ -93,9 +96,10 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			streamId: 'stream-1',
 			items,
+			...assignments,
 			executionSecret
 		});
-		expect(number).toBe(1);
+		expect(number?.number).toBe(1);
 		const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			transcriptProtocol: 2,
 			runId,
@@ -103,9 +107,10 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			streamId: 'stream-1',
 			items,
+			...assignments,
 			executionSecret
 		});
-		expect(again).toBe(1);
+		expect(again?._id).toBe(number?._id);
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(2);
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
@@ -143,9 +148,10 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			streamId: 'stream-1',
 			items: [{ type: 'text' as const, id: 't', text: 'Hi', turnId: 'stream-1' }],
+			...emptyCompletionAssignments,
 			executionSecret
 		});
-		expect(number).toBe(1);
+		expect(number?.number).toBe(1);
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 		const stored = await t.run(
@@ -190,6 +196,7 @@ describe('numbered transcript parts', () => {
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			claimId: 'claim-tool-order',
 			runId,
+			...toolTranscriptAssignment(runId, 'claim-tool-order', 1, 1, 'stream-tool'),
 			kind: 'exec_command',
 			callId: 'c1',
 			payload: { cmd: 'echo hi' },
@@ -264,6 +271,29 @@ describe('numbered transcript parts', () => {
 					turnId: 'stream-tool'
 				}
 			],
+			work: {
+				ranges: [
+					{
+						start: 0,
+						end: 1,
+						sectionKey: `agent:${runId}:claim-tool-order:1:section:1`
+					}
+				]
+			},
+			toolInvocations: [
+				{
+					callId: 'c1',
+					toolInvocationId: 'test-invocation-1',
+					sectionKey: `agent:${runId}:claim-tool-order:1:section:1`
+				}
+			],
+			sections: [
+				{
+					sectionKey: `agent:${runId}:claim-tool-order:1:section:1`,
+					sectionOrdinal: 1,
+					closed: false
+				}
+			],
 			executionSecret
 		});
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2, 3] });
@@ -299,6 +329,7 @@ describe('numbered transcript parts', () => {
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			claimId: 'claim-tool-cancel',
 			runId,
+			...toolTranscriptAssignment(runId, 'claim-tool-cancel'),
 			kind: 'exec_command',
 			callId: 'c-cancel',
 			payload: { cmd: 'sleep 10' },
@@ -366,6 +397,7 @@ describe('numbered transcript parts', () => {
 		await asUser.mutation(api.agentRuntime.beginToolJob, {
 			claimId: 'claim-hidden-tool',
 			runId,
+			...toolTranscriptAssignment(runId, 'claim-hidden-tool'),
 			kind: 'exec_command',
 			callId: 'hidden',
 			payload: { cmd: 'true' },
@@ -430,6 +462,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			streamId: 'stream-without-tool',
 			items: [{ type: 'text', id: 'text', text: 'Done', turnId: 'stream-without-tool' }],
+			...emptyCompletionAssignments,
 			executionSecret
 		});
 
@@ -504,6 +537,7 @@ describe('numbered transcript parts', () => {
 					turnId: 'stream-continue'
 				}
 			],
+			...emptyCompletionAssignments,
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -601,6 +635,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			streamId: 'stream-keep',
 			items: [{ type: 'text' as const, id: 't', text: 'Covered work', turnId: 'stream-keep' }],
+			...emptyCompletionAssignments,
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {

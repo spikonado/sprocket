@@ -556,7 +556,9 @@ async fn unsolicited_handoff_is_not_executed_or_emitted_as_a_tool_call() {
     tokio::time::timeout(DRIVE_TIMEOUT, async {
         let mut stream = agent
             .stream_prompt("normal work")
-            .add_hook(crate::hooks::AgentPromptHook::new(Default::default()))
+            .add_hook(crate::hooks::AgentPromptHook::new(
+                crate::hooks::ToolCallTracker::new("test-run", "test-claim"),
+            ))
             .add_hook(hook.clone())
             .max_invalid_tool_call_retries(0)
             .await;

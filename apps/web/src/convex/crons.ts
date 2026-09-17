@@ -4,9 +4,9 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
-	'migrate transcript work memberships',
+	'migrate transcript sections to write-time assignments',
 	{ hours: 1 },
-	internal.migrations.runTranscriptMembershipMigration,
+	internal.migrations.runTranscriptWriteTimeSectionMigration,
 	{}
 );
 

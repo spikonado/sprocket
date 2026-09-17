@@ -3,38 +3,43 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TranscriptPart;
-use super::sections::{
-    WorkItem, WorkMembership, WorkPosition, earliest_timing, hidden_tool, string, timing,
-};
+use super::sections::{WorkItem, WorkPosition, earliest_timing, hidden_tool, string, timing};
 
 pub(super) struct ReadIndex<'a>(pub &'a Connection);
 
 const DISPLAY_ITEM: &str = "(canonical=1 OR (NOT EXISTS (
-    SELECT 1 FROM source_refs c WHERE c.run=s.run AND c.call_id=s.call_id AND c.canonical=1
-) AND sequence=(SELECT MIN(t.sequence) FROM source_refs t WHERE t.run=s.run AND t.call_id=s.call_id AND t.canonical=0)))";
+    SELECT 1 FROM source_refs c WHERE c.run=s.run AND c.canonical=1 AND
+    (c.identity=s.identity OR c.identity='call:'||s.call_id)
+) AND sequence=(SELECT MIN(t.sequence) FROM source_refs t WHERE t.run=s.run AND t.identity=s.identity AND t.canonical=0)))";
 
 impl ReadIndex<'_> {
     pub fn initialize(db: &Connection) -> anyhow::Result<()> {
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS source_refs (
                 number INTEGER NOT NULL, offset INTEGER NOT NULL, sequence INTEGER NOT NULL,
-                section TEXT, run TEXT NOT NULL, call_id TEXT, canonical INTEGER NOT NULL,
+                section TEXT, run TEXT NOT NULL, call_id TEXT, identity TEXT, canonical INTEGER NOT NULL,
                 session TEXT, terminal INTEGER NOT NULL, body TEXT NOT NULL,
                 PRIMARY KEY(number,offset)
             );
             CREATE INDEX IF NOT EXISTS source_refs_section_sequence ON source_refs(section,sequence);
-            CREATE INDEX IF NOT EXISTS source_refs_run_call_canonical_sequence ON source_refs(run,call_id,canonical,sequence);
-            CREATE INDEX IF NOT EXISTS source_refs_run_call_terminal_sequence ON source_refs(run,call_id,terminal,sequence);
+            CREATE INDEX IF NOT EXISTS source_refs_run_identity_canonical_sequence ON source_refs(run,identity,canonical,sequence);
+            CREATE INDEX IF NOT EXISTS source_refs_run_identity_terminal_sequence ON source_refs(run,identity,terminal,sequence);
             CREATE INDEX IF NOT EXISTS source_refs_run_session_terminal_sequence ON source_refs(run,session,terminal,sequence);"
         )?;
         Ok(())
     }
 
     pub fn insert_part(&self, part: &TranscriptPart) -> anyhow::Result<()> {
-        if let Some(completion) = &part.completion {
-            for (offset, value) in completion.items.iter().enumerate() {
+        if part.completion.is_some() {
+            for (offset, value) in part.content_items().iter().enumerate() {
                 let kind = value["type"].as_str();
                 let call_id = string(value, "callId");
+                let tool_invocation_id = part
+                    .work
+                    .tool_invocations
+                    .iter()
+                    .find(|invocation| invocation.item as usize == offset)
+                    .map(|invocation| invocation.tool_invocation_id.clone());
                 let name = string(value, "name");
                 match kind {
                     Some("reasoning")
@@ -53,6 +58,7 @@ impl ReadIndex<'_> {
                         item: u32::try_from(offset)?,
                     },
                     call_id,
+                    tool_invocation_id,
                     name,
                     result_part: None,
                     tool_parts: BTreeSet::new(),
@@ -73,32 +79,23 @@ impl ReadIndex<'_> {
             self.insert(&item, item.result_part.is_some())?;
         }
         self.0.execute("UPDATE source_refs AS result SET session=(
-            SELECT call.session FROM source_refs call WHERE call.run=result.run AND call.call_id=result.call_id AND call.canonical=1 LIMIT 1)
-            WHERE result.canonical=0 AND result.session IS NULL AND result.run=? AND result.call_id IN (
-                SELECT call_id FROM source_refs WHERE number=? AND call_id IS NOT NULL)", params![part.run_id,part.number])?;
-        let membership: Option<String> = self
-            .0
-            .query_row(
-                "SELECT body FROM memberships WHERE number=?",
-                [part.number],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(membership) = membership {
-            self.link(&serde_json::from_str(&membership)?)?;
-        }
+            SELECT call.session FROM source_refs call WHERE call.run=result.run AND call.identity=result.identity AND call.canonical=1 LIMIT 1)
+            WHERE result.canonical=0 AND result.session IS NULL AND result.run=? AND result.identity IN (
+                SELECT identity FROM source_refs WHERE number=? AND identity IS NOT NULL)", params![part.run_id,part.number])?;
+        self.link(part.number, &part.work_assignment())?;
         Ok(())
     }
 
     fn insert(&self, item: &WorkItem, terminal: bool) -> anyhow::Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?,?,?)",
             params![
                 item.source.part,
                 item.source.item,
                 i64::try_from(item.source.sequence())?,
                 item.run_id,
                 item.call_id,
+                item.identity(),
                 item.canonical,
                 item.session_id,
                 terminal,
@@ -108,30 +105,39 @@ impl ReadIndex<'_> {
         Ok(())
     }
 
-    pub fn link(&self, membership: &WorkMembership) -> anyhow::Result<()> {
+    pub fn link(
+        &self,
+        number: u32,
+        assignment: &super::sections::WorkAssignment,
+    ) -> anyhow::Result<()> {
         self.0.execute(
             "UPDATE source_refs SET section=NULL WHERE number=?",
-            [membership.number],
+            [number],
         )?;
-        for range in &membership.ranges {
+        for range in &assignment.ranges {
             self.0.execute("UPDATE source_refs SET section=? WHERE number=? AND canonical=1 AND offset>=? AND offset<?",
-                params![range.section_key,membership.number,range.start,range.end])?;
+                params![range.section_key,number,range.start,range.end])?;
         }
-        if let Some(section) = &membership.section_key {
+        if let Some(section) = &assignment.section_key {
             self.0.execute(
                 "UPDATE source_refs SET section=? WHERE number=? AND canonical=0",
-                params![section, membership.number],
+                params![section, number],
             )?;
         }
         Ok(())
     }
 
     pub fn approvals_for_part(&self, number: u32) -> anyhow::Result<Vec<WorkItem>> {
-        let bodies: Vec<String> = self.0.prepare(
-            "SELECT DISTINCT canonical.body FROM source_refs changed JOIN source_refs canonical
-            ON canonical.run=changed.run AND canonical.call_id=changed.call_id AND canonical.canonical=1
-            WHERE changed.number=?"
-        )?.query_map([number], |row| row.get(0))?.collect::<Result<_,_>>()?;
+        let bodies: Vec<String> = self
+            .0
+            .prepare(
+                "SELECT DISTINCT canonical.body FROM source_refs changed JOIN source_refs canonical
+            ON canonical.run=changed.run AND canonical.canonical=1 AND
+            (canonical.identity=changed.identity OR canonical.identity='call:'||changed.call_id)
+            WHERE changed.number=?",
+            )?
+            .query_map([number], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
         let mut approvals = Vec::new();
         for body in bodies {
             let mut item: WorkItem = serde_json::from_str(&body)?;
@@ -146,7 +152,9 @@ impl ReadIndex<'_> {
     pub fn affected_sections(&self, number: u32) -> anyhow::Result<Vec<String>> {
         Ok(self.0.prepare("SELECT section FROM source_refs WHERE number=? AND section IS NOT NULL
             UNION SELECT linked.section FROM source_refs changed JOIN source_refs linked
-                ON linked.run=changed.run AND linked.call_id=changed.call_id WHERE changed.number=? AND linked.section IS NOT NULL
+                ON linked.run=changed.run AND (linked.identity=changed.identity OR
+                (linked.canonical=1 AND linked.identity='call:'||changed.call_id))
+                WHERE changed.number=? AND linked.section IS NOT NULL
             UNION SELECT linked.section FROM source_refs changed JOIN source_refs linked
                 ON linked.run=changed.run AND linked.session=changed.session WHERE changed.number=? AND linked.section IS NOT NULL")?
             .query_map([number,number,number], |row| row.get(0))?.collect::<Result<_,_>>()?)
@@ -189,24 +197,29 @@ impl ReadIndex<'_> {
         )?)
     }
 
-    fn event(&self, run: &str, call: &str, terminal: bool) -> anyhow::Result<Option<WorkItem>> {
-        let body: Option<String> = self.0.query_row(
-            "SELECT body FROM source_refs WHERE run=? AND call_id=? AND terminal=? AND canonical=0 ORDER BY sequence LIMIT 1",
-            params![run,call,terminal], |row| row.get(0)).optional()?;
+    fn event(&self, item: &WorkItem, terminal: bool) -> anyhow::Result<Option<WorkItem>> {
+        let body: Option<String> = if item.tool_invocation_id.is_some() {
+            self.0.query_row(
+                "SELECT body FROM source_refs WHERE run=? AND identity=? AND terminal=? AND canonical=0 ORDER BY sequence LIMIT 1",
+                params![item.run_id,item.identity(),terminal], |row| row.get(0)).optional()?
+        } else {
+            self.0.query_row(
+                "SELECT body FROM source_refs WHERE run=? AND call_id=? AND terminal=? AND canonical=0 ORDER BY sequence LIMIT 1",
+                params![item.run_id,item.call_id,terminal], |row| row.get(0)).optional()?
+        };
         body.map(|body| serde_json::from_str(&body).map_err(Into::into))
             .transpose()
     }
 
     fn pair(&self, item: &mut WorkItem) -> anyhow::Result<()> {
-        let Some(call) = &item.call_id else {
+        if item.call_id.is_none() {
             return Ok(());
-        };
+        }
         item.started_at = earliest_timing(
             item.started_at,
-            self.event(&item.run_id, call, false)?
-                .and_then(|event| event.started_at),
+            self.event(item, false)?.and_then(|event| event.started_at),
         );
-        if let Some(result) = self.event(&item.run_id, call, true)? {
+        if let Some(result) = self.event(item, true)? {
             item.merge_event(result);
         }
         if matches!(item.name.as_deref(), Some("exec_command" | "write_stdin")) {
@@ -215,7 +228,7 @@ impl ReadIndex<'_> {
                     "SELECT body FROM source_refs s WHERE run=? AND session=? AND terminal=1
                     AND json_extract(body,'$.name') IN ('exec_command','write_stdin')
                     AND json_extract(body,'$.reported_running') IS NOT NULL
-                    AND NOT EXISTS (SELECT 1 FROM source_refs earlier WHERE earlier.run=s.run AND earlier.call_id=s.call_id AND earlier.terminal=1 AND earlier.sequence<s.sequence)
+                    AND NOT EXISTS (SELECT 1 FROM source_refs earlier WHERE earlier.run=s.run AND earlier.identity=s.identity AND earlier.terminal=1 AND earlier.sequence<s.sequence)
                     ORDER BY sequence DESC LIMIT 1",
                     params![item.run_id,session], |row| row.get(0)).optional()?;
                 if let Some(body) = body {

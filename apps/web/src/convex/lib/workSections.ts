@@ -20,9 +20,17 @@ export const workRange = v.object({
 	sectionKey: v.string()
 });
 export const workMembership = v.object({
-	processed: v.number(),
+	// Historical rows only. The write-time assignment migration removes it.
+	processed: v.optional(v.number()),
 	ranges: v.array(workRange),
-	sectionKey: v.optional(v.string())
+	sectionKey: v.optional(v.string()),
+	toolInvocations: v.optional(v.array(v.object({ item: v.number(), toolInvocationId: v.string() })))
+});
+
+export const sectionOrder = v.object({
+	sectionKey: v.string(),
+	sectionOrdinal: v.number(),
+	closed: v.boolean()
 });
 export const workAssignment = workMembership.extend({ number: v.number() });
 export const workBatch = v.object({

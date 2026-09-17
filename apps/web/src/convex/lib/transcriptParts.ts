@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
-import { getTranscriptMembership } from '@convex/lib/transcriptMemberships';
+import type { Value } from 'convex/values';
 import type {
 	TranscriptCompletionBody,
 	TranscriptPromptBody,
@@ -45,10 +45,6 @@ export function completionSourceKey(runId: Id<'runs'>, streamId: string): string
 }
 
 export type ToolTranscriptPhase = 'started' | 'finished';
-
-export function newToolInvocationId(): string {
-	return crypto.randomUUID();
-}
 
 export function toolInvocationIdForJob(job: {
 	_id: Id<'executorJobs'>;
@@ -106,6 +102,7 @@ type AppendTranscriptPartArgs = {
 	prompt?: TranscriptPromptBody;
 	completion?: TranscriptCompletionBody;
 	tool?: TranscriptToolBody;
+	work: NonNullable<Doc<'threadTranscriptParts'>['work']>;
 };
 
 type TranscriptPartInsert = {
@@ -118,12 +115,60 @@ type TranscriptPartInsert = {
 	prompt?: TranscriptPromptBody;
 	completion?: TranscriptCompletionBody;
 	tool?: TranscriptToolBody;
+	work: NonNullable<Doc<'threadTranscriptParts'>['work']>;
 };
+
+export function sameValue(left: Value | undefined, right: Value | undefined): boolean {
+	if (Object.is(left, right)) return true;
+	if (Array.isArray(left) || Array.isArray(right)) {
+		return (
+			Array.isArray(left) &&
+			Array.isArray(right) &&
+			left.length === right.length &&
+			left.every((value, index) => sameValue(value, right[index]))
+		);
+	}
+	if (left === null || right === null || !(left instanceof Object) || !(right instanceof Object)) {
+		return false;
+	}
+	if (left instanceof ArrayBuffer || right instanceof ArrayBuffer) {
+		if (!(left instanceof ArrayBuffer) || !(right instanceof ArrayBuffer)) return false;
+		const leftBytes = new Uint8Array(left);
+		const rightBytes = new Uint8Array(right);
+		return (
+			leftBytes.length === rightBytes.length &&
+			leftBytes.every((value, index) => value === rightBytes[index])
+		);
+	}
+	const leftEntries = Object.entries(left);
+	const rightEntries = Object.entries(right);
+	return (
+		leftEntries.length === rightEntries.length &&
+		leftEntries.every(([key, value]) =>
+			rightEntries.some(
+				([otherKey, otherValue]) => key === otherKey && sameValue(value, otherValue)
+			)
+		)
+	);
+}
+
+function promptWithoutLegacyUploadIds(prompt: TranscriptPromptBody | undefined) {
+	if (!prompt) return undefined;
+	return {
+		...prompt,
+		imageUploads: prompt.imageUploads.map((upload) => {
+			const current = { ...upload };
+			delete current.imageUploadId;
+			return current;
+		})
+	};
+}
 
 export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
 ): Promise<{ part: Doc<'threadTranscriptParts'>; inserted: boolean }> {
+	const completion = args.completion ? normalizeCompletionTiming(args.completion) : undefined;
 	const existing = await ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_and_sourceKey', (query) =>
@@ -131,6 +176,25 @@ export async function appendTranscriptPart(
 		)
 		.unique();
 	if (existing) {
+		const expected = {
+			kind: args.kind,
+			runId: args.runId,
+			prompt: promptWithoutLegacyUploadIds(args.prompt),
+			completion,
+			tool: args.tool,
+			work: args.work
+		};
+		const persisted = {
+			kind: existing.kind,
+			runId: existing.runId,
+			prompt: promptWithoutLegacyUploadIds(existing.prompt),
+			completion: existing.completion,
+			tool: existing.tool,
+			work: existing.work
+		};
+		if (!sameValue(persisted, expected)) {
+			throw new Error('Conflicting transcript part retry.');
+		}
 		return { part: existing, inserted: false };
 	}
 
@@ -145,10 +209,11 @@ export async function appendTranscriptPart(
 		number,
 		sourceKey: args.sourceKey,
 		kind: args.kind,
-		runId: args.runId
+		runId: args.runId,
+		work: args.work
 	};
 	if (args.prompt) part.prompt = args.prompt;
-	if (args.completion) part.completion = normalizeCompletionTiming(args.completion);
+	if (completion) part.completion = completion;
 	if (args.tool) part.tool = args.tool;
 	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
@@ -259,19 +324,19 @@ export function stripLegacyAttachmentImageUploadIds(
 
 export async function transcriptPartsForClient(
 	ctx: MutationCtx | QueryCtx,
-	parts: Doc<'threadTranscriptParts'>[],
-	includeWork = true
+	parts: Doc<'threadTranscriptParts'>[]
 ): Promise<Doc<'threadTranscriptParts'>[]> {
-	const current = await Promise.all(
+	const withWork = await Promise.all(
 		parts.map(async (part) => {
-			if (includeWork) {
-				const membership = await getTranscriptMembership(ctx, part.threadId, part.number);
-				return membership ? { ...part, work: membership.work } : part;
-			}
-			const raw = { ...part };
-			delete raw.work;
-			return raw;
+			if (part.work) return part;
+			const legacy = await ctx.db
+				.query('threadTranscriptMemberships')
+				.withIndex('by_threadId_and_number', (query) =>
+					query.eq('threadId', part.threadId).eq('number', part.number)
+				)
+				.unique();
+			return { ...part, work: legacy?.work ?? { ranges: [] } };
 		})
 	);
-	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, current));
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, withWork));
 }

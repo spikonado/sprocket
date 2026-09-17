@@ -15,9 +15,7 @@ pub struct TranscriptState {
     pub history_from_number: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
-    #[serde(default)]
     pub downloaded_ranges: Vec<DownloadedRange>,
-    #[serde(default)]
     pub stale: bool,
 }
 
@@ -113,6 +111,43 @@ pub struct TranscriptPart {
     pub completion: Option<TranscriptCompletionBody>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<TranscriptToolBody>,
+    #[serde(default, skip_serializing_if = "WorkAssignment::is_empty")]
+    pub work: WorkAssignment,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkRange {
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
+    pub start: u32,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
+    pub end: u32,
+    pub section_key: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkAssignment {
+    #[serde(default)]
+    pub ranges: Vec<WorkRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_invocations: Vec<WorkInvocation>,
+}
+
+impl WorkAssignment {
+    fn is_empty(&self) -> bool {
+        self.ranges.is_empty() && self.section_key.is_none() && self.tool_invocations.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkInvocation {
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
+    pub item: u32,
+    pub tool_invocation_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -127,7 +162,6 @@ pub enum TranscriptPartKind {
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptPromptBody {
     pub text: String,
-    #[serde(default)]
     pub image_uploads: Vec<TranscriptAttachmentMeta>,
 }
 

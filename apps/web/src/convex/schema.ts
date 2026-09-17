@@ -181,6 +181,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		totalParts: v.number(),
+		// Retained until the write-time assignment migration has completed.
 		workThrough: v.optional(workPosition),
 		migratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
@@ -201,14 +202,38 @@ export default defineSchema({
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
 	threadTranscriptWorkSections: defineTable({
 		threadId: v.id('threadRecords'),
-		linkedParts: v.number(),
-		...workSectionFields
-	}).index('by_threadId_and_key', ['threadId', 'key']),
+		...workSectionFields,
+		sectionOrdinal: v.optional(v.number()),
+		displayOrder: v.optional(v.string()),
+		// Legacy migration fields.
+		linkedParts: v.optional(v.number())
+	})
+		.index('by_threadId_and_key', ['threadId', 'key'])
+		.index('by_threadId_and_sectionOrdinal', ['threadId', 'sectionOrdinal'])
+		.index('by_threadId_and_displayOrder', ['threadId', 'displayOrder']),
 	threadTranscriptMemberships: defineTable({
 		threadId: v.id('threadRecords'),
-		number: v.number(),
-		work: workMembership
-	}).index('by_threadId_and_number', ['threadId', 'number']),
+		// Legacy membership fields, removed after the migration below completes.
+		number: v.optional(v.number()),
+		work: v.optional(workMembership),
+		entryKey: v.optional(v.string()),
+		sectionKey: v.optional(v.string()),
+		runId: v.optional(v.id('runs')),
+		partNumber: v.optional(v.number()),
+		start: v.optional(v.number()),
+		end: v.optional(v.number()),
+		toolInvocationId: v.optional(v.string()),
+		sectionOrdinal: v.optional(v.number()),
+		closed: v.optional(v.boolean())
+	})
+		.index('by_threadId_and_number', ['threadId', 'number'])
+		.index('by_threadId_and_entryKey', ['threadId', 'entryKey'])
+		.index('by_threadId_sectionKey_partNumber_start', [
+			'threadId',
+			'sectionKey',
+			'partNumber',
+			'start'
+		]),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),
@@ -285,6 +310,10 @@ export default defineSchema({
 		// Set on jobs created after tool progress events. Legacy rows omit it;
 		// transcript writes fall back to the job document id.
 		toolInvocationId: v.optional(v.string()),
+		sectionKey: v.optional(v.string()),
+		sectionOrdinal: v.optional(v.number()),
+		attemptSeq: v.optional(v.number()),
+		streamId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
 		hidden: v.boolean(),
 		status: vExecutorJobStatus,
@@ -300,6 +329,7 @@ export default defineSchema({
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence'])
+		.index('by_runId_and_toolInvocationId', ['runId', 'toolInvocationId'])
 		.index('by_runId_and_callId_and_hidden', ['runId', 'callId', 'hidden']),
 	agentQuestions: defineTable({
 		threadId: v.id('threadRecords'),

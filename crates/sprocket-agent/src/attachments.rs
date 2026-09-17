@@ -293,6 +293,7 @@ mod tests {
             }),
             completion: None,
             tool: None,
+            work: Default::default(),
         }];
         cache_prompt_attachments(&store, "user", "thread", &mut parts)
             .await
@@ -470,6 +471,7 @@ mod tests {
             }),
             completion: None,
             tool: None,
+            work: Default::default(),
         }];
         cache_prompt_attachments(&store, "user", "thread", &mut parts)
             .await

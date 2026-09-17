@@ -46,6 +46,7 @@ import {
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
+import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
 import {
 	canRegisterCompletionAttempt,
@@ -72,6 +73,24 @@ type RunClaimPatch = {
 	claimExpiresAt: number;
 	completionAttemptSeq?: number;
 };
+
+function isExpectedSectionKey(
+	runId: Doc<'runs'>['_id'],
+	claimId: string,
+	attemptSeq: number,
+	sectionKey: string,
+	sectionOrdinal: number
+) {
+	const prefix = `agent:${runId}:${claimId}:`;
+	const suffix = `:section:${sectionOrdinal}`;
+	if (!sectionKey.startsWith(prefix) || !sectionKey.endsWith(suffix)) return false;
+	const sectionAttempt = Number(sectionKey.slice(prefix.length, -suffix.length));
+	return (
+		Number.isSafeInteger(sectionAttempt) && sectionAttempt >= 0 && sectionAttempt <= attemptSeq
+	);
+}
+
+const MAX_COMPLETION_ASSIGNMENTS = 256;
 
 /** Retired Convex createRun. Kept so older agents get an update message. */
 export const createRun = mutation({
@@ -465,9 +484,18 @@ export const finalizeCompletionCall = mutation({
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		items: v.array(vTranscriptCompletionItem),
+		work: workMembership,
+		toolInvocations: v.array(
+			v.object({
+				callId: v.string(),
+				toolInvocationId: v.string(),
+				sectionKey: v.optional(v.string())
+			})
+		),
+		sections: v.array(sectionOrder),
 		executionSecret: v.string()
 	},
-	returns: v.union(v.number(), v.null()),
+	returns: v.union(schema.doc('threadTranscriptParts'), v.null()),
 	handler: async (ctx, args) => {
 		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
@@ -478,20 +506,112 @@ export const finalizeCompletionCall = mutation({
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			return null;
 		}
-		const number = await recordCompletionTranscript(ctx, {
+		const sectionOrdinals = new Map(
+			args.sections.map((section) => [section.sectionKey, section.sectionOrdinal])
+		);
+		if (
+			args.sections.length > MAX_COMPLETION_ASSIGNMENTS ||
+			args.work.ranges.length > MAX_COMPLETION_ASSIGNMENTS ||
+			args.toolInvocations.length > MAX_COMPLETION_ASSIGNMENTS ||
+			sectionOrdinals.size !== args.sections.length ||
+			args.sections.some(
+				(section) =>
+					!isExpectedSectionKey(
+						run._id,
+						args.claimId,
+						args.attemptSeq,
+						section.sectionKey,
+						section.sectionOrdinal
+					)
+			)
+		) {
+			throw new Error('Invalid section metadata.');
+		}
+		const invocationIds = new Set<string>();
+		for (const invocation of args.toolInvocations) {
+			if (invocationIds.has(invocation.toolInvocationId)) {
+				throw new Error('Duplicate tool invocation assignment.');
+			}
+			invocationIds.add(invocation.toolInvocationId);
+			const job = await ctx.db
+				.query('executorJobs')
+				.withIndex('by_runId_and_toolInvocationId', (q) =>
+					q.eq('runId', run._id).eq('toolInvocationId', invocation.toolInvocationId)
+				)
+				.unique();
+			if (
+				!job ||
+				job.callId !== invocation.callId ||
+				job.sectionKey !== invocation.sectionKey ||
+				job.sectionOrdinal !==
+					(invocation.sectionKey === undefined
+						? job.sectionOrdinal
+						: sectionOrdinals.get(invocation.sectionKey)) ||
+				job.attemptSeq !== args.attemptSeq ||
+				job.streamId !== args.streamId
+			) {
+				throw new Error('Invalid tool invocation assignment.');
+			}
+		}
+		const completionCallIds = args.items.flatMap((item) =>
+			item.type === 'tool-call' ? [item.callId] : []
+		);
+		if (
+			completionCallIds.length !== args.toolInvocations.length ||
+			completionCallIds.some((callId, index) => callId !== args.toolInvocations[index]?.callId)
+		) {
+			throw new Error('Incomplete tool invocation assignments.');
+		}
+		const invocationsByItem = new Map<number, (typeof args.toolInvocations)[number]>();
+		let invocationIndex = 0;
+		for (const [index, item] of args.items.entries()) {
+			if (item.type === 'tool-call') {
+				invocationsByItem.set(index, args.toolInvocations[invocationIndex++]);
+			}
+		}
+		const assignedItems = new Set<number>();
+		for (const range of args.work.ranges) {
+			if (!sectionOrdinals.has(range.sectionKey)) throw new Error('Unknown work section.');
+			for (let index = range.start; index < range.end; index++) {
+				const item = args.items[index];
+				if (!item || item.type === 'text' || assignedItems.has(index)) {
+					throw new Error('Invalid work assignment.');
+				}
+				if (item.type === 'tool-call') {
+					const invocation = invocationsByItem.get(index);
+					if (invocation?.sectionKey !== range.sectionKey) {
+						throw new Error('Tool call assigned to a different section.');
+					}
+				}
+				assignedItems.add(index);
+			}
+		}
+		for (const [index, item] of args.items.entries()) {
+			const invocation = invocationsByItem.get(index);
+			if (item.type === 'reasoning' || invocation?.sectionKey !== undefined) {
+				if (!assignedItems.has(index)) throw new Error('Missing work assignment.');
+			} else if (assignedItems.has(index)) {
+				throw new Error('Non-work item has a work assignment.');
+			}
+		}
+		const part = await recordCompletionTranscript(ctx, {
 			threadId: run.threadId,
 			userId: run.userId,
 			runId: run._id,
 			streamId: args.streamId,
-			items: args.items
+			items: args.items,
+			work: args.work,
+			toolInvocations: args.toolInvocations,
+			sections: args.sections
 		});
 		await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,
 			userId: run.userId,
 			runId: run._id,
-			items: args.items
+			items: args.items,
+			toolInvocations: args.toolInvocations
 		});
-		return number;
+		return part;
 	}
 });
 
@@ -604,6 +724,11 @@ export const beginToolJob = mutation({
 		runId: v.id('runs'),
 		kind: vCurrentExecutorJobKind,
 		callId: v.optional(v.string()),
+		toolInvocationId: v.string(),
+		sectionKey: v.optional(v.string()),
+		sectionOrdinal: v.number(),
+		attemptSeq: v.number(),
+		streamId: v.string(),
 		payload: vCurrentExecutorJobPayload,
 		hidden: v.optional(v.boolean()),
 		executionSecret: v.string()
@@ -619,13 +744,33 @@ export const beginToolJob = mutation({
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}
+			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+			}
+			if (
+				args.sectionKey !== undefined &&
+				!isExpectedSectionKey(
+					run._id,
+					args.claimId,
+					args.attemptSeq,
+					args.sectionKey,
+					args.sectionOrdinal
+				)
+			) {
+				throw new Error('Invalid section identity.');
+			}
 			return await beginExecutorJob(ctx, {
 				run,
 				claimId: args.claimId,
 				kind: args.kind,
 				payload: args.payload,
 				callId: args.callId,
-				hidden: args.hidden
+				hidden: args.hidden,
+				toolInvocationId: args.toolInvocationId,
+				sectionKey: args.sectionKey,
+				sectionOrdinal: args.sectionOrdinal,
+				attemptSeq: args.attemptSeq,
+				streamId: args.streamId
 			});
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

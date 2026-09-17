@@ -192,26 +192,6 @@ impl TranscriptWatchSession {
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<TranscriptWatchEvent> {
         &mut self.rx
     }
-
-    pub async fn wait_for_run(&mut self, run_id: &str) -> anyhow::Result<()> {
-        loop {
-            let run = run_id.to_owned();
-            if self
-                .watchers
-                .store
-                .with_work_replica(&self.key.user_id, &self.key.thread_id, move |replica| {
-                    replica.run_synced(&run)
-                })
-                .await?
-            {
-                return Ok(());
-            }
-            match self.rx.recv().await {
-                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
 }
 
 impl Drop for TranscriptWatchSession {

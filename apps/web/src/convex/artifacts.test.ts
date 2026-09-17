@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { createQueuedRun, initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	seedThreadRecord,
+	toolTranscriptAssignment
+} from './test.setup';
 
 async function seedActiveRun(subject = 'user_alice', t = initConvexTest()) {
 	const { asUser, threadId, repositoryKey } = await seedOwnedThread(t, subject);
@@ -182,19 +188,21 @@ describe('cloud artifacts', () => {
 	it('persists path-free add, edit, save and list tool jobs', async () => {
 		const { t, asUser, auth } = await seedActiveRun();
 		const artifact = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
-		for (const kind of [
-			'add_artifact',
-			'edit_artifact',
-			'save_artifact',
-			'list_artifacts'
-		] as const) {
+		for (const [index, kind] of (
+			['add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
+		).entries()) {
 			const payload =
 				kind === 'add_artifact'
 					? { scope: 'project' as const }
 					: kind === 'list_artifacts'
 						? {}
 						: { artifactId: artifact.artifactId };
-			const job = await asUser.mutation(api.agentRuntime.beginToolJob, { ...auth, kind, payload });
+			const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				...auth,
+				...toolTranscriptAssignment(auth.runId, auth.claimId, index + 1),
+				kind,
+				payload
+			});
 			const result =
 				kind === 'list_artifacts'
 					? { artifacts: (await asUser.query(api.artifacts.listArtifactsForRun, auth)).page }

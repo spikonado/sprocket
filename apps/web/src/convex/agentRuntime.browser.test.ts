@@ -1,7 +1,12 @@
 import { makeFunctionReference } from 'convex/server';
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	toolTranscriptAssignment
+} from './test.setup';
 
 describe('browser screenshot results', () => {
 	it.each([
@@ -25,6 +30,7 @@ describe('browser screenshot results', () => {
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			runId,
 			claimId,
+			...toolTranscriptAssignment(runId, claimId),
 			executionSecret,
 			kind: 'browser_screenshot',
 			payload: {}
@@ -57,6 +63,7 @@ describe('retired browser clients', () => {
 				asUser.mutation(makeFunctionReference<'mutation'>('agentRuntime:beginToolJob'), {
 					runId,
 					claimId,
+					...toolTranscriptAssignment(runId, claimId),
 					executionSecret,
 					kind,
 					payload
@@ -79,6 +86,7 @@ describe('retired browser clients', () => {
 				asUser.mutation(makeFunctionReference<'mutation'>('agentRuntime:beginToolJob'), {
 					runId,
 					claimId,
+					...toolTranscriptAssignment(runId, claimId),
 					executionSecret,
 					kind,
 					payload: {}
@@ -111,6 +119,7 @@ describe('retired browser clients', () => {
 				asUser.mutation(api.agentRuntime.beginToolJob, {
 					runId,
 					claimId,
+					...toolTranscriptAssignment(runId, claimId),
 					executionSecret,
 					kind: 'browser_interact',
 					payload: { command: 'snapshot' }

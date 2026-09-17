@@ -67,7 +67,7 @@ impl TranscriptStore {
             .root
             .join(display_cache_segment(user_id)?)
             .join(display_cache_segment(thread_id)?)
-            .join("display-v1")
+            .join("display")
             .join(display_cache_segment(key)?))
     }
 
@@ -391,6 +391,7 @@ mod tests {
             }),
             completion: None,
             tool: None,
+            work: Default::default(),
         }
     }
 

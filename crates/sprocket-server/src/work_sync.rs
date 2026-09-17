@@ -1,141 +1,15 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use anyhow::Context;
-use convex::{FunctionResult, QuerySubscription, Value};
+use convex::Value;
 use futures::StreamExt;
-use serde::Deserialize;
-use sprocket_agent::{
-    RemoteTranscriptState, SectionPartition, TranscriptStore, WorkSnapshot, apply_remote_state,
-    sections::{WorkBatch, WorkMembership, WorkPosition, WorkSection},
-};
+use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
 use sprocket_convex::decode_labeled_function_result;
-use tokio::sync::{Notify, broadcast, watch};
+use tokio::sync::{broadcast, watch};
 
 use crate::transcript_client::UserConvexClient;
 
-mod metadata;
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkState {
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    total_parts: u32,
-    through: WorkPosition,
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    history_from_number: u32,
-    context_summary: Option<String>,
-    active_run_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SectionPage {
-    rows: Vec<WorkSection>,
-    split: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct CommitResult {
-    accepted: bool,
-    through: WorkPosition,
-}
-
-const MAX_COMMIT_BATCHES: usize = 8;
-const MAX_COMMIT_PARTS: usize = 4;
-const MAX_COMMIT_SECTION_CHANGES: usize = 256;
-const MAX_COMMIT_MEMBERSHIPS: usize = 256;
-const MAX_COMMIT_JSON_BYTES: usize = 256 * 1024;
-
-fn grouped_commit_prefix(
-    batches: &[WorkBatch],
-    expected: WorkPosition,
-) -> anyhow::Result<Vec<WorkBatch>> {
-    let mut grouped = Vec::new();
-    let mut parts = BTreeSet::new();
-    let mut section_changes = 0;
-    let mut memberships = 0;
-    for batch in batches.iter().take(MAX_COMMIT_BATCHES) {
-        if batch.finished_run_id.is_some() {
-            break;
-        }
-        let mut candidate = batch.clone();
-        if grouped.is_empty() {
-            candidate.expected = expected;
-        }
-        let mut candidate_parts = parts.clone();
-        candidate_parts.insert(candidate.expected.part);
-        candidate_parts.extend(candidate.sections.iter().map(|section| section.first.part));
-        candidate_parts.extend(
-            candidate
-                .memberships
-                .iter()
-                .map(|membership| membership.number),
-        );
-        let candidate_section_changes =
-            section_changes + candidate.sections.len() + candidate.removed.len();
-        let candidate_memberships = memberships + candidate.memberships.len();
-        grouped.push(candidate);
-        let fits = candidate_parts.len() <= MAX_COMMIT_PARTS
-            && candidate_section_changes <= MAX_COMMIT_SECTION_CHANGES
-            && candidate_memberships <= MAX_COMMIT_MEMBERSHIPS
-            && serde_json::to_vec(&grouped)?.len() <= MAX_COMMIT_JSON_BYTES;
-        if !fits {
-            grouped.pop();
-            break;
-        }
-        parts = candidate_parts;
-        section_changes = candidate_section_changes;
-        memberships = candidate_memberships;
-    }
-    Ok(grouped)
-}
-
-#[derive(Deserialize)]
-struct MembershipPart {
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    number: u32,
-    work: Option<MembershipBody>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MembershipBody {
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    processed: u32,
-    ranges: Vec<sprocket_agent::sections::WorkRange>,
-    section_key: Option<String>,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Feed {
-    State,
-    Sections {
-        after: String,
-        before: Option<String>,
-    },
-    Memberships(u32),
-}
-
-impl Feed {
-    fn request(&self, thread: &str) -> (&'static str, BTreeMap<String, Value>) {
-        let mut args = thread_args(thread);
-        let function = match self {
-            Self::State => "transcriptSections:state",
-            Self::Sections { after, before } => {
-                args.insert("after".into(), after.clone().into());
-                if let Some(before) = before {
-                    args.insert("before".into(), before.clone().into());
-                }
-                "transcriptSections:sections"
-            }
-            Self::Memberships(start) => {
-                args.insert("start".into(), f64::from(*start).into());
-                "transcriptSections:indexedMemberships"
-            }
-        };
-        (function, args)
-    }
-}
+const DOWNLOAD_PAGE_SIZE: u32 = 4;
 
 fn thread_args(thread: &str) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), thread.to_owned().into())])
@@ -143,265 +17,101 @@ fn thread_args(thread: &str) -> BTreeMap<String, Value> {
 
 fn pop_download_page(pending: &mut Vec<(u32, u32)>) -> Option<(u32, u32)> {
     let (start, end) = pending.pop()?;
-    let lower = ((end - 1) / 4 * 4).max(start);
+    let lower = ((end - 1) / DOWNLOAD_PAGE_SIZE * DOWNLOAD_PAGE_SIZE).max(start);
     if lower > start {
         pending.push((start, lower));
     }
     Some((lower, end))
 }
 
-struct WorkSync<'a, F> {
-    client: UserConvexClient,
-    store: Arc<TranscriptStore>,
-    user: String,
-    thread: String,
-    changed: &'a F,
-    downloaded: Notify,
+async fn metadata(
+    client: &UserConvexClient,
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    states: watch::Sender<RemoteTranscriptState>,
+    changed: &(impl Fn(u32) + Send + Sync),
+) -> anyhow::Result<()> {
+    let mut updates = client.watch_all().await?;
+    let subscription = client
+        .subscribe("transcript:getState", thread_args(thread))
+        .await?;
+    while let Some(results) = updates.next().await {
+        let Some(result) = results.get(subscription.id()).cloned() else {
+            continue;
+        };
+        let state: RemoteTranscriptState =
+            decode_labeled_function_result(result, "transcript:getState")?;
+        apply_remote_state(store, user, thread, &state, false).await?;
+        let total = state.total_parts;
+        store
+            .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
+            .await?;
+        states.send_replace(state);
+        changed(total);
+    }
+    anyhow::bail!("transcript state subscription ended")
 }
 
-impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
-    async fn metadata(&self, state_tx: watch::Sender<WorkState>) -> anyhow::Result<()> {
-        let mut updates = self.client.watch_all().await?;
-        let mut subscriptions: BTreeMap<Feed, QuerySubscription> = BTreeMap::new();
-        for feed in [
-            Feed::State,
-            Feed::Sections {
-                after: String::new(),
-                before: None,
-            },
-        ] {
-            let (function, args) = feed.request(&self.thread);
-            subscriptions.insert(feed, self.client.subscribe(function, args).await?);
+async fn download(
+    client: &UserConvexClient,
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    mut states: watch::Receiver<RemoteTranscriptState>,
+    changed: &(impl Fn(u32) + Send + Sync),
+) -> anyhow::Result<()> {
+    let mut seen_total = 0;
+    let mut pending = Vec::new();
+    loop {
+        let total = states.borrow_and_update().total_parts;
+        if total > seen_total {
+            pending.push((seen_total, total));
+            seen_total = total;
         }
-        let mut metadata = metadata::Metadata::default();
-        while let Some(results) = updates.next().await {
-            let Some(metadata::Update {
-                state,
-                state_changed,
-                snapshot,
-                mut add,
-                remove,
-            }) = metadata.apply(
-                subscriptions
-                    .iter()
-                    .map(|(feed, subscription)| {
-                        (feed.clone(), results.get(subscription.id()).cloned())
+        let Some((lower, end)) = pop_download_page(&mut pending) else {
+            states.changed().await?;
+            continue;
+        };
+        let numbers = store
+            .with_work_replica(user, thread, move |replica| {
+                (lower..end)
+                    .filter_map(|number| match replica.has_part(number) {
+                        Ok(true) => None,
+                        Ok(false) => Some(Ok(number)),
+                        Err(error) => Some(Err(error)),
                     })
-                    .collect(),
-            )?
-            else {
-                continue;
-            };
-            for feed in remove {
-                subscriptions.remove(&feed);
-            }
-            let thread = self.thread.clone();
-            let pending = self
-                .store
-                .with_work_replica(&self.user, &self.thread, move |replica| {
-                    replica.save_snapshot(&thread, snapshot)?;
-                    replica.pending_membership_pages(4)
-                })
-                .await?;
-            if state_changed {
-                apply_remote_state(
-                    &self.store,
-                    &self.user,
-                    &self.thread,
-                    &RemoteTranscriptState {
-                        thread_id: self.thread.clone(),
-                        total_parts: state.total_parts,
-                        history_from_number: state.history_from_number,
-                        context_summary: state.context_summary.clone(),
-                    },
-                    false,
-                )
-                .await?;
-                state_tx.send_replace(state.clone());
-            }
-            (self.changed)(state.total_parts);
-            for start in pending {
-                let feed = Feed::Memberships(start);
-                let active = subscriptions
-                    .keys()
-                    .chain(add.iter())
-                    .filter(|feed| matches!(feed, Feed::Memberships(_)))
-                    .count();
-                if active < 4 && !subscriptions.contains_key(&feed) {
-                    add.push(feed);
-                }
-            }
-            for feed in add {
-                if subscriptions.contains_key(&feed) {
-                    continue;
-                }
-                let (function, args) = feed.request(&self.thread);
-                subscriptions.insert(feed, self.client.subscribe(function, args).await?);
-            }
+                    .collect::<anyhow::Result<Vec<_>>>()
+            })
+            .await?;
+        if numbers.is_empty() {
+            continue;
         }
-        anyhow::bail!("transcript metadata subscription ended")
-    }
-
-    async fn download(&self, mut states: watch::Receiver<WorkState>) -> anyhow::Result<()> {
-        let mut seen_total = 0;
-        let mut pending = Vec::new();
-        loop {
-            let total = states.borrow_and_update().total_parts;
-            if total > seen_total {
-                pending.push((seen_total, total));
-                seen_total = total;
-            }
-            let Some((lower, end)) = pop_download_page(&mut pending) else {
-                states.changed().await?;
-                continue;
-            };
-            let numbers = self
-                .store
-                .with_work_replica(&self.user, &self.thread, move |replica| {
-                    (lower..end)
-                        .filter_map(|number| match replica.has_part(number) {
-                            Ok(true) => None,
-                            Ok(false) => Some(Ok(number)),
-                            Err(error) => Some(Err(error)),
-                        })
-                        .collect::<anyhow::Result<Vec<_>>>()
-                })
-                .await?;
-            if numbers.is_empty() {
-                continue;
-            }
-            let mut parts = self
-                .store
-                .read_parts(&self.user, &self.thread, &numbers)
-                .await?;
-            let missing: Vec<_> = numbers
-                .iter()
-                .copied()
-                .filter(|number| !parts.iter().any(|part| part.number == *number))
-                .collect();
-            if !missing.is_empty() {
-                let fetched = self.client.transcript_parts(&self.thread, &missing).await?;
-                anyhow::ensure!(
-                    fetched.len() == missing.len()
-                        && missing
-                            .iter()
-                            .all(|number| fetched.iter().any(|part| part.number == *number)),
-                    "incomplete transcript download"
-                );
-                self.store
-                    .append_parts(&self.user, &self.thread, &fetched)
-                    .await?;
-                parts.extend(fetched);
-            }
-            let thread = self.thread.clone();
-            self.store
-                .with_work_replica(&self.user, &self.thread, move |replica| {
-                    replica.save_parts(&thread, &parts)
-                })
-                .await?;
-            self.downloaded.notify_one();
-            (self.changed)(total);
-        }
-    }
-
-    async fn process(&self, mut states: watch::Receiver<WorkState>) -> anyhow::Result<()> {
-        states.changed().await?;
-        let mut remote = WorkPosition::default();
-        loop {
-            let state = states.borrow_and_update().clone();
-            remote = remote.max(state.through);
-            let batches = self
-                .store
-                .with_work_replica(&self.user, &self.thread, move |replica| {
-                    let batches = replica.advance_batches(remote, MAX_COMMIT_BATCHES)?;
-                    if !batches.is_empty() {
-                        return Ok(batches);
-                    }
-                    if remote.part == state.total_parts && remote.item == 0 {
-                        return Ok(replica
-                            .finish_inactive(state.active_run_id.as_deref(), remote)?
-                            .into_iter()
-                            .collect());
-                    }
-                    Ok(Vec::new())
-                })
-                .await?;
-            if batches.is_empty() {
-                tokio::select! {
-                    result = states.changed() => { result?; }
-                    () = self.downloaded.notified() => {}
-                }
-                continue;
-            }
-            if let Some(acknowledged) = batches
-                .iter()
-                .take_while(|batch| batch.through <= remote && batch.finished_run_id.is_none())
-                .last()
-            {
-                let through = acknowledged.through;
-                self.store
-                    .with_work_replica(&self.user, &self.thread, move |replica| {
-                        replica.acknowledge_batches(through)
-                    })
-                    .await?;
-                continue;
-            }
-            let pending = batches;
-            let batch = pending
-                .first()
-                .context("work batch queue unexpectedly empty")?;
-            anyhow::ensure!(batch.expected <= remote, "remote work checkpoint regressed");
-            let grouped = grouped_commit_prefix(&pending, remote)?;
-            let (result, acknowledged_through) = if grouped.is_empty() {
-                let mut submitted = batch.clone();
-                submitted.expected = remote;
-                if submitted.finished_run_id.is_some() {
-                    submitted.through = remote;
-                }
-                let mut args = thread_args(&self.thread);
-                args.insert("includeCheckpoint".into(), true.into());
-                args.insert(
-                    "batch".into(),
-                    Value::try_from(serde_json::to_value(&submitted)?)?,
-                );
-                let result: CommitResult = self
-                    .client
-                    .mutate("transcriptSections:commit", args)
-                    .await?;
-                (result, batch.through)
-            } else {
-                let acknowledged = grouped.last().context("work batch group missing")?.through;
-                let mut args = thread_args(&self.thread);
-                args.insert(
-                    "batches".into(),
-                    Value::try_from(serde_json::to_value(&grouped)?)?,
-                );
-                let result: CommitResult = self
-                    .client
-                    .mutate("transcriptSections:commitBatches", args)
-                    .await?;
-                (result, acknowledged)
-            };
-            if !result.accepted {
-                anyhow::ensure!(
-                    result.through > remote,
-                    "work checkpoint conflict did not advance"
-                );
-                remote = result.through;
-                continue;
-            }
+        let mut parts = store.read_parts(user, thread, &numbers).await?;
+        let missing: Vec<_> = numbers
+            .iter()
+            .copied()
+            .filter(|number| !parts.iter().any(|part| part.number == *number))
+            .collect();
+        if !missing.is_empty() {
+            let fetched = client.transcript_parts(thread, &missing).await?;
             anyhow::ensure!(
-                result.through >= acknowledged_through,
-                "accepted work commit returned an incomplete checkpoint"
+                fetched.len() == missing.len()
+                    && missing
+                        .iter()
+                        .all(|number| fetched.iter().any(|part| part.number == *number)),
+                "incomplete transcript download"
             );
-            remote = remote.max(result.through);
-            self.store
-                .with_work_replica(&self.user, &self.thread, move |replica| {
-                    replica.acknowledge_batches(acknowledged_through)
-                })
-                .await?;
-            (self.changed)(states.borrow().total_parts);
+            store.append_parts(user, thread, &fetched).await?;
+            parts.extend(fetched);
         }
+        let thread_id = thread.to_owned();
+        store
+            .with_work_replica(user, thread, move |replica| {
+                replica.save_parts(&thread_id, &parts)
+            })
+            .await?;
+        changed(total);
     }
 }
 
@@ -427,20 +137,20 @@ pub(crate) async fn synchronize(
 ) -> anyhow::Result<()> {
     let resets = store.watch_work_replica_resets();
     store.prepare_work_replica(&user, &thread).await?;
-    let sync = WorkSync {
-        client,
-        store,
-        user,
-        thread,
-        changed: &changed,
-        downloaded: Notify::new(),
-    };
-    let (states, state_rx) = watch::channel(WorkState::default());
+    let (states, state_rx) = watch::channel(RemoteTranscriptState {
+        thread_id: thread.clone(),
+        total_parts: 0,
+        history_from_number: 0,
+        context_summary: None,
+    });
     tokio::select! {
         result = async {
-            tokio::try_join!(sync.metadata(states), sync.download(state_rx.clone()), sync.process(state_rx))
+            tokio::try_join!(
+                metadata(&client, &store, &user, &thread, states, &changed),
+                download(&client, &store, &user, &thread, state_rx, &changed),
+            )
         } => { result?; }
-        result = wait_for_reset(resets, &sync.user, &sync.thread) => { return result; }
+        result = wait_for_reset(resets, &user, &thread) => { return result; }
     }
     Ok(())
 }
@@ -448,25 +158,9 @@ pub(crate) async fn synchronize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::poll;
-    use std::task::Poll;
-
-    fn batch(item: u32) -> WorkBatch {
-        WorkBatch {
-            expected: WorkPosition { part: 0, item },
-            through: WorkPosition {
-                part: 0,
-                item: item + 1,
-            },
-            sections: Vec::new(),
-            removed: Vec::new(),
-            memberships: Vec::new(),
-            finished_run_id: None,
-        }
-    }
 
     #[test]
-    fn historical_download_pages_do_not_shift_with_the_live_tail() {
+    fn downloads_newest_pages_first_without_shifting_old_pages() {
         for total in 13..=16 {
             let mut pending = vec![(0, total)];
             assert_eq!(pop_download_page(&mut pending), Some((12, total)));
@@ -475,119 +169,5 @@ mod tests {
             }
             assert_eq!(pop_download_page(&mut pending), None);
         }
-        let mut pending = vec![(3, 6)];
-        assert_eq!(pop_download_page(&mut pending), Some((4, 6)));
-        assert_eq!(pop_download_page(&mut pending), Some((3, 4)));
-        assert_eq!(pop_download_page(&mut pending), None);
-
-        let mut pending = vec![(u32::MAX - 1, u32::MAX)];
-        assert_eq!(
-            pop_download_page(&mut pending),
-            Some((u32::MAX - 1, u32::MAX))
-        );
-    }
-
-    #[test]
-    fn ready_transcripts_require_fewer_commit_requests() {
-        use serde_json::json;
-        use sprocket_agent::{TranscriptPart, WorkReplica};
-
-        fn count_commits(parts: &[TranscriptPart], grouped: bool) -> usize {
-            let dir = tempfile::tempdir().unwrap();
-            let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-            replica.save_parts("thread", parts).unwrap();
-            let mut remote = WorkPosition::default();
-            let mut commits = 0;
-            loop {
-                let pending = replica
-                    .advance_batches(remote, if grouped { 8 } else { 1 })
-                    .unwrap();
-                if pending.is_empty() {
-                    break;
-                }
-                let submitted = if grouped {
-                    grouped_commit_prefix(&pending, remote).unwrap()
-                } else {
-                    pending
-                };
-                remote = submitted.last().unwrap().through;
-                replica.acknowledge_batches(remote).unwrap();
-                commits += 1;
-            }
-            commits
-        }
-
-        let parts: Vec<TranscriptPart> = (0..32).map(|number| serde_json::from_value(json!({
-            "number":number,"sourceKey":format!("completion:{number}"),"runId":"run","kind":"completion",
-            "completion":{"items":[{"type":"text","text":"Text"}]}
-        })).unwrap()).collect();
-        assert_eq!(count_commits(&parts, false), 32);
-        assert_eq!(count_commits(&parts, true), 8);
-
-        let calls: Vec<_> = (0..32)
-            .map(|number| {
-                json!({
-                    "type":"tool-call","callId":format!("call-{number}"),"name":"read","input":{}
-                })
-            })
-            .collect();
-        let part: TranscriptPart = serde_json::from_value(json!({
-            "number":0,"sourceKey":"completion:tools","runId":"run","kind":"completion",
-            "completion":{"items":calls}
-        }))
-        .unwrap();
-        assert_eq!(count_commits(std::slice::from_ref(&part), false), 32);
-        assert_eq!(count_commits(&[part], true), 4);
-    }
-
-    #[test]
-    fn grouped_commits_rebase_the_first_batch_after_a_mid_batch_conflict() {
-        let mut first = batch(0);
-        first.through.item = 4;
-        let backlog = vec![first, batch(4), batch(5), batch(6)];
-        let remote = WorkPosition { part: 0, item: 2 };
-        let grouped = grouped_commit_prefix(&backlog, remote).unwrap();
-        assert_eq!(grouped[0].expected, remote);
-        assert_eq!(grouped[0].through, backlog[0].through);
-        assert_eq!(grouped[1].expected, backlog[1].expected);
-    }
-
-    #[test]
-    fn grouping_stops_before_exceeding_the_raw_part_limit() {
-        let backlog: Vec<_> = (0..6)
-            .map(|part| WorkBatch {
-                expected: WorkPosition { part, item: 0 },
-                through: WorkPosition {
-                    part: part + 1,
-                    item: 0,
-                },
-                sections: Vec::new(),
-                removed: Vec::new(),
-                memberships: Vec::new(),
-                finished_run_id: None,
-            })
-            .collect();
-        let grouped = grouped_commit_prefix(&backlog, WorkPosition::default()).unwrap();
-        assert_eq!(grouped.len(), MAX_COMMIT_PARTS);
-    }
-
-    #[tokio::test]
-    async fn idle_sync_restarts_only_for_its_replica_or_missed_resets() {
-        let (resets, receiver) = broadcast::channel(1);
-        let waiting = wait_for_reset(receiver, "user", "thread");
-        tokio::pin!(waiting);
-        assert!(poll!(&mut waiting).is_pending());
-        resets.send(("other-user".into(), "thread".into())).unwrap();
-        assert!(poll!(&mut waiting).is_pending());
-        resets.send(("user".into(), "other-thread".into())).unwrap();
-        assert!(poll!(&mut waiting).is_pending());
-        resets.send(("user".into(), "thread".into())).unwrap();
-        assert!(matches!(poll!(&mut waiting), Poll::Ready(Err(_))));
-
-        let receiver = resets.subscribe();
-        for _ in 0..2 {
-            resets.send(("other-user".into(), "thread".into())).unwrap();
-        }
-        assert!(wait_for_reset(receiver, "user", "thread").await.is_err());
     }
 }

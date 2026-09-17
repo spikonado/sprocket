@@ -6,30 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::read_index::ReadIndex;
-use super::sections::{
-    POSITION_STRIDE, WorkBatch, WorkEngine, WorkIndex, WorkMembership, WorkPosition, WorkSection,
-};
-use super::work_index::SqlWorkIndex;
+use super::sections::{POSITION_STRIDE, WorkItem, WorkPosition, WorkSection};
 use super::{TranscriptPart, TranscriptStore};
 
 pub struct WorkReplica {
     db: Connection,
-}
-
-pub struct SectionPartition {
-    pub after: String,
-    pub before: Option<String>,
-    pub sections: Vec<WorkSection>,
-}
-
-pub struct WorkSnapshot {
-    pub through: WorkPosition,
-    pub total: u32,
-    pub complete: bool,
-    pub active_run_id: Option<String>,
-    pub sections: Vec<SectionPartition>,
-    pub memberships: Vec<WorkMembership>,
-    pub membership_pages: Vec<u32>,
 }
 
 impl WorkReplica {
@@ -71,9 +52,6 @@ impl WorkReplica {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS parts (number INTEGER PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, item_count INTEGER NOT NULL, body TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS memberships (number INTEGER PRIMARY KEY, processed INTEGER NOT NULL, body TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS memberships_section ON memberships(json_extract(body,'$.sectionKey'));
-            CREATE TABLE IF NOT EXISTS membership_refresh (start INTEGER PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS sections (key TEXT PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS coverage (start INTEGER PRIMARY KEY, end INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS rows (id TEXT PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE, part INTEGER NOT NULL, offset INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL);
@@ -81,7 +59,6 @@ impl WorkReplica {
             CREATE INDEX IF NOT EXISTS changes_generation_sequence ON changes(generation, sequence);
             INSERT OR IGNORE INTO state VALUES ('generation', '0');"
         )?;
-        SqlWorkIndex::initialize(&db)?;
         ReadIndex::initialize(&db)?;
         db.execute(
             "INSERT OR IGNORE INTO state VALUES ('replicaId',?)",
@@ -108,10 +85,6 @@ impl WorkReplica {
             params![key, serde_json::to_string(value)?],
         )?;
         Ok(())
-    }
-
-    pub fn through(&self) -> anyhow::Result<WorkPosition> {
-        Ok(self.state("through")?.unwrap_or_default())
     }
 
     pub fn has_part(&self, number: u32) -> anyhow::Result<bool> {
@@ -163,15 +136,6 @@ impl WorkReplica {
         Ok(())
     }
 
-    fn touch_row(db: &Connection, id: &str, generation: i64) -> anyhow::Result<()> {
-        db.execute(
-            "UPDATE rows SET body=json_set(body,'$.revision',?) WHERE id=?",
-            params![generation, id],
-        )?;
-        db.execute("INSERT INTO changes SELECT id,sequence,? FROM rows WHERE id=? ON CONFLICT(id) DO UPDATE SET generation=excluded.generation",params![generation,id])?;
-        Ok(())
-    }
-
     fn record_download(db: &Connection, number: u32) -> anyhow::Result<()> {
         let number = i64::from(number);
         let (start, end): (i64, i64) = db.query_row(
@@ -188,6 +152,117 @@ impl WorkReplica {
         Ok(())
     }
 
+    fn rebuild_section(
+        db: &Connection,
+        thread_id: &str,
+        key: &str,
+        generation: i64,
+    ) -> anyhow::Result<()> {
+        let index = ReadIndex(db);
+        let items = index.page(key, -1, i64::MAX, false, u32::MAX)?;
+        if items.is_empty() {
+            db.execute("DELETE FROM sections WHERE key=?", [key])?;
+            db.execute("DELETE FROM rows WHERE id=?", [key])?;
+            return Ok(());
+        }
+        let canonical = items.iter().filter(|item| item.canonical);
+        let first = canonical
+            .clone()
+            .map(|item| item.source)
+            .min()
+            .or_else(|| items.iter().map(|item| item.source).min())
+            .context("section has no first item")?;
+        let last = canonical
+            .map(|item| item.source)
+            .max()
+            .or_else(|| items.iter().map(|item| item.source).max())
+            .context("section has no last item")?;
+        let run_id = items[0].run_id.clone();
+        anyhow::ensure!(
+            items.iter().all(|item| item.run_id == run_id),
+            "section spans runs"
+        );
+        let pending_tools = items
+            .iter()
+            .filter(|item| item.call_id.is_some() && (item.result_part.is_none() || item.running))
+            .count() as u32;
+        let started_at = items
+            .iter()
+            .filter_map(|item| item.started_at)
+            .min_by(f64::total_cmp);
+        let completed_at = (pending_tools == 0)
+            .then(|| {
+                items
+                    .iter()
+                    .filter_map(WorkItem::known_completion)
+                    .max_by(f64::total_cmp)
+            })
+            .flatten();
+        let mut closed = false;
+        let mut statement = db.prepare(
+            "SELECT body FROM parts WHERE json_extract(body,'$.runId')=? ORDER BY number",
+        )?;
+        let bodies: Vec<String> = statement
+            .query_map([&run_id], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        for body in bodies {
+            let part: TranscriptPart = serde_json::from_str(&body)?;
+            for range in &part.work_assignment().ranges {
+                let at = WorkPosition {
+                    part: part.number,
+                    item: range.start,
+                };
+                if range.section_key != key && at > first {
+                    closed = true;
+                }
+                if range.section_key == key
+                    && part
+                        .content_items()
+                        .iter()
+                        .skip(range.end as usize)
+                        .any(|item| {
+                            item["type"] == "text"
+                                && item["text"]
+                                    .as_str()
+                                    .is_some_and(|text| !text.trim().is_empty())
+                        })
+                {
+                    closed = true;
+                }
+            }
+        }
+        let section = WorkSection {
+            key: key.to_owned(),
+            run_id,
+            first,
+            end: WorkPosition {
+                part: last.part,
+                item: last.item.saturating_add(1),
+            },
+            closed,
+            provisional: false,
+            item_count: u32::try_from(items.len())?,
+            pending_tools,
+            started_at,
+            completed_at,
+        };
+        db.execute(
+            "INSERT INTO sections VALUES (?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+            params![key, serde_json::to_string(&section)?],
+        )?;
+        let mut row = serde_json::to_value(&section)?;
+        row["id"] = json!(section.key);
+        row["threadId"] = json!(thread_id);
+        row["sequence"] = json!(section.first.sequence());
+        row["kind"] = json!("work");
+        if let Some(object) = row.as_object_mut() {
+            object.remove("key");
+            object.remove("first");
+            object.remove("end");
+        }
+        Self::put_row(db, row, section.first, generation)
+    }
+
     pub fn save_parts(&mut self, thread_id: &str, parts: &[TranscriptPart]) -> anyhow::Result<()> {
         let generation = self.generation()? + 1;
         let tx = self.db.transaction()?;
@@ -195,7 +270,7 @@ impl WorkReplica {
             let count = part
                 .completion
                 .as_ref()
-                .map_or(1, |completion| completion.items.len().max(1));
+                .map_or(1, |_| part.content_items().len().max(1));
             anyhow::ensure!(count <= 8192, "invalid completion item count");
             let body = serde_json::to_string(&part.without_ephemeral_urls())?;
             let previous: Option<(String, String)> = tx
@@ -219,9 +294,16 @@ impl WorkReplica {
             )?;
             Self::record_download(&tx, part.number)?;
             ReadIndex(&tx).insert_part(part)?;
-            for section in ReadIndex(&tx).affected_sections(part.number)? {
-                Self::touch_row(&tx, &section, generation)?;
-            }
+            let mut affected = ReadIndex(&tx).affected_sections(part.number)?;
+            affected.extend(
+                tx.prepare(
+                    "SELECT DISTINCT section FROM source_refs WHERE run=? AND section IS NOT NULL",
+                )?
+                .query_map([&part.run_id], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?,
+            );
+            affected.sort();
+            affected.dedup();
             for item in ReadIndex(&tx).approvals_for_part(part.number)? {
                 if let Some((mandate_id, approval_url)) = item.approval {
                     Self::put_row(
@@ -248,8 +330,8 @@ impl WorkReplica {
                     generation,
                 )?;
             }
-            if let Some(completion) = &part.completion {
-                for (offset, item) in completion.items.iter().enumerate() {
+            if part.completion.is_some() {
+                for (offset, item) in part.content_items().iter().enumerate() {
                     if item["type"] == "text"
                         && item["text"]
                             .as_str()
@@ -268,247 +350,31 @@ impl WorkReplica {
                     }
                 }
             }
-        }
-        Self::put_state(&tx, "generation", &generation)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub fn save_snapshot(&mut self, thread_id: &str, snapshot: WorkSnapshot) -> anyhow::Result<()> {
-        let generation = self.generation()? + 1;
-        let previous: WorkPosition = self.state("cloudThrough")?.unwrap_or_default();
-        anyhow::ensure!(
-            snapshot.through >= previous,
-            "remote work checkpoint regressed"
-        );
-        let tx = self.db.transaction()?;
-        if snapshot.through > previous {
-            let end = snapshot.through.part + u32::from(snapshot.through.item > 0);
-            for start in ((previous.part / 8 * 8)..end).step_by(8) {
-                tx.execute(
-                    "INSERT OR IGNORE INTO membership_refresh VALUES (?)",
-                    [start],
-                )?;
+            for section in affected {
+                Self::rebuild_section(&tx, thread_id, &section, generation)?;
             }
         }
-        for partition in snapshot.sections {
-            let keys: Vec<String> = tx
-                .prepare("SELECT key FROM sections WHERE key>? AND (? IS NULL OR key<=?)")?
-                .query_map(
-                    params![partition.after, partition.before, partition.before],
-                    |row| row.get(0),
-                )?
-                .collect::<Result<_, _>>()?;
-            for key in keys {
-                if partition.sections.iter().any(|section| section.key == key) {
-                    continue;
-                }
-                tx.execute("INSERT OR IGNORE INTO membership_refresh SELECT number/8*8 FROM memberships WHERE json_extract(body,'$.sectionKey')=?", [&key])?;
-                tx.execute("DELETE FROM sections WHERE key=?", [&key])?;
-                tx.execute("INSERT INTO changes SELECT id,sequence,? FROM rows WHERE id=? ON CONFLICT(id) DO UPDATE SET generation=excluded.generation", params![generation,key])?;
-                tx.execute("DELETE FROM rows WHERE id=?", [&key])?;
-            }
-            for section in partition.sections {
-                tx.execute("INSERT INTO sections VALUES (?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body", params![section.key,serde_json::to_string(&section)?])?;
-                let mut row = serde_json::to_value(&section)?;
-                row["id"] = json!(section.key);
-                row["threadId"] = json!(thread_id);
-                row["sequence"] = json!(section.first.sequence());
-                row["kind"] = json!("work");
-                if let Some(object) = row.as_object_mut() {
-                    object.remove("key");
-                    object.remove("first");
-                    object.remove("end");
-                }
-                Self::put_row(&tx, row, section.first, generation)?;
-            }
-        }
-        for membership in snapshot.memberships {
-            tx.execute("INSERT INTO memberships VALUES (?,?,?) ON CONFLICT(number) DO UPDATE SET processed=excluded.processed,body=excluded.body",
-                params![membership.number,membership.processed,serde_json::to_string(&membership)?])?;
-            ReadIndex(&tx).link(&membership)?;
-            for section in ReadIndex(&tx).affected_sections(membership.number)? {
-                Self::touch_row(&tx, &section, generation)?;
-            }
-            tx.execute("INSERT INTO changes SELECT id,sequence,? FROM rows WHERE part=? ON CONFLICT(id) DO UPDATE SET generation=excluded.generation",
-                params![generation,membership.number])?;
-        }
-        for start in snapshot.membership_pages {
-            tx.execute("DELETE FROM membership_refresh WHERE start=?", [start])?;
-        }
-        Self::put_state(&tx, "cloudThrough", &snapshot.through)?;
-        Self::put_state(&tx, "total", &snapshot.total)?;
-        Self::put_state(&tx, "metadataComplete", &snapshot.complete)?;
-        Self::put_state(&tx, "activeRun", &snapshot.active_run_id)?;
-        Self::put_state(&tx, "generation", &generation)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub fn pending_membership_pages(&self, limit: u32) -> anyhow::Result<Vec<u32>> {
-        Ok(self
-            .db
-            .prepare("SELECT start FROM membership_refresh ORDER BY start DESC LIMIT ?")?
-            .query_map([limit], |row| row.get(0))?
-            .collect::<Result<_, _>>()?)
-    }
-
-    pub fn pending_batch(&self) -> anyhow::Result<Option<WorkBatch>> {
-        Ok(self.pending_batches()?.into_iter().next())
-    }
-
-    pub fn pending_batches(&self) -> anyhow::Result<Vec<WorkBatch>> {
-        if let Some(batches) = self.state("pendingBatches")? {
-            return Ok(batches);
-        }
-        Ok(self.state("pendingBatch")?.into_iter().collect())
-    }
-
-    pub fn run_synced(&self, run: &str) -> anyhow::Result<bool> {
-        if !self.state::<bool>("metadataComplete")?.unwrap_or(false)
-            || self
-                .state::<Option<String>>("activeRun")?
-                .flatten()
-                .as_deref()
-                == Some(run)
-            || self.pending_batch()?.is_some()
-            || self.through()?.part != self.state::<u32>("total")?.unwrap_or(0)
-        {
-            return Ok(false);
-        }
-        let unsettled = self
-            .db
-            .query_row(
-                "SELECT 1 FROM work_sections WHERE settled=0 AND run=? LIMIT 1",
-                [run],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        let unpublished = self.db.query_row("SELECT 1 FROM sections WHERE json_extract(body,'$.runId')=? AND (json_extract(body,'$.closed')=0 OR json_extract(body,'$.pendingTools')>0) LIMIT 1", [run], |_| Ok(())).optional()?.is_some();
-        Ok(!unsettled && !unpublished)
-    }
-
-    pub fn acknowledge_batch(&mut self, through: WorkPosition) -> anyhow::Result<()> {
-        self.acknowledge_batches(through)
-    }
-
-    pub fn acknowledge_batches(&mut self, through: WorkPosition) -> anyhow::Result<()> {
-        let mut pending = self.pending_batches()?;
-        let acknowledged = pending
+        if let Some(local_total) = parts
             .iter()
-            .position(|batch| batch.through == through)
-            .context("work acknowledgment mismatch")?;
-        pending.drain(..=acknowledged);
-        let tx = self.db.transaction()?;
-        Self::put_state(&tx, "pendingBatches", &pending)?;
-        tx.execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
+            .filter_map(|part| part.number.checked_add(1))
+            .max()
+        {
+            let remote_total: u32 = tx
+                .query_row("SELECT value FROM state WHERE key='total'", [], |row| {
+                    row.get(0)
+                })
+                .optional()?
+                .and_then(|value: String| value.parse().ok())
+                .unwrap_or(0);
+            Self::put_state(&tx, "total", &remote_total.max(local_total))?;
+        }
+        Self::put_state(&tx, "generation", &generation)?;
         tx.commit()?;
         Ok(())
     }
 
-    pub fn advance(&mut self, remote_through: WorkPosition) -> anyhow::Result<Option<WorkBatch>> {
-        Ok(self.advance_batches(remote_through, 1)?.into_iter().next())
-    }
-
-    pub fn advance_batches(
-        &mut self,
-        remote_through: WorkPosition,
-        limit: usize,
-    ) -> anyhow::Result<Vec<WorkBatch>> {
-        anyhow::ensure!(limit > 0, "work batch queue limit must be positive");
-        let mut pending = self.pending_batches()?;
-        if pending.len() >= limit
-            || pending
-                .last()
-                .is_some_and(|batch| batch.finished_run_id.is_some())
-        {
-            return Ok(pending);
-        }
-        let mut engine: WorkEngine = self.state("engine")?.unwrap_or_default();
-        let previous_count = pending.len();
-        let tx = self.db.transaction()?;
-        while pending.len() < limit {
-            let body: Option<String> = tx
-                .query_row(
-                    "SELECT body FROM parts WHERE number=?",
-                    [engine.through.part],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let Some(part) = body.map(|body| serde_json::from_str(&body)).transpose()? else {
-                break;
-            };
-            let item_limit = if engine.through.part == remote_through.part
-                && engine.through.item < remote_through.item
-            {
-                (remote_through.item - engine.through.item) as usize
-            } else {
-                engine.batch_limit(&part)
-            };
-            let batch = engine.advance(&SqlWorkIndex(&tx), &part, item_limit)?;
-            pending.push(batch);
-        }
-        if pending.len() == previous_count {
-            return Ok(pending);
-        }
-        Self::put_state(&tx, "engine", &engine)?;
-        Self::put_state(&tx, "through", &engine.through)?;
-        Self::put_state(&tx, "pendingBatches", &pending)?;
-        tx.execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
-        tx.commit()?;
-        Ok(pending)
-    }
-
-    pub fn finish_inactive(
-        &mut self,
-        active_run: Option<&str>,
-        through: WorkPosition,
-    ) -> anyhow::Result<Option<WorkBatch>> {
-        if let Some(batch) = self.pending_batch()? {
-            return Ok(Some(batch));
-        }
-        if self.through()? != through {
-            return Ok(None);
-        }
-        let run: Option<String> = self.db.query_row(
-            "SELECT run FROM work_sections WHERE settled=0 AND (? IS NULL OR run<>?) ORDER BY run,key LIMIT 1",
-            params![active_run,active_run], |row| row.get(0)).optional()?;
-        let Some(run) = run else {
-            return Ok(None);
-        };
-        let tx = self.db.transaction()?;
-        let keys: Vec<String> = tx
-            .prepare(
-                "SELECT key FROM work_sections WHERE settled=0 AND run=? ORDER BY key LIMIT 4",
-            )?
-            .query_map([&run], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        let index = SqlWorkIndex(&tx);
-        let mut sections = Vec::new();
-        for key in keys {
-            let mut section = index.section(&key)?.context("work section missing")?;
-            section.closed = true;
-            if section.pending_tools > 0 {
-                section.completed_at = None;
-            }
-            section.pending_tools = 0;
-            index.save_section(&section)?;
-            tx.execute("UPDATE work_sections SET settled=1 WHERE key=?", [&key])?;
-            sections.push(section);
-        }
-        let batch = WorkBatch {
-            expected: through,
-            through,
-            sections,
-            removed: Vec::new(),
-            memberships: Vec::new(),
-            finished_run_id: Some(run),
-        };
-        Self::put_state(&tx, "pendingBatches", &vec![batch.clone()])?;
-        tx.execute("DELETE FROM state WHERE key='pendingBatch'", [])?;
-        tx.commit()?;
-        Ok(Some(batch))
+    pub fn set_remote_total(&mut self, total: u32) -> anyhow::Result<()> {
+        Self::put_state(&self.db, "total", &total)
     }
 
     pub fn page(
@@ -523,7 +389,7 @@ impl WorkReplica {
         let total: u32 = self.state("total")?.unwrap_or(0);
         let end = i64::from(total) * i64::try_from(POSITION_STRIDE)?;
         let before = before.map(i64::try_from).transpose()?.unwrap_or(end);
-        let ready = "(r.kind='work' OR EXISTS (SELECT 1 FROM memberships m WHERE m.number=r.part AND m.processed>r.offset))";
+        let ready = "1=1";
         let mut rows: Vec<Value> = self.db.prepare(&format!("SELECT r.body FROM rows r WHERE r.sequence<? AND {ready} ORDER BY r.sequence DESC LIMIT ?"))?
             .query_map(params![before,limit+1], |row| row.get::<_,String>(0))?.map(|row| Ok(serde_json::from_str(&row?)?)).collect::<anyhow::Result<_>>()?;
         let more = rows.len() > limit as usize;
@@ -536,15 +402,7 @@ impl WorkReplica {
             })
             .optional()?
             .unwrap_or(0);
-        let through: WorkPosition = self.state("cloudThrough")?.unwrap_or_default();
-        let pending_membership: Option<u32> =
-            self.db
-                .query_row("SELECT MIN(start) FROM membership_refresh", [], |row| {
-                    row.get(0)
-                })?;
-        let ready_prefix = downloaded_prefix
-            .min(through.part)
-            .min(pending_membership.unwrap_or(total));
+        let ready_prefix = downloaded_prefix;
         let first_sequence = rows.first().and_then(|row| row["sequence"].as_u64());
         let missing_older = first_sequence.is_some_and(|sequence| {
             sequence > 0 && u64::from(ready_prefix) * POSITION_STRIDE < sequence
@@ -571,20 +429,26 @@ impl WorkReplica {
                 }
             }
         }
-        let complete = self.state::<bool>("metadataComplete")?.unwrap_or(false);
+        let complete = downloaded_prefix >= total;
         let mut persisted = Vec::new();
         if complete {
             for (run, stream) in streams {
                 let source_key = format!("completion:{run}:{stream}");
-                let found = self.db.query_row("SELECT 1 FROM parts p JOIN memberships m USING(number) WHERE p.source_key=? AND p.number<? AND m.processed=p.item_count",
-                    params![source_key,through.part], |_| Ok(())).optional()?.is_some();
+                let found = self
+                    .db
+                    .query_row(
+                        "SELECT 1 FROM parts WHERE source_key=?",
+                        params![source_key],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some();
                 if found {
                     persisted.push(json!({"runId":run,"streamId":stream}));
                 }
             }
         }
-        let handoff_pending = persisted.len() < streams.len()
-            && (!complete || through.item != 0 || ready_prefix < through.part);
+        let handoff_pending = persisted.len() < streams.len() && !complete;
         let indexing = handoff_pending
             || (!stale && !complete)
             || (rows.is_empty()
@@ -621,7 +485,15 @@ impl WorkReplica {
         let index = ReadIndex(&self.db);
         let complete = match &row {
             Some(row) => index.item_count(section)? == row.item_count,
-            None => self.state::<bool>("metadataComplete")?.unwrap_or(false),
+            None => self
+                .db
+                .query_row(
+                    "SELECT end+1>=? FROM coverage WHERE start=0",
+                    [self.state::<u32>("total")?.unwrap_or(0)],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(false),
         };
         let mut items = index.page(section, after, before, descending, limit)?;
         if descending {
@@ -643,7 +515,7 @@ impl WorkReplica {
                 .map(|number| self.part(number))
                 .transpose()?
                 .flatten();
-            parts.extend(WorkEngine::detail(item, &source, result.as_ref()));
+            parts.extend(super::sections::detail(item, &source, result.as_ref()));
         }
         let mut page = json!({"parts":parts,"indexing":!complete && items.is_empty() && !stale,"stale":stale,"revision":self.generation()?});
         if let Some(first) = items.first() {

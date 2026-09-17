@@ -21,7 +21,12 @@ import {
 import { selectedThreadLifecycle } from '@convex/chat';
 import { complete, fail, getJob } from '@convex/executor';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	toolTranscriptAssignment
+} from './test.setup';
 
 function callHandler<Ref extends FunctionReference<'query' | 'mutation'>>(
 	_reference: Ref,
@@ -60,6 +65,7 @@ describe('run execution state', () => {
 		const callId = 'command-call';
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
+			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind,
 			callId,
 			payload: kind === 'exec_command' ? { cmd: 'echo ok' } : { sessionId: '1' }
@@ -105,6 +111,7 @@ describe('run execution state', () => {
 		const { asUser, auth } = await startedRun();
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
+			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind: 'exec_command',
 			payload: { cmd: 'echo ok' }
 		});
@@ -142,11 +149,13 @@ describe('run execution state', () => {
 			);
 			const first = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
 				...auth,
+				...toolTranscriptAssignment(auth.runId, auth.claimId, 1, 1),
 				kind: 'exec_command',
 				payload: { cmd: 'true' }
 			});
 			const second = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
 				...auth,
+				...toolTranscriptAssignment(auth.runId, auth.claimId, 2, 1),
 				kind: 'exec_command',
 				payload: { cmd: 'false' }
 			});
@@ -207,6 +216,7 @@ describe('run execution state', () => {
 		const { asUser, threadId, auth } = await startedRun();
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
+			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind: 'exec_command',
 			payload: { cmd: 'true' }
 		});

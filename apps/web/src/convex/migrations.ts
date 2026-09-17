@@ -3,7 +3,11 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
-import { getTranscriptMembership, MEMBERSHIP_MIGRATION } from '@convex/lib/transcriptMemberships';
+import {
+	sectionDisplayOrder,
+	writeCompletionSectionData,
+	writeToolSectionData
+} from '@convex/lib/transcriptSectionWrites';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -13,50 +17,125 @@ export const migrations = new Migrations(components.migrations, {
 	internalMutation
 });
 
-export const moveTranscriptMemberships = migrations.define({
+export const assignTranscriptSectionsAtWriteTime = migrations.define({
 	table: 'threadTranscriptParts',
-	batchSize: 4,
+	batchSize: 50,
 	migrateOne: async (ctx, part) => {
-		if (!part.work) return;
-		if (!(await getTranscriptMembership(ctx, part.threadId, part.number))) {
-			await ctx.db.insert('threadTranscriptMemberships', {
-				threadId: part.threadId,
-				number: part.number,
-				work: part.work
+		const legacy = await ctx.db
+			.query('threadTranscriptMemberships')
+			.withIndex('by_threadId_and_number', (q) =>
+				q.eq('threadId', part.threadId).eq('number', part.number)
+			)
+			.unique();
+		const priorWork = part.work ?? legacy?.work ?? { ranges: [] };
+		if (part.kind === 'completion' && part.completion) {
+			const ranges = priorWork.ranges;
+			const work = { ...priorWork, ranges, processed: undefined };
+			const sections = new Map<
+				string,
+				{ sectionKey: string; sectionOrdinal: number; closed: boolean }
+			>();
+			for (const range of ranges) {
+				if (sections.has(range.sectionKey)) continue;
+				const old = await ctx.db
+					.query('threadTranscriptWorkSections')
+					.withIndex('by_threadId_and_key', (q) =>
+						q.eq('threadId', part.threadId).eq('key', range.sectionKey)
+					)
+					.unique();
+				sections.set(range.sectionKey, {
+					sectionKey: range.sectionKey,
+					sectionOrdinal: old?.sectionOrdinal ?? part.number * 8192 + range.start,
+					closed: old?.closed ?? true
+				});
+			}
+			await writeCompletionSectionData(ctx, {
+				part: { ...part, work },
+				work,
+				sections: [...sections.values()],
+				preserveExistingSummaries: true
 			});
+			return { work };
 		}
-		return { work: undefined };
+		if (part.kind === 'tool' && part.tool) {
+			const sectionKey = priorWork.sectionKey;
+			if (!sectionKey) return { work: { ranges: [] } };
+			const old = await ctx.db
+				.query('threadTranscriptWorkSections')
+				.withIndex('by_threadId_and_key', (q) =>
+					q.eq('threadId', part.threadId).eq('key', sectionKey)
+				)
+				.unique();
+			await writeToolSectionData(ctx, {
+				part: { ...part, work: { ranges: [], sectionKey } },
+				sectionKey,
+				sectionOrdinal: old?.sectionOrdinal ?? part.number * 8192,
+				toolInvocationId: part.tool.toolInvocationId ?? part.tool.callId,
+				started: part.tool.status === 'started',
+				occurredAt: part._creationTime,
+				preserveExistingSummary: true
+			});
+			return { work: { ranges: [], sectionKey } };
+		}
+		return { work: { ranges: [] } };
 	}
 });
 
-export const finishTranscriptMembershipMigration = migrations.define({
-	table: 'migrationSchedules',
-	customRange: (q) => q.withIndex('by_name', (q) => q.eq('name', MEMBERSHIP_MIGRATION)),
-	migrateOne: () => ({ completedAt: Date.now() })
+export const deleteLegacyTranscriptMemberships = migrations.define({
+	table: 'threadTranscriptMemberships',
+	batchSize: 50,
+	migrateOne: async (ctx, row) => {
+		if (row.number === undefined) return;
+		await ctx.db.delete('threadTranscriptMemberships', row._id);
+	}
 });
 
-export const runTranscriptMembershipMigration = internalMutation({
+export const backfillTranscriptSectionDisplayOrder = migrations.define({
+	table: 'threadTranscriptWorkSections',
+	batchSize: 50,
+	migrateOne: async (ctx, section) => {
+		const run = await ctx.db.get('runs', section.runId);
+		if (!run) throw new Error('Transcript section run not found.');
+		const sectionOrdinal = section.sectionOrdinal ?? section.first.part * 8192 + section.first.item;
+		return {
+			sectionOrdinal,
+			displayOrder: sectionDisplayOrder(run.startedAt, run._id, sectionOrdinal)
+		};
+	}
+});
+
+const WRITE_TIME_SECTION_MIGRATION = 'transcript-write-time-sections-v1';
+
+export const runTranscriptWriteTimeSectionMigration = internalMutation({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
 		const schedule = await ctx.db
 			.query('migrationSchedules')
-			.withIndex('by_name', (q) => q.eq('name', MEMBERSHIP_MIGRATION))
+			.withIndex('by_name', (q) => q.eq('name', WRITE_TIME_SECTION_MIGRATION))
 			.unique();
 		if (schedule?.completedAt !== undefined) return null;
+		let scheduleId = schedule?._id;
 		if (!schedule) {
-			await ctx.db.insert('migrationSchedules', {
-				name: MEMBERSHIP_MIGRATION,
+			scheduleId = await ctx.db.insert('migrationSchedules', {
+				name: WRITE_TIME_SECTION_MIGRATION,
 				notBefore: Date.now(),
 				startedAt: Date.now()
 			});
 		} else if (schedule.startedAt === undefined) {
 			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
 		}
-		await migrations.runSerially(ctx, [
-			internal.migrations.moveTranscriptMemberships,
-			internal.migrations.finishTranscriptMembershipMigration
-		]);
+		const migrationList = [
+			internal.migrations.assignTranscriptSectionsAtWriteTime,
+			internal.migrations.backfillTranscriptSectionDisplayOrder,
+			internal.migrations.deleteLegacyTranscriptMemberships
+		];
+		const statuses = await migrations.getStatus(ctx, { migrations: migrationList });
+		if (statuses.every((status) => status.isDone)) {
+			await ctx.db.patch('migrationSchedules', scheduleId!, { completedAt: Date.now() });
+			return null;
+		}
+		await migrations.runSerially(ctx, migrationList);
 		return null;
 	}
 });

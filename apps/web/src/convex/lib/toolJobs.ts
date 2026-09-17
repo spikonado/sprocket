@@ -2,8 +2,8 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { WorkId } from '@convex-dev/workpool';
 import { patchRunExecution } from '@convex/lib/runExecution';
-import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
+import { sameValue } from '@convex/lib/transcriptParts';
 import {
 	enqueueWebSearchJob,
 	isCloudWebSearchKind,
@@ -60,10 +60,42 @@ export async function beginExecutorJob(
 		payload: Doc<'executorJobs'>['payload'];
 		callId?: string;
 		hidden?: boolean;
+		toolInvocationId: string;
+		sectionKey?: string;
+		sectionOrdinal: number;
+		attemptSeq: number;
+		streamId: string;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
 	if (args.kind === 'parse_file' && !('path' in args.payload)) {
 		unsupportedClient();
+	}
+	if (!args.hidden && !args.sectionKey) {
+		throw new Error('Visible tool job requires a section key.');
+	}
+	if (!Number.isSafeInteger(args.sectionOrdinal) || args.sectionOrdinal < 0) {
+		throw new Error('Invalid section ordinal.');
+	}
+	const existing = await ctx.db
+		.query('executorJobs')
+		.withIndex('by_runId_and_toolInvocationId', (query) =>
+			query.eq('runId', args.run._id).eq('toolInvocationId', args.toolInvocationId)
+		)
+		.unique();
+	if (existing) {
+		if (
+			existing.callId !== args.callId ||
+			existing.kind !== args.kind ||
+			existing.hidden !== (args.hidden ?? false) ||
+			!sameValue(existing.payload, args.payload) ||
+			existing.sectionKey !== args.sectionKey ||
+			existing.sectionOrdinal !== args.sectionOrdinal ||
+			existing.attemptSeq !== args.attemptSeq ||
+			existing.streamId !== args.streamId
+		) {
+			throw new Error('Conflicting tool invocation retry.');
+		}
+		return { jobId: existing._id, sequence: existing.sequence };
 	}
 	const lastJob = await ctx.db
 		.query('executorJobs')
@@ -71,8 +103,6 @@ export async function beginExecutorJob(
 		.order('desc')
 		.first();
 	const nextSequence = (lastJob?.sequence ?? -1) + 1;
-	const toolInvocationId = newToolInvocationId();
-
 	const job: Omit<Doc<'executorJobs'>, '_id' | '_creationTime'> = {
 		threadId: args.run.threadId,
 		runId: args.run._id,
@@ -83,7 +113,11 @@ export async function beginExecutorJob(
 		enqueuedAt: Date.now(),
 		claimedAt: Date.now(),
 		sequence: nextSequence,
-		toolInvocationId
+		toolInvocationId: args.toolInvocationId,
+		sectionKey: args.sectionKey,
+		sectionOrdinal: args.sectionOrdinal,
+		attemptSeq: args.attemptSeq,
+		streamId: args.streamId
 	};
 	if (args.callId) job.callId = args.callId;
 	const jobId = await ctx.db.insert('executorJobs', job);
@@ -96,11 +130,13 @@ export async function beginExecutorJob(
 	}
 
 	await patchRunExecution(ctx, args.run._id, { activeJobId: jobId });
+	const persistedJob = await ctx.db.get('executorJobs', jobId);
+	if (!persistedJob) throw new Error('Failed to create executor job.');
 	await recordStartedToolTranscript(ctx, {
 		threadId: args.run.threadId,
 		userId: args.run.userId,
 		runId: args.run._id,
-		job: { ...job, _id: jobId }
+		job: persistedJob
 	});
 
 	return {

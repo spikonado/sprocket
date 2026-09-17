@@ -230,24 +230,10 @@ pub(crate) async fn launch_agent(
                     )
                 };
                 let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
-                let mut transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
+                let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
                 let result = run_agent(run, live, transcript).await;
                 if let Some(output) = &output {
                     output.finish(result.as_ref().err().map(ToString::to_string));
-                }
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    transcript_watch.wait_for_run(&run_id),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        tracing::warn!("transcript sync after run {run_id} failed: {error:#}")
-                    }
-                    Err(_) => tracing::warn!(
-                        "transcript sync after run {run_id} timed out; it will resume when reopened"
-                    ),
                 }
                 if let Some(watch) = &artifact_watch {
                     if let Err(error) = watch.flush().await {

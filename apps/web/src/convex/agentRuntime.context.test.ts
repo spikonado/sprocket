@@ -7,6 +7,7 @@ import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import {
 	createQueuedRun,
+	emptyCompletionAssignments,
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
@@ -63,6 +64,7 @@ async function finalizeTextCompletion(
 				turnId: args.streamId
 			}
 		],
+		...emptyCompletionAssignments,
 		executionSecret: args.executionSecret
 	});
 }
@@ -100,7 +102,8 @@ async function appendFinishedToolPart(
 				callId: args.invocationId,
 				name: 'exec_command',
 				status: 'completed'
-			}
+			},
+			work: { ranges: [], sectionKey: `historical-tool:${args.runId}:${args.invocationId}` }
 		});
 	});
 }
@@ -442,7 +445,7 @@ describe('agentRuntime context accounting', () => {
 			streamId: 'stream-visible',
 			text: 'Finished the first step'
 		});
-		expect(completionNumber).toBe(1);
+		expect(completionNumber?.number).toBe(1);
 		await appendFinishedToolPart(t, {
 			threadId,
 			runId,

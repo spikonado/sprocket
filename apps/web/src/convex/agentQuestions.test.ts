@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { AGENT_DECIDE_OPTION_ID } from '@convex/lib/agentQuestions';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from '@convex/test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	toolTranscriptAssignment
+} from '@convex/test.setup';
 
 async function startRun(t: ReturnType<typeof initConvexTest>, threadId: Id<'threadRecords'>) {
 	const asUser = t.withIdentity({ subject: 'user_alice' });
@@ -25,6 +30,7 @@ async function startRun(t: ReturnType<typeof initConvexTest>, threadId: Id<'thre
 	await t.mutation(api.agentRuntime.beginToolJob, {
 		runId: created.runId,
 		claimId,
+		...toolTranscriptAssignment(created.runId, claimId),
 		kind: 'ask_question',
 		payload: {
 			question: 'placeholder',

@@ -173,7 +173,7 @@ where
         ..Default::default()
     }
     .to_json();
-    let tool_call_tracker = ToolCallTracker::default();
+    let tool_call_tracker = ToolCallTracker::new(&request.run_id, &request.claim_id);
     let tools = agent_tools(
         runtime.clone(),
         request.run_id.clone(),
@@ -241,6 +241,7 @@ where
         request.claim_id.clone(),
         request.thread_id.clone(),
         request.run_started_at,
+        tool_call_tracker.clone(),
     )
     .await
     {
@@ -261,7 +262,7 @@ where
         }
     };
 
-    let prompt_hook = AgentPromptHook::new(tool_call_tracker);
+    let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
     let initial_context: Arc<[Message]> = request.initial_context.into();
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
@@ -398,6 +399,10 @@ where
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                                 StreamedAssistantContent::ToolCall { tool_call, internal_call_id },
                             ))) => {
+                                tool_call_tracker.observe_streamed_call(
+                                    tool_call.id.as_str(),
+                                    &internal_call_id,
+                                );
                                 transcript.push_tool_call(
                                     Some(internal_call_id.to_string()),
                                     tool_call.wire_call_id().to_string(),
@@ -554,6 +559,7 @@ struct TranscriptSink {
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
+    tool_call_tracker: ToolCallTracker,
 }
 
 impl TranscriptSink {
@@ -564,6 +570,7 @@ impl TranscriptSink {
         claim_id: String,
         thread_id: String,
         run_started_at: u64,
+        tool_call_tracker: ToolCallTracker,
     ) -> anyhow::Result<Self> {
         runtime
             .register_completion_attempt(&run_id, &claim_id, 1)
@@ -582,6 +589,7 @@ impl TranscriptSink {
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
+            tool_call_tracker,
         })
     }
 
@@ -644,6 +652,7 @@ impl TranscriptSink {
                 self.attempt_seq,
                 &self.stream_id,
                 self.items_json(),
+                self.tool_call_tracker.completion_assignments(),
             )
             .await?;
         self.streamed = false;
@@ -664,7 +673,10 @@ impl TranscriptSink {
         );
         self.runtime
             .register_completion_attempt(&self.run_id, &self.claim_id, self.attempt_seq)
-            .await
+            .await?;
+        self.tool_call_tracker
+            .begin_attempt(self.attempt_seq, &self.stream_id);
+        Ok(())
     }
 
     async fn begin_next_turn_if_streamed(&mut self) -> anyhow::Result<()> {

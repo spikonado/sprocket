@@ -315,6 +315,7 @@ mod tests {
             }),
             completion: None,
             tool: None,
+            work: Default::default(),
         }
     }
 
@@ -343,6 +344,7 @@ mod tests {
                 output,
                 status: status.into(),
             }),
+            work: Default::default(),
         }
     }
 
@@ -364,6 +366,7 @@ mod tests {
                 })],
             }),
             tool: None,
+            work: Default::default(),
         }
     }
 
@@ -405,6 +408,7 @@ mod tests {
                         items: vec![serde_json::json!({ "type": "text", "text": "now" })],
                     }),
                     tool: None,
+                    work: Default::default(),
                 },
             ],
             Some("current"),
@@ -434,6 +438,7 @@ mod tests {
                         items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
                     }),
                     tool: None,
+                    work: Default::default(),
                 },
             ],
             Some("continuation"),
@@ -470,6 +475,7 @@ mod tests {
                         output: Some(serde_json::json!("orphan-output")),
                         status: "completed".into(),
                     }),
+                    work: Default::default(),
                 },
                 TranscriptPart {
                     number: 2,
@@ -488,6 +494,7 @@ mod tests {
                         })],
                     }),
                     tool: None,
+                    work: Default::default(),
                 },
                 TranscriptPart {
                     number: 3,
@@ -505,6 +512,7 @@ mod tests {
                         output: Some(serde_json::json!("keep-output")),
                         status: "completed".into(),
                     }),
+                    work: Default::default(),
                 },
             ],
             Some("run"),
@@ -637,6 +645,7 @@ mod tests {
                     }),
                     completion: None,
                     tool: None,
+                    work: Default::default(),
                 },
                 TranscriptPart {
                     number: 1,
@@ -659,6 +668,7 @@ mod tests {
                         })],
                     }),
                     tool: None,
+                    work: Default::default(),
                 },
             ],
             None,
@@ -685,6 +695,7 @@ mod tests {
                 items: vec![item],
             }),
             tool: None,
+            work: Default::default(),
         }
     }
 
@@ -799,6 +810,7 @@ mod tests {
                     ],
                 }),
                 tool: None,
+                work: Default::default(),
             }],
             None,
         );

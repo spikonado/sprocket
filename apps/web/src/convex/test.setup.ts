@@ -30,6 +30,28 @@ export type ConvexTestInstance = TestConvex<typeof schema>;
 
 type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
 
+export function toolTranscriptAssignment(
+	runId: Id<'runs'>,
+	claimId: string,
+	sectionOrdinal = 1,
+	attemptSeq = 0,
+	streamId = `test-stream-${sectionOrdinal}`
+) {
+	return {
+		attemptSeq,
+		streamId,
+		sectionOrdinal,
+		toolInvocationId: `test-invocation-${sectionOrdinal}`,
+		sectionKey: `agent:${runId}:${claimId}:${attemptSeq}:section:${sectionOrdinal}`
+	};
+}
+
+export const emptyCompletionAssignments = {
+	work: { ranges: [] },
+	toolInvocations: [],
+	sections: []
+};
+
 /** Fresh mock backend with our schema, functions, and registered components. */
 export function initConvexTest(): ConvexTestInstance {
 	// Match deployed Convex read/write limits so oversized transactions fail here.
@@ -196,6 +218,7 @@ export async function seedStartedWebJob(
 	const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
 		runId: created.runId,
 		claimId,
+		...toolTranscriptAssignment(created.runId, claimId),
 		kind: options.kind,
 		payload: options.payload,
 		executionSecret: options.executionSecret
