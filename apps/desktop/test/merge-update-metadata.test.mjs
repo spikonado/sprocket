@@ -84,6 +84,16 @@ test('merges per-arch files and keeps extra update fields', () => {
 	assert.equal(merged.releaseDate, '2026-09-07T01:00:00.000Z');
 });
 
+test('serializes quoted scalars with single quotes', () => {
+	const serialized = serializeUpdateInfoYaml({
+		version: '1.2.3',
+		files: [{ url: 'app.zip', sha512: 'sha' }],
+		releaseNotes: 'true'
+	});
+
+	assert.match(serialized, /releaseNotes: 'true'/);
+});
+
 test('refuses version, channel-field, and same-url checksum collisions', () => {
 	const arm64 = parseUpdateInfoYaml(
 		macManifest('arm64', { stagingPercentage: 10, releaseNotes: 'notes' })
