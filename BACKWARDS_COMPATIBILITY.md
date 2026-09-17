@@ -389,6 +389,17 @@ Remove the fallback after every summarized thread has a part-number cutoff and
 no row retains only `contextSummaryThroughRunId`. The reasoning filter can be
 removed at the same point.
 
+## Inbox working rank
+
+Unsettled inbox queries rank queued and running threads above idle ones using
+`threadRecords.working`. Existing rows may omit that field until
+`backfillInboxWorking` finishes. Until `inbox-working-v1` records
+`completedAt`, `inbox.list` keeps the previous recency index for unsettled
+threads.
+
+Remove the recency query and the old archived/lastMessageAt index after the
+migration completes and a production scan finds no thread without `working`.
+
 ## Unsupported client errors
 
 Released clients that call retired Convex functions get a `ConvexError` with:

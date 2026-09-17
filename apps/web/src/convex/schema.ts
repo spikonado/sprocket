@@ -124,7 +124,7 @@ export default defineSchema({
 			'archivedAt',
 			'lastMessageAt'
 		])
-		.index('by_userId_and_repositoryKey_and_archivedAt_and_working_and_lastMessageAt', [
+		.index('by_userId_repo_archivedAt_working_lastMessageAt', [
 			'userId',
 			'repositoryKey',
 			'archivedAt',

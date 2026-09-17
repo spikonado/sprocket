@@ -3,7 +3,7 @@ import { mergedStream, stream } from 'convex-helpers/server/stream';
 import { v } from 'convex/values';
 import { query } from './_generated/server';
 import { getUserId } from './lib/auth';
-import { MAX_INBOX_REPOSITORIES, vInboxState } from './lib/inboxState';
+import { INBOX_WORKING_MIGRATION, MAX_INBOX_REPOSITORIES, vInboxState } from './lib/inboxState';
 import schema from './schema';
 
 export const list = query({
@@ -24,20 +24,39 @@ export const list = query({
 		}
 
 		if (args.state === 'unsettled') {
-			const streams = repositoryKeys.map((repositoryKey) =>
-				stream(ctx.db, schema)
-					.query('threadRecords')
-					.withIndex(
-						'by_userId_and_repositoryKey_and_archivedAt_and_working_and_lastMessageAt',
-						(range) =>
+			const migration = await ctx.db
+				.query('migrationSchedules')
+				.withIndex('by_name', (q) => q.eq('name', INBOX_WORKING_MIGRATION))
+				.unique();
+			if (migration?.completedAt !== undefined) {
+				const streams = repositoryKeys.map((repositoryKey) =>
+					stream(ctx.db, schema)
+						.query('threadRecords')
+						.withIndex('by_userId_repo_archivedAt_working_lastMessageAt', (range) =>
 							range
 								.eq('userId', userId)
 								.eq('repositoryKey', repositoryKey)
 								.eq('archivedAt', undefined)
+						)
+						.order('desc')
+				);
+				return await mergedStream(streams, ['working', 'lastMessageAt', '_creationTime']).paginate(
+					args.paginationOpts
+				);
+			}
+
+			const streams = repositoryKeys.map((repositoryKey) =>
+				stream(ctx.db, schema)
+					.query('threadRecords')
+					.withIndex('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', (range) =>
+						range
+							.eq('userId', userId)
+							.eq('repositoryKey', repositoryKey)
+							.eq('archivedAt', undefined)
 					)
 					.order('desc')
 			);
-			return await mergedStream(streams, ['working', 'lastMessageAt', '_creationTime']).paginate(
+			return await mergedStream(streams, ['lastMessageAt', '_creationTime']).paginate(
 				args.paginationOpts
 			);
 		}
