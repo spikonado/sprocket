@@ -417,6 +417,7 @@ mod tests {
             }),
             completion: None,
             tool: None,
+            work: Default::default(),
         };
         store.append_parts("user", "thread", &[part]).await.unwrap();
         store

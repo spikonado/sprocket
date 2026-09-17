@@ -10,10 +10,26 @@ import {
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
+import {
+	writeCompletionSectionData,
+	writeToolSectionData,
+	type PersistedWork
+} from '@convex/lib/transcriptSectionWrites';
 
 type TranscriptToolJob = Pick<
 	Doc<'executorJobs'>,
-	'_id' | 'hidden' | 'status' | 'callId' | 'kind' | 'result' | 'error' | 'toolInvocationId'
+	| '_id'
+	| '_creationTime'
+	| 'hidden'
+	| 'status'
+	| 'callId'
+	| 'kind'
+	| 'result'
+	| 'error'
+	| 'completedAt'
+	| 'toolInvocationId'
+	| 'sectionKey'
+	| 'sectionOrdinal'
 >;
 
 export async function recordPromptTranscript(
@@ -35,7 +51,8 @@ export async function recordPromptTranscript(
 		prompt: {
 			text: args.text,
 			imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds)
-		}
+		},
+		work: { ranges: [] }
 	});
 	return result.part;
 }
@@ -48,20 +65,38 @@ export async function recordCompletionTranscript(
 		runId: Id<'runs'>;
 		streamId: string;
 		items: TranscriptCompletionItem[];
+		work: PersistedWork;
+		sections: { sectionKey: string; sectionOrdinal: number; closed: boolean }[];
+		toolInvocations: { callId: string; toolInvocationId: string; sectionKey?: string }[];
 	}
-): Promise<number | null> {
+): Promise<Doc<'threadTranscriptParts'> | null> {
 	if (args.items.length === 0) {
 		return null;
 	}
+	let invocationIndex = 0;
+	const toolInvocations = args.items.flatMap((item, index) => {
+		if (item.type !== 'tool-call') return [];
+		const invocation = args.toolInvocations[invocationIndex++];
+		if (!invocation) throw new Error('Missing tool invocation assignment.');
+		return [{ item: index, toolInvocationId: invocation.toolInvocationId }];
+	});
+	const work = { ...args.work, toolInvocations };
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
-		completion: { streamId: args.streamId, items: args.items }
+		completion: { streamId: args.streamId, items: args.items },
+		work
 	});
-	return result.part.number;
+	await writeCompletionSectionData(ctx, {
+		part: result.part,
+		work,
+		sections: args.sections,
+		representedCallIds: new Set(args.toolInvocations.map((invocation) => invocation.callId))
+	});
+	return result.part;
 }
 
 export async function recordStartedToolTranscript(
@@ -77,13 +112,25 @@ export async function recordStartedToolTranscript(
 		return;
 	}
 	const toolInvocationId = toolInvocationIdForJob(args.job);
-	await appendTranscriptPart(ctx, {
+	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) {
+		throw new Error('Visible tool job has no transcript section assignment.');
+	}
+	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'started'),
 		kind: 'tool',
 		runId: args.runId,
-		tool: progressToolBody(args.job, { status: 'started' })
+		tool: progressToolBody(args.job, { status: 'started' }),
+		work: { ranges: [], sectionKey: args.job.sectionKey }
+	});
+	await writeToolSectionData(ctx, {
+		part: result.part,
+		sectionKey: args.job.sectionKey,
+		sectionOrdinal: args.job.sectionOrdinal,
+		toolInvocationId,
+		started: true,
+		occurredAt: args.job._creationTime
 	});
 }
 
@@ -103,13 +150,25 @@ export async function recordToolTranscript(
 		return;
 	}
 	const toolInvocationId = toolInvocationIdForJob(args.job);
-	await appendTranscriptPart(ctx, {
+	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) {
+		throw new Error('Visible tool job has no transcript section assignment.');
+	}
+	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'finished'),
 		kind: 'tool',
 		runId: args.runId,
-		tool: settledToolBody(args.job)
+		tool: settledToolBody(args.job),
+		work: { ranges: [], sectionKey: args.job.sectionKey }
+	});
+	await writeToolSectionData(ctx, {
+		part: result.part,
+		sectionKey: args.job.sectionKey,
+		sectionOrdinal: args.job.sectionOrdinal,
+		toolInvocationId,
+		started: false,
+		occurredAt: args.job.completedAt
 	});
 }
 
@@ -120,19 +179,26 @@ export async function recordSettledToolTranscripts(
 		userId: string;
 		runId: Id<'runs'>;
 		items: TranscriptCompletionItem[];
+		toolInvocations?: { callId: string; toolInvocationId: string }[];
 	}
 ): Promise<void> {
-	const callIds = new Set(
-		args.items.flatMap((item) => (item.type === 'tool-call' ? [item.callId] : []))
-	);
-	for (const callId of callIds) {
-		const job = await ctx.db
-			.query('executorJobs')
-			.withIndex('by_runId_and_callId_and_hidden', (query) =>
-				query.eq('runId', args.runId).eq('callId', callId).eq('hidden', false)
-			)
-			.order('desc')
-			.first();
+	const callIds = args.items.flatMap((item) => (item.type === 'tool-call' ? [item.callId] : []));
+	for (const [index, callId] of callIds.entries()) {
+		const invocation = args.toolInvocations?.[index];
+		const job = invocation
+			? await ctx.db
+					.query('executorJobs')
+					.withIndex('by_runId_and_toolInvocationId', (query) =>
+						query.eq('runId', args.runId).eq('toolInvocationId', invocation.toolInvocationId)
+					)
+					.unique()
+			: await ctx.db
+					.query('executorJobs')
+					.withIndex('by_runId_and_callId_and_hidden', (query) =>
+						query.eq('runId', args.runId).eq('callId', callId).eq('hidden', false)
+					)
+					.order('desc')
+					.first();
 		if (job) {
 			await recordToolTranscript(ctx, {
 				threadId: args.threadId,

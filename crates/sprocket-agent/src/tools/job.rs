@@ -8,7 +8,7 @@ use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{cancelled_error, tool_error, tool_failure};
 use crate::convex::RuntimeClient;
-use crate::hooks::ToolCallTracker;
+use crate::hooks::{ToolCallTracker, ToolInvocationAssignment};
 
 pub(super) const GET_JOB_FUNCTION: &str = "executor:getJob";
 
@@ -89,15 +89,32 @@ pub(super) async fn begin_executor_job(
     run_id: &str,
     claim_id: &str,
     kind: &str,
-    tool_call_tracker: &ToolCallTracker,
+    assignment: ToolInvocationAssignment,
     payload: &serde_json::Value,
 ) -> Result<String, ToolExecutionError> {
     let mut begin_args = BTreeMap::new();
     begin_args.insert("runId".to_string(), run_id.to_string().into());
     begin_args.insert("claimId".to_string(), claim_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
-    if let Some(call_id) = tool_call_tracker.claim(kind, payload) {
-        begin_args.insert("callId".to_string(), call_id.into());
+    begin_args.insert("callId".to_string(), assignment.call_id.into());
+    begin_args.insert(
+        "toolInvocationId".to_string(),
+        assignment.tool_invocation_id.into(),
+    );
+    if let Some(section_key) = assignment.section_key {
+        begin_args.insert("sectionKey".to_string(), section_key.into());
+    }
+    begin_args.insert(
+        "sectionOrdinal".to_string(),
+        Value::Float64(assignment.section_ordinal as f64),
+    );
+    begin_args.insert(
+        "attemptSeq".to_string(),
+        Value::Float64(assignment.attempt_seq as f64),
+    );
+    begin_args.insert("streamId".to_string(), assignment.stream_id.into());
+    if crate::transcript::sections::hidden_tool(kind) {
+        begin_args.insert("hidden".to_string(), Value::Boolean(true));
     }
     let mut stored_payload = payload.clone();
     if matches!(kind, "add_artifact" | "edit_artifact" | "save_artifact") {
@@ -128,6 +145,9 @@ pub(super) async fn execute_cloud_tool_job(
     tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
 ) -> Result<serde_json::Value, ToolExecutionError> {
+    let assignment = tool_call_tracker
+        .claim_dispatch(kind, &payload)
+        .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
     eprintln!(
         "sprocket-agent: starting cloud tool {} for run {}",
         kind, run_id
@@ -144,8 +164,7 @@ pub(super) async fn execute_cloud_tool_job(
         return Err(cancelled_error());
     }
 
-    let job_id =
-        begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
+    let job_id = begin_executor_job(runtime, run_id, claim_id, kind, assignment, &payload).await?;
     let mut job_args = BTreeMap::new();
     job_args.insert("runId".to_string(), run_id.to_string().into());
     job_args.insert("jobId".to_string(), job_id.clone().into());
@@ -215,12 +234,15 @@ where
     F: FnOnce(WorkspaceCancellation) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
-    execute_tool_job_with_id(
+    let assignment = tool_call_tracker
+        .claim_dispatch(kind, &payload)
+        .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
+    execute_tool_job_with_assignment(
         runtime,
+        assignment,
         run_id,
         claim_id,
         kind,
-        tool_call_tracker,
         payload,
         |cancellation, _job_id| operation(cancellation),
     )
@@ -233,6 +255,28 @@ pub(super) async fn execute_tool_job_with_id<F, Fut>(
     claim_id: &str,
     kind: &str,
     tool_call_tracker: &ToolCallTracker,
+    payload: serde_json::Value,
+    operation: F,
+) -> Result<serde_json::Value, ToolExecutionError>
+where
+    F: FnOnce(WorkspaceCancellation, String) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
+{
+    let assignment = tool_call_tracker
+        .claim_dispatch(kind, &payload)
+        .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
+    execute_tool_job_with_assignment(
+        runtime, assignment, run_id, claim_id, kind, payload, operation,
+    )
+    .await
+}
+
+async fn execute_tool_job_with_assignment<F, Fut>(
+    runtime: &RuntimeClient,
+    assignment: ToolInvocationAssignment,
+    run_id: &str,
+    claim_id: &str,
+    kind: &str,
     payload: serde_json::Value,
     operation: F,
 ) -> Result<serde_json::Value, ToolExecutionError>
@@ -255,8 +299,7 @@ where
         return Err(cancelled_error());
     }
 
-    let job_id =
-        begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
+    let job_id = begin_executor_job(runtime, run_id, claim_id, kind, assignment, &payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
     let operation = operation(cancellation.clone(), job_id.clone());

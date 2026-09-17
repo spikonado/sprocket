@@ -221,7 +221,12 @@ impl RunOutput {
                 Ok(parts)
             });
         match parts {
-            Ok(parts) => page.parts = parts,
+            Ok(parts) => {
+                page.parts = parts
+                    .into_iter()
+                    .map(TranscriptPart::without_work_assignment)
+                    .collect();
+            }
             Err(error) => {
                 let error = format!("Could not read local run output: {error}");
                 self.update(|state| state.output_error = Some(error.clone()));
@@ -251,6 +256,7 @@ mod tests {
                 stream_id: None,
                 items: vec![serde_json::json!({"type": "text", "text": text})],
             }),
+            work: Default::default(),
         }
     }
 

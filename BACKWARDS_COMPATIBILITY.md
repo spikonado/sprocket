@@ -85,58 +85,34 @@ replacement store imports the old file before parsing the new format.
 
 ## Stored transcript work metadata
 
-`transcriptSections:commit` accepts optional `includeCheckpoint`. New servers
-request the accepted flag and the transaction's work checkpoint together, so a
-competing indexer does not need a separate state query after a conflict. Requests
-without this flag keep the boolean response for installed servers. Deploy the
-Convex change before releasing the server. Remove the boolean response only when
-all supported installed servers request the checkpoint. No stored-data migration
-is needed.
+New transcript writes embed immutable work assignments and atomically maintain
+section entries and summaries. `transcript-write-time-sections-v1` migrates four
+parts at a time. It reuses embedded or separately stored assignments, derives
+assignments for never-indexed history, then removes legacy membership rows. The
+hourly migration runner is resumable. It also backfills each section's global
+display order from the run start time, run ID, and per-run section ordinal.
 
-New servers submit ordinary indexing checkpoints to `transcriptSections:commitBatches`.
-Each atomic group has at most eight batches, four distinct raw parts, 256 section
-changes, 256 membership assignments, and 256 KiB of JSON. Larger individual
-batches and run finalization still use `commit`. Keep the single-batch endpoint
-for both these cases and installed clients. Deploy both endpoints before
-releasing the updated server.
+The local work replica uses the `display-v2` directory and records the
+`write-time-sections-v1` format marker. Older caches remain untouched because
+they do not contain embedded work assignments. Keep the separate directory
+until direct upgrades from pre-write-time replicas are no longer supported.
 
-Memberships now live in `threadTranscriptMemberships`, not on raw transcript
-documents. `migrations:runTranscriptMembershipMigration` copies legacy
-`threadTranscriptParts.work` fields in four-document transactions and removes
-each field after preserving its membership. An existing membership row wins over
-the legacy field, so concurrent indexing cannot lose a newer assignment. The
-first `transcript:ensureMigrated` call schedules the migration. An hourly cron
-also starts or resumes it. Its final step marks `transcript-work-memberships-v1`
-complete in `migrationSchedules`.
+For the coordinated two-user cutover, stop every old desktop, CLI, and server
+process before touching local data. For each user, confirm the data directory
+printed by the server at startup. It is `SPROCKET_DATA_DIR` when set, otherwise
+`$HOME/.sprocket` on Unix and `%USERPROFILE%\.sprocket` on Windows. Delete only
+the `transcripts` child of each confirmed directory, then start the new version
+and let it download cloud history. Do not delete the parent directory. It also
+contains credentials, sessions, project attachments, artifact bindings, and the
+installation identity. Any local transcript content that never reached Convex
+will not return after this reset.
 
-`transcriptSections:indexedMemberships` reads both representations until that
-marker is complete, then reads only the membership table. Keep the legacy field
-in the schema and its read fallback until every retained deployment has completed
-the migration and no supported backend writes the old representation. The
-migration can run while old installed clients are connected because all commit
-endpoints write the new table after the backend deploy.
-
-`transcript:getParts` and `getPartsForRun` accept optional `includeWork`. New
-clients send `false`, which avoids membership reads. Requests without the flag
-still receive current work metadata joined onto raw parts. The legacy
-`transcriptSections:memberships` endpoint also preserves unprocessed rows with
-`work: null`. Keep these response shims until all supported installed clients
-use raw-only reads and `indexedMemberships`.
-
-The SQLite work replica now stores a durable `pendingBatches` outbox. It imports
-the old `pendingBatch` entry on upgrade and removes that entry in the transaction
-that saves the queue and advanced engine state. Partial acknowledgments retain
-the uncommitted suffix. Keep the old-entry reader while direct upgrades from
-single-batch replicas remain supported; offline data directories can outlive
-the release that wrote them.
-
-Historical transcripts may lack membership records and
-`threadTranscriptStates.workThrough`. Opening a thread fills missing work metadata
-with the Rust processor without changing its raw transcript bodies.
-
-Keep support for missing metadata until every retained transcript has complete
-membership and its checkpoint covers all parts. Remove only that fallback after
-the gate passes; the processor remains responsible for new transcript parts.
+Until every retained deployment reports that migration complete, the schema
+continues to accept `threadTranscriptStates.workThrough`, the historical
+`work.processed` field, legacy membership rows, and old section bookkeeping
+fields. Verify that every part has `work`, every assigned range or tool event has
+a section entry, and no legacy membership row remains before removing those
+optional fields and the migration code.
 
 ## Production rollout cleanup
 
@@ -312,21 +288,6 @@ Remove the URL variants after those jobs and local replicas have aged out or
 been rewritten.
 
 ## Stored transcript formats
-
-### Local work index completion boundaries
-
-Local work replicas created before completion boundaries were added lack the
-`work_sections.boundary` column. `SqlWorkIndex::initialize` checks the local
-SQLite schema and adds the column when needed. This upgrades a derived local
-cache; it does not migrate cloud transcript data.
-
-Keep the `PRAGMA table_info` and `ALTER TABLE` fallback while the app can open
-`display-v1` work replicas. Release age alone is not a safe removal signal
-because a device can retain an older replica while skipping releases. Remove
-the fallback and the `existing_work_indexes_add_completion_boundaries_on_open`
-test after work replicas move to a new cache namespace and the app no longer
-opens `display-v1`. Keep the `boundary` column because current work indexing
-uses it.
 
 ### Local transcript state
 

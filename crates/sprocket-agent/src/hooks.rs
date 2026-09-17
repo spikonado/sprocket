@@ -1,10 +1,15 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
-    AgentHook, HookContext, InvalidToolCallAction, InvalidToolCallContext, StepEventKind,
-    ToolCallAction,
+    AgentHook, HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelTurnAction,
+    ModelTurnFinished, StepEventKind, ToolCallAction,
 };
+use rig::message::AssistantContent;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use crate::transcript::sections::hidden_tool;
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "add_artifact",
@@ -45,61 +50,339 @@ pub(crate) fn available_agent_tool_names(
         .collect()
 }
 
-#[derive(Clone, Debug)]
-struct TrackedToolCall {
-    call_id: Option<String>,
-    name: String,
-    args: serde_json::Value,
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkRangeAssignment {
+    pub(crate) start: u64,
+    pub(crate) end: u64,
+    pub(crate) section_key: String,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ToolCallTracker(Arc<Mutex<VecDeque<TrackedToolCall>>>);
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ToolInvocationAssignment {
+    pub(crate) call_id: String,
+    pub(crate) tool_invocation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) section_key: Option<String>,
+    #[serde(skip)]
+    pub(crate) section_ordinal: u64,
+    #[serde(skip)]
+    pub(crate) attempt_seq: u64,
+    #[serde(skip)]
+    pub(crate) stream_id: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CompletionAssignments {
+    pub(crate) work: CompletionWorkAssignments,
+    pub(crate) tool_invocations: Vec<ToolInvocationAssignment>,
+    pub(crate) sections: Vec<SectionAssignment>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub(crate) struct CompletionWorkAssignments {
+    pub(crate) ranges: Vec<WorkRangeAssignment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SectionAssignment {
+    pub(crate) section_key: String,
+    pub(crate) section_ordinal: u64,
+    pub(crate) closed: bool,
+}
+
+#[derive(Clone, Debug)]
+enum OrderedContent {
+    Text(bool),
+    Reasoning(bool),
+    Tool {
+        model_call_id: String,
+        call_id: String,
+        hidden: bool,
+    },
+    Other,
+}
+
+#[derive(Debug)]
+struct ToolCallState {
+    run_id: String,
+    claim_id: String,
+    attempt_seq: u64,
+    stream_id: String,
+    next_section_ordinal: u64,
+    open_section: Option<SectionAssignment>,
+    streamed_internal_ids: HashMap<String, VecDeque<String>>,
+    invocations_by_internal_id: HashMap<String, ToolInvocationAssignment>,
+    unbound_invocations: HashMap<String, VecDeque<ToolInvocationAssignment>>,
+    dispatches_by_tool: HashMap<String, VecDeque<PendingDispatch>>,
+    completion: CompletionAssignments,
+}
+
+#[derive(Debug)]
+struct PendingDispatch {
+    args: serde_json::Value,
+    assignment: ToolInvocationAssignment,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ToolCallTracker(Arc<Mutex<ToolCallState>>);
 
 impl ToolCallTracker {
-    fn record(&self, call_id: Option<&str>, name: &str, args: &str) {
+    pub(crate) fn new(run_id: &str, claim_id: &str) -> Self {
+        Self(Arc::new(Mutex::new(ToolCallState {
+            run_id: run_id.to_owned(),
+            claim_id: claim_id.to_owned(),
+            attempt_seq: 1,
+            stream_id: format!("agent:{run_id}:{claim_id}:1"),
+            next_section_ordinal: 1,
+            open_section: None,
+            streamed_internal_ids: HashMap::new(),
+            invocations_by_internal_id: HashMap::new(),
+            unbound_invocations: HashMap::new(),
+            dispatches_by_tool: HashMap::new(),
+            completion: CompletionAssignments::default(),
+        })))
+    }
+
+    pub(crate) fn begin_attempt(&self, attempt_seq: u64, stream_id: &str) {
+        if let Ok(mut state) = self.0.lock() {
+            state.attempt_seq = attempt_seq;
+            state.stream_id = stream_id.to_owned();
+            state.streamed_internal_ids.clear();
+            state.invocations_by_internal_id.clear();
+            state.unbound_invocations.clear();
+            state.dispatches_by_tool.clear();
+            state.completion = CompletionAssignments::default();
+        }
+    }
+
+    pub(crate) fn observe_streamed_call(&self, model_call_id: &str, internal_call_id: &str) {
+        if let Ok(mut state) = self.0.lock() {
+            state
+                .streamed_internal_ids
+                .entry(model_call_id.to_owned())
+                .or_default()
+                .push_back(internal_call_id.to_owned());
+        }
+    }
+
+    pub(crate) fn completion_assignments(&self) -> CompletionAssignments {
+        self.0
+            .lock()
+            .map(|state| state.completion.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn assignment_for_dispatch(
+        &self,
+        internal_call_id: &str,
+        call_id: Option<&str>,
+    ) -> Option<ToolInvocationAssignment> {
+        let mut state = self.0.lock().ok()?;
+        if let Some(assignment) = state.invocations_by_internal_id.get(internal_call_id) {
+            return Some(assignment.clone());
+        }
+        let call_id = call_id?;
+        let assignment = state.unbound_invocations.get_mut(call_id)?.pop_front()?;
+        state
+            .invocations_by_internal_id
+            .insert(internal_call_id.to_owned(), assignment.clone());
+        Some(assignment)
+    }
+
+    fn prepare_dispatch(
+        &self,
+        tool_name: &str,
+        internal_call_id: &str,
+        call_id: Option<&str>,
+        args: &str,
+    ) {
+        let Some(assignment) = self.assignment_for_dispatch(internal_call_id, call_id) else {
+            return;
+        };
         let Ok(args) = serde_json::from_str(args) else {
             return;
         };
-        if let Ok(mut calls) = self.0.lock() {
-            calls.push_back(TrackedToolCall {
-                call_id: call_id.map(str::to_owned),
-                name: name.to_owned(),
-                args,
-            });
+        if let Ok(mut state) = self.0.lock() {
+            state
+                .dispatches_by_tool
+                .entry(tool_name.to_owned())
+                .or_default()
+                .push_back(PendingDispatch { args, assignment });
         }
     }
 
-    pub(crate) fn claim(&self, name: &str, args: &serde_json::Value) -> Option<String> {
-        let mut calls = self.0.lock().ok()?;
-        let mut compatible = calls
+    pub(crate) fn claim_dispatch(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Option<ToolInvocationAssignment> {
+        let mut state = self.0.lock().ok()?;
+        let pending = state.dispatches_by_tool.get_mut(tool_name)?;
+        let index = pending
             .iter()
-            .enumerate()
-            .filter(|(_, call)| call.name == name && tool_payload_compatible(&call.args, args));
-        let (index, _) = compatible.next()?;
-        if compatible.next().is_some() {
-            return None;
+            .position(|dispatch| tool_payload_compatible(&dispatch.args, args))?;
+        pending.remove(index).map(|dispatch| dispatch.assignment)
+    }
+
+    fn record_turn(&self, content: &[OrderedContent]) {
+        let Ok(mut state) = self.0.lock() else {
+            return;
+        };
+        state.completion = CompletionAssignments::default();
+        let mut touched_sections = Vec::new();
+        for (index, item) in content.iter().enumerate() {
+            match item {
+                OrderedContent::Text(true) => {
+                    if let Some(section) = state.open_section.take() {
+                        touched_sections.push(section);
+                    }
+                }
+                OrderedContent::Reasoning(true) => {
+                    let section = ensure_section(&mut state);
+                    touched_sections.push(section.clone());
+                    push_range(
+                        &mut state.completion.work.ranges,
+                        index as u64,
+                        &section.section_key,
+                    );
+                }
+                OrderedContent::Tool {
+                    model_call_id,
+                    call_id,
+                    hidden,
+                } => {
+                    let section = (!hidden).then(|| ensure_section(&mut state));
+                    if let Some(section) = &section {
+                        touched_sections.push(section.clone());
+                        push_range(
+                            &mut state.completion.work.ranges,
+                            index as u64,
+                            &section.section_key,
+                        );
+                    }
+                    let section_ordinal = section
+                        .as_ref()
+                        .or(state.open_section.as_ref())
+                        .map_or(state.next_section_ordinal, |section| {
+                            section.section_ordinal
+                        });
+                    let section_key = section.map(|section| section.section_key);
+                    let assignment = ToolInvocationAssignment {
+                        call_id: call_id.clone(),
+                        tool_invocation_id: stable_id(
+                            "invocation",
+                            &state.run_id,
+                            &state.claim_id,
+                            state.attempt_seq,
+                            index as u64,
+                        ),
+                        section_key,
+                        section_ordinal,
+                        attempt_seq: state.attempt_seq,
+                        stream_id: state.stream_id.clone(),
+                    };
+                    let internal_id = state
+                        .streamed_internal_ids
+                        .get_mut(model_call_id)
+                        .and_then(VecDeque::pop_front);
+                    if let Some(internal_id) = internal_id {
+                        state
+                            .invocations_by_internal_id
+                            .insert(internal_id, assignment.clone());
+                    } else {
+                        state
+                            .unbound_invocations
+                            .entry(call_id.clone())
+                            .or_default()
+                            .push_back(assignment.clone());
+                    }
+                    state.completion.tool_invocations.push(assignment);
+                }
+                OrderedContent::Text(false)
+                | OrderedContent::Reasoning(false)
+                | OrderedContent::Other => {}
+            }
         }
-        calls.remove(index)?.call_id
+        touched_sections.sort_by_key(|section| section.section_ordinal);
+        touched_sections.dedup_by(|left, right| left.section_key == right.section_key);
+        for section in &mut touched_sections {
+            section.closed = state
+                .open_section
+                .as_ref()
+                .is_none_or(|open| open.section_key != section.section_key);
+        }
+        state.completion.sections = touched_sections;
     }
 }
 
-fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Value) -> bool {
-    match (raw, normalized) {
-        (serde_json::Value::Object(raw), serde_json::Value::Object(normalized)) => {
-            normalized.iter().all(|(key, value)| {
-                raw.get(key)
-                    .is_some_and(|raw| tool_payload_compatible(raw, value))
-            })
-        }
-        (serde_json::Value::Array(raw), serde_json::Value::Array(normalized)) => {
-            raw.len() == normalized.len()
-                && raw
-                    .iter()
-                    .zip(normalized)
-                    .all(|(raw, normalized)| tool_payload_compatible(raw, normalized))
-        }
-        _ => raw == normalized,
+fn ensure_section(state: &mut ToolCallState) -> SectionAssignment {
+    if let Some(section) = &state.open_section {
+        return section.clone();
     }
+    let section_ordinal = state.next_section_ordinal;
+    state.next_section_ordinal += 1;
+    let section = SectionAssignment {
+        section_key: format!(
+            "agent:{}:{}:{}:section:{section_ordinal}",
+            state.run_id, state.claim_id, state.attempt_seq
+        ),
+        section_ordinal,
+        closed: false,
+    };
+    state.open_section = Some(section.clone());
+    section
+}
+
+fn push_range(ranges: &mut Vec<WorkRangeAssignment>, index: u64, section_key: &str) {
+    if let Some(last) = ranges
+        .last_mut()
+        .filter(|range| range.end == index && range.section_key == section_key)
+    {
+        last.end += 1;
+    } else {
+        ranges.push(WorkRangeAssignment {
+            start: index,
+            end: index + 1,
+            section_key: section_key.to_owned(),
+        });
+    }
+}
+
+fn stable_id(kind: &str, run_id: &str, claim_id: &str, attempt_seq: u64, index: u64) -> String {
+    let mut hash = Sha256::new();
+    for value in [
+        kind,
+        run_id,
+        claim_id,
+        &attempt_seq.to_string(),
+        &index.to_string(),
+    ] {
+        hash.update((value.len() as u64).to_le_bytes());
+        hash.update(value.as_bytes());
+    }
+    format!("agent-{kind}-{:x}", hash.finalize())
+}
+
+fn ordered_content(content: &[AssistantContent]) -> Vec<OrderedContent> {
+    content
+        .iter()
+        .map(|item| match item {
+            AssistantContent::Text(text) => OrderedContent::Text(!text.text.trim().is_empty()),
+            AssistantContent::Reasoning(reasoning) => {
+                OrderedContent::Reasoning(!reasoning.display_text().trim().is_empty())
+            }
+            AssistantContent::ToolCall(call) => OrderedContent::Tool {
+                model_call_id: call.id.as_str().to_owned(),
+                call_id: call.wire_call_id().to_owned(),
+                hidden: hidden_tool(&call.function.name),
+            },
+            _ => OrderedContent::Other,
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -120,10 +403,23 @@ impl AgentHook for AgentPromptHook {
         event: rig::agent::ToolCall<'_>,
     ) -> ToolCallAction {
         if AGENT_TOOL_NAMES.contains(&event.tool_name) {
-            self.tracker
-                .record(event.tool_call_id, event.tool_name, event.args);
+            self.tracker.prepare_dispatch(
+                event.tool_name,
+                event.internal_call_id,
+                event.tool_call_id,
+                event.args,
+            );
         }
         ToolCallAction::Run
+    }
+
+    async fn on_model_turn_finished(
+        &self,
+        _context: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
+        self.tracker.record_turn(&ordered_content(event.content));
+        ModelTurnAction::Continue
     }
 
     async fn on_invalid_tool_call(
@@ -137,8 +433,29 @@ impl AgentHook for AgentPromptHook {
     fn observes(&self, kind: StepEventKind) -> bool {
         matches!(
             kind,
-            StepEventKind::InvalidToolCall | StepEventKind::ToolCall
+            StepEventKind::InvalidToolCall
+                | StepEventKind::ToolCall
+                | StepEventKind::ModelTurnFinished
         )
+    }
+}
+
+fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Value) -> bool {
+    match (raw, normalized) {
+        (serde_json::Value::Object(raw), serde_json::Value::Object(normalized)) => {
+            normalized.iter().all(|(key, value)| {
+                raw.get(key)
+                    .is_some_and(|raw| tool_payload_compatible(raw, value))
+            })
+        }
+        (serde_json::Value::Array(raw), serde_json::Value::Array(normalized)) => {
+            raw.len() == normalized.len()
+                && raw
+                    .iter()
+                    .zip(normalized)
+                    .all(|(raw, normalized)| tool_payload_compatible(raw, normalized))
+        }
+        _ => raw == normalized,
     }
 }
 
@@ -292,58 +609,114 @@ mod tests {
     }
 
     #[test]
-    fn tracker_claims_only_the_matching_executed_call() {
-        let tracker = ToolCallTracker::default();
-        tracker.record(Some("call-1"), "exec_command", r#"{"cmd":"pwd"}"#);
-        tracker.record(Some("call-2"), "exec_command", r#"{"cmd":"ls"}"#);
+    fn tracker_associates_identical_parallel_calls_by_internal_identity() {
+        let tracker = ToolCallTracker::new("run", "claim");
+        tracker.observe_streamed_call("model-1", "internal-1");
+        tracker.observe_streamed_call("model-2", "internal-2");
+        tracker.record_turn(&[
+            OrderedContent::Tool {
+                model_call_id: "model-1".into(),
+                call_id: "call-1".into(),
+                hidden: false,
+            },
+            OrderedContent::Tool {
+                model_call_id: "model-2".into(),
+                call_id: "call-2".into(),
+                hidden: false,
+            },
+        ]);
 
-        assert_eq!(
-            tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
-            Some("call-2".to_string())
-        );
-        assert_eq!(
-            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
-            Some("call-1".to_string())
-        );
-    }
+        let second = tracker
+            .assignment_for_dispatch("internal-2", Some("call-2"))
+            .unwrap();
+        let first = tracker
+            .assignment_for_dispatch("internal-1", Some("call-1"))
+            .unwrap();
+        assert_eq!(second.call_id, "call-2");
+        assert_eq!(first.call_id, "call-1");
+        assert_ne!(first.tool_invocation_id, second.tool_invocation_id);
+        assert_eq!(first.section_key, second.section_key);
 
-    #[test]
-    fn tracker_uniquely_matches_normalized_args_when_typed_args_drop_fields() {
-        let tracker = ToolCallTracker::default();
-        tracker.record(
-            Some("call-1"),
+        tracker.prepare_dispatch(
             "exec_command",
-            r#"{"cmd":"pwd","workdir":null,"unknown":"ignored"}"#,
-        );
-        tracker.record(Some("call-2"), "exec_command", r#"{"cmd":"ls"}"#);
-
-        assert_eq!(
-            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
-            Some("call-1".to_string())
-        );
-        assert_eq!(
-            tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
-            Some("call-2".to_string())
-        );
-    }
-
-    #[test]
-    fn tracker_does_not_claim_ambiguous_normalized_parallel_calls() {
-        let tracker = ToolCallTracker::default();
-        tracker.record(
+            "internal-1",
             Some("call-1"),
-            "exec_command",
-            r#"{"cmd":"pwd","workdir":null}"#,
+            r#"{"cmd":"first"}"#,
         );
-        tracker.record(
+        tracker.prepare_dispatch(
+            "exec_command",
+            "internal-2",
             Some("call-2"),
-            "exec_command",
-            r#"{"cmd":"pwd","unknown":"first"}"#,
+            r#"{"cmd":"second"}"#,
         );
+        let second_dispatch = tracker
+            .claim_dispatch("exec_command", &serde_json::json!({"cmd":"second"}))
+            .unwrap();
+        let first_dispatch = tracker
+            .claim_dispatch("exec_command", &serde_json::json!({"cmd":"first"}))
+            .unwrap();
+        assert_eq!(second_dispatch.call_id, "call-2");
+        assert_eq!(first_dispatch.call_id, "call-1");
 
-        assert_eq!(
-            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
-            None
-        );
+        let original_ids = tracker
+            .completion_assignments()
+            .tool_invocations
+            .into_iter()
+            .map(|invocation| invocation.tool_invocation_id)
+            .collect::<Vec<_>>();
+        tracker.record_turn(&[
+            OrderedContent::Tool {
+                model_call_id: "model-1".into(),
+                call_id: "call-1".into(),
+                hidden: false,
+            },
+            OrderedContent::Tool {
+                model_call_id: "model-2".into(),
+                call_id: "call-2".into(),
+                hidden: false,
+            },
+        ]);
+        let retry_ids = tracker
+            .completion_assignments()
+            .tool_invocations
+            .into_iter()
+            .map(|invocation| invocation.tool_invocation_id)
+            .collect::<Vec<_>>();
+        assert_eq!(retry_ids, original_ids);
+    }
+
+    #[test]
+    fn grouping_survives_turns_and_text_closes_the_current_section() {
+        let tracker = ToolCallTracker::new("run", "claim");
+        tracker.record_turn(&[
+            OrderedContent::Reasoning(true),
+            OrderedContent::Tool {
+                model_call_id: "one".into(),
+                call_id: "one".into(),
+                hidden: false,
+            },
+        ]);
+        let first = tracker.completion_assignments();
+        let first_key = first.work.ranges[0].section_key.clone();
+        assert_eq!(first.work.ranges[0].start, 0);
+        assert_eq!(first.work.ranges[0].end, 2);
+
+        tracker.begin_attempt(2, "stream-2");
+        tracker.record_turn(&[
+            OrderedContent::Reasoning(true),
+            OrderedContent::Text(true),
+            OrderedContent::Reasoning(true),
+            OrderedContent::Tool {
+                model_call_id: "hidden".into(),
+                call_id: "hidden".into(),
+                hidden: true,
+            },
+        ]);
+        let second = tracker.completion_assignments();
+        assert_eq!(second.work.ranges[0].section_key, first_key);
+        assert_ne!(second.work.ranges[1].section_key, first_key);
+        assert!(second.sections[0].closed);
+        assert!(!second.sections[1].closed);
+        assert_eq!(second.tool_invocations[0].section_key, None);
     }
 }

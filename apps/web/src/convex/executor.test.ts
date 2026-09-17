@@ -5,6 +5,7 @@ import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
+	toolTranscriptAssignment,
 	type ConvexTestInstance
 } from './test.setup';
 
@@ -32,6 +33,7 @@ async function seedRunWithJob(
 	);
 
 	const jobId = await t.run(async (ctx) => {
+		const section = toolTranscriptAssignment(created.runId, claimId);
 		const jobId = await ctx.db.insert('executorJobs', {
 			threadId,
 			runId: created.runId,
@@ -41,7 +43,8 @@ async function seedRunWithJob(
 			status: options.jobStatus ?? 'claimed',
 			enqueuedAt: Date.now(),
 			claimedAt: Date.now(),
-			sequence: 0
+			sequence: 0,
+			...section
 		});
 		const otherJobId = await ctx.db.insert('executorJobs', {
 			threadId,
@@ -51,7 +54,8 @@ async function seedRunWithJob(
 			hidden: false,
 			status: 'pending',
 			enqueuedAt: Date.now(),
-			sequence: 1
+			sequence: 1,
+			...toolTranscriptAssignment(created.runId, claimId, 2)
 		});
 		await ctx.db.patch('runs', created.runId, {
 			status: options.runStatus ?? 'running'
@@ -98,6 +102,7 @@ describe('executor', () => {
 			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				runId,
 				claimId,
+				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
 				kind: 'parse_file',
 				callId: `call-${mode}`,
@@ -168,6 +173,7 @@ describe('executor', () => {
 			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				runId,
 				claimId,
+				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
 				kind,
 				payload: { url: result.url }

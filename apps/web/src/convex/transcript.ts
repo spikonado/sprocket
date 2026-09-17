@@ -4,7 +4,6 @@ import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { imageUploadByStorageId } from '@convex/lib/imageUploads';
-import { ensureMembershipMigration } from '@convex/lib/transcriptMemberships';
 import {
 	vAttachmentFileDownloadResult,
 	vTranscriptPartsResult,
@@ -58,7 +57,6 @@ export const ensureMigrated = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		await ensureMembershipMigration(ctx);
 		await getOrCreateTranscriptState(ctx, {
 			threadId: args.threadId,
 			userId
@@ -81,16 +79,14 @@ export const getState = query({
 export const getParts = query({
 	args: {
 		threadId: v.id('threadRecords'),
-		numbers: v.array(v.number()),
-		includeWork: v.optional(v.boolean())
+		numbers: v.array(v.number())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
 		const parts = await transcriptPartsForClient(
 			ctx,
-			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers),
-			args.includeWork
+			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
 		);
 		return { threadId: args.threadId, parts };
 	}
@@ -112,16 +108,14 @@ export const getPartsForRun = query({
 	args: {
 		runId: v.id('runs'),
 		executionSecret: v.string(),
-		numbers: v.array(v.number()),
-		includeWork: v.optional(v.boolean())
+		numbers: v.array(v.number())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const parts = await transcriptPartsForClient(
 			ctx,
-			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers),
-			args.includeWork
+			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)
 		);
 		return { threadId: run.threadId, parts };
 	}

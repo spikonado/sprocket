@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	toolTranscriptAssignment
+} from './test.setup';
 
 describe('chat.selectedThreadLifecycle', { timeout: 20_000 }, () => {
 	it('shows the latest completed run for a persisted thread', async () => {
@@ -98,6 +103,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			asUser.mutation(api.agentRuntime.beginToolJob, {
 				claimId: 'claim-cancel',
 				runId: created.runId,
+				...toolTranscriptAssignment(created.runId, 'claim-cancel'),
 				kind: 'exec_command',
 				payload: { cmd: 'true' },
 				executionSecret

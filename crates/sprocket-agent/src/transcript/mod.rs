@@ -3,10 +3,9 @@ mod history;
 mod read_index;
 mod replica;
 pub mod sections;
-mod work_index;
 #[cfg(test)]
 mod work_tests;
-pub use replica::{SectionPartition, WorkReplica, WorkSnapshot};
+pub use replica::WorkReplica;
 mod store;
 mod sync;
 pub(crate) mod types;

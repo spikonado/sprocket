@@ -35,6 +35,8 @@ struct RemoteTranscriptPart {
     source_key: String,
     kind: String,
     run_id: String,
+    #[serde(default)]
+    work: super::sections::WorkAssignment,
     #[serde(
         rename = "_creationTime",
         default,
@@ -143,6 +145,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
             output: tool.output,
             status: tool.status,
         }),
+        work: part.work,
     })
 }
 
@@ -230,6 +233,7 @@ mod tests {
             }),
             completion: None,
             tool: None,
+            work: Default::default(),
         }
     }
 
@@ -261,6 +265,28 @@ mod tests {
             vec![0, 1, 2]
         );
         let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[test]
+    fn parses_embedded_work_without_exposing_metadata_as_completion_content() {
+        let parts = parse_remote_parts(serde_json::json!({
+            "parts": [{
+                "number": 2,
+                "sourceKey": "completion:run:stream",
+                "kind": "completion",
+                "runId": "run",
+                "work": {
+                    "ranges": [{ "start": 0, "end": 1, "sectionKey": "section" }]
+                },
+                "completion": {
+                    "streamId": "stream",
+                    "items": [{ "type": "reasoning", "text": "thinking" }]
+                }
+            }]
+        }))
+        .unwrap();
+        assert_eq!(parts[0].work_assignment().ranges[0].section_key, "section");
+        assert_eq!(parts[0].content_items().len(), 1);
     }
 
     #[test]
