@@ -85,36 +85,14 @@ replacement store imports the old file before parsing the new format.
 
 ## Stored transcript work metadata
 
-New transcript writes embed immutable work assignments and atomically maintain
-section entries and summaries. `transcript-write-time-sections-v1` migrates 50
-parts at a time. It reuses embedded or separately stored assignments and leaves
-never-indexed history without sections, then removes legacy membership rows. The
-hourly cron starts or resumes the migration automatically. Once started, the
-migration component schedules successive batches without waiting for the next
-cron tick. All three migration steps use batches of 50. It also backfills each
-section's global display order from the run start time, run ID, and per-run
-section ordinal.
+The schema retains `threadTranscriptStates.workThrough`, `work.processed`, legacy
+membership rows, and old section bookkeeping fields for stored cloud data.
+Reads use legacy memberships when embedded assignments are absent.
 
-Older clients and old Sprocket data directories are not supported by this cutover.
-The local work replica uses `display-v2` with a `write-time-sections-v1` format
-marker. There is no migration or metadata refresh for old local raw caches.
-
-For the coordinated two-user cutover, stop every old desktop, CLI, and server
-process before touching local data. For each user, confirm the data directory
-printed by the server at startup. It is `SPROCKET_DATA_DIR` when set, otherwise
-`$HOME/.sprocket` on Unix and `%USERPROFILE%\.sprocket` on Windows. Delete only
-the `transcripts` child of each confirmed directory, then start the new version
-and let it download cloud history. Do not delete the parent directory. It also
-contains credentials, sessions, project attachments, artifact bindings, and the
-installation identity. Any local transcript content that never reached Convex
-will not return after this reset.
-
-Until every retained deployment reports that migration complete, the schema
-continues to accept `threadTranscriptStates.workThrough`, the historical
-`work.processed` field, legacy membership rows, and old section bookkeeping
-fields. Verify that every part has `work`, every assigned range or tool event has
-a section entry, and no legacy membership row remains before removing those
-optional fields and the migration code.
+Remove these fields, the read fallback, and `transcript-write-time-sections-v1`
+after every retained deployment completes migration, every part has `work`,
+every assigned range or tool event has a section entry, and no legacy membership
+row remains. Never-indexed history intentionally keeps empty assignments.
 
 ## Production rollout cleanup
 
@@ -290,16 +268,6 @@ Remove the URL variants after those jobs and local replicas have aged out or
 been rewritten.
 
 ## Stored transcript formats
-
-### Local transcript state
-
-Early local `state.json` files may omit `downloadedRanges` or `stale`. The
-replica reader supplies the empty or false value. Prompt bodies that predate
-attachments may omit `imageUploads`; readers treat them as having no
-attachments.
-
-Remove these defaults after old local transcript caches have aged out or been
-rewritten.
 
 ### Attachment metadata and cache layout
 

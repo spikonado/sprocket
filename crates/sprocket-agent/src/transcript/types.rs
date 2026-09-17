@@ -15,9 +15,7 @@ pub struct TranscriptState {
     pub history_from_number: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
-    #[serde(default)]
     pub downloaded_ranges: Vec<DownloadedRange>,
-    #[serde(default)]
     pub stale: bool,
 }
 
@@ -164,7 +162,6 @@ pub enum TranscriptPartKind {
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptPromptBody {
     pub text: String,
-    #[serde(default)]
     pub image_uploads: Vec<TranscriptAttachmentMeta>,
 }
 
