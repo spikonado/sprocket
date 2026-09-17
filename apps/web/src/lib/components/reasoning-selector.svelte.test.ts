@@ -14,6 +14,12 @@ const model = {
 	supportsFastMode: true
 } as const;
 
+const providerManagedModel = {
+	...model,
+	reasoningEfforts: ['none'],
+	defaultReasoningEffort: 'none'
+} as const;
+
 let cleanup: (() => Promise<void>) | undefined;
 
 afterEach(async () => {
@@ -29,9 +35,39 @@ function renderSelector(overrides: Partial<ComponentProps<typeof ReasoningSelect
 	});
 	cleanup = () => unmount(component);
 	flushSync();
-	document.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]')!.click();
+}
+
+function openSelector() {
+	const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]');
+	if (!trigger) throw new Error('Reasoning selector trigger was not rendered');
+	trigger.click();
 	flushSync();
 }
+
+describe('ReasoningSelector provider-managed reasoning', () => {
+	it('omits the selector when reasoning has no user control and Fast mode is unsupported', () => {
+		renderSelector({
+			model: { ...providerManagedModel, supportsFastMode: false },
+			reasoningEffort: 'none',
+			fastModeAccess: 'unsupported'
+		});
+		expect(document.querySelector('button')).toBeNull();
+		expect(document.body.textContent).not.toContain('None');
+	});
+
+	it('shows only speed controls when reasoning has no user control', () => {
+		renderSelector({
+			model: providerManagedModel,
+			reasoningEffort: 'none',
+			fastModeAccess: 'available'
+		});
+		openSelector();
+		expect(document.body.textContent).toContain('Speed');
+		expect(document.body.textContent).not.toContain('Reasoning');
+		expect(document.body.textContent).not.toContain('None');
+		expect(document.querySelector('[role="switch"]')).not.toBeNull();
+	});
+});
 
 describe('ReasoningSelector Fast mode', () => {
 	it('omits the control for models without Fast support', () => {
@@ -40,6 +76,7 @@ describe('ReasoningSelector Fast mode', () => {
 			fastMode: true,
 			fastModeAccess: 'unsupported'
 		});
+		openSelector();
 		expect(document.querySelector('[role="switch"]')).toBeNull();
 		expect(document.body.textContent).not.toContain('Speed');
 		expect(document.body.textContent).not.toContain('Fast');
@@ -47,6 +84,7 @@ describe('ReasoningSelector Fast mode', () => {
 
 	it('renders an enabled toggle when Fast mode is available', () => {
 		renderSelector({ fastModeAccess: 'available' });
+		openSelector();
 		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
 		expect(toggle?.getAttribute('aria-checked')).toBe('false');
 		toggle?.click();
@@ -59,6 +97,7 @@ describe('ReasoningSelector Fast mode', () => {
 			fastModeAccess: 'locked',
 			fastModeLockTooltip: 'Upgrade to use Fast mode'
 		});
+		openSelector();
 		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
 		expect(toggle?.getAttribute('aria-disabled')).toBe('true');
 		expect(toggle?.getAttribute('aria-label')).toContain('Upgrade to use Fast mode');

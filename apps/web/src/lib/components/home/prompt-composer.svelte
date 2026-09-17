@@ -21,6 +21,7 @@
 		isModelAllowedForTier,
 		modelOptionsForTier,
 		resolveModelForTier,
+		showsReasoningControl,
 		type CatalogModelId,
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
@@ -598,9 +599,10 @@
 								{/snippet}
 							</OptionSelector>
 
-							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-
 							{#if selectedCatalogModel}
+								{#if showsReasoningControl(selectedCatalogModel) || selectedFastModeAccess === 'available' || selectedFastModeAccess === 'locked'}
+									<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+								{/if}
 								<ReasoningSelector
 									model={selectedCatalogModel}
 									bind:reasoningEffort={selectedReasoningEffort}
