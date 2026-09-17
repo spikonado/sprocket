@@ -15,9 +15,10 @@ describe('agentRuntime.start', () => {
 			runId,
 			executionSecret
 		});
-		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
-			'running'
-		);
+		expect(await t.run(async (ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			status: 'running',
+			working: true
+		});
 
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-revision',
@@ -32,9 +33,10 @@ describe('agentRuntime.start', () => {
 			status: 'completed',
 			executionSecret
 		});
-		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
-			'completed'
-		);
+		expect(await t.run(async (ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			status: 'completed',
+			working: false
+		});
 	});
 
 	it('claims a queued run and renews the same claim', async () => {

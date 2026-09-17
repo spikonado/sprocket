@@ -112,7 +112,8 @@ export default defineSchema({
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
 		lastMessageAt: v.number(),
-		archivedAt: v.optional(v.number())
+		archivedAt: v.optional(v.number()),
+		working: v.optional(v.boolean())
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
@@ -121,6 +122,13 @@ export default defineSchema({
 			'userId',
 			'repositoryKey',
 			'archivedAt',
+			'lastMessageAt'
+		])
+		.index('by_userId_and_repositoryKey_and_archivedAt_and_working_and_lastMessageAt', [
+			'userId',
+			'repositoryKey',
+			'archivedAt',
+			'working',
 			'lastMessageAt'
 		]),
 	threadUsage: defineTable({

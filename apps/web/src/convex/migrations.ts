@@ -4,6 +4,7 @@ import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { getTranscriptMembership, MEMBERSHIP_MIGRATION } from '@convex/lib/transcriptMemberships';
+import { INBOX_WORKING_MIGRATION, inboxWorking } from '@convex/lib/inboxState';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -56,6 +57,47 @@ export const runTranscriptMembershipMigration = internalMutation({
 		await migrations.runSerially(ctx, [
 			internal.migrations.moveTranscriptMemberships,
 			internal.migrations.finishTranscriptMembershipMigration
+		]);
+		return null;
+	}
+});
+
+export const backfillInboxWorking = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		const working = inboxWorking(thread.status);
+		if (thread.working === working) return;
+		return { working };
+	}
+});
+
+export const finishInboxWorkingMigration = migrations.define({
+	table: 'migrationSchedules',
+	customRange: (q) => q.withIndex('by_name', (q) => q.eq('name', INBOX_WORKING_MIGRATION)),
+	migrateOne: () => ({ completedAt: Date.now() })
+});
+
+export const runInboxWorkingMigration = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const schedule = await ctx.db
+			.query('migrationSchedules')
+			.withIndex('by_name', (q) => q.eq('name', INBOX_WORKING_MIGRATION))
+			.unique();
+		if (schedule?.completedAt !== undefined) return null;
+		if (!schedule) {
+			await ctx.db.insert('migrationSchedules', {
+				name: INBOX_WORKING_MIGRATION,
+				notBefore: Date.now(),
+				startedAt: Date.now()
+			});
+		} else if (schedule.startedAt === undefined) {
+			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
+		}
+		await migrations.runSerially(ctx, [
+			internal.migrations.backfillInboxWorking,
+			internal.migrations.finishInboxWorkingMigration
 		]);
 		return null;
 	}

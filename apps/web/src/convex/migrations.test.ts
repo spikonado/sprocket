@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import { initConvexTest, seedOwnedThread } from './test.setup';
+import { INBOX_WORKING_MIGRATION } from './lib/inboxState';
 import { AUTOMATIC_CLEANUP_DELAY_MS } from './migrations';
 
 const oneBatch = { cursor: null, dryRun: false, oneBatchOnly: true } as const;
@@ -205,6 +206,93 @@ describe('production rollout cleanup migrations', () => {
 			expect(migrated.schedule?.completedAt).toBeDefined();
 			expect(migrated.thread?.status).toBe('failed');
 			expect(migrated.run?.completionTransport).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('inbox working migration', () => {
+	it('backfills missing and stale working flags from thread status', async () => {
+		const t = initConvexTest();
+		const ids = await t.run(async (ctx) => {
+			const insertThread = async (
+				submissionId: string,
+				status?: 'queued' | 'running' | 'completed',
+				working?: boolean
+			) => {
+				const threadId = await ctx.db.insert('threadRecords', {
+					userId: 'user_alice',
+					submissionId,
+					repositoryKey: 'alpha',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'medium',
+					fastMode: false,
+					lastMessageAt: 1
+				});
+				if (status !== undefined) await ctx.db.patch('threadRecords', threadId, { status });
+				if (working !== undefined) await ctx.db.patch('threadRecords', threadId, { working });
+				return threadId;
+			};
+			return {
+				missingQueued: await insertThread('missing-queued', 'queued'),
+				missingRunning: await insertThread('missing-running', 'running'),
+				missingCompleted: await insertThread('missing-completed', 'completed'),
+				missingStatus: await insertThread('missing-status'),
+				wrongIdle: await insertThread('wrong-idle', 'completed', true),
+				alreadyWorking: await insertThread('already-working', 'queued', true)
+			};
+		});
+
+		await t.mutation(internal.migrations.backfillInboxWorking, oneBatch);
+
+		const records = await t.run(async (ctx) => ({
+			missingQueued: await ctx.db.get('threadRecords', ids.missingQueued),
+			missingRunning: await ctx.db.get('threadRecords', ids.missingRunning),
+			missingCompleted: await ctx.db.get('threadRecords', ids.missingCompleted),
+			missingStatus: await ctx.db.get('threadRecords', ids.missingStatus),
+			wrongIdle: await ctx.db.get('threadRecords', ids.wrongIdle),
+			alreadyWorking: await ctx.db.get('threadRecords', ids.alreadyWorking)
+		}));
+		expect(records.missingQueued?.working).toBe(true);
+		expect(records.missingRunning?.working).toBe(true);
+		expect(records.missingCompleted?.working).toBe(false);
+		expect(records.missingStatus?.working).toBe(false);
+		expect(records.wrongIdle?.working).toBe(false);
+		expect(records.alreadyWorking?.working).toBe(true);
+	});
+
+	it('marks the inbox working schedule complete and skips a second run', async () => {
+		vi.useFakeTimers();
+		try {
+			const t = initConvexTest();
+			const { threadId } = await seedOwnedThread(t);
+			await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', threadId, {
+					status: 'queued',
+					working: undefined
+				});
+			});
+
+			await t.mutation(internal.migrations.runInboxWorkingMigration, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+			const first = await t.run(async (ctx) => ({
+				thread: await ctx.db.get('threadRecords', threadId),
+				schedule: await ctx.db
+					.query('migrationSchedules')
+					.withIndex('by_name', (q) => q.eq('name', INBOX_WORKING_MIGRATION))
+					.unique()
+			}));
+			expect(first.thread?.working).toBe(true);
+			expect(first.schedule?.startedAt).toBeDefined();
+			expect(first.schedule?.completedAt).toBeDefined();
+
+			await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', threadId, { status: 'completed', working: true });
+			});
+			await t.mutation(internal.migrations.runInboxWorkingMigration, {});
+			expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.working).toBe(true);
 		} finally {
 			vi.useRealTimers();
 		}

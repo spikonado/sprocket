@@ -11,6 +11,13 @@ crons.interval(
 );
 
 crons.interval(
+	'backfill inbox working rank',
+	{ hours: 1 },
+	internal.migrations.runInboxWorkingMigration,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

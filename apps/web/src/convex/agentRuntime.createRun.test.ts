@@ -30,7 +30,8 @@ describe('agentRuntime.insertGatewayRun', () => {
 			userId,
 			repositoryKey: 'alpha',
 			status: 'queued',
-			fastMode: false
+			fastMode: false,
+			working: true
 		});
 		expect(run).toMatchObject({
 			threadId: created.threadId,
@@ -87,6 +88,10 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({
 			created: true
+		});
+		expect(await t.run(async (ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			status: 'queued',
+			working: true
 		});
 
 		const again = await insertQueuedRun(t, asUser, args);
