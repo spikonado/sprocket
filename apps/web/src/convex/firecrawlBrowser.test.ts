@@ -99,7 +99,7 @@ describe('Firecrawl browser lifecycle', () => {
 		await expect(interact(t, { ...third, command: 'agent-browser get url' })).rejects.toThrow(
 			'Both browser session slots are in use'
 		);
-		expect(fetch).toHaveBeenCalledTimes(4);
+		expect(fetch).toHaveBeenCalledTimes(5);
 		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
 		const session = await t.run((ctx) =>
 			ctx.db
@@ -125,6 +125,41 @@ describe('Firecrawl browser lifecycle', () => {
 		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
 	});
 
+	it('reconciles destroyed sessions only when a new session needs their capacity', async () => {
+		const fetch = remote();
+		const defaultResponse = fetch.getMockImplementation()!;
+		const t = initConvexTest();
+		const first = await fixture(t, 'first');
+		const second = await fixture(t, 'second');
+		const third = await fixture(t, 'third');
+		await interact(t, { ...first, command: 'agent-browser get url' });
+		await interact(t, { ...second, command: 'agent-browser get url' });
+		expect(fetch.mock.calls.some(([, options]) => options.method === 'GET')).toBe(false);
+		fetch.mockImplementation(async (url, options) => {
+			if (options.method === 'GET') {
+				return new Response(
+					JSON.stringify({
+						success: true,
+						sessions: [{ id: 'session-1', status: 'destroyed' }]
+					})
+				);
+			}
+			return defaultResponse(url, options);
+		});
+		await interact(t, { ...third, command: 'agent-browser get url' });
+		expect(fetch.mock.calls.filter(([, options]) => options.method === 'GET')).toHaveLength(1);
+		expect(
+			(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).map(
+				(slot) => slot.sessionId
+			)
+		).toEqual(['session-2', 'session-3']);
+		expect(
+			(await t.run((ctx) => ctx.db.query('browserSessions').collect())).map(
+				(session) => session.sessionId
+			)
+		).toEqual(['session-2', 'session-3']);
+	});
+
 	it('keeps unknown creations reserved until the provider hard lifetime has passed', async () => {
 		vi.useFakeTimers();
 		const fetch = remote().mockRejectedValue(new Error('connection lost'));
@@ -135,7 +170,7 @@ describe('Firecrawl browser lifecycle', () => {
 		await expect(interact(t, { ...auth, command: 'agent-browser click @e1' })).rejects.toThrow(
 			'Both browser session slots are in use'
 		);
-		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(fetch).toHaveBeenCalledTimes(3);
 		const slots = await t.run((ctx) => ctx.db.query('browserCapacity').collect());
 		expect(slots).toHaveLength(2);
 		expect(slots.every((slot) => slot.sessionId === undefined)).toBe(true);
@@ -161,7 +196,7 @@ describe('Firecrawl browser lifecycle', () => {
 		await expect(
 			interact(t, { ...first, command: 'agent-browser click @e1', enforce_saving: true })
 		).rejects.toThrow('Both browser session slots are in use');
-		expect(fetch).toHaveBeenCalledTimes(5);
+		expect(fetch).toHaveBeenCalledTimes(6);
 		expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
 		expect(
 			await t.run((ctx) =>

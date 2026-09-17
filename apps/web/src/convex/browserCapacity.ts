@@ -8,24 +8,33 @@ export const active = internalQuery({
 });
 
 export const reserve = internalMutation({
-	args: { reservationId: v.string(), expiresAt: v.number() },
-	returns: v.null(),
+	args: {
+		reservationId: v.string(),
+		expiresAt: v.number(),
+		returnIfFull: v.optional(v.boolean())
+	},
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const existing = await ctx.db
 			.query('browserCapacity')
 			.withIndex('by_reservationId', (q) => q.eq('reservationId', args.reservationId))
 			.unique();
-		if (existing) return null;
+		if (existing) return true;
 		const occupied = await ctx.db
 			.query('browserCapacity')
 			.withIndex('by_expiresAt', (q) => q.gt('expiresAt', Date.now()))
 			.take(2);
-		if (occupied.length === 2)
+		if (occupied.length === 2) {
+			if (args.returnIfFull) return false;
 			throw new ConvexError(
 				'Both browser session slots are in use. Stop an existing browser session or wait for one to close before opening another.'
 			);
-		await ctx.db.insert('browserCapacity', args);
-		return null;
+		}
+		await ctx.db.insert('browserCapacity', {
+			reservationId: args.reservationId,
+			expiresAt: args.expiresAt
+		});
+		return true;
 	}
 });
 

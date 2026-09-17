@@ -342,10 +342,18 @@ async function createSession(ctx: ActionCtx, profileName: string, saveChanges: b
 	if (!env.FIRECRAWL_BROWSER_API_KEY?.trim())
 		throw new Error('FIRECRAWL_BROWSER_API_KEY is not configured.');
 	const reservationId = crypto.randomUUID();
-	await ctx.runMutation(internal.browserCapacity.reserve, {
+	const reservation = {
 		reservationId,
 		expiresAt: Date.now() + SESSION_TTL_SECONDS * 1_000 + FETCH_TIMEOUT_MS
+	};
+	const reserved = await ctx.runMutation(internal.browserCapacity.reserve, {
+		...reservation,
+		returnIfFull: true
 	});
+	if (!reserved) {
+		await reconcileProviderSessions(ctx).catch(() => undefined);
+		await ctx.runMutation(internal.browserCapacity.reserve, reservation);
+	}
 	try {
 		const data = await provider('POST', '', {
 			ttl: SESSION_TTL_SECONDS,
@@ -625,44 +633,49 @@ export const close = internalAction({
 	}
 });
 
+async function reconcileProviderSessions(ctx: ActionCtx) {
+	if (!env.FIRECRAWL_BROWSER_API_KEY?.trim()) return;
+	await ctx.runMutation(internal.browserCapacity.expire, {});
+	const before = Date.now();
+	const listed = sessionsSchema.safeParse(await provider('GET', '?status=destroyed'));
+	if (!listed.success) {
+		throw new Error('Firecrawl session list was missing or malformed. Reconcile skipped.');
+	}
+	const destroyed = new Set(
+		listed.data.sessions
+			.filter((session) => session.status === 'destroyed')
+			.map((session) => session.id)
+	);
+	if (destroyed.size === 0) return;
+	for (const slot of await ctx.runQuery(internal.browserCapacity.active, {})) {
+		if (slot.sessionId && destroyed.has(slot.sessionId)) {
+			await ctx.runMutation(internal.browserCapacity.releaseSession, {
+				sessionId: slot.sessionId
+			});
+		}
+	}
+	let cursor: string | null = null;
+	for (;;) {
+		const batch: PaginationResult<Doc<'browserSessions'>> = await ctx.runQuery(
+			internal.browserSessions.list,
+			{ paginationOpts: { cursor, numItems: 100 } }
+		);
+		await ctx.runMutation(internal.browserSessions.reconcile, {
+			ids: batch.page
+				.filter((session) => session.sessionId && destroyed.has(session.sessionId))
+				.map((session) => session._id),
+			before
+		});
+		if (batch.isDone) break;
+		cursor = batch.continueCursor;
+	}
+}
+
 export const reconcile = internalAction({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
-		await ctx.runMutation(internal.browserCapacity.expire, {});
-		if (!env.FIRECRAWL_BROWSER_API_KEY?.trim()) return null;
-		const before = Date.now();
-		const listed = sessionsSchema.safeParse(await provider('GET', '?status=destroyed'));
-		if (!listed.success) {
-			throw new Error('Firecrawl session list was missing or malformed. Reconcile skipped.');
-		}
-		const destroyed = new Set(
-			listed.data.sessions
-				.filter((session) => session.status === 'destroyed')
-				.map((session) => session.id)
-		);
-		for (const slot of await ctx.runQuery(internal.browserCapacity.active, {})) {
-			if (slot.sessionId && destroyed.has(slot.sessionId)) {
-				await ctx.runMutation(internal.browserCapacity.releaseSession, {
-					sessionId: slot.sessionId
-				});
-			}
-		}
-		let cursor: string | null = null;
-		for (;;) {
-			const batch: PaginationResult<Doc<'browserSessions'>> = await ctx.runQuery(
-				internal.browserSessions.list,
-				{ paginationOpts: { cursor, numItems: 100 } }
-			);
-			await ctx.runMutation(internal.browserSessions.reconcile, {
-				ids: batch.page
-					.filter((session) => session.sessionId && destroyed.has(session.sessionId))
-					.map((session) => session._id),
-				before
-			});
-			if (batch.isDone) break;
-			cursor = batch.continueCursor;
-		}
+		await reconcileProviderSessions(ctx);
 		return null;
 	}
 });
