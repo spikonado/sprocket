@@ -90,7 +90,7 @@ import type * as transcript from "../transcript.js";
 import type * as transcriptSections from "../transcriptSections.js";
 import type * as uiPreferences from "../uiPreferences.js";
 import type * as usage from "../usage.js";
-import type * as webToolPool from "../webToolPool.js";
+import type * as webSearchPool from "../webSearchPool.js";
 import type * as webTools from "../webTools.js";
 
 import type {
@@ -182,7 +182,7 @@ declare const fullApi: ApiFromModules<{
   transcriptSections: typeof transcriptSections;
   uiPreferences: typeof uiPreferences;
   usage: typeof usage;
-  webToolPool: typeof webToolPool;
+  webSearchPool: typeof webSearchPool;
   webTools: typeof webTools;
 }>;
 
@@ -220,7 +220,7 @@ export declare const components: {
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   aggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregate">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;
-  webToolWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webToolWorkpool">;
+  webSearchWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webSearchWorkpool">;
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;
   firecrawlBrowserWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlBrowserWorkpool">;
 };

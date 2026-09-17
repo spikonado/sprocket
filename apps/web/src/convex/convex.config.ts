@@ -34,7 +34,7 @@ app.use(dodopayments);
 app.use(migrations);
 app.use(aggregate);
 app.use(actionRetrier);
-app.use(workpool, { name: 'webToolWorkpool' });
+app.use(workpool, { name: 'webSearchWorkpool' });
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
 app.use(workpool, { name: 'firecrawlBrowserWorkpool' });
 

@@ -3,12 +3,14 @@ import { patchRunExecution } from '@convex/lib/runExecution';
 import { ConvexError, type Infer } from 'convex/values';
 import { getFunctionName, type FunctionArgs } from 'convex/server';
 import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
+import { isNonRetryableError } from '@convex-dev/workpool';
 import { api, internal } from '@convex/_generated/api';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { UNSUPPORTED_CLIENT_MESSAGE } from '@convex/lib/unsupportedClient';
 import { vScrapeUrlTransport, vScreenshotUrlTransport } from '@convex/lib/validators';
 import {
 	DEFAULT_SCRAPE_SUMMARY,
+	classifyExaSearchFailure,
 	scrapeHttpErrorStatus,
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
@@ -123,6 +125,36 @@ describe('scrape HTTP failures', () => {
 			})}\n    at scrape (lib.js:24:12)`
 		);
 		expect(scrapeHttpErrorStatus(error)).toBe(403);
+	});
+});
+
+describe('Exa search failures', () => {
+	it.each([400, 401, 402, 403])('does not retry HTTP %i', (status) => {
+		const cause = new Error(
+			`Uncaught Error: Exa /search failed (${status}): provider rejected the request`
+		);
+		const error = classifyExaSearchFailure(cause);
+
+		expect(isNonRetryableError(error)).toBe(true);
+		expect(error.message).toContain(`Exa search failed (${status}): provider rejected the request`);
+	});
+
+	it.each([408, 425, 429, 500, 503, 504])('retries transient HTTP %i', (status) => {
+		const failure = new Error(`Exa /search failed (${status}): transient`);
+		const error = classifyExaSearchFailure(failure);
+
+		expect(error).toBe(failure);
+		expect(isNonRetryableError(error)).toBe(false);
+	});
+
+	it('does not retry a missing API key', () => {
+		const error = classifyExaSearchFailure(new Error('Missing EXA_API_KEY for the Exa component.'));
+		expect(isNonRetryableError(error)).toBe(true);
+	});
+
+	it('preserves transport failures for retry', () => {
+		const failure = new Error('fetch failed');
+		expect(classifyExaSearchFailure(failure)).toBe(failure);
 	});
 });
 

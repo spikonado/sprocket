@@ -6,7 +6,7 @@ import type { WorkId } from '@convex-dev/workpool';
 import type { GenericDatabaseWriter, GenericDataModel, SystemDataModel } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { cancelWebToolWork } from '@convex/webToolPool';
+import { cancelWebToolWork } from '@convex/lib/toolJobs';
 import {
 	FIRECRAWL_PARSE_URL,
 	HOSTED_PARSE_MAX_OUTPUT_BYTES,

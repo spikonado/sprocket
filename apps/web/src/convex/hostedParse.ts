@@ -379,6 +379,17 @@ export const cleanupExpired = internalMutation({
 	}
 });
 
+export const deleteUnregisteredStorage = internalMutation({
+	args: { storageId: v.id('_storage') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (!(await registeredParseStorage(ctx, args.storageId))) {
+			await deleteTemporaryStorage(ctx, args.storageId);
+		}
+		return null;
+	}
+});
+
 function createUploadResponse(request: Doc<'hostedParseRequests'>) {
 	if (request.status === 'awaiting_upload' && request.uploadUrl) {
 		return { requestId: request._id, uploadUrl: request.uploadUrl };

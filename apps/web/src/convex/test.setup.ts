@@ -45,7 +45,7 @@ export function initConvexTest(): ConvexTestInstance {
 	aggregateTest.register(backend);
 	batchWorkerTest.register(backend, 'aggregate/batchWorker');
 	actionRetrierTest.register(backend);
-	workpoolTest.register(backend, 'webToolWorkpool');
+	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
 	workpoolTest.register(backend, 'firecrawlBrowserWorkpool');
 	return t;

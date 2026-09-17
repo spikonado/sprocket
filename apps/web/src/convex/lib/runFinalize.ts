@@ -2,7 +2,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { isRunFinalStatus, vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 import { reconcileTerminalRunPages } from '@convex/lib/runTerminal';
-import { cancelWebToolWork } from '@convex/webToolPool';
+import { cancelWebToolWork } from '@convex/lib/toolJobs';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
