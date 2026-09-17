@@ -961,6 +961,7 @@ pub async fn run_agent(
                     fast_mode,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
+                    supports_required_tool_choice: capabilities.supports_required_tool_choice,
                     transcript_dir: store.thread_dir(&context.run.user_id, &context.run.thread_id),
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,

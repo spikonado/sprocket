@@ -87,6 +87,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
+    pub(crate) supports_required_tool_choice: bool,
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
@@ -191,6 +192,7 @@ where
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
         available_agent_tool_names(request.allow_interaction, request.supports_images),
+        request.supports_required_tool_choice,
     );
     let agent = completion_client
         .agent(model)

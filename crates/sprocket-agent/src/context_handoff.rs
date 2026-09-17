@@ -43,12 +43,17 @@ impl HandoffState {
         event: CompletionCallEvent<'_>,
         limit: u64,
         active_tools: &[&'static str],
+        supports_required_tool_choice: bool,
     ) -> CompletionCallAction {
         if self.writing {
             return CompletionCallAction::patch(
                 RequestPatch::new()
                     .active_tools([HandoffTool::NAME])
-                    .tool_choice(ToolChoice::Required),
+                    .tool_choice(if supports_required_tool_choice {
+                        ToolChoice::Required
+                    } else {
+                        ToolChoice::Auto
+                    }),
             );
         }
         if self.context_tokens >= limit && self.context_tokens > 0 {
@@ -89,6 +94,7 @@ impl HandoffState {
 pub(crate) struct ContextHandoffHook {
     token_limit: u64,
     active_tools: Arc<[&'static str]>,
+    supports_required_tool_choice: bool,
     state: Arc<Mutex<HandoffState>>,
 }
 
@@ -98,10 +104,12 @@ impl ContextHandoffHook {
         context_tokens: u64,
         defer_prompt: bool,
         active_tools: Vec<&'static str>,
+        supports_required_tool_choice: bool,
     ) -> Self {
         Self {
             token_limit,
             active_tools: active_tools.into(),
+            supports_required_tool_choice,
             state: Arc::new(Mutex::new(HandoffState {
                 context_tokens,
                 first_call: true,
@@ -173,7 +181,12 @@ impl AgentHook for ContextHandoffHook {
                         "The agent reached its completion call limit.",
                     );
                 }
-                let action = state.prepare(event, self.token_limit, &self.active_tools);
+                let action = state.prepare(
+                    event,
+                    self.token_limit,
+                    &self.active_tools,
+                    self.supports_required_tool_choice,
+                );
                 if !matches!(action, CompletionCallAction::Stop(_)) {
                     state.calls += 1;
                 }
@@ -286,7 +299,7 @@ mod tests {
 
     #[test]
     fn missing_usage_preserves_the_last_observation_until_restart() {
-        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"]);
+        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
         assert_eq!(hook.record_usage(Usage::default()), 0);
         assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
         hook.restart();
@@ -312,6 +325,7 @@ mod tests {
                 },
                 100,
                 &["exec_command"],
+                true,
             ),
             CompletionCallAction::Stop(_)
         ));
@@ -337,6 +351,7 @@ mod tests {
             },
             100,
             &["exec_command"],
+            true,
         );
         let request = state.request.unwrap();
         assert_eq!(request.history, vec![history[0].clone(), prompt]);
@@ -358,6 +373,7 @@ mod tests {
                 },
                 100,
                 &["exec_command"],
+                true,
             ),
             CompletionCallAction::Patch(_)
         ));
