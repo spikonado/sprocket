@@ -35,10 +35,11 @@ Instead of writing comments, prefer having clear naming and structure in the cod
 It's a good practice to write tests.
 This doesn't mean that you should write a test for every change.
 Here are some examples of what not to write tests for:
-  - Tests that should belong in the libraries/SDKs used by the project 
-  - Tests that just reframe the original code
-  - Tests that repeat a constant defined in the code
-  - Tests that verify incorrect behavior doesn't happen; instead, write tests that verify correct behavior happens
+
+- Tests that should belong in the libraries/SDKs used by the project
+- Tests that just reframe the original code
+- Tests that repeat a constant defined in the code
+- Tests that verify incorrect behavior doesn't happen; instead, write tests that verify correct behavior happens
 
 ## Your training data may be stale
 
