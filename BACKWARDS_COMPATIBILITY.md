@@ -73,9 +73,9 @@ schema was tightened accordingly:
 
 Still retained from that era: `threadTranscriptStates.workThrough` (covered by
 the backfill below; production had more than 100 rows with the field set),
-section `linkedParts` (covered by the backfill below), and the
-`threadTranscriptMemberships` entry rows that current section writes use for
-idempotent retries (current mechanism, not legacy debt).
+section `linkedParts` (still read by preserve-on-retry section writes, so it is
+not backfilled), and the `threadTranscriptMemberships` entry rows that current
+section writes use for idempotent retries (current mechanism, not legacy debt).
 
 ## Legacy compat backfills (running)
 
@@ -96,17 +96,19 @@ In serial order: `removeTranscriptStateWorkThrough`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
-`convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last covered
-part number), and `removeSectionLinkedParts`.
+and `convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last
+covered part number).
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, mandate `userEmail`, scrape
-`truncated`, and `linkedParts` from the schema and validators; require
+`truncated` from the schema and validators; require
 `summary`/`images` on scrape results; require `toolInvocationId` on executor
 jobs and transcript tool parts and drop `jobId` and its pairing fallback;
 normalize or require stored completion timing; drop stored `imageUploadId`; drop
 `contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
-remove the backfill cron and its `migrationSchedules` row and table.
+remove the backfill cron and its `migrationSchedules` row and table. Dropping
+`linkedParts` waits on rewriting preserve-on-retry section writes so they no
+longer treat the field as the pre-counted summary marker.
 
 No lossless migration exists for retired tool kinds and their payload/result
 variants, `parse_file` URL sources, legacy command results, mandate status
