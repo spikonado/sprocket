@@ -15,8 +15,7 @@ describe('executor finalization acknowledgments', () => {
 			executionSecret,
 			expectedClaimId: 'claim',
 			status: 'failed',
-			text: '',
-			includeOutput: true
+			text: ''
 		});
 		expect(result).toEqual({ accepted: true, outcome: { status: 'cancelled', error: null } });
 		expect(
@@ -25,8 +24,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				expectedClaimId: 'claim',
 				status: 'completed',
-				text: 'done',
-				includeOutput: true
+				text: 'done'
 			})
 		).toEqual({ accepted: false, outcome: { status: 'cancelled', error: null } });
 	});
@@ -49,8 +47,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				claimId: 'other',
 				text: '',
-				lastError: 'lost',
-				includeOutput: true
+				lastError: 'lost'
 			})
 		).toEqual({ accepted: false, outcome: null });
 		expect(
@@ -59,8 +56,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				expectedClaimId: 'owner',
 				status: 'completed',
-				text: 'done',
-				includeOutput: true
+				text: 'done'
 			})
 		).toEqual({ accepted: true, outcome: { status: 'completed', error: null } });
 	});
@@ -77,8 +73,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret: 'wrong',
 				claimId: 'owner',
 				text: '',
-				lastError: 'lost',
-				includeOutput: true
+				lastError: 'lost'
 			})
 		).rejects.toThrow();
 		expect(
@@ -87,8 +82,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				claimId: 'owner',
 				text: '',
-				lastError: 'lost',
-				includeOutput: true
+				lastError: 'lost'
 			})
 		).toEqual({ accepted: true, outcome: { status: 'failed', error: 'lost' } });
 	});

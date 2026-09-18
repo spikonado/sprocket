@@ -181,7 +181,9 @@
 			block.type === 'tool-group' &&
 			(block.toolKey === 'add_artifact' ||
 				block.toolKey === 'list_artifacts' ||
-				block.toolKey === 'edit_artifact')
+				block.toolKey === 'edit_artifact' ||
+				block.toolKey === 'create_artifact' ||
+				block.toolKey === 'update_artifact')
 		);
 	}
 

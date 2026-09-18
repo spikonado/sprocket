@@ -141,7 +141,6 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				expectedClaimId: 'claim-complete',
 				text: 'done',
 				status: 'completed',
-				includeOutput: true,
 				executionSecret
 			})
 		).toMatchObject({ accepted: true });
@@ -166,7 +165,6 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				text: 'boom',
 				status: 'failed',
 				lastError: 'model exploded',
-				includeOutput: true,
 				executionSecret: 'fail-secret'
 			})
 		).toMatchObject({ accepted: true });

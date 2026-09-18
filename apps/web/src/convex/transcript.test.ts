@@ -90,7 +90,6 @@ describe('numbered transcript parts', () => {
 			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
 		};
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-complete',
 			attemptSeq: 1,
@@ -101,7 +100,6 @@ describe('numbered transcript parts', () => {
 		});
 		expect(number?.number).toBe(1);
 		const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-complete',
 			attemptSeq: 1,
@@ -162,7 +160,6 @@ describe('numbered transcript parts', () => {
 		];
 		const sectionKey = `agent:${runId}:claim-empty-reasoning:1:section:1`;
 		const part = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-empty-reasoning',
 			attemptSeq: 1,
@@ -178,7 +175,6 @@ describe('numbered transcript parts', () => {
 		// Empty reasoning must not carry work; visible reasoning must.
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-				transcriptProtocol: 2,
 				runId,
 				claimId: 'claim-empty-reasoning',
 				attemptSeq: 1,
@@ -216,7 +212,6 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-no-begin',
 			attemptSeq: 1,
@@ -327,7 +322,6 @@ describe('numbered transcript parts', () => {
 		});
 		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-tool-order',
 			attemptSeq: 1,
@@ -413,7 +407,6 @@ describe('numbered transcript parts', () => {
 			expectedClaimId: 'claim-tool-cancel',
 			text: '',
 			status: 'cancelled',
-			includeOutput: true,
 			executionSecret
 		});
 		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
@@ -526,7 +519,6 @@ describe('numbered transcript parts', () => {
 		});
 
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-exact-tool',
 			attemptSeq: 1,
@@ -562,7 +554,6 @@ describe('numbered transcript parts', () => {
 			text: 'partial',
 			status: 'failed',
 			lastError: 'boom',
-			includeOutput: true,
 			executionSecret
 		});
 		const state = await asUser.query(api.transcript.getState, { threadId });
@@ -595,7 +586,6 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-continue',
 			attemptSeq: 1,
@@ -616,7 +606,6 @@ describe('numbered transcript parts', () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
-			includeOutput: true,
 			executionSecret
 		});
 		const continuation = await insertQueuedRun(t, asUser, {
@@ -640,7 +629,6 @@ describe('numbered transcript parts', () => {
 			runId: first.runId,
 			text: '',
 			status: 'cancelled',
-			includeOutput: true,
 			executionSecret: 'secret-a'
 		});
 		await createQueuedRun(t, asUser, threadId, 'sub-b', 'secret-b', 'B');
@@ -697,7 +685,6 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			transcriptProtocol: 2,
 			runId,
 			claimId: 'claim-keep-history',
 			attemptSeq: 1,

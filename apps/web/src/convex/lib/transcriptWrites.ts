@@ -90,7 +90,6 @@ export async function recordCompletionTranscript(
 		completion: { streamId: args.streamId, items: args.items },
 		work
 	});
-	if (!result.inserted) return result.part;
 	await writeCompletionSectionData(ctx, {
 		part: result.part,
 		work,
@@ -125,7 +124,6 @@ export async function recordStartedToolTranscript(
 		tool: progressToolBody(args.job, { status: 'started' }),
 		work: { ranges: [], sectionKey: args.job.sectionKey }
 	});
-	if (!result.inserted) return;
 	await writeToolSectionData(ctx, {
 		part: result.part,
 		sectionKey: args.job.sectionKey,
@@ -164,7 +162,6 @@ export async function recordToolTranscript(
 		tool: settledToolBody(args.job),
 		work: { ranges: [], sectionKey: args.job.sectionKey }
 	});
-	if (!result.inserted) return;
 	await writeToolSectionData(ctx, {
 		part: result.part,
 		sectionKey: args.job.sectionKey,
@@ -182,21 +179,26 @@ export async function recordSettledToolTranscripts(
 		userId: string;
 		runId: Id<'runs'>;
 		items: TranscriptCompletionItem[];
-		toolInvocations: { callId: string; toolInvocationId: string }[];
+		toolInvocations?: { callId: string; toolInvocationId: string }[];
 	}
 ): Promise<void> {
 	const callIds = args.items.flatMap((item) => (item.type === 'tool-call' ? [item.callId] : []));
 	for (const [index, callId] of callIds.entries()) {
-		const invocation = args.toolInvocations[index];
-		if (!invocation || invocation.callId !== callId) {
-			throw new Error('Missing tool invocation assignment.');
-		}
-		const job = await ctx.db
-			.query('executorJobs')
-			.withIndex('by_runId_and_toolInvocationId', (query) =>
-				query.eq('runId', args.runId).eq('toolInvocationId', invocation.toolInvocationId)
-			)
-			.unique();
+		const invocation = args.toolInvocations?.[index];
+		const job = invocation
+			? await ctx.db
+					.query('executorJobs')
+					.withIndex('by_runId_and_toolInvocationId', (query) =>
+						query.eq('runId', args.runId).eq('toolInvocationId', invocation.toolInvocationId)
+					)
+					.unique()
+			: await ctx.db
+					.query('executorJobs')
+					.withIndex('by_runId_and_callId_and_hidden', (query) =>
+						query.eq('runId', args.runId).eq('callId', callId).eq('hidden', false)
+					)
+					.order('desc')
+					.first();
 		if (job) {
 			await recordToolTranscript(ctx, {
 				threadId: args.threadId,

@@ -569,7 +569,6 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
 			submissionId: 'storage-ids-run',
-			transcriptProtocol: 2,
 			threadId,
 			prompt: 'Hello',
 			storageIds: [storageId],

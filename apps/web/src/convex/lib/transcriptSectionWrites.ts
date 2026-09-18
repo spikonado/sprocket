@@ -9,6 +9,17 @@ type SectionMetadata = {
 	closed: boolean;
 };
 
+function entryKey(
+	partNumber: number,
+	start: number,
+	sectionKey: string,
+	toolInvocationId?: string
+) {
+	return toolInvocationId
+		? `tool:${partNumber}:${toolInvocationId}`
+		: `range:${partNumber}:${start}:${sectionKey}`;
+}
+
 function validateOrdinal(value: number) {
 	if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid section ordinal.');
 }
@@ -80,8 +91,9 @@ async function updateSummary(
 	}
 	if (
 		existing.runId !== args.runId ||
-		existing.displayOrder !== displayOrder ||
-		existing.sectionOrdinal !== args.metadata.sectionOrdinal
+		(existing.displayOrder !== undefined && existing.displayOrder !== displayOrder) ||
+		(existing.sectionOrdinal !== undefined &&
+			existing.sectionOrdinal !== args.metadata.sectionOrdinal)
 	) {
 		throw new Error('Section identity conflicts with an existing section.');
 	}
@@ -102,6 +114,46 @@ async function updateSummary(
 	});
 }
 
+async function insertEntry(
+	ctx: MutationCtx,
+	args: {
+		threadId: Id<'threadRecords'>;
+		runId: Id<'runs'>;
+		partNumber: number;
+		sectionKey: string;
+		start: number;
+		end: number;
+		toolInvocationId?: string;
+		sectionOrdinal: number;
+		closed: boolean;
+	}
+) {
+	const key = entryKey(args.partNumber, args.start, args.sectionKey, args.toolInvocationId);
+	const existing = await ctx.db
+		.query('threadTranscriptMemberships')
+		.withIndex('by_threadId_and_entryKey', (q) =>
+			q.eq('threadId', args.threadId).eq('entryKey', key)
+		)
+		.unique();
+	if (existing) {
+		if (
+			existing.runId !== args.runId ||
+			existing.partNumber !== args.partNumber ||
+			existing.sectionKey !== args.sectionKey ||
+			existing.start !== args.start ||
+			existing.end !== args.end ||
+			existing.toolInvocationId !== args.toolInvocationId ||
+			existing.sectionOrdinal !== args.sectionOrdinal ||
+			existing.closed !== args.closed
+		) {
+			throw new Error('Conflicting transcript section retry.');
+		}
+		return false;
+	}
+	await ctx.db.insert('threadTranscriptMemberships', { ...args, entryKey: key });
+	return true;
+}
+
 export async function writeCompletionSectionData(
 	ctx: MutationCtx,
 	args: {
@@ -109,6 +161,7 @@ export async function writeCompletionSectionData(
 		work: PersistedWork;
 		sections: SectionMetadata[];
 		representedCallIds?: Set<string>;
+		preserveExistingSummaries?: boolean;
 	}
 ) {
 	const metadata = new Map(args.sections.map((section) => [section.sectionKey, section]));
@@ -127,21 +180,43 @@ export async function writeCompletionSectionData(
 		previousEnd = range.end;
 		const section = metadata.get(range.sectionKey);
 		if (!section) throw new Error('Completion work range has no section metadata.');
-		const representedTools =
-			args.part.completion?.items
-				.slice(range.start, range.end)
-				.filter((item) => item.type === 'tool-call' && args.representedCallIds?.has(item.callId))
-				.length ?? 0;
-		await updateSummary(ctx, {
-			threadId: args.part.threadId,
-			runId: args.part.runId,
-			partNumber: args.part.number,
-			start: range.start,
-			end: range.end,
-			metadata: section,
-			itemDelta: range.end - range.start - representedTools,
-			pendingDelta: 0
-		});
+		const existingSummary = args.preserveExistingSummaries
+			? await ctx.db
+					.query('threadTranscriptWorkSections')
+					.withIndex('by_threadId_and_key', (q) =>
+						q.eq('threadId', args.part.threadId).eq('key', range.sectionKey)
+					)
+					.unique()
+			: null;
+		if (
+			await insertEntry(ctx, {
+				threadId: args.part.threadId,
+				runId: args.part.runId,
+				partNumber: args.part.number,
+				sectionKey: range.sectionKey,
+				start: range.start,
+				end: range.end,
+				sectionOrdinal: section.sectionOrdinal,
+				closed: section.closed
+			})
+		) {
+			const preserveExisting = existingSummary?.linkedParts !== undefined;
+			const representedTools =
+				args.part.completion?.items
+					.slice(range.start, range.end)
+					.filter((item) => item.type === 'tool-call' && args.representedCallIds?.has(item.callId))
+					.length ?? 0;
+			await updateSummary(ctx, {
+				threadId: args.part.threadId,
+				runId: args.part.runId,
+				partNumber: args.part.number,
+				start: range.start,
+				end: range.end,
+				metadata: section,
+				itemDelta: preserveExisting ? 0 : range.end - range.start - representedTools,
+				pendingDelta: 0
+			});
+		}
 	}
 }
 
@@ -154,8 +229,32 @@ export async function writeToolSectionData(
 		toolInvocationId: string;
 		started: boolean;
 		occurredAt?: number;
+		preserveExistingSummary?: boolean;
 	}
 ) {
+	if (
+		!(await insertEntry(ctx, {
+			threadId: args.part.threadId,
+			runId: args.part.runId,
+			partNumber: args.part.number,
+			sectionKey: args.sectionKey,
+			start: 0,
+			end: 1,
+			toolInvocationId: args.toolInvocationId,
+			sectionOrdinal: args.sectionOrdinal,
+			closed: false
+		}))
+	) {
+		return;
+	}
+	const existingSummary = args.preserveExistingSummary
+		? await ctx.db
+				.query('threadTranscriptWorkSections')
+				.withIndex('by_threadId_and_key', (q) =>
+					q.eq('threadId', args.part.threadId).eq('key', args.sectionKey)
+				)
+				.unique()
+		: null;
 	await updateSummary(ctx, {
 		threadId: args.part.threadId,
 		runId: args.part.runId,
@@ -168,7 +267,7 @@ export async function writeToolSectionData(
 			closed: false
 		},
 		itemDelta: 0,
-		pendingDelta: args.started ? 1 : -1,
+		pendingDelta: existingSummary?.linkedParts !== undefined ? 0 : args.started ? 1 : -1,
 		startedAt: args.started ? args.occurredAt : undefined,
 		completedAt: args.started ? undefined : args.occurredAt
 	});

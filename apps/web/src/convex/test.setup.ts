@@ -3,6 +3,7 @@
 import firecrawlTest from '@firecrawl/firecrawl-convex/test';
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
+import migrationsTest from '@convex-dev/migrations/test';
 import aggregateTest from '@convex-dev/aggregate/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
@@ -61,6 +62,7 @@ export function initConvexTest(): ConvexTestInstance {
 	rateLimiterTest.register(backend);
 	firecrawlTest.register(backend);
 	exaTest.register(backend);
+	migrationsTest.register(backend);
 	aggregateTest.register(backend);
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');

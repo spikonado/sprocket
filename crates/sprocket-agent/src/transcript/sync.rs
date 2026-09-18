@@ -78,7 +78,10 @@ struct RemoteCompletion {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteTool {
-    tool_invocation_id: String,
+    #[serde(default)]
+    job_id: Option<String>,
+    #[serde(default)]
+    tool_invocation_id: Option<String>,
     call_id: String,
     name: String,
     #[serde(default)]
@@ -134,6 +137,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
             items: completion.items,
         }),
         tool: part.tool.map(|tool| TranscriptToolBody {
+            job_id: tool.job_id,
             tool_invocation_id: tool.tool_invocation_id,
             call_id: tool.call_id,
             name: tool.name,
@@ -285,20 +289,31 @@ mod tests {
     }
 
     #[test]
-    fn attachment_wire_format_uses_storage_identity_only() {
-        let attachment = serde_json::json!({
-            "storageId": "storage", "name": "file.txt",
-            "mediaType": "text/plain", "size": 4.0
-        });
-        let parts = parse_remote_parts(serde_json::json!({"parts": [{
-            "number": 0.0, "sourceKey": "prompt:0", "kind": "prompt", "runId": "run",
-            "prompt": {"text": "hi", "imageUploads": [attachment]}
-        }]}))
-        .unwrap();
-        let meta = &parts[0].prompt.as_ref().unwrap().image_uploads[0];
-        assert_eq!(meta.storage_id, "storage");
-        let json = serde_json::to_value(meta).unwrap();
-        assert!(json.get("imageUploadId").is_none());
+    fn attachment_wire_formats_serialize_with_storage_identity_only() {
+        for legacy in [false, true] {
+            let mut attachment = serde_json::json!({
+                "storageId": "storage", "name": "file.txt",
+                "mediaType": "text/plain", "size": 4.0
+            });
+            if legacy {
+                attachment["imageUploadId"] = "upload".into();
+            }
+            let parts = parse_remote_parts(serde_json::json!({"parts": [{
+                "number": 0.0, "sourceKey": "prompt:0", "kind": "prompt", "runId": "run",
+                "prompt": {"text": "hi", "imageUploads": [attachment]}
+            }]}))
+            .unwrap();
+            let meta = &parts[0].prompt.as_ref().unwrap().image_uploads[0];
+            assert_eq!(meta.storage_id, "storage");
+            let json = serde_json::to_value(meta).unwrap();
+            assert!(json.get("imageUploadId").is_none());
+            let mut old_local = json.clone();
+            old_local["imageUploadId"] = "upload".into();
+            assert_eq!(
+                serde_json::from_value::<TranscriptAttachmentMeta>(old_local).unwrap(),
+                *meta
+            );
+        }
     }
 
     #[test]
@@ -311,7 +326,6 @@ mod tests {
                 "runId": "run",
                 "_creationTime": 1_700_000_000_000.125,
                 "tool": {
-                    "toolInvocationId": "inv-1",
                     "callId": "c1",
                     "name": "exec_command",
                     "status": "started"

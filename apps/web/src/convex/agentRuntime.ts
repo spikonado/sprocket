@@ -46,7 +46,7 @@ import {
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
-import { getPromptPart } from '@convex/lib/transcriptParts';
+import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -129,7 +129,6 @@ export const insertGatewayRun = internalMutation({
 
 export const createGatewayRun = action({
 	args: {
-		transcriptProtocol: v.literal(2),
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
@@ -168,6 +167,9 @@ export const createGatewayRun = action({
 		};
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+		if (created.promptPart) {
+			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
+		}
 		return {
 			...created,
 			gatewayUrl,
@@ -368,7 +370,7 @@ export const saveContextHandoff = mutation({
 			beforePrompt: args.beforePrompt
 		});
 		const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
-		const existingCutoff = existingThroughPartNumber(thread);
+		const existingCutoff = await existingThroughPartNumber(ctx, thread);
 		if (thread.contextSummaryHandoffKey === handoffKey) {
 			if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
 				throw new Error('Invalid context handoff cutoff.');
@@ -384,6 +386,7 @@ export const saveContextHandoff = mutation({
 		await ctx.db.patch('threadRecords', thread._id, {
 			contextSummary: args.summary,
 			contextSummaryThroughPartNumber: throughPartNumber,
+			contextSummaryThroughRunId: undefined,
 			contextSummaryHandoffKey: handoffKey
 		});
 		await clearThreadContextTokens(ctx, thread._id);
@@ -437,7 +440,6 @@ export const registerCompletionAttempt = mutation({
 
 export const finalizeCompletionCall = mutation({
 	args: {
-		transcriptProtocol: v.literal(2),
 		runId: v.id('runs'),
 		claimId: v.string(),
 		attemptSeq: v.number(),
@@ -597,7 +599,6 @@ export const requestCancellation = mutation({
 
 export const finalizeExecutorRun = mutation({
 	args: {
-		includeOutput: v.literal(true),
 		expectedStatus: v.optional(vRunStatus),
 		expectedClaimId: v.optional(v.string()),
 		runId: v.id('runs'),
@@ -640,7 +641,6 @@ export const finalizeFailedStart = mutation({
 
 export const finalizeClaimFailure = mutation({
 	args: {
-		includeOutput: v.literal(true),
 		claimId: v.string(),
 		runId: v.id('runs'),
 		text: v.string(),

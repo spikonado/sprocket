@@ -169,7 +169,6 @@ describe('agentQuestions', () => {
 			runId,
 			text: '',
 			status: 'cancelled',
-			includeOutput: true,
 			executionSecret
 		});
 
@@ -199,7 +198,6 @@ describe('agentQuestions', () => {
 			text: '',
 			status: 'failed',
 			lastError: 'Stopped before receiving the answer.',
-			includeOutput: true,
 			executionSecret
 		});
 
@@ -247,7 +245,6 @@ describe('agentQuestions', () => {
 			runId,
 			text: '',
 			status: 'completed',
-			includeOutput: true,
 			executionSecret
 		});
 
@@ -289,7 +286,6 @@ describe('agentQuestions', () => {
 			runId,
 			text: '',
 			status: 'completed',
-			includeOutput: true,
 			executionSecret
 		});
 

@@ -49,7 +49,6 @@ async function finalizeTextCompletion(
 		executionSecret: args.executionSecret
 	});
 	return await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-		transcriptProtocol: 2,
 		runId: args.runId,
 		claimId: args.claimId,
 		attemptSeq: args.attemptSeq,
@@ -624,7 +623,6 @@ describe('agentRuntime context accounting', () => {
 			expectedClaimId: 'claim-1',
 			text: 'Old work completed',
 			status: 'completed',
-			includeOutput: true,
 			executionSecret: firstSecret
 		});
 
@@ -755,7 +753,6 @@ describe('agentRuntime context accounting', () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
-			includeOutput: true,
 			executionSecret: parentSecret
 		});
 

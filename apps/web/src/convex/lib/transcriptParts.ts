@@ -48,9 +48,9 @@ export type ToolTranscriptPhase = 'started' | 'finished';
 
 export function toolInvocationIdForJob(job: {
 	_id: Id<'executorJobs'>;
-	toolInvocationId: string;
+	toolInvocationId?: string;
 }): string {
-	return job.toolInvocationId;
+	return job.toolInvocationId ?? job._id;
 }
 
 export function toolSourceKey(toolInvocationId: string, phase: ToolTranscriptPhase): string {
@@ -152,6 +152,18 @@ export function sameValue(left: Value | undefined, right: Value | undefined): bo
 	);
 }
 
+function promptWithoutLegacyUploadIds(prompt: TranscriptPromptBody | undefined) {
+	if (!prompt) return undefined;
+	return {
+		...prompt,
+		imageUploads: prompt.imageUploads.map((upload) => {
+			const current = { ...upload };
+			delete current.imageUploadId;
+			return current;
+		})
+	};
+}
+
 export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
@@ -167,7 +179,7 @@ export async function appendTranscriptPart(
 		const expected = {
 			kind: args.kind,
 			runId: args.runId,
-			prompt: args.prompt,
+			prompt: promptWithoutLegacyUploadIds(args.prompt),
 			completion,
 			tool: args.tool,
 			work: args.work
@@ -175,7 +187,7 @@ export async function appendTranscriptPart(
 		const persisted = {
 			kind: existing.kind,
 			runId: existing.runId,
-			prompt: existing.prompt,
+			prompt: promptWithoutLegacyUploadIds(existing.prompt),
 			completion: existing.completion,
 			tool: existing.tool,
 			work: existing.work
@@ -289,9 +301,42 @@ export async function hydrateTranscriptPartUrls(
 	);
 }
 
+export function stripLegacyAttachmentImageUploadIds(
+	parts: Doc<'threadTranscriptParts'>[]
+): Doc<'threadTranscriptParts'>[] {
+	return parts.map((part) => {
+		if (!part.prompt || part.prompt.imageUploads.length === 0) {
+			return part;
+		}
+		return {
+			...part,
+			prompt: {
+				...part.prompt,
+				imageUploads: part.prompt.imageUploads.map((upload) => {
+					const attachment = { ...upload };
+					delete attachment.imageUploadId;
+					return attachment;
+				})
+			}
+		};
+	});
+}
+
 export async function transcriptPartsForClient(
 	ctx: MutationCtx | QueryCtx,
 	parts: Doc<'threadTranscriptParts'>[]
 ): Promise<Doc<'threadTranscriptParts'>[]> {
-	return await hydrateTranscriptPartUrls(ctx, parts);
+	const withWork = await Promise.all(
+		parts.map(async (part) => {
+			if (part.work) return part;
+			const legacy = await ctx.db
+				.query('threadTranscriptMemberships')
+				.withIndex('by_threadId_and_number', (query) =>
+					query.eq('threadId', part.threadId).eq('number', part.number)
+				)
+				.unique();
+			return { ...part, work: legacy?.work ?? { ranges: [] } };
+		})
+	);
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, withWork));
 }

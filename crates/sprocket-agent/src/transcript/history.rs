@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::context_handoff::context_summary_text;
-use crate::reasoning::opaque_encrypted;
+use crate::reasoning::{opaque_encrypted, skip_reasoning_on_reload};
 use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
@@ -195,6 +195,11 @@ pub fn agent_history_from_parts(
                     let mut contents = Vec::new();
                     for item in &completion.items {
                         if let Some(content) = completion_item_to_history(item) {
+                            if matches!(content, AgentHistoryContent::Reasoning { .. })
+                                && skip_reasoning_on_reload(state.context_summary.as_deref())
+                            {
+                                continue;
+                            }
                             contents.push(content);
                         }
                     }
@@ -320,7 +325,8 @@ mod tests {
         call_id: &str,
         status: &str,
         output: Option<serde_json::Value>,
-        tool_invocation_id: &str,
+        tool_invocation_id: Option<&str>,
+        job_id: Option<&str>,
     ) -> TranscriptPart {
         TranscriptPart {
             number,
@@ -331,7 +337,8 @@ mod tests {
             prompt: None,
             completion: None,
             tool: Some(TranscriptToolBody {
-                tool_invocation_id: tool_invocation_id.to_string(),
+                job_id: job_id.map(str::to_string),
+                tool_invocation_id: tool_invocation_id.map(str::to_string),
                 call_id: call_id.into(),
                 name: "exec_command".into(),
                 output,
@@ -454,14 +461,15 @@ mod tests {
                 prompt(0, "run", "do it"),
                 TranscriptPart {
                     number: 1,
-                    source_key: "tool:orphan-inv:finished".into(),
+                    source_key: "tool:orphan".into(),
                     kind: TranscriptPartKind::Tool,
                     run_id: "run".into(),
                     created_at: None,
                     prompt: None,
                     completion: None,
                     tool: Some(TranscriptToolBody {
-                        tool_invocation_id: "orphan-inv".into(),
+                        job_id: None,
+                        tool_invocation_id: None,
                         call_id: "orphan".into(),
                         name: "exec_command".into(),
                         output: Some(serde_json::json!("orphan-output")),
@@ -490,14 +498,15 @@ mod tests {
                 },
                 TranscriptPart {
                     number: 3,
-                    source_key: "tool:keep-inv:finished".into(),
+                    source_key: "tool:keep".into(),
                     kind: TranscriptPartKind::Tool,
                     run_id: "run".into(),
                     created_at: None,
                     prompt: None,
                     completion: None,
                     tool: Some(TranscriptToolBody {
-                        tool_invocation_id: "keep-inv".into(),
+                        job_id: None,
+                        tool_invocation_id: None,
                         call_id: "keep".into(),
                         name: "exec_command".into(),
                         output: Some(serde_json::json!("keep-output")),
@@ -521,14 +530,23 @@ mod tests {
             &state,
             &[
                 prompt(0, "run", "do it"),
-                tool_part(1, "tool:inv-1:started", "keep", "started", None, "inv-1"),
+                tool_part(
+                    1,
+                    "tool:inv-1:started",
+                    "keep",
+                    "started",
+                    None,
+                    Some("inv-1"),
+                    None,
+                ),
                 tool_part(
                     2,
                     "tool:inv-1:finished",
                     "keep",
                     "completed",
                     Some(serde_json::json!("keep-output")),
-                    "inv-1",
+                    Some("inv-1"),
+                    None,
                 ),
                 completion_with_call(3, "keep"),
             ],
@@ -557,7 +575,8 @@ mod tests {
                     "keep",
                     "cancelled",
                     Some(serde_json::json!({"error": "stopped", "status": "cancelled"})),
-                    "inv-1",
+                    Some("inv-1"),
+                    None,
                 ),
                 tool_part(
                     3,
@@ -565,7 +584,8 @@ mod tests {
                     "keep",
                     "completed",
                     Some(serde_json::json!("should-not-win")),
-                    "inv-1",
+                    Some("inv-1"),
+                    None,
                 ),
             ],
             Some("run"),
@@ -573,6 +593,31 @@ mod tests {
         let serialized = format!("{history:?}");
         assert!(serialized.contains("stopped"));
         assert!(!serialized.contains("should-not-win"));
+    }
+
+    #[test]
+    fn reads_legacy_job_id_tool_parts() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "run", "do it"),
+                completion_with_call(1, "keep"),
+                tool_part(
+                    2,
+                    "tool:legacy-job",
+                    "keep",
+                    "completed",
+                    Some(serde_json::json!("legacy-output")),
+                    None,
+                    Some("legacy-job"),
+                ),
+            ],
+            Some("run"),
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("legacy-output"));
+        assert!(serialized.contains("call_id: Some(\"keep\")"));
     }
 
     #[test]
@@ -682,5 +727,96 @@ mod tests {
             }
             other => panic!("expected empty signed reasoning, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn context_handoff_reload_drops_all_loaded_reasoning_regardless_of_part_number() {
+        // A context summary is not proof the retained prefix is unchanged.
+        // In-flight old generations can commit later, and in-memory context handoff
+        // can replace current-run text while historyFromNumber only drops the
+        // prior run. Fail closed: drop every loaded reasoning item.
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("Prior work is done.".into());
+        state.history_from_number = 1;
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "old", "covered"),
+                reasoning_completion(
+                    1,
+                    serde_json::json!({
+                        "type": "reasoning",
+                        "text": "stale-tail",
+                        "providerMetadata": {
+                            "openai": {
+                                "itemId": "rs_tail",
+                                "reasoningEncryptedContent": "tail-envelope"
+                            }
+                        }
+                    }),
+                ),
+                reasoning_completion(
+                    3,
+                    serde_json::json!({
+                        "type": "reasoning",
+                        "text": "also-stale",
+                        "providerMetadata": {
+                            "openai": {
+                                "itemId": "rs_later",
+                                "reasoningEncryptedContent": "later-envelope"
+                            }
+                        }
+                    }),
+                ),
+            ],
+            None,
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("Prior work is done."));
+        assert!(!serialized.contains("rs_tail"));
+        assert!(!serialized.contains("tail-envelope"));
+        assert!(!serialized.contains("rs_later"));
+        assert!(!serialized.contains("later-envelope"));
+    }
+
+    #[test]
+    fn context_handoff_reload_keeps_text_while_dropping_reasoning() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("Prior work is done.".into());
+        state.history_from_number = 1;
+        let history = agent_history_from_parts(
+            &state,
+            &[TranscriptPart {
+                number: 1,
+                source_key: "completion:1".into(),
+                kind: TranscriptPartKind::Completion,
+                created_at: None,
+                run_id: "run".into(),
+                prompt: None,
+                completion: Some(TranscriptCompletionBody {
+                    stream_id: Some("s".into()),
+                    items: vec![
+                        serde_json::json!({
+                            "type": "reasoning",
+                            "text": "stale",
+                            "providerMetadata": {
+                                "openai": {
+                                    "itemId": "rs_old",
+                                    "reasoningEncryptedContent": "old-envelope"
+                                }
+                            }
+                        }),
+                        serde_json::json!({ "type": "text", "text": "kept answer" }),
+                    ],
+                }),
+                tool: None,
+                work: Default::default(),
+            }],
+            None,
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("kept answer"));
+        assert!(!serialized.contains("rs_old"));
+        assert!(!serialized.contains("old-envelope"));
     }
 }

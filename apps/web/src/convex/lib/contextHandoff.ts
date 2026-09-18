@@ -25,6 +25,15 @@ async function partNumberForRun(
 	return part?.number;
 }
 
+export async function throughPartNumberForRunId(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>,
+	runId: Id<'runs'>
+): Promise<number> {
+	const lastCovered = await partNumberForRun(ctx, threadId, runId, 'desc');
+	return lastCovered ?? EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER;
+}
+
 async function lastTranscriptPartNumber(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
@@ -51,16 +60,23 @@ export async function throughPartNumberForHandoff(
 	return await lastTranscriptPartNumber(ctx, args.threadId);
 }
 
-export function existingThroughPartNumber(thread: Doc<'threadRecords'>): number | undefined {
-	return thread.contextSummaryThroughPartNumber;
+export async function existingThroughPartNumber(
+	ctx: QueryCtx | MutationCtx,
+	thread: Doc<'threadRecords'>
+): Promise<number | undefined> {
+	if (thread.contextSummaryThroughPartNumber !== undefined) {
+		return thread.contextSummaryThroughPartNumber;
+	}
+	if (!thread.contextSummaryThroughRunId) return undefined;
+	return await throughPartNumberForRunId(ctx, thread._id, thread.contextSummaryThroughRunId);
 }
 
 export async function transcriptHistoryFromNumber(
-	_ctx: QueryCtx | MutationCtx,
+	ctx: QueryCtx | MutationCtx,
 	thread: Doc<'threadRecords'> | null
 ): Promise<number> {
 	if (!thread) return 0;
-	const throughPartNumber = existingThroughPartNumber(thread);
+	const throughPartNumber = await existingThroughPartNumber(ctx, thread);
 	if (throughPartNumber === undefined) return 0;
 	return throughPartNumber + 1;
 }

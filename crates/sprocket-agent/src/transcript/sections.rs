@@ -100,7 +100,7 @@ impl WorkItem {
                 item: 0,
             },
             call_id: Some(tool.call_id.clone()),
-            tool_invocation_id: Some(tool.tool_invocation_id.clone()),
+            tool_invocation_id: tool.tool_invocation_id.clone(),
             name: Some(tool.name.clone()),
             result_part: terminal.then_some(part.number),
             tool_parts: BTreeSet::new(),
@@ -184,7 +184,10 @@ pub(super) fn earliest_timing(left: Option<f64>, right: Option<f64>) -> Option<f
 }
 
 pub(crate) fn hidden_tool(name: &str) -> bool {
-    matches!(name, "add_artifact" | "list_artifacts" | "edit_artifact")
+    matches!(
+        name,
+        "add_artifact" | "list_artifacts" | "edit_artifact" | "create_artifact" | "update_artifact"
+    )
 }
 
 pub(super) fn detail(
