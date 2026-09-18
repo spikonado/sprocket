@@ -2,7 +2,7 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-## Convex Backwards Compatibility 
+## Convex Backwards Compatibility
 
 ### Current Migrations
 
@@ -13,19 +13,17 @@ In serial order: `removeTranscriptStateWorkThrough`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
-and `convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last
-covered part number).
+`convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last
+covered part number), and `removeSectionLinkedParts`.
 
 After the runner reports completion and production scans confirm no row carries
-the old fields, a later PR may: drop `workThrough`, mandate `userEmail`, scrape
-`truncated` from the schema and validators; require
+the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
+`userEmail`, scrape `truncated` from the schema and validators; require
 `summary`/`images` on scrape results; require `toolInvocationId` on executor
 jobs and transcript tool parts and drop `jobId` and its pairing fallback;
 normalize or require stored completion timing; drop stored `imageUploadId`; drop
 `contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
-remove the backfill cron and its `migrationSchedules` row and table. Dropping
-`linkedParts` waits on rewriting preserve-on-retry section writes so they no
-longer treat the field as the pre-counted summary marker.
+remove the backfill cron and its `migrationSchedules` row and table.
 
 ### Outdated Executor jobs
 

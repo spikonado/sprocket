@@ -161,7 +161,6 @@ export async function writeCompletionSectionData(
 		work: PersistedWork;
 		sections: SectionMetadata[];
 		representedCallIds?: Set<string>;
-		preserveExistingSummaries?: boolean;
 	}
 ) {
 	const metadata = new Map(args.sections.map((section) => [section.sectionKey, section]));
@@ -180,14 +179,6 @@ export async function writeCompletionSectionData(
 		previousEnd = range.end;
 		const section = metadata.get(range.sectionKey);
 		if (!section) throw new Error('Completion work range has no section metadata.');
-		const existingSummary = args.preserveExistingSummaries
-			? await ctx.db
-					.query('threadTranscriptWorkSections')
-					.withIndex('by_threadId_and_key', (q) =>
-						q.eq('threadId', args.part.threadId).eq('key', range.sectionKey)
-					)
-					.unique()
-			: null;
 		if (
 			await insertEntry(ctx, {
 				threadId: args.part.threadId,
@@ -200,7 +191,6 @@ export async function writeCompletionSectionData(
 				closed: section.closed
 			})
 		) {
-			const preserveExisting = existingSummary?.linkedParts !== undefined;
 			const representedTools =
 				args.part.completion?.items
 					.slice(range.start, range.end)
@@ -213,7 +203,7 @@ export async function writeCompletionSectionData(
 				start: range.start,
 				end: range.end,
 				metadata: section,
-				itemDelta: preserveExisting ? 0 : range.end - range.start - representedTools,
+				itemDelta: range.end - range.start - representedTools,
 				pendingDelta: 0
 			});
 		}
@@ -229,7 +219,6 @@ export async function writeToolSectionData(
 		toolInvocationId: string;
 		started: boolean;
 		occurredAt?: number;
-		preserveExistingSummary?: boolean;
 	}
 ) {
 	if (
@@ -247,14 +236,6 @@ export async function writeToolSectionData(
 	) {
 		return;
 	}
-	const existingSummary = args.preserveExistingSummary
-		? await ctx.db
-				.query('threadTranscriptWorkSections')
-				.withIndex('by_threadId_and_key', (q) =>
-					q.eq('threadId', args.part.threadId).eq('key', args.sectionKey)
-				)
-				.unique()
-		: null;
 	await updateSummary(ctx, {
 		threadId: args.part.threadId,
 		runId: args.part.runId,
@@ -267,7 +248,7 @@ export async function writeToolSectionData(
 			closed: false
 		},
 		itemDelta: 0,
-		pendingDelta: existingSummary?.linkedParts !== undefined ? 0 : args.started ? 1 : -1,
+		pendingDelta: args.started ? 1 : -1,
 		startedAt: args.started ? args.occurredAt : undefined,
 		completedAt: args.started ? undefined : args.occurredAt
 	});

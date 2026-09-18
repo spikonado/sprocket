@@ -174,7 +174,7 @@ export default defineSchema({
 		...workSectionFields,
 		sectionOrdinal: v.number(),
 		displayOrder: v.string(),
-		// Retained: no migration unsets it, and older sections still carry it.
+		// Cleared by removeSectionLinkedParts; drop once that backfill finishes.
 		linkedParts: v.optional(v.number())
 	})
 		.index('by_threadId_and_key', ['threadId', 'key'])

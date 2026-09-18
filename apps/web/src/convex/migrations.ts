@@ -161,6 +161,14 @@ export const convertContextHandoffCutoffs = migrations.define({
 	}
 });
 
+export const removeSectionLinkedParts = migrations.define({
+	table: 'threadTranscriptWorkSections',
+	migrateOne: async (_ctx, section) => {
+		if (section.linkedParts === undefined) return;
+		return { linkedParts: undefined };
+	}
+});
+
 const legacyCompatBackfillMigrations = [
 	internal.migrations.removeTranscriptStateWorkThrough,
 	internal.migrations.removeMandateSetupUserEmail,
@@ -169,7 +177,8 @@ const legacyCompatBackfillMigrations = [
 	internal.migrations.migrateToolPartJobIds,
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
-	internal.migrations.convertContextHandoffCutoffs
+	internal.migrations.convertContextHandoffCutoffs,
+	internal.migrations.removeSectionLinkedParts
 ];
 
 export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMigrations);

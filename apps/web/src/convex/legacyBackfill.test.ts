@@ -276,6 +276,41 @@ describe('legacy compat backfill migrations', () => {
 		).toBeUndefined();
 	});
 
+	it('unsets section linkedParts', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		const runId = await t.run(async (ctx) => {
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+				.unique();
+			if (!run) throw new Error('Missing test fixture.');
+			return run._id;
+		});
+		const sectionId = await t.run((ctx) =>
+			ctx.db.insert('threadTranscriptWorkSections', {
+				threadId,
+				key: 'section',
+				runId,
+				first: { part: 0, item: 0 },
+				end: { part: 0, item: 1 },
+				closed: true,
+				provisional: false,
+				itemCount: 1,
+				pendingTools: 0,
+				sectionOrdinal: 1,
+				displayOrder: '0000000000000001:run:000000000001',
+				linkedParts: 1
+			})
+		);
+
+		await t.mutation(internal.migrations.removeSectionLinkedParts, oneBatch);
+
+		const section = await t.run((ctx) => ctx.db.get('threadTranscriptWorkSections', sectionId));
+		expect(section).toMatchObject({ sectionOrdinal: 1 });
+		expect(section).not.toHaveProperty('linkedParts');
+	});
+
 	it('records completion through the automatic schedule', async () => {
 		vi.useFakeTimers();
 		try {
