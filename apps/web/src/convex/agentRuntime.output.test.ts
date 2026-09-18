@@ -15,8 +15,7 @@ describe('executor finalization acknowledgments', () => {
 			executionSecret,
 			expectedClaimId: 'claim',
 			status: 'failed',
-			text: '',
-			includeOutput: true
+			text: ''
 		});
 		expect(result).toEqual({ accepted: true, outcome: { status: 'cancelled', error: null } });
 		expect(
@@ -25,17 +24,22 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				expectedClaimId: 'claim',
 				status: 'completed',
-				text: 'done',
-				includeOutput: true
+				text: 'done'
 			})
 		).toEqual({ accepted: false, outcome: { status: 'cancelled', error: null } });
 	});
 
-	it('preserves boolean responses for installed clients and does not invent a terminal result after losing ownership', async () => {
+	it('returns the committed result and does not invent a terminal result after losing ownership', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'output-compat-secret';
-		const { runId } = await createQueuedRun(t, asUser, threadId, 'output-compat', executionSecret);
+		const executionSecret = 'output-secret-2';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'output-ownership',
+			executionSecret
+		);
 		await asUser.mutation(api.agentRuntime.start, { runId, executionSecret, claimId: 'owner' });
 		expect(
 			await asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
@@ -43,8 +47,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				claimId: 'other',
 				text: '',
-				lastError: 'lost',
-				includeOutput: true
+				lastError: 'lost'
 			})
 		).toEqual({ accepted: false, outcome: null });
 		expect(
@@ -55,7 +58,7 @@ describe('executor finalization acknowledgments', () => {
 				status: 'completed',
 				text: 'done'
 			})
-		).toBe(true);
+		).toEqual({ accepted: true, outcome: { status: 'completed', error: null } });
 	});
 
 	it('returns a committed failure and keeps execution capability checks', async () => {
@@ -70,8 +73,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret: 'wrong',
 				claimId: 'owner',
 				text: '',
-				lastError: 'lost',
-				includeOutput: true
+				lastError: 'lost'
 			})
 		).rejects.toThrow();
 		expect(
@@ -80,8 +82,7 @@ describe('executor finalization acknowledgments', () => {
 				executionSecret,
 				claimId: 'owner',
 				text: '',
-				lastError: 'lost',
-				includeOutput: true
+				lastError: 'lost'
 			})
 		).toEqual({ accepted: true, outcome: { status: 'failed', error: 'lost' } });
 	});

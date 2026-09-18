@@ -20,24 +20,19 @@ type FinalizeRunArgs = {
 	lastError?: string;
 };
 
-export const vExecutorFinalizationResult = v.union(
-	v.boolean(),
-	v.object({
-		accepted: v.boolean(),
-		outcome: v.union(
-			v.null(),
-			v.object({ status: vRunFinalStatus, error: v.union(v.null(), v.string()) })
-		)
-	})
-);
+export const vExecutorFinalizationResult = v.object({
+	accepted: v.boolean(),
+	outcome: v.union(
+		v.null(),
+		v.object({ status: vRunFinalStatus, error: v.union(v.null(), v.string()) })
+	)
+});
 
 export async function executorFinalizationResult(
 	ctx: MutationCtx,
 	run: ExecutionRun,
-	accepted: boolean,
-	includeOutput: boolean | undefined
+	accepted: boolean
 ) {
-	if (!includeOutput) return accepted;
 	const finalized = accepted ? await ctx.db.get('runs', run._id) : run;
 	return {
 		accepted,

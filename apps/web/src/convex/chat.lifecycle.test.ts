@@ -143,7 +143,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				status: 'completed',
 				executionSecret
 			})
-		).toBe(true);
+		).toMatchObject({ accepted: true });
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', completed.runId))?.status)).toBe(
 			'completed'
 		);
@@ -167,7 +167,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				lastError: 'model exploded',
 				executionSecret: 'fail-secret'
 			})
-		).toBe(true);
+		).toMatchObject({ accepted: true });
 		expect(await t.run(async (ctx) => ctx.db.get('runs', failed.runId))).toMatchObject({
 			status: 'cancelled',
 			lastError: 'model exploded'

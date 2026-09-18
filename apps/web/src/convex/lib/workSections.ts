@@ -20,8 +20,6 @@ export const workRange = v.object({
 	sectionKey: v.string()
 });
 export const workMembership = v.object({
-	// Historical rows only. The write-time assignment migration removes it.
-	processed: v.optional(v.number()),
 	ranges: v.array(workRange),
 	sectionKey: v.optional(v.string()),
 	toolInvocations: v.optional(v.array(v.object({ item: v.number(), toolInvocationId: v.string() })))

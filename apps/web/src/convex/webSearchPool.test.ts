@@ -52,29 +52,6 @@ describe('web search workpool fencing', () => {
 		expect(after?.status).toBe('completed');
 		expect(after?.result).toMatchObject({ results: [{ url: 'https://example.com' }] });
 	});
-
-	it('reads historical truncated scrape results', async () => {
-		const t = initConvexTest();
-		const { jobId } = await seedStartedWebJob(t, {
-			executionSecret: 'webpool-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/legacy' }
-		});
-		const markdown = 'x'.repeat(40_000);
-		await t.run(async (ctx) => {
-			await ctx.db.patch('executorJobs', jobId, {
-				status: 'completed',
-				result: { url: 'https://example.com/legacy', markdown, truncated: true }
-			});
-		});
-		const after = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(after?.status).toBe('completed');
-		expect(after?.result).toEqual({
-			url: 'https://example.com/legacy',
-			markdown,
-			truncated: true
-		});
-	});
 });
 
 describe('local scrape_url dispatch', () => {

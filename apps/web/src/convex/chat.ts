@@ -5,19 +5,6 @@ import { getUserId } from '@convex/lib/auth';
 import { getOwnedMachine, runMachineId } from '@convex/lib/machineRuns';
 import { vSelectedThreadLifecycle } from '@convex/lib/docs';
 import { projectSelectedThreadLifecycle } from '@convex/lib/runCancellation';
-import { unsupportedClient } from '@convex/lib/unsupportedClient';
-
-/** Retired UI run query. Current clients read `selectedThreadLifecycle`. */
-export const latestRunForThread = query({
-	args: {
-		threadId: v.id('threadRecords'),
-		now: v.optional(v.number())
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
 
 export const selectedThreadLifecycle = query({
 	args: {

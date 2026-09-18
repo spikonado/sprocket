@@ -47,6 +47,7 @@ async function seedParseJob(
 			threadId,
 			runId: created.runId,
 			kind: options.kind ?? 'parse_file',
+			toolInvocationId: `test-invocation-hosted-parse-${Math.random()}`,
 			payload: options.kind === 'web_search' ? { query: 'sprocket' } : { path: '/tmp/doc.pdf' },
 			hidden: false,
 			status: 'claimed',

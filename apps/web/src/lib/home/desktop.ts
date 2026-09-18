@@ -140,7 +140,7 @@ export function buildDesktopProjectAttachmentsByPath(
 ): Record<string, ProjectAttachment> {
 	const attachmentsByRepository = new Map<string, ProjectAttachment>();
 	for (const attachment of desktopProjectAttachments) {
-		const attachmentKey = attachment.attachmentKey ?? `path:${attachment.workspacePath}`;
+		const attachmentKey = attachment.attachmentKey;
 		const current = attachmentsByRepository.get(attachmentKey);
 		if (!current || attachmentIsPreferred(attachment, current)) {
 			attachmentsByRepository.set(attachmentKey, attachment);
@@ -164,9 +164,7 @@ export function upsertDesktopProjectAttachment(
 			([workspacePath, existing]) =>
 				workspacePath !== replaceWorkspacePath &&
 				workspacePath !== attachment.workspacePath &&
-				(existing.attachmentKey === undefined ||
-					attachment.attachmentKey === undefined ||
-					existing.attachmentKey !== attachment.attachmentKey)
+				existing.attachmentKey !== attachment.attachmentKey
 		)
 	);
 	nextAttachments[attachment.workspacePath] = attachment;

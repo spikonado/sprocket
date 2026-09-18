@@ -3,296 +3,215 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
-import {
-	sectionDisplayOrder,
-	writeCompletionSectionData,
-	writeToolSectionData
-} from '@convex/lib/transcriptSectionWrites';
+import { z } from 'zod';
+import { EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER } from '@convex/lib/contextHandoff';
 
-export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
-const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
+// Backfills for legacy stored fields that predate their validators. Current
+// code never writes these fields, so the migrations need no start delay and
+// are safe to trigger from the CLI as soon as they deploy:
+//
+//   bunx convex run migrations:runLegacyCompatBackfill '{"dryRun":true}'
+//   bunx convex run migrations:runLegacyCompatBackfill
+//
+// The hourly cron runs the same set automatically. `migrateToolPartJobIds`
+// must run after `backfillExecutorJobToolInvocationId` because it resolves
+// each part's job to compute the invocation id.
 
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
 });
 
-export const assignTranscriptSectionsAtWriteTime = migrations.define({
-	table: 'threadTranscriptParts',
-	batchSize: 50,
-	migrateOne: async (ctx, part) => {
-		const legacy = await ctx.db
-			.query('threadTranscriptMemberships')
-			.withIndex('by_threadId_and_number', (q) =>
-				q.eq('threadId', part.threadId).eq('number', part.number)
-			)
-			.unique();
-		const priorWork = part.work ?? legacy?.work ?? { ranges: [] };
-		if (part.kind === 'completion' && part.completion) {
-			const ranges = priorWork.ranges;
-			const work = { ...priorWork, ranges, processed: undefined };
-			const sections = new Map<
-				string,
-				{ sectionKey: string; sectionOrdinal: number; closed: boolean }
-			>();
-			for (const range of ranges) {
-				if (sections.has(range.sectionKey)) continue;
-				const old = await ctx.db
-					.query('threadTranscriptWorkSections')
-					.withIndex('by_threadId_and_key', (q) =>
-						q.eq('threadId', part.threadId).eq('key', range.sectionKey)
-					)
-					.unique();
-				sections.set(range.sectionKey, {
-					sectionKey: range.sectionKey,
-					sectionOrdinal: old?.sectionOrdinal ?? part.number * 8192 + range.start,
-					closed: old?.closed ?? true
-				});
-			}
-			await writeCompletionSectionData(ctx, {
-				part: { ...part, work },
-				work,
-				sections: [...sections.values()],
-				preserveExistingSummaries: true
-			});
-			return { work };
-		}
-		if (part.kind === 'tool' && part.tool) {
-			const sectionKey = priorWork.sectionKey;
-			if (!sectionKey) return { work: { ranges: [] } };
-			const old = await ctx.db
-				.query('threadTranscriptWorkSections')
-				.withIndex('by_threadId_and_key', (q) =>
-					q.eq('threadId', part.threadId).eq('key', sectionKey)
-				)
-				.unique();
-			await writeToolSectionData(ctx, {
-				part: { ...part, work: { ranges: [], sectionKey } },
-				sectionKey,
-				sectionOrdinal: old?.sectionOrdinal ?? part.number * 8192,
-				toolInvocationId: part.tool.toolInvocationId ?? part.tool.callId,
-				started: part.tool.status === 'started',
-				occurredAt: part._creationTime,
-				preserveExistingSummary: true
-			});
-			return { work: { ranges: [], sectionKey } };
-		}
-		return { work: { ranges: [] } };
+export const removeTranscriptStateWorkThrough = migrations.define({
+	table: 'threadTranscriptStates',
+	migrateOne: async (_ctx, state) => {
+		if (state.workThrough === undefined) return;
+		return { workThrough: undefined };
 	}
 });
 
-export const deleteLegacyTranscriptMemberships = migrations.define({
-	table: 'threadTranscriptMemberships',
-	batchSize: 50,
-	migrateOne: async (ctx, row) => {
-		if (row.number === undefined) return;
-		await ctx.db.delete('threadTranscriptMemberships', row._id);
+const mandateSetupPayloadSchema = z.object({ userEmail: z.unknown().optional() }).passthrough();
+
+export const removeMandateSetupUserEmail = migrations.define({
+	table: 'executorJobs',
+	migrateOne: async (_ctx, job) => {
+		if (job.kind !== 'mandate_setup') return;
+		const parsed = mandateSetupPayloadSchema.safeParse(job.payload);
+		if (!parsed.success || parsed.data.userEmail === undefined) return;
+		const rest = { ...parsed.data };
+		delete rest.userEmail;
+		return { payload: rest };
 	}
 });
 
-export const backfillTranscriptSectionDisplayOrder = migrations.define({
-	table: 'threadTranscriptWorkSections',
-	batchSize: 50,
-	migrateOne: async (ctx, section) => {
-		const run = await ctx.db.get('runs', section.runId);
-		if (!run) throw new Error('Transcript section run not found.');
-		const sectionOrdinal = section.sectionOrdinal ?? section.first.part * 8192 + section.first.item;
+// Keep in sync with DEFAULT_SCRAPE_SUMMARY in webTools.ts (a 'use node'
+// module, so it cannot be imported here).
+const SCRAPE_SUMMARY_FALLBACK = 'No summary was returned for this page.';
+
+const scrapeUrlResultSchema = z.object({
+	url: z.string(),
+	markdown: z.string(),
+	summary: z.string().optional(),
+	images: z.array(z.string()).optional(),
+	truncated: z.unknown().optional()
+});
+
+export const normalizeScrapeUrlResults = migrations.define({
+	table: 'executorJobs',
+	migrateOne: async (_ctx, job) => {
+		if (job.kind !== 'scrape_url') return;
+		const parsed = scrapeUrlResultSchema.safeParse(job.result);
+		if (!parsed.success) return;
+		const { url, markdown, summary, images, truncated } = parsed.data;
+		if (truncated === undefined && summary !== undefined && images !== undefined) return;
 		return {
-			sectionOrdinal,
-			displayOrder: sectionDisplayOrder(run.startedAt, run._id, sectionOrdinal)
+			result: {
+				url,
+				markdown,
+				summary: summary ?? SCRAPE_SUMMARY_FALLBACK,
+				images: images ?? []
+			}
 		};
 	}
 });
 
-const WRITE_TIME_SECTION_MIGRATION = 'transcript-write-time-sections-v1';
+export const backfillExecutorJobToolInvocationId = migrations.define({
+	table: 'executorJobs',
+	migrateOne: async (_ctx, job) => {
+		if (job.toolInvocationId !== undefined) return;
+		return { toolInvocationId: job._id };
+	}
+});
 
-export const runTranscriptWriteTimeSectionMigration = internalMutation({
+export const migrateToolPartJobIds = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (ctx, part) => {
+		if (part.kind !== 'tool' || !part.tool?.jobId) return;
+		const job = await ctx.db.get(part.tool.jobId);
+		if (!job) return;
+		const tool = { ...part.tool };
+		tool.toolInvocationId = job.toolInvocationId ?? job._id;
+		delete tool.jobId;
+		return { tool };
+	}
+});
+
+export const normalizeTranscriptCompletionTiming = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (_ctx, part) => {
+		if (part.kind !== 'completion' || !part.completion) return;
+		if (
+			part.completion.items.every(
+				(item) => item.startedAt !== undefined && item.completedAt !== undefined
+			)
+		) {
+			return;
+		}
+		return {
+			completion: {
+				...part.completion,
+				items: part.completion.items.map((item) => ({
+					...item,
+					startedAt: item.startedAt ?? null,
+					completedAt: item.completedAt ?? null
+				}))
+			}
+		};
+	}
+});
+
+export const stripStoredAttachmentImageUploadIds = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (_ctx, part) => {
+		if (!part.prompt || part.prompt.imageUploads.length === 0) return;
+		if (part.prompt.imageUploads.every((upload) => upload.imageUploadId === undefined)) return;
+		return {
+			prompt: {
+				...part.prompt,
+				imageUploads: part.prompt.imageUploads.map((upload) => {
+					const current = { ...upload };
+					delete current.imageUploadId;
+					return current;
+				})
+			}
+		};
+	}
+});
+
+export const convertContextHandoffCutoffs = migrations.define({
+	table: 'threadRecords',
+	migrateOne: async (ctx, thread) => {
+		const throughRunId = thread.contextSummaryThroughRunId;
+		if (throughRunId === undefined) return;
+		if (thread.contextSummaryThroughPartNumber !== undefined) {
+			return { contextSummaryThroughRunId: undefined };
+		}
+		const lastCovered = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_runId_and_number', (query) =>
+				query.eq('threadId', thread._id).eq('runId', throughRunId)
+			)
+			.order('desc')
+			.first();
+		return {
+			contextSummaryThroughPartNumber:
+				lastCovered?.number ?? EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER,
+			contextSummaryThroughRunId: undefined
+		};
+	}
+});
+
+export const removeSectionLinkedParts = migrations.define({
+	table: 'threadTranscriptWorkSections',
+	migrateOne: async (_ctx, section) => {
+		if (section.linkedParts === undefined) return;
+		return { linkedParts: undefined };
+	}
+});
+
+const legacyCompatBackfillMigrations = [
+	internal.migrations.removeTranscriptStateWorkThrough,
+	internal.migrations.removeMandateSetupUserEmail,
+	internal.migrations.normalizeScrapeUrlResults,
+	internal.migrations.backfillExecutorJobToolInvocationId,
+	internal.migrations.migrateToolPartJobIds,
+	internal.migrations.normalizeTranscriptCompletionTiming,
+	internal.migrations.stripStoredAttachmentImageUploadIds,
+	internal.migrations.convertContextHandoffCutoffs,
+	internal.migrations.removeSectionLinkedParts
+];
+
+export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMigrations);
+
+const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-09';
+
+export const runLegacyCompatBackfillAutomatically = internalMutation({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
 		const schedule = await ctx.db
 			.query('migrationSchedules')
-			.withIndex('by_name', (q) => q.eq('name', WRITE_TIME_SECTION_MIGRATION))
+			.withIndex('by_name', (q) => q.eq('name', LEGACY_COMPAT_BACKFILL))
 			.unique();
 		if (schedule?.completedAt !== undefined) return null;
 		let scheduleId = schedule?._id;
 		if (!schedule) {
 			scheduleId = await ctx.db.insert('migrationSchedules', {
-				name: WRITE_TIME_SECTION_MIGRATION,
+				name: LEGACY_COMPAT_BACKFILL,
 				notBefore: Date.now(),
 				startedAt: Date.now()
 			});
 		} else if (schedule.startedAt === undefined) {
 			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
 		}
-		const migrationList = [
-			internal.migrations.assignTranscriptSectionsAtWriteTime,
-			internal.migrations.backfillTranscriptSectionDisplayOrder,
-			internal.migrations.deleteLegacyTranscriptMemberships
-		];
-		const statuses = await migrations.getStatus(ctx, { migrations: migrationList });
+		const statuses = await migrations.getStatus(ctx, {
+			migrations: legacyCompatBackfillMigrations
+		});
 		if (statuses.every((status) => status.isDone)) {
 			await ctx.db.patch('migrationSchedules', scheduleId!, { completedAt: Date.now() });
 			return null;
 		}
-		await migrations.runSerially(ctx, migrationList);
+		await migrations.runSerially(ctx, legacyCompatBackfillMigrations);
 		return null;
-	}
-});
-
-const productionRolloutCleanupMigrations = [
-	internal.migrations.backfillMissingThreadStatus,
-	internal.migrations.removeThreadRecordProjectId,
-	internal.migrations.removeRunCompletionTransport,
-	internal.migrations.removeRunLegacyFields,
-	internal.migrations.removeThreadUsageLegacyFields,
-	internal.migrations.removeTranscriptStateMigratedAt,
-	internal.migrations.removeImageUploadMessageIds,
-	internal.migrations.removeExecutorJobCloudWorkPool,
-	internal.migrations.removeExecutorJobProjectId,
-	internal.migrations.deleteProjectConnections,
-	internal.migrations.deleteProjects
-];
-
-export const runProductionRolloutCleanup = migrations.runner(productionRolloutCleanupMigrations);
-
-export const runProductionRolloutCleanupAutomatically = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const now = Date.now();
-		const schedule = await ctx.db
-			.query('migrationSchedules')
-			.withIndex('by_name', (query) => query.eq('name', PRODUCTION_ROLLOUT_CLEANUP))
-			.unique();
-		if (!schedule) {
-			await ctx.db.insert('migrationSchedules', {
-				name: PRODUCTION_ROLLOUT_CLEANUP,
-				notBefore: now + AUTOMATIC_CLEANUP_DELAY_MS
-			});
-			return null;
-		}
-		if (schedule.completedAt !== undefined || now < schedule.notBefore) return null;
-
-		const statuses = await migrations.getStatus(ctx, {
-			migrations: productionRolloutCleanupMigrations
-		});
-		if (statuses.every((status) => status.isDone)) {
-			await ctx.db.patch('migrationSchedules', schedule._id, { completedAt: now });
-			return null;
-		}
-
-		if (schedule.startedAt === undefined) {
-			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: now });
-		}
-		await migrations.runSerially(ctx, productionRolloutCleanupMigrations);
-		return null;
-	}
-});
-
-export const backfillMissingThreadStatus = migrations.define({
-	table: 'threadRecords',
-	migrateOne: async (ctx, thread) => {
-		if (thread.status !== undefined) return;
-		const latestRun = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', thread._id))
-			.order('desc')
-			.first();
-		return { status: latestRun?.status ?? 'completed' };
-	}
-});
-
-export const removeRunCompletionTransport = migrations.define({
-	table: 'runs',
-	migrateOne: (_ctx, run) => {
-		if (run.completionTransport === undefined) return;
-		return { completionTransport: undefined };
-	}
-});
-
-export const removeThreadRecordProjectId = migrations.define({
-	table: 'threadRecords',
-	migrateOne: (_ctx, thread) => {
-		if (thread.projectId === undefined) return;
-		return { projectId: undefined };
-	}
-});
-
-export const removeRunLegacyFields = migrations.define({
-	table: 'runs',
-	migrateOne: (_ctx, run) => {
-		if (
-			run.projectId === undefined &&
-			run.catalogVersion === undefined &&
-			run.contextWindowTokens === undefined &&
-			run.autoCompactTokenLimit === undefined &&
-			run.promptMessageId === undefined
-		) {
-			return;
-		}
-		return {
-			projectId: undefined,
-			catalogVersion: undefined,
-			contextWindowTokens: undefined,
-			autoCompactTokenLimit: undefined,
-			promptMessageId: undefined
-		};
-	}
-});
-
-export const removeThreadUsageLegacyFields = migrations.define({
-	table: 'threadUsage',
-	migrateOne: (_ctx, usage) => {
-		if (usage.totalTokensProcessed === undefined && usage.usageLedgerMigratedAt === undefined) {
-			return;
-		}
-		return { totalTokensProcessed: undefined, usageLedgerMigratedAt: undefined };
-	}
-});
-
-export const removeTranscriptStateMigratedAt = migrations.define({
-	table: 'threadTranscriptStates',
-	migrateOne: (_ctx, state) => {
-		if (state.migratedAt === undefined) return;
-		return { migratedAt: undefined };
-	}
-});
-
-export const removeImageUploadMessageIds = migrations.define({
-	table: 'imageUploads',
-	migrateOne: (_ctx, upload) => {
-		if (upload.messageIds === undefined) return;
-		return { messageIds: undefined };
-	}
-});
-
-export const removeExecutorJobCloudWorkPool = migrations.define({
-	table: 'executorJobs',
-	migrateOne: (_ctx, job) => {
-		if (job.cloudWorkPool === undefined) return;
-		return { cloudWorkPool: undefined };
-	}
-});
-
-export const removeExecutorJobProjectId = migrations.define({
-	table: 'executorJobs',
-	migrateOne: (_ctx, job) => {
-		if (job.projectId === undefined) return;
-		return { projectId: undefined };
-	}
-});
-
-export const deleteProjectConnections = migrations.define({
-	table: 'projectConnections',
-	migrateOne: async (ctx, connection) => {
-		await ctx.db.delete('projectConnections', connection._id);
-	}
-});
-
-export const deleteProjects = migrations.define({
-	table: 'projects',
-	migrateOne: async (ctx, project) => {
-		await ctx.db.delete('projects', project._id);
 	}
 });

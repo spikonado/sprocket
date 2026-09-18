@@ -4,7 +4,7 @@ import { ConvexError, v, type Infer } from 'convex/values';
 import { z } from 'zod';
 import { FirecrawlClient, type ScrapeOptions } from '@firecrawl/firecrawl-convex';
 import { ExaClient } from '@exalabs/convex-exa';
-import { action, internalAction, type ActionCtx } from '@convex/_generated/server';
+import { internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
 	vScrapeUrlTransport,
@@ -13,7 +13,6 @@ import {
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
-import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { NonRetryableError } from '@convex-dev/workpool';
 import type { Doc } from '@convex/_generated/dataModel';
 
@@ -384,35 +383,6 @@ async function runSearch(
 	};
 }
 
-/** Retired direct scrape action. Kept so older agents get an update message. */
-export const scrapeUrl = action({
-	args: {
-		url: v.string(),
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string()
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
-/** Retired direct search action. Kept so older agents get an update message. */
-export const webSearch = action({
-	args: {
-		query: v.string(),
-		numResults: v.optional(v.number()),
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string()
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
 const executeArgs = {
 	jobId: v.id('executorJobs'),
 	runId: v.id('runs'),
@@ -429,34 +399,6 @@ export const executeWebSearch = internalAction({
 		}
 		const search = webSearchFromPayload(job.payload);
 		return await runSearch(ctx, search.query, search.numResults);
-	}
-});
-
-/** Retired blocking scrape action. Current agents use the Firecrawl request subscription. */
-export const scrapeForTool = action({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		jobId: v.id('executorJobs'),
-		executionSecret: v.string()
-	},
-	returns: vScrapeUrlTransport,
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
-/** Retired blocking screenshot action. Current agents use the Firecrawl request subscription. */
-export const screenshotForTool = action({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		jobId: v.id('executorJobs'),
-		executionSecret: v.string()
-	},
-	returns: vScreenshotUrlTransport,
-	handler: async () => {
-		unsupportedClient();
 	}
 });
 

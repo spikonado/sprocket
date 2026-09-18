@@ -252,11 +252,11 @@ describe('cloud artifacts', () => {
 		}
 		expect(count).toBe(36);
 		expect(pages).toBeGreaterThan(4);
-		await asUser.mutation(api.threads.rekeyRepositoryForLocalCache, {
+		await asUser.mutation(api.threads.rekeyRepository, {
 			from: repositoryKey,
 			to: 'beta'
 		});
-		await asUser.mutation(api.threads.rekeyRepositoryForLocalCache, { from: 'beta', to: 'gamma' });
+		await asUser.mutation(api.threads.rekeyRepository, { from: 'beta', to: 'gamma' });
 		for (let i = 0; i < 5; i++)
 			await t.mutation(internal.artifacts.continueRekey, {
 				userId: 'user_alice',

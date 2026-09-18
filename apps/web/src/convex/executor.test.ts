@@ -72,14 +72,13 @@ async function seedRunWithJob(
 }
 
 const commandResult = {
-	command: 'echo hi',
-	cwd: '/',
+	output: 'hi',
 	exitCode: 0,
 	success: true,
 	running: false,
 	timedOut: false,
-	output: 'hi',
-	truncated: false
+	completeLogPath: '/transcripts/command/output.log',
+	eventsPath: '/transcripts/command/events.jsonl'
 };
 
 describe('executor', () => {
@@ -219,14 +218,13 @@ describe('executor', () => {
 		expect(state.job).toMatchObject({
 			status: 'completed',
 			result: {
-				command: 'echo hi',
-				cwd: '/',
+				output: 'hi',
 				exitCode: 0,
 				success: true,
 				running: false,
 				timedOut: false,
-				output: 'hi',
-				truncated: false
+				completeLogPath: '/transcripts/command/output.log',
+				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
 		expect(state.job?.completedAt).toBeTypeOf('number');

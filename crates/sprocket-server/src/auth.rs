@@ -72,16 +72,11 @@ pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> b
 struct SessionRecord {
     #[serde(skip)]
     ephemeral: bool,
-    #[serde(default = "default_local_browser")]
     local_browser: bool,
     role: String,
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
-}
-
-fn default_local_browser() -> bool {
-    true
 }
 
 fn deserialize_session_user_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -837,32 +832,6 @@ mod tests {
 
         let auth = AuthState::load(&temp_dir).expect("auth state");
         assert!(!auth.session_state(Some("old-session")).await.authenticated);
-
-        let _ = fs::remove_dir_all(temp_dir);
-    }
-
-    #[tokio::test]
-    async fn treats_sessions_from_older_versions_as_local_browser_sessions() {
-        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&temp_dir).unwrap();
-        fs::write(
-            temp_dir.join(SESSIONS_FILE),
-            serde_json::json!([{
-                "token": "old-session",
-                "role": "owner",
-                "createdAt": crate::now_ms(),
-                "userId": "user-1"
-            }])
-            .to_string(),
-        )
-        .unwrap();
-
-        let auth = AuthState::load(&temp_dir).expect("auth state");
-        assert!(auth.session_is_local_browser("old-session").await);
-        auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
-        auth.require_session_user("old-session", "user-2")
-            .await
-            .unwrap();
 
         let _ = fs::remove_dir_all(temp_dir);
     }

@@ -193,7 +193,6 @@ impl RuntimeClient {
             args.insert("repositoryKey".to_string(), repository_key.clone().into());
         }
         args.insert("prompt".to_string(), request.prompt.clone().into());
-        args.insert("transcriptProtocol".into(), Value::Float64(2.0));
         args.insert("storageIds".to_string(), string_array(&request.storage_ids));
         args.insert(
             "selectedModel".to_string(),
@@ -302,7 +301,6 @@ impl RuntimeClient {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
         args.insert("streamId".to_string(), stream_id.to_string().into());
-        args.insert("transcriptProtocol".into(), Value::Float64(2.0));
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
@@ -520,19 +518,15 @@ impl RuntimeClient {
     async fn finalize_mutation(
         &self,
         function: &str,
-        mut args: BTreeMap<String, Value>,
+        args: BTreeMap<String, Value>,
     ) -> anyhow::Result<bool> {
-        let Some(output) = &self.output else {
-            return self.mutation_json(function, args).await;
-        };
-        args.insert("includeOutput".into(), Value::Boolean(true));
         #[derive(Deserialize)]
         struct Response {
             accepted: bool,
             outcome: Option<crate::RunOutcome>,
         }
         let response: Response = self.mutation_json(function, args).await?;
-        if let Some(outcome) = response.outcome {
+        if let (Some(output), Some(outcome)) = (&self.output, response.outcome) {
             output.finalized(outcome, response.accepted);
         }
         Ok(response.accepted)

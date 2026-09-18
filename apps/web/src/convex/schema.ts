@@ -73,32 +73,11 @@ export default defineSchema({
 		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number())
 	}).index('by_name', ['name']),
-	// Stored-only until the production rollout cleanup deletes old rows and references.
-	projects: defineTable({
-		userId: v.string(),
-		repositoryKey: v.string(),
-		displayName: v.string(),
-		lastHeartbeatAt: v.optional(v.number()),
-		connectedClientId: v.optional(v.string()),
-		nextExecutorSequence: v.number(),
-		lastSeenAt: v.number()
-	})
-		.index('by_userId', ['userId'])
-		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
-	projectConnections: defineTable({
-		projectId: v.id('projects'),
-		userId: v.string(),
-		clientId: v.string(),
-		lastHeartbeatAt: v.number()
-	})
-		.index('by_projectId', ['projectId'])
-		.index('by_userId', ['userId']),
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		status: v.optional(vRunStatus),
+		status: vRunStatus,
 		repositoryKey: v.string(),
-		projectId: v.optional(v.id('projects')),
 		title: v.optional(v.string()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
@@ -126,9 +105,7 @@ export default defineSchema({
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		contextTokens: v.optional(v.number()),
-		totalTokensProcessed: v.optional(v.number()),
-		usageLedgerMigratedAt: v.optional(v.number())
+		contextTokens: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadUsageEvents: defineTable({
 		threadId: v.id('threadRecords'),
@@ -141,7 +118,6 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
-		projectId: v.optional(v.id('projects')),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
@@ -150,18 +126,13 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
-		catalogVersion: v.optional(v.string()),
-		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
-		contextWindowTokens: v.optional(v.number()),
-		autoCompactTokenLimit: v.optional(v.number()),
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
-		cancellationDeadlineAt: v.optional(v.number()),
-		promptMessageId: v.optional(v.string())
+		cancellationDeadlineAt: v.optional(v.number())
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
@@ -181,9 +152,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		totalParts: v.number(),
-		// Retained until the write-time assignment migration has completed.
-		workThrough: v.optional(workPosition),
-		migratedAt: v.optional(v.number())
+		workThrough: v.optional(workPosition)
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
@@ -195,7 +164,7 @@ export default defineSchema({
 		prompt: v.optional(vTranscriptPromptBody),
 		completion: v.optional(vTranscriptCompletionBody),
 		tool: v.optional(vTranscriptToolBody),
-		work: v.optional(workMembership)
+		work: workMembership
 	})
 		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
@@ -203,9 +172,9 @@ export default defineSchema({
 	threadTranscriptWorkSections: defineTable({
 		threadId: v.id('threadRecords'),
 		...workSectionFields,
-		sectionOrdinal: v.optional(v.number()),
-		displayOrder: v.optional(v.string()),
-		// Legacy migration fields.
+		sectionOrdinal: v.number(),
+		displayOrder: v.string(),
+		// Cleared by removeSectionLinkedParts; drop once that backfill finishes.
 		linkedParts: v.optional(v.number())
 	})
 		.index('by_threadId_and_key', ['threadId', 'key'])
@@ -213,7 +182,8 @@ export default defineSchema({
 		.index('by_threadId_and_displayOrder', ['threadId', 'displayOrder']),
 	threadTranscriptMemberships: defineTable({
 		threadId: v.id('threadRecords'),
-		// Legacy membership fields, removed after the migration below completes.
+		// Entry rows written by current section writes; legacy membership rows
+		// are gone after the completed write-time migration.
 		number: v.optional(v.number()),
 		work: v.optional(workMembership),
 		entryKey: v.optional(v.string()),
@@ -226,7 +196,6 @@ export default defineSchema({
 		sectionOrdinal: v.optional(v.number()),
 		closed: v.optional(v.boolean())
 	})
-		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_and_entryKey', ['threadId', 'entryKey'])
 		.index('by_threadId_sectionKey_partNumber_start', [
 			'threadId',
@@ -240,7 +209,6 @@ export default defineSchema({
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
-		messageIds: v.optional(v.array(v.string())),
 		attached: v.boolean(),
 		threadId: v.optional(v.id('threadRecords')),
 		storageDeletedAt: v.optional(v.number())
@@ -304,10 +272,9 @@ export default defineSchema({
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
-		projectId: v.optional(v.id('projects')),
 		kind: vStoredExecutorJobKind,
 		callId: v.optional(v.string()),
-		// Set on jobs created after tool progress events. Legacy rows omit it;
+		// Set on jobs created after tool progress events. Older rows omit it;
 		// transcript writes fall back to the job document id.
 		toolInvocationId: v.optional(v.string()),
 		sectionKey: v.optional(v.string()),
@@ -323,8 +290,7 @@ export default defineSchema({
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
 		sequence: v.number(),
-		cloudWorkId: v.optional(v.string()),
-		cloudWorkPool: v.optional(v.literal('firecrawlScrape'))
+		cloudWorkId: v.optional(v.string())
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])

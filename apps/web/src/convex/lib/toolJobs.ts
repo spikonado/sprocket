@@ -9,7 +9,6 @@ import {
 	isCloudWebSearchKind,
 	webSearchWorkpool
 } from '@convex/webSearchPool';
-import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { cancelFirecrawlRequests } from '@convex/firecrawlRequests';
 import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
@@ -67,9 +66,6 @@ export async function beginExecutorJob(
 		streamId: string;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
-	if (args.kind === 'parse_file' && !('path' in args.payload)) {
-		unsupportedClient();
-	}
 	if (!args.hidden && !args.sectionKey) {
 		throw new Error('Visible tool job requires a section key.');
 	}

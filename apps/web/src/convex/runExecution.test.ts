@@ -107,7 +107,7 @@ describe('run execution state', () => {
 		]);
 	});
 
-	it('still accepts command results from older executors', async () => {
+	it('accepts command results from executors', async () => {
 		const { asUser, auth } = await startedRun();
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
@@ -116,14 +116,13 @@ describe('run execution state', () => {
 			payload: { cmd: 'echo ok' }
 		});
 		const result = {
-			command: 'echo ok',
-			cwd: '/',
+			output: 'ok\n',
 			exitCode: 0,
 			success: true,
 			running: false,
 			timedOut: false,
-			output: 'ok\n',
-			truncated: false
+			completeLogPath: '/transcripts/command/output.log',
+			eventsPath: '/transcripts/command/events.jsonl'
 		};
 		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
 		expect(
@@ -164,14 +163,13 @@ describe('run execution state', () => {
 					...auth,
 					jobId: first.jobId,
 					result: {
-						command: 'true',
-						cwd: '/',
+						output: '',
 						exitCode: 0,
 						success: true,
 						running: false,
 						timedOut: false,
-						output: '',
-						truncated: false
+						completeLogPath: '/transcripts/command/output.log',
+						eventsPath: '/transcripts/command/events.jsonl'
 					}
 				})
 			).toBe(true);

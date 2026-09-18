@@ -111,7 +111,7 @@ async fn rekey_handler(
     ]);
     let result: RekeyResult = client(&state, &payload.user_id)
         .await?
-        .mutate("threads:rekeyRepositoryForLocalCache", args)
+        .mutate("threads:rekeyRepository", args)
         .await
         .map_err(ApiError::bad_request)?;
     if result.user_id != payload.user_id {

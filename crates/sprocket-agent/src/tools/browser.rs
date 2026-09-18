@@ -275,8 +275,8 @@ mod tests {
         );
 
         let part = serde_json::from_value(json!({
-            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
-            "tool": {"callId": "call", "name": "browser_screenshot", "status": "completed", "output": metadata}
+            "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
+            "tool": {"toolInvocationId": "inv-1", "callId": "call", "name": "browser_screenshot", "status": "completed", "output": metadata}
         }))
         .unwrap();
         let mut history: Vec<crate::types::AgentHistoryMessage> = serde_json::from_value(json!([{

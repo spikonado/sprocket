@@ -6,7 +6,6 @@ use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, broadcast};
 
-use super::attachment_store::storage_ids_from_parts_dir;
 use super::types::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptState};
 
 pub(super) fn safe_segment(value: &str) -> String {
@@ -328,14 +327,11 @@ impl TranscriptStore {
         );
         let lock = self.lock_thread(user_id, thread_id).await;
         let _guard = lock.lock().await;
-        let referenced =
-            storage_ids_from_parts_dir(&self.thread_dir(user_id, thread_id).join("parts")).await?;
         let dir = self.thread_dir(user_id, thread_id);
         if tokio::fs::try_exists(&dir).await? {
             tokio::fs::remove_dir_all(&dir).await?;
         }
-        drop(_guard);
-        self.purge_unreferenced_blobs(user_id, &referenced).await
+        Ok(())
     }
 }
 

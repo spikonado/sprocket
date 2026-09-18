@@ -69,11 +69,8 @@ pub async fn cache_attachment(
         tokio::fs::create_dir_all(parent).await?;
         let temp = tempfile::NamedTempFile::new_in(parent)?;
         let staged = store.pending_attachment_path(user_id, &attachment.storage_id);
-        let legacy = store.blob_data_path(user_id, &attachment.storage_id);
         if tokio::fs::try_exists(&staged).await? {
             tokio::fs::copy(&staged, temp.path()).await?;
-        } else if tokio::fs::try_exists(&legacy).await? {
-            tokio::fs::copy(&legacy, temp.path()).await?;
         } else {
             let url = attachment.url.as_deref().ok_or(AttachmentUnavailable)?;
             download_attachment_to_file(url, temp.path(), attachment.size)
@@ -218,7 +215,6 @@ mod tests {
             for path in [
                 store.attachment_path(input, input, &meta),
                 store.pending_attachment_path(input, input),
-                store.blob_data_path(input, input),
             ] {
                 let relative = path.strip_prefix(&root).unwrap();
                 assert!(
@@ -308,52 +304,12 @@ mod tests {
                     .pending_attachment_path("user", &meta.storage_id)
                     .exists()
             );
-            assert!(!store.blob_data_path("user", &meta.storage_id).exists());
         }
         let text = crate::transcript::prompt_text_with_attachments(prompt);
         assert_eq!(text.matches("local transcript cache").count(), 1);
         assert_eq!(text.matches("file-.._notes.txt").count(), 6);
         store.clear_thread("user", "thread").await.unwrap();
         assert!(!store.thread_dir("user", "thread").exists());
-    }
-
-    #[tokio::test]
-    async fn migrates_legacy_blobs_to_each_thread_and_reuses_cached_files_offline() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let meta = attachment("legacy", 4);
-        store
-            .write_blob(
-                "user",
-                &meta.storage_id,
-                "upload-legacy",
-                &meta.media_type,
-                &meta.name,
-                b"data",
-            )
-            .await
-            .unwrap();
-        let meta = store
-            .attachment_metadata("user", "first", &meta.storage_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(meta.name, "../notes.txt");
-        assert_eq!(meta.size, 4);
-        let first = cache_attachment(&store, "user", "first", &meta)
-            .await
-            .unwrap();
-        let second = cache_attachment(&store, "user", "second", &meta)
-            .await
-            .unwrap();
-        assert_ne!(first, second);
-        assert_eq!(tokio::fs::read(&first).await.unwrap(), b"data");
-        let offline = cache_attachment(&store, "user", "first", &meta)
-            .await
-            .unwrap();
-        assert_eq!(offline, first);
-        store.clear_thread("user", "first").await.unwrap();
-        assert_eq!(tokio::fs::read(&second).await.unwrap(), b"data");
     }
 
     #[tokio::test]

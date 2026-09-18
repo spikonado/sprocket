@@ -19,7 +19,6 @@ const MAX_PERSISTED_PROJECT_ATTACHMENTS: usize = 200;
 pub struct ProjectAttachmentRecord {
     pub workspace_path: String,
     pub repository_key: String,
-    #[serde(default)]
     pub attachment_key: String,
     pub display_name: String,
     pub availability: WorkspaceAvailability,
@@ -326,9 +325,6 @@ fn deduplicate_repository_attachments(
     let mut winners = HashMap::<String, String>::new();
 
     for (workspace_path, attachment) in attachments.iter() {
-        if attachment.attachment_key.is_empty() {
-            continue;
-        }
         let Some(current_path) = winners.get(&attachment.attachment_key) else {
             winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
             continue;
@@ -342,8 +338,7 @@ fn deduplicate_repository_attachments(
 
     let previous_len = attachments.len();
     attachments.retain(|workspace_path, attachment| {
-        attachment.attachment_key.is_empty()
-            || winners.get(&attachment.attachment_key) == Some(workspace_path)
+        winners.get(&attachment.attachment_key) == Some(workspace_path)
     });
     attachments.len() != previous_len
 }
@@ -352,7 +347,7 @@ fn same_attachment_identity(
     left: &ProjectAttachmentRecord,
     right: &ProjectAttachmentRecord,
 ) -> bool {
-    !left.attachment_key.is_empty() && left.attachment_key == right.attachment_key
+    left.attachment_key == right.attachment_key
 }
 
 fn attachment_is_preferred(
@@ -455,18 +450,7 @@ fn mark_unavailable(
 }
 
 fn unavailable_attachment_key(session: &ProjectAttachmentRecord) -> String {
-    if !session.attachment_key.is_empty() {
-        return session.attachment_key.clone();
-    }
-    let fallback_name = directory_name(&session.workspace_path);
-    if !session.repository_key.is_empty()
-        && !session.display_name.is_empty()
-        && (session.repository_key != session.display_name
-            || session.repository_key != fallback_name)
-    {
-        return format!("remote:{}", session.repository_key);
-    }
-    format!("directory:{}", session.workspace_path)
+    session.attachment_key.clone()
 }
 
 fn validate_session_path(session: ProjectAttachmentRecord) -> ProjectAttachmentRecord {
@@ -888,18 +872,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_migrates_an_unavailable_legacy_duplicate() {
+    async fn list_deduplicates_an_unavailable_duplicate() {
         let temp_root = tempfile::tempdir().expect("temp dir");
         let missing = temp_root.path().join("removed");
         let available = temp_root.path().join("current");
         let repository_key = "github.com/spikonado/sprocket";
         init_repo_with_origin(&available, "https://github.com/spikonado/sprocket.git");
         let mut missing_record = attachment_record(missing.to_string_lossy(), repository_key, 1);
-        missing_record.attachment_key.clear();
         missing_record.display_name = "sprocket".to_string();
         let mut available_record =
             attachment_record(available.to_string_lossy(), repository_key, 2);
-        available_record.attachment_key.clear();
         available_record.display_name = "sprocket".to_string();
         fs::write(
             temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
@@ -919,16 +901,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_migrates_a_single_component_remote_legacy_duplicate() {
+    async fn list_deduplicates_a_single_component_remote_duplicate() {
         let temp_root = tempfile::tempdir().expect("temp dir");
         let missing = temp_root.path().join("removed");
         let available = temp_root.path().join("current");
         init_repo_with_origin(&available, "sprocket.git");
         let mut missing_record = attachment_record(missing.to_string_lossy(), "sprocket", 1);
-        missing_record.attachment_key.clear();
         missing_record.display_name = "sprocket".to_string();
         let mut available_record = attachment_record(available.to_string_lossy(), "sprocket", 2);
-        available_record.attachment_key.clear();
         available_record.display_name = "sprocket".to_string();
         fs::write(
             temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
@@ -948,20 +928,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_keeps_legacy_local_directories_that_match_a_remote_key() {
+    async fn list_keeps_local_directories_that_match_a_remote_key() {
         let temp_root = tempfile::tempdir().expect("temp dir");
         let first = temp_root.path().join("clients/project");
         let second = temp_root.path().join("archive/project");
         let remote = temp_root.path().join("current");
         init_repo_with_origin(&remote, "project.git");
         let mut first_record = attachment_record(first.to_string_lossy(), "project", 1);
-        first_record.attachment_key.clear();
+        first_record.attachment_key = format!("directory:{}", first.to_string_lossy());
         first_record.display_name = "project".to_string();
         let mut second_record = attachment_record(second.to_string_lossy(), "project", 2);
-        second_record.attachment_key.clear();
+        second_record.attachment_key = format!("directory:{}", second.to_string_lossy());
         second_record.display_name = "project".to_string();
         let mut remote_record = attachment_record(remote.to_string_lossy(), "project", 3);
-        remote_record.attachment_key.clear();
         remote_record.display_name = "project".to_string();
         fs::write(
             temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
@@ -1035,7 +1014,8 @@ mod tests {
             temp_root.join(PROJECT_ATTACHMENTS_FILE),
             serde_json::json!([{
                 "workspacePath": workspace.to_string_lossy(),
-                "repositoryKey": "legacy-key",
+                "repositoryKey": "previous-key",
+                "attachmentKey": "remote:previous-key",
                 "displayName": "checkout",
                 "availability": "available",
                 "lastValidatedAt": 1,
@@ -1053,7 +1033,7 @@ mod tests {
         assert_eq!(listed[0].repository_key, "github.com/spikonado/sprocket");
         assert_eq!(
             listed[0].previous_repository_key.as_deref(),
-            Some("legacy-key")
+            Some("previous-key")
         );
 
         let _ = fs::remove_dir_all(temp_root);

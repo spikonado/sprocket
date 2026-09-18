@@ -38,7 +38,6 @@ import {
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
-import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
@@ -92,25 +91,6 @@ function isExpectedSectionKey(
 
 const MAX_COMPLETION_ASSIGNMENTS = 256;
 
-/** Retired Convex createRun. Kept so older agents get an update message. */
-export const createRun = mutation({
-	args: {
-		submissionId: v.optional(v.string()),
-		threadId: v.optional(v.string()),
-		prompt: v.optional(v.string()),
-		imageUploadIds: v.optional(v.array(v.string())),
-		selectedModel: v.optional(v.string()),
-		reasoningEffort: v.optional(v.string()),
-		serviceTier: v.optional(v.string()),
-		executionSecret: v.optional(v.string()),
-		guestId: v.optional(v.string())
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
 const vCreatedGatewayRun = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
@@ -149,7 +129,6 @@ export const insertGatewayRun = internalMutation({
 
 export const createGatewayRun = action({
 	args: {
-		transcriptProtocol: v.optional(v.literal(2)),
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
@@ -165,7 +144,6 @@ export const createGatewayRun = action({
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
-		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const userId = await getUserId(ctx);
 		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
 			userId,
@@ -365,22 +343,6 @@ export const completionActor = query({
 	}
 });
 
-/** Retired run-scoped compaction API. Current agents save part-bounded handoffs. */
-export const saveContextCompaction = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		summary: v.string(),
-		processedTokens: v.number(),
-		persistForFutureRuns: v.boolean()
-	},
-	returns: v.boolean(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
 export const saveContextHandoff = mutation({
 	args: {
@@ -478,7 +440,6 @@ export const registerCompletionAttempt = mutation({
 
 export const finalizeCompletionCall = mutation({
 	args: {
-		transcriptProtocol: v.optional(v.literal(2)),
 		runId: v.id('runs'),
 		claimId: v.string(),
 		attemptSeq: v.number(),
@@ -497,7 +458,6 @@ export const finalizeCompletionCall = mutation({
 	},
 	returns: v.union(schema.doc('threadTranscriptParts'), v.null()),
 	handler: async (ctx, args) => {
-		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
@@ -627,22 +587,6 @@ export const finalizeCompletionCall = mutation({
 	}
 });
 
-/** Retired user-authenticated finalizer. Current agents use finalizeExecutorRun. */
-export const finalizeRun = mutation({
-	args: {
-		expectedStatus: v.optional(vRunStatus),
-		expectedClaimId: v.optional(v.string()),
-		runId: v.id('runs'),
-		text: v.string(),
-		status: vRunFinalStatus,
-		lastError: v.optional(v.string())
-	},
-	returns: v.boolean(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
 export const requestCancellation = mutation({
 	args: { runId: v.id('runs') },
 	returns: v.boolean(),
@@ -653,20 +597,8 @@ export const requestCancellation = mutation({
 	}
 });
 
-/** Retired in-place reopen. Current clients continue with a new run. */
-export const reopenRun = mutation({
-	args: {
-		runId: v.id('runs')
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
-	}
-});
-
 export const finalizeExecutorRun = mutation({
 	args: {
-		includeOutput: v.optional(v.boolean()),
 		expectedStatus: v.optional(vRunStatus),
 		expectedClaimId: v.optional(v.string()),
 		runId: v.id('runs'),
@@ -680,7 +612,7 @@ export const finalizeExecutorRun = mutation({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const accepted =
 			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));
-		return executorFinalizationResult(ctx, run, accepted, args.includeOutput);
+		return executorFinalizationResult(ctx, run, accepted);
 	}
 });
 
@@ -709,7 +641,6 @@ export const finalizeFailedStart = mutation({
 
 export const finalizeClaimFailure = mutation({
 	args: {
-		includeOutput: v.optional(v.boolean()),
 		claimId: v.string(),
 		runId: v.id('runs'),
 		text: v.string(),
@@ -726,7 +657,7 @@ export const finalizeClaimFailure = mutation({
 				status: 'failed',
 				lastError: args.lastError
 			}));
-		return executorFinalizationResult(ctx, run, accepted, args.includeOutput);
+		return executorFinalizationResult(ctx, run, accepted);
 	}
 });
 

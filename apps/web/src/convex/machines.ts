@@ -10,7 +10,6 @@ import {
 	MAX_ACTIVE_MACHINE_RUNS
 } from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
-import { unsupportedClient } from '@convex/lib/unsupportedClient';
 
 const MACHINE_ENDED = 'The machine stopped before this run finished.';
 
@@ -159,24 +158,6 @@ export const tryRegister = mutation({
 	args: vRegistration.fields,
 	returns: vRegistrationResult,
 	handler: registerMachine
-});
-
-/** Retired registration API. Current servers handle a busy machine through tryRegister. */
-export const register = mutation({
-	args: {
-		machineId: v.string(),
-		credentialHash: v.string(),
-		friendlyName: v.string(),
-		platform: v.string(),
-		platformVersion: v.optional(v.string()),
-		architecture: v.string(),
-		hostname: v.optional(v.string()),
-		appVersion: v.string()
-	},
-	returns: v.object({ machineId: v.string(), userId: v.string() }),
-	handler: async () => {
-		unsupportedClient();
-	}
 });
 
 export const heartbeat = mutation({

@@ -31,7 +31,7 @@ const workspacePathResolutionSchema = z.object({
 const projectAttachmentSchema = z.object({
 	workspacePath: z.string(),
 	repositoryKey: z.string(),
-	attachmentKey: z.string().optional(),
+	attachmentKey: z.string(),
 	displayName: z.string(),
 	availability: z.enum(['available', 'unavailable']),
 	lastValidatedAt: z.int(),

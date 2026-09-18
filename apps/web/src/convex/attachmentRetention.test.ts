@@ -64,7 +64,6 @@ describe('attachment retention', () => {
 				.take(8)
 		);
 		expect(parts[0].prompt?.imageUploads[0].storageId).toBe(file.storageId);
-		expect(parts[0].prompt?.imageUploads[0].imageUploadId).toBeUndefined();
 	});
 
 	it('uses lastMessageAt alone, including the strict one-week boundary', async () => {
@@ -77,7 +76,7 @@ describe('attachment retention', () => {
 				status: 'running'
 			});
 		});
-		await asUser.mutation(api.threads.renameForLocalCache, { threadId, title: 'Recent rename' });
+		await asUser.mutation(api.threads.rename, { threadId, title: 'Recent rename' });
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(0);
 		vi.setSystemTime(Date.now() + 1);
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);
@@ -119,15 +118,15 @@ describe('attachment retention', () => {
 
 	it('removes ownerless attached uploads and retains the separate one-day draft cleanup', async () => {
 		const t = initConvexTest();
-		const legacy = await attachment(t);
+		const attached = await attachment(t);
 		const draft = await attachment(t);
 		await t.run(async (ctx) => {
-			await ctx.db.patch('imageUploads', legacy.imageUploadId, { attached: true });
+			await ctx.db.patch('imageUploads', attached.imageUploadId, { attached: true });
 		});
 		vi.setSystemTime(Date.now() + WEEK + 1);
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);
 		expect(await t.mutation(internal.imageUploads.cleanupOrphans, {})).toBe(1);
-		expect(await t.run((ctx) => ctx.db.system.get('_storage', legacy.storageId))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.system.get('_storage', attached.storageId))).toBeNull();
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', draft.storageId))).toBeNull();
 	});
 });

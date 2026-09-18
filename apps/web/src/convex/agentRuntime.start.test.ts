@@ -199,7 +199,7 @@ describe('agentRuntime.start', () => {
 				lastError: 'claim expired',
 				executionSecret
 			})
-		).resolves.toBe(false);
+		).resolves.toMatchObject({ accepted: false });
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,
@@ -208,7 +208,7 @@ describe('agentRuntime.start', () => {
 				lastError: 'claim expired',
 				executionSecret
 			})
-		).resolves.toBe(true);
+		).resolves.toMatchObject({ accepted: true });
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 	});
 
