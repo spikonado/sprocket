@@ -2,55 +2,12 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-## Local clients and profiles
-
-CLI clients send their exact semantic release version to local `/api/cli/*`
-endpoints. The local server rejects every mismatch, including canary identifiers
-and dev commit hashes. Native login and agent-run endpoints keep their request
-formats. Finalization always returns the structured `{accepted, outcome}`
-result; the `transcriptProtocol` and `includeOutput` arguments were removed.
-
-CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
-never sends the reusable pairing credential over HTTP. CLI sessions stay in
-memory and cannot resume after a server restart.
-
-Older apps do not subscribe to `/api/auth/changes`; their existing session-token
-reads still observe the shared login. Keep those endpoints until all supported
-installed apps use the session-change subscription. Native tokens remain
-restricted to the existing local-app endpoint; CLI control uses local pairing
-sessions and never returns refresh tokens.
-
-Session records require the `localBrowser` field. Session files written before
-remote HTTPS support fail to parse and start empty; the user signs in again.
-
-Profiles without a credential-store selection continue using the existing
-deployment-and-data-directory-scoped keyring entry. The keyring default has no
-removal gate.
-
-New servers take an exclusive data-directory lock. Separate profiles must use
-separate data directories.
-
-Local servers call `threads:settle`, `threads:unsettle`, `threads:rename`, and
-the live `threads:rekeyRepository` directly. The `*ForLocalCache` aliases were
-removed.
-
-Project attachment records require `attachmentKey` in the profile's
-`project-attachments.json`. Files written before PR #392 fail to parse; the
-user re-attaches their projects.
-
 ## Convex Backwards Compatibility
 
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
 The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-09` once the migrations component reports every migration finished.
-`runLegacyCompatBackfill` remains available to dry-run or trigger the same set from the CLI after deploy:
-
-```sh
-bunx convex run migrations:runLegacyCompatBackfill '{"dryRun":true}' --prod
-bunx convex run migrations:runLegacyCompatBackfill --prod
-```
-
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
