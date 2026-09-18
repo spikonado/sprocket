@@ -30,6 +30,7 @@ describe('agentRuntime.start', () => {
 			expectedClaimId: 'claim-revision',
 			text: 'done',
 			status: 'completed',
+			includeOutput: true,
 			executionSecret
 		});
 		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
@@ -122,6 +123,7 @@ describe('agentRuntime.start', () => {
 			expectedClaimId: 'older-claim',
 			text: 'older finished',
 			status: 'completed',
+			includeOutput: true,
 			executionSecret: 'older-secret'
 		});
 
@@ -197,18 +199,20 @@ describe('agentRuntime.start', () => {
 				claimId: 'claim-someone-else',
 				text: 'stale failure',
 				lastError: 'claim expired',
+				includeOutput: true,
 				executionSecret
 			})
-		).resolves.toBe(false);
+		).resolves.toMatchObject({ accepted: false });
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,
 				claimId: 'claim-expired',
 				text: 'stale failure',
 				lastError: 'claim expired',
+				includeOutput: true,
 				executionSecret
 			})
-		).resolves.toBe(true);
+		).resolves.toMatchObject({ accepted: true });
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 	});
 

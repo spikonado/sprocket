@@ -522,9 +522,6 @@ impl RuntimeClient {
         function: &str,
         mut args: BTreeMap<String, Value>,
     ) -> anyhow::Result<bool> {
-        let Some(output) = &self.output else {
-            return self.mutation_json(function, args).await;
-        };
         args.insert("includeOutput".into(), Value::Boolean(true));
         #[derive(Deserialize)]
         struct Response {
@@ -532,7 +529,7 @@ impl RuntimeClient {
             outcome: Option<crate::RunOutcome>,
         }
         let response: Response = self.mutation_json(function, args).await?;
-        if let Some(outcome) = response.outcome {
+        if let (Some(output), Some(outcome)) = (&self.output, response.outcome) {
             output.finalized(outcome, response.accepted);
         }
         Ok(response.accepted)

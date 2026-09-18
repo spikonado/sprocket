@@ -37,12 +37,6 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
     opaque_encrypted(reasoning.encrypted_content())
 }
 
-/// Legacy summaries can leave reasoning whose original context was replaced.
-/// Reload conservatively omits it until legacy compaction writers age out.
-pub(crate) fn skip_reasoning_on_reload(context_summary: Option<&str>) -> bool {
-    context_summary.is_some_and(|summary| !summary.is_empty())
-}
-
 /// Live display is summary blocks only. Rig's `display_text` also joins
 /// `Text` and `Redacted`, which must not become transcript text.
 pub(crate) fn reasoning_summary_text(reasoning: &Reasoning) -> String {
@@ -274,14 +268,6 @@ mod tests {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "after"),
             other => panic!("expected second reasoning, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn reload_drops_all_reasoning_when_a_context_summary_is_present() {
-        assert!(!skip_reasoning_on_reload(None));
-        assert!(skip_reasoning_on_reload(Some("summary")));
-        assert!(!skip_reasoning_on_reload(Some("")));
-        assert!(skip_reasoning_on_reload(Some("   ")));
     }
 
     #[test]

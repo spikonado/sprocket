@@ -25,10 +25,8 @@ export function toolGroupLabel(toolKey: string) {
 		case 'check_docs':
 			return 'Checked Docs';
 		case 'add_artifact':
-		case 'create_artifact':
 			return 'Created Artifacts';
 		case 'edit_artifact':
-		case 'update_artifact':
 			return 'Updated Artifacts';
 		case 'list_artifacts':
 			return 'Listed Artifacts';
@@ -93,7 +91,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'check_docs':
 			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
 		case 'add_artifact':
-		case 'create_artifact':
 		case 'edit_artifact':
 		case 'save_artifact':
 			return summarizeArtifactTool(input);
@@ -123,9 +120,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'screenshot_url':
 			return jsonString(fields?.url) ?? 'URL';
 		case 'parse_file':
-			return jsonString(fields?.path) ?? jsonString(fields?.url) ?? 'File';
-		case 'update_artifact':
-			return jsonString(fields?.title) ?? 'Updated artifact';
+			return jsonString(fields?.path) ?? 'File';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
 		case 'write_stdin': {
@@ -293,12 +288,7 @@ export function toolItemSummary(
 	if (kind === 'list_artifacts') {
 		return summarizeArtifactListResult(toolLog.job?.result ?? toolLog.output);
 	}
-	if (
-		kind === 'add_artifact' ||
-		kind === 'edit_artifact' ||
-		kind === 'save_artifact' ||
-		kind === 'create_artifact'
-	) {
+	if (kind === 'add_artifact' || kind === 'edit_artifact' || kind === 'save_artifact') {
 		return summarizeArtifactTool(
 			toolLog.job?.payload ?? toolLog.input,
 			toolLog.job?.result ?? toolLog.output

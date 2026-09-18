@@ -290,7 +290,6 @@ describe('numbered transcript parts', () => {
 				status: 'started'
 			}
 		});
-		expect(started?.tool?.jobId).toBeUndefined();
 		expect(started?.tool?.output).toBeUndefined();
 		const storedJob = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(storedJob?.toolInvocationId).toBe(invocationId);
@@ -301,14 +300,13 @@ describe('numbered transcript parts', () => {
 			claimId: 'claim-tool-order',
 			executionSecret,
 			result: {
-				command: 'echo hi',
-				cwd: '/',
+				output: 'hi',
 				exitCode: 0,
 				success: true,
 				running: false,
 				timedOut: false,
-				output: 'hi',
-				truncated: false
+				completeLogPath: '/transcripts/command/output.log',
+				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
 		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
@@ -318,14 +316,13 @@ describe('numbered transcript parts', () => {
 			claimId: 'claim-tool-order',
 			executionSecret,
 			result: {
-				command: 'echo hi',
-				cwd: '/',
+				output: 'ignored',
 				exitCode: 0,
 				success: true,
 				running: false,
 				timedOut: false,
-				output: 'ignored',
-				truncated: false
+				completeLogPath: '/transcripts/command/output.log',
+				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
 		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
@@ -380,7 +377,6 @@ describe('numbered transcript parts', () => {
 				status: 'completed'
 			}
 		});
-		expect(parts.parts[2]?.tool?.jobId).toBeUndefined();
 	});
 
 	it('records one cancelled finished event and ignores a later complete', async () => {
@@ -417,6 +413,7 @@ describe('numbered transcript parts', () => {
 			expectedClaimId: 'claim-tool-cancel',
 			text: '',
 			status: 'cancelled',
+			includeOutput: true,
 			executionSecret
 		});
 		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
@@ -436,14 +433,13 @@ describe('numbered transcript parts', () => {
 			claimId: 'claim-tool-cancel',
 			executionSecret,
 			result: {
-				command: 'sleep 10',
-				cwd: '/',
+				output: '',
 				exitCode: 0,
 				success: true,
 				running: false,
 				timedOut: false,
-				output: '',
-				truncated: false
+				completeLogPath: '/transcripts/command/output.log',
+				eventsPath: '/transcripts/command/events.jsonl'
 			}
 		});
 		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
@@ -510,20 +506,20 @@ describe('numbered transcript parts', () => {
 				runId,
 				kind: 'exec_command',
 				callId: 'unrelated',
+				toolInvocationId: 'test-invocation-unrelated',
 				payload: { cmd: 'echo unrelated' },
 				hidden: false,
 				status: 'completed',
 				enqueuedAt: 1,
 				completedAt: 2,
 				result: {
-					command: 'echo unrelated',
-					cwd: '/',
+					output: 'unrelated',
 					exitCode: 0,
 					success: true,
 					running: false,
 					timedOut: false,
-					output: 'unrelated',
-					truncated: false
+					completeLogPath: '/transcripts/command/output.log',
+					eventsPath: '/transcripts/command/events.jsonl'
 				},
 				sequence: 0
 			});
@@ -566,6 +562,7 @@ describe('numbered transcript parts', () => {
 			text: 'partial',
 			status: 'failed',
 			lastError: 'boom',
+			includeOutput: true,
 			executionSecret
 		});
 		const state = await asUser.query(api.transcript.getState, { threadId });
@@ -619,6 +616,7 @@ describe('numbered transcript parts', () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
+			includeOutput: true,
 			executionSecret
 		});
 		const continuation = await insertQueuedRun(t, asUser, {
@@ -642,6 +640,7 @@ describe('numbered transcript parts', () => {
 			runId: first.runId,
 			text: '',
 			status: 'cancelled',
+			includeOutput: true,
 			executionSecret: 'secret-a'
 		});
 		await createQueuedRun(t, asUser, threadId, 'sub-b', 'secret-b', 'B');
@@ -807,46 +806,5 @@ describe('transcript attachment identity', () => {
 		expect(await bob.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })).toBe(
 			null
 		);
-	});
-
-	it('strips leftover stored imageUploadId', async () => {
-		const t = initConvexTest();
-		const { asUser, subject, threadId } = await seedOwnedThread(t);
-		await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
-			const imageUploadId = await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'file.txt',
-				mediaType: 'text/plain',
-				size: 4,
-				attached: true,
-				threadId
-			});
-			const run = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
-				.first();
-			if (!run) throw new Error('Missing fixture run');
-			await ctx.db.insert('threadTranscriptParts', {
-				threadId,
-				userId: subject,
-				number: 0,
-				sourceKey: `prompt:${run._id}`,
-				kind: 'prompt',
-				runId: run._id,
-				prompt: {
-					text: 'Read',
-					imageUploads: [
-						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
-					]
-				}
-			});
-		});
-		const current = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [0]
-		});
-		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 	});
 });

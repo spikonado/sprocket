@@ -491,8 +491,8 @@ mod tests {
 
         metadata["url"] = json!("http://127.0.0.1:1/unavailable");
         let part = serde_json::from_value(json!({
-            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
-            "tool": {"callId": "call", "name": name, "status": "completed", "output": metadata}
+            "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
+            "tool": {"toolInvocationId": "inv-1", "callId": "call", "name": name, "status": "completed", "output": metadata}
         }))
         .unwrap();
         let mut history = vec![AgentHistoryMessage {

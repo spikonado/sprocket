@@ -121,6 +121,7 @@ describe('thread inbox', () => {
 				threadId,
 				runId: run._id,
 				kind: 'ask_question',
+				toolInvocationId: 'test-invocation-inbox-question',
 				payload: { question: 'Choose?', options: [] },
 				hidden: false,
 				status: 'claimed',

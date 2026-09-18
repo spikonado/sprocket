@@ -189,10 +189,7 @@ pub struct TranscriptCompletionBody {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptToolBody {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_invocation_id: Option<String>,
+    pub tool_invocation_id: String,
     pub call_id: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

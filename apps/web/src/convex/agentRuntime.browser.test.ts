@@ -20,7 +20,7 @@ describe('browser screenshot results', () => {
 		},
 		{ mediaType: 'image/png' as const, dataBase64: '', byteLength: 600_001, truncated: true },
 		{ mediaType: 'image/png' as const, dataBase64: '', byteLength: 123, truncated: false }
-	])('persists cached and historical metadata: %j', async (result) => {
+	])('persists cached metadata: %j', async (result) => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'screenshot-secret';
@@ -98,10 +98,10 @@ describe('retired browser clients', () => {
 				ctx.db.insert('executorJobs', {
 					threadId,
 					runId,
-					kind: 'browser_observe',
-					payload: { instruction: 'Find Pay' },
+					kind: 'browser_interact',
+					toolInvocationId: 'test-invocation-browser-history',
+					payload: { command: 'snapshot' },
 					result: {
-						actions: [{ selector: '#pay', description: 'Pay' }],
 						text: 'Pay',
 						truncated: false
 					},
@@ -112,8 +112,8 @@ describe('retired browser clients', () => {
 				})
 			);
 			expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
-				kind: 'browser_observe',
-				result: { actions: [{ selector: '#pay', description: 'Pay' }] }
+				kind: 'browser_interact',
+				result: { text: 'Pay' }
 			});
 			await expect(
 				asUser.mutation(api.agentRuntime.beginToolJob, {

@@ -50,7 +50,6 @@ pub(super) async fn localize_scrape(
             record_saved_scrape(fields, temp, saved_file);
         }
     }
-    fields.remove("truncated");
     Ok(result)
 }
 
@@ -131,18 +130,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn short_scrapes_preserve_summary_and_images_without_a_truncation_flag() {
-        let result = localize_scrape(
-            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "truncated": false}),
-            &WorkspaceCancellation::new(),
-            &mut None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            result,
-            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"]})
-        );
+    async fn short_scrapes_preserve_summary_and_images() {
+        let input = json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"]});
+        let result = localize_scrape(input.clone(), &WorkspaceCancellation::new(), &mut None)
+            .await
+            .unwrap();
+        assert_eq!(result, input);
     }
 
     #[tokio::test]

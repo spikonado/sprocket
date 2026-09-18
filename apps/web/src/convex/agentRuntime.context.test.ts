@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import {
@@ -27,7 +26,6 @@ async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecor
 		const thread = await ctx.db.get('threadRecords', threadId);
 		return {
 			contextSummary: thread?.contextSummary,
-			contextSummaryThroughRunId: thread?.contextSummaryThroughRunId,
 			contextSummaryThroughPartNumber: thread?.contextSummaryThroughPartNumber
 		};
 	});
@@ -103,7 +101,7 @@ async function appendFinishedToolPart(
 				name: 'exec_command',
 				status: 'completed'
 			},
-			work: { ranges: [], sectionKey: `historical-tool:${args.runId}:${args.invocationId}` }
+			work: { ranges: [], sectionKey: `test-tool:${args.runId}:${args.invocationId}` }
 		});
 	});
 }
@@ -258,97 +256,6 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
-	it('carries a legacy compacted prefix into later runs without replaying covered history', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const firstSecret = 'context-first-secret';
-		const first = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'context-first',
-			firstSecret,
-			'Old prompt that should be covered'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			runId: first.runId,
-			claimId: 'claim-1',
-			executionSecret: firstSecret
-		});
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: first.runId,
-			expectedStatus: 'running',
-			expectedClaimId: 'claim-1',
-			text: 'Old work completed',
-			status: 'completed',
-			executionSecret: firstSecret
-		});
-
-		const secondSecret = 'context-second-secret';
-		const second = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'context-second',
-			secondSecret,
-			'New prompt'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			runId: second.runId,
-			claimId: 'claim-2',
-			executionSecret: secondSecret
-		});
-		await t.run(async (ctx) => {
-			const runId = await ctx.db.insert('runs', {
-				threadId,
-				userId: 'user_alice',
-				submissionId: 'context-concurrent-later',
-				status: 'completed',
-				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
-				selectedModel: 'gpt-5.6-sol',
-				reasoningEffort: 'medium',
-				fastMode: false,
-				startedAt: Date.now() + 1_000,
-				completedAt: Date.now() + 1_001
-			});
-			await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
-		});
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
-				contextSummary: 'The old work is complete.',
-				contextSummaryThroughRunId: first.runId
-			});
-		});
-		expect(
-			await t.run(
-				async (ctx) => (await ctx.db.get('threadRecords', threadId))?.contextSummaryThroughRunId
-			)
-		).toBe(first.runId);
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: second.runId,
-			expectedStatus: 'running',
-			expectedClaimId: 'claim-2',
-			text: 'Second work completed',
-			status: 'completed',
-			executionSecret: secondSecret
-		});
-
-		const thirdSecret = 'context-third-secret';
-		const third = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'context-third',
-			thirdSecret,
-			'Third prompt'
-		);
-		const context = await asUser.query(api.agentRuntime.getContext, {
-			runId: third.runId,
-			executionSecret: thirdSecret
-		});
-		expect(context.prompt).toBe('Third prompt');
-	});
-
 	it('preserves opaque run model ids for the worker', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -470,7 +377,6 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'First step is done.',
-			contextSummaryThroughRunId: undefined,
 			contextSummaryThroughPartNumber: 2
 		});
 		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed ?? 0).toBe(0);
@@ -718,6 +624,7 @@ describe('agentRuntime context accounting', () => {
 			expectedClaimId: 'claim-1',
 			text: 'Old work completed',
 			status: 'completed',
+			includeOutput: true,
 			executionSecret: firstSecret
 		});
 
@@ -763,7 +670,6 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'The old work is complete.',
-			contextSummaryThroughRunId: undefined,
 			contextSummaryThroughPartNumber: 1
 		});
 		const state = await asUser.query(api.transcript.getStateForRun, {
@@ -810,7 +716,6 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: 'No prior work to cover.',
-			contextSummaryThroughRunId: undefined,
 			contextSummaryThroughPartNumber: -1
 		});
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
@@ -850,6 +755,7 @@ describe('agentRuntime context accounting', () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
+			includeOutput: true,
 			executionSecret: parentSecret
 		});
 
@@ -945,7 +851,6 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(false);
 		expect(await readThreadCutoff(t, threadId)).toEqual({
 			contextSummary: undefined,
-			contextSummaryThroughRunId: undefined,
 			contextSummaryThroughPartNumber: undefined
 		});
 
@@ -968,104 +873,5 @@ describe('agentRuntime context accounting', () => {
 			})
 		).resolves.toBe(false);
 		expect((await readThreadCutoff(t, threadId)).contextSummary).toBeFalsy();
-	});
-
-	it('keeps the legacy run-id cutoff when no part-number cutoff exists', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const firstSecret = 'legacy-cutoff-first-secret';
-		const first = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'legacy-cutoff-first',
-			firstSecret,
-			'Old prompt that should be covered'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			runId: first.runId,
-			claimId: 'claim-1',
-			executionSecret: firstSecret
-		});
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: first.runId,
-			expectedStatus: 'running',
-			expectedClaimId: 'claim-1',
-			text: 'Old work completed',
-			status: 'completed',
-			executionSecret: firstSecret
-		});
-
-		const secondSecret = 'legacy-cutoff-second-secret';
-		const second = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'legacy-cutoff-second',
-			secondSecret,
-			'New prompt'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			runId: second.runId,
-			claimId: 'claim-2',
-			executionSecret: secondSecret
-		});
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
-				contextSummary: 'The old work is complete.',
-				contextSummaryThroughRunId: first.runId
-			});
-		});
-		expect(await readThreadCutoff(t, threadId)).toEqual({
-			contextSummary: 'The old work is complete.',
-			contextSummaryThroughRunId: first.runId,
-			contextSummaryThroughPartNumber: undefined
-		});
-		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
-			historyFromNumber: 1,
-			contextSummary: 'The old work is complete.'
-		});
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
-				contextSummaryThroughPartNumber: 0
-			});
-		});
-		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
-			historyFromNumber: 1
-		});
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
-				contextSummaryThroughPartNumber: 1
-			});
-		});
-		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
-			historyFromNumber: 2
-		});
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
-				contextSummaryThroughPartNumber: undefined
-			});
-		});
-		await registerCompletionAttempt(asUser, {
-			runId: second.runId,
-			claimId: 'claim-2',
-			executionSecret: secondSecret,
-			attemptSeq: 1
-		});
-		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
-			runId: second.runId,
-			claimId: 'claim-2',
-			executionSecret: secondSecret,
-			summary: 'The old work is complete.',
-			completionAttemptSeq: 1,
-			beforePrompt: true
-		});
-		expect(await readThreadCutoff(t, threadId)).toEqual({
-			contextSummary: 'The old work is complete.',
-			contextSummaryThroughRunId: undefined,
-			contextSummaryThroughPartNumber: 0
-		});
 	});
 });

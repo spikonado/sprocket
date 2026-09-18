@@ -4,13 +4,6 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
-	'migrate transcript sections to write-time assignments',
-	{ hours: 1 },
-	internal.migrations.runTranscriptWriteTimeSectionMigration,
-	{}
-);
-
-crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans
@@ -33,13 +26,6 @@ crons.interval(
 	'delete unregistered file bytes',
 	{ hours: 1 },
 	internal.storageCleanup.cleanupUnregistered,
-	{}
-);
-
-crons.interval(
-	'run production rollout cleanup migrations',
-	{ hours: 1 },
-	internal.migrations.runProductionRolloutCleanupAutomatically,
 	{}
 );
 

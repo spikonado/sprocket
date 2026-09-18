@@ -33,7 +33,6 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'check_docs':
 			return BookOpen;
 		case 'add_artifact':
-		case 'create_artifact':
 			return FileCode;
 		case 'save_artifact':
 			return Save;
@@ -59,7 +58,6 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Camera;
 		case 'edit_artifact':
 		case 'list_artifacts':
-		case 'update_artifact':
 		case 'parse_file':
 			return FileText;
 		case 'web_search':

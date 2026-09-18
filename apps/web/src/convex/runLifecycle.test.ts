@@ -94,7 +94,8 @@ describe('native run lifecycle', () => {
 			expectedStatus: 'running',
 			expectedClaimId: 'live',
 			text: 'done',
-			status: 'completed'
+			status: 'completed',
+			includeOutput: true
 		});
 		expect(
 			await t.run((ctx) => ctx.db.system.get('_scheduled_functions', scheduledId))

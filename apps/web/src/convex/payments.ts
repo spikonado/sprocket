@@ -10,7 +10,6 @@ import {
 import { components, internal } from '@convex/_generated/api';
 import { getUserId, pickPrimaryUser } from '@convex/lib/auth';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
-import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import {
 	vMandateReportOutcome,
 	vMandateFrequency,
@@ -600,8 +599,6 @@ export const completeRetriedChargeReport = internalMutation({
 // ---------------------------------------------------------------------------
 
 const mandateSetupArgs = {
-	// Older agents still send this; current agents do not.
-	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
@@ -621,9 +618,6 @@ async function createMandateSetup(
 	userId: string,
 	args: ObjectType<typeof mandateSetupArgs>
 ): Promise<Infer<typeof vMandateSetupResult>> {
-	if (args.userEmail !== undefined) {
-		unsupportedClient();
-	}
 	// Prava requires a customer email on merchant sessions. Executor actions
 	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
 	// keeps on the users row instead of ctx.auth.

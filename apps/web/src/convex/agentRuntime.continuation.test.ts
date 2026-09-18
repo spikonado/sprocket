@@ -15,6 +15,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
+			includeOutput: true,
 			executionSecret: 'parent-secret'
 		});
 		const args = {
@@ -73,6 +74,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			runId: parent.runId,
 			text: '',
 			status: 'completed',
+			includeOutput: true,
 			executionSecret: 'parent-secret'
 		});
 		await expect(
@@ -144,6 +146,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			runId: active.runId,
 			text: '',
 			status: 'completed',
+			includeOutput: true,
 			executionSecret: 'active-secret'
 		});
 
@@ -153,6 +156,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
+			includeOutput: true,
 			executionSecret: 'failed-secret'
 		});
 		const first = await insertQueuedRun(t, asUser, {
@@ -166,6 +170,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			runId: first.runId,
 			text: '',
 			status: 'cancelled',
+			includeOutput: true,
 			executionSecret: 'continue-first-secret'
 		});
 		await expect(
@@ -187,6 +192,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			runId: parent.runId,
 			text: '',
 			status: 'cancelled',
+			includeOutput: true,
 			executionSecret: 'race-parent'
 		});
 		await insertQueuedRun(t, asUser, {
@@ -260,6 +266,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			text: '',
 			status: 'failed',
 			lastError: 'boom',
+			includeOutput: true,
 			executionSecret: 'cleanup-parent'
 		});
 		const args = {

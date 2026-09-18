@@ -73,33 +73,8 @@ export const vEditArtifactPayload = v.object({
 	artifactId: v.string()
 });
 
-// Stored leftover executorJobs from create_artifact / update_artifact.
-export const vCreateArtifactPayload = v.object({
-	title: v.string(),
-	contentType: vArtifactType,
-	content: v.string()
-});
-
-export const vUpdateArtifactPayload = v.object({
-	artifactId: v.string(),
-	content: v.string()
-});
-
 export const vReadSkillPayload = v.object({
 	name: v.string()
-});
-
-const vHistoricalBrowserActPayload = v.object({
-	instruction: v.optional(v.string()),
-	action: v.optional(
-		v.object({
-			selector: v.string(),
-			description: v.string(),
-			method: v.optional(v.string()),
-			arguments: v.optional(v.array(v.string()))
-		})
-	),
-	startUrl: v.optional(v.string())
 });
 
 export const vBrowserInteractPayload = v.object({
@@ -138,8 +113,6 @@ export const vMandateChargeStatus = v.union(
 export const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
 
 export const vMandateSetupPayload = v.object({
-	// Stored executorJobs payloads from older agents may still carry it.
-	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
@@ -187,10 +160,7 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
-export const vParseFilePayload = v.union(
-	v.object({ path: v.string() }),
-	v.object({ url: v.string() })
-);
+export const vParseFilePayload = v.object({ path: v.string() });
 
 export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
@@ -206,8 +176,6 @@ export const vCurrentExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vAddArtifactPayload,
 	vEditArtifactPayload,
-	vCreateArtifactPayload,
-	vUpdateArtifactPayload,
 	vBrowserInteractPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
@@ -215,10 +183,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vMandateReportPayload
 );
 
-export const vExecutorJobPayload = v.union(
-	vCurrentExecutorJobPayload,
-	vHistoricalBrowserActPayload
-);
+export const vExecutorJobPayload = vCurrentExecutorJobPayload;
 
 export const vApplyPatchResult = v.object({
 	changes: v.array(
@@ -233,19 +198,6 @@ export const vApplyPatchResult = v.object({
 			)
 		})
 	)
-});
-
-const vLegacyCommandResult = v.object({
-	command: v.string(),
-	cwd: v.string(),
-	output: v.string(),
-	sessionId: v.optional(v.string()),
-	exitCode: v.optional(v.number()),
-	success: v.boolean(),
-	running: v.boolean(),
-	timedOut: v.boolean(),
-	truncated: v.boolean(),
-	error: v.optional(v.string())
 });
 
 const vCommandOutput = v.object({
@@ -268,13 +220,11 @@ export const vCommandStdinResult = vCommandOutput.extend({
 	workdir: v.string()
 });
 
-/** Stored scrape_url job result. Historical rows may include `truncated`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
-	truncated: v.optional(v.boolean()),
-	summary: v.optional(v.string()),
-	images: v.optional(v.array(v.string()))
+	summary: v.string(),
+	images: v.array(v.string())
 });
 
 /** Local scrapeForTool transport. Oversized pages return a temporary JSON download URL. */
@@ -330,8 +280,7 @@ export const vMandateStatusResult = v.object({
 	mandateId: v.id('mandates'),
 	pravaMandateId: v.optional(v.string()),
 	status: vMandateStatus,
-	// Optional for older persisted executor job results that predate the field.
-	description: v.optional(v.string()),
+	description: v.string(),
 	merchantName: v.optional(v.string()),
 	/** Decimal string for agent/Prava wire format (e.g. "120.00"). */
 	amountCap: v.string(),
@@ -394,19 +343,6 @@ const vCachedBrowserScreenshotResult = vWebImageResult.omit('url').extend({
 	mediaType: v.literal('image/png')
 });
 
-const vHistoricalBrowserObservedAction = v.object({
-	selector: v.string(),
-	description: v.string(),
-	method: v.optional(v.string()),
-	arguments: v.optional(v.array(v.string()))
-});
-
-const vHistoricalBrowserObserveResult = v.object({
-	actions: v.array(vHistoricalBrowserObservedAction),
-	text: v.string(),
-	truncated: v.boolean()
-});
-
 export const vReadSkillResult = v.object({
 	name: v.string(),
 	description: v.string(),
@@ -435,9 +371,7 @@ export const vArtifactResult = v.object({
 	revision: v.optional(v.number()),
 	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),
-	contentType: v.optional(vArtifactType),
-	// Stored leftover create_artifact / update_artifact job results.
-	version: v.optional(v.number())
+	contentType: v.optional(vArtifactType)
 });
 
 export const vListArtifactsResult = v.object({
@@ -456,10 +390,7 @@ export const vListArtifactsResult = v.object({
 	)
 });
 
-const vParsedFileSource = v.union(
-	v.object({ type: v.literal('path'), path: v.string() }),
-	v.object({ type: v.literal('url'), url: v.string() })
-);
+const vParsedFileSource = v.object({ type: v.literal('path'), path: v.string() });
 
 export const vParsedFileResult = v.union(
 	v.object({
@@ -490,7 +421,6 @@ export const vExecutorJobResult = v.union(
 	vAskQuestionResult,
 	vCommandExecResult,
 	vCommandStdinResult,
-	vLegacyCommandResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
 	vWebImageResult,
@@ -500,7 +430,6 @@ export const vExecutorJobResult = v.union(
 	vBrowserTaskResult,
 	vBrowserScreenshotResult,
 	vCachedBrowserScreenshotResult,
-	vHistoricalBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
 	vMandateListResult,
@@ -551,18 +480,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('save_artifact')
 );
 
-export const vExecutorJobKind = v.union(
-	vCurrentExecutorJobKind,
-	v.literal('browser_observe'),
-	v.literal('browser_act'),
-	v.literal('browser_extract')
-);
-
-export const vStoredExecutorJobKind = v.union(
-	vExecutorJobKind,
-	v.literal('create_artifact'),
-	v.literal('update_artifact')
-);
+export const vExecutorJobKind = vCurrentExecutorJobKind;
 
 export const vAgentQuestionStatus = v.union(
 	v.literal('pending'),
@@ -663,8 +581,6 @@ export const vTranscriptPartKind = v.union(
 );
 
 export const vTranscriptAttachmentMeta = v.object({
-	// Historical rows. New writes omit it; readers strip it from responses.
-	imageUploadId: v.optional(v.id('imageUploads')),
 	name: v.string(),
 	mediaType: v.string(),
 	size: v.number(),
@@ -684,7 +600,7 @@ export const vTranscriptPromptBody = v.object({
 });
 
 export const vTranscriptCompletionBody = v.object({
-	streamId: v.optional(v.string()),
+	streamId: v.string(),
 	items: v.array(vTranscriptCompletionItem)
 });
 
@@ -696,11 +612,7 @@ export const vTranscriptToolStatus = v.union(
 );
 
 export const vTranscriptToolBody = v.object({
-	// Legacy: written on pre-progress-event tool parts. New events omit it and
-	// pair by toolInvocationId. Keep reading until the removal gate in
-	// BACKWARDS_COMPATIBILITY.md.
-	jobId: v.optional(v.id('executorJobs')),
-	toolInvocationId: v.optional(v.string()),
+	toolInvocationId: v.string(),
 	callId: v.string(),
 	name: v.string(),
 	output: v.optional(vJsonValue),

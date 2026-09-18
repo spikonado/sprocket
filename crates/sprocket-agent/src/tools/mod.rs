@@ -201,8 +201,8 @@ mod tests {
             "source": {"type": "path", "path": "photo.png"}, "byteSize": 1.0, "width": 1.0, "height": 1.0
         });
         let part = serde_json::from_value(serde_json::json!({
-            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
-            "tool": {"callId": "call", "name": "parse_file", "status": "completed", "output": output}
+            "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
+            "tool": {"toolInvocationId": "inv-1", "callId": "call", "name": "parse_file", "status": "completed", "output": output}
         })).unwrap();
         let mut history = vec![AgentHistoryMessage {
             role: AgentHistoryRole::User,

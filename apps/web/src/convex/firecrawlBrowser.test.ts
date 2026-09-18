@@ -1,11 +1,11 @@
 import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import {
 	interact as executeInteract,
 	screenshot as executeScreenshot
 } from '@convex/firecrawlBrowser';
-import type { FunctionArgs } from 'convex/server';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -16,10 +16,21 @@ import {
 const CHROME_WRAPPER_DEV_FD_ERROR =
 	'/usr/bin/google-chrome-stable: line 26: /dev/fd/63: No such file or directory';
 
-async function interact(
-	t: ConvexTestInstance,
-	args: FunctionArgs<typeof api.browserAgent.interact>
-) {
+type InteractArgs = {
+	runId: Id<'runs'>;
+	claimId: string;
+	executionSecret: string;
+	command: string;
+	enforce_saving?: boolean;
+};
+
+type ScreenshotArgs = {
+	runId: Id<'runs'>;
+	claimId: string;
+	executionSecret: string;
+};
+
+async function interact(t: ConvexTestInstance, args: InteractArgs) {
 	return t.action(async (ctx) => {
 		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 			runId: args.runId,
@@ -29,10 +40,7 @@ async function interact(
 	});
 }
 
-async function screenshot(
-	t: ConvexTestInstance,
-	args: FunctionArgs<typeof api.browserAgent.screenshot>
-) {
+async function screenshot(t: ConvexTestInstance, args: ScreenshotArgs) {
 	return t.action(async (ctx) => {
 		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 			runId: args.runId,

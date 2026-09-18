@@ -32,8 +32,7 @@ fn tool_part(
     part.kind = super::TranscriptPartKind::Tool;
     part.completion = None;
     part.tool = Some(super::types::TranscriptToolBody {
-        job_id: None,
-        tool_invocation_id: Some(invocation.into()),
+        tool_invocation_id: invocation.into(),
         call_id: "repeated".into(),
         name: "read_file".into(),
         output: Some(output),
@@ -77,8 +76,7 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
     let mut event = TranscriptPart {
         kind: super::TranscriptPartKind::Tool,
         tool: Some(super::types::TranscriptToolBody {
-            job_id: None,
-            tool_invocation_id: Some("invocation".into()),
+            tool_invocation_id: "invocation".into(),
             call_id: "call".into(),
             name: "read_file".into(),
             output: None,
