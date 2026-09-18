@@ -164,7 +164,6 @@ impl RuntimeClient {
         numbers: &[u32],
     ) -> anyhow::Result<Vec<crate::transcript::TranscriptPart>> {
         let mut args = self.run_args(run_id);
-        args.insert("includeWork".into(), false.into());
         args.insert(
             "numbers".to_string(),
             Value::Array(
