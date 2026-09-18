@@ -53,6 +53,25 @@ fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
     Ok(id)
 }
 
+fn deserialize_row_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    // Work section keys are `agent:{runId}:{claimId}:{attempt}:section:{ordinal}`
+    // (and similar `historical-tool:...` keys), so colons must be accepted.
+    // Unlike thread IDs, row IDs are only used as SQLite query parameters,
+    // never as filesystem path segments.
+    if id.is_empty()
+        || id.len() > 512
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+    {
+        return Err(serde::de::Error::custom("invalid transcript row ID"));
+    }
+    Ok(id)
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/transcript/display", post(display_handler))
@@ -76,7 +95,7 @@ struct DisplayDetailsRequest {
     user_id: String,
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
+    #[serde(deserialize_with = "deserialize_row_id")]
     row_id: String,
     after: Option<u64>,
     before: Option<u64>,
@@ -433,6 +452,33 @@ mod tests {
             assert_eq!(
                 parse::<TranscriptAttachmentRequest>(thread_id, json!({"storageId": "storage-1"})),
                 valid
+            );
+        }
+    }
+
+    #[test]
+    fn display_details_row_ids_accept_work_section_keys() {
+        use serde_json::json;
+
+        for row_id in [
+            "row-1",
+            "prompt-1",
+            "text-1-0",
+            "agent:run1:claim1:1:section:1",
+            "agent:j97abc:claim-complete:1:section:2",
+            "historical-tool:run1:invocation-1",
+        ] {
+            let value = json!({"userId": "user-1", "threadId": "thread-1", "rowId": row_id});
+            assert!(
+                serde_json::from_value::<DisplayDetailsRequest>(value).is_ok(),
+                "row ID should be accepted: {row_id}"
+            );
+        }
+        for row_id in ["", "../other", "a\\b", "row 1", "row/1", "row.1"] {
+            let value = json!({"userId": "user-1", "threadId": "thread-1", "rowId": row_id});
+            assert!(
+                serde_json::from_value::<DisplayDetailsRequest>(value).is_err(),
+                "row ID should be rejected: {row_id}"
             );
         }
     }
