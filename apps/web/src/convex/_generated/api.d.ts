@@ -74,7 +74,6 @@ import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workSections from "../lib/workSections.js";
 import type * as machines from "../machines.js";
-import type * as migrations from "../migrations.js";
 import type * as payments from "../payments.js";
 import type * as runLifecycle from "../runLifecycle.js";
 import type * as storageCleanup from "../storageCleanup.js";
@@ -158,7 +157,6 @@ declare const fullApi: ApiFromModules<{
   "lib/validators": typeof lib_validators;
   "lib/workSections": typeof lib_workSections;
   machines: typeof machines;
-  migrations: typeof migrations;
   payments: typeof payments;
   runLifecycle: typeof runLifecycle;
   storageCleanup: typeof storageCleanup;
@@ -201,7 +199,6 @@ export declare const components: {
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   dodopayments: import("@dodopayments/convex/_generated/component.js").ComponentApi<"dodopayments">;
-  migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   aggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregate">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;
   webSearchWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webSearchWorkpool">;

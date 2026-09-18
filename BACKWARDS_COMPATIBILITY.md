@@ -47,138 +47,34 @@ Project attachment records require `attachmentKey` in the profile's
 `project-attachments.json`. Files written before PR #392 fail to parse; the
 user re-attaches their projects.
 
-## Stored transcript work metadata
+## Completed migrations (removed 2026-09)
 
-The schema retains `threadTranscriptStates.workThrough`, `work.processed`, legacy
-membership rows, and old section bookkeeping fields for stored cloud data.
-Reads use legacy memberships when embedded assignments are absent.
+The production-rollout cleanup (`production-rollout-cleanup-2026-09`) and the
+write-time transcript-section migration (`transcript-write-time-sections-v1`)
+both report completion on every deployment, and production scans find no
+remaining legacy rows. Their migration definitions, crons, the migrations
+component wiring, and the `migrationSchedules` table were removed, and the
+schema was tightened accordingly:
 
-Remove these fields, the read fallback, and `transcript-write-time-sections-v1`
-after every retained deployment completes migration, every part has `work`,
-every assigned range or tool event has a section entry, and no legacy membership
-row remains. Never-indexed history intentionally keeps empty assignments.
+- `projects` and `projectConnections` tables, and every `projectId` reference
+  on `threadRecords`, `runs`, and `executorJobs`.
+- Required `threadRecords.status` (backfilled from the latest run status).
+- `runs.completionTransport`, `catalogVersion`, `contextWindowTokens`,
+  `autoCompactTokenLimit`, and `promptMessageId`.
+- `threadUsage.totalTokensProcessed` and `usageLedgerMigratedAt` (processed
+  tokens come from `threadUsageEvents` and the Aggregate component).
+- `threadTranscriptStates.migratedAt`.
+- Required `threadTranscriptParts.work` (the membership read fallback is gone;
+  every part carries its assignment).
+- Required `threadTranscriptWorkSections.sectionOrdinal` and `displayOrder`.
+- `imageUploads.messageIds`.
+- `executorJobs.cloudWorkPool`.
+- `work.processed` in transcript work memberships.
 
-## Production rollout cleanup
-
-PR #345 removed stored project tables, project references, run fields,
-transcript migration state, message references, usage fields, and executor work
-pool state before production data had been rewritten. The production deployment
-that remained active after that failed rollout could still write some of those
-fields. Cleaning existing rows immediately would race with those writers. This
-release restores every known shape from that removal that still needs stored
-data cleanup and ships the cleanup migrations in `convex/migrations.ts`.
-
-The hourly cron calls `runProductionRolloutCleanupAutomatically`. Its first call
-records a cleanup time 48 hours later. That delay exceeds the preceding
-deployment's 36-hour gateway token lifetime and one-hour hosted parse lifetime,
-so its writers have expired before cleanup starts. Once the delay passes, the
-cron starts or resumes the migrations in order. It records completion after the
-migrations component reports that every migration finished.
-
-### Thread status
-
-Production has historical `threadRecords` without `status`. Current run
-lifecycle code writes the field. The schema still accepts a missing value, and
-`threadRecordToSummary` treats it as `completed`.
-
-`backfillMissingThreadStatus` copies the latest run status onto each affected thread.
-It marks a runless thread as `completed` rather than deleting user data. Remove
-the optional schema and parser handling, and the summary default, after the
-migration completes and a production scan finds no thread without `status`.
-
-### Legacy projects and references
-
-Production may still contain rows in `projects` and `projectConnections`, plus
-`projectId` on `threadRecords`, `runs`, and `executorJobs`. Current code uses
-`repositoryKey` and does not read or write these tables or references. Their
-validators exist only so the stored rows survive schema validation.
-
-`removeThreadRecordProjectId`, `removeRunLegacyFields`, and
-`removeExecutorJobProjectId` unset all project references. The serial runner
-then executes `deleteProjectConnections` before `deleteProjects`. Remove the
-three optional fields and the two table definitions only after all five
-migrations complete and production scans find no project reference, connection,
-or project row. The project table deletions must remain last so no stored
-reference outlives its target table.
-
-### Run completion transport
-
-The preceding schema accepted `runs.completionTransport` with either
-`convex-action` or `gateway`, and the preceding production writer still stores
-`gateway`. Current code neither reads nor writes this field. Both values remain
-accepted so stored rows and writes made during the rollout validate.
-
-`removeRunCompletionTransport` unsets the field. Remove it from the schema after
-the migration completes and a production scan finds no run carrying it.
-
-### Run catalog snapshots
-
-Historical runs may contain `catalogVersion`, `contextWindowTokens`, and
-`autoCompactTokenLimit`. Current code gets model limits from the gateway catalog
-and does not read or write these stored snapshots. The fields remain optional
-only so historical runs validate.
-
-`removeRunLegacyFields` unsets all three fields. Remove them from the schema
-after that migration completes and a production scan finds no run carrying any
-of them.
-
-### Usage ledger fields
-
-The preceding production writer still dual-writes
-`threadUsage.totalTokensProcessed`. Current code calculates processed tokens
-from `threadUsageEvents` and the Aggregate component instead. The
-`usageLedgerMigratedAt` field is a marker left by the completed ledger backfill;
-current code does not read it. Both fields remain optional only to validate old
-rows and writes made during the rollout.
-
-`removeThreadUsageLegacyFields` unsets both fields. Remove them from the schema
-after the migration completes and a production scan finds neither field.
-
-### Numbered transcript migration marker
-
-`threadTranscriptStates.migratedAt` was left by the completed numbered
-transcript backfill. Current code does not read or write it, but production still
-has rows carrying it.
-
-`removeTranscriptStateMigratedAt` unsets the field. Remove it from the schema
-after the migration completes and a production scan finds no transcript state
-carrying it.
-
-### Thread-message references
-
-Historical runs and uploads may contain `runs.promptMessageId` and
-`imageUploads.messageIds`. Prompts and attachment metadata now live in
-`threadTranscriptParts`; current code does not read or write either old field.
-
-`removeRunLegacyFields` unsets `promptMessageId`, and
-`removeImageUploadMessageIds` unsets `messageIds`. Remove each field from the
-schema only after its migration completes and a production scan finds no stored
-value for that field.
-
-### Executor work pool
-
-The preceding production code writes `executorJobs.cloudWorkPool` for hosted
-parse work and reads it to choose the cancellation pool. Current code no longer
-reads or writes it, but an in-flight job from the preceding deployment can still
-store `firecrawlScrape` while this release rolls out.
-
-`removeExecutorJobCloudWorkPool` unsets the field. Remove it from the schema
-after the migration completes, all jobs started by the preceding deployment
-have settled, and a production scan finds no executor job carrying it.
-
-The cleanup runs automatically. `runProductionRolloutCleanup` remains available
-for operator recovery, but it must not be called before the scheduled
-`notBefore` time in `migrationSchedules`:
-
-```sh
-bunx convex run migrations:runProductionRolloutCleanup '{"dryRun":true}' --prod
-bunx convex run migrations:runProductionRolloutCleanup --prod
-```
-
-Keep the migration definitions until the runner reports completion. A later PR
-may tighten the schema and remove the read fallbacks only after the production
-scans described above pass. That PR may also remove the cleanup cron and its
-`migrationSchedules` row and table.
+Still retained from that era: `threadTranscriptStates.workThrough` (no
+migration ever unsets it), section `linkedParts`, and the
+`threadTranscriptMemberships` entry rows that current section writes use for
+idempotent retries.
 
 ## Stored executor jobs
 
@@ -235,15 +131,11 @@ been rewritten.
 ### Attachment metadata and cache layout
 
 Historical prompt attachments may contain `imageUploadId`; current writes use
-only `storageId`. Convex and local JSONL readers accept the old field and remove
-it from projected responses.
+only `storageId`. Convex readers accept the old field and remove it from
+projected responses. The local user-level blob directory fallback was removed;
+new uploads use only the thread directory.
 
-Old local attachment bytes may live in the user-level blob directory. Reading
-one copies it into the thread's `attachments/<storageId>/` directory before
-returning its path. New uploads use only the thread directory.
-
-Remove these readers after old Convex rows and local transcript caches have
-aged out or been rewritten.
+Remove the Convex reader after old Convex rows have aged out or been rewritten.
 
 ### Completion timing
 

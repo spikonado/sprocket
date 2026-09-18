@@ -326,17 +326,5 @@ export async function transcriptPartsForClient(
 	ctx: MutationCtx | QueryCtx,
 	parts: Doc<'threadTranscriptParts'>[]
 ): Promise<Doc<'threadTranscriptParts'>[]> {
-	const withWork = await Promise.all(
-		parts.map(async (part) => {
-			if (part.work) return part;
-			const legacy = await ctx.db
-				.query('threadTranscriptMemberships')
-				.withIndex('by_threadId_and_number', (query) =>
-					query.eq('threadId', part.threadId).eq('number', part.number)
-				)
-				.unique();
-			return { ...part, work: legacy?.work ?? { ranges: [] } };
-		})
-	);
-	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, withWork));
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, parts));
 }
