@@ -94,7 +94,7 @@ pub(crate) struct SectionAssignment {
     pub(crate) closed: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum OrderedContent {
     Text(bool),
     Reasoning(bool),
@@ -373,7 +373,15 @@ fn ordered_content(content: &[AssistantContent]) -> Vec<OrderedContent> {
         .map(|item| match item {
             AssistantContent::Text(text) => OrderedContent::Text(!text.text.trim().is_empty()),
             AssistantContent::Reasoning(reasoning) => {
-                OrderedContent::Reasoning(!reasoning.display_text().trim().is_empty())
+                // Must match what is persisted: summary blocks only. `display_text`
+                // also joins Text/Redacted, which never become transcript text.
+                // Empty (encrypted-only) reasoning is stored for replay but carries
+                // no work assignment; the server rejects work covering it.
+                OrderedContent::Reasoning(
+                    !crate::reasoning::reasoning_summary_text(reasoning)
+                        .trim()
+                        .is_empty(),
+                )
             }
             AssistantContent::ToolCall(call) => OrderedContent::Tool {
                 model_call_id: call.id.as_str().to_owned(),
@@ -718,5 +726,36 @@ mod tests {
         assert!(second.sections[0].closed);
         assert!(!second.sections[1].closed);
         assert_eq!(second.tool_invocations[0].section_key, None);
+    }
+
+    #[test]
+    fn non_summary_reasoning_blocks_carry_no_work() {
+        use rig::message::{AssistantContent, Reasoning, ReasoningContent};
+
+        // Summary text is what gets persisted, so only it counts as work.
+        // Text/Redacted never become transcript text; Encrypted is replay-only.
+        let summary = ordered_content(&[AssistantContent::Reasoning(Reasoning {
+            id: Some("rs_1".into()),
+            content: vec![ReasoningContent::Summary("plan".into())],
+        })]);
+        assert_eq!(summary, vec![OrderedContent::Reasoning(true)]);
+
+        for content in [
+            vec![ReasoningContent::Encrypted("envelope".into())],
+            vec![ReasoningContent::Text {
+                text: "raw".into(),
+                signature: None,
+            }],
+            vec![ReasoningContent::Redacted {
+                data: "redacted".into(),
+            }],
+            vec![ReasoningContent::Summary("  \n ".into())],
+        ] {
+            let mapped = ordered_content(&[AssistantContent::Reasoning(Reasoning {
+                id: Some("rs_1".into()),
+                content,
+            })]);
+            assert_eq!(mapped, vec![OrderedContent::Reasoning(false)]);
+        }
     }
 }

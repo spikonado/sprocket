@@ -574,7 +574,12 @@ export const finalizeCompletionCall = mutation({
 			if (!sectionOrdinals.has(range.sectionKey)) throw new Error('Unknown work section.');
 			for (let index = range.start; index < range.end; index++) {
 				const item = args.items[index];
-				if (!item || item.type === 'text' || assignedItems.has(index)) {
+				if (
+					!item ||
+					item.type === 'text' ||
+					(item.type === 'reasoning' && item.text.trim() === '') ||
+					assignedItems.has(index)
+				) {
 					throw new Error('Invalid work assignment.');
 				}
 				if (item.type === 'tool-call') {
@@ -588,7 +593,14 @@ export const finalizeCompletionCall = mutation({
 		}
 		for (const [index, item] of args.items.entries()) {
 			const invocation = invocationsByItem.get(index);
-			if (item.type === 'reasoning' || invocation?.sectionKey !== undefined) {
+			// Empty reasoning carries only the encrypted envelope for replay and has
+			// no display text. The agent tracker and read path both skip it as work,
+			// so it must not carry a work range. Require work only for visible
+			// reasoning and section-bound tool calls.
+			const needsWork =
+				(item.type === 'reasoning' && item.text.trim() !== '') ||
+				invocation?.sectionKey !== undefined;
+			if (needsWork) {
 				if (!assignedItems.has(index)) throw new Error('Missing work assignment.');
 			} else if (assignedItems.has(index)) {
 				throw new Error('Non-work item has a work assignment.');

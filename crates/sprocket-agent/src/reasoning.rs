@@ -45,7 +45,7 @@ pub(crate) fn skip_reasoning_on_reload(context_summary: Option<&str>) -> bool {
 
 /// Live display is summary blocks only. Rig's `display_text` also joins
 /// `Text` and `Redacted`, which must not become transcript text.
-fn reasoning_summary_text(reasoning: &Reasoning) -> String {
+pub(crate) fn reasoning_summary_text(reasoning: &Reasoning) -> String {
     reasoning
         .content
         .iter()

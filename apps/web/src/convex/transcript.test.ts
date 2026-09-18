@@ -118,6 +118,80 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
 
+	it('accepts encrypted-only reasoning without a work assignment', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-empty-reasoning-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-empty-reasoning',
+			executionSecret,
+			'Write code'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-empty-reasoning',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId: 'claim-empty-reasoning',
+			attemptSeq: 1,
+			executionSecret
+		});
+		// Encrypted-only reasoning has no display text. The agent tracker skips it
+		// as work while still persisting the envelope for replay.
+		const items = [
+			{
+				type: 'reasoning' as const,
+				id: 'stream-1:reasoning:empty',
+				text: '',
+				turnId: 'stream-1',
+				providerMetadata: {
+					openai: { itemId: 'rs_empty', reasoningEncryptedContent: 'envelope' }
+				}
+			},
+			{
+				type: 'reasoning' as const,
+				id: 'stream-1:reasoning:visible',
+				text: 'Thinking',
+				turnId: 'stream-1'
+			}
+		];
+		const sectionKey = `agent:${runId}:claim-empty-reasoning:1:section:1`;
+		const part = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			transcriptProtocol: 2,
+			runId,
+			claimId: 'claim-empty-reasoning',
+			attemptSeq: 1,
+			streamId: 'stream-1',
+			items,
+			work: { ranges: [{ start: 1, end: 2, sectionKey }] },
+			toolInvocations: [],
+			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }],
+			executionSecret
+		});
+		expect(part?.completion?.items).toHaveLength(2);
+
+		// Empty reasoning must not carry work; visible reasoning must.
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+				transcriptProtocol: 2,
+				runId,
+				claimId: 'claim-empty-reasoning',
+				attemptSeq: 1,
+				streamId: 'stream-1-bad-work',
+				items,
+				work: { ranges: [{ start: 0, end: 2, sectionKey }] },
+				toolInvocations: [],
+				sections: [{ sectionKey, sectionOrdinal: 1, closed: true }],
+				executionSecret
+			})
+		).rejects.toThrow('Invalid work assignment.');
+	});
+
 	it('normalizes missing timing on completion writes', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
