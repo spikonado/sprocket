@@ -36,11 +36,12 @@ async function persistSubscription(
 	}
 	const tier = tierForProductId(data.product_id);
 	if (tier === undefined) {
-		console.warn('Unknown Dodo product; keeping user on free tier.', data.product_id);
+		console.warn('Unknown Dodo product; skipping subscription upsert.', data.product_id);
+		return;
 	}
 	await ctx.runMutation(internal.billing.upsertSubscription, {
 		userId,
-		tier: tier ?? 'free',
+		tier,
 		dodoSubscriptionId: data.subscription_id,
 		dodoProductId: data.product_id,
 		dodoCustomerId: data.customer.customer_id,
