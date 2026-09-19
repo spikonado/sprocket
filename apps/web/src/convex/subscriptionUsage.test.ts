@@ -1,17 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest } from './test.setup';
+import { initConvexTest, type ConvexTestInstance } from './test.setup';
+
+const UNITS_PER_DOLLAR = 1_000_000_000;
+
+/** Mirror of the ai-gateway tiers document so quota tests run without network. */
+async function seedTiers(t: ConvexTestInstance): Promise<void> {
+	await t.run(async (ctx) => {
+		const tiers = [
+			{
+				tierId: 'free',
+				label: 'Free',
+				weekly: 5 * UNITS_PER_DOLLAR,
+				monthly: 15 * UNITS_PER_DOLLAR
+			},
+			{
+				tierId: 'pro',
+				label: 'Pro',
+				weekly: 25 * UNITS_PER_DOLLAR,
+				monthly: 75 * UNITS_PER_DOLLAR
+			},
+			{
+				tierId: 'max',
+				label: 'Max',
+				weekly: 170 * UNITS_PER_DOLLAR,
+				monthly: 500 * UNITS_PER_DOLLAR
+			}
+		];
+		for (const tier of tiers) {
+			await ctx.db.insert('tiers', tier);
+		}
+	});
+}
 
 describe('subscription and usage backend', () => {
 	it('gives Max $170 of weekly usage and $500 of monthly usage', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
 		const userId = 'user_max';
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', {
 				userId,
 				tier: 'max',
-				dodoSubscriptionId: 'sub_max',
-				dodoProductId: 'prod_max',
 				status: 'active',
 				eventAt: 1
 			});
@@ -19,19 +49,21 @@ describe('subscription and usage backend', () => {
 
 		const usage = await t.withIdentity({ subject: userId }).query(api.usage.getMyUsage, {});
 		expect(usage.tier).toBe('max');
+		expect(usage.tierLabel).toBe('Max');
 		expect(usage.meters[0]?.windows).toEqual([
-			{ period: 'weekly', used: 0, limit: 170_000, resetsAt: null },
-			{ period: 'monthly', used: 0, limit: 500_000, resetsAt: null }
+			{ period: 'weekly', used: 0, limit: 170 * UNITS_PER_DOLLAR, resetsAt: null },
+			{ period: 'monthly', used: 0, limit: 500 * UNITS_PER_DOLLAR, resetsAt: null }
 		]);
 	});
 
 	it('reports usage overdraft and preserves it', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
 		const userId = 'user_usage';
 		const asUser = t.withIdentity({ subject: userId });
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			count: 20_000
+			count: 6 * UNITS_PER_DOLLAR
 		});
 
 		const usage = await asUser.query(api.usage.getMyUsage, {});
@@ -48,53 +80,52 @@ describe('subscription and usage backend', () => {
 		).rejects.toThrow(/model usage limit reached/);
 	});
 
-	it('uses only active subscriptions and ignores stale webhook events', async () => {
+	it('uses only active subscriptions and ignores stale rows', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
 		const userId = 'user_billing';
 		const asUser = t.withIdentity({ subject: userId });
 		const currentTier = async () => (await asUser.query(api.usage.getMyUsage, {})).tier;
-		const subscription = {
-			userId,
-			tier: 'pro',
-			dodoSubscriptionId: 'sub_1',
-			dodoProductId: 'prod_1',
-			dodoCustomerId: 'customer_1'
-		} as const;
 		expect(await currentTier()).toBe('free');
 
-		await t.mutation(internal.billing.upsertSubscription, {
-			...subscription,
-			status: 'active',
-			eventAt: 1_000
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'pro',
+				status: 'active',
+				eventAt: 1_000
+			});
 		});
 		expect(await currentTier()).toBe('pro');
 
-		await t.mutation(internal.billing.upsertSubscription, {
-			...subscription,
-			status: 'cancelled',
-			eventAt: 2_000
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'pro',
+				status: 'cancelled',
+				eventAt: 2_000
+			});
 		});
 		expect(await currentTier()).toBe('free');
 
-		// A late-arriving older 'active' event must not resurrect the subscription.
-		await t.mutation(internal.billing.upsertSubscription, {
-			...subscription,
-			status: 'active',
-			eventAt: 1_500
+		// An older 'active' row must not resurrect the subscription.
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'pro',
+				status: 'active',
+				eventAt: 1_500
+			});
 		});
 		expect(await currentTier()).toBe('free');
 	});
 
 	it('dedupes to the newest event so a cancellation beats an older active row', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
 		const userId = 'user_dedup';
 		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
-		const shared = {
-			userId,
-			tier: 'pro',
-			dodoSubscriptionId: 'sub_dup',
-			dodoProductId: 'prod_dup'
-		} as const;
+		const shared = { userId, tier: 'pro' } as const;
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', { ...shared, status: 'active', eventAt: 1_000 });
 			await ctx.db.insert('subscriptions', { ...shared, status: 'cancelled', eventAt: 2_000 });
@@ -116,6 +147,7 @@ describe('subscription and usage backend', () => {
 
 	it('ensures a free subscription row and leaves existing grants alone', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
 		const userId = 'user_ensure_free';
 		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		const readSubscription = () =>
@@ -130,121 +162,109 @@ describe('subscription and usage backend', () => {
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		const created = await readSubscription();
 		expect(created).toMatchObject({ userId, tier: 'free', status: 'active', eventAt: 0 });
-		expect(created?.dodoSubscriptionId).toBe('');
-		expect(created?.dodoProductId).toBe('');
+		expect(created).not.toHaveProperty('dodoSubscriptionId');
+		expect(created).not.toHaveProperty('dodoProductId');
 
 		await t.run(async (ctx) => {
 			if (!created) throw new Error('Expected subscription row');
-			await ctx.db.patch('subscriptions', created._id, { tier: 'admin', eventAt: 5_000 });
+			await ctx.db.patch('subscriptions', created._id, { tier: 'pro', eventAt: 5_000 });
 		});
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		expect(await readSubscription()).toMatchObject({
 			userId,
-			tier: 'admin',
+			tier: 'pro',
 			status: 'active',
 			eventAt: 5_000
 		});
 	});
 
-	it('lets paid webhooks replace a bootstrap free row', async () => {
+	it('lets operator edits replace a bootstrap free row', async () => {
 		const t = initConvexTest();
+		await seedTiers(t);
 		const userId = 'user_bootstrap_upgrade';
 		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 
-		await t.mutation(internal.billing.upsertSubscription, {
-			userId,
-			tier: 'pro',
-			dodoSubscriptionId: 'sub_upgrade',
-			dodoProductId: 'prod_upgrade',
-			dodoCustomerId: 'customer_upgrade',
-			status: 'active',
-			eventAt: 1
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', { userId, tier: 'pro', status: 'active', eventAt: 1 });
 		});
 		expect(await asUser.query(api.usage.getMyUsage, {})).toMatchObject({ tier: 'pro' });
 	});
 
-	it('keeps admin grants above Dodo webhook upserts', async () => {
+	it('fails fast on duplicate tier rows instead of metering arbitrarily', async () => {
 		const t = initConvexTest();
-		const userId = 'user_admin_grant';
+		await seedTiers(t);
+		const userId = 'user_dup_tier';
+		const asUser = t.withIdentity({ subject: userId });
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', { userId, tier: 'pro', status: 'active', eventAt: 1 });
+			await ctx.db.insert('tiers', {
+				tierId: 'pro',
+				label: 'Pro Duplicate',
+				weekly: 1,
+				monthly: 2
+			});
+		});
+		await expect(asUser.query(api.usage.getMyUsage, {})).rejects.toThrow(
+			'Duplicate tiers rows for tier "pro".'
+		);
+	});
+
+	it('lets newer rows win regardless of tier', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_recency';
 		const asUser = t.withIdentity({ subject: userId });
 		const currentTier = async () => (await asUser.query(api.usage.getMyUsage, {})).tier;
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', {
 				userId,
-				tier: 'admin',
-				dodoSubscriptionId: '',
-				dodoProductId: '',
+				tier: 'pro',
 				status: 'active',
 				eventAt: 1_000
 			});
 		});
-		const webhook = {
-			userId,
-			tier: 'pro' as const,
-			dodoSubscriptionId: 'sub_admin',
-			dodoProductId: 'prod_admin',
-			dodoCustomerId: 'customer_admin'
-		};
-
-		await t.mutation(internal.billing.upsertSubscription, {
-			...webhook,
-			status: 'active',
-			eventAt: 2_000
+		expect(await currentTier()).toBe('pro');
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'max',
+				status: 'active',
+				eventAt: 2_000
+			});
 		});
-		expect(await currentTier()).toBe('admin');
-		const customer = await t.run(async (ctx) =>
-			ctx.db
-				.query('billingCustomers')
-				.withIndex('by_userId', (query) => query.eq('userId', userId))
-				.unique()
-		);
-		expect(customer?.dodoCustomerId).toBe('customer_admin');
-
-		await t.mutation(internal.billing.upsertSubscription, {
-			...webhook,
-			status: 'cancelled',
-			eventAt: 3_000
-		});
-		expect(await currentTier()).toBe('admin');
+		expect(await currentTier()).toBe('max');
 	});
 
-	it('lets admin bypass meters after free overdraft', async () => {
+	it('meters each tier against its own limits', async () => {
 		const t = initConvexTest();
-		const userId = 'user_admin_bypass';
+		await seedTiers(t);
+		const userId = 'user_max_metered';
 		const asUser = t.withIdentity({ subject: userId });
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'max',
+				status: 'active',
+				eventAt: 1
+			});
+		});
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			count: 20_000
+			count: 6 * UNITS_PER_DOLLAR
 		});
-		await expect(
-			t.mutation(internal.lib.rateLimits.checkUsageLimits, {
-				userId
-			})
-		).rejects.toThrow(/model usage limit reached/);
-
-		await t.run(async (ctx) => {
-			const existing = await ctx.db
-				.query('subscriptions')
-				.withIndex('by_userId', (query) => query.eq('userId', userId))
-				.unique();
-			if (!existing) throw new Error('Expected subscription row');
-			await ctx.db.patch('subscriptions', existing._id, { tier: 'admin' });
-		});
-
+		// 6 dollars of usage is far below the max tier's own limits.
 		await t.mutation(internal.lib.rateLimits.checkUsageLimits, {
 			userId
 		});
-		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
-			userId,
-			count: 20_000
-		});
 		const usage = await asUser.query(api.usage.getMyUsage, {});
-		expect(usage.tier).toBe('admin');
+		expect(usage.tier).toBe('max');
+		expect(usage.tierLabel).toBe('Max');
+		expect(usage.exhausted).toBe(false);
 		const weekly = usage.meters
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
-		expect(weekly).toMatchObject({ used: 0 });
+		expect(weekly).toMatchObject({ used: 6 * UNITS_PER_DOLLAR });
 	});
 
 	it('materializes exactly one users row per subject across repeated page loads', async () => {

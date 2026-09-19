@@ -200,7 +200,6 @@ export declare const components: {
   firecrawl: import("@firecrawl/firecrawl-convex/_generated/component.js").ComponentApi<"firecrawl">;
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
-  dodopayments: import("@dodopayments/convex/_generated/component.js").ComponentApi<"dodopayments">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   aggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregate">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;

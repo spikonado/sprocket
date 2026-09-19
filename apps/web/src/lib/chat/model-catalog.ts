@@ -1,4 +1,3 @@
-import type { SubscriptionTier } from '$convex/lib/tiers';
 import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
@@ -29,15 +28,18 @@ export function getCatalogModel(
 
 export function isModelAllowedForTier(
 	catalog: ModelCatalog,
-	tier: SubscriptionTier,
+	tier: string,
 	modelId: CatalogModelId
 ): boolean {
-	return (catalog.tierAllowedModels[tier] ?? []).includes(modelId);
+	// Tiers missing from the catalog allow every model.
+	return (catalog.tierAllowedModels[tier] ?? catalog.models.map((model) => model.id)).includes(
+		modelId
+	);
 }
 
 export function resolveModelForTier(
 	catalog: ModelCatalog,
-	tier: SubscriptionTier,
+	tier: string,
 	modelId: CatalogModelId
 ): CatalogModelId {
 	if (isModelAllowedForTier(catalog, tier, modelId)) return modelId;
@@ -46,21 +48,19 @@ export function resolveModelForTier(
 
 export function fastModeAccessForModelAndTier(
 	catalog: ModelCatalog,
-	tier: SubscriptionTier,
+	tier: string,
 	model: CatalogModel
 ): FastModeAccess {
 	if (!model.supportsFastMode) return 'unsupported';
-	return catalog.tierAllowsFastMode[tier] ? 'available' : 'locked';
+	// Tiers missing from the catalog allow fast mode.
+	return (catalog.tierAllowsFastMode[tier] ?? true) ? 'available' : 'locked';
 }
 
 export function showsReasoningControl(model: CatalogModel): boolean {
 	return model.reasoningEfforts.length !== 1 || model.reasoningEfforts[0] !== 'none';
 }
 
-export function modelOptionsForTier(
-	catalog: ModelCatalog,
-	tier: SubscriptionTier
-): ModelSelectorOption[] {
+export function modelOptionsForTier(catalog: ModelCatalog, tier: string): ModelSelectorOption[] {
 	const unlocked: ModelSelectorOption[] = [];
 	const locked: ModelSelectorOption[] = [];
 	for (const model of catalog.models) {
@@ -119,18 +119,16 @@ const gatewayModelsResponseSchema = z.object({
 		defaultReasoningEffort: z.string().min(1),
 		defaultServiceTier: z.string().min(1),
 		models: z.array(gatewayModelSchema).min(1),
-		tierAllowedModels: z.object({
-			free: z.array(z.string()),
-			pro: z.array(z.string()),
-			max: z.array(z.string()),
-			admin: z.array(z.string())
-		}),
-		tierAllowedServiceTiers: z.object({
-			free: z.array(z.string()),
-			pro: z.array(z.string()),
-			max: z.array(z.string()),
-			admin: z.array(z.string())
-		}),
+		tierAllowedModels: z
+			.record(z.string(), z.array(z.string()))
+			.refine((maps) => Object.keys(maps).length > 0, {
+				message: 'Expected at least one tier in tierAllowedModels.'
+			}),
+		tierAllowedServiceTiers: z
+			.record(z.string(), z.array(z.string()))
+			.refine((maps) => Object.keys(maps).length > 0, {
+				message: 'Expected at least one tier in tierAllowedServiceTiers.'
+			}),
 		modelLockUpgradeMessage: z.string().min(1),
 		serviceTierLockUpgradeMessage: z.string().min(1)
 	})
@@ -163,12 +161,12 @@ function catalogFromGatewayPayload(
 			usagePolicy: model.usagePolicy
 		})),
 		tierAllowedModels: sprocket.tierAllowedModels,
-		tierAllowsFastMode: {
-			free: sprocket.tierAllowedServiceTiers.free.includes('fast'),
-			pro: sprocket.tierAllowedServiceTiers.pro.includes('fast'),
-			max: sprocket.tierAllowedServiceTiers.max.includes('fast'),
-			admin: sprocket.tierAllowedServiceTiers.admin.includes('fast')
-		},
+		tierAllowsFastMode: Object.fromEntries(
+			Object.entries(sprocket.tierAllowedServiceTiers).map(([tier, serviceTiers]) => [
+				tier,
+				serviceTiers.includes('fast')
+			])
+		),
 		modelLockUpgradeMessage: sprocket.modelLockUpgradeMessage,
 		fastModeLockUpgradeMessage: sprocket.serviceTierLockUpgradeMessage
 	};

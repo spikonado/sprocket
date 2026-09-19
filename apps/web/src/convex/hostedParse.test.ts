@@ -423,8 +423,6 @@ describe('hostedParse', () => {
 		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', resultId))).not.toBeNull();
 		const usageAfter = await t.run(async (ctx) => ctx.db.query('threadUsageEvents').take(32));
 		expect(usageAfter).toEqual(usageBefore);
-		const customers = await t.run(async (ctx) => ctx.db.query('billingCustomers').take(8));
-		expect(customers).toEqual([]);
 		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 		expect(job?.status).toBe('claimed');
 	});
