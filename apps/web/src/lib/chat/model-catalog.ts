@@ -31,7 +31,10 @@ export function isModelAllowedForTier(
 	tier: string,
 	modelId: CatalogModelId
 ): boolean {
-	return (catalog.tierAllowedModels[tier] ?? []).includes(modelId);
+	// Tiers missing from the catalog allow every model.
+	return (catalog.tierAllowedModels[tier] ?? catalog.models.map((model) => model.id)).includes(
+		modelId
+	);
 }
 
 export function resolveModelForTier(
@@ -49,7 +52,8 @@ export function fastModeAccessForModelAndTier(
 	model: CatalogModel
 ): FastModeAccess {
 	if (!model.supportsFastMode) return 'unsupported';
-	return catalog.tierAllowsFastMode[tier] ? 'available' : 'locked';
+	// Tiers missing from the catalog allow fast mode.
+	return (catalog.tierAllowsFastMode[tier] ?? true) ? 'available' : 'locked';
 }
 
 export function showsReasoningControl(model: CatalogModel): boolean {

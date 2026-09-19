@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
 	fastModeAccessForModelAndTier,
 	fetchGatewayModelCatalog,
+	isModelAllowedForTier,
 	showsReasoningControl
 } from './model-catalog';
 
@@ -27,13 +28,13 @@ const catalogPayload = {
 		],
 		tierAllowedModels: {
 			free: ['model-small'],
-			pro: ['model-small'],
-			max: ['model-small']
+			go: ['model-small'],
+			budget: ['model-small']
 		},
 		tierAllowedServiceTiers: {
 			free: ['standard'],
-			pro: ['standard', 'fast'],
-			max: ['standard', 'fast']
+			go: ['standard', 'fast'],
+			budget: ['standard', 'fast']
 		},
 		modelLockUpgradeMessage: 'Upgrade to use this model',
 		serviceTierLockUpgradeMessage: 'Upgrade to use Fast mode'
@@ -58,12 +59,25 @@ describe('gateway model catalog', () => {
 		expect(catalog.models[0].supportsFastMode).toBe(true);
 		expect(catalog.tierAllowsFastMode).toEqual({
 			free: false,
-			pro: true,
-			max: true
+			go: true,
+			budget: true
 		});
 		expect(fastModeAccessForModelAndTier(catalog, 'free', catalog.models[0])).toBe('locked');
-		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('available');
-		expect(fastModeAccessForModelAndTier(catalog, 'max', catalog.models[0])).toBe('available');
+		expect(fastModeAccessForModelAndTier(catalog, 'go', catalog.models[0])).toBe('available');
+		expect(fastModeAccessForModelAndTier(catalog, 'budget', catalog.models[0])).toBe('available');
+	});
+
+	it('allows everything for tiers missing from the catalog', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(catalogPayload), { status: 200 }))
+		);
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+		expect(isModelAllowedForTier(catalog, 'enterprise', 'model-small')).toBe(true);
+		expect(isModelAllowedForTier(catalog, 'enterprise', 'model-unknown')).toBe(false);
+		expect(fastModeAccessForModelAndTier(catalog, 'enterprise', catalog.models[0])).toBe(
+			'available'
+		);
 	});
 
 	it('rejects catalogs with empty permission maps', async () => {

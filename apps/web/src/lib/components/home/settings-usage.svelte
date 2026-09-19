@@ -20,10 +20,16 @@
 		};
 	});
 
-	const compactAmount = new Intl.NumberFormat('en-US', {
-		notation: 'compact',
-		maximumFractionDigits: 1
+	const dollars = new Intl.NumberFormat('en-US', {
+		style: 'currency',
+		currency: 'USD',
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2
 	});
+
+	function formatDollars(units: number, unitsPerDollar: number) {
+		return dollars.format(units / unitsPerDollar);
+	}
 
 	const periodLabels = { weekly: 'Weekly', monthly: 'Monthly' } as const;
 
@@ -104,8 +110,10 @@
 										{/if}
 									</div>
 									<p class="text-muted-foreground mt-0.5 text-[12px]">
-										{compactAmount.format(hasLimit ? meterWindow.used : 0)} / {compactAmount.format(
-											hasLimit ? meterWindow.limit : 0
+										{formatDollars(hasLimit ? meterWindow.used : 0, usageQuery.data.unitsPerDollar)} /
+										{formatDollars(
+											hasLimit ? meterWindow.limit : 0,
+											usageQuery.data.unitsPerDollar
 										)}
 									</p>
 									<div

@@ -51,14 +51,14 @@ export async function resolveTierLimits(
 	return match.limits;
 }
 
-/** Limits and label in two strict lookups. */
+/** Limits, label, and unit scale in two strict lookups. */
 export async function resolveTierInfo(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
-): Promise<{ limits: TierLimits; label: string }> {
+): Promise<{ limits: TierLimits; label: string; unitsPerDollar: number }> {
 	const match = (await getCachedTier(ctx, tierId)) ?? (await getCachedTier(ctx, 'free'));
 	if (!match) throw new Error('Subscription tiers are unavailable.');
-	return { limits: match.limits, label: match.label };
+	return { limits: match.limits, label: match.label, unitsPerDollar: match.unitsPerDollar };
 }
 
 export async function getTierLabel(
