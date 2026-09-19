@@ -13,7 +13,6 @@ export type CachedTier = {
 	label: string;
 	limits: TierLimits;
 	unitsPerDollar: number;
-	updatedAt: number;
 };
 
 function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
@@ -21,36 +20,25 @@ function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
 		id: row.tierId,
 		label: row.label,
 		limits: { modelUsage: { weekly: row.weekly, monthly: row.monthly } },
-		unitsPerDollar: row.unitsPerDollar,
-		updatedAt: row.updatedAt
+		unitsPerDollar: row.unitsPerDollar
 	};
 }
 
-export async function listCachedTiers(
-	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>
-): Promise<CachedTier[]> {
-	const rows = await ctx.db.query('tiers').collect();
-	// Operator edits can leave duplicate tierId rows; the latest edit wins so
-	// every reader agrees on one definition.
-	const latest = new Map<string, CachedTier>();
-	for (const tier of rows.map(rowToCachedTier)) {
-		if ((latest.get(tier.id)?.updatedAt ?? -1) <= tier.updatedAt) latest.set(tier.id, tier);
-	}
-	return [...latest.values()];
-}
-
-/** Prefer the requested tier, falling back to the free tier when unknown. */
-function pickTier(tiers: CachedTier[], tierId: string): CachedTier | null {
-	return (
-		tiers.find((tier) => tier.id === tierId) ?? tiers.find((tier) => tier.id === 'free') ?? null
-	);
-}
-
+/**
+ * Strict tier lookup. Duplicate tierId rows fail fast with a clear error
+ * instead of metering against an arbitrary row.
+ */
 export async function getCachedTier(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
 ): Promise<CachedTier | null> {
-	return (await listCachedTiers(ctx)).find((tier) => tier.id === tierId) ?? null;
+	const rows = await ctx.db
+		.query('tiers')
+		.withIndex('by_tierId', (query) => query.eq('tierId', tierId))
+		.collect();
+	if (rows.length > 1) throw new Error(`Duplicate tiers rows for tier "${tierId}".`);
+	const row = rows[0];
+	return row ? rowToCachedTier(row) : null;
 }
 
 /** Limits for a tier, falling back to the free tier when unknown. */
@@ -58,17 +46,17 @@ export async function resolveTierLimits(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
 ): Promise<TierLimits> {
-	const match = pickTier(await listCachedTiers(ctx), tierId);
+	const match = (await getCachedTier(ctx, tierId)) ?? (await getCachedTier(ctx, 'free'));
 	if (!match) throw new Error('Subscription tiers are unavailable.');
 	return match.limits;
 }
 
-/** Limits and label in a single pass over the `tiers` table. */
+/** Limits and label in two strict lookups. */
 export async function resolveTierInfo(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
 ): Promise<{ limits: TierLimits; label: string }> {
-	const match = pickTier(await listCachedTiers(ctx), tierId);
+	const match = (await getCachedTier(ctx, tierId)) ?? (await getCachedTier(ctx, 'free'));
 	if (!match) throw new Error('Subscription tiers are unavailable.');
 	return { limits: match.limits, label: match.label };
 }

@@ -57,8 +57,7 @@ export default defineSchema({
 		label: v.string(),
 		weekly: v.number(),
 		monthly: v.number(),
-		unitsPerDollar: v.number(),
-		updatedAt: v.number()
+		unitsPerDollar: v.number()
 	}).index('by_tierId', ['tierId']),
 	subscriptions: defineTable({
 		userId: v.string(),
