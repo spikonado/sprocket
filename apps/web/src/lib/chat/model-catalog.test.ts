@@ -66,6 +66,25 @@ describe('gateway model catalog', () => {
 		expect(fastModeAccessForModelAndTier(catalog, 'max', catalog.models[0])).toBe('available');
 	});
 
+	it('rejects catalogs with empty permission maps', async () => {
+		const base = structuredClone(catalogPayload);
+		// SAFETY: test-only payload exercising the empty-maps rejection path.
+		const payload = {
+			sprocket: {
+				...base.sprocket,
+				tierAllowedModels: {} as Record<string, string[]>,
+				tierAllowedServiceTiers: {} as Record<string, string[]>
+			}
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }))
+		);
+		await expect(fetchGatewayModelCatalog('https://ai-gateway.spikonado.com')).rejects.toThrow(
+			'Model catalog is unavailable.'
+		);
+	});
+
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models[0].serviceTiers = ['standard'];

@@ -13,6 +13,7 @@ export type CachedTier = {
 	label: string;
 	limits: TierLimits;
 	unitsPerDollar: number;
+	updatedAt: number;
 };
 
 function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
@@ -20,7 +21,8 @@ function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
 		id: row.tierId,
 		label: row.label,
 		limits: { modelUsage: { weekly: row.weekly, monthly: row.monthly } },
-		unitsPerDollar: row.unitsPerDollar
+		unitsPerDollar: row.unitsPerDollar,
+		updatedAt: row.updatedAt
 	};
 }
 
@@ -28,18 +30,13 @@ export async function listCachedTiers(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>
 ): Promise<CachedTier[]> {
 	const rows = await ctx.db.query('tiers').collect();
-	return rows.map(rowToCachedTier);
-}
-
-async function cachedTierById(
-	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
-	tierId: string
-): Promise<CachedTier | null> {
-	const row = await ctx.db
-		.query('tiers')
-		.withIndex('by_tierId', (query) => query.eq('tierId', tierId))
-		.unique();
-	return row ? rowToCachedTier(row) : null;
+	// Operator edits can leave duplicate tierId rows; the latest edit wins so
+	// every reader agrees on one definition.
+	const latest = new Map<string, CachedTier>();
+	for (const tier of rows.map(rowToCachedTier)) {
+		if ((latest.get(tier.id)?.updatedAt ?? -1) <= tier.updatedAt) latest.set(tier.id, tier);
+	}
+	return [...latest.values()];
 }
 
 /** Prefer the requested tier, falling back to the free tier when unknown. */
@@ -53,7 +50,7 @@ export async function getCachedTier(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
 ): Promise<CachedTier | null> {
-	return await cachedTierById(ctx, tierId);
+	return (await listCachedTiers(ctx)).find((tier) => tier.id === tierId) ?? null;
 }
 
 /** Limits for a tier, falling back to the free tier when unknown. */

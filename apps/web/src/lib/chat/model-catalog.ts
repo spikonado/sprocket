@@ -115,8 +115,16 @@ const gatewayModelsResponseSchema = z.object({
 		defaultReasoningEffort: z.string().min(1),
 		defaultServiceTier: z.string().min(1),
 		models: z.array(gatewayModelSchema).min(1),
-		tierAllowedModels: z.record(z.string(), z.array(z.string())),
-		tierAllowedServiceTiers: z.record(z.string(), z.array(z.string())),
+		tierAllowedModels: z
+			.record(z.string(), z.array(z.string()))
+			.refine((maps) => Object.keys(maps).length > 0, {
+				message: 'Expected at least one tier in tierAllowedModels.'
+			}),
+		tierAllowedServiceTiers: z
+			.record(z.string(), z.array(z.string()))
+			.refine((maps) => Object.keys(maps).length > 0, {
+				message: 'Expected at least one tier in tierAllowedServiceTiers.'
+			}),
 		modelLockUpgradeMessage: z.string().min(1),
 		serviceTierLockUpgradeMessage: z.string().min(1)
 	})

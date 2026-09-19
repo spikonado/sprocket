@@ -191,6 +191,35 @@ describe('subscription and usage backend', () => {
 		expect(await asUser.query(api.usage.getMyUsage, {})).toMatchObject({ tier: 'pro' });
 	});
 
+	it('resolves duplicate tier rows to the latest edit everywhere', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_dup_tier';
+		const asUser = t.withIdentity({ subject: userId });
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', { userId, tier: 'pro', status: 'active', eventAt: 1 });
+			await ctx.db.insert('tiers', {
+				tierId: 'pro',
+				label: 'Pro Legacy',
+				weekly: 1,
+				monthly: 2,
+				unitsPerDollar: UNITS_PER_DOLLAR,
+				updatedAt: 0
+			});
+		});
+		const usage = await asUser.query(api.usage.getMyUsage, {});
+		// Label and limits agree on the seeded row, not the stale duplicate.
+		expect(usage.tierLabel).toBe('Pro');
+		expect(usage.meters[0]?.windows).toEqual([
+			{ period: 'weekly', used: 0, limit: 25 * UNITS_PER_DOLLAR, resetsAt: null },
+			{ period: 'monthly', used: 0, limit: 75 * UNITS_PER_DOLLAR, resetsAt: null }
+		]);
+		expect(await asUser.query(api.billing.getMySubscription, {})).toMatchObject({
+			tier: 'pro',
+			tierLabel: 'Pro'
+		});
+	});
+
 	it('lets newer rows win regardless of tier', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
