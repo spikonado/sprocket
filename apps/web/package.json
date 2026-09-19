@@ -18,7 +18,6 @@
 		"@convex-dev/migrations": "^0.3.6",
 		"@convex-dev/rate-limiter": "^0.3.2",
 		"@convex-dev/workpool": "^0.4.10",
-		"@dodopayments/convex": "^0.2.15",
 		"@exalabs/convex-exa": "^0.1.1",
 		"@firecrawl/firecrawl-convex": "^0.1.1",
 		"@fontsource-variable/ibm-plex-sans": "^5.2.8",

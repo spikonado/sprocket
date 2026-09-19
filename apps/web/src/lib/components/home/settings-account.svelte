@@ -2,7 +2,6 @@
 	import { LogOut } from '@lucide/svelte';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
-	import { tierLabels } from '$convex/lib/tiers';
 	import type { AuthUser } from '$lib/auth';
 	import Button from '$lib/components/ui/button/button.svelte';
 
@@ -66,7 +65,7 @@
 					Spikonado Subscription Tier
 				</p>
 				{#if subscriptionQuery.data}
-					<p class="text-foreground mt-3 text-[15px]">{tierLabels[subscriptionQuery.data.tier]}</p>
+					<p class="text-foreground mt-3 text-[15px]">{subscriptionQuery.data.tierLabel}</p>
 				{:else if subscriptionQuery.error}
 					<p class="text-muted-foreground mt-3 text-sm">
 						Couldn’t load your subscription right now.
