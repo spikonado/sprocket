@@ -28,14 +28,12 @@ const catalogPayload = {
 		tierAllowedModels: {
 			free: ['model-small'],
 			pro: ['model-small'],
-			max: ['model-small'],
-			admin: ['model-small']
+			max: ['model-small']
 		},
 		tierAllowedServiceTiers: {
 			free: ['standard'],
 			pro: ['standard', 'fast'],
-			max: ['standard', 'fast'],
-			admin: ['standard', 'fast']
+			max: ['standard', 'fast']
 		},
 		modelLockUpgradeMessage: 'Upgrade to use this model',
 		serviceTierLockUpgradeMessage: 'Upgrade to use Fast mode'
@@ -61,8 +59,7 @@ describe('gateway model catalog', () => {
 		expect(catalog.tierAllowsFastMode).toEqual({
 			free: false,
 			pro: true,
-			max: true,
-			admin: true
+			max: true
 		});
 		expect(fastModeAccessForModelAndTier(catalog, 'free', catalog.models[0])).toBe('locked');
 		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('available');

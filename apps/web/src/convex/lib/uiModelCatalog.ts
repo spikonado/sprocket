@@ -1,5 +1,4 @@
 import type { UsagePolicy } from '@convex/lib/models';
-import type { SubscriptionTier } from '@convex/lib/tiers';
 
 /** Ids are opaque so gateway catalogs can add models. */
 export type CatalogModel = {
@@ -20,8 +19,9 @@ export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;
 	models: readonly CatalogModel[];
-	tierAllowedModels: Readonly<Record<SubscriptionTier, readonly string[]>>;
-	tierAllowsFastMode: Readonly<Record<SubscriptionTier, boolean>>;
+	/** Tier ids are gateway-owned; keys are dynamic strings. */
+	tierAllowedModels: Readonly<Record<string, readonly string[]>>;
+	tierAllowsFastMode: Readonly<Record<string, boolean>>;
 	modelLockUpgradeMessage: string;
 	fastModeLockUpgradeMessage: string;
 	protocolVersion?: number;

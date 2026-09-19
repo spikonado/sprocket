@@ -54,14 +54,6 @@ export const vAgentQuestionSnapshot = v.object({
 	answeredAt: v.optional(v.number())
 });
 
-export const vCheckoutResponse = v.object({
-	checkout_url: v.string()
-});
-
-export const vCustomerPortalResponse = v.object({
-	portal_url: v.string()
-});
-
 export const vGetContextResult = v.object({
 	run: schema
 		.doc('runs')
@@ -102,6 +94,7 @@ export const vUsageMeterWindow = v.object({
 
 export const vMyUsage = v.object({
 	tier: vSubscriptionTier,
+	tierLabel: v.string(),
 	exhausted: v.boolean(),
 	resetsAt: v.union(v.number(), v.null()),
 	meters: v.array(

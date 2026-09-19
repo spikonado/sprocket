@@ -1,69 +1,95 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
 
-export const subscriptionTierIds = ['free', 'pro', 'max', 'admin'] as const;
-export type SubscriptionTier = (typeof subscriptionTierIds)[number];
-
-export const tierLabels = {
-	free: 'Free',
-	pro: 'Pro',
-	max: 'Max',
-	admin: 'Admin'
-} as const satisfies Record<SubscriptionTier, string>;
+/** Tier ids are operator-owned (see the `tiers` table); an opaque string, not a union. */
+export type SubscriptionTier = string;
 
 export type TierLimits = {
 	modelUsage: { weekly: number; monthly: number };
 };
 
-const freeLimits: TierLimits = {
-	modelUsage: { weekly: 5_000, monthly: 15_000 }
+export type CachedTier = {
+	id: string;
+	label: string;
+	limits: TierLimits;
+	unitsPerDollar: number;
 };
 
-const proLimits: TierLimits = {
-	modelUsage: {
-		weekly: freeLimits.modelUsage.weekly * 5,
-		monthly: freeLimits.modelUsage.monthly * 5
-	}
-};
-
-const modelUsageUnitsPerDollar = 1_000;
-const adminQuota = 1_000_000_000;
-
-export const tierLimits = {
-	free: freeLimits,
-	pro: proLimits,
-	max: {
-		modelUsage: {
-			weekly: 170 * modelUsageUnitsPerDollar,
-			monthly: 500 * modelUsageUnitsPerDollar
-		}
-	},
-	admin: {
-		modelUsage: { weekly: adminQuota, monthly: adminQuota }
-	}
-} as const satisfies Record<SubscriptionTier, TierLimits>;
-
-/** Dodo product id per paid tier; 'free' and 'admin' never have one. */
-export const tierProductIds: Partial<Record<SubscriptionTier, string>> = {};
-
-export function tierForProductId(productId: string): SubscriptionTier | undefined {
-	return subscriptionTierIds.find((tier) => tierProductIds[tier] === productId);
+function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
+	return {
+		id: row.tierId,
+		label: row.label,
+		limits: { modelUsage: { weekly: row.weekly, monthly: row.monthly } },
+		unitsPerDollar: row.unitsPerDollar
+	};
 }
 
-/** Active admin grants are manual and outrank every Dodo-driven row. */
-function subscriptionRank(subscription: Doc<'subscriptions'>): number {
-	return subscription.status === 'active' && subscription.tier === 'admin' ? 1 : 0;
+export async function listCachedTiers(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>
+): Promise<CachedTier[]> {
+	const rows = await ctx.db.query('tiers').collect();
+	return rows.map(rowToCachedTier);
+}
+
+async function cachedTierById(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	tierId: string
+): Promise<CachedTier | null> {
+	const row = await ctx.db
+		.query('tiers')
+		.withIndex('by_tierId', (query) => query.eq('tierId', tierId))
+		.unique();
+	return row ? rowToCachedTier(row) : null;
+}
+
+/** Prefer the requested tier, falling back to the free tier when unknown. */
+function pickTier(tiers: CachedTier[], tierId: string): CachedTier | null {
+	return (
+		tiers.find((tier) => tier.id === tierId) ?? tiers.find((tier) => tier.id === 'free') ?? null
+	);
+}
+
+export async function getCachedTier(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	tierId: string
+): Promise<CachedTier | null> {
+	return await cachedTierById(ctx, tierId);
+}
+
+/** Limits for a tier, falling back to the free tier when unknown. */
+export async function resolveTierLimits(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	tierId: string
+): Promise<TierLimits> {
+	const match = pickTier(await listCachedTiers(ctx), tierId);
+	if (!match) throw new Error('Subscription tiers are unavailable.');
+	return match.limits;
+}
+
+/** Limits and label in a single pass over the `tiers` table. */
+export async function resolveTierInfo(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	tierId: string
+): Promise<{ limits: TierLimits; label: string }> {
+	const match = pickTier(await listCachedTiers(ctx), tierId);
+	if (!match) throw new Error('Subscription tiers are unavailable.');
+	return { limits: match.limits, label: match.label };
+}
+
+export async function getTierLabel(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	tierId: string
+): Promise<string> {
+	const tier = await getCachedTier(ctx, tierId);
+	return tier?.label ?? tierId;
 }
 
 function pickSubscription(rows: Doc<'subscriptions'>[]): Doc<'subscriptions'> | null {
 	if (rows.length === 0) return null;
 	return rows.reduce((best, row) => {
-		const bestRank = subscriptionRank(best);
-		const rowRank = subscriptionRank(row);
-		if (rowRank !== bestRank) return rowRank > bestRank ? row : best;
-		// Recency wins so a newer cancellation supersedes an older active row.
+		// Recency wins so a newer row supersedes an older one.
 		if (row.eventAt !== best.eventAt) return row.eventAt > best.eventAt ? row : best;
-		// Same event time (e.g. webhook retries): keep an active row over a lapsed one.
+		// Same event time (e.g. retried edits): keep an active row over a lapsed one.
 		const rowActive = row.status === 'active';
 		const bestActive = best.status === 'active';
 		if (rowActive !== bestActive) return rowActive ? row : best;
@@ -117,13 +143,10 @@ export async function ensureSubscription(
 ): Promise<SubscriptionTier> {
 	const existing = await getSubscriptionDocExclusive(ctx, userId);
 	if (existing) return existing.status === 'active' ? existing.tier : 'free';
-	// eventAt 0 so bootstrap rows never win ordering over Dodo webhooks.
+	// eventAt 0 so bootstrap rows never win ordering over operator edits.
 	await ctx.db.insert('subscriptions', {
 		userId,
 		tier: 'free',
-		// No Dodo binding yet; empty-string sentinels keep the fields required.
-		dodoSubscriptionId: '',
-		dodoProductId: '',
 		status: 'active',
 		eventAt: 0
 	});

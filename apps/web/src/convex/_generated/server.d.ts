@@ -30,8 +30,6 @@ import type { DataModel } from "./dataModel.js";
 type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
-  readonly DODO_PAYMENTS_API_KEY: string | undefined;
-  readonly DODO_PAYMENTS_ENVIRONMENT: "live_mode" | "test_mode" | undefined;
   readonly EXA_API_KEY: string;
   readonly FIRECRAWL_API_KEY: string;
   readonly FIRECRAWL_BROWSER_API_KEY: string | undefined;

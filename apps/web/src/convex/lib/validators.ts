@@ -1,7 +1,6 @@
 import { v, type Infer } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
 import { reasoningEffortIds } from '@convex/lib/models';
-import { subscriptionTierIds } from '@convex/lib/tiers';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
 	// SAFETY: map emits one v.literal per input string, matching TValues by index.
@@ -12,7 +11,8 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
-export const vSubscriptionTier = v.union(...literals(subscriptionTierIds));
+/** Tier ids are gateway-owned and dynamic, so this stays an open string. */
+export const vSubscriptionTier = v.string();
 
 export const vSubscriptionStatus = v.union(
 	v.literal('active'),

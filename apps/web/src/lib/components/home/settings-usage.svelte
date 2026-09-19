@@ -2,7 +2,6 @@
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import { usageMeters, usagePeriods } from '$convex/lib/usageMeters';
-	import { tierLabels } from '$convex/lib/tiers';
 	import { formatRemainingDuration } from '$lib/format';
 
 	const convexAuth = useAuth();
@@ -71,7 +70,7 @@
 						Subscription Tier
 					</p>
 					<p class="text-foreground mt-3 text-[15px]">
-						{tierLabels[usageQuery.data.tier]}
+						{usageQuery.data.tierLabel}
 					</p>
 				</div>
 

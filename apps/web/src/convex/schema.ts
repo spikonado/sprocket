@@ -21,7 +21,6 @@ import {
 	vReasoningEffort,
 	vRunStatus,
 	vSubscriptionStatus,
-	vSubscriptionTier,
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
 	vTranscriptPromptBody,
@@ -51,15 +50,20 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
-	billingCustomers: defineTable({
-		userId: v.string(),
-		dodoCustomerId: v.string()
-	}).index('by_userId', ['userId']),
+	// Operator-managed subscription tiers (edited directly in prod data).
+	// The rate limiter reads weekly/monthly quota units from these rows.
+	tiers: defineTable({
+		tierId: v.string(),
+		label: v.string(),
+		weekly: v.number(),
+		monthly: v.number(),
+		unitsPerDollar: v.number(),
+		updatedAt: v.number()
+	}).index('by_tierId', ['tierId']),
 	subscriptions: defineTable({
 		userId: v.string(),
-		tier: vSubscriptionTier,
-		dodoSubscriptionId: v.string(),
-		dodoProductId: v.string(),
+		// Operator-managed tier id (see the `tiers` table).
+		tier: v.string(),
 		status: vSubscriptionStatus,
 		eventAt: v.number()
 	}).index('by_userId', ['userId']),

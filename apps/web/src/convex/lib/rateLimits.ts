@@ -17,7 +17,7 @@ import { type GenericMutationCtx } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import {
 	ensureSubscription,
-	tierLimits,
+	resolveTierLimits,
 	type SubscriptionTier,
 	type TierLimits
 } from '@convex/lib/tiers';
@@ -117,8 +117,8 @@ export async function gatewayQuotaStatus(
 	userId: string
 ): Promise<{ tier: SubscriptionTier; exhausted: boolean; message?: string }> {
 	const tier = await ensureSubscription(ctx, userId);
-	if (tier === 'admin') return { tier, exhausted: false };
-	const blocked = await blockedMeterLimit(ctx, 'modelUsage', userId, tierLimits[tier]);
+	const limits = await resolveTierLimits(ctx, tier);
+	const blocked = await blockedMeterLimit(ctx, 'modelUsage', userId, limits);
 	if (!blocked) return { tier, exhausted: false };
 	return {
 		tier,
@@ -174,8 +174,7 @@ export async function applyGatewayUsageCharge(
 ): Promise<void> {
 	if (count <= 0) return;
 	const tier = await ensureSubscription(ctx, userId);
-	if (tier === 'admin') return;
-	await chargeMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier], count);
+	await chargeMeterLimits(ctx, 'modelUsage', userId, await resolveTierLimits(ctx, tier), count);
 }
 
 export const checkUsageLimits = internalMutation({
@@ -183,8 +182,7 @@ export const checkUsageLimits = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { userId }) => {
 		const tier = await ensureSubscription(ctx, userId);
-		if (tier === 'admin') return null;
-		await checkMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier]);
+		await checkMeterLimits(ctx, 'modelUsage', userId, await resolveTierLimits(ctx, tier));
 		return null;
 	}
 });
