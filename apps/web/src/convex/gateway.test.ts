@@ -32,7 +32,7 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 			}
 		];
 		for (const tier of tiers) {
-			await ctx.db.insert('tiers', { ...tier, unitsPerDollar: UNITS_PER_DOLLAR });
+			await ctx.db.insert('tiers', tier);
 		}
 	});
 }

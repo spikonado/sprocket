@@ -95,7 +95,6 @@ export const vUsageMeterWindow = v.object({
 export const vMyUsage = v.object({
 	tier: vSubscriptionTier,
 	tierLabel: v.string(),
-	unitsPerDollar: v.number(),
 	exhausted: v.boolean(),
 	resetsAt: v.union(v.number(), v.null()),
 	meters: v.array(

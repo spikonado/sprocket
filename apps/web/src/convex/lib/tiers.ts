@@ -4,6 +4,9 @@ import type { DataModel, Doc } from '@convex/_generated/dataModel';
 /** Tier ids are operator-owned (see the `tiers` table); an opaque string, not a union. */
 export type SubscriptionTier = string;
 
+/** Quota units per dollar. Tier limits in the `tiers` table use this scale. */
+export const MODEL_USAGE_UNITS_PER_DOLLAR = 1_000_000_000;
+
 export type TierLimits = {
 	modelUsage: { weekly: number; monthly: number };
 };
@@ -12,15 +15,13 @@ export type CachedTier = {
 	id: string;
 	label: string;
 	limits: TierLimits;
-	unitsPerDollar: number;
 };
 
 function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
 	return {
 		id: row.tierId,
 		label: row.label,
-		limits: { modelUsage: { weekly: row.weekly, monthly: row.monthly } },
-		unitsPerDollar: row.unitsPerDollar
+		limits: { modelUsage: { weekly: row.weekly, monthly: row.monthly } }
 	};
 }
 
@@ -51,14 +52,14 @@ export async function resolveTierLimits(
 	return match.limits;
 }
 
-/** Limits, label, and unit scale in two strict lookups. */
+/** Limits and label in two strict lookups. */
 export async function resolveTierInfo(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	tierId: string
-): Promise<{ limits: TierLimits; label: string; unitsPerDollar: number }> {
+): Promise<{ limits: TierLimits; label: string }> {
 	const match = (await getCachedTier(ctx, tierId)) ?? (await getCachedTier(ctx, 'free'));
 	if (!match) throw new Error('Subscription tiers are unavailable.');
-	return { limits: match.limits, label: match.label, unitsPerDollar: match.unitsPerDollar };
+	return { limits: match.limits, label: match.label };
 }
 
 export async function getTierLabel(

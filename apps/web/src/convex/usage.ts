@@ -10,7 +10,7 @@ export const getMyUsage = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const tier = await getSubscriptionTier(ctx, userId);
-		const { limits, label: tierLabel, unitsPerDollar } = await resolveTierInfo(ctx, tier);
+		const { limits, label: tierLabel } = await resolveTierInfo(ctx, tier);
 		const meters = await Promise.all(
 			usageMeters.map(async (meter) => ({
 				id: meter.id,
@@ -33,7 +33,6 @@ export const getMyUsage = query({
 		return {
 			tier,
 			tierLabel,
-			unitsPerDollar,
 			exhausted: blockedWindow !== undefined,
 			resetsAt: blockedWindow?.resetsAt ?? null,
 			meters

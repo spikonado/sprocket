@@ -2,6 +2,7 @@
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import { usageMeters, usagePeriods } from '$convex/lib/usageMeters';
+	import { MODEL_USAGE_UNITS_PER_DOLLAR } from '$convex/lib/tiers';
 	import { formatRemainingDuration } from '$lib/format';
 
 	const convexAuth = useAuth();
@@ -27,8 +28,8 @@
 		maximumFractionDigits: 2
 	});
 
-	function formatDollars(units: number, unitsPerDollar: number) {
-		return dollars.format(units / unitsPerDollar);
+	function formatDollars(units: number) {
+		return dollars.format(units / MODEL_USAGE_UNITS_PER_DOLLAR);
 	}
 
 	const periodLabels = { weekly: 'Weekly', monthly: 'Monthly' } as const;
@@ -110,10 +111,8 @@
 										{/if}
 									</div>
 									<p class="text-muted-foreground mt-0.5 text-[12px]">
-										{formatDollars(hasLimit ? meterWindow.used : 0, usageQuery.data.unitsPerDollar)} /
-										{formatDollars(
-											hasLimit ? meterWindow.limit : 0,
-											usageQuery.data.unitsPerDollar
+										{formatDollars(hasLimit ? meterWindow.used : 0)} / {formatDollars(
+											hasLimit ? meterWindow.limit : 0
 										)}
 									</p>
 									<div

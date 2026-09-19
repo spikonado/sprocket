@@ -28,7 +28,7 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 			}
 		];
 		for (const tier of tiers) {
-			await ctx.db.insert('tiers', { ...tier, unitsPerDollar: UNITS_PER_DOLLAR });
+			await ctx.db.insert('tiers', tier);
 		}
 	});
 }
@@ -202,8 +202,7 @@ describe('subscription and usage backend', () => {
 				tierId: 'pro',
 				label: 'Pro Duplicate',
 				weekly: 1,
-				monthly: 2,
-				unitsPerDollar: UNITS_PER_DOLLAR
+				monthly: 2
 			});
 		});
 		await expect(asUser.query(api.usage.getMyUsage, {})).rejects.toThrow(
