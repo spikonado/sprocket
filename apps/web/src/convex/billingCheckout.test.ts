@@ -82,7 +82,7 @@ describe('marketing checkout URLs', () => {
 });
 
 describe('Dodo subscription persistence', () => {
-	it('reuses one checkout reservation until its Dodo session expires', async () => {
+	it('reuses a matching checkout reservation and replaces it when the plan changes', async () => {
 		const t = initConvexTest();
 		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_checkout',
@@ -102,28 +102,49 @@ describe('Dodo subscription persistence', () => {
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_2',
-				interval: 'annual',
-				productId: 'prod_annual',
+				interval: 'monthly',
+				productId: 'prod_monthly',
 				now: 2_000
 			})
 		).resolves.toEqual(first);
-
-		await t.mutation(internal.billing.attachCheckoutSession, {
-			userId: 'user_checkout',
-			attemptId: 'attempt_1',
-			checkoutUrl: 'https://checkout.example/session_1'
-		});
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_3',
 				interval: 'annual',
 				productId: 'prod_annual',
+				now: 2_000
+			})
+		).resolves.toEqual({
+			kind: 'create',
+			attemptId: 'attempt_3',
+			interval: 'annual',
+			productId: 'prod_annual'
+		});
+
+		await expect(
+			t.mutation(internal.billing.attachCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_1',
+				checkoutUrl: 'https://checkout.example/session_1'
+			})
+		).rejects.toThrow('Checkout reservation expired.');
+		await t.mutation(internal.billing.attachCheckoutSession, {
+			userId: 'user_checkout',
+			attemptId: 'attempt_3',
+			checkoutUrl: 'https://checkout.example/session_3'
+		});
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_4',
+				interval: 'annual',
+				productId: 'prod_annual',
 				now: 3_000
 			})
 		).resolves.toEqual({
 			kind: 'existing',
-			checkoutUrl: 'https://checkout.example/session_1'
+			checkoutUrl: 'https://checkout.example/session_3'
 		});
 	});
 
