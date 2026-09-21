@@ -315,6 +315,59 @@ describe('payments mandates', () => {
 		expect(stored).not.toHaveProperty('expiryYear');
 	});
 
+	it('releases the charge reservation when mandate resolution fails', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const fetchMock = vi.fn(
+			async () => jsonResponse({ mandates: [] })
+		);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				session_id: 'prava-session-1',
+				iframe_url: 'https://pay.prava.space/approve/1',
+				session_token: 'session-token-1',
+				expires_at: '2026-08-01T10:15:00Z'
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const setup = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+
+		const charges = await t.run(async (ctx) =>
+			ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+				)
+				.collect()
+		);
+		expect(charges).toHaveLength(1);
+		expect(charges[0]?.chargingStartedAt).toBeUndefined();
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+	});
+
 	it('reuses a completed charge handle without replaying credentials', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();

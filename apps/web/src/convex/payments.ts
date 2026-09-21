@@ -817,8 +817,17 @@ export const mandateCharge = action({
 				throw new Error('A charge with this reference is already in progress. Retry shortly.');
 			}
 
-			const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
-			if ((prava.status ?? '').toLowerCase() !== 'active') {
+		let prava: Awaited<ReturnType<typeof resolvePravaMandate>>;
+		try {
+			prava = await resolvePravaMandate(ctx, actor.userId, mandate);
+		} catch (error) {
+			await ctx.runMutation(internal.payments.releaseChargeReservation, {
+				chargeId: reservation.chargeId,
+				userId: actor.userId
+			});
+			throw error;
+		}
+		if ((prava.status ?? '').toLowerCase() !== 'active') {
 				await ctx.runMutation(internal.payments.releaseChargeReservation, {
 					chargeId: reservation.chargeId,
 					userId: actor.userId
