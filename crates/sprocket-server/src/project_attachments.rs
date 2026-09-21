@@ -336,6 +336,29 @@ fn deduplicate_repository_attachments(
         }
     }
 
+    let pending_rekeys = attachments
+        .values()
+        .filter_map(|attachment| {
+            attachment
+                .previous_repository_key
+                .as_ref()
+                .map(|previous| (attachment.attachment_key.clone(), previous.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    for (attachment_key, previous_repository_key) in pending_rekeys {
+        let Some(winner_path) = winners.get(&attachment_key) else {
+            continue;
+        };
+        let Some(winner) = attachments.get_mut(winner_path) else {
+            continue;
+        };
+        if winner.previous_repository_key.is_none()
+            && previous_repository_key != winner.repository_key
+        {
+            winner.previous_repository_key = Some(previous_repository_key);
+        }
+    }
+
     let previous_len = attachments.len();
     attachments.retain(|workspace_path, attachment| {
         winners.get(&attachment.attachment_key) == Some(workspace_path)
@@ -1037,5 +1060,40 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn list_keeps_a_pending_rekey_when_remote_change_creates_a_duplicate() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let changed = temp_root.path().join("changed");
+        let existing = temp_root.path().join("existing");
+        let new_repository_key = "github.com/spikonado/sprocket";
+        let old_repository_key = "github.com/spikonado/old-sprocket";
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&changed, origin);
+        init_repo_with_origin(&existing, origin);
+
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![
+                attachment_record(changed.to_string_lossy(), old_repository_key, 2),
+                attachment_record(existing.to_string_lossy(), new_repository_key, 1),
+            ])
+            .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, existing.to_string_lossy());
+        assert_eq!(listed[0].repository_key, new_repository_key);
+        assert_eq!(
+            listed[0].previous_repository_key.as_deref(),
+            Some(old_repository_key)
+        );
     }
 }

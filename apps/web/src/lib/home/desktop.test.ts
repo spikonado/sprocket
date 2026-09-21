@@ -250,6 +250,26 @@ describe('local project attachments', () => {
 		}
 	});
 
+	it('keeps a pending rekey from a duplicate directory', () => {
+		const changed = {
+			...projectAttachment('/worktrees/changed', 'github.com/acme/robot', 2),
+			previousRepositoryKey: 'github.com/acme/old-robot'
+		};
+		const existing = projectAttachment('/worktrees/existing', 'github.com/acme/robot', 1);
+
+		for (const attachments of [
+			[changed, existing],
+			[existing, changed]
+		]) {
+			expect(buildDesktopProjectAttachmentsByPath(attachments)).toEqual({
+				'/worktrees/existing': {
+					...existing,
+					previousRepositoryKey: 'github.com/acme/old-robot'
+				}
+			});
+		}
+	});
+
 	it('keeps unrelated local directories with the same display repository key', () => {
 		const indexed = buildDesktopProjectAttachmentsByPath([
 			projectAttachment('/clients/acme', 'acme', 1, 'available', 'directory:/clients/acme'),

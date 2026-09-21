@@ -142,9 +142,20 @@ export function buildDesktopProjectAttachmentsByPath(
 	for (const attachment of desktopProjectAttachments) {
 		const attachmentKey = attachment.attachmentKey;
 		const current = attachmentsByRepository.get(attachmentKey);
-		if (!current || attachmentIsPreferred(attachment, current)) {
+		if (!current) {
 			attachmentsByRepository.set(attachmentKey, attachment);
+			continue;
 		}
+
+		const preferred = attachmentIsPreferred(attachment, current) ? attachment : current;
+		const other = preferred === attachment ? current : attachment;
+		const previousRepositoryKey = preferred.previousRepositoryKey ?? other.previousRepositoryKey;
+		attachmentsByRepository.set(
+			attachmentKey,
+			previousRepositoryKey === preferred.previousRepositoryKey
+				? preferred
+				: { ...preferred, previousRepositoryKey }
+		);
 	}
 	return Object.fromEntries(
 		[...attachmentsByRepository.values()].map((attachment) => [

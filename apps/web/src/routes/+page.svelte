@@ -249,6 +249,7 @@
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
+	let projectAttachmentsLoadedForUserId = $state<string | null>(null);
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
@@ -646,6 +647,27 @@
 		hasLoadedDesktopProjectAttachments = true;
 		await rekeyChangedLocalRepositories(nextAttachments);
 	}
+
+	$effect(() => {
+		const userId = signedInUserId;
+		if (!authReady || !desktopApi || !userId) {
+			projectAttachmentsLoadedForUserId = null;
+			return;
+		}
+		if (projectAttachmentsLoadedForUserId === userId) {
+			return;
+		}
+
+		projectAttachmentsLoadedForUserId = userId;
+		untrack(() => {
+			void refreshDesktopProjectAttachments().catch((error) => {
+				if (getCurrentUserId() === userId) {
+					currentError =
+						error instanceof Error ? error.message : 'Failed to load local project attachments.';
+				}
+			});
+		});
+	});
 
 	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
 		if (getAuthenticatedQueryArgs() === 'skip') {
@@ -1272,18 +1294,7 @@
 					return;
 				}
 				if (resolution.repositoryKey !== submittedRepositoryKey) {
-					await attachLocalProject(resolution.workspacePath);
-					if (!isSubmissionCurrent()) {
-						return;
-					}
-					const siblingStillHasPreviousKey = projects.some(
-						(project) =>
-							project.workspacePath !== resolution.workspacePath &&
-							project.repositoryKey === submittedRepositoryKey
-					);
-					if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
-						await rekeyLocalRepository(submittedRepositoryKey, resolution.repositoryKey);
-					}
+					await refreshDesktopProjectAttachments();
 					if (!isSubmissionCurrent()) {
 						return;
 					}
@@ -1786,10 +1797,6 @@
 				desktopApi = client;
 				await reconcileNativeAuthentication();
 				desktopApiResolved = true;
-				void refreshDesktopProjectAttachments().catch((error) => {
-					currentError =
-						error instanceof Error ? error.message : 'Failed to load local project attachments.';
-				});
 			})
 			.catch((error) => {
 				currentError =
