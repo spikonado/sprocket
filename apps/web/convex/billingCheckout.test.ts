@@ -82,8 +82,116 @@ describe('marketing checkout URLs', () => {
 });
 
 describe('Dodo subscription persistence', () => {
+	it('reuses one checkout reservation until its Dodo session expires', async () => {
+		const t = initConvexTest();
+		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
+			userId: 'user_checkout',
+			attemptId: 'attempt_1',
+			interval: 'monthly',
+			productId: 'prod_monthly',
+			now: 1_000
+		});
+		expect(first).toEqual({
+			kind: 'create',
+			attemptId: 'attempt_1',
+			interval: 'monthly',
+			productId: 'prod_monthly'
+		});
+
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_2',
+				interval: 'annual',
+				productId: 'prod_annual',
+				now: 2_000
+			})
+		).resolves.toEqual(first);
+
+		await t.mutation(internal.billing.attachCheckoutSession, {
+			userId: 'user_checkout',
+			attemptId: 'attempt_1',
+			checkoutUrl: 'https://checkout.example/session_1'
+		});
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_3',
+				interval: 'annual',
+				productId: 'prod_annual',
+				now: 3_000
+			})
+		).resolves.toEqual({
+			kind: 'existing',
+			checkoutUrl: 'https://checkout.example/session_1'
+		});
+	});
+
+	it('replaces an expired checkout reservation', async () => {
+		const t = initConvexTest();
+		await t.mutation(internal.billing.reserveCheckoutSession, {
+			userId: 'user_checkout',
+			attemptId: 'attempt_1',
+			interval: 'monthly',
+			productId: 'prod_monthly',
+			now: 1_000
+		});
+		await t.run(async (ctx) => {
+			const reservation = await ctx.db
+				.query('billingCheckoutSessions')
+				.withIndex('by_userId', (query) => query.eq('userId', 'user_checkout'))
+				.unique();
+			if (!reservation) throw new Error('Missing checkout reservation.');
+			await ctx.db.patch(reservation._id, { expiresAt: 1_999 });
+		});
+
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_2',
+				interval: 'annual',
+				productId: 'prod_annual',
+				now: 2_000
+			})
+		).resolves.toEqual({
+			kind: 'create',
+			attemptId: 'attempt_2',
+			interval: 'annual',
+			productId: 'prod_annual'
+		});
+	});
+
+	it('rejects a checkout reservation when a paid tier is active', async () => {
+		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId: 'user_pro',
+				tier: 'pro',
+				status: 'active',
+				eventAt: 1_000
+			});
+		});
+
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_pro',
+				attemptId: 'attempt_1',
+				interval: 'monthly',
+				productId: 'prod_monthly',
+				now: 2_000
+			})
+		).rejects.toThrow('A paid plan is already active on this account.');
+	});
+
 	it('activates Pro, links the customer, and ignores an older cancellation', async () => {
 		const t = initConvexTest();
+		await t.mutation(internal.billing.reserveCheckoutSession, {
+			userId: 'user_1',
+			attemptId: 'attempt_1',
+			interval: 'monthly',
+			productId: 'prod_monthly',
+			now: 1_000
+		});
 		const args = {
 			userId: 'user_1',
 			tier: 'pro',
@@ -112,6 +220,13 @@ describe('Dodo subscription persistence', () => {
 		}));
 		expect(stored.subscription).toMatchObject({ tier: 'pro', status: 'active', eventAt: 2_000 });
 		expect(stored.customer).toMatchObject({ dodoCustomerId: 'cus_1' });
+		const checkoutSession = await t.run(async (ctx) =>
+			ctx.db
+				.query('billingCheckoutSessions')
+				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+				.unique()
+		);
+		expect(checkoutSession).toBeNull();
 
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', { tierId: 'pro', label: 'Pro', weekly: 1, monthly: 1 });
