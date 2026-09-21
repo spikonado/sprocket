@@ -9,7 +9,7 @@
 	import AgentQuestion from '$lib/components/home/agent-question.svelte';
 	import ComposerAttachments from '$lib/components/home/composer-attachments.svelte';
 	import ComposerSkillMenu from '$lib/components/home/composer-skill-menu.svelte';
-	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
+	import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
 	import { formatCountdownDuration } from '$lib/format';
@@ -123,6 +123,7 @@
 	let caretPosition = $state(0);
 	let skillsRequestId = 0;
 	let skillsCacheKey: string | null | undefined = undefined;
+	let draggingFiles = $state(false);
 
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
@@ -280,13 +281,46 @@
 
 	function handleComposerPaste(event: ClipboardEvent) {
 		const files = Array.from(event.clipboardData?.files ?? []);
-		if (files.length === 0 || isRunning || isSubmitting || answeringQuestion) {
+		if (files.length === 0 || !canAttachMore) {
 			return;
 		}
 		if (!event.clipboardData?.getData('text/plain')) {
 			event.preventDefault();
 		}
 		onAttachFiles(files);
+	}
+
+	function handleFileDragEnter(event: DragEvent) {
+		if (!containsDraggedFiles(event.dataTransfer)) return;
+		event.preventDefault();
+		if (canAttachMore) draggingFiles = true;
+	}
+
+	function handleFileDragOver(event: DragEvent) {
+		if (!containsDraggedFiles(event.dataTransfer)) return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = canAttachMore ? 'copy' : 'none';
+	}
+
+	function handleFileDragLeave(event: DragEvent) {
+		const composer = event.currentTarget;
+		if (
+			composer instanceof HTMLElement &&
+			event.relatedTarget instanceof Node &&
+			composer.contains(event.relatedTarget)
+		) {
+			return;
+		}
+		draggingFiles = false;
+	}
+
+	function handleFileDrop(event: DragEvent) {
+		if (!containsDraggedFiles(event.dataTransfer)) return;
+		event.preventDefault();
+		draggingFiles = false;
+		if (!canAttachMore) return;
+		const files = Array.from(event.dataTransfer?.files ?? []);
+		if (files.length > 0) onAttachFiles(files);
 	}
 
 	function showAttachTooltip(event: MouseEvent | FocusEvent) {
@@ -475,8 +509,26 @@
 			</div>
 		{/if}
 
-		<div class={composerShellClass}>
-			<div class={composerInnerClass}>
+		<div
+			class={composerShellClass}
+			role="group"
+			aria-label="Message composer"
+			ondragenter={handleFileDragEnter}
+			ondragover={handleFileDragOver}
+			ondragleave={handleFileDragLeave}
+			ondrop={handleFileDrop}
+		>
+			<div class={`${composerInnerClass} relative`}>
+				{#if draggingFiles}
+					<div
+						class="bg-surface/90 border-primary/70 pointer-events-none absolute inset-0 z-30 flex items-center justify-center gap-2 rounded-[27px] border-2 border-dashed backdrop-blur-sm"
+						role="status"
+						aria-live="polite"
+					>
+						<Paperclip class="text-primary size-5" aria-hidden="true" />
+						<span class="text-foreground text-sm font-medium">Drop files to attach</span>
+					</div>
+				{/if}
 				<div class="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
 					{#if composerNotice}
 						<div
