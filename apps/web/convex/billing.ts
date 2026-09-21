@@ -156,12 +156,12 @@ export const reserveCheckoutSession = internalMutation({
 			.query('billingCheckoutSessions')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
-		if (
-			existing &&
-			existing.expiresAt > args.now &&
-			existing.interval === args.interval &&
-			existing.productId === args.productId
-		) {
+		if (existing && existing.expiresAt > args.now) {
+			if (existing.interval !== args.interval || existing.productId !== args.productId) {
+				throw new Error(
+					`A ${existing.interval} checkout is still active. Try that plan again or change plans after it expires.`
+				);
+			}
 			return existing.checkoutUrl
 				? { kind: 'existing' as const, checkoutUrl: existing.checkoutUrl }
 				: {

@@ -82,7 +82,7 @@ describe('marketing checkout URLs', () => {
 });
 
 describe('Dodo subscription persistence', () => {
-	it('reuses a matching checkout reservation and replaces it when the plan changes', async () => {
+	it('reuses a matching checkout reservation and rejects plan changes until expiry', async () => {
 		const t = initConvexTest();
 		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_checkout',
@@ -115,24 +115,12 @@ describe('Dodo subscription persistence', () => {
 				productId: 'prod_annual',
 				now: 2_000
 			})
-		).resolves.toEqual({
-			kind: 'create',
-			attemptId: 'attempt_3',
-			interval: 'annual',
-			productId: 'prod_annual'
-		});
+		).rejects.toThrow('A monthly checkout is still active.');
 
-		await expect(
-			t.mutation(internal.billing.attachCheckoutSession, {
-				userId: 'user_checkout',
-				attemptId: 'attempt_1',
-				checkoutUrl: 'https://checkout.example/session_1'
-			})
-		).rejects.toThrow('Checkout reservation expired.');
 		await t.mutation(internal.billing.attachCheckoutSession, {
 			userId: 'user_checkout',
-			attemptId: 'attempt_3',
-			checkoutUrl: 'https://checkout.example/session_3'
+			attemptId: 'attempt_1',
+			checkoutUrl: 'https://checkout.example/session_1'
 		});
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, {
@@ -142,9 +130,19 @@ describe('Dodo subscription persistence', () => {
 				productId: 'prod_annual',
 				now: 3_000
 			})
+		).rejects.toThrow('A monthly checkout is still active.');
+
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_5',
+				interval: 'monthly',
+				productId: 'prod_monthly',
+				now: 4_000
+			})
 		).resolves.toEqual({
 			kind: 'existing',
-			checkoutUrl: 'https://checkout.example/session_3'
+			checkoutUrl: 'https://checkout.example/session_1'
 		});
 	});
 
