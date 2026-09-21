@@ -150,6 +150,18 @@
 	color: var(--foreground);
 }
 
+.inbox-primary-navigation,
+.inbox-primary-navigation:hover {
+	color: #000;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+[data-theme='dark'] .inbox-primary-navigation,
+[data-theme='dark'] .inbox-primary-navigation:hover {
+	color: var(--foreground);
+}
+
 .inbox-section-heading svg {
 	transition: transform 120ms ease;
 }
