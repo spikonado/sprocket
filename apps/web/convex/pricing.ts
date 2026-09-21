@@ -8,18 +8,18 @@ import {
 	matchesBillingInterval,
 	readDodoEnvironment,
 	readProProductIds,
-	type BillingInterval
+	vDodoProPrices,
+	type BillingInterval,
+	type DodoProPrices
 } from '@convex/lib/dodoProducts';
 import { vBillingInterval } from '@convex/lib/validators';
 
-const vDodoPublicPrice = v.object({
-	productId: v.string(),
-	name: v.union(v.string(), v.null()),
-	amountMinor: v.number(),
-	currency: v.string(),
-	paymentFrequencyCount: v.number(),
-	paymentFrequencyInterval: v.string()
-});
+const DODO_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
+
+type PublicPricingCatalog = {
+	plans: Array<{ id: 'free' | 'pro'; label: string; monthlyUsageDollars: number }>;
+	proPrices: DodoProPrices | null;
+};
 
 const vPublicPricingCatalog = v.object({
 	plans: v.array(
@@ -29,13 +29,7 @@ const vPublicPricingCatalog = v.object({
 			monthlyUsageDollars: v.number()
 		})
 	),
-	proPrices: v.union(
-		v.null(),
-		v.object({
-			monthly: vDodoPublicPrice,
-			annual: vDodoPublicPrice
-		})
-	)
+	proPrices: v.union(v.null(), vDodoProPrices)
 });
 
 function createDodoClient(): DodoPayments {
@@ -75,19 +69,43 @@ async function retrieveProPrice(
 	};
 }
 
-export const validateCheckoutProduct = internalAction({
-	args: { productId: v.string(), interval: vBillingInterval },
-	returns: v.null(),
-	handler: async (_ctx, { productId, interval }) => {
-		await retrieveProPrice(createDodoClient(), productId, interval);
-		return null;
+export const createCheckoutSession = internalAction({
+	args: {
+		attemptId: v.string(),
+		userId: v.string(),
+		productId: v.string(),
+		interval: vBillingInterval,
+		returnUrl: v.string(),
+		cancelUrl: v.string(),
+		customer: v.union(
+			v.object({ customer_id: v.string() }),
+			v.object({ email: v.string(), name: v.string() })
+		)
+	},
+	returns: v.object({ checkoutUrl: v.string() }),
+	handler: async (_ctx, args) => {
+		const client = createDodoClient();
+		await retrieveProPrice(client, args.productId, args.interval);
+		const session = await client.checkoutSessions.create(
+			{
+				product_cart: [{ product_id: args.productId, quantity: 1 }],
+				metadata: { userId: args.userId },
+				return_url: args.returnUrl,
+				cancel_url: args.cancelUrl,
+				feature_flags: { allow_discount_code: true },
+				customer: args.customer
+			},
+			{ headers: { 'Idempotency-Key': args.attemptId } }
+		);
+		if (!session.checkout_url) throw new Error('Checkout session did not return a URL.');
+		return { checkoutUrl: session.checkout_url };
 	}
 });
 
 export const getPublicCatalog = action({
 	args: {},
 	returns: vPublicPricingCatalog,
-	handler: async (ctx) => {
+	handler: async (ctx): Promise<PublicPricingCatalog> => {
 		const plans: Array<{
 			id: 'free' | 'pro';
 			label: string;
@@ -99,6 +117,17 @@ export const getPublicCatalog = action({
 		}
 
 		try {
+			const cacheKey = `${readDodoEnvironment()}:${productIds.monthly}:${productIds.annual}`;
+			const now = Date.now();
+			const cached: DodoProPrices | null = await ctx.runQuery(
+				internal.pricingData.getCachedDodoPrices,
+				{
+					cacheKey,
+					now
+				}
+			);
+			if (cached) return { plans, proPrices: cached };
+
 			const client = createDodoClient();
 			const [monthly, annual] = await Promise.all([
 				retrieveProPrice(client, productIds.monthly, 'monthly'),
@@ -107,7 +136,13 @@ export const getPublicCatalog = action({
 			if (monthly.currency !== annual.currency) {
 				throw new Error('Dodo Pro products use different currencies.');
 			}
-			return { plans, proPrices: { monthly, annual } };
+			const proPrices = { monthly, annual };
+			await ctx.runMutation(internal.pricingData.cacheDodoPrices, {
+				cacheKey,
+				proPrices,
+				expiresAt: now + DODO_PRICE_CACHE_TTL_MS
+			});
+			return { plans, proPrices };
 		} catch (error) {
 			console.error('Could not load Dodo product prices.', error);
 			return { plans, proPrices: null };

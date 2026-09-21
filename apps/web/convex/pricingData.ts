@@ -1,6 +1,37 @@
 import { v } from 'convex/values';
-import { internalQuery } from '@convex/_generated/server';
+import { internalMutation, internalQuery } from '@convex/_generated/server';
+import { vDodoProPrices } from '@convex/lib/dodoProducts';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
+
+export const getCachedDodoPrices = internalQuery({
+	args: { cacheKey: v.string(), now: v.number() },
+	returns: v.union(vDodoProPrices, v.null()),
+	handler: async (ctx, { cacheKey, now }) => {
+		const cached = await ctx.db
+			.query('dodoPricingCache')
+			.withIndex('by_cacheKey', (query) => query.eq('cacheKey', cacheKey))
+			.unique();
+		return cached && cached.expiresAt > now ? cached.proPrices : null;
+	}
+});
+
+export const cacheDodoPrices = internalMutation({
+	args: {
+		cacheKey: v.string(),
+		proPrices: vDodoProPrices,
+		expiresAt: v.number()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const cached = await ctx.db
+			.query('dodoPricingCache')
+			.withIndex('by_cacheKey', (query) => query.eq('cacheKey', args.cacheKey))
+			.unique();
+		if (cached) await ctx.db.replace(cached._id, args);
+		else await ctx.db.insert('dodoPricingCache', args);
+		return null;
+	}
+});
 
 export const getPublicPlans = internalQuery({
 	args: {},

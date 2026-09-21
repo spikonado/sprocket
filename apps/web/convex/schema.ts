@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { vDodoProPrices } from '@convex/lib/dodoProducts';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import {
@@ -23,6 +24,7 @@ import {
 	vExecutorJobStatus,
 	vReasoningEffort,
 	vRunStatus,
+	vBillingInterval,
 	vSubscriptionStatus,
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
@@ -67,6 +69,19 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_dodoCustomerId', ['dodoCustomerId']),
+	billingCheckoutSessions: defineTable({
+		userId: v.string(),
+		attemptId: v.string(),
+		interval: vBillingInterval,
+		productId: v.string(),
+		checkoutUrl: v.optional(v.string()),
+		expiresAt: v.number()
+	}).index('by_userId', ['userId']),
+	dodoPricingCache: defineTable({
+		cacheKey: v.string(),
+		proPrices: vDodoProPrices,
+		expiresAt: v.number()
+	}).index('by_cacheKey', ['cacheKey']),
 	subscriptions: defineTable({
 		userId: v.string(),
 		// Operator-managed tier id (see the `tiers` table).
