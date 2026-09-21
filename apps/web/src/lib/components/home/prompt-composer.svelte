@@ -177,6 +177,9 @@
 		attachments.some((attachment) => attachment.status !== 'ready')
 	);
 	const canAttachMore = $derived(!composerLocked && !answeringQuestion);
+	$effect(() => {
+		if (!canAttachMore) draggingFiles = false;
+	});
 
 	let trackedPendingQuestionId = $state<string | null>(null);
 	$effect(() => {
