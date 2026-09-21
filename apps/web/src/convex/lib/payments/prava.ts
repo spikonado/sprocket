@@ -23,8 +23,12 @@ function pravaConfig(): PravaConfig {
 	if (!secretKey) {
 		throw new Error('PRAVA_SECRET_KEY is not configured.');
 	}
+	const baseUrl = env.PRAVA_BACKEND_URL?.trim().replace(/\/+$/, '');
+	if (!baseUrl) {
+		throw new Error('PRAVA_BACKEND_URL is not configured.');
+	}
 	return {
-		baseUrl: env.PRAVA_BACKEND_URL,
+		baseUrl,
 		secretKey
 	};
 }
