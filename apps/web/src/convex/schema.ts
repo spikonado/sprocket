@@ -59,12 +59,20 @@ export default defineSchema({
 		weekly: v.number(),
 		monthly: v.number()
 	}).index('by_tierId', ['tierId']),
+	billingCustomers: defineTable({
+		userId: v.string(),
+		dodoCustomerId: v.string()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_dodoCustomerId', ['dodoCustomerId']),
 	subscriptions: defineTable({
 		userId: v.string(),
 		// Operator-managed tier id (see the `tiers` table).
 		tier: v.string(),
 		status: vSubscriptionStatus,
-		eventAt: v.number()
+		eventAt: v.number(),
+		dodoSubscriptionId: v.optional(v.string()),
+		dodoProductId: v.optional(v.string())
 	}).index('by_userId', ['userId']),
 	uiPreferences: defineTable({
 		userId: v.string(),

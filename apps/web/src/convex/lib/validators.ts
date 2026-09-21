@@ -18,6 +18,8 @@ export const vCompletionProvider = v.union(...literals(completionProviderIds));
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();
 
+export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'));
+
 export const vSubscriptionStatus = v.union(
 	v.literal('active'),
 	v.literal('on_hold'),

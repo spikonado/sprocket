@@ -136,6 +136,21 @@ Start the browser development environment:
 bun dev
 ```
 
+After creating a Convex deployment and configuring AuthKit, give the deployment an API key for each model provider you want to enable.
+
+### Dodo Payments
+
+Self-serve Pro checkout on `spikonado.com/pricing` uses the Sprocket Convex deployment. Configure these variables in each Convex deployment:
+
+- `DODO_PAYMENTS_API_KEY`
+- `DODO_PAYMENTS_ENVIRONMENT`, set to `test_mode` or `live_mode`
+- `DODO_PAYMENTS_WEBHOOK_SECRET`
+- `DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID`
+- `DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID`
+- `SPROCKET_MARKETING_ORIGIN`, set to `https://spikonado.com` in production
+
+Create monthly and annual recurring Pro products in Dodo, then point the Dodo webhook at `https://<deployment>.convex.site/dodopayments-webhook`. The webhook, rather than the browser redirect, grants and removes paid access. AuthKit must allow `https://spikonado.com` as a CORS origin and `https://spikonado.com/pricing/callback` as a redirect URI.
+
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 It targets the dev Convex deployment. To run against the production Convex
 deployment with `~/.sprocket` state instead:
