@@ -339,7 +339,7 @@ impl NativeAuthManager {
             anyhow::bail!("desktop login attempt was invalidated by another sign-in or sign-out");
         }
         let mut params = AuthenticateWithCodeParams::new(code);
-        params.code_verifier = Some(code_verifier);
+        params.code_verifier = Some(code_verifier.into());
         match self
             .client()
             .await?
