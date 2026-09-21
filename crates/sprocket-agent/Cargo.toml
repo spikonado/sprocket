@@ -10,6 +10,7 @@ anydoc = "0.2.4"
 base64 = "0.22.1"
 convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
 futures = "0.3.32"
+hex = "0.4.3"
 image = { version = "0.25.8", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 percent-encoding = "2.3.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
@@ -18,7 +19,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 schemars = "1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 sprocket-convex = { path = "../sprocket-convex" }
 sprocket-workspace = { path = "../sprocket-workspace" }
 thiserror = "2.0.18"

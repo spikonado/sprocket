@@ -364,7 +364,7 @@ fn stable_id(kind: &str, run_id: &str, claim_id: &str, attempt_seq: u64, index: 
         hash.update((value.len() as u64).to_le_bytes());
         hash.update(value.as_bytes());
     }
-    format!("agent-{kind}-{:x}", hash.finalize())
+    format!("agent-{kind}-{}", hex::encode(hash.finalize()))
 }
 
 fn ordered_content(content: &[AssistantContent]) -> Vec<OrderedContent> {
