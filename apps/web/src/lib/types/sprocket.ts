@@ -45,7 +45,6 @@ export type ExecutorJob = {
 	kind: AgentToolName;
 	callId?: string;
 	payload: ExecutorJobPayload;
-	hidden: boolean;
 	status: Infer<typeof vExecutorJobStatus>;
 	enqueuedAt: number;
 	claimedAt?: number;

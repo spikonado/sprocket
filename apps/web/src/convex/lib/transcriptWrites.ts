@@ -20,7 +20,6 @@ type TranscriptToolJob = Pick<
 	Doc<'executorJobs'>,
 	| '_id'
 	| '_creationTime'
-	| 'hidden'
 	| 'status'
 	| 'callId'
 	| 'kind'
@@ -108,13 +107,7 @@ export async function recordStartedToolTranscript(
 		job: TranscriptToolJob;
 	}
 ): Promise<void> {
-	if (args.job.hidden) {
-		return;
-	}
 	const toolInvocationId = toolInvocationIdForJob(args.job);
-	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) {
-		throw new Error('Visible tool job has no transcript section assignment.');
-	}
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -122,8 +115,9 @@ export async function recordStartedToolTranscript(
 		kind: 'tool',
 		runId: args.runId,
 		tool: progressToolBody(args.job, { status: 'started' }),
-		work: { ranges: [], sectionKey: args.job.sectionKey }
+		work: args.job.sectionKey ? { ranges: [], sectionKey: args.job.sectionKey } : { ranges: [] }
 	});
+	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;
 	await writeToolSectionData(ctx, {
 		part: result.part,
 		sectionKey: args.job.sectionKey,
@@ -143,16 +137,10 @@ export async function recordToolTranscript(
 		job: TranscriptToolJob;
 	}
 ): Promise<void> {
-	if (args.job.hidden) {
-		return;
-	}
 	if (!isSettledExecutorJobStatus(args.job.status)) {
 		return;
 	}
 	const toolInvocationId = toolInvocationIdForJob(args.job);
-	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) {
-		throw new Error('Visible tool job has no transcript section assignment.');
-	}
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -160,8 +148,9 @@ export async function recordToolTranscript(
 		kind: 'tool',
 		runId: args.runId,
 		tool: settledToolBody(args.job),
-		work: { ranges: [], sectionKey: args.job.sectionKey }
+		work: args.job.sectionKey ? { ranges: [], sectionKey: args.job.sectionKey } : { ranges: [] }
 	});
+	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;
 	await writeToolSectionData(ctx, {
 		part: result.part,
 		sectionKey: args.job.sectionKey,
@@ -194,8 +183,8 @@ export async function recordSettledToolTranscripts(
 					.unique()
 			: await ctx.db
 					.query('executorJobs')
-					.withIndex('by_runId_and_callId_and_hidden', (query) =>
-						query.eq('runId', args.runId).eq('callId', callId).eq('hidden', false)
+					.withIndex('by_runId_and_callId', (query) =>
+						query.eq('runId', args.runId).eq('callId', callId)
 					)
 					.order('desc')
 					.first();

@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TranscriptPart;
-use super::sections::{WorkItem, WorkPosition, earliest_timing, hidden_tool, string, timing};
+use super::sections::{WorkItem, WorkPosition, earliest_timing, string, timing};
 
 pub(super) struct ReadIndex<'a>(pub &'a Connection);
 
@@ -46,8 +46,7 @@ impl ReadIndex<'_> {
                         if value["text"]
                             .as_str()
                             .is_some_and(|text| !text.trim().is_empty()) => {}
-                    Some("tool-call") if name.as_deref().is_some_and(|name| !hidden_tool(name)) => {
-                    }
+                    Some("tool-call") => {}
                     _ => continue,
                 }
                 let item = WorkItem {

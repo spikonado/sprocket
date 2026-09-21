@@ -58,7 +58,6 @@ export async function beginExecutorJob(
 		kind: Doc<'executorJobs'>['kind'];
 		payload: Doc<'executorJobs'>['payload'];
 		callId?: string;
-		hidden?: boolean;
 		toolInvocationId: string;
 		sectionKey?: string;
 		sectionOrdinal: number;
@@ -66,9 +65,6 @@ export async function beginExecutorJob(
 		streamId: string;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
-	if (!args.hidden && !args.sectionKey) {
-		throw new Error('Visible tool job requires a section key.');
-	}
 	if (!Number.isSafeInteger(args.sectionOrdinal) || args.sectionOrdinal < 0) {
 		throw new Error('Invalid section ordinal.');
 	}
@@ -82,7 +78,6 @@ export async function beginExecutorJob(
 		if (
 			existing.callId !== args.callId ||
 			existing.kind !== args.kind ||
-			existing.hidden !== (args.hidden ?? false) ||
 			!sameValue(existing.payload, args.payload) ||
 			existing.sectionKey !== args.sectionKey ||
 			existing.sectionOrdinal !== args.sectionOrdinal ||
@@ -104,7 +99,6 @@ export async function beginExecutorJob(
 		runId: args.run._id,
 		kind: args.kind,
 		payload: args.payload,
-		hidden: args.hidden ?? false,
 		status: 'claimed',
 		enqueuedAt: Date.now(),
 		claimedAt: Date.now(),

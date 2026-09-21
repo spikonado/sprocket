@@ -101,9 +101,7 @@ pub(super) async fn begin_executor_job(
         "toolInvocationId".to_string(),
         assignment.tool_invocation_id.into(),
     );
-    if let Some(section_key) = assignment.section_key {
-        begin_args.insert("sectionKey".to_string(), section_key.into());
-    }
+    begin_args.insert("sectionKey".to_string(), assignment.section_key.into());
     begin_args.insert(
         "sectionOrdinal".to_string(),
         Value::Float64(assignment.section_ordinal as f64),
@@ -113,9 +111,6 @@ pub(super) async fn begin_executor_job(
         Value::Float64(assignment.attempt_seq as f64),
     );
     begin_args.insert("streamId".to_string(), assignment.stream_id.into());
-    if crate::transcript::sections::hidden_tool(kind) {
-        begin_args.insert("hidden".to_string(), Value::Boolean(true));
-    }
     let mut stored_payload = payload.clone();
     if matches!(kind, "add_artifact" | "edit_artifact" | "save_artifact") {
         if let Some(fields) = stored_payload.as_object_mut() {
