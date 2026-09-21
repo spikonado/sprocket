@@ -29,6 +29,93 @@ describe('thread inbox', () => {
 		expect(settled.page.map((thread) => thread._id)).toEqual([second]);
 	});
 
+	it('lists queued and running threads first, then by lastMessageAt', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId: idleNewer } = await seedOwnedThread(t);
+		const idleOlder = await seedThreadRecord(t, subject, 'beta');
+		const queuedOlder = await seedThreadRecord(t, subject, 'gamma');
+		const runningNewer = await seedThreadRecord(t, subject, 'delta');
+		const failedNewest = await seedThreadRecord(t, subject, 'epsilon');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', idleNewer, { lastMessageAt: 40 });
+			await ctx.db.patch('threadRecords', idleOlder, { lastMessageAt: 10 });
+			await ctx.db.patch('threadRecords', queuedOlder, {
+				lastMessageAt: 20,
+				status: 'queued'
+			});
+			await ctx.db.patch('threadRecords', runningNewer, {
+				lastMessageAt: 30,
+				status: 'running'
+			});
+			await ctx.db.patch('threadRecords', failedNewest, {
+				lastMessageAt: 50,
+				status: 'failed'
+			});
+		});
+
+		const page = await asUser.query(api.inbox.list, {
+			state: 'unsettled',
+			repositoryKeys: ['alpha', 'beta', 'gamma', 'delta', 'epsilon'],
+			paginationOpts: { numItems: 10, cursor: null }
+		});
+
+		expect(page.page.map((thread) => thread._id)).toEqual([
+			runningNewer,
+			queuedOlder,
+			failedNewest,
+			idleNewer,
+			idleOlder
+		]);
+	});
+
+	it('keeps queued and running threads first across pages', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId: idle } = await seedOwnedThread(t);
+		const running = await seedThreadRecord(t, subject, 'beta');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', idle, { lastMessageAt: 40 });
+			await ctx.db.patch('threadRecords', running, {
+				lastMessageAt: 10,
+				status: 'running'
+			});
+		});
+
+		const first = await asUser.query(api.inbox.list, {
+			state: 'unsettled',
+			repositoryKeys: ['alpha', 'beta'],
+			paginationOpts: { numItems: 1, cursor: null }
+		});
+		const second = await asUser.query(api.inbox.list, {
+			state: 'unsettled',
+			repositoryKeys: ['alpha', 'beta'],
+			paginationOpts: { numItems: 1, cursor: first.continueCursor }
+		});
+
+		expect(first.page.map((thread) => thread._id)).toEqual([running]);
+		expect(second.page.map((thread) => thread._id)).toEqual([idle]);
+	});
+
+	it('orders settled threads by settlement time regardless of status', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId: olderRunning } = await seedOwnedThread(t);
+		const newerIdle = await seedThreadRecord(t, subject, 'beta');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', olderRunning, {
+				archivedAt: 10,
+				status: 'running'
+			});
+			await ctx.db.patch('threadRecords', newerIdle, { archivedAt: 20 });
+		});
+
+		const page = await asUser.query(api.inbox.list, {
+			state: 'settled',
+			repositoryKeys: ['alpha', 'beta'],
+			paginationOpts: { numItems: 10, cursor: null }
+		});
+
+		expect(page.page.map((thread) => thread._id)).toEqual([newerIdle, olderRunning]);
+	});
+
 	it('keeps another account out of the requested project stream', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');

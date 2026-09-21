@@ -103,6 +103,13 @@ export default defineSchema({
 			'repositoryKey',
 			'archivedAt',
 			'lastMessageAt'
+		])
+		.index('by_userId_repo_archivedAt_status_lastMessageAt', [
+			'userId',
+			'repositoryKey',
+			'archivedAt',
+			'status',
+			'lastMessageAt'
 		]),
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
