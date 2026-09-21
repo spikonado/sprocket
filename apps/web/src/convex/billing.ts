@@ -15,7 +15,6 @@ import {
 	ensureSubscription,
 	getSubscriptionDoc,
 	getSubscriptionDocExclusive,
-	getSubscriptionTier,
 	getTierLabel
 } from '@convex/lib/tiers';
 import { vBillingInterval, vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
@@ -30,16 +29,11 @@ const dodo = new DodoPayments(components.dodopayments, {
 	environment: readDodoEnvironment()
 });
 const payments = dodo.api();
+const CHECKOUT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
 
 function assertPaymentsConfigured(): void {
 	if (!process.env.DODO_PAYMENTS_API_KEY?.trim()) throw new Error('Payments are not configured.');
 }
-
-export const getSubscriptionTierForUser = internalQuery({
-	args: { userId: v.string() },
-	returns: vSubscriptionTier,
-	handler: async (ctx, { userId }) => await getSubscriptionTier(ctx, userId)
-});
 
 export const getDodoSubscriptionTier = internalQuery({
 	args: { userId: v.string(), dodoSubscriptionId: v.string() },
@@ -93,39 +87,117 @@ export const checkout = action({
 	returns: v.object({ checkout_url: v.string() }),
 	handler: async (ctx, { tier, interval }): Promise<{ checkout_url: string }> => {
 		const identity = await requireIdentity(ctx);
-		const currentTier: string = await ctx.runQuery(internal.billing.getSubscriptionTierForUser, {
-			userId: identity.subject
-		});
-		if (currentTier !== 'free') throw new Error('A paid plan is already active on this account.');
-
 		const productId = productIdForCheckout(tier, interval);
 		if (!productId) throw new Error(`No checkout product is configured for the ${interval} plan.`);
 		assertPaymentsConfigured();
-		await ctx.runAction(internal.pricing.validateCheckoutProduct, { productId, interval });
 
 		const billingCustomer = await ctx.runQuery(internal.billingCustomers.get, {
 			userId: identity.subject
 		});
 		const email = identity.email?.trim();
 		if (!billingCustomer && !email) throw new Error('Your account does not have a billing email.');
-		const { return_url, cancel_url } = resolveMarketingPricingUrls();
-		const session = await payments.checkout(ctx, {
-			payload: {
-				product_cart: [{ product_id: productId, quantity: 1 }],
-				metadata: { userId: identity.subject },
-				return_url,
-				cancel_url,
-				feature_flags: { allow_discount_code: true },
-				customer: billingCustomer
-					? { customer_id: billingCustomer.dodoCustomerId }
-					: {
-							email: email!,
-							name: identity.name ?? identity.nickname ?? email!
-						}
-			}
+		const reserved = await ctx.runMutation(internal.billing.reserveCheckoutSession, {
+			userId: identity.subject,
+			attemptId: crypto.randomUUID(),
+			interval,
+			productId,
+			now: Date.now()
 		});
-		if (!session.checkout_url) throw new Error('Checkout session did not return a URL.');
-		return { checkout_url: session.checkout_url };
+		if (reserved.kind === 'existing') return { checkout_url: reserved.checkoutUrl };
+
+		const { return_url, cancel_url } = resolveMarketingPricingUrls();
+		const session = await ctx.runAction(internal.pricing.createCheckoutSession, {
+			attemptId: reserved.attemptId,
+			userId: identity.subject,
+			productId: reserved.productId,
+			interval: reserved.interval,
+			returnUrl: return_url,
+			cancelUrl: cancel_url,
+			customer: billingCustomer
+				? { customer_id: billingCustomer.dodoCustomerId }
+				: {
+						email: email!,
+						name: identity.name ?? identity.nickname ?? email!
+					}
+		});
+		await ctx.runMutation(internal.billing.attachCheckoutSession, {
+			userId: identity.subject,
+			attemptId: reserved.attemptId,
+			checkoutUrl: session.checkoutUrl
+		});
+		return { checkout_url: session.checkoutUrl };
+	}
+});
+
+export const reserveCheckoutSession = internalMutation({
+	args: {
+		userId: v.string(),
+		attemptId: v.string(),
+		interval: vBillingInterval,
+		productId: v.string(),
+		now: v.number()
+	},
+	returns: v.union(
+		v.object({ kind: v.literal('existing'), checkoutUrl: v.string() }),
+		v.object({
+			kind: v.literal('create'),
+			attemptId: v.string(),
+			interval: vBillingInterval,
+			productId: v.string()
+		})
+	),
+	handler: async (ctx, args) => {
+		const subscription = await getSubscriptionDocExclusive(ctx, args.userId);
+		if (subscription?.status === 'active' && subscription.tier !== 'free') {
+			throw new Error('A paid plan is already active on this account.');
+		}
+
+		const existing = await ctx.db
+			.query('billingCheckoutSessions')
+			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.unique();
+		if (existing && existing.expiresAt > args.now) {
+			return existing.checkoutUrl
+				? { kind: 'existing' as const, checkoutUrl: existing.checkoutUrl }
+				: {
+						kind: 'create' as const,
+						attemptId: existing.attemptId,
+						interval: existing.interval,
+						productId: existing.productId
+					};
+		}
+
+		const reservation = {
+			userId: args.userId,
+			attemptId: args.attemptId,
+			interval: args.interval,
+			productId: args.productId,
+			expiresAt: args.now + CHECKOUT_SESSION_TTL_MS
+		};
+		if (existing) await ctx.db.replace(existing._id, reservation);
+		else await ctx.db.insert('billingCheckoutSessions', reservation);
+		return {
+			kind: 'create' as const,
+			attemptId: args.attemptId,
+			interval: args.interval,
+			productId: args.productId
+		};
+	}
+});
+
+export const attachCheckoutSession = internalMutation({
+	args: { userId: v.string(), attemptId: v.string(), checkoutUrl: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const reservation = await ctx.db
+			.query('billingCheckoutSessions')
+			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.unique();
+		if (!reservation || reservation.attemptId !== args.attemptId) {
+			throw new Error('Checkout reservation expired.');
+		}
+		await ctx.db.patch(reservation._id, { checkoutUrl: args.checkoutUrl });
+		return null;
 	}
 });
 
@@ -189,6 +261,13 @@ export const upsertDodoSubscription = internalMutation({
 		};
 		if (existing) await ctx.db.replace(existing._id, subscription);
 		else await ctx.db.insert('subscriptions', subscription);
+		if (args.status === 'active') {
+			const checkoutSession = await ctx.db
+				.query('billingCheckoutSessions')
+				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+				.unique();
+			if (checkoutSession) await ctx.db.delete('billingCheckoutSessions', checkoutSession._id);
+		}
 		return null;
 	}
 });
