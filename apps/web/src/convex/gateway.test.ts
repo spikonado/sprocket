@@ -87,6 +87,42 @@ describe('gateway quota', () => {
 		);
 	}, 15_000);
 
+	it('rejects invalid quota charges without touching usage', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const { asUser, threadId, subject } = await seedOwnedThread(t);
+		const executionSecret = 'gateway-secret';
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'gateway-run-invalid-units',
+			threadId,
+			prompt: 'Ship it',
+			storageIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret,
+			agentVersion: '0.3.2'
+		});
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId: 'claim-gateway-invalid-units',
+			executionSecret
+		});
+		const credential = await t.mutation(api.agentRuntime.issueGatewayCredential, {
+			runId: created.runId,
+			claimId: 'claim-gateway-invalid-units',
+			executionSecret
+		});
+
+		for (const units of [Number.NaN, Number.POSITIVE_INFINITY, -5, 2_000_000_000_000]) {
+			await expect(
+				t.mutation(api.gateway.consumeQuota, { token: credential.token, units })
+			).rejects.toThrow();
+		}
+		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
+		expect(quota).toMatchObject({ userId: subject, exhausted: false });
+	}, 15_000);
+
 	it('snapshots the gateway protocol on new runs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
