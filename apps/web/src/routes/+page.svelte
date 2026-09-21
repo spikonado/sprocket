@@ -679,7 +679,6 @@
 			if (previousKeys.length === 0) {
 				continue;
 			}
-			const completedRepositoryKeys: string[] = [];
 			for (const previousKey of previousKeys) {
 				const siblingStillHasPreviousKey = Object.values(next).some(
 					(candidate) =>
@@ -688,13 +687,12 @@
 				);
 				if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
 					await rekeyLocalRepository(previousKey, attachment.repositoryKey);
-					completedRepositoryKeys.push(previousKey);
+					await attachLocalProject(attachment.workspacePath, undefined, [previousKey]);
 				}
 			}
 			if (currentWorkspacePath === attachment.workspacePath) {
 				currentRepositoryKey = attachment.repositoryKey;
 			}
-			await attachLocalProject(attachment.workspacePath, undefined, completedRepositoryKeys);
 		}
 	}
 
