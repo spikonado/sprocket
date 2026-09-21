@@ -78,6 +78,19 @@ variants stay permanently.
 
 ### Stored transcript formats
 
+#### Retired tool visibility flag
+
+All current agent tools receive work sections and appear in the transcript.
+New executor jobs omit `hidden`. The stored validator still accepts that field
+on historical rows; no migration rewrites old jobs or repairs old transcripts.
+Remove the stored field once those rows age out.
+
+`beginToolJob` accepts the old `hidden` argument only to allow sectionless calls
+from released agents. It does not store the flag or suppress transcript events.
+Sectionless jobs persist started and terminal parts without work membership;
+agents need an update to display those calls in work sections. Remove this
+argument and the sectionless write fallback once those agents age out.
+
 #### Attachment metadata and cache layout
 
 Historical prompt attachments may contain `imageUploadId`; current writes use

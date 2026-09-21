@@ -86,9 +86,6 @@ impl WorkItem {
 
     pub(super) fn tool_event(part: &TranscriptPart) -> Option<Self> {
         let tool = part.tool.as_ref()?;
-        if hidden_tool(&tool.name) {
-            return None;
-        }
         let terminal = tool.status != "started";
         let output = tool.output.as_ref();
         let reported_running = output.and_then(|output| output["running"].as_bool());
@@ -181,13 +178,6 @@ pub(super) fn earliest_timing(left: Option<f64>, right: Option<f64>) -> Option<f
         (Some(left), Some(right)) => Some(left.min(right)),
         (left, right) => left.or(right),
     }
-}
-
-pub(crate) fn hidden_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "add_artifact" | "list_artifacts" | "edit_artifact" | "create_artifact" | "update_artifact"
-    )
 }
 
 pub(super) fn detail(

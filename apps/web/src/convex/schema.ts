@@ -284,7 +284,8 @@ export default defineSchema({
 		attemptSeq: v.optional(v.number()),
 		streamId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
-		hidden: v.boolean(),
+		// Historical rows only. New jobs have no visibility flag.
+		hidden: v.optional(v.boolean()),
 		status: vExecutorJobStatus,
 		enqueuedAt: v.number(),
 		claimedAt: v.optional(v.number()),
@@ -296,9 +297,8 @@ export default defineSchema({
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
-		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence'])
 		.index('by_runId_and_toolInvocationId', ['runId', 'toolInvocationId'])
-		.index('by_runId_and_callId_and_hidden', ['runId', 'callId', 'hidden']),
+		.index('by_runId_and_callId', ['runId', 'callId']),
 	agentQuestions: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

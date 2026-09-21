@@ -440,34 +440,127 @@ describe('numbered transcript parts', () => {
 		expect(job?.status).toBe('cancelled');
 	});
 
-	it('does not write transcript events for hidden tool jobs', async () => {
+	it.each([undefined, true])(
+		'records artifact work and results with legacy hidden=%s',
+		async (hidden) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = 'transcript-artifact-secret';
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'sub-artifact',
+				executionSecret,
+				'List artifacts'
+			);
+			await asUser.mutation(api.agentRuntime.start, {
+				claimId: 'claim-artifact',
+				runId,
+				executionSecret
+			});
+			const assignment = toolTranscriptAssignment(runId, 'claim-artifact');
+			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				claimId: 'claim-artifact',
+				runId,
+				...assignment,
+				kind: 'list_artifacts',
+				callId: 'artifacts',
+				payload: {},
+				hidden,
+				executionSecret
+			});
+			expect(
+				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
+			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 1 });
+			await asUser.mutation(api.executor.complete, {
+				jobId,
+				runId,
+				claimId: 'claim-artifact',
+				executionSecret,
+				result: { artifacts: [] }
+			});
+			await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+				runId,
+				claimId: 'claim-artifact',
+				executionSecret,
+				attemptSeq: assignment.attemptSeq,
+				streamId: assignment.streamId,
+				items: [{ type: 'tool-call', callId: 'artifacts', name: 'list_artifacts', input: {} }],
+				work: { ranges: [{ start: 0, end: 1, sectionKey: assignment.sectionKey }] },
+				toolInvocations: [
+					{
+						callId: 'artifacts',
+						toolInvocationId: assignment.toolInvocationId,
+						sectionKey: assignment.sectionKey
+					}
+				],
+				sections: [
+					{
+						sectionKey: assignment.sectionKey,
+						sectionOrdinal: assignment.sectionOrdinal,
+						closed: false
+					}
+				]
+			});
+			const parts = await asUser.query(api.transcript.getPartsForRun, {
+				runId,
+				executionSecret,
+				numbers: [0, 1, 2, 3, 4]
+			});
+			expect(parts.parts.map((part) => part.kind)).toEqual([
+				'prompt',
+				'tool',
+				'tool',
+				'completion'
+			]);
+			expect(parts.parts[2]).toMatchObject({
+				tool: {
+					callId: 'artifacts',
+					name: 'list_artifacts',
+					status: 'completed',
+					output: { artifacts: [] }
+				},
+				work: { ranges: [], sectionKey: assignment.sectionKey }
+			});
+			expect(
+				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
+			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 0 });
+		}
+	);
+
+	it('accepts sectionless artifact calls from released agents and persists their results', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'transcript-hidden-tool-secret';
+		const executionSecret = 'legacy-artifact-secret';
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
 			threadId,
-			'sub-hidden-tool',
+			'legacy-artifact',
 			executionSecret,
-			'Hide it'
+			'List artifacts'
 		);
-		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-hidden-tool',
-			runId,
-			executionSecret
+		const auth = { runId, claimId: 'legacy-artifact', executionSecret };
+		await asUser.mutation(api.agentRuntime.start, auth);
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			...auth,
+			...toolTranscriptAssignment(runId, auth.claimId),
+			sectionKey: undefined,
+			kind: 'list_artifacts',
+			callId: 'legacy-artifacts',
+			payload: {},
+			hidden: true
 		});
-		await asUser.mutation(api.agentRuntime.beginToolJob, {
-			claimId: 'claim-hidden-tool',
+		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });
+		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });
+		const parts = await asUser.query(api.transcript.getPartsForRun, {
 			runId,
-			...toolTranscriptAssignment(runId, 'claim-hidden-tool'),
-			kind: 'exec_command',
-			callId: 'hidden',
-			payload: { cmd: 'true' },
-			hidden: true,
-			executionSecret
+			executionSecret,
+			numbers: [1, 2]
 		});
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(1);
+		expect(parts.parts.map((part) => part.tool?.status)).toEqual(['started', 'completed']);
+		expect(parts.parts[1]?.tool?.output).toEqual({ artifacts: [] });
 	});
 
 	it('only reads jobs named by the current completion call', async () => {

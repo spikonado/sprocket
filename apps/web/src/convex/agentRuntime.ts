@@ -690,6 +690,9 @@ export const beginToolJob = mutation({
 			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 			}
+			if (!args.sectionKey && args.hidden !== true) {
+				throw new Error('Tool job requires a section key.');
+			}
 			if (
 				args.sectionKey !== undefined &&
 				!isExpectedSectionKey(
@@ -708,7 +711,6 @@ export const beginToolJob = mutation({
 				kind: args.kind,
 				payload: args.payload,
 				callId: args.callId,
-				hidden: args.hidden,
 				toolInvocationId: args.toolInvocationId,
 				sectionKey: args.sectionKey,
 				sectionOrdinal: args.sectionOrdinal,

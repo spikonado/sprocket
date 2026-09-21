@@ -9,8 +9,6 @@ use rig::message::AssistantContent;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::transcript::sections::hidden_tool;
-
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "add_artifact",
     "apply_patch",
@@ -63,8 +61,7 @@ pub(crate) struct WorkRangeAssignment {
 pub(crate) struct ToolInvocationAssignment {
     pub(crate) call_id: String,
     pub(crate) tool_invocation_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) section_key: Option<String>,
+    pub(crate) section_key: String,
     #[serde(skip)]
     pub(crate) section_ordinal: u64,
     #[serde(skip)]
@@ -101,7 +98,6 @@ enum OrderedContent {
     Tool {
         model_call_id: String,
         call_id: String,
-        hidden: bool,
     },
     Other,
 }
@@ -253,24 +249,14 @@ impl ToolCallTracker {
                 OrderedContent::Tool {
                     model_call_id,
                     call_id,
-                    hidden,
                 } => {
-                    let section = (!hidden).then(|| ensure_section(&mut state));
-                    if let Some(section) = &section {
-                        touched_sections.push(section.clone());
-                        push_range(
-                            &mut state.completion.work.ranges,
-                            index as u64,
-                            &section.section_key,
-                        );
-                    }
-                    let section_ordinal = section
-                        .as_ref()
-                        .or(state.open_section.as_ref())
-                        .map_or(state.next_section_ordinal, |section| {
-                            section.section_ordinal
-                        });
-                    let section_key = section.map(|section| section.section_key);
+                    let section = ensure_section(&mut state);
+                    touched_sections.push(section.clone());
+                    push_range(
+                        &mut state.completion.work.ranges,
+                        index as u64,
+                        &section.section_key,
+                    );
                     let assignment = ToolInvocationAssignment {
                         call_id: call_id.clone(),
                         tool_invocation_id: stable_id(
@@ -280,8 +266,8 @@ impl ToolCallTracker {
                             state.attempt_seq,
                             index as u64,
                         ),
-                        section_key,
-                        section_ordinal,
+                        section_key: section.section_key,
+                        section_ordinal: section.section_ordinal,
                         attempt_seq: state.attempt_seq,
                         stream_id: state.stream_id.clone(),
                     };
@@ -386,7 +372,6 @@ fn ordered_content(content: &[AssistantContent]) -> Vec<OrderedContent> {
             AssistantContent::ToolCall(call) => OrderedContent::Tool {
                 model_call_id: call.id.as_str().to_owned(),
                 call_id: call.wire_call_id().to_owned(),
-                hidden: hidden_tool(&call.function.name),
             },
             _ => OrderedContent::Other,
         })
@@ -625,12 +610,10 @@ mod tests {
             OrderedContent::Tool {
                 model_call_id: "model-1".into(),
                 call_id: "call-1".into(),
-                hidden: false,
             },
             OrderedContent::Tool {
                 model_call_id: "model-2".into(),
                 call_id: "call-2".into(),
-                hidden: false,
             },
         ]);
 
@@ -676,12 +659,10 @@ mod tests {
             OrderedContent::Tool {
                 model_call_id: "model-1".into(),
                 call_id: "call-1".into(),
-                hidden: false,
             },
             OrderedContent::Tool {
                 model_call_id: "model-2".into(),
                 call_id: "call-2".into(),
-                hidden: false,
             },
         ]);
         let retry_ids = tracker
@@ -701,7 +682,6 @@ mod tests {
             OrderedContent::Tool {
                 model_call_id: "one".into(),
                 call_id: "one".into(),
-                hidden: false,
             },
         ]);
         let first = tracker.completion_assignments();
@@ -715,9 +695,8 @@ mod tests {
             OrderedContent::Text(true),
             OrderedContent::Reasoning(true),
             OrderedContent::Tool {
-                model_call_id: "hidden".into(),
-                call_id: "hidden".into(),
-                hidden: true,
+                model_call_id: "two".into(),
+                call_id: "two".into(),
             },
         ]);
         let second = tracker.completion_assignments();
@@ -725,7 +704,11 @@ mod tests {
         assert_ne!(second.work.ranges[1].section_key, first_key);
         assert!(second.sections[0].closed);
         assert!(!second.sections[1].closed);
-        assert_eq!(second.tool_invocations[0].section_key, None);
+        assert_eq!(second.work.ranges[1].end, 4);
+        assert_eq!(
+            second.tool_invocations[0].section_key,
+            second.work.ranges[1].section_key
+        );
     }
 
     #[test]

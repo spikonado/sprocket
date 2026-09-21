@@ -110,6 +110,47 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
 }
 
 #[test]
+fn artifact_calls_and_results_appear_in_work_details() {
+    for name in [
+        "add_artifact",
+        "list_artifacts",
+        "edit_artifact",
+        "save_artifact",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+        let mut started = tool_part(0, "artifact", "started", json!(null));
+        started.tool.as_mut().unwrap().name = name.into();
+        replica.save_parts("thread", &[started]).unwrap();
+        let page = replica.page(None, 10, None, &[], false).unwrap();
+        assert_eq!(page["rows"][0]["pendingTools"], 1, "{name}");
+        let completion = assigned_part(
+            1,
+            vec![json!({"type":"tool-call","callId":"repeated","name":name,"input":{}})],
+            json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}],
+                "toolInvocations":[{"item":0,"toolInvocationId":"artifact"}]}),
+        );
+        let mut finished = tool_part(2, "artifact", "completed", json!({"artifacts":[]}));
+        finished.tool.as_mut().unwrap().name = name.into();
+        replica
+            .save_parts("thread", &[completion, finished])
+            .unwrap();
+        let page = replica.page(None, 10, None, &[], false).unwrap();
+        assert_eq!(page["rows"][0]["itemCount"], 1, "{name}");
+        assert_eq!(page["rows"][0]["pendingTools"], 0, "{name}");
+        let details = replica
+            .details("section", None, None, true, 10, false)
+            .unwrap();
+        let parts = details["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2, "{name}");
+        assert_eq!(parts[0]["type"], "tool-call");
+        assert_eq!(parts[0]["name"], name);
+        assert_eq!(parts[1]["type"], "tool-result");
+        assert_eq!(parts[1]["output"], json!({"artifacts":[]}));
+    }
+}
+
+#[test]
 fn repeated_call_ids_pair_by_invocation_when_results_finish_out_of_order() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
