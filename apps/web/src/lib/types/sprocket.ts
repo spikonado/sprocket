@@ -321,4 +321,5 @@ export type ProjectAttachment = {
 	lastUsedAt: number;
 	unavailableReason?: string;
 	previousRepositoryKey?: string;
+	previousRepositoryKeys?: string[];
 };

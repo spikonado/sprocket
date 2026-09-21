@@ -43,6 +43,7 @@
 		attachLocalProject as attachLocalProjectForPath,
 		launchAgentRun,
 		lifecycleResumeKind,
+		pendingRepositoryKeys,
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
 		projectFromAttachment,
 		resolveSubmissionId,
@@ -674,17 +675,19 @@
 			return;
 		}
 		for (const attachment of Object.values(next)) {
-			const previousKey = attachment.previousRepositoryKey;
-			if (!previousKey || previousKey === attachment.repositoryKey) {
+			const previousKeys = pendingRepositoryKeys(attachment);
+			if (previousKeys.length === 0) {
 				continue;
 			}
-			const siblingStillHasPreviousKey = Object.values(next).some(
-				(candidate) =>
-					candidate.workspacePath !== attachment.workspacePath &&
-					candidate.repositoryKey === previousKey
-			);
-			if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
-				await rekeyLocalRepository(previousKey, attachment.repositoryKey);
+			for (const previousKey of previousKeys) {
+				const siblingStillHasPreviousKey = Object.values(next).some(
+					(candidate) =>
+						candidate.workspacePath !== attachment.workspacePath &&
+						candidate.repositoryKey === previousKey
+				);
+				if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
+					await rekeyLocalRepository(previousKey, attachment.repositoryKey);
+				}
 			}
 			if (currentWorkspacePath === attachment.workspacePath) {
 				currentRepositoryKey = attachment.repositoryKey;

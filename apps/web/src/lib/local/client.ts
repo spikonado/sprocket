@@ -37,7 +37,8 @@ const projectAttachmentSchema = z.object({
 	lastValidatedAt: z.int(),
 	lastUsedAt: z.int(),
 	unavailableReason: z.string().optional(),
-	previousRepositoryKey: z.string().optional()
+	previousRepositoryKey: z.string().optional(),
+	previousRepositoryKeys: z.array(z.string()).optional()
 });
 const agentRunStartSchema = z.object({
 	runId: z.string(),

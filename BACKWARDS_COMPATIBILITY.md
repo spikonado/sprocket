@@ -2,6 +2,16 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Local project attachment rekey history
+
+Project attachment records now store every pending source repository in
+`previousRepositoryKeys`. The server still reads and writes the singular
+`previousRepositoryKey` field so existing data directories and released web
+clients can complete one pending rekey. Remove the singular field after all
+supported installations have rewritten `project-attachments.json` with the
+plural field and clients that only read the singular field are no longer
+supported.
+
 ## Convex Backwards Compatibility
 
 ### Current Migrations

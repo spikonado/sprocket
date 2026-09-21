@@ -3,6 +3,7 @@ import type { Id } from '$convex/_generated/dataModel';
 import {
 	buildDesktopProjectAttachmentsByPath,
 	launchAgentRun,
+	pendingRepositoryKeys,
 	resolveSubmissionId,
 	upsertDesktopProjectAttachment
 } from '$lib/home/desktop';
@@ -264,10 +265,29 @@ describe('local project attachments', () => {
 			expect(buildDesktopProjectAttachmentsByPath(attachments)).toEqual({
 				'/worktrees/existing': {
 					...existing,
-					previousRepositoryKey: 'github.com/acme/old-robot'
+					previousRepositoryKey: 'github.com/acme/old-robot',
+					previousRepositoryKeys: ['github.com/acme/old-robot']
 				}
 			});
 		}
+	});
+
+	it('keeps every pending rekey when changed remotes converge', () => {
+		const first = {
+			...projectAttachment('/worktrees/first', 'github.com/acme/robot', 2),
+			previousRepositoryKey: 'github.com/acme/first'
+		};
+		const second = {
+			...projectAttachment('/worktrees/second', 'github.com/acme/robot', 3),
+			previousRepositoryKey: 'github.com/acme/second'
+		};
+		const existing = projectAttachment('/worktrees/existing', 'github.com/acme/robot', 1);
+
+		const merged = buildDesktopProjectAttachmentsByPath([second, existing, first]);
+		expect(pendingRepositoryKeys(merged['/worktrees/existing'])).toEqual([
+			'github.com/acme/first',
+			'github.com/acme/second'
+		]);
 	});
 
 	it('keeps unrelated local directories with the same display repository key', () => {

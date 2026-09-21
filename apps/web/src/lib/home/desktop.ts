@@ -135,6 +135,19 @@ function attachmentIsPreferred(candidate: ProjectAttachment, current: ProjectAtt
 	return candidate.workspacePath < current.workspacePath;
 }
 
+export function pendingRepositoryKeys(attachment: ProjectAttachment): string[] {
+	return [
+		...new Set([
+			...(attachment.previousRepositoryKeys ?? []),
+			...(attachment.previousRepositoryKey ? [attachment.previousRepositoryKey] : [])
+		])
+	]
+		.filter(
+			(repositoryKey) => repositoryKey.length > 0 && repositoryKey !== attachment.repositoryKey
+		)
+		.sort();
+}
+
 export function buildDesktopProjectAttachmentsByPath(
 	desktopProjectAttachments: ProjectAttachment[]
 ): Record<string, ProjectAttachment> {
@@ -149,13 +162,18 @@ export function buildDesktopProjectAttachmentsByPath(
 
 		const preferred = attachmentIsPreferred(attachment, current) ? attachment : current;
 		const other = preferred === attachment ? current : attachment;
-		const previousRepositoryKey = preferred.previousRepositoryKey ?? other.previousRepositoryKey;
-		attachmentsByRepository.set(
-			attachmentKey,
-			previousRepositoryKey === preferred.previousRepositoryKey
-				? preferred
-				: { ...preferred, previousRepositoryKey }
-		);
+		const previousRepositoryKeys = [
+			...new Set([...pendingRepositoryKeys(preferred), ...pendingRepositoryKeys(other)])
+		].sort();
+		if (previousRepositoryKeys.length === 0) {
+			attachmentsByRepository.set(attachmentKey, preferred);
+			continue;
+		}
+		attachmentsByRepository.set(attachmentKey, {
+			...preferred,
+			previousRepositoryKey: previousRepositoryKeys[0],
+			previousRepositoryKeys
+		});
 	}
 	return Object.fromEntries(
 		[...attachmentsByRepository.values()].map((attachment) => [

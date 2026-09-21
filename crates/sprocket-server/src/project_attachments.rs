@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -26,9 +26,11 @@ pub struct ProjectAttachmentRecord {
     pub last_used_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
-    /// Last persisted key when git identity changed, until the client rekeys threads.
+    /// First pending key retained for older clients.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_repository_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previous_repository_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -144,6 +146,7 @@ impl ProjectAttachmentStore {
             match existing {
                 Some(existing) => {
                     resolved.previous_repository_key = existing.previous_repository_key;
+                    resolved.previous_repository_keys = existing.previous_repository_keys;
                     if existing.workspace_path == resolved.workspace_path {
                         attachments.insert(resolved.workspace_path.clone(), resolved.clone());
                         changed = true;
@@ -323,6 +326,7 @@ fn deduplicate_repository_attachments(
     preferred_workspace_path: Option<&str>,
 ) -> bool {
     let mut winners = HashMap::<String, String>::new();
+    let mut changed = false;
 
     for (workspace_path, attachment) in attachments.iter() {
         let Some(current_path) = winners.get(&attachment.attachment_key) else {
@@ -336,34 +340,28 @@ fn deduplicate_repository_attachments(
         }
     }
 
-    let pending_rekeys = attachments
-        .values()
-        .filter_map(|attachment| {
-            attachment
-                .previous_repository_key
-                .as_ref()
-                .map(|previous| (attachment.attachment_key.clone(), previous.clone()))
-        })
-        .collect::<HashMap<_, _>>();
-    for (attachment_key, previous_repository_key) in pending_rekeys {
+    let mut pending_rekeys = HashMap::<String, BTreeSet<String>>::new();
+    for attachment in attachments.values() {
+        pending_rekeys
+            .entry(attachment.attachment_key.clone())
+            .or_default()
+            .extend(pending_repository_keys(attachment));
+    }
+    for (attachment_key, previous_repository_keys) in pending_rekeys {
         let Some(winner_path) = winners.get(&attachment_key) else {
             continue;
         };
         let Some(winner) = attachments.get_mut(winner_path) else {
             continue;
         };
-        if winner.previous_repository_key.is_none()
-            && previous_repository_key != winner.repository_key
-        {
-            winner.previous_repository_key = Some(previous_repository_key);
-        }
+        changed |= set_pending_repository_keys(winner, previous_repository_keys);
     }
 
     let previous_len = attachments.len();
     attachments.retain(|workspace_path, attachment| {
         winners.get(&attachment.attachment_key) == Some(workspace_path)
     });
-    attachments.len() != previous_len
+    changed || attachments.len() != previous_len
 }
 
 fn same_attachment_identity(
@@ -412,13 +410,13 @@ fn mark_available(
     session: ProjectAttachmentRecord,
     resolution: WorkspacePathResolution,
 ) -> ProjectAttachmentRecord {
+    let previous_repository_keys =
+        previous_repository_keys_after_resolve(&session, &resolution.repository_key);
     ProjectAttachmentRecord {
         workspace_path: resolution.workspace_path,
         attachment_key: resolution.attachment_key,
-        previous_repository_key: previous_repository_key_after_resolve(
-            &session,
-            &resolution.repository_key,
-        ),
+        previous_repository_key: previous_repository_keys.first().cloned(),
+        previous_repository_keys,
         repository_key: resolution.repository_key,
         display_name: resolution.display_name,
         availability: WorkspaceAvailability::Available,
@@ -432,19 +430,43 @@ pub(crate) fn repository_key_matches(record: &ProjectAttachmentRecord, requested
     let requested = requested.trim();
     !requested.is_empty()
         && (record.repository_key == requested
-            || record.previous_repository_key.as_deref() == Some(requested))
+            || pending_repository_keys(record).contains(requested))
 }
 
-fn previous_repository_key_after_resolve(
+fn pending_repository_keys(session: &ProjectAttachmentRecord) -> BTreeSet<String> {
+    session
+        .previous_repository_keys
+        .iter()
+        .chain(session.previous_repository_key.iter())
+        .filter(|key| !key.is_empty() && *key != &session.repository_key)
+        .cloned()
+        .collect()
+}
+
+fn set_pending_repository_keys(
+    session: &mut ProjectAttachmentRecord,
+    mut previous_repository_keys: BTreeSet<String>,
+) -> bool {
+    previous_repository_keys.remove(&session.repository_key);
+    let previous_repository_key = previous_repository_keys.first().cloned();
+    let previous_repository_keys = previous_repository_keys.into_iter().collect();
+    let changed = session.previous_repository_key != previous_repository_key
+        || session.previous_repository_keys != previous_repository_keys;
+    session.previous_repository_key = previous_repository_key;
+    session.previous_repository_keys = previous_repository_keys;
+    changed
+}
+
+fn previous_repository_keys_after_resolve(
     session: &ProjectAttachmentRecord,
     new_key: &str,
-) -> Option<String> {
-    let candidate = if !session.repository_key.is_empty() && session.repository_key != new_key {
-        Some(session.repository_key.clone())
-    } else {
-        session.previous_repository_key.clone()
-    };
-    candidate.filter(|key| !key.is_empty() && key != new_key)
+) -> Vec<String> {
+    let mut previous_repository_keys = pending_repository_keys(session);
+    if !session.repository_key.is_empty() && session.repository_key != new_key {
+        previous_repository_keys.insert(session.repository_key.clone());
+    }
+    previous_repository_keys.remove(new_key);
+    previous_repository_keys.into_iter().collect()
 }
 
 fn mark_unavailable(
@@ -491,6 +513,7 @@ fn session_record_changed(
         || previous.repository_key != current.repository_key
         || previous.attachment_key != current.attachment_key
         || previous.previous_repository_key != current.previous_repository_key
+        || previous.previous_repository_keys != current.previous_repository_keys
         || previous.display_name != current.display_name
         || previous.availability != current.availability
         || previous.unavailable_reason != current.unavailable_reason
@@ -516,6 +539,7 @@ async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentR
         last_used_at: now,
         unavailable_reason: None,
         previous_repository_key: None,
+        previous_repository_keys: Vec::new(),
     })
     .await?;
 
@@ -580,6 +604,7 @@ mod tests {
             last_used_at,
             unavailable_reason: None,
             previous_repository_key: None,
+            previous_repository_keys: Vec::new(),
         }
     }
 
@@ -1058,6 +1083,7 @@ mod tests {
             listed[0].previous_repository_key.as_deref(),
             Some("previous-key")
         );
+        assert_eq!(listed[0].previous_repository_keys, ["previous-key"]);
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -1095,5 +1121,54 @@ mod tests {
             listed[0].previous_repository_key.as_deref(),
             Some(old_repository_key)
         );
+        assert_eq!(listed[0].previous_repository_keys, [old_repository_key]);
+    }
+
+    #[tokio::test]
+    async fn list_keeps_all_pending_rekeys_when_changed_remotes_converge() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("first");
+        let second = temp_root.path().join("second");
+        let existing = temp_root.path().join("existing");
+        let new_repository_key = "github.com/spikonado/sprocket";
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        init_repo_with_origin(&existing, origin);
+
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![
+                attachment_record(first.to_string_lossy(), "github.com/spikonado/first", 2),
+                attachment_record(second.to_string_lossy(), "github.com/spikonado/second", 3),
+                attachment_record(existing.to_string_lossy(), new_repository_key, 1),
+            ])
+            .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, existing.to_string_lossy());
+        assert_eq!(
+            listed[0].previous_repository_key.as_deref(),
+            Some("github.com/spikonado/first")
+        );
+        assert_eq!(
+            listed[0].previous_repository_keys,
+            ["github.com/spikonado/first", "github.com/spikonado/second"]
+        );
+        assert!(repository_key_matches(
+            &listed[0],
+            "github.com/spikonado/first"
+        ));
+        assert!(repository_key_matches(
+            &listed[0],
+            "github.com/spikonado/second"
+        ));
     }
 }
