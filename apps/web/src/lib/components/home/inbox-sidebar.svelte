@@ -314,12 +314,12 @@
 	</header>
 
 	<div class="px-3 pb-3">
-		<button class="inbox-menu-item" type="button" onclick={onNew}>
+		<button class="inbox-menu-item inbox-primary-navigation" type="button" onclick={onNew}>
 			<SquarePen size={15} />New thread
 		</button>
 		<div class="inbox-project-controls">
 			<details bind:open={projectMenuOpen}>
-				<summary class="inbox-filter">
+				<summary class="inbox-filter inbox-primary-navigation">
 					<span class="truncate">{projectFilterLabel}</span>
 					<ChevronDown size={14} />
 				</summary>
@@ -378,7 +378,7 @@
 			>
 				{#if section.state === 'settled'}
 					<button
-						class="inbox-section-heading"
+						class="inbox-section-heading inbox-primary-navigation"
 						type="button"
 						aria-expanded={settledOpen}
 						aria-controls="inbox-settled-threads"
@@ -517,7 +517,7 @@
 	{/if}
 
 	<footer class="inbox-footer">
-		<button class="inbox-menu-item" type="button" onclick={onSettings}>
+		<button class="inbox-menu-item inbox-primary-navigation" type="button" onclick={onSettings}>
 			<Settings size={15} />Settings
 		</button>
 		<AppUpdate />
