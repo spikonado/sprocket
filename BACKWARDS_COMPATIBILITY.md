@@ -10,7 +10,9 @@ Project attachment records now store every pending source repository in
 clients can complete one pending rekey. Remove the singular field after all
 supported installations have rewritten `project-attachments.json` with the
 plural field and clients that only read the singular field are no longer
-supported.
+supported. Older clients omit the optional `completedRepositoryKeys`
+acknowledgement when attaching, so the server retains pending history until an
+updated client confirms each completed rekey.
 
 ## Convex Backwards Compatibility
 

@@ -309,6 +309,7 @@ export type WorkspacePathResolution = {
 export type ProjectAttachmentRequest = {
 	workspacePath: string;
 	replaceWorkspacePath?: string;
+	completedRepositoryKeys?: string[];
 };
 
 export type ProjectAttachment = {

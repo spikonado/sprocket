@@ -46,6 +46,8 @@ pub struct AttachProjectRequest {
     pub workspace_path: String,
     #[serde(default)]
     pub replace_workspace_path: Option<String>,
+    #[serde(default)]
+    pub completed_repository_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -87,7 +89,7 @@ impl ProjectAttachmentStore {
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
-        let validated = resolve_attachment(request.workspace_path).await?;
+        let mut validated = resolve_attachment(request.workspace_path).await?;
         let replace_workspace_path = request
             .replace_workspace_path
             .as_deref()
@@ -115,6 +117,20 @@ impl ProjectAttachmentStore {
                     existing.workspace_path
                 );
             }
+            let mut previous_repository_keys = sessions
+                .get(&validated.workspace_path)
+                .into_iter()
+                .chain(
+                    replace_workspace_path
+                        .as_deref()
+                        .and_then(|path| sessions.get(path)),
+                )
+                .flat_map(pending_repository_keys)
+                .collect::<BTreeSet<_>>();
+            for completed_repository_key in request.completed_repository_keys {
+                previous_repository_keys.remove(completed_repository_key.trim());
+            }
+            set_pending_repository_keys(&mut validated, previous_repository_keys);
             sessions.insert(validated.workspace_path.clone(), validated.clone());
             if let Some(previous_path) = replace_workspace_path.as_deref() {
                 sessions.remove(previous_path);
@@ -619,6 +635,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: env!("CARGO_MANIFEST_DIR").to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach");
@@ -694,6 +711,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: first.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach first");
@@ -701,6 +719,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: second.to_string_lossy().to_string(),
                 replace_workspace_path: Some(attached_first.workspace_path.clone()),
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach second");
@@ -726,6 +745,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: first.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach first worktree");
@@ -733,6 +753,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: second.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect_err("reject second worktree");
@@ -757,6 +778,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: first.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach first project");
@@ -764,6 +786,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: second.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach second project");
@@ -794,6 +817,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: first.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach first worktree");
@@ -801,6 +825,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: second.to_string_lossy().to_string(),
                 replace_workspace_path: Some(attached_first.workspace_path),
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("reconnect to second worktree");
@@ -826,6 +851,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: first.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach first repository");
@@ -833,6 +859,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: second.to_string_lossy().to_string(),
                 replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect("attach second repository");
@@ -841,6 +868,7 @@ mod tests {
             .attach(AttachProjectRequest {
                 workspace_path: duplicate_second.to_string_lossy().to_string(),
                 replace_workspace_path: Some(attached_first.workspace_path.clone()),
+                completed_repository_keys: Vec::new(),
             })
             .await
             .expect_err("reject already attached replacement repository");
@@ -1170,5 +1198,56 @@ mod tests {
             &listed[0],
             "github.com/spikonado/second"
         ));
+    }
+
+    #[tokio::test]
+    async fn attach_removes_only_acknowledged_pending_rekeys() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let workspace = temp_root.path().join("checkout");
+        let repository_key = "github.com/spikonado/sprocket";
+        init_repo_with_origin(&workspace, "https://github.com/spikonado/sprocket.git");
+
+        let mut stored = attachment_record(workspace.to_string_lossy(), repository_key, 1);
+        stored.previous_repository_key = Some("github.com/spikonado/first".into());
+        stored.previous_repository_keys = vec![
+            "github.com/spikonado/first".into(),
+            "github.com/spikonado/second".into(),
+        ];
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&[stored]).expect("serialize attachment"),
+        )
+        .expect("write attachments");
+
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+                completed_repository_keys: Vec::new(),
+            })
+            .await
+            .expect("attach without acknowledgements");
+        assert_eq!(
+            attached.previous_repository_keys,
+            ["github.com/spikonado/first", "github.com/spikonado/second"]
+        );
+
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+                completed_repository_keys: vec!["github.com/spikonado/first".into()],
+            })
+            .await
+            .expect("attach with acknowledgement");
+        assert_eq!(
+            attached.previous_repository_key.as_deref(),
+            Some("github.com/spikonado/second")
+        );
+        assert_eq!(
+            attached.previous_repository_keys,
+            ["github.com/spikonado/second"]
+        );
     }
 }

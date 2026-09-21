@@ -679,6 +679,7 @@
 			if (previousKeys.length === 0) {
 				continue;
 			}
+			const completedRepositoryKeys: string[] = [];
 			for (const previousKey of previousKeys) {
 				const siblingStillHasPreviousKey = Object.values(next).some(
 					(candidate) =>
@@ -687,12 +688,13 @@
 				);
 				if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
 					await rekeyLocalRepository(previousKey, attachment.repositoryKey);
+					completedRepositoryKeys.push(previousKey);
 				}
 			}
 			if (currentWorkspacePath === attachment.workspacePath) {
 				currentRepositoryKey = attachment.repositoryKey;
 			}
-			await attachLocalProject(attachment.workspacePath);
+			await attachLocalProject(attachment.workspacePath, undefined, completedRepositoryKeys);
 		}
 	}
 
@@ -759,7 +761,11 @@
 		applyProjectSelection(workspacePath, threadId, draft);
 	}
 
-	async function attachLocalProject(workspacePath: string, replaceWorkspacePath?: string) {
+	async function attachLocalProject(
+		workspacePath: string,
+		replaceWorkspacePath?: string,
+		completedRepositoryKeys?: string[]
+	) {
 		if (!desktopApi) {
 			throw new Error(localServerRequiredMessage);
 		}
@@ -767,7 +773,8 @@
 		const attachment = await attachLocalProjectForPath({
 			desktopApi,
 			workspacePath,
-			replaceWorkspacePath
+			replaceWorkspacePath,
+			completedRepositoryKeys
 		});
 		desktopProjectAttachmentsGeneration += 1;
 		desktopProjectAttachmentsByPath = upsertDesktopProjectAttachment(

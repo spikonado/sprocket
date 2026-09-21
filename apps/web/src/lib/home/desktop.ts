@@ -212,12 +212,16 @@ export async function attachLocalProject(args: {
 	desktopApi: DesktopApi;
 	workspacePath: string;
 	replaceWorkspacePath?: string;
+	completedRepositoryKeys?: string[];
 }) {
 	const request: ProjectAttachmentRequest = {
 		workspacePath: args.workspacePath
 	};
 	if (args.replaceWorkspacePath) {
 		request.replaceWorkspacePath = args.replaceWorkspacePath;
+	}
+	if (args.completedRepositoryKeys?.length) {
+		request.completedRepositoryKeys = args.completedRepositoryKeys;
 	}
 	return await args.desktopApi.attachProject(request);
 }
