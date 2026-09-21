@@ -93,15 +93,7 @@ impl rig::tool::Tool for WebSearchTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_cloud_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-        )
-        .await
+        execute_cloud_tool_job(&self.0, Self::NAME, payload).await
     }
 }
 
@@ -130,11 +122,8 @@ impl rig::tool::Tool for ScrapeUrlTool {
         let saved_file = &mut scrape_file;
         let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let result = execute_tool_job_with_id(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
+            &self.0,
             Self::NAME,
-            &self.0.tool_call_tracker,
             payload,
             |cancellation, job_id| async move {
                 if let Some(raw_url) = super::github_url::github_raw_url(&url) {
@@ -203,11 +192,8 @@ impl rig::tool::Tool for ScreenshotUrlTool {
         let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let result = execute_tool_job_with_id(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
+            &self.0,
             Self::NAME,
-            &self.0.tool_call_tracker,
             payload,
             |cancellation, job_id| async move {
                 let action_args = BTreeMap::from([

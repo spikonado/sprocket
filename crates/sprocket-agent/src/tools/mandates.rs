@@ -251,40 +251,32 @@ pub(super) async fn mandate_action_job(
     let runtime = context.runtime.clone();
     let run_id = context.run_id.clone();
     let claim_id = context.claim_id.clone();
-    execute_tool_job(
-        &context.runtime,
-        &context.run_id,
-        &context.claim_id,
-        kind,
-        &context.tool_call_tracker,
-        payload.clone(),
-        |cancellation| async move {
-            let action_args = action_args_from_payload(&run_id, &claim_id, &payload)?;
-            loop {
-                if cancellation.is_cancelled() {
-                    return Err(cancelled_error());
-                }
-                let result = run_convex_tool_action(
-                    &runtime,
-                    cancellation.clone(),
-                    function,
-                    action_args.clone(),
-                )
-                .await?;
-                let in_flight = result
-                    .get("inFlight")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false);
-                if !in_flight {
-                    return Ok(result);
-                }
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return Err(cancelled_error()),
-                    _ = sleep(Duration::from_millis(250)) => {}
-                }
+    execute_tool_job(context, kind, payload.clone(), |cancellation| async move {
+        let action_args = action_args_from_payload(&run_id, &claim_id, &payload)?;
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(cancelled_error());
             }
-        },
-    )
+            let result = run_convex_tool_action(
+                &runtime,
+                cancellation.clone(),
+                function,
+                action_args.clone(),
+            )
+            .await?;
+            let in_flight = result
+                .get("inFlight")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if !in_flight {
+                return Ok(result);
+            }
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                _ = sleep(Duration::from_millis(250)) => {}
+            }
+        }
+    })
     .await
 }

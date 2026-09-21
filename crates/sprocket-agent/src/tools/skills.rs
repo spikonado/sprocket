@@ -44,11 +44,8 @@ impl rig::tool::Tool for ReadSkillTool {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let skills = self.skills.clone();
         execute_tool_job(
-            &self.context.runtime,
-            &self.context.run_id,
-            &self.context.claim_id,
+            &self.context,
             Self::NAME,
-            &self.context.tool_call_tracker,
             payload,
             |_cancellation| async move {
                 let output = resolve_read_skill(&skills, &args.name)?;

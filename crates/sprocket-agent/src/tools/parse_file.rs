@@ -121,11 +121,8 @@ impl rig::tool::Tool for ParseFileTool {
         let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let supports_images = self.0.supports_images;
         let persisted = execute_tool_job_with_id(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
+            &self.0,
             Self::NAME,
-            &self.0.tool_call_tracker,
             payload,
             |cancellation, job_id| async move {
                 let hosted = HostedParseContext {

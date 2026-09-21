@@ -77,22 +77,14 @@ impl rig::tool::Tool for BrowserInteractTool {
         }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| {
-                super::firecrawl::run(
-                    &self.0.runtime,
-                    cancellation,
-                    action_args,
-                    "browser_interact",
-                )
-            },
-        )
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
+            super::firecrawl::run(
+                &self.0.runtime,
+                cancellation,
+                action_args,
+                "browser_interact",
+            )
+        })
         .await
     }
 }
@@ -122,28 +114,20 @@ impl rig::tool::Tool for BrowserScreenshotTool {
         let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
-        let result = execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| async move {
-                let result = super::firecrawl::run(
-                    &self.0.runtime,
-                    cancellation.clone(),
-                    action_args,
-                    "browser_screenshot",
-                )
-                .await?;
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => Err(cancelled_error()),
-                    result = save_screenshot(result, &cache_dir) => result.map_err(tool_error),
-                }
-            },
-        )
+        let result = execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
+            let result = super::firecrawl::run(
+                &self.0.runtime,
+                cancellation.clone(),
+                action_args,
+                "browser_screenshot",
+            )
+            .await?;
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => Err(cancelled_error()),
+                result = save_screenshot(result, &cache_dir) => result.map_err(tool_error),
+            }
+        })
         .await?;
         if result.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
             return Ok(ToolOutput::text(format!(

@@ -6,9 +6,9 @@ use rig::tool::{ToolErrorKind, ToolExecutionError};
 use serde::Deserialize;
 use sprocket_workspace::WorkspaceCancellation;
 
-use super::context::{cancelled_error, tool_error, tool_failure};
+use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use crate::convex::RuntimeClient;
-use crate::hooks::{ToolCallTracker, ToolInvocationAssignment};
+use crate::hooks::ToolInvocationAssignment;
 
 pub(super) const GET_JOB_FUNCTION: &str = "executor:getJob";
 
@@ -85,16 +85,14 @@ pub(super) struct ExecutorJobSnapshot {
 }
 
 pub(super) async fn begin_executor_job(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    claim_id: &str,
+    context: &AgentToolContext,
     kind: &str,
     assignment: ToolInvocationAssignment,
     payload: &serde_json::Value,
 ) -> Result<String, ToolExecutionError> {
     let mut begin_args = BTreeMap::new();
-    begin_args.insert("runId".to_string(), run_id.to_string().into());
-    begin_args.insert("claimId".to_string(), claim_id.to_string().into());
+    begin_args.insert("runId".to_string(), context.run_id.clone().into());
+    begin_args.insert("claimId".to_string(), context.claim_id.clone().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
     begin_args.insert("callId".to_string(), assignment.call_id.into());
     begin_args.insert(
@@ -121,7 +119,8 @@ pub(super) async fn begin_executor_job(
         "payload".to_string(),
         Value::try_from(stored_payload).map_err(tool_error)?,
     );
-    let begin_result: serde_json::Value = runtime
+    let begin_result: serde_json::Value = context
+        .runtime
         .mutation_json("agentRuntime:beginToolJob", begin_args)
         .await
         .map_err(tool_error)?;
@@ -133,22 +132,21 @@ pub(super) async fn begin_executor_job(
 }
 
 pub(super) async fn execute_cloud_tool_job(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    claim_id: &str,
+    context: &AgentToolContext,
     kind: &str,
-    tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
 ) -> Result<serde_json::Value, ToolExecutionError> {
-    let assignment = tool_call_tracker
+    let assignment = context
+        .tool_call_tracker
         .claim_dispatch(kind, &payload)
         .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
     eprintln!(
         "sprocket-agent: starting cloud tool {} for run {}",
-        kind, run_id
+        kind, context.run_id
     );
-    let mut run_updates = runtime
-        .run_finished_subscription(run_id)
+    let mut run_updates = context
+        .runtime
+        .run_finished_subscription(&context.run_id)
         .await
         .map_err(tool_error)?;
     let initial_update = run_updates
@@ -159,11 +157,12 @@ pub(super) async fn execute_cloud_tool_job(
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(runtime, run_id, claim_id, kind, assignment, &payload).await?;
+    let job_id = begin_executor_job(context, kind, assignment, &payload).await?;
     let mut job_args = BTreeMap::new();
-    job_args.insert("runId".to_string(), run_id.to_string().into());
+    job_args.insert("runId".to_string(), context.run_id.clone().into());
     job_args.insert("jobId".to_string(), job_id.clone().into());
-    let mut job_updates = runtime
+    let mut job_updates = context
+        .runtime
         .subscribe(GET_JOB_FUNCTION, job_args)
         .await
         .map_err(tool_error)?;
@@ -178,7 +177,10 @@ pub(super) async fn execute_cloud_tool_job(
                 match RuntimeClient::decode_run_finished_update(update) {
                     Ok(false) => {}
                     Ok(true) => {
-                        eprintln!("sprocket-agent: cancelled cloud tool {} for run {}", kind, run_id);
+                        eprintln!(
+                            "sprocket-agent: cancelled cloud tool {} for run {}",
+                            kind, context.run_id
+                        );
                         return Err(cancelled_error());
                     }
                     Err(error) => {
@@ -198,7 +200,10 @@ pub(super) async fn execute_cloud_tool_job(
                 };
                 match snapshot.status.as_str() {
                     "completed" => {
-                        eprintln!("sprocket-agent: completed cloud tool {} for run {}", kind, run_id);
+                        eprintln!(
+                            "sprocket-agent: completed cloud tool {} for run {}",
+                            kind, context.run_id
+                        );
                         return snapshot.result.ok_or_else(|| {
                             tool_failure("completed executor job did not include a result")
                         });
@@ -217,11 +222,8 @@ pub(super) async fn execute_cloud_tool_job(
 }
 
 pub(super) async fn execute_tool_job<F, Fut>(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    claim_id: &str,
+    context: &AgentToolContext,
     kind: &str,
-    tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
     operation: F,
 ) -> Result<serde_json::Value, ToolExecutionError>
@@ -229,14 +231,13 @@ where
     F: FnOnce(WorkspaceCancellation) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
-    let assignment = tool_call_tracker
+    let assignment = context
+        .tool_call_tracker
         .claim_dispatch(kind, &payload)
         .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
     execute_tool_job_with_assignment(
-        runtime,
+        context,
         assignment,
-        run_id,
-        claim_id,
         kind,
         payload,
         |cancellation, _job_id| operation(cancellation),
@@ -245,11 +246,8 @@ where
 }
 
 pub(super) async fn execute_tool_job_with_id<F, Fut>(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    claim_id: &str,
+    context: &AgentToolContext,
     kind: &str,
-    tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
     operation: F,
 ) -> Result<serde_json::Value, ToolExecutionError>
@@ -257,20 +255,16 @@ where
     F: FnOnce(WorkspaceCancellation, String) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
-    let assignment = tool_call_tracker
+    let assignment = context
+        .tool_call_tracker
         .claim_dispatch(kind, &payload)
         .ok_or_else(|| tool_failure("tool dispatch is missing its invocation assignment"))?;
-    execute_tool_job_with_assignment(
-        runtime, assignment, run_id, claim_id, kind, payload, operation,
-    )
-    .await
+    execute_tool_job_with_assignment(context, assignment, kind, payload, operation).await
 }
 
 async fn execute_tool_job_with_assignment<F, Fut>(
-    runtime: &RuntimeClient,
+    context: &AgentToolContext,
     assignment: ToolInvocationAssignment,
-    run_id: &str,
-    claim_id: &str,
     kind: &str,
     payload: serde_json::Value,
     operation: F,
@@ -279,9 +273,13 @@ where
     F: FnOnce(WorkspaceCancellation, String) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
-    eprintln!("sprocket-agent: starting tool {} for run {}", kind, run_id);
-    let mut run_updates = runtime
-        .run_finished_subscription(run_id)
+    eprintln!(
+        "sprocket-agent: starting tool {} for run {}",
+        kind, context.run_id
+    );
+    let mut run_updates = context
+        .runtime
+        .run_finished_subscription(&context.run_id)
         .await
         .map_err(tool_error)?;
     let initial_update = run_updates
@@ -294,7 +292,7 @@ where
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(runtime, run_id, claim_id, kind, assignment, &payload).await?;
+    let job_id = begin_executor_job(context, kind, assignment, &payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
     let operation = operation(cancellation.clone(), job_id.clone());
@@ -313,7 +311,10 @@ where
                     Ok(true) => {
                         cancellation.cancel();
                         let _ = operation.await;
-                        eprintln!("sprocket-agent: cancelled tool {} for run {}", kind, run_id);
+                        eprintln!(
+                            "sprocket-agent: cancelled tool {} for run {}",
+                            kind, context.run_id
+                        );
                         return Err(cancelled_error());
                     }
                     Err(error) => {
@@ -329,16 +330,20 @@ where
 
     match operation_result {
         Ok(output) => {
-            eprintln!("sprocket-agent: completed tool {} for run {}", kind, run_id);
+            eprintln!(
+                "sprocket-agent: completed tool {} for run {}",
+                kind, context.run_id
+            );
             let mut complete_args = BTreeMap::new();
             complete_args.insert("jobId".to_string(), job_id.into());
-            complete_args.insert("runId".to_string(), run_id.to_string().into());
-            complete_args.insert("claimId".to_string(), claim_id.to_string().into());
+            complete_args.insert("runId".to_string(), context.run_id.clone().into());
+            complete_args.insert("claimId".to_string(), context.claim_id.clone().into());
             complete_args.insert(
                 "result".to_string(),
                 Value::try_from(output.clone()).map_err(tool_error)?,
             );
-            let accepted: bool = runtime
+            let accepted: bool = context
+                .runtime
                 .mutation_json("executor:complete", complete_args)
                 .await
                 .map_err(tool_error)?;
@@ -351,7 +356,7 @@ where
         Err(error) => {
             eprintln!(
                 "sprocket-agent: failed tool {} for run {}: {}",
-                kind, run_id, error
+                kind, context.run_id, error
             );
             // Terminal runs already cancel claimed jobs via
             // cancelExecutorJobsForTerminalRun and Workpool cancel in
@@ -361,10 +366,11 @@ where
             }
             let mut fail_args = BTreeMap::new();
             fail_args.insert("jobId".to_string(), job_id.into());
-            fail_args.insert("runId".to_string(), run_id.to_string().into());
-            fail_args.insert("claimId".to_string(), claim_id.to_string().into());
+            fail_args.insert("runId".to_string(), context.run_id.clone().into());
+            fail_args.insert("claimId".to_string(), context.claim_id.clone().into());
             fail_args.insert("error".to_string(), error.to_string().into());
-            let accepted: bool = runtime
+            let accepted: bool = context
+                .runtime
                 .mutation_json("executor:fail", fail_args)
                 .await
                 .map_err(tool_error)?;
