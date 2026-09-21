@@ -1,12 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
+import { closeConvex } from 'convex-svelte';
 import PromptComposer from './prompt-composer.svelte';
-
-vi.mock('convex-svelte', async (importOriginal) => ({
-	...(await importOriginal<typeof import('convex-svelte')>()),
-	useAuth: () => ({ isAuthenticated: false, isLoading: false }),
-	useQuery: () => ({ data: undefined, error: undefined })
-}));
+import PromptComposerTestHarness from './prompt-composer-test-harness.svelte';
 
 let cleanup: (() => Promise<void>) | undefined;
 
@@ -14,6 +10,7 @@ afterEach(async () => {
 	await cleanup?.();
 	cleanup = undefined;
 	document.body.replaceChildren();
+	await closeConvex();
 });
 
 function renderComposer(overrides: Partial<ComponentProps<typeof PromptComposer>> = {}) {
@@ -31,7 +28,10 @@ function renderComposer(overrides: Partial<ComponentProps<typeof PromptComposer>
 		onCancel: vi.fn(),
 		...overrides
 	} satisfies ComponentProps<typeof PromptComposer>);
-	const component = mount(PromptComposer, { target: document.body, props });
+	const component = mount(PromptComposerTestHarness, {
+		target: document.body,
+		props: { composerProps: props }
+	});
 	cleanup = () => unmount(component);
 	flushSync();
 	const composer = document.querySelector<HTMLElement>('[aria-label="Message composer"]');
@@ -44,11 +44,15 @@ function dataTransfer(
 	files: File[] = [],
 	dropEffect: DataTransfer['dropEffect'] = 'none'
 ) {
-	return { types, files, dropEffect } as unknown as DataTransfer;
+	return { types, files, dropEffect };
 }
 
-function dispatchDrag(target: HTMLElement, type: string, transfer: DataTransfer) {
-	const event = new Event(type, { bubbles: true, cancelable: true }) as DragEvent;
+function dispatchDrag(
+	target: HTMLElement,
+	type: string,
+	transfer: ReturnType<typeof dataTransfer>
+) {
+	const event = new Event(type, { bubbles: true, cancelable: true });
 	Object.defineProperties(event, {
 		dataTransfer: { value: transfer },
 		relatedTarget: { value: null }
