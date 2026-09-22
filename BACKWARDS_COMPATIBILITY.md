@@ -4,17 +4,26 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Convex Backwards Compatibility
 
+### Retired repository rekey calls
+
+Released local servers may still call `threads.rekeyRepository`, and deployments
+may have queued `artifacts.continueRekey` jobs. Both functions are no-ops. They
+must not move threads or artifacts when a checkout's remote changes. Remove
+them after clients containing automatic repository rekeying have aged out and
+no queued continuation jobs remain.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-09` once the migrations component reports every migration finished.
+The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10` once the migrations component reports every migration finished.
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
 `convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last
-covered part number), and `removeSectionLinkedParts`.
+covered part number), `removeSectionLinkedParts`, and
+`removeArtifactRegistryRekeyTargets`.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
@@ -23,7 +32,10 @@ the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
 jobs and transcript tool parts and drop `jobId` and its pairing fallback;
 normalize or require stored completion timing; drop stored `imageUploadId`; drop
 `contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
-remove the backfill cron and its `migrationSchedules` row and table.
+drop `artifactRegistries.rekeyTo`. The optional field remains in the schema
+until the migration has completed and production scans find no rows that use
+it. That PR may also remove the backfill cron and its `migrationSchedules` row
+and table.
 
 ### Outdated Executor jobs
 

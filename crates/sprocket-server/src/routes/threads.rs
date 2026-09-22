@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use anyhow::anyhow;
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -21,14 +20,6 @@ struct UserRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RekeyRequest {
-    user_id: String,
-    from: String,
-    to: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CancelRequest {
     user_id: String,
     run_id: String,
@@ -41,16 +32,8 @@ struct LifecycleRequest {
     thread_id: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RekeyResult {
-    user_id: String,
-    count: u64,
-}
-
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/threads/rekey", post(rekey_handler))
         .route("/threads/lifecycle", post(lifecycle_handler))
         .route("/threads/cancel", post(cancel_handler))
         .route(
@@ -98,29 +81,6 @@ fn thread_args(thread_id: String) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), Value::String(thread_id))])
 }
 
-async fn rekey_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<RekeyRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    let args = BTreeMap::from([
-        ("from".into(), Value::String(payload.from)),
-        ("to".into(), Value::String(payload.to)),
-    ]);
-    let result: RekeyResult = client(&state, &payload.user_id)
-        .await?
-        .mutate("threads:rekeyRepository", args)
-        .await
-        .map_err(ApiError::bad_request)?;
-    if result.user_id != payload.user_id {
-        return Err(ApiError::bad_request(anyhow!(
-            "thread command account does not match the requested account"
-        )));
-    }
-    Ok(Json(serde_json::json!(result.count)))
-}
 async fn lifecycle_handler(
     State(state): State<AppState>,
     headers: HeaderMap,

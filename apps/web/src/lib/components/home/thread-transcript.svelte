@@ -45,8 +45,6 @@
 		actions: ExecutorJob[];
 		activeRunId: TranscriptMessage['runId'] | null;
 		project: Project | null;
-		remoteChangeNotice?: string | null;
-		onDismissRemoteChangeNotice?: () => void;
 		emptyStateMessage?: string;
 		stale?: boolean;
 		loadingOlder?: boolean;
@@ -69,8 +67,6 @@
 		actions,
 		activeRunId,
 		project,
-		remoteChangeNotice = null,
-		onDismissRemoteChangeNotice,
 		emptyStateMessage = project
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 			: 'Add a project to begin.',
@@ -83,7 +79,6 @@
 		artifacts = [],
 		onOpenArtifact
 	}: Props = $props();
-	const firstPromptMessageId = $derived(messages.find((message) => message.kind === 'prompt')?.id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let scrollContent = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
@@ -487,8 +482,6 @@
 							<TranscriptPromptMessage
 								{message}
 								copied={copiedMessageId === message.id}
-								remoteChangeNotice={message.id === firstPromptMessageId ? remoteChangeNotice : null}
-								{onDismissRemoteChangeNotice}
 								{loadAttachment}
 								onCopy={() => void copyUserMessage(message.id, message.text ?? '')}
 								onOpenImage={(image) => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import {
 	buildDesktopProjectAttachmentsByPath,
+	findCanonicalProjectAttachment,
 	launchAgentRun,
 	resolveSubmissionId,
 	upsertDesktopProjectAttachment
@@ -54,7 +55,6 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		uploadTranscriptAttachment: unusedDesktopCall,
 		discardTranscriptAttachment: unusedDesktopCall,
 		watchArtifacts: unusedDesktopCall,
-		rekeyRepository: unusedDesktopCall,
 		requestRunCancellation: unusedDesktopCall,
 		startAccountSession: unusedDesktopCall,
 		endAccountSession: unusedDesktopCall
@@ -257,6 +257,24 @@ describe('local project attachments', () => {
 		]);
 
 		expect(Object.keys(indexed)).toEqual(['/clients/acme', '/archive/acme']);
+	});
+
+	it('finds the surviving attachment after a changed repository is deduplicated', () => {
+		const canonical = projectAttachment('/worktrees/existing', 'github.com/acme/replacement', 1);
+		const attachments = { '/worktrees/existing': canonical };
+
+		expect(
+			findCanonicalProjectAttachment(attachments, {
+				workspacePath: '/worktrees/changed',
+				repositoryKey: 'github.com/acme/replacement'
+			})
+		).toBe(canonical);
+		expect(
+			findCanonicalProjectAttachment(attachments, {
+				workspacePath: '/worktrees/changed',
+				repositoryKey: 'github.com/acme/original'
+			})
+		).toBeUndefined();
 	});
 
 	it('replaces the displayed directory when the same repository is attached again', () => {

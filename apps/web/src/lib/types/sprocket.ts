@@ -293,7 +293,6 @@ export type DesktopApi = {
 			signal: AbortSignal;
 		}
 	) => Promise<void>;
-	rekeyRepository: (request: LocalUserRequest & { from: string; to: string }) => Promise<number>;
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;
 	endAccountSession: (request: LocalUserRequest) => Promise<void>;
@@ -319,5 +318,4 @@ export type ProjectAttachment = {
 	lastValidatedAt: number;
 	lastUsedAt: number;
 	unavailableReason?: string;
-	previousRepositoryKey?: string;
 };

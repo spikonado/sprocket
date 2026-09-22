@@ -311,6 +311,24 @@ describe('legacy compat backfill migrations', () => {
 		expect(section).not.toHaveProperty('linkedParts');
 	});
 
+	it('unsets artifact registry rekey targets', async () => {
+		const t = initConvexTest();
+		const registryId = await t.run((ctx) =>
+			ctx.db.insert('artifactRegistries', {
+				userId: 'user_alice',
+				repositoryKey: 'repository-a',
+				revision: 2,
+				rekeyTo: 'repository-b'
+			})
+		);
+
+		await t.mutation(internal.migrations.removeArtifactRegistryRekeyTargets, oneBatch);
+
+		const registry = await t.run((ctx) => ctx.db.get('artifactRegistries', registryId));
+		expect(registry).toMatchObject({ repositoryKey: 'repository-a', revision: 2 });
+		expect(registry).not.toHaveProperty('rekeyTo');
+	});
+
 	it('records completion through the automatic schedule', async () => {
 		vi.useFakeTimers();
 		try {
@@ -332,7 +350,7 @@ describe('legacy compat backfill migrations', () => {
 			const schedule = await t.run((ctx) =>
 				ctx.db.query('migrationSchedules').withIndex('by_name').unique()
 			);
-			expect(schedule).toMatchObject({ name: 'legacy-compat-backfill-2026-09' });
+			expect(schedule).toMatchObject({ name: 'legacy-compat-backfill-2026-10' });
 			expect(schedule?.completedAt).toBeDefined();
 			const states = await t.run((ctx) =>
 				ctx.db.query('threadTranscriptStates').withIndex('by_threadId').collect()

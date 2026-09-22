@@ -154,6 +154,24 @@ export function buildDesktopProjectAttachmentsByPath(
 	);
 }
 
+export function findCanonicalProjectAttachment(
+	attachmentsByPath: Record<string, ProjectAttachment>,
+	workspace: { workspacePath: string; repositoryKey: string }
+): ProjectAttachment | undefined {
+	const attachmentAtPath = attachmentsByPath[workspace.workspacePath];
+	if (
+		attachmentAtPath?.availability === 'available' &&
+		attachmentAtPath.repositoryKey === workspace.repositoryKey
+	) {
+		return attachmentAtPath;
+	}
+	return Object.values(attachmentsByPath).find(
+		(attachment) =>
+			attachment.availability === 'available' &&
+			attachment.repositoryKey === workspace.repositoryKey
+	);
+}
+
 export function upsertDesktopProjectAttachment(
 	desktopProjectAttachmentsByPath: Record<string, ProjectAttachment>,
 	attachment: ProjectAttachment,

@@ -6,7 +6,6 @@ import {
 	type MutationCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
-import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
@@ -214,63 +213,10 @@ async function writeArtifactFields(
 	};
 }
 
-export async function rekeyOwnedArtifacts(
-	ctx: MutationCtx,
-	userId: string,
-	from: string,
-	to: string
-): Promise<void> {
-	if (from === to) return;
-	await bumpRegistry(ctx, userId, from);
-	const source = await registryState(ctx, userId, from);
-	if (!source) throw new Error('Artifact registry not found.');
-	await ctx.db.patch('artifactRegistries', source._id, { rekeyTo: to });
-	const destination = await registryState(ctx, userId, to);
-	if (destination?.rekeyTo)
-		await ctx.db.patch('artifactRegistries', destination._id, { rekeyTo: undefined });
-	await rekeyArtifactBatch(ctx, userId, from, to);
-}
-
-async function rekeyArtifactBatch(
-	ctx: MutationCtx,
-	userId: string,
-	from: string,
-	to: string
-): Promise<void> {
-	if ((await registryState(ctx, userId, from))?.rekeyTo !== to) return;
-	let destination = to;
-	const visited = new Set([from]);
-	for (;;) {
-		if (visited.has(destination)) throw new Error('Artifact repository rename cycle.');
-		visited.add(destination);
-		const redirected = (await registryState(ctx, userId, destination))?.rekeyTo;
-		if (!redirected) break;
-		destination = redirected;
-	}
-	const artifacts = await ctx.db
-		.query('artifacts')
-		.withIndex('by_userId_and_repositoryKey_and_scope', (q) =>
-			q.eq('userId', userId).eq('repositoryKey', from)
-		)
-		.take(8);
-	for (const artifact of artifacts) {
-		await ctx.db.patch('artifacts', artifact._id, { repositoryKey: destination });
-	}
-	if (artifacts.length > 0) {
-		await bumpRegistry(ctx, userId, from);
-		await bumpRegistry(ctx, userId, destination);
-	}
-	if (artifacts.length === 8) {
-		await ctx.scheduler.runAfter(0, internal.artifacts.continueRekey, { userId, from, to });
-	}
-}
-
 export const continueRekey = internalMutation({
 	args: { userId: v.string(), from: v.string(), to: v.string() },
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		await rekeyArtifactBatch(ctx, args.userId, args.from, args.to);
-	}
+	handler: () => null
 });
 
 export const addArtifact = mutation({

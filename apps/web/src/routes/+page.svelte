@@ -41,6 +41,7 @@
 	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
+		findCanonicalProjectAttachment,
 		launchAgentRun,
 		lifecycleResumeKind,
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
@@ -264,9 +265,6 @@
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
 	let createThreadComposerElement = $state<HTMLElement | null>(null);
-	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
-	const REMOTE_CHANGE_NOTICE =
-		'This directory’s git remote changed. Existing threads now follow the new repository.';
 	function getCurrentUserId() {
 		return signedInUserId;
 	}
@@ -644,30 +642,14 @@
 
 		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
-		await rekeyChangedLocalRepositories(nextAttachments);
-	}
-
-	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
-		if (getAuthenticatedQueryArgs() === 'skip') {
-			return;
-		}
-		for (const attachment of Object.values(next)) {
-			const previousKey = attachment.previousRepositoryKey;
-			if (!previousKey || previousKey === attachment.repositoryKey) {
-				continue;
-			}
-			const siblingStillHasPreviousKey = Object.values(next).some(
-				(candidate) =>
-					candidate.workspacePath !== attachment.workspacePath &&
-					candidate.repositoryKey === previousKey
-			);
-			if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
-				await rekeyLocalRepository(previousKey, attachment.repositoryKey);
-			}
-			if (currentWorkspacePath === attachment.workspacePath) {
-				currentRepositoryKey = attachment.repositoryKey;
-			}
-			await attachLocalProject(attachment.workspacePath);
+		const selectedAttachment = currentWorkspacePath
+			? nextAttachments[currentWorkspacePath]
+			: undefined;
+		if (selectedAttachment && selectedAttachment.repositoryKey !== currentRepositoryKey) {
+			projectSelectionGeneration += 1;
+			currentRepositoryKey = selectedAttachment.repositoryKey;
+			currentThreadId = null;
+			pendingCreatedThreadId = null;
 		}
 	}
 
@@ -687,11 +669,6 @@
 			await api.endAccountSession({ userId }).catch(() => {});
 		}
 		await authSignOut();
-	}
-
-	async function rekeyLocalRepository(from: string, to: string) {
-		const { api, userId } = localThreadCommandContext();
-		await api.rekeyRepository({ userId, from, to });
 	}
 
 	$effect(() => {
@@ -845,18 +822,6 @@
 		);
 		if (getCurrentUserId() !== expectedUserId) {
 			return;
-		}
-		if (
-			previousProject &&
-			previousProject.repositoryKey !== selection.repositoryKey &&
-			getAuthenticatedQueryArgs() !== 'skip' &&
-			!projects.some(
-				(project) =>
-					project.workspacePath !== selection.workspacePath &&
-					project.repositoryKey === previousProject.repositoryKey
-			)
-		) {
-			await rekeyLocalRepository(previousProject.repositoryKey, selection.repositoryKey);
 		}
 		const keepThread =
 			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
@@ -1130,7 +1095,7 @@
 			return;
 		}
 
-		const workspacePath = currentProjectPath;
+		let workspacePath = currentProjectPath;
 		if (!workspacePath) {
 			currentError = 'Choose a project first.';
 			return;
@@ -1162,7 +1127,6 @@
 			currentError = 'Choose a project first.';
 			return;
 		}
-		let repositoryKeyChanged = false;
 		const submittedUserId = getCurrentUserId();
 		if (!submittedUserId) {
 			currentError = 'User session is not ready.';
@@ -1272,24 +1236,32 @@
 					return;
 				}
 				if (resolution.repositoryKey !== submittedRepositoryKey) {
-					await attachLocalProject(resolution.workspacePath);
+					await refreshDesktopProjectAttachments();
 					if (!isSubmissionCurrent()) {
 						return;
 					}
-					const siblingStillHasPreviousKey = projects.some(
-						(project) =>
-							project.workspacePath !== resolution.workspacePath &&
-							project.repositoryKey === submittedRepositoryKey
+					const canonicalAttachment = findCanonicalProjectAttachment(
+						desktopProjectAttachmentsByPath,
+						resolution
 					);
-					if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
-						await rekeyLocalRepository(submittedRepositoryKey, resolution.repositoryKey);
+					if (!canonicalAttachment) {
+						throw new Error('The repository changed and its project attachment is unavailable.');
 					}
-					if (!isSubmissionCurrent()) {
-						return;
+					workspacePath = canonicalAttachment.workspacePath;
+					submittedRepositoryKey = canonicalAttachment.repositoryKey;
+					setProjectSelection(workspacePath, null, true, true);
+					currentRepositoryKey = submittedRepositoryKey;
+
+					const nextSubmissionScope = `draft:${workspacePath}`;
+					if (nextSubmissionScope !== submissionScope) {
+						clearSubmittingPrompt(submissionScope, submissionSequence);
+						latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
+						submissionScope = nextSubmissionScope;
+						recoveryScope = nextSubmissionScope;
+						submissionTrackingKey = getComposerRecoveryKey(submittedUserId, nextSubmissionScope);
+						latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
+						submittingPromptScopes.set(submissionScope, submissionSequence);
 					}
-					submittedRepositoryKey = resolution.repositoryKey;
-					currentRepositoryKey = resolution.repositoryKey;
-					repositoryKeyChanged = true;
 				}
 			}
 
@@ -1377,8 +1349,6 @@
 						projectSelectionGeneration += 1;
 						currentThreadId = createdThreadId;
 						draftWorkspacePath = null;
-						if (repositoryKeyChanged)
-							remoteChangeNotices.set(createdThreadId, REMOTE_CHANGE_NOTICE);
 					}
 					composerAttachments.clear({ discard: false });
 					if (composerContinuationOfRunId === submittedContinuationOfRunId) {
@@ -1979,14 +1949,6 @@
 										tab: 'artifacts',
 										selectedKey: artifactId
 									});
-								}}
-								remoteChangeNotice={currentThreadId
-									? (remoteChangeNotices.get(currentThreadId) ?? null)
-									: null}
-								onDismissRemoteChangeNotice={() => {
-									if (currentThreadId) {
-										remoteChangeNotices.delete(currentThreadId);
-									}
 								}}
 								stale={transcript.stale}
 								loadingOlder={transcript.loadingOlder}

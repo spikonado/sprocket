@@ -36,8 +36,7 @@ const projectAttachmentSchema = z.object({
 	availability: z.enum(['available', 'unavailable']),
 	lastValidatedAt: z.int(),
 	lastUsedAt: z.int(),
-	unavailableReason: z.string().optional(),
-	previousRepositoryKey: z.string().optional()
+	unavailableReason: z.string().optional()
 });
 const agentRunStartSchema = z.object({
 	runId: z.string(),
@@ -471,11 +470,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				}
 			);
 		},
-		rekeyRepository: async (requestBody) =>
-			await request('/api/threads/rekey', z.int(), {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
 		requestRunCancellation: async (requestBody) => {
 			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',
