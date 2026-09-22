@@ -44,6 +44,20 @@ export const getDodoSubscriptionTier = internalQuery({
 	}
 });
 
+export const getCheckoutTier = internalQuery({
+	args: { userId: v.string(), attemptId: v.string(), productId: v.string() },
+	returns: v.union(v.string(), v.null()),
+	handler: async (ctx, { userId, attemptId, productId }) => {
+		const checkout = await ctx.db
+			.query('billingCheckoutSessions')
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.unique();
+		return checkout?.attemptId === attemptId && checkout.productId === productId
+			? (checkout.tierId ?? null)
+			: null;
+	}
+});
+
 export const getMySubscription = query({
 	args: {},
 	returns: v.object({
@@ -120,6 +134,7 @@ export const checkout = action({
 		const reserved = await ctx.runMutation(internal.billing.reserveCheckoutSession, {
 			userId: identity.subject,
 			attemptId: crypto.randomUUID(),
+			tierId: tier,
 			interval,
 			productId,
 			now: Date.now()
@@ -130,6 +145,7 @@ export const checkout = action({
 		const session = await ctx.runAction(internal.pricing.createCheckoutSession, {
 			attemptId: reserved.attemptId,
 			userId: identity.subject,
+			tierId: tier,
 			productId: reserved.productId,
 			interval: reserved.interval,
 			returnUrl: return_url,
@@ -154,6 +170,7 @@ export const reserveCheckoutSession = internalMutation({
 	args: {
 		userId: v.string(),
 		attemptId: v.string(),
+		tierId: v.string(),
 		interval: vBillingInterval,
 		productId: v.string(),
 		now: v.number()
@@ -178,11 +195,16 @@ export const reserveCheckoutSession = internalMutation({
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
 		if (existing && existing.expiresAt > args.now) {
-			if (existing.interval !== args.interval || existing.productId !== args.productId) {
+			if (
+				(existing.tierId && existing.tierId !== args.tierId) ||
+				existing.interval !== args.interval ||
+				existing.productId !== args.productId
+			) {
 				throw new Error(
 					`A ${existing.interval} checkout is still active. Try that plan again or change plans after it expires.`
 				);
 			}
+			if (!existing.tierId) await ctx.db.patch(existing._id, { tierId: args.tierId });
 			return existing.checkoutUrl
 				? { kind: 'existing' as const, checkoutUrl: existing.checkoutUrl }
 				: {
@@ -196,6 +218,7 @@ export const reserveCheckoutSession = internalMutation({
 		const reservation = {
 			userId: args.userId,
 			attemptId: args.attemptId,
+			tierId: args.tierId,
 			interval: args.interval,
 			productId: args.productId,
 			expiresAt: args.now + CHECKOUT_SESSION_TTL_MS

@@ -8,6 +8,7 @@ import {
 	tierForProductId,
 	type ProProductIds
 } from '@convex/lib/dodoProducts';
+import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import { initConvexTest } from './test.setup';
 
@@ -163,6 +164,7 @@ describe('Dodo subscription persistence', () => {
 		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_checkout',
 			attemptId: 'attempt_1',
+			tierId: 'pro',
 			interval: 'monthly',
 			productId: 'prod_monthly',
 			now: 1_000
@@ -178,15 +180,34 @@ describe('Dodo subscription persistence', () => {
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_2',
+				tierId: 'pro',
 				interval: 'monthly',
 				productId: 'prod_monthly',
 				now: 2_000
 			})
 		).resolves.toEqual(first);
 		await expect(
+			t.query(internal.billing.getCheckoutTier, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_1',
+				productId: 'prod_monthly'
+			})
+		).resolves.toBe('pro');
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_team',
+				tierId: 'team',
+				interval: 'monthly',
+				productId: 'prod_monthly',
+				now: 2_000
+			})
+		).rejects.toThrow('A monthly checkout is still active.');
+		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_3',
+				tierId: 'pro',
 				interval: 'annual',
 				productId: 'prod_annual',
 				now: 2_000
@@ -202,6 +223,7 @@ describe('Dodo subscription persistence', () => {
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_4',
+				tierId: 'pro',
 				interval: 'annual',
 				productId: 'prod_annual',
 				now: 3_000
@@ -212,6 +234,7 @@ describe('Dodo subscription persistence', () => {
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_5',
+				tierId: 'pro',
 				interval: 'monthly',
 				productId: 'prod_monthly',
 				now: 4_000
@@ -222,11 +245,49 @@ describe('Dodo subscription persistence', () => {
 		});
 	});
 
+	it('backfills the tier on a matching legacy checkout reservation', async () => {
+		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('billingCheckoutSessions', {
+				userId: 'user_legacy',
+				attemptId: 'attempt_legacy',
+				interval: 'monthly',
+				productId: 'prod_team_monthly',
+				expiresAt: 10_000
+			});
+		});
+
+		await t.mutation(internal.billing.reserveCheckoutSession, {
+			userId: 'user_legacy',
+			attemptId: 'attempt_retry',
+			tierId: 'team',
+			interval: 'monthly',
+			productId: 'prod_team_monthly',
+			now: 2_000
+		});
+
+		await expect(
+			t.query(internal.billing.getCheckoutTier, {
+				userId: 'user_legacy',
+				attemptId: 'attempt_legacy',
+				productId: 'prod_team_monthly'
+			})
+		).resolves.toBe('team');
+		await expect(
+			t.query(internal.billing.getCheckoutTier, {
+				userId: 'user_legacy',
+				attemptId: 'another_attempt',
+				productId: 'prod_team_monthly'
+			})
+		).resolves.toBeNull();
+	});
+
 	it('replaces an expired checkout reservation', async () => {
 		const t = initConvexTest();
 		await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_checkout',
 			attemptId: 'attempt_1',
+			tierId: 'pro',
 			interval: 'monthly',
 			productId: 'prod_monthly',
 			now: 1_000
@@ -244,6 +305,7 @@ describe('Dodo subscription persistence', () => {
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_2',
+				tierId: 'pro',
 				interval: 'annual',
 				productId: 'prod_annual',
 				now: 2_000
@@ -271,6 +333,7 @@ describe('Dodo subscription persistence', () => {
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_pro',
 				attemptId: 'attempt_1',
+				tierId: 'pro',
 				interval: 'monthly',
 				productId: 'prod_monthly',
 				now: 2_000
@@ -283,6 +346,7 @@ describe('Dodo subscription persistence', () => {
 		await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_1',
 			attemptId: 'attempt_1',
+			tierId: 'team',
 			interval: 'monthly',
 			productId: 'prod_monthly',
 			now: 1_000
@@ -403,5 +467,53 @@ describe('Dodo subscription persistence', () => {
 		await expect(
 			t.withIdentity({ subject: 'user_max' }).query(api.billing.getMySubscription, {})
 		).resolves.toMatchObject({ tier: 'max', billingManaged: false });
+	});
+});
+
+describe('Dodo subscription tier resolution', () => {
+	it('keeps the purchase-time tier after a product is remapped', () => {
+		expect(
+			resolveSubscriptionTier({
+				checkoutTier: 'team',
+				metadataTier: 'team',
+				existingTier: null,
+				configuredTier: 'max',
+				legacyTier: undefined
+			})
+		).toBe('team');
+		expect(
+			resolveSubscriptionTier({
+				checkoutTier: null,
+				metadataTier: undefined,
+				existingTier: 'team',
+				configuredTier: 'max',
+				legacyTier: undefined
+			})
+		).toBe('team');
+	});
+
+	it('rejects conflicting checkout and signed metadata tiers', () => {
+		expect(() =>
+			resolveSubscriptionTier({
+				checkoutTier: 'team',
+				metadataTier: 'max',
+				existingTier: null,
+				configuredTier: 'max',
+				legacyTier: undefined
+			})
+		).toThrow('Dodo subscription tier metadata does not match its checkout reservation.');
+	});
+
+	it('uses the current product tier for an explicit Dodo plan change', () => {
+		expect(
+			resolveSubscriptionTier({
+				checkoutTier: null,
+				metadataTier: 'team',
+				existingTier: 'team',
+				configuredTier: 'max',
+				legacyTier: undefined,
+				preferConfiguredTier: true
+			})
+		).toBe('max');
 	});
 });
