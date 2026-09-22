@@ -38,7 +38,10 @@ async function persistSubscription(
 		console.error('Ignoring Dodo subscription without a Sprocket user.', data.subscription_id);
 		return;
 	}
-	const configuredTier = tierForProductId(data.product_id);
+	const storedTier: string | null = await ctx.runQuery(internal.pricingData.getTierForProduct, {
+		productId: data.product_id
+	});
+	const configuredTier = storedTier ?? tierForProductId(data.product_id);
 	const existingTier =
 		!configuredTier && status !== 'active'
 			? await ctx.runQuery(internal.billing.getDodoSubscriptionTier, {

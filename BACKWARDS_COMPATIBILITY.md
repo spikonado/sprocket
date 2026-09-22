@@ -358,6 +358,16 @@ confirm no rows contain it. Only then remove the schema field and migration.
 `ownActive`, `ownStatus`, and `activeDescendantCount` are not covered by this
 removal gate: they still support incremental updates and pending-question activity.
 
+### Legacy Pro billing configuration
+
+Convex still reads `DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID` and
+`DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID` when the corresponding product ID is
+missing from the `pro` row in `tiers`. The public pricing response also retains
+the old `proPrices` field while current clients read per-tier `prices`.
+
+Remove both fallbacks after every production deployment has both product IDs on
+the `pro` tier row and all deployed pricing clients read `plans[].prices`.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
