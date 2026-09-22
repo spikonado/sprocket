@@ -79,6 +79,7 @@ export default defineSchema({
 	billingCheckoutSessions: defineTable({
 		userId: v.string(),
 		attemptId: v.string(),
+		tierId: v.optional(v.string()),
 		interval: vBillingInterval,
 		productId: v.string(),
 		checkoutUrl: v.optional(v.string()),

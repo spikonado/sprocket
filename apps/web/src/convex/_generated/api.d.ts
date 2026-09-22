@@ -38,6 +38,7 @@ import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_dodoProducts from "../lib/dodoProducts.js";
+import type * as lib_dodoSubscription from "../lib/dodoSubscription.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
 import type * as lib_firecrawlPools from "../lib/firecrawlPools.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
@@ -128,6 +129,7 @@ declare const fullApi: ApiFromModules<{
   "lib/contextHandoff": typeof lib_contextHandoff;
   "lib/docs": typeof lib_docs;
   "lib/dodoProducts": typeof lib_dodoProducts;
+  "lib/dodoSubscription": typeof lib_dodoSubscription;
   "lib/executorJobs": typeof lib_executorJobs;
   "lib/firecrawlPools": typeof lib_firecrawlPools;
   "lib/gatewayFetch": typeof lib_gatewayFetch;

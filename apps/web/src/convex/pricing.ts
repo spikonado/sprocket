@@ -115,6 +115,7 @@ export const createCheckoutSession = internalAction({
 	args: {
 		attemptId: v.string(),
 		userId: v.string(),
+		tierId: v.string(),
 		productId: v.string(),
 		interval: vBillingInterval,
 		returnUrl: v.string(),
@@ -131,7 +132,11 @@ export const createCheckoutSession = internalAction({
 		const session = await client.checkoutSessions.create(
 			{
 				product_cart: [{ product_id: args.productId, quantity: 1 }],
-				metadata: { userId: args.userId },
+				metadata: {
+					userId: args.userId,
+					tierId: args.tierId,
+					checkoutAttemptId: args.attemptId
+				},
 				return_url: args.returnUrl,
 				cancel_url: args.cancelUrl,
 				feature_flags: { allow_discount_code: true },

@@ -78,6 +78,12 @@ the old `proPrices` field while current clients read per-tier `prices`.
 Remove both fallbacks after every production deployment has both product IDs on
 the `pro` tier row and all deployed pricing clients read `plans[].prices`.
 
+Checkout reservations created before dynamic tiers omit `tierId`. Their
+product-to-tier lookup remains as a fallback because their Dodo metadata also
+omits the checkout attempt ID. This fallback lasts for the 24-hour checkout lifetime.
+Require `tierId` in the stored schema after all reservations created before this
+change have expired.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
