@@ -26,9 +26,6 @@ pub struct ProjectAttachmentRecord {
     pub last_used_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
-    /// Last persisted key when git identity changed, until the client rekeys threads.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_repository_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,7 +128,7 @@ impl ProjectAttachmentStore {
         workspace_path: String,
     ) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
-        let mut resolved = resolve_attachment(workspace_path).await?;
+        let resolved = resolve_attachment(workspace_path).await?;
         let _update_guard = self.update_lock.lock().await;
         let changed = {
             let mut attachments = self.attachments.write().await;
@@ -143,7 +140,6 @@ impl ProjectAttachmentStore {
 
             match existing {
                 Some(existing) => {
-                    resolved.previous_repository_key = existing.previous_repository_key;
                     if existing.workspace_path == resolved.workspace_path {
                         attachments.insert(resolved.workspace_path.clone(), resolved.clone());
                         changed = true;
@@ -213,22 +209,35 @@ impl ProjectAttachmentStore {
 
         tokio::fs::create_dir_all(&self.data_dir).await?;
         let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
-        if tokio::fs::try_exists(&store_path).await? {
+        let store_exists = tokio::fs::try_exists(&store_path).await?;
+        let mut should_save = false;
+        if store_exists {
             let contents = tokio::fs::read_to_string(&store_path)
                 .await
                 .with_context(|| format!("failed to read {}", store_path.display()))?;
-            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_str(&contents)
+            let stored_json: serde_json::Value = serde_json::from_str(&contents)
+                .with_context(|| "failed to parse project attachments")?;
+            should_save = stored_json.as_array().is_some_and(|attachments| {
+                attachments
+                    .iter()
+                    .any(|attachment| attachment.get("previousRepositoryKey").is_some())
+            });
+            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_value(stored_json)
                 .with_context(|| "failed to parse project attachments")?;
             let mut sessions = self.attachments.write().await;
             for attachment in stored {
                 if attachment.workspace_path.trim().is_empty() {
                     continue;
                 }
-                let record = validate_session_path(attachment);
+                let record = validate_session_path(attachment.clone());
+                should_save |= session_record_changed(&attachment, &record);
                 sessions.insert(record.workspace_path.clone(), record);
             }
         }
 
+        if should_save {
+            self.save_to_disk().await?;
+        }
         *loaded = true;
         Ok(())
     }
@@ -392,10 +401,6 @@ fn mark_available(
     ProjectAttachmentRecord {
         workspace_path: resolution.workspace_path,
         attachment_key: resolution.attachment_key,
-        previous_repository_key: previous_repository_key_after_resolve(
-            &session,
-            &resolution.repository_key,
-        ),
         repository_key: resolution.repository_key,
         display_name: resolution.display_name,
         availability: WorkspaceAvailability::Available,
@@ -407,21 +412,7 @@ fn mark_available(
 
 pub(crate) fn repository_key_matches(record: &ProjectAttachmentRecord, requested: &str) -> bool {
     let requested = requested.trim();
-    !requested.is_empty()
-        && (record.repository_key == requested
-            || record.previous_repository_key.as_deref() == Some(requested))
-}
-
-fn previous_repository_key_after_resolve(
-    session: &ProjectAttachmentRecord,
-    new_key: &str,
-) -> Option<String> {
-    let candidate = if !session.repository_key.is_empty() && session.repository_key != new_key {
-        Some(session.repository_key.clone())
-    } else {
-        session.previous_repository_key.clone()
-    };
-    candidate.filter(|key| !key.is_empty() && key != new_key)
+    !requested.is_empty() && record.repository_key == requested
 }
 
 fn mark_unavailable(
@@ -467,7 +458,6 @@ fn session_record_changed(
     previous.workspace_path != current.workspace_path
         || previous.repository_key != current.repository_key
         || previous.attachment_key != current.attachment_key
-        || previous.previous_repository_key != current.previous_repository_key
         || previous.display_name != current.display_name
         || previous.availability != current.availability
         || previous.unavailable_reason != current.unavailable_reason
@@ -492,7 +482,6 @@ async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentR
         last_validated_at: now,
         last_used_at: now,
         unavailable_reason: None,
-        previous_repository_key: None,
     })
     .await?;
 
@@ -556,7 +545,6 @@ mod tests {
             last_validated_at: last_used_at,
             last_used_at,
             unavailable_reason: None,
-            previous_repository_key: None,
         }
     }
 
@@ -996,7 +984,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_keeps_the_previous_repository_key_when_git_identity_changes() {
+    async fn list_replaces_the_repository_key_when_git_identity_changes() {
         let temp_root = std::env::temp_dir().join(format!(
             "sprocket-project-attachments-rekey-{}",
             crate::now_ms()
@@ -1019,7 +1007,8 @@ mod tests {
                 "displayName": "checkout",
                 "availability": "available",
                 "lastValidatedAt": 1,
-                "lastUsedAt": 2
+                "lastUsedAt": 2,
+                "previousRepositoryKey": "older-key"
             }])
             .to_string(),
         )
@@ -1031,10 +1020,18 @@ mod tests {
             .expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].repository_key, "github.com/spikonado/sprocket");
-        assert_eq!(
-            listed[0].previous_repository_key.as_deref(),
-            Some("previous-key")
-        );
+        assert!(!repository_key_matches(&listed[0], "previous-key"));
+        assert!(repository_key_matches(
+            &listed[0],
+            "github.com/spikonado/sprocket"
+        ));
+
+        let persisted: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(temp_root.join(PROJECT_ATTACHMENTS_FILE))
+                .expect("read attachments"),
+        )
+        .expect("parse attachments");
+        assert_eq!(persisted[0].get("previousRepositoryKey"), None);
 
         let _ = fs::remove_dir_all(temp_root);
     }

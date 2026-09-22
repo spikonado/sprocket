@@ -2,7 +2,31 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Local data directory backwards compatibility
+
+### Retired repository rekey metadata
+
+Older servers may have written `previousRepositoryKey` into
+`project-attachments.json`. The current attachment record does not deserialize
+or use that field. On the first successful attachment load, the server inspects
+the raw JSON for it and forces a save, which rewrites the file without the
+field. The rewrite also persists any changes made while validating the stored
+attachments.
+
+After releases that wrote `previousRepositoryKey` are outside the supported
+direct-upgrade window, remove the raw JSON field-presence check and its legacy
+JSON test fixture. Keep the save triggered by attachment validation changes.
+
 ## Convex Backwards Compatibility
+
+### Retired repository rekey calls
+
+Released local servers may still call `threads.rekeyRepository`, and deployments
+may have queued `artifacts.continueRekey` jobs. Both functions are no-ops. They
+must not move threads or artifacts when a checkout's remote changes. Remove
+both functions and their no-op compatibility tests after clients containing
+automatic repository rekeying have aged out and no queued continuation jobs
+remain.
 
 ### Standalone thread usage writes
 
@@ -15,14 +39,15 @@ using it have aged out, then remove the mutation and its direct tests.
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-09` once the migrations component reports every migration finished.
+The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10` once the migrations component reports every migration finished.
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
 `convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last
-covered part number), and `removeSectionLinkedParts`.
+covered part number), `removeSectionLinkedParts`, and
+`removeArtifactRegistryRekeyTargets`.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
@@ -31,7 +56,12 @@ the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
 jobs and transcript tool parts and drop `jobId` and its pairing fallback;
 normalize or require stored completion timing; drop stored `imageUploadId`; drop
 `contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
-remove the backfill cron and its `migrationSchedules` row and table.
+drop `artifactRegistries.rekeyTo`. The optional field remains in the schema
+until the migration has completed and production scans find no rows that use
+it. At that point, also remove `removeArtifactRegistryRekeyTargets`, its test,
+and its entry in the migration sequence. After every migration in the sequence
+meets its removal gate, remove the backfill cron, runner, tests, and the
+`migrationSchedules` row and table.
 
 ### Outdated Executor jobs
 

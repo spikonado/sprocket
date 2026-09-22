@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { api, internal } from '@convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
 	createQueuedRun,
@@ -220,7 +220,7 @@ describe('cloud artifacts', () => {
 		}
 	});
 
-	it('pages more than 16 MB of content and follows chained repository rekeys', async () => {
+	it('pages more than 16 MB of content', async () => {
 		const { t, asUser, repositoryKey } = await seedActiveRun();
 		for (let i = 0; i < 36; i++) {
 			await t.run(async (ctx) => {
@@ -252,23 +252,5 @@ describe('cloud artifacts', () => {
 		}
 		expect(count).toBe(36);
 		expect(pages).toBeGreaterThan(4);
-		await asUser.mutation(api.threads.rekeyRepository, {
-			from: repositoryKey,
-			to: 'beta'
-		});
-		await asUser.mutation(api.threads.rekeyRepository, { from: 'beta', to: 'gamma' });
-		for (let i = 0; i < 5; i++)
-			await t.mutation(internal.artifacts.continueRekey, {
-				userId: 'user_alice',
-				from: repositoryKey,
-				to: 'beta'
-			});
-		expect((await asUser.query(api.artifacts.listArtifacts, { repositoryKey })).page).toEqual([]);
-		expect(
-			(await asUser.query(api.artifacts.listArtifacts, { repositoryKey: 'beta' })).page
-		).toEqual([]);
-		expect(
-			(await asUser.query(api.artifacts.listArtifacts, { repositoryKey: 'gamma' })).page.length
-		).toBeGreaterThan(0);
 	}, 15_000);
 });

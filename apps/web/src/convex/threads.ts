@@ -1,7 +1,6 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { rekeyOwnedArtifacts } from '@convex/artifacts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
@@ -35,30 +34,6 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
 	return { userId, record };
-}
-
-async function rekeyOwnedThreads(ctx: MutationCtx, fromArg: string, toArg: string) {
-	const userId = await getUserId(ctx);
-	const from = fromArg.trim();
-	const to = toArg.trim();
-	if (from.length === 0 || to.length === 0) {
-		throw new Error('Repository key is required.');
-	}
-	if (from === to) {
-		return { userId, from, to, count: 0 };
-	}
-
-	const threads = await ctx.db
-		.query('threadRecords')
-		.withIndex('by_userId_repositoryKey', (query) =>
-			query.eq('userId', userId).eq('repositoryKey', from)
-		)
-		.collect();
-	for (const thread of threads) {
-		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
-	}
-	await rekeyOwnedArtifacts(ctx, userId, from, to);
-	return { userId, from, to, count: threads.length };
 }
 
 export const setSelectedModel = mutation({
@@ -132,5 +107,10 @@ export const rekeyRepository = mutation({
 		to: v.string()
 	},
 	returns: v.object({ userId: v.string(), from: v.string(), to: v.string(), count: v.number() }),
-	handler: async (ctx, args) => await rekeyOwnedThreads(ctx, args.from, args.to)
+	handler: async (ctx, args) => ({
+		userId: await getUserId(ctx),
+		from: args.from.trim(),
+		to: args.to.trim(),
+		count: 0
+	})
 });

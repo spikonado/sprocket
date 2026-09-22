@@ -169,6 +169,14 @@ export const removeSectionLinkedParts = migrations.define({
 	}
 });
 
+export const removeArtifactRegistryRekeyTargets = migrations.define({
+	table: 'artifactRegistries',
+	migrateOne: async (_ctx, registry) => {
+		if (registry.rekeyTo === undefined) return;
+		return { rekeyTo: undefined };
+	}
+});
+
 const legacyCompatBackfillMigrations = [
 	internal.migrations.removeTranscriptStateWorkThrough,
 	internal.migrations.removeMandateSetupUserEmail,
@@ -178,12 +186,13 @@ const legacyCompatBackfillMigrations = [
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
 	internal.migrations.convertContextHandoffCutoffs,
-	internal.migrations.removeSectionLinkedParts
+	internal.migrations.removeSectionLinkedParts,
+	internal.migrations.removeArtifactRegistryRekeyTargets
 ];
 
 export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMigrations);
 
-const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-09';
+const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10';
 
 export const runLegacyCompatBackfillAutomatically = internalMutation({
 	args: {},
