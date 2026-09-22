@@ -18,11 +18,9 @@ function page(
 }
 
 function history(
-	load: (cursor: TranscriptDetailCursor, signal: AbortSignal) => Promise<TranscriptDisplayDetails>,
-	latest = false
+	load: (cursor: TranscriptDetailCursor, signal: AbortSignal) => Promise<TranscriptDisplayDetails>
 ) {
 	return new WorkDetails(
-		latest,
 		load,
 		() => {},
 		async (update) => {
@@ -36,26 +34,26 @@ afterEach(() => {
 });
 
 describe('WorkDetails', () => {
-	it('keeps both ends of an active section and refreshes from a fixed start, not a sliding latest page', async () => {
+	it('loads work oldest first and refreshes from that fixed start', async () => {
 		const load = vi
 			.fn()
+			.mockResolvedValueOnce(page([4, 5], undefined, 5))
 			.mockResolvedValueOnce(page([6, 7], 6))
-			.mockResolvedValueOnce(page([4, 5], 4, 5))
 			.mockResolvedValueOnce(page([4, 5], 4, 5))
 			.mockResolvedValueOnce(page([6, 7], 6, 7))
 			.mockResolvedValueOnce(page([8, 9], 8));
-		const details = history(load, true);
+		const details = history(load);
 		await details.refresh();
-		await details.more('older');
+		await details.more('newer');
 		expect(details.parts).toEqual(page([4, 5, 6, 7]).parts);
 		await details.refresh();
 		expect(details.parts).toEqual(page([4, 5, 6, 7]).parts);
 		await details.more('newer');
 		expect(details.parts).toEqual(page([4, 5, 6, 7, 8, 9]).parts);
 		expect(load.mock.calls.map(([cursor]) => cursor)).toEqual([
-			{ latest: true },
-			{ before: 6 },
-			{ after: 3 },
+			{},
+			{ after: 5 },
+			{},
 			{ after: 5 },
 			{ after: 7 }
 		]);
@@ -195,10 +193,10 @@ describe('WorkDetails', () => {
 			.mockResolvedValueOnce(page([9], 9))
 			.mockResolvedValueOnce({ ...page([]), stale: true })
 			.mockResolvedValueOnce(page([9], 9));
-		const details = history(load, true);
+		const details = history(load);
 		await details.refresh();
 		await vi.advanceTimersByTimeAsync(500);
-		expect(load.mock.calls[1][0]).toEqual({ latest: true });
+		expect(load.mock.calls[1][0]).toEqual({});
 		await details.refresh();
 		expect(details.parts).toEqual(page([9]).parts);
 		await vi.advanceTimersByTimeAsync(500);

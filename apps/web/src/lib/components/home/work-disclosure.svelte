@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { ChevronRight } from '@lucide/svelte';
 	import type { Snippet } from 'svelte';
-	import { createInProgressDisclosure } from '$lib/components/home/in-progress-disclosure.svelte';
 	import { formatElapsedDuration } from '$lib/format';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 
@@ -14,13 +13,13 @@
 	};
 
 	let { inProgress, startedAtMs, completedAtMs, children }: Props = $props();
+	let expanded = $state(false);
 
 	function toggle() {
-		disclosure.toggle();
+		expanded = !expanded;
 	}
 
 	const duration = $derived(elapsedSeconds(startedAtMs, inProgress ? tickingNow() : completedAtMs));
-	const disclosure = createInProgressDisclosure(() => inProgress);
 
 	const label = $derived(
 		`${inProgress ? 'Working' : 'Worked'}${duration === undefined ? '' : ` for ${formatElapsedDuration(duration)}`}`
@@ -32,15 +31,15 @@
 		type="button"
 		class="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1 transition"
 		onclick={toggle}
-		aria-expanded={disclosure.expanded}
+		aria-expanded={expanded}
 	>
 		<span>{label}</span>
 		<ChevronRight
-			class={`size-3.5 shrink-0 transition-transform ${disclosure.expanded ? 'rotate-90' : ''}`}
+			class={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
 			aria-hidden="true"
 		/>
 	</button>
-	{#if disclosure.expanded}
+	{#if expanded}
 		<div class="mt-1.5 space-y-2">
 			{@render children()}
 		</div>

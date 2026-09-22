@@ -247,6 +247,14 @@ describe('transcript viewport paging', () => {
 				.fn()
 				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false });
 			await settle();
+			const work = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+				button.textContent?.trim().startsWith('Working')
+			);
+			expect(work?.getAttribute('aria-expanded')).toBe('false');
+			if (kind === 'persisted') {
+				work?.click();
+				await settle();
+			}
 			const running = [...viewport.querySelectorAll('button')].find((button) =>
 				button.textContent?.includes('Running')
 			);
@@ -300,6 +308,16 @@ describe('transcript viewport paging', () => {
 			(button) => button.textContent?.trim().startsWith('Working')
 		);
 		expect(workButtons).toHaveLength(1);
+		expect(workButtons[0].getAttribute('aria-expanded')).toBe('false');
+		expect(props.loadSectionDetails).not.toHaveBeenCalled();
+		expect(viewport.textContent).not.toContain('Current reasoning');
+		workButtons[0].click();
+		await settle();
+		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
+		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
+			.map((button) => button.textContent?.trim())
+			.filter((label) => label === 'Reasoned' || label === 'Reasoning');
+		expect(reasoningLabels).toEqual(['Reasoned', 'Reasoning']);
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
 
@@ -342,6 +360,13 @@ describe('transcript viewport paging', () => {
 		expect(workLabels[0]).toBe('Worked for 2s');
 		expect(workLabels[1]).toMatch(/^Working/);
 		expect(workLabels).toHaveLength(2);
+		const workButtons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter(
+			(button) => button.textContent?.trim().startsWith('Work')
+		);
+		expect(workButtons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+			'false',
+			'false'
+		]);
 		expect(viewport.textContent).toContain('Visible boundary');
 	});
 
@@ -480,6 +505,12 @@ describe('transcript viewport paging', () => {
 				);
 			props.loadSectionDetails = load;
 			props.activeRunId = work.runId;
+			await settle();
+			const disclosure = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
+				(button) => button.textContent?.trim().startsWith('Working')
+			);
+			expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
+			disclosure?.click();
 			await settle();
 			expect(load).toHaveBeenCalledTimes(1);
 			scrollTo(700);
