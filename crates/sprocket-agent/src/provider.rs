@@ -10,7 +10,7 @@ use rig::completion::{FinishReason, Message};
 use rig::providers::openai;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
@@ -287,7 +287,8 @@ where
     let mut streamed_text = String::new();
     let mut completion_error = None;
     let mut observed_calls = 0;
-    let mut recorded_attempt = None;
+    let mut completed_attempt = None;
+    let mut handoff_processed_tokens = 0_u64;
 
     let result = 'agent_run: {
         'generations: loop {
@@ -341,7 +342,7 @@ where
                     item = stream.next() => {
                         let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
-                            if recorded_attempt == Some(transcript.attempt_seq) {
+                            if completed_attempt == Some(transcript.attempt_seq) {
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
@@ -353,22 +354,13 @@ where
                             | Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(_)))
                                 if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
-                                recorded_attempt = Some(transcript.attempt_seq);
+                                completed_attempt = Some(transcript.attempt_seq);
                                 let tokens = context_handoff_hook.record_usage(call.usage);
-                                if tokens == 0 {
-                                    continue;
-                                }
-                                let recorded = timeout(Duration::from_secs(5), runtime.record_context_usage(
-                                    &request.run_id, &request.claim_id, tokens, tokens,
-                                )).await;
-                                match recorded {
-                                    Ok(Ok(true)) => {}
-                                    Ok(Ok(false)) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
-                                    Ok(Err(error)) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
-                                    Err(_) => break 'agent_run AgentProviderResult::Failed {
-                                        text: streamed_text,
-                                        error: anyhow!("Recording provider usage timed out."),
-                                    },
+                                if context_handoff_hook.is_writing() {
+                                    handoff_processed_tokens =
+                                        handoff_processed_tokens.saturating_add(tokens);
+                                } else {
+                                    transcript.record_usage(tokens);
                                 }
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
@@ -421,6 +413,7 @@ where
                                     match runtime.save_context_handoff(
                                         &request.run_id, &request.claim_id, &summary,
                                         transcript.attempt_seq, before_prompt,
+                                        handoff_processed_tokens,
                                     ).await {
                                         Ok(true) => {}
                                         Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
@@ -436,6 +429,7 @@ where
                                         None => handoff,
                                     };
                                     context_handoff_hook.restart();
+                                    handoff_processed_tokens = 0;
                                     final_text.clear();
                                     streamed_text.clear();
                                     completion_error = None;
@@ -454,6 +448,7 @@ where
                             | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))) => {}
                             Some(Err(error)) => {
                                 if let Some(handoff) = context_handoff_hook.take_request() {
+                                    handoff_processed_tokens = 0;
                                     history = handoff.history;
                                     prompt = Message::user(HANDOFF_PROMPT);
                                     deferred_prompt = handoff.deferred_prompt;
@@ -559,6 +554,7 @@ struct TranscriptSink {
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
+    usage_tokens: Option<u64>,
     tool_call_tracker: ToolCallTracker,
 }
 
@@ -589,6 +585,7 @@ impl TranscriptSink {
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
+            usage_tokens: None,
             tool_call_tracker,
         })
     }
@@ -641,6 +638,7 @@ impl TranscriptSink {
         self.provider_metadata.clear();
         self.unpublished = 0;
         self.streamed = false;
+        self.usage_tokens = None;
     }
 
     async fn finalize_turn(&mut self) -> anyhow::Result<()> {
@@ -653,6 +651,7 @@ impl TranscriptSink {
                 &self.stream_id,
                 self.items_json(),
                 self.tool_call_tracker.completion_assignments(),
+                self.usage_tokens,
             )
             .await?;
         self.streamed = false;
@@ -692,6 +691,12 @@ impl TranscriptSink {
 
     fn has_unpublished(&self) -> bool {
         self.unpublished > 0
+    }
+
+    fn record_usage(&mut self, tokens: u64) {
+        if tokens > 0 {
+            self.usage_tokens = Some(tokens);
+        }
     }
 
     fn publish_delay(&self) -> Duration {

@@ -28,6 +28,14 @@ both functions and their no-op compatibility tests after clients containing
 automatic repository rekeying have aged out and no queued continuation jobs
 remain.
 
+### Standalone thread usage writes
+
+Released agents call `agentRuntime.recordContextUsage` after every provider
+completion. Current agents send usage with `finalizeCompletionCall` and
+`saveContextHandoff` so Convex stores usage only with durable transcript data
+or a successful handoff. Keep the standalone mutation until released agents
+using it have aged out, then remove the mutation and its direct tests.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
