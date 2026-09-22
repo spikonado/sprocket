@@ -149,7 +149,7 @@ Self-serve checkout on `spikonado.com/pricing` uses the Sprocket Convex deployme
 
 Every row in the Convex `tiers` table appears on the pricing page. Set `monthlyProductId` and `annualProductId` on a row to the matching recurring Dodo products. Either product can be omitted to make that billing interval unavailable. Product IDs must be unique across all tier and interval fields. The optional `description`, `features`, `displayOrder`, and `highlighted` fields control the pricing card.
 
-Point the Dodo webhook at `https://<deployment>.convex.site/dodopayments-webhook`. The webhook, rather than the browser redirect, grants and removes paid access. AuthKit must allow `https://spikonado.com` as a CORS origin and `https://spikonado.com/pricing/callback` as a redirect URI. Existing deployments may keep using `DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID` and `DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID` until those values have been copied onto the `pro` tier row.
+Point the Dodo webhook at `https://<deployment>.convex.site/dodopayments-webhook`. The webhook, rather than the browser redirect, grants and removes paid access. AuthKit must allow `https://spikonado.com` as a CORS origin and `https://spikonado.com/pricing/callback` as a redirect URI.
 
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 It targets the dev Convex deployment. To run against the production Convex

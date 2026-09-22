@@ -3,7 +3,6 @@ type SubscriptionTierSources = {
 	metadataTier: string | undefined;
 	existingTier: string | null;
 	configuredTier: string | null;
-	legacyTier: string | undefined;
 	preferConfiguredTier?: boolean;
 };
 
@@ -12,13 +11,12 @@ export function resolveSubscriptionTier({
 	metadataTier,
 	existingTier,
 	configuredTier,
-	legacyTier,
 	preferConfiguredTier = false
 }: SubscriptionTierSources): string | undefined {
 	if (checkoutTier && metadataTier && checkoutTier !== metadataTier) {
 		throw new Error('Dodo subscription tier metadata does not match its checkout reservation.');
 	}
 	if (checkoutTier) return checkoutTier;
-	if (preferConfiguredTier) return configuredTier ?? legacyTier;
-	return existingTier ?? metadataTier ?? configuredTier ?? legacyTier;
+	if (preferConfiguredTier) return configuredTier ?? undefined;
+	return existingTier ?? metadataTier ?? configuredTier ?? undefined;
 }
