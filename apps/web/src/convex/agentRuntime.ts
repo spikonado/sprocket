@@ -351,7 +351,8 @@ export const saveContextHandoff = mutation({
 		executionSecret: v.string(),
 		summary: v.string(),
 		completionAttemptSeq: v.number(),
-		beforePrompt: v.boolean()
+		beforePrompt: v.boolean(),
+		processedTokens: v.optional(v.number())
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
@@ -389,6 +390,12 @@ export const saveContextHandoff = mutation({
 			contextSummaryThroughRunId: undefined,
 			contextSummaryHandoffKey: handoffKey
 		});
+		if (args.processedTokens !== undefined) {
+			await recordThreadUsageEvent(ctx, thread, {
+				eventId: usageEventId('usage', run._id, args.claimId, args.completionAttemptSeq),
+				processedTokens: args.processedTokens
+			});
+		}
 		await clearThreadContextTokens(ctx, thread._id);
 		return true;
 	}
@@ -454,6 +461,12 @@ export const finalizeCompletionCall = mutation({
 			})
 		),
 		sections: v.array(sectionOrder),
+		usage: v.optional(
+			v.object({
+				contextTokens: v.number(),
+				processedTokens: v.number()
+			})
+		),
 		executionSecret: v.string()
 	},
 	returns: v.union(schema.doc('threadTranscriptParts'), v.null()),
@@ -583,6 +596,14 @@ export const finalizeCompletionCall = mutation({
 			items: args.items,
 			toolInvocations: args.toolInvocations
 		});
+		if (part && args.usage) {
+			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+			await recordThreadUsageEvent(ctx, thread, {
+				eventId: usageEventId('usage', run._id, args.claimId, args.attemptSeq),
+				contextTokens: args.usage.contextTokens,
+				processedTokens: args.usage.processedTokens
+			});
+		}
 		return part;
 	}
 });
