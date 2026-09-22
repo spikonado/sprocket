@@ -139,6 +139,7 @@ export async function insertQueuedRun(
 		prompt: string;
 		imageUploadIds?: Id<'imageUploads'>[];
 		selectedModel?: string;
+		completionProvider?: 'spikonado' | 'openai';
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		fastMode?: boolean;
 		machineId?: string;
@@ -153,6 +154,7 @@ export async function insertQueuedRun(
 		prompt: args.prompt,
 		imageUploadIds: args.imageUploadIds ?? [],
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
+		completionProvider: args.completionProvider,
 		reasoningEffort: args.reasoningEffort ?? 'medium',
 		fastMode: args.fastMode ?? false,
 		executionSecret: args.executionSecret,

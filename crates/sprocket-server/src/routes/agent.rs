@@ -14,8 +14,8 @@ use futures::StreamExt;
 use futures::stream::{self, unfold};
 use serde::Deserialize;
 use sprocket_agent::{
-    LiveCompletionHub, LiveCompletionWatchEvent, RunAgentRequest, finalize_failed_start, run_agent,
-    start_agent_run,
+    CompletionProvider, LiveCompletionHub, LiveCompletionWatchEvent, RunAgentRequest,
+    finalize_failed_start, run_agent, start_agent_run,
 };
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
@@ -58,6 +58,8 @@ pub(crate) struct RunAgentApiRequest {
     pub prompt: String,
     pub storage_ids: Vec<String>,
     pub selected_model: String,
+    #[serde(default)]
+    pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
     pub fast_mode: bool,
     pub workspace_path: String,
@@ -152,6 +154,7 @@ pub(crate) async fn launch_agent(
         prompt: payload.prompt,
         storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
+        completion_provider: payload.completion_provider,
         reasoning_effort: payload.reasoning_effort,
         fast_mode: payload.fast_mode,
         workspace_path,
@@ -401,6 +404,24 @@ mod tests {
         let mut json = base_request();
         json["fastMode"] = true.into();
         assert!(request(json).fast_mode);
+    }
+
+    #[test]
+    fn defaults_older_requests_to_spikonado() {
+        assert_eq!(
+            request(base_request()).completion_provider,
+            CompletionProvider::Spikonado
+        );
+    }
+
+    #[test]
+    fn accepts_direct_openai_requests() {
+        let mut json = base_request();
+        json["completionProvider"] = "openai".into();
+        assert_eq!(
+            request(json).completion_provider,
+            CompletionProvider::Openai
+        );
     }
 
     #[test]

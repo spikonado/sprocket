@@ -6,6 +6,7 @@ export type ThreadSummaryRow = {
 	repositoryKey: ThreadSummary['repositoryKey'];
 	title: string;
 	selectedModel: string;
+	completionProvider?: ThreadSummary['completionProvider'];
 	reasoningEffort: ThreadSummary['reasoningEffort'];
 	fastMode: ThreadSummary['fastMode'];
 	lastMessageAt: number;
@@ -19,6 +20,7 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 		repositoryKey: row.repositoryKey,
 		title: row.title,
 		selectedModel: row.selectedModel,
+		completionProvider: row.completionProvider,
 		reasoningEffort: row.reasoningEffort,
 		fastMode: row.fastMode,
 		lastMessageAt: row.lastMessageAt,
@@ -33,6 +35,7 @@ export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSumma
 		repositoryKey: record.repositoryKey,
 		title: record.title ?? 'New thread',
 		selectedModel: record.selectedModel,
+		completionProvider: record.completionProvider,
 		reasoningEffort: record.reasoningEffort,
 		fastMode: record.fastMode ?? false,
 		lastMessageAt: record.lastMessageAt,

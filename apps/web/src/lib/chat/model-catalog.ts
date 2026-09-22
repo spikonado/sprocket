@@ -1,4 +1,5 @@
 import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
+import type { CompletionProvider } from '$convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	GATEWAY_API_PREFIX,
@@ -76,6 +77,28 @@ export function modelOptionsForTier(catalog: ModelCatalog, tier: string): ModelS
 		}
 	}
 	return [...unlocked, ...locked];
+}
+
+export function modelOptionsForCompletionProvider(
+	catalog: ModelCatalog,
+	tier: string,
+	provider: CompletionProvider
+): ModelSelectorOption[] {
+	if (provider === 'spikonado') return modelOptionsForTier(catalog, tier);
+	return catalog.models
+		.filter((model) => model.provider === provider)
+		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
+}
+
+export function resolveModelForCompletionProvider(
+	catalog: ModelCatalog,
+	tier: string,
+	provider: CompletionProvider,
+	modelId: CatalogModelId
+): CatalogModelId | undefined {
+	const options = modelOptionsForCompletionProvider(catalog, tier, provider);
+	if (options.some((option) => option.id === modelId && !option.locked)) return modelId;
+	return options.find((option) => !option.locked)?.id;
 }
 
 /** Prefer a known label; fall back to the raw id so newer catalog values still render. */

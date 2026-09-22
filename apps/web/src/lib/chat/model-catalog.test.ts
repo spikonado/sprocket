@@ -3,6 +3,8 @@ import {
 	fastModeAccessForModelAndTier,
 	fetchGatewayModelCatalog,
 	isModelAllowedForTier,
+	modelOptionsForCompletionProvider,
+	resolveModelForCompletionProvider,
 	showsReasoningControl
 } from './model-catalog';
 
@@ -110,6 +112,27 @@ describe('gateway model catalog', () => {
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(catalog.models[0].supportsFastMode).toBe(false);
 		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('unsupported');
+	});
+
+	it('offers only OpenAI models for a direct OpenAI provider without tier locks', async () => {
+		const payload = structuredClone(catalogPayload);
+		payload.sprocket.models = [
+			{ ...payload.sprocket.models[0], id: 'openai-paid', provider: 'openai' },
+			{ ...payload.sprocket.models[0], id: 'other-free', provider: 'other' }
+		];
+		payload.sprocket.tierAllowedModels.free = ['other-free'];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+
+		expect(modelOptionsForCompletionProvider(catalog, 'free', 'openai')).toEqual([
+			expect.objectContaining({ id: 'openai-paid', provider: 'openai' })
+		]);
+		expect(resolveModelForCompletionProvider(catalog, 'free', 'openai', 'other-free')).toBe(
+			'openai-paid'
+		);
 	});
 });
 

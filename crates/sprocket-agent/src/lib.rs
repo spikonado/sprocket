@@ -28,4 +28,5 @@ pub use transcript::{
     TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptStore, apply_remote_state,
     fetch_missing_parts, parse_remote_parts,
 };
+pub use types::CompletionProvider;
 pub use types::RunAgentRequest;

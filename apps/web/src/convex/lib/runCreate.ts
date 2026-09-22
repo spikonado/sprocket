@@ -23,7 +23,11 @@ import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { startRunLifecycle } from '@convex/runLifecycle';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
-import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	type CompletionProvider,
+	type vReasoningEffort
+} from '@convex/lib/validators';
 import { withRunExecution } from '@convex/lib/runExecution';
 
 export type QueuedRunRequest = {
@@ -34,6 +38,7 @@ export type QueuedRunRequest = {
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
+	completionProvider?: CompletionProvider;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	fastMode: boolean;
 	executionSecret: string;
@@ -67,6 +72,7 @@ export async function createQueuedRunRecord(
 		throw new Error('A continuation requires an existing thread.');
 	}
 	const secretHash = await executionSecretHash(args.executionSecret);
+	const completionProvider = args.completionProvider ?? 'spikonado';
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
 	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
@@ -107,6 +113,7 @@ export async function createQueuedRunRecord(
 			repositoryKey,
 			title: fallbackTitle,
 			selectedModel: args.selectedModel,
+			completionProvider,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
 			lastMessageAt: now
@@ -158,6 +165,7 @@ export async function createQueuedRunRecord(
 		status: 'queued' as const,
 		executionSecretHash: secretHash,
 		selectedModel: args.selectedModel,
+		completionProvider,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
 		startedAt: Date.now(),
@@ -190,6 +198,7 @@ export async function createQueuedRunRecord(
 		status: 'queued' as const,
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
+		completionProvider,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
 		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt,
@@ -220,6 +229,7 @@ async function reconcileExistingQueuedRun(
 		(args.repositoryKey !== undefined &&
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
+		(existingRun.completionProvider ?? 'spikonado') !== (args.completionProvider ?? 'spikonado') ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches
@@ -276,6 +286,7 @@ export async function finalizeFailedQueuedStart(
 		prompt: string;
 		storageIds: Id<'_storage'>[];
 		selectedModel: string;
+		completionProvider?: CompletionProvider;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
 		fastMode: boolean;
 		text: string;
@@ -313,6 +324,7 @@ export async function finalizeFailedQueuedStart(
 		run.status !== 'queued' ||
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
+		(run.completionProvider ?? 'spikonado') !== (args.completionProvider ?? 'spikonado') ||
 		run.reasoningEffort !== args.reasoningEffort ||
 		run.fastMode !== args.fastMode
 	) {

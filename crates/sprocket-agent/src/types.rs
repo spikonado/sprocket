@@ -7,6 +7,23 @@ use rig::message::{
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CompletionProvider {
+    #[default]
+    Spikonado,
+    Openai,
+}
+
+impl CompletionProvider {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Spikonado => "spikonado",
+            Self::Openai => "openai",
+        }
+    }
+}
+
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
     format!("{}/api/v1", gateway_url.trim_end_matches('/'))
 }
@@ -24,6 +41,7 @@ pub struct RunAgentRequest {
     pub prompt: String,
     pub storage_ids: Vec<String>,
     pub selected_model: String,
+    pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
     pub fast_mode: bool,
     pub workspace_path: String,
@@ -51,6 +69,12 @@ pub struct GatewayCredential {
     pub token: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiCredential {
+    pub api_key: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -179,6 +203,8 @@ pub struct RunSnapshot {
     pub thread_id: String,
     pub user_id: String,
     pub selected_model: String,
+    #[serde(default)]
+    pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
     pub fast_mode: bool,
     #[serde(deserialize_with = "deserialize_convex_u64")]

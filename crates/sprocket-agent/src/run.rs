@@ -913,7 +913,10 @@ pub async fn run_agent(
         return Ok(());
     }
 
-    eprintln!("sprocket-agent: selected provider gateway for run {run_id}");
+    eprintln!(
+        "sprocket-agent: selected completion provider {} for run {run_id}",
+        context.run.completion_provider.as_str()
+    );
 
     match timeout(RUN_CLAIM_ATTEMPT_TIMEOUT, runtime.run_finished(&run_id)).await {
         Ok(Ok(false)) => {}

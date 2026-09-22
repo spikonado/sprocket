@@ -61,6 +61,7 @@ import {
 	isRunFinalStatus,
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
+	vCompletionProvider,
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
@@ -113,6 +114,7 @@ export const insertGatewayRun = internalMutation({
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
+		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
@@ -135,6 +137,7 @@ export const createGatewayRun = action({
 		prompt: v.string(),
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
+		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
@@ -158,6 +161,7 @@ export const createGatewayRun = action({
 			prompt: args.prompt,
 			imageUploadIds,
 			selectedModel: args.selectedModel,
+			completionProvider: args.completionProvider,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
 			executionSecret: args.executionSecret,
@@ -192,6 +196,9 @@ export const issueGatewayCredential = mutation({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		}
+		if ((run.completionProvider ?? 'spikonado') !== 'spikonado') {
+			throw new Error('Run is not configured to use the Spikonado gateway.');
 		}
 		const expiresAt = gatewayTokenExpiresAt();
 		const token = await mintGatewayToken(modelGatewayTokenSecret(), {
@@ -270,6 +277,7 @@ function getContextResult(args: {
 			threadId: args.run.threadId,
 			userId: args.run.userId,
 			selectedModel: args.run.selectedModel,
+			completionProvider: args.run.completionProvider,
 			reasoningEffort: args.run.reasoningEffort,
 			fastMode: args.run.fastMode,
 			startedAt: args.run.startedAt,
@@ -644,6 +652,7 @@ export const finalizeFailedStart = mutation({
 		prompt: v.string(),
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
+		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		text: v.string(),

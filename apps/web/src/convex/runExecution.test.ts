@@ -226,6 +226,7 @@ describe('run execution state', () => {
 			expect(context.run._id).toBe(auth.runId);
 			expect(Object.keys(context.run).sort()).toEqual([
 				'_id',
+				'completionProvider',
 				'continuationOfRunId',
 				'fastMode',
 				'reasoningEffort',
