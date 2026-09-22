@@ -18,7 +18,7 @@ If the workspace is already dirty, do not revert the changes. Try to work around
 1. Question the requirements of the task and the codebase. Discuss with the user and try to make them less dumb.
 2. See if the part/process you are working on should even exist. If it shouldn't, discuss with the user and try to remove it.
 3. Simplify how the part/process works. This can include massive refactors, but they should be discussed with the user first.
-4. Fix the bugs in the part/process and/or make it faster/cheaper. Even if the user's original ask was this, do steps 1-3 first. 
+4. Fix the bugs in the part/process and/or make it faster/cheaper. Even if the user's original ask was this, do steps 1-3 first.
 
 ### Ask questions
 
