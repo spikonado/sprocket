@@ -172,7 +172,7 @@ export async function applyGatewayUsageCharge(
 	userId: string,
 	count: number
 ): Promise<void> {
-	if (count <= 0) return;
+	if (!Number.isFinite(count) || count <= 0) return;
 	const tier = await ensureSubscription(ctx, userId);
 	await chargeMeterLimits(ctx, 'modelUsage', userId, await resolveTierLimits(ctx, tier), count);
 }

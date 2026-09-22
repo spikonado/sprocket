@@ -12,6 +12,10 @@ const vQuota = v.object({
 	message: v.optional(v.string())
 });
 
+// A single model call charges a small multiple of UNITS_PER_DOLLAR; anything
+// above this is a caller bug or a replayed token, not real usage.
+const MAX_QUOTA_CHARGE_UNITS = 1_000_000_000_000;
+
 async function userFromGatewayToken(token: string) {
 	try {
 		return await verifyGatewayToken(modelGatewayTokenSecret(), token);
@@ -46,7 +50,13 @@ export const consumeQuota = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const payload = await userFromGatewayToken(args.token);
-		await applyGatewayUsageCharge(ctx, payload.userId, Math.max(0, Math.ceil(args.units)));
+		if (!Number.isFinite(args.units) || args.units < 0) {
+			throw new ConvexError('Invalid quota units.');
+		}
+		if (args.units > MAX_QUOTA_CHARGE_UNITS) {
+			throw new ConvexError('Quota charge exceeds the per-call limit.');
+		}
+		await applyGatewayUsageCharge(ctx, payload.userId, Math.ceil(args.units));
 		return null;
 	}
 });
