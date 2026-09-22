@@ -12,6 +12,7 @@ import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import { initConvexTest } from './test.setup';
 
 const ENV_KEYS = [
+	'DODO_PAYMENTS_API_KEY',
 	'DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID',
 	'DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID'
 ] as const;
@@ -52,6 +53,77 @@ describe('Dodo product mapping', () => {
 			'DODO_PAYMENTS_ENVIRONMENT must be test_mode or live_mode.'
 		);
 	});
+
+	it('maps products for an arbitrary configured tier', async () => {
+		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('tiers', {
+				tierId: 'team',
+				label: 'Team',
+				weekly: 1,
+				monthly: 1,
+				monthlyProductId: 'prod_team_monthly',
+				annualProductId: 'prod_team_annual'
+			});
+		});
+
+		await expect(
+			t.query(internal.pricingData.getTierProduct, { tierId: 'team', interval: 'monthly' })
+		).resolves.toBe('prod_team_monthly');
+		await expect(
+			t.query(internal.pricingData.getTierForProduct, { productId: 'prod_team_annual' })
+		).resolves.toBe('team');
+	});
+
+	it('rejects a product assigned to more than one tier or interval', async () => {
+		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('tiers', {
+				tierId: 'pro',
+				label: 'Pro',
+				weekly: 1,
+				monthly: 1,
+				monthlyProductId: 'prod_shared'
+			});
+			await ctx.db.insert('tiers', {
+				tierId: 'team',
+				label: 'Team',
+				weekly: 1,
+				monthly: 1,
+				annualProductId: 'prod_shared'
+			});
+		});
+
+		await expect(
+			t.query(internal.pricingData.getTierForProduct, { productId: 'prod_shared' })
+		).rejects.toThrow('Dodo product "prod_shared" is assigned more than once.');
+		await expect(
+			t.query(internal.pricingData.getTierProduct, { tierId: 'team', interval: 'annual' })
+		).rejects.toThrow('Dodo product "prod_shared" is assigned more than once.');
+	});
+
+	it('accepts checkout for an arbitrary tier with a configured product', async () => {
+		delete process.env.DODO_PAYMENTS_API_KEY;
+		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('tiers', {
+				tierId: 'team',
+				label: 'Team',
+				weekly: 1,
+				monthly: 1,
+				monthlyProductId: 'prod_team_monthly'
+			});
+		});
+
+		await expect(
+			t
+				.withIdentity({ subject: 'user_team', email: 'team@example.com' })
+				.action(api.billing.checkout, {
+					tier: 'team',
+					interval: 'monthly'
+				})
+		).rejects.toThrow('Payments are not configured.');
+	});
 });
 
 describe('marketing checkout URLs', () => {
@@ -77,6 +149,10 @@ describe('marketing checkout URLs', () => {
 		).toEqual({
 			return_url: 'https://spikonado.com/pricing?checkout=return',
 			cancel_url: 'https://spikonado.com/pricing?checkout=cancel'
+		});
+		expect(resolveMarketingPricingUrls({}, 'team/plus')).toEqual({
+			return_url: 'https://spikonado.com/pricing?checkout=return&tier=team%2Fplus',
+			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=team%2Fplus'
 		});
 	});
 });
@@ -202,7 +278,7 @@ describe('Dodo subscription persistence', () => {
 		).rejects.toThrow('A paid plan is already active on this account.');
 	});
 
-	it('activates Pro, links the customer, and ignores an older cancellation', async () => {
+	it('activates an arbitrary Dodo tier, links the customer, and ignores an older cancellation', async () => {
 		const t = initConvexTest();
 		await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_1',
@@ -213,7 +289,7 @@ describe('Dodo subscription persistence', () => {
 		});
 		const args = {
 			userId: 'user_1',
-			tier: 'pro',
+			tier: 'team',
 			dodoSubscriptionId: 'sub_1',
 			dodoProductId: 'prod_monthly',
 			dodoCustomerId: 'cus_1',
@@ -237,7 +313,7 @@ describe('Dodo subscription persistence', () => {
 				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 				.unique()
 		}));
-		expect(stored.subscription).toMatchObject({ tier: 'pro', status: 'active', eventAt: 2_000 });
+		expect(stored.subscription).toMatchObject({ tier: 'team', status: 'active', eventAt: 2_000 });
 		expect(stored.customer).toMatchObject({ dodoCustomerId: 'cus_1' });
 		const checkoutSession = await t.run(async (ctx) =>
 			ctx.db
@@ -248,17 +324,20 @@ describe('Dodo subscription persistence', () => {
 		expect(checkoutSession).toBeNull();
 
 		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', { tierId: 'pro', label: 'Pro', weekly: 1, monthly: 1 });
+			await ctx.db.insert('tiers', { tierId: 'team', label: 'Team', weekly: 1, monthly: 1 });
 		});
 		await expect(
 			t.withIdentity({ subject: args.userId }).query(api.billing.getMySubscription, {})
-		).resolves.toMatchObject({ tier: 'pro', billingManaged: true });
+		).resolves.toMatchObject({ tier: 'team', tierLabel: 'Team', billingManaged: true });
 		await expect(
 			t.query(internal.billing.getDodoSubscriptionTier, {
 				userId: args.userId,
 				dodoSubscriptionId: args.dodoSubscriptionId
 			})
-		).resolves.toBe('pro');
+		).resolves.toBe('team');
+		await expect(
+			t.query(internal.billingCustomers.getManageable, { userId: args.userId })
+		).resolves.toMatchObject({ dodoCustomerId: 'cus_1' });
 	});
 
 	it('does not reactivate a lapsed subscription with the same event timestamp', async () => {

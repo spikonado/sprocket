@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { vDodoProPrices } from '@convex/lib/dodoProducts';
+import { vDodoProPrices, vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import {
 	vMandateChargeStatus,
@@ -59,8 +59,17 @@ export default defineSchema({
 		tierId: v.string(),
 		label: v.string(),
 		weekly: v.number(),
-		monthly: v.number()
-	}).index('by_tierId', ['tierId']),
+		monthly: v.number(),
+		description: v.optional(v.string()),
+		features: v.optional(v.array(v.string())),
+		displayOrder: v.optional(v.number()),
+		highlighted: v.optional(v.boolean()),
+		monthlyProductId: v.optional(v.string()),
+		annualProductId: v.optional(v.string())
+	})
+		.index('by_tierId', ['tierId'])
+		.index('by_monthlyProductId', ['monthlyProductId'])
+		.index('by_annualProductId', ['annualProductId']),
 	billingCustomers: defineTable({
 		userId: v.string(),
 		dodoCustomerId: v.string()
@@ -77,7 +86,16 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	dodoPricingCache: defineTable({
 		cacheKey: v.string(),
-		proPrices: vDodoProPrices,
+		proPrices: v.optional(vDodoProPrices),
+		tierPrices: v.optional(
+			v.array(
+				v.object({
+					tierId: v.string(),
+					interval: vBillingInterval,
+					price: vDodoPublicPrice
+				})
+			)
+		),
 		expiresAt: v.number()
 	}).index('by_cacheKey', ['cacheKey']),
 	subscriptions: defineTable({
