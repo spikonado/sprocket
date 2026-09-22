@@ -137,7 +137,12 @@ export const authorizeOpenAiCredential = internalQuery({
 	returns: v.string(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) throw new Error(RUN_NO_LONGER_ACTIVE);
+		if (
+			run.cancellationRequestedAt !== undefined ||
+			!ownsActiveRunClaim(run, args.claimId, Date.now())
+		) {
+			throw new Error(RUN_NO_LONGER_ACTIVE);
+		}
 		if ((run.completionProvider ?? 'spikonado') !== 'openai') {
 			throw new Error('Run is not configured to use OpenAI directly.');
 		}

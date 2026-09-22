@@ -185,21 +185,21 @@
 
 	async function loadProviderConfiguration(userId: string) {
 		providerConfigurationLoading = true;
+		providerConfigurationReady = false;
 		providerConfigurationError = null;
 		try {
 			const configuration = await getMyProviderConfiguration({});
 			if (getCurrentUserId() !== userId) return;
 			openAiConfigured = configuration.openai;
+			providerConfigurationReady = true;
 		} catch (error) {
 			if (getCurrentUserId() !== userId) return;
-			openAiConfigured = false;
 			providerConfigurationError =
 				(error instanceof Error && convexClientErrorMessage(error)) ||
 				'Couldn’t load provider settings.';
 		} finally {
 			if (getCurrentUserId() === userId) {
 				providerConfigurationLoading = false;
-				providerConfigurationReady = true;
 			}
 		}
 	}

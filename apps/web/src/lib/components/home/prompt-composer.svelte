@@ -126,8 +126,8 @@
 	// Block send until a catalog model is selected. If the usage query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
-		providersReady &&
-			configuredProviders.includes(selectedCompletionProvider) &&
+		(selectedCompletionProvider === 'spikonado' ||
+			(providersReady && configuredProviders.includes(selectedCompletionProvider))) &&
 			selectedCatalogModel !== undefined &&
 			((selectedCompletionProvider === 'openai' && selectedCatalogModel.provider === 'openai') ||
 				subscriptionFailed ||

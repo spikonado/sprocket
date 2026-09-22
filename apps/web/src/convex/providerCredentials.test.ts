@@ -87,6 +87,20 @@ describe('provider credentials', () => {
 			})
 		).resolves.toEqual({ apiKey: 'sk-user' });
 
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', created.runId, { cancellationRequestedAt: Date.now() });
+		});
+		await expect(
+			t.query(internal.providerCredentials.authorizeOpenAiCredential, {
+				runId: created.runId,
+				claimId,
+				executionSecret
+			})
+		).rejects.toThrow('Run is no longer active.');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', created.runId, { cancellationRequestedAt: undefined });
+		});
+
 		await expect(
 			t.query(internal.providerCredentials.authorizeOpenAiCredential, {
 				runId: created.runId,
