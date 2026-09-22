@@ -121,7 +121,10 @@ describe('gateway model catalog', () => {
 			{ ...payload.sprocket.models[0], id: 'other-free', provider: 'other' }
 		];
 		payload.sprocket.tierAllowedModels.free = ['other-free'];
-		vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload)));
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 
 		expect(modelOptionsForCompletionProvider(catalog, 'free', 'openai')).toEqual([

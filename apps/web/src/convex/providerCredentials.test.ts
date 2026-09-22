@@ -27,9 +27,9 @@ describe('provider credentials', () => {
 			return Response.json({ id: 'secret_1' });
 		});
 
-		expect(await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: ' sk-user ' })).toBe(
-			null
-		);
+		expect(
+			await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: ' sk-user ' })
+		).toBe(null);
 		expect(requests.map(({ url }) => url)).toEqual([
 			'https://api.openai.com/v1/models',
 			expect.stringContaining('/vault/v1/kv/name/sprocket-openai-'),

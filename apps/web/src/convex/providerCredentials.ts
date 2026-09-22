@@ -1,6 +1,7 @@
 import { action, env, internalQuery } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
+import { z } from 'zod';
 import { getExecutionRun } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
@@ -9,11 +10,12 @@ const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
 const OPENAI_API_ORIGIN = 'https://api.openai.com';
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
 
-type VaultObject = {
-	id: string;
-	name: string;
-	value: string;
-};
+const vaultObjectSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	value: z.string()
+});
+type VaultObject = z.infer<typeof vaultObjectSchema>;
 
 function workosApiKey(): string {
 	const key = env.WORKOS_API_KEY?.trim();
@@ -36,16 +38,6 @@ function workosHeaders(): HeadersInit {
 	};
 }
 
-function isVaultObject(value: unknown): value is VaultObject {
-	if (typeof value !== 'object' || value === null) return false;
-	const object = value as Record<string, unknown>;
-	return (
-		typeof object.id === 'string' &&
-		typeof object.name === 'string' &&
-		typeof object.value === 'string'
-	);
-}
-
 async function readVaultObject(name: string): Promise<VaultObject | null> {
 	const response = await fetch(
 		`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/name/${encodeURIComponent(name)}`,
@@ -53,11 +45,11 @@ async function readVaultObject(name: string): Promise<VaultObject | null> {
 	);
 	if (response.status === 404) return null;
 	if (!response.ok) throw new Error('Couldn’t read the provider credential from WorkOS Vault.');
-	const value: unknown = await response.json();
-	if (!isVaultObject(value) || value.name !== name) {
+	const parsed = vaultObjectSchema.safeParse(await response.json());
+	if (!parsed.success || parsed.data.name !== name) {
 		throw new Error('WorkOS Vault returned an invalid provider credential.');
 	}
-	return value;
+	return parsed.data;
 }
 
 async function validateOpenAiKey(apiKey: string): Promise<void> {

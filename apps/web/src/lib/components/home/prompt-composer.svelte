@@ -43,10 +43,7 @@
 		configuredProviders?: CompletionProvider[];
 		providersReady?: boolean;
 		selectedCompletionProvider?: CompletionProvider;
-		onCompletionSettingsChange?: (
-			provider: CompletionProvider,
-			modelId: CatalogModelId
-		) => void;
+		onCompletionSettingsChange?: (provider: CompletionProvider, modelId: CatalogModelId) => void;
 		selectedReasoningEffort?: string;
 		fastMode?: boolean;
 		pendingQuestion?: PendingAgentQuestion | null;
@@ -130,8 +127,8 @@
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
 		providersReady &&
-		configuredProviders.includes(selectedCompletionProvider) &&
-		selectedCatalogModel !== undefined &&
+			configuredProviders.includes(selectedCompletionProvider) &&
+			selectedCatalogModel !== undefined &&
 			((selectedCompletionProvider === 'openai' && selectedCatalogModel.provider === 'openai') ||
 				subscriptionFailed ||
 				(subscriptionTier !== undefined &&

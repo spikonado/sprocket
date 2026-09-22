@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { ArrowLeft, ChartNoAxesColumn, CreditCard, Globe, KeyRound, UserRound } from '@lucide/svelte';
+	import {
+		ArrowLeft,
+		ChartNoAxesColumn,
+		CreditCard,
+		Globe,
+		KeyRound,
+		UserRound
+	} from '@lucide/svelte';
 	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { SprocketTheme } from '$lib/theme';
 
