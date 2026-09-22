@@ -429,6 +429,7 @@ async fn prepare_run(
         prompt: request.prompt.clone(),
         storage_ids: Vec::new(),
         selected_model: settings.model,
+        completion_provider: Default::default(),
         reasoning_effort: settings.reasoning,
         fast_mode: settings.fast,
         workspace_path: attachment.workspace_path,

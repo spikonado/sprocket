@@ -15,12 +15,13 @@
 	import { formatCountdownDuration } from '$lib/format';
 	import { canSubmitQuestionAnswer, type AgentQuestionOption } from '$convex/lib/agentQuestions';
 	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
+	import type { CompletionProvider } from '$convex/lib/validators';
 	import {
 		fastModeAccessForModelAndTier,
 		getCatalogModel,
 		isModelAllowedForTier,
-		modelOptionsForTier,
-		resolveModelForTier,
+		modelOptionsForCompletionProvider,
+		resolveModelForCompletionProvider,
 		showsReasoningControl,
 		type CatalogModelId,
 		type ModelCatalog
@@ -39,7 +40,13 @@
 		onRemoveAttachment: (localId: string) => void;
 		modelCatalog?: ModelCatalog;
 		selectedModel?: CatalogModelId;
-		onModelChange?: (modelId: CatalogModelId) => void;
+		configuredProviders?: CompletionProvider[];
+		providersReady?: boolean;
+		selectedCompletionProvider?: CompletionProvider;
+		onCompletionSettingsChange?: (
+			provider: CompletionProvider,
+			modelId: CatalogModelId
+		) => void;
 		selectedReasoningEffort?: string;
 		fastMode?: boolean;
 		pendingQuestion?: PendingAgentQuestion | null;
@@ -67,7 +74,10 @@
 		onRemoveAttachment,
 		modelCatalog,
 		selectedModel = $bindable(defaultModelId),
-		onModelChange,
+		configuredProviders = ['spikonado'],
+		providersReady = true,
+		selectedCompletionProvider = $bindable<CompletionProvider>('spikonado'),
+		onCompletionSettingsChange,
 		selectedReasoningEffort = $bindable<string>(defaultReasoningEffort),
 		fastMode = $bindable(false),
 		pendingQuestion = null,
@@ -91,14 +101,27 @@
 	const subscriptionTier = $derived(usageQuery.data?.tier);
 	const subscriptionFailed = $derived(Boolean(usageQuery.error));
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
-	const tierModelOptions = $derived(
-		modelCatalog ? modelOptionsForTier(modelCatalog, subscriptionTier ?? 'free') : []
+	const providerOptions = $derived(
+		configuredProviders.map((provider) => ({
+			id: provider,
+			label: provider === 'spikonado' ? 'Spikonado' : 'OpenAI'
+		}))
+	);
+	const modelOptions = $derived(
+		modelCatalog
+			? modelOptionsForCompletionProvider(
+					modelCatalog,
+					subscriptionTier ?? 'free',
+					selectedCompletionProvider
+				)
+			: []
 	);
 	const selectedCatalogModel = $derived(
 		modelCatalog ? getCatalogModel(modelCatalog, selectedModel) : undefined
 	);
 	const selectedFastModeAccess = $derived.by(() => {
 		if (!modelCatalog || !selectedCatalogModel) return undefined;
+		if (selectedCompletionProvider === 'openai') return 'unsupported';
 		if (!selectedCatalogModel.supportsFastMode) return 'unsupported';
 		if (!subscriptionTier) return undefined;
 		return fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, selectedCatalogModel);
@@ -106,8 +129,11 @@
 	// Block send until a catalog model is selected. If the usage query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
+		providersReady &&
+		configuredProviders.includes(selectedCompletionProvider) &&
 		selectedCatalogModel !== undefined &&
-			(subscriptionFailed ||
+			((selectedCompletionProvider === 'openai' && selectedCatalogModel.provider === 'openai') ||
+				subscriptionFailed ||
 				(subscriptionTier !== undefined &&
 					modelCatalog !== undefined &&
 					isModelAllowedForTier(modelCatalog, subscriptionTier, selectedModel)))
@@ -144,11 +170,12 @@
 	const usageBlocked = $derived(
 		usageQuery.data?.exhausted === true &&
 			(usageQuery.data.resetsAt === null || usageQuery.data.resetsAt > now) &&
-			!selectedModelUnmetered
+			!selectedModelUnmetered &&
+			selectedCompletionProvider === 'spikonado'
 	);
 	const unlimitedAlternativeLabel = $derived.by(() => {
 		if (!modelCatalog) return null;
-		const option = tierModelOptions.find(
+		const option = modelOptions.find(
 			(candidate) =>
 				!candidate.locked &&
 				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
@@ -376,14 +403,54 @@
 		selectedModel = modelId;
 		const model = getCatalogModel(modelCatalog, modelId);
 		if (model) selectedReasoningEffort = model.defaultReasoningEffort;
-		onModelChange?.(modelId);
+		onCompletionSettingsChange?.(selectedCompletionProvider, modelId);
+	}
+
+	function handleProviderChange(provider: CompletionProvider) {
+		if (!modelCatalog) return;
+		selectedCompletionProvider = provider;
+		const modelId = resolveModelForCompletionProvider(
+			modelCatalog,
+			subscriptionTier ?? 'free',
+			provider,
+			selectedModel
+		);
+		if (!modelId) return;
+		selectedModel = modelId;
+		selectedReasoningEffort =
+			getCatalogModel(modelCatalog, modelId)?.defaultReasoningEffort ??
+			modelCatalog.defaultReasoningEffort;
+		fastMode = false;
+		onCompletionSettingsChange?.(provider, modelId);
 	}
 
 	$effect(() => {
 		if (!modelCatalog) return;
-		if (!selectedModel || !getCatalogModel(modelCatalog, selectedModel)) {
-			selectedModel = modelCatalog.defaultModelId;
-			selectedReasoningEffort = modelCatalog.defaultReasoningEffort;
+		if (providersReady && !configuredProviders.includes(selectedCompletionProvider)) {
+			selectedCompletionProvider = 'spikonado';
+		}
+		const resolvedModel =
+			selectedCompletionProvider === 'openai'
+				? resolveModelForCompletionProvider(
+						modelCatalog,
+						subscriptionTier ?? 'free',
+						selectedCompletionProvider,
+						selectedModel
+					)
+				: getCatalogModel(modelCatalog, selectedModel)
+					? selectedModel
+					: modelCatalog.defaultModelId;
+		if (resolvedModel && resolvedModel !== selectedModel) {
+			selectedModel = resolvedModel;
+			selectedReasoningEffort =
+				getCatalogModel(modelCatalog, resolvedModel)?.defaultReasoningEffort ??
+				modelCatalog.defaultReasoningEffort;
+			fastMode = false;
+		}
+	});
+
+	$effect(() => {
+		if (selectedCompletionProvider === 'openai') {
 			fastMode = false;
 		}
 	});
@@ -392,7 +459,13 @@
 		// Only coerce after a successful tier + catalog load so paid users are not snapped to
 		// free defaults during loading or transient query failures.
 		if (!modelCatalog || !subscriptionTier) return;
-		const allowedModel = resolveModelForTier(modelCatalog, subscriptionTier, selectedModel);
+		const allowedModel = resolveModelForCompletionProvider(
+			modelCatalog,
+			subscriptionTier,
+			selectedCompletionProvider,
+			selectedModel
+		);
+		if (!allowedModel) return;
 		if (allowedModel !== selectedModel) {
 			selectedModel = allowedModel;
 			selectedReasoningEffort =
@@ -584,8 +657,21 @@
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							<OptionSelector
+								value={selectedCompletionProvider}
+								options={providerOptions}
+								ariaLabel="Select provider"
+								menuTitle="Provider"
+								disabled={composerLocked || answeringQuestion || !providersReady}
+								onValueChange={handleProviderChange}
+								className="z-20 shrink-0"
+								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
+							/>
+
+							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+
+							<OptionSelector
 								value={selectedModel}
-								options={tierModelOptions}
+								options={modelOptions}
 								ariaLabel="Select model"
 								menuTitle="Model"
 								disabled={composerLocked || answeringQuestion || modelCatalog === undefined}

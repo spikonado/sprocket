@@ -30,15 +30,45 @@ describe('agentRuntime.insertGatewayRun', () => {
 			userId,
 			repositoryKey: 'alpha',
 			status: 'queued',
+			completionProvider: 'spikonado',
 			fastMode: false
 		});
 		expect(run).toMatchObject({
 			threadId: created.threadId,
 			status: 'queued',
+			completionProvider: 'spikonado',
 			fastMode: false
 		});
 		expect(thread).not.toHaveProperty('serviceTier');
 		expect(run).not.toHaveProperty('serviceTier');
+	});
+
+	it('persists direct OpenAI routing on the thread and run', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const created = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'direct-openai',
+			executionSecret: 'direct-openai-secret',
+			prompt: 'Use OpenAI directly',
+			selectedModel: 'openai-model',
+			completionProvider: 'openai'
+		});
+
+		const [thread, run] = await t.run(async (ctx) =>
+			Promise.all([
+				ctx.db.get('threadRecords', created.threadId),
+				ctx.db.get('runs', created.runId)
+			])
+		);
+		expect(thread).toMatchObject({
+			selectedModel: 'openai-model',
+			completionProvider: 'openai'
+		});
+		expect(run).toMatchObject({
+			selectedModel: 'openai-model',
+			completionProvider: 'openai'
+		});
 	});
 
 	it('rejects an empty prompt with no images', async () => {

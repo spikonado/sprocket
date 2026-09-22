@@ -7,8 +7,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    CreateRunResponse, GatewayCredential, RenewClaimResponse, RunAgentRequest, RunContextResponse,
-    StartRunResponse,
+    CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse, RunAgentRequest,
+    RunContextResponse, StartRunResponse,
 };
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
@@ -199,6 +199,10 @@ impl RuntimeClient {
             request.selected_model.clone().into(),
         );
         args.insert(
+            "completionProvider".to_string(),
+            request.completion_provider.as_str().into(),
+        );
+        args.insert(
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
@@ -271,6 +275,18 @@ impl RuntimeClient {
     ) -> anyhow::Result<GatewayCredential> {
         self.mutation_json(
             "agentRuntime:issueGatewayCredential",
+            self.run_args_with_claim(run_id, claim_id),
+        )
+        .await
+    }
+
+    pub(crate) async fn issue_openai_credential(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<OpenAiCredential> {
+        self.action_json(
+            "providerCredentials:issueOpenAiCredential",
             self.run_args_with_claim(run_id, claim_id),
         )
         .await
@@ -360,6 +376,10 @@ impl RuntimeClient {
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
+        );
+        args.insert(
+            "completionProvider".to_string(),
+            request.completion_provider.as_str().into(),
         );
         args.insert(
             "reasoningEffort".to_string(),

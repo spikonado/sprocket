@@ -28,6 +28,14 @@ both functions and their no-op compatibility tests after clients containing
 automatic repository rekeying have aged out and no queued continuation jobs
 remain.
 
+### Completion provider defaults
+
+Released clients do not send `completionProvider`, and existing thread and run
+rows do not contain it. Convex and the Rust agent treat a missing value as
+`spikonado`. Keep the field optional until released clients have aged out and a
+migration has written `spikonado` to every older row. Then require the field and
+remove the defaults.
+
 ### Standalone thread usage writes
 
 Released agents call `agentRuntime.recordContextUsage` after every provider

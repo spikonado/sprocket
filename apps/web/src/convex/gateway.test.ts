@@ -142,4 +142,34 @@ describe('gateway quota', () => {
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run?.gatewayProtocolVersion).toBe(1);
 	});
+
+	it('does not issue gateway credentials for direct OpenAI runs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'direct-openai-secret';
+		const claimId = 'direct-openai-claim';
+		const created = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'direct-openai-run',
+			executionSecret
+		);
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', created.runId, { completionProvider: 'openai' });
+		});
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId,
+			executionSecret
+		});
+
+		await expect(
+			t.mutation(api.agentRuntime.issueGatewayCredential, {
+				runId: created.runId,
+				claimId,
+				executionSecret
+			})
+		).rejects.toThrow('Run is not configured to use the Spikonado gateway.');
+	});
 });

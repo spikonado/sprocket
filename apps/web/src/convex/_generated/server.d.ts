@@ -38,6 +38,7 @@ type Env = {
   readonly PRAVA_BACKEND_URL:
     "https://sandbox.api.prava.space" | "https://api.prava.space";
   readonly PRAVA_SECRET_KEY: string | undefined;
+  readonly WORKOS_API_KEY: string | undefined;
   readonly WORKOS_CLIENT_ID: string;
 };
 

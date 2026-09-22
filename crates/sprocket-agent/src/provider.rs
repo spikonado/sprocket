@@ -21,7 +21,7 @@ use crate::live::{
 };
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
-use crate::types::{ContextBudget, RunContextResponse, gateway_api_v1_url};
+use crate::types::{CompletionProvider, ContextBudget, RunContextResponse, gateway_api_v1_url};
 
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -65,6 +65,7 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
 }
 
 pub(crate) struct AgentProvider {
+    completion_provider: CompletionProvider,
     gateway_url: String,
     model: String,
 }
@@ -104,6 +105,7 @@ pub(crate) enum AgentProviderResult {
 impl AgentProvider {
     pub(crate) fn default_for_run(context: &RunContextResponse, gateway_url: &str) -> Self {
         Self {
+            completion_provider: context.run.completion_provider,
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
         }
@@ -112,26 +114,52 @@ impl AgentProvider {
     pub(crate) async fn run(
         self,
         runtime: RuntimeClient,
-        request: AgentProviderRequest,
+        mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        let credential = match runtime
-            .issue_gateway_credential(&request.run_id, &request.claim_id)
-            .await
-        {
-            Ok(credential) => credential,
-            Err(error) => {
-                return AgentProviderResult::Failed {
-                    text: String::new(),
-                    error,
+        let (api_key, base_url) = match self.completion_provider {
+            CompletionProvider::Spikonado => {
+                let credential = match runtime
+                    .issue_gateway_credential(&request.run_id, &request.claim_id)
+                    .await
+                {
+                    Ok(credential) => credential,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
                 };
+                (
+                    credential.token,
+                    Some(gateway_api_v1_url(&self.gateway_url)),
+                )
+            }
+            CompletionProvider::Openai => {
+                let credential = match runtime
+                    .issue_openai_credential(&request.run_id, &request.claim_id)
+                    .await
+                {
+                    Ok(credential) => credential,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
+                };
+                (credential.api_key, None)
             }
         };
-        let base_url = gateway_api_v1_url(&self.gateway_url);
-        let completion_client = match openai::Client::builder()
-            .api_key(credential.token)
-            .base_url(&base_url)
-            .build()
-        {
+        if self.completion_provider == CompletionProvider::Openai {
+            request.fast_mode = false;
+        }
+        let builder = openai::Client::builder().api_key(api_key);
+        let builder = match base_url {
+            Some(base_url) => builder.base_url(&base_url),
+            None => builder,
+        };
+        let completion_client = match builder.build() {
             Ok(client) => client,
             Err(error) => {
                 return AgentProviderResult::Failed {

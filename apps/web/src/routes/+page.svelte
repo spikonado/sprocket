@@ -4,7 +4,7 @@
 	import { page } from '$app/state';
 	import { PanelLeft, PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
+	import { useAction, useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
 	import type { Doc, Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
@@ -31,6 +31,7 @@
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
+	import SettingsProviders from '$lib/components/home/settings-providers.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
@@ -56,6 +57,7 @@
 	import type { ComposerAttachment } from '$lib/chat/attachments';
 	import { ComposerAttachments } from '$lib/home/composer-attachments.svelte';
 	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
+	import type { CompletionProvider } from '$convex/lib/validators';
 	import {
 		CATALOG_UNAVAILABLE_MESSAGE,
 		fetchGatewayModelCatalog,
@@ -146,7 +148,8 @@
 			convexAuthRetryPending.set(false);
 		}
 	});
-	const setThreadSelectedModel = useMutation(api.threads.setSelectedModel);
+	const setThreadCompletionSettings = useMutation(api.threads.setCompletionSettings);
+	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	const renameThreadRecord = useMutation(api.threads.rename);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
@@ -156,6 +159,13 @@
 	let modelCatalog = $state<ModelCatalog | undefined>(undefined);
 	let catalogError = $state<string | null>(null);
 	let catalogLoading = $state(true);
+	let openAiConfigured = $state(false);
+	let providerConfigurationLoading = $state(false);
+	let providerConfigurationReady = $state(false);
+	let providerConfigurationError = $state<string | null>(null);
+	const configuredProviders = $derived<CompletionProvider[]>(
+		openAiConfigured ? ['spikonado', 'openai'] : ['spikonado']
+	);
 
 	async function loadModelCatalog() {
 		catalogLoading = true;
@@ -171,6 +181,28 @@
 		}
 	}
 	let ensureSubscriptionAttemptedFor: string | null = null;
+	let providerConfigurationLoadedFor: string | null = null;
+
+	async function loadProviderConfiguration(userId: string) {
+		providerConfigurationLoading = true;
+		providerConfigurationError = null;
+		try {
+			const configuration = await getMyProviderConfiguration({});
+			if (getCurrentUserId() !== userId) return;
+			openAiConfigured = configuration.openai;
+		} catch (error) {
+			if (getCurrentUserId() !== userId) return;
+			openAiConfigured = false;
+			providerConfigurationError =
+				(error instanceof Error && convexClientErrorMessage(error)) ||
+				'Couldn’t load provider settings.';
+		} finally {
+			if (getCurrentUserId() === userId) {
+				providerConfigurationLoading = false;
+				providerConfigurationReady = true;
+			}
+		}
+	}
 
 	$effect(() => {
 		if (!authReady) return;
@@ -184,6 +216,14 @@
 		ensureSubscriptionAttemptedFor = userId;
 		void ensureMySubscription({}).catch(() => {});
 	});
+
+	$effect(() => {
+		if (!authReady) return;
+		const userId = getCurrentUserId();
+		if (!userId || providerConfigurationLoadedFor === userId) return;
+		providerConfigurationLoadedFor = userId;
+		void loadProviderConfiguration(userId);
+	});
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 	const agentLaunchTimeoutMs = 30_000;
 	type ComposerRecovery = {
@@ -194,6 +234,7 @@
 		reasoningEffort?: string;
 		fastMode?: boolean;
 		selectedModel?: CatalogModelId;
+		completionProvider?: CompletionProvider;
 		submissionId?: string;
 		continuationOfRunId?: Id<'runs'>;
 		autoSubmit?: boolean;
@@ -206,6 +247,7 @@
 	let draftWorkspacePath = $state<string | null>(null);
 	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
 	let selectedModel = $state<CatalogModelId>(defaultModelId);
+	let selectedCompletionProvider = $state<CompletionProvider>('spikonado');
 	let selectedReasoningEffort = $state<string>(defaultReasoningEffort);
 	let fastMode = $state(false);
 	let prompt = $state('');
@@ -235,6 +277,7 @@
 			reasoningEffort: string;
 			fastMode: boolean;
 			selectedModel: CatalogModelId;
+			completionProvider: CompletionProvider;
 			submissionId: string;
 			continuationOfRunId?: Id<'runs'>;
 		}
@@ -898,7 +941,10 @@
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	async function persistSelectedModel(modelId: CatalogModelId) {
+	async function persistCompletionSettings(
+		completionProvider: CompletionProvider,
+		modelId: CatalogModelId
+	) {
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
 		if (!threadId || !userId) {
@@ -906,12 +952,26 @@
 		}
 
 		try {
-			await setThreadSelectedModel({ threadId, selectedModel: modelId });
+			await setThreadCompletionSettings({
+				threadId,
+				selectedModel: modelId,
+				completionProvider
+			});
 		} catch (error) {
 			if (currentThreadId === threadId && getCurrentUserId() === userId) {
 				currentError =
 					error instanceof Error ? error.message : 'Failed to save the selected model.';
 			}
+		}
+	}
+
+	function handleProviderConfigurationChange(configured: boolean) {
+		openAiConfigured = configured;
+		providerConfigurationReady = true;
+		providerConfigurationError = null;
+		if (!configured && selectedCompletionProvider === 'openai') {
+			selectedCompletionProvider = 'spikonado';
+			void persistCompletionSettings('spikonado', selectedModel);
 		}
 	}
 
@@ -1038,6 +1098,7 @@
 			attachment.storageId ? [attachment.storageId] : []
 		);
 		const submittedModel = selectedModel;
+		const submittedCompletionProvider = selectedCompletionProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
@@ -1077,6 +1138,7 @@
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
+				completionProvider: submittedCompletionProvider,
 				continuationOfRunId,
 				autoSubmit: true
 			});
@@ -1164,6 +1226,7 @@
 			attachment.storageId ? [attachment.storageId] : []
 		);
 		const submittedModel = selectedModel;
+		const submittedCompletionProvider = selectedCompletionProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		const submittedContinuationOfRunId =
@@ -1194,6 +1257,7 @@
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
+			completionProvider: submittedCompletionProvider,
 			continuationOfRunId: submittedContinuationOfRunId,
 			recoveredSubmission: recoveredSubmission
 				? {
@@ -1225,6 +1289,7 @@
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
+				completionProvider: submittedCompletionProvider,
 				continuationOfRunId: submittedContinuationOfRunId,
 				autoSubmit: false,
 				submissionId:
@@ -1386,6 +1451,7 @@
 				prompt: submittedPrompt,
 				storageIds: submittedStorageIds,
 				selectedModel: submittedModel,
+				completionProvider: submittedCompletionProvider,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
@@ -1484,6 +1550,7 @@
 				prompt: '',
 				storageIds: [],
 				selectedModel,
+				completionProvider: selectedCompletionProvider,
 				reasoningEffort: selectedReasoningEffort,
 				fastMode,
 				submissionId: crypto.randomUUID(),
@@ -1513,6 +1580,10 @@
 		pendingCreatedThreadId = null;
 		pendingAgentLaunches = {};
 		ensureSubscriptionAttemptedFor = null;
+		providerConfigurationLoadedFor = null;
+		openAiConfigured = false;
+		providerConfigurationReady = false;
+		providerConfigurationError = null;
 		lastSyncedComposerThreadId = null;
 		projectSelectionGeneration += 1;
 		prompt = '';
@@ -1525,6 +1596,7 @@
 		});
 		currentError = null;
 		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
+		selectedCompletionProvider = 'spikonado';
 		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
 		fastMode = false;
 		projectPickerOpen = false;
@@ -1590,6 +1662,7 @@
 		autoSubmitComposerContinuation = false;
 		if (!thread) return;
 		selectedModel = thread.selectedModel;
+		selectedCompletionProvider = thread.completionProvider ?? 'spikonado';
 		selectedReasoningEffort = thread.reasoningEffort;
 		fastMode = thread.fastMode ?? false;
 	});
@@ -1630,7 +1703,8 @@
 				recovery.submissionId &&
 				(recovery.prompt || recovery.storageIds?.length) &&
 				recovery.reasoningEffort &&
-				recovery.selectedModel
+				recovery.selectedModel &&
+				recovery.completionProvider
 			) {
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
@@ -1638,6 +1712,7 @@
 					reasoningEffort: recovery.reasoningEffort,
 					fastMode: recovery.fastMode ?? false,
 					selectedModel: recovery.selectedModel,
+					completionProvider: recovery.completionProvider,
 					submissionId: recovery.submissionId,
 					continuationOfRunId: recovery.continuationOfRunId
 				});
@@ -1946,6 +2021,13 @@
 				{#if settingsOpen}
 					{#if settingsPage === 'usage'}
 						<SettingsUsage />
+					{:else if settingsPage === 'providers'}
+						<SettingsProviders
+							{openAiConfigured}
+							loading={providerConfigurationLoading}
+							loadError={providerConfigurationError}
+							onConfigurationChange={handleProviderConfigurationChange}
+						/>
 					{:else if settingsPage === 'browser'}
 						<SettingsBrowser />
 					{:else if settingsPage === 'payments'}
@@ -2052,8 +2134,11 @@
 								onRemoveAttachment={(localId) => composerAttachments.remove(localId)}
 								{modelCatalog}
 								bind:selectedModel
-								onModelChange={(modelId) => {
-									void persistSelectedModel(modelId);
+								{configuredProviders}
+								providersReady={providerConfigurationReady}
+								bind:selectedCompletionProvider
+								onCompletionSettingsChange={(provider, modelId) => {
+									void persistCompletionSettings(provider, modelId);
 								}}
 								bind:selectedReasoningEffort
 								bind:fastMode

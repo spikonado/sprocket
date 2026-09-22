@@ -11,6 +11,10 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
+export const completionProviderIds = ['spikonado', 'openai'] as const;
+export type CompletionProvider = (typeof completionProviderIds)[number];
+export const vCompletionProvider = v.union(...literals(completionProviderIds));
+
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();
 

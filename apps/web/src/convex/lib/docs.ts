@@ -62,6 +62,7 @@ export const vGetContextResult = v.object({
 			'threadId',
 			'userId',
 			'selectedModel',
+			'completionProvider',
 			'reasoningEffort',
 			'startedAt',
 			'continuationOfRunId'
