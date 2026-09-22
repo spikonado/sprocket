@@ -54,7 +54,6 @@
 	}
 
 	const history = new WorkDetails(
-		untrack(() => inProgress),
 		(cursor, signal) => load(row, cursor, signal),
 		() => {
 			version += 1;

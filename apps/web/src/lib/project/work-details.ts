@@ -17,7 +17,7 @@ export class WorkDetails {
 	indexing = false;
 	stale = false;
 	error = false;
-	private start: TranscriptDetailCursor;
+	private start: TranscriptDetailCursor = {};
 	private initialized = false;
 	private stopped = false;
 	private refreshPending = false;
@@ -26,16 +26,13 @@ export class WorkDetails {
 	private retry: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
-		latest: boolean,
 		private load: (
 			cursor: TranscriptDetailCursor,
 			signal: AbortSignal
 		) => Promise<TranscriptDisplayDetails>,
 		private changed: () => void,
 		private commit: (update: () => void, direction?: Direction) => Promise<void>
-	) {
-		this.start = latest ? { latest: true } : {};
-	}
+	) {}
 
 	stop() {
 		this.stopped = true;

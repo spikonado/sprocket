@@ -138,28 +138,31 @@ describe('scrolling work details', () => {
 		expect(restore).toHaveBeenCalledTimes(2);
 	});
 
-	it('opens active work at the latest page and preserves a tool group when older calls join it', async () => {
+	it('opens active work at the oldest page and preserves a tool group when newer calls join it', async () => {
 		const load = vi
 			.fn()
-			.mockResolvedValueOnce(tools([6, 7], 6))
-			.mockResolvedValueOnce(tools([4, 5], 4))
-			.mockResolvedValueOnce(tools([2, 3]));
+			.mockResolvedValueOnce({ ...tools([2, 3]), nextAfter: 3 })
+			.mockResolvedValueOnce({ ...tools([4, 5], 4), nextAfter: 5 })
+			.mockResolvedValueOnce(tools([6, 7], 6));
 		const { viewport, edges, props } = await render(load, true);
-		expect(load.mock.calls[0][1]).toEqual({ latest: true });
+		expect(load.mock.calls[0][1]).toEqual({});
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 		const group = viewport.querySelector<HTMLButtonElement>('button');
-		const originalTool = viewport.querySelector('[title="echo 6"]');
+		const originalTool = viewport.querySelector('[title="echo 2"]');
 		expect(originalTool).not.toBeNull();
 		expect(group?.getAttribute('aria-expanded')).toBe('true');
-		edges.older = -1_000;
+		edges.newer = 1_500;
 		intersection();
 		await settle();
-		expect(load.mock.calls[1][1]).toEqual({ before: 6 });
+		expect(load.mock.calls[1][1]).toEqual({ after: 3 });
 		expect(viewport.querySelector('button')).toBe(group);
 		expect(group?.getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.querySelector('[title="echo 6"]')).toBe(originalTool);
-		expect(viewport.textContent).toContain('echo 2');
-		expect(props.beforeChange).toHaveBeenLastCalledWith(false);
+		expect(viewport.querySelector('[title="echo 2"]')).toBe(originalTool);
+		expect(viewport.textContent).toContain('echo 6');
+		expect(
+			[...viewport.querySelectorAll<HTMLElement>('[title^="echo "]')].map((item) => item.title)
+		).toEqual(['echo 2', 'echo 3', 'echo 4', 'echo 5', 'echo 6', 'echo 7']);
+		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 		group?.click();
 		await settle();
 		props.row = { ...props.row, revision: 2 };
