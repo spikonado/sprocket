@@ -64,7 +64,10 @@ export const getMySubscription = query({
 		return {
 			tier,
 			tierLabel: await getTierLabel(ctx, tier),
-			billingManaged: subscription?.status === 'active' && tier === 'pro' && customer !== null
+			billingManaged:
+				subscription?.status === 'active' &&
+				Boolean(subscription.dodoSubscriptionId) &&
+				customer !== null
 		};
 	}
 });
@@ -81,14 +84,32 @@ export const ensureMySubscription = mutation({
 
 export const checkout = action({
 	args: {
-		tier: v.literal('pro'),
+		tier: v.string(),
 		interval: vBillingInterval
 	},
 	returns: v.object({ checkout_url: v.string() }),
 	handler: async (ctx, { tier, interval }): Promise<{ checkout_url: string }> => {
 		const identity = await requireIdentity(ctx);
-		const productId = productIdForCheckout(tier, interval);
-		if (!productId) throw new Error(`No checkout product is configured for the ${interval} plan.`);
+		if (tier === 'free') throw new Error('The Free tier does not use checkout.');
+		const configuredProductId: string | null = await ctx.runQuery(
+			internal.pricingData.getTierProduct,
+			{ tierId: tier, interval }
+		);
+		const productId = configuredProductId ?? productIdForCheckout(tier, interval);
+		if (!productId) {
+			throw new Error(`No ${interval} checkout product is configured for tier "${tier}".`);
+		}
+		if (!configuredProductId) {
+			const configuredTier: string | null = await ctx.runQuery(
+				internal.pricingData.getTierForProduct,
+				{ productId }
+			);
+			if (configuredTier) {
+				throw new Error(
+					`Dodo product "${productId}" is also assigned to tier "${configuredTier}".`
+				);
+			}
+		}
 		assertPaymentsConfigured();
 
 		const billingCustomer = await ctx.runQuery(internal.billingCustomers.get, {
@@ -105,7 +126,7 @@ export const checkout = action({
 		});
 		if (reserved.kind === 'existing') return { checkout_url: reserved.checkoutUrl };
 
-		const { return_url, cancel_url } = resolveMarketingPricingUrls();
+		const { return_url, cancel_url } = resolveMarketingPricingUrls(process.env, tier);
 		const session = await ctx.runAction(internal.pricing.createCheckoutSession, {
 			attemptId: reserved.attemptId,
 			userId: identity.subject,
@@ -231,7 +252,9 @@ export const upsertDodoSubscription = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
-		if (existing?.status === 'active' && !['free', 'pro'].includes(existing.tier)) return null;
+		if (existing?.status === 'active' && existing.tier !== 'free' && !existing.dodoSubscriptionId) {
+			return null;
+		}
 		if (existing && args.eventAt < existing.eventAt) return null;
 		if (existing && args.eventAt === existing.eventAt && existing.status !== 'active') {
 			if (args.status === 'active') return null;

@@ -68,6 +68,16 @@ completion. Current agents send usage with `finalizeCompletionCall` and
 or a successful handoff. Keep the standalone mutation until released agents
 using it have aged out, then remove the mutation and its direct tests.
 
+### Legacy Pro billing configuration
+
+Convex still reads `DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID` and
+`DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID` when the corresponding product ID is
+missing from the `pro` row in `tiers`. The public pricing response also retains
+the old `proPrices` field while current clients read per-tier `prices`.
+
+Remove both fallbacks after every production deployment has both product IDs on
+the `pro` tier row and all deployed pricing clients read `plans[].prices`.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
