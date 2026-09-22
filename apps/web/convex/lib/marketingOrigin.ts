@@ -3,10 +3,7 @@ type MarketingOriginEnv = {
 	DODO_PAYMENTS_ENVIRONMENT?: string;
 };
 
-export function resolveMarketingPricingUrls(
-	env: MarketingOriginEnv = process.env,
-	tierId?: string
-) {
+export function resolveMarketingPricingUrls(env: MarketingOriginEnv = process.env, tierId: string) {
 	const configured = env.SPROCKET_MARKETING_ORIGIN?.trim().replace(/\/$/, '');
 	const allowed = new Set(['https://spikonado.com']);
 	if (env.DODO_PAYMENTS_ENVIRONMENT !== 'live_mode') {
@@ -14,7 +11,7 @@ export function resolveMarketingPricingUrls(
 		allowed.add('http://127.0.0.1:4321');
 	}
 	const origin = configured && allowed.has(configured) ? configured : 'https://spikonado.com';
-	const tier = tierId ? `&tier=${encodeURIComponent(tierId)}` : '';
+	const tier = `&tier=${encodeURIComponent(tierId)}`;
 	return {
 		return_url: `${origin}/pricing?checkout=return${tier}`,
 		cancel_url: `${origin}/pricing?checkout=cancel${tier}`

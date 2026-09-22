@@ -1,24 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import {
-	productIdForCheckout,
-	readProProductIds,
-	matchesBillingInterval,
-	readDodoEnvironment,
-	tierForProductId,
-	type ProProductIds
-} from '@convex/lib/dodoProducts';
+import { matchesBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
 import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import { initConvexTest } from './test.setup';
 
-const ENV_KEYS = [
-	'DODO_PAYMENTS_API_KEY',
-	'DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID',
-	'DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID'
-] as const;
+const ENV_KEYS = ['DODO_PAYMENTS_API_KEY'] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-const products: ProProductIds = { monthly: 'prod_monthly', annual: 'prod_annual' };
 
 afterEach(() => {
 	for (const key of ENV_KEYS) {
@@ -29,16 +17,6 @@ afterEach(() => {
 });
 
 describe('Dodo product mapping', () => {
-	it('reads product ids and maps only the configured Pro products', () => {
-		process.env.DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID = ' prod_monthly ';
-		process.env.DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID = 'prod_annual';
-		expect(readProProductIds()).toEqual(products);
-		expect(productIdForCheckout('pro', 'monthly', products)).toBe('prod_monthly');
-		expect(productIdForCheckout('free', 'monthly', products)).toBeUndefined();
-		expect(tierForProductId('prod_annual', products)).toBe('pro');
-		expect(tierForProductId('other', products)).toBeUndefined();
-	});
-
 	it('accepts only monthly and annual recurring schedules for their mapped products', () => {
 		expect(matchesBillingInterval('monthly', 1, 'Month')).toBe(true);
 		expect(matchesBillingInterval('monthly', 1, 'Year')).toBe(false);
@@ -129,27 +107,33 @@ describe('Dodo product mapping', () => {
 
 describe('marketing checkout URLs', () => {
 	it('allows the production site and test-mode localhost only', () => {
-		expect(resolveMarketingPricingUrls({})).toEqual({
-			return_url: 'https://spikonado.com/pricing?checkout=return',
-			cancel_url: 'https://spikonado.com/pricing?checkout=cancel'
+		expect(resolveMarketingPricingUrls({}, 'team')).toEqual({
+			return_url: 'https://spikonado.com/pricing?checkout=return&tier=team',
+			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=team'
 		});
 		expect(
-			resolveMarketingPricingUrls({
-				SPROCKET_MARKETING_ORIGIN: 'http://localhost:4321',
-				DODO_PAYMENTS_ENVIRONMENT: 'test_mode'
-			})
+			resolveMarketingPricingUrls(
+				{
+					SPROCKET_MARKETING_ORIGIN: 'http://localhost:4321',
+					DODO_PAYMENTS_ENVIRONMENT: 'test_mode'
+				},
+				'team'
+			)
 		).toEqual({
-			return_url: 'http://localhost:4321/pricing?checkout=return',
-			cancel_url: 'http://localhost:4321/pricing?checkout=cancel'
+			return_url: 'http://localhost:4321/pricing?checkout=return&tier=team',
+			cancel_url: 'http://localhost:4321/pricing?checkout=cancel&tier=team'
 		});
 		expect(
-			resolveMarketingPricingUrls({
-				SPROCKET_MARKETING_ORIGIN: 'http://localhost:4321',
-				DODO_PAYMENTS_ENVIRONMENT: 'live_mode'
-			})
+			resolveMarketingPricingUrls(
+				{
+					SPROCKET_MARKETING_ORIGIN: 'http://localhost:4321',
+					DODO_PAYMENTS_ENVIRONMENT: 'live_mode'
+				},
+				'team'
+			)
 		).toEqual({
-			return_url: 'https://spikonado.com/pricing?checkout=return',
-			cancel_url: 'https://spikonado.com/pricing?checkout=cancel'
+			return_url: 'https://spikonado.com/pricing?checkout=return&tier=team',
+			cancel_url: 'https://spikonado.com/pricing?checkout=cancel&tier=team'
 		});
 		expect(resolveMarketingPricingUrls({}, 'team/plus')).toEqual({
 			return_url: 'https://spikonado.com/pricing?checkout=return&tier=team%2Fplus',
@@ -243,43 +227,6 @@ describe('Dodo subscription persistence', () => {
 			kind: 'existing',
 			checkoutUrl: 'https://checkout.example/session_1'
 		});
-	});
-
-	it('backfills the tier on a matching legacy checkout reservation', async () => {
-		const t = initConvexTest();
-		await t.run(async (ctx) => {
-			await ctx.db.insert('billingCheckoutSessions', {
-				userId: 'user_legacy',
-				attemptId: 'attempt_legacy',
-				interval: 'monthly',
-				productId: 'prod_team_monthly',
-				expiresAt: 10_000
-			});
-		});
-
-		await t.mutation(internal.billing.reserveCheckoutSession, {
-			userId: 'user_legacy',
-			attemptId: 'attempt_retry',
-			tierId: 'team',
-			interval: 'monthly',
-			productId: 'prod_team_monthly',
-			now: 2_000
-		});
-
-		await expect(
-			t.query(internal.billing.getCheckoutTier, {
-				userId: 'user_legacy',
-				attemptId: 'attempt_legacy',
-				productId: 'prod_team_monthly'
-			})
-		).resolves.toBe('team');
-		await expect(
-			t.query(internal.billing.getCheckoutTier, {
-				userId: 'user_legacy',
-				attemptId: 'another_attempt',
-				productId: 'prod_team_monthly'
-			})
-		).resolves.toBeNull();
 	});
 
 	it('replaces an expired checkout reservation', async () => {
@@ -477,8 +424,7 @@ describe('Dodo subscription tier resolution', () => {
 				checkoutTier: 'team',
 				metadataTier: 'team',
 				existingTier: null,
-				configuredTier: 'max',
-				legacyTier: undefined
+				configuredTier: 'max'
 			})
 		).toBe('team');
 		expect(
@@ -486,8 +432,7 @@ describe('Dodo subscription tier resolution', () => {
 				checkoutTier: null,
 				metadataTier: 'pro',
 				existingTier: 'team',
-				configuredTier: 'max',
-				legacyTier: undefined
+				configuredTier: 'max'
 			})
 		).toBe('team');
 	});
@@ -498,8 +443,7 @@ describe('Dodo subscription tier resolution', () => {
 				checkoutTier: 'team',
 				metadataTier: 'max',
 				existingTier: null,
-				configuredTier: 'max',
-				legacyTier: undefined
+				configuredTier: 'max'
 			})
 		).toThrow('Dodo subscription tier metadata does not match its checkout reservation.');
 	});
@@ -511,7 +455,6 @@ describe('Dodo subscription tier resolution', () => {
 				metadataTier: 'team',
 				existingTier: 'team',
 				configuredTier: 'max',
-				legacyTier: undefined,
 				preferConfiguredTier: true
 			})
 		).toBe('max');
