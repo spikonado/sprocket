@@ -65,11 +65,16 @@
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden">
 	<header class="flex h-12 shrink-0 items-center px-6">
-		<h1 class="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Providers</h1>
+		<h1 class="text-foreground text-[1rem] font-medium tracking-[-0.03em]">BYOK/BYOS</h1>
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl">
+			<p class="text-muted-foreground mb-5 text-sm leading-6">
+				You can use your own API keys or subscriptions from other providers. Your credentials are
+				stored encrypted and are only accessible to you.
+			</p>
+
 			<div class="border-border rounded-xl border p-5">
 				<div class="flex items-center gap-3">
 					<ProviderLogo provider="openai" className="size-5" />
@@ -84,11 +89,6 @@
 						</p>
 					</div>
 				</div>
-
-				<p class="text-muted-foreground mt-4 text-sm leading-6">
-					OpenAI requests run directly from your local Sprocket server. They do not use your
-					Spikonado quota. Your key is encrypted in WorkOS Vault and is never shown again.
-				</p>
 
 				<form class="mt-5 space-y-3" onsubmit={saveKey}>
 					<label class="block space-y-1.5">
@@ -116,7 +116,7 @@
 					</label>
 
 					<div class="flex flex-wrap items-center gap-3">
-						<Button disabled={pending || loading || !apiKey.trim()}>
+						<Button type="submit" disabled={pending || loading || !apiKey.trim()}>
 							{pending ? 'Saving…' : openAiConfigured ? 'Replace key' : 'Connect OpenAI'}
 						</Button>
 						{#if openAiConfigured && !confirmRemove}

@@ -654,19 +654,6 @@
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							<OptionSelector
-								value={selectedCompletionProvider}
-								options={providerOptions}
-								ariaLabel="Select provider"
-								menuTitle="Provider"
-								disabled={composerLocked || answeringQuestion || !providersReady}
-								onValueChange={handleProviderChange}
-								className="z-20 shrink-0"
-								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
-							/>
-
-							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-
-							<OptionSelector
 								value={selectedModel}
 								options={modelOptions}
 								ariaLabel="Select model"
@@ -696,6 +683,23 @@
 									className="z-20 shrink-0"
 								/>
 							{/if}
+
+							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+
+							<OptionSelector
+								value={selectedCompletionProvider}
+								options={providerOptions}
+								ariaLabel="Select provider"
+								menuTitle="Provider"
+								disabled={composerLocked || answeringQuestion || !providersReady}
+								onValueChange={handleProviderChange}
+								className="z-20 shrink-0"
+								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
+							>
+								{#snippet optionIcon(option)}
+									<ProviderLogo provider={option.id} className="size-4 shrink-0" />
+								{/snippet}
+							</OptionSelector>
 						</div>
 
 						<div class="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">

@@ -11,7 +11,9 @@
 	let { provider, className = '' }: Props = $props();
 </script>
 
-{#if provider === 'openai'}
+{#if provider === 'spikonado'}
+	<img src="/logo.png" alt="" class={cn('size-4 shrink-0', className)} />
+{:else if provider === 'openai'}
 	<OpenAiBlossom className={cn('size-4 text-foreground', className)} />
 {:else if provider === 'anthropic'}
 	<svg

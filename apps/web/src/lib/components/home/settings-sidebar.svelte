@@ -25,7 +25,7 @@
 	const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
 		{ id: 'account', label: 'Account', icon: UserRound },
 		{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
-		{ id: 'providers', label: 'Providers', icon: KeyRound },
+		{ id: 'providers', label: 'BYOK/BYOS', icon: KeyRound },
 		{ id: 'browser', label: "Agent's Browser", icon: Globe },
 		{ id: 'payments', label: 'Payments', icon: CreditCard }
 	];
