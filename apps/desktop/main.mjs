@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
+import { waitForServerReady } from './local-server.mjs';
 import { createAppImageUpdater, DesktopUpdater, stopUpdateProcess } from './updater.mjs';
 
 const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
@@ -137,35 +138,6 @@ function getLocalDataDir() {
 	}
 
 	return isDevelopment ? path.resolve(__dirname, '../../.sprocket-dev') : getDefaultDataDir();
-}
-
-function waitForServerReady(baseUrl, timeoutMs = 30_000) {
-	const startedAt = Date.now();
-
-	return new Promise((resolve, reject) => {
-		const poll = async () => {
-			try {
-				const response = await fetch(`${baseUrl}/api/health`);
-				if (response.ok) {
-					resolve(undefined);
-					return;
-				}
-			} catch {
-				// Server is still starting.
-			}
-
-			if (Date.now() - startedAt > timeoutMs) {
-				reject(new Error('Timed out waiting for the Sprocket local server.'));
-				return;
-			}
-
-			setTimeout(() => {
-				void poll();
-			}, 200);
-		};
-
-		void poll();
-	});
 }
 
 async function attachToRunningServer(baseUrl, dataDir) {
