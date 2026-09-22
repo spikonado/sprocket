@@ -2,6 +2,21 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Local data directory backwards compatibility
+
+### Retired repository rekey metadata
+
+Older servers may have written `previousRepositoryKey` into
+`project-attachments.json`. The current attachment record does not deserialize
+or use that field. On the first successful attachment load, the server inspects
+the raw JSON for it and forces a save, which rewrites the file without the
+field. The rewrite also persists any changes made while validating the stored
+attachments.
+
+After releases that wrote `previousRepositoryKey` are outside the supported
+direct-upgrade window, remove the raw JSON field-presence check and its legacy
+JSON test fixture. Keep the save triggered by attachment validation changes.
+
 ## Convex Backwards Compatibility
 
 ### Retired repository rekey calls
@@ -9,8 +24,9 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 Released local servers may still call `threads.rekeyRepository`, and deployments
 may have queued `artifacts.continueRekey` jobs. Both functions are no-ops. They
 must not move threads or artifacts when a checkout's remote changes. Remove
-them after clients containing automatic repository rekeying have aged out and
-no queued continuation jobs remain.
+both functions and their no-op compatibility tests after clients containing
+automatic repository rekeying have aged out and no queued continuation jobs
+remain.
 
 ### Current Migrations
 
@@ -34,8 +50,10 @@ normalize or require stored completion timing; drop stored `imageUploadId`; drop
 `contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
 drop `artifactRegistries.rekeyTo`. The optional field remains in the schema
 until the migration has completed and production scans find no rows that use
-it. That PR may also remove the backfill cron and its `migrationSchedules` row
-and table.
+it. At that point, also remove `removeArtifactRegistryRekeyTargets`, its test,
+and its entry in the migration sequence. After every migration in the sequence
+meets its removal gate, remove the backfill cron, runner, tests, and the
+`migrationSchedules` row and table.
 
 ### Outdated Executor jobs
 
