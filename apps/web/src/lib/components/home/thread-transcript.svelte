@@ -551,6 +551,7 @@
 									className="text-foreground"
 									{artifacts}
 									{onOpenArtifact}
+									openLinksInNewTab
 								/>
 							</div>
 						{:else if message.kind === 'live'}
@@ -574,6 +575,7 @@
 											className="text-foreground"
 											{artifacts}
 											{onOpenArtifact}
+											openLinksInNewTab
 										/>
 									{/if}
 									{#each live.sections as section, sectionIndex (section.renderKey)}
@@ -586,6 +588,7 @@
 													className="text-foreground"
 													{artifacts}
 													{onOpenArtifact}
+													openLinksInNewTab
 												/>
 											</div>
 										{:else}

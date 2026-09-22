@@ -17,6 +17,7 @@ function renderChatMarkdown(props: {
 	content: string;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
+	openLinksInNewTab?: boolean;
 }) {
 	const component = mount(ChatMarkdown, { target: document.body, props });
 	cleanup = () => unmount(component);
@@ -25,6 +26,19 @@ function renderChatMarkdown(props: {
 afterEach(async () => {
 	await cleanup?.();
 	cleanup = undefined;
+});
+
+describe('links', () => {
+	it('opens links in a new tab when requested', () => {
+		renderChatMarkdown({
+			content: '[Sprocket](https://sprocket.dev)',
+			openLinksInNewTab: true
+		});
+
+		const link = document.querySelector('a');
+		expect(link?.target).toBe('_blank');
+		expect(link?.rel).toBe('noopener noreferrer');
+	});
 });
 
 describe('artifact references', () => {

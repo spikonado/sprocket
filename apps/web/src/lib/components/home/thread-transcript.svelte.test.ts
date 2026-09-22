@@ -138,6 +138,26 @@ describe('transcript viewport paging', () => {
 		expect(viewport.classList.contains('overflow-auto')).toBe(false);
 	});
 
+	it('opens every transcript link in a new tab without granting opener access', async () => {
+		const prompt = { ...message(1), text: '[Prompt](https://example.com/prompt)' };
+		const response: TranscriptDisplayRow = {
+			...message(2),
+			id: 'text-2',
+			kind: 'text',
+			text: '[Response](https://example.com/response)'
+		};
+		const live: LiveTranscriptMessage = {
+			...liveMessage(),
+			text: '[Live](https://example.com/live)'
+		};
+		const { viewport } = await renderTranscript([prompt, response, live]);
+
+		const links = [...viewport.querySelectorAll<HTMLAnchorElement>('.chat-markdown a')];
+		expect(links).toHaveLength(3);
+		expect(links.every((link) => link.target === '_blank')).toBe(true);
+		expect(links.every((link) => link.rel === 'noopener noreferrer')).toBe(true);
+	});
+
 	it.each(['live', 'persisted'] as const)(
 		'uses the same patch and failure disclosures for %s tools',
 		async (kind) => {

@@ -12,6 +12,21 @@ describe('renderMarkdown', () => {
 });
 
 describe('renderMarkdownBlocks', () => {
+	it('replaces existing link targets when links should open in a new tab', () => {
+		const blocks = renderMarkdownBlocks(
+			'<a href="https://example.com" target="named-frame" rel="opener">example</a>',
+			new Set(),
+			true
+		);
+
+		expect(blocks).toEqual([
+			{
+				type: 'html',
+				html: '<p><a target="_blank" rel="noopener noreferrer" href="https://example.com">example</a></p>\n'
+			}
+		]);
+	});
+
 	it('turns a known standalone artifact reference into a separate block', () => {
 		expect(
 			renderMarkdownBlocks(

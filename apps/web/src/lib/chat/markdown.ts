@@ -6,10 +6,14 @@ marked.setOptions({
 	breaks: true
 });
 
-function sanitizeMarkdown(rendered: string) {
-	return DOMPurify.sanitize(rendered, {
-		ADD_ATTR: ['target', 'rel']
+function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
+	const sanitized = DOMPurify.sanitize(rendered, {
+		ADD_ATTR: ['target', 'rel'],
+		FORBID_ATTR: openLinksInNewTab ? ['target', 'rel'] : []
 	});
+	if (!openLinksInNewTab) return sanitized;
+
+	return sanitized.replace(/<a(?=[\s>])/gi, '<a target="_blank" rel="noopener noreferrer"');
 }
 
 export function renderMarkdown(value: string) {
@@ -23,14 +27,15 @@ const ARTIFACT_REFERENCE = /^\s*artifact:([A-Za-z0-9_-]+)\s*$/;
 
 export function renderMarkdownBlocks(
 	value: string,
-	availableArtifactIds: ReadonlySet<string>
+	availableArtifactIds: ReadonlySet<string>,
+	openLinksInNewTab = false
 ): MarkdownBlock[] {
 	const blocks: MarkdownBlock[] = [];
 	let markdownTokens: Token[] = [];
 
 	const flushMarkdown = () => {
 		if (markdownTokens.length === 0) return;
-		const html = sanitizeMarkdown(marked.parser(markdownTokens));
+		const html = sanitizeMarkdown(marked.parser(markdownTokens), openLinksInNewTab);
 		if (html) blocks.push({ type: 'html', html });
 		markdownTokens = [];
 	};
