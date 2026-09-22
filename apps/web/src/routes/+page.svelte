@@ -635,6 +635,7 @@
 
 	async function refreshDesktopProjectAttachments() {
 		const refreshGeneration = ++desktopProjectAttachmentsGeneration;
+		const selectedWorkspacePath = currentWorkspacePath;
 		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(desktopApi);
 		if (refreshGeneration !== desktopProjectAttachmentsGeneration) {
 			return;
@@ -642,14 +643,38 @@
 
 		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
-		const selectedAttachment = currentWorkspacePath
-			? nextAttachments[currentWorkspacePath]
-			: undefined;
-		if (selectedAttachment && selectedAttachment.repositoryKey !== currentRepositoryKey) {
+		if (!selectedWorkspacePath || currentWorkspacePath !== selectedWorkspacePath) {
+			return;
+		}
+
+		let selectedAttachment: ProjectAttachment | undefined = nextAttachments[selectedWorkspacePath];
+		if (!selectedAttachment && desktopApi) {
+			const resolution = await desktopApi.resolveWorkspacePath({
+				workspacePath: selectedWorkspacePath
+			});
+			if (
+				refreshGeneration !== desktopProjectAttachmentsGeneration ||
+				currentWorkspacePath !== selectedWorkspacePath
+			) {
+				return;
+			}
+			selectedAttachment = findCanonicalProjectAttachment(nextAttachments, resolution);
+		}
+		if (!selectedAttachment) {
+			return;
+		}
+
+		const repositoryChanged = selectedAttachment.repositoryKey !== currentRepositoryKey;
+		if (selectedAttachment.workspacePath !== selectedWorkspacePath || repositoryChanged) {
+			const draft = draftWorkspacePath === selectedWorkspacePath;
 			projectSelectionGeneration += 1;
+			currentWorkspacePath = selectedAttachment.workspacePath;
 			currentRepositoryKey = selectedAttachment.repositoryKey;
-			currentThreadId = null;
-			pendingCreatedThreadId = null;
+			draftWorkspacePath = draft ? selectedAttachment.workspacePath : null;
+			if (repositoryChanged) {
+				currentThreadId = null;
+				pendingCreatedThreadId = null;
+			}
 		}
 	}
 
