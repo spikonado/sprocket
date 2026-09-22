@@ -27,7 +27,7 @@ pub struct BindingGuard {
 }
 
 pub fn content_hash(content: &str) -> String {
-    format!("{:x}", Sha256::digest(content.as_bytes()))
+    hex::encode(Sha256::digest(content.as_bytes()))
 }
 
 impl ArtifactBindings {
@@ -38,7 +38,7 @@ impl ArtifactBindings {
         let identity = serde_json::to_vec(&(deployment.trim_end_matches('/'), user_id, workspace))
             .expect("binding identity is serializable");
         Self {
-            directory: root.join(format!("{:x}", Sha256::digest(identity))),
+            directory: root.join(hex::encode(Sha256::digest(identity))),
         }
     }
 
