@@ -9,11 +9,11 @@ use sprocket_agent::artifact_bindings::{ArtifactBindings, content_hash};
 use sprocket_convex::{decode_labeled_function_result, deserialize_convex_u64};
 use sprocket_workspace::{ArtifactContentType, read_artifact_file};
 use tokio::sync::broadcast;
-use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::{ArtifactSnapshot, UserConvexClient};
+use crate::watch_registry::{WatchRegistry, WatchSession};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -74,26 +74,25 @@ struct WatchKey {
     thread_id: Option<String>,
 }
 
-struct WatchSlot {
-    refs: usize,
-    events: broadcast::Sender<ArtifactWatchEvent>,
-    latest: Arc<Mutex<Option<ArtifactWatchEvent>>>,
-    task: JoinHandle<()>,
-}
-
 pub struct ArtifactWatchers {
     deployment_url: String,
     native_auth: Arc<NativeAuthManager>,
     bindings_root: PathBuf,
-    inner: Mutex<HashMap<WatchKey, WatchSlot>>,
+    registry: Arc<ArtifactRegistry>,
 }
 
 pub struct ArtifactWatchSession {
     watchers: Arc<ArtifactWatchers>,
     key: WatchKey,
-    rx: broadcast::Receiver<ArtifactWatchEvent>,
-    latest: Arc<Mutex<Option<ArtifactWatchEvent>>>,
+    session: ArtifactSession,
+    latest: LatestEvent,
 }
+
+type LatestEvent = Arc<Mutex<Option<ArtifactWatchEvent>>>;
+
+type ArtifactRegistry = WatchRegistry<WatchKey, ArtifactWatchEvent, LatestEvent>;
+
+type ArtifactSession = WatchSession<WatchKey, ArtifactWatchEvent, LatestEvent>;
 
 impl ArtifactWatchers {
     pub(crate) fn new(
@@ -105,7 +104,7 @@ impl ArtifactWatchers {
             deployment_url,
             native_auth,
             bindings_root,
-            inner: Mutex::new(HashMap::new()),
+            registry: WatchRegistry::new(),
         })
     }
 
@@ -131,47 +130,44 @@ impl ArtifactWatchers {
             workspace_path: workspace_path.into(),
             thread_id: thread_id.map(str::to_string),
         };
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        let slot = inner.entry(key.clone()).or_insert_with(|| {
-            let (events, _) = broadcast::channel(1);
-            let latest = Arc::new(Mutex::new(None));
-            // The task must not own the registry: the last session drop aborts it.
-            let task = tokio::spawn(watch(
-                self.deployment_url.clone(),
-                Arc::clone(&self.native_auth),
-                key.clone(),
-                self.bindings(&key),
-                events.clone(),
-                Arc::clone(&latest),
-            ));
-            WatchSlot {
-                refs: 0,
-                events,
-                latest,
-                task,
-            }
-        });
-        slot.refs += 1;
+        // The task must not own the registry: the last session drop aborts it.
+        let (session, latest) =
+            self.registry
+                .open_with(key.clone(), 1, || Arc::new(Mutex::new(None)), {
+                    |events, latest| {
+                        let task_key = key.clone();
+                        tokio::spawn(watch(
+                            self.deployment_url.clone(),
+                            Arc::clone(&self.native_auth),
+                            task_key.clone(),
+                            self.bindings(&task_key),
+                            events,
+                            latest,
+                        ))
+                    }
+                });
         ArtifactWatchSession {
             watchers: Arc::clone(self),
             key,
-            rx: slot.events.subscribe(),
-            latest: Arc::clone(&slot.latest),
+            session,
+            latest,
         }
     }
 
     #[cfg(test)]
     pub fn active_count(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .len()
+        self.registry.active_count()
+    }
+
+    #[cfg(test)]
+    fn task_abort_handle(&self, key: &WatchKey) -> Option<tokio::task::AbortHandle> {
+        self.registry.task_abort_handle(key)
     }
 }
 
 impl ArtifactWatchSession {
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<ArtifactWatchEvent> {
-        &mut self.rx
+        self.session.receiver()
     }
     pub fn latest_event(&self) -> Option<ArtifactWatchEvent> {
         self.latest
@@ -243,24 +239,6 @@ where
         }
         for request in std::mem::take(&mut feed.pending) {
             synchronize(request).await?;
-        }
-    }
-}
-
-impl Drop for ArtifactWatchSession {
-    fn drop(&mut self) {
-        let mut inner = self
-            .watchers
-            .inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if let Some(slot) = inner.get_mut(&self.key) {
-            slot.refs -= 1;
-            if slot.refs == 0 {
-                if let Some(slot) = inner.remove(&self.key) {
-                    slot.task.abort();
-                }
-            }
         }
     }
 }
@@ -796,14 +774,7 @@ mod tests {
         let first = watchers.open("alice", "repo", "/workspace", None).await;
         let second = watchers.open("alice", "repo", "/workspace", None).await;
         let other = watchers.open("bob", "repo", "/workspace", None).await;
-        let task = watchers
-            .inner
-            .lock()
-            .unwrap()
-            .get(&first.key)
-            .unwrap()
-            .task
-            .abort_handle();
+        let task = watchers.task_abort_handle(&first.key).expect("watch task");
         assert_eq!(watchers.active_count(), 2);
         drop(first);
         assert_eq!(watchers.active_count(), 2);
