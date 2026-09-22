@@ -228,6 +228,17 @@ describe('payments mandates', () => {
 		expect(stored).not.toHaveProperty('session_token');
 	});
 
+	it('reports a missing Prava backend URL instead of a fetch failure', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		delete process.env.PRAVA_BACKEND_URL;
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		await expect(run.asUser.action(api.payments.mandateSetup, setupArgs(run))).rejects.toThrow(
+			/PRAVA_BACKEND_URL is not configured/
+		);
+	});
+
 	it('resolves the synced account email without a caller identity', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
