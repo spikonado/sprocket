@@ -8205,7 +8205,7 @@ version = "0.3.8"
 dependencies = [
  "anydoc",
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "convex",
  "futures",
  "hex",
@@ -8248,7 +8248,7 @@ name = "sprocket-convex"
 version = "0.3.8"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "convex",
  "rustls",
  "serde",
@@ -8263,7 +8263,7 @@ dependencies = [
  "anyhow",
  "axum",
  "axum-extra",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "convex",
  "cookie",
