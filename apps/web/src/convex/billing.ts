@@ -9,7 +9,7 @@ import {
 	query
 } from '@convex/_generated/server';
 import { ensureCurrentUser, getUserId, requireIdentity } from '@convex/lib/auth';
-import { productIdForCheckout, readDodoEnvironment } from '@convex/lib/dodoProducts';
+import { readDodoEnvironment } from '@convex/lib/dodoProducts';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import {
 	ensureSubscription,
@@ -53,7 +53,7 @@ export const getCheckoutTier = internalQuery({
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
 		return checkout?.attemptId === attemptId && checkout.productId === productId
-			? (checkout.tierId ?? null)
+			? checkout.tierId
 			: null;
 	}
 });
@@ -105,24 +105,12 @@ export const checkout = action({
 	handler: async (ctx, { tier, interval }): Promise<{ checkout_url: string }> => {
 		const identity = await requireIdentity(ctx);
 		if (tier === 'free') throw new Error('The Free tier does not use checkout.');
-		const configuredProductId: string | null = await ctx.runQuery(
-			internal.pricingData.getTierProduct,
-			{ tierId: tier, interval }
-		);
-		const productId = configuredProductId ?? productIdForCheckout(tier, interval);
+		const productId: string | null = await ctx.runQuery(internal.pricingData.getTierProduct, {
+			tierId: tier,
+			interval
+		});
 		if (!productId) {
 			throw new Error(`No ${interval} checkout product is configured for tier "${tier}".`);
-		}
-		if (!configuredProductId) {
-			const configuredTier: string | null = await ctx.runQuery(
-				internal.pricingData.getTierForProduct,
-				{ productId }
-			);
-			if (configuredTier) {
-				throw new Error(
-					`Dodo product "${productId}" is also assigned to tier "${configuredTier}".`
-				);
-			}
 		}
 		assertPaymentsConfigured();
 
@@ -196,7 +184,7 @@ export const reserveCheckoutSession = internalMutation({
 			.unique();
 		if (existing && existing.expiresAt > args.now) {
 			if (
-				(existing.tierId && existing.tierId !== args.tierId) ||
+				existing.tierId !== args.tierId ||
 				existing.interval !== args.interval ||
 				existing.productId !== args.productId
 			) {
@@ -204,7 +192,6 @@ export const reserveCheckoutSession = internalMutation({
 					`A ${existing.interval} checkout is still active. Try that plan again or change plans after it expires.`
 				);
 			}
-			if (!existing.tierId) await ctx.db.patch(existing._id, { tierId: args.tierId });
 			return existing.checkoutUrl
 				? { kind: 'existing' as const, checkoutUrl: existing.checkoutUrl }
 				: {

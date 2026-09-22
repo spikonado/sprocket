@@ -3,12 +3,7 @@ import { api, internal } from '@convex/_generated/api';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { initConvexTest } from './test.setup';
 
-const ENV_KEYS = [
-	'DODO_PAYMENTS_API_KEY',
-	'DODO_PAYMENTS_ENVIRONMENT',
-	'DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID',
-	'DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID'
-] as const;
+const ENV_KEYS = ['DODO_PAYMENTS_API_KEY', 'DODO_PAYMENTS_ENVIRONMENT'] as const;
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
@@ -132,8 +127,7 @@ describe('public pricing catalog', () => {
 					highlighted: false,
 					prices: { monthly: null, annual: null }
 				}
-			],
-			proPrices: null
+			]
 		});
 	});
 
@@ -188,50 +182,5 @@ describe('public pricing catalog', () => {
 			monthly: tierPrices[0]?.price,
 			annual: tierPrices[1]?.price
 		});
-		expect(catalog.proPrices).toBeNull();
-	});
-
-	it('uses legacy Pro product environment variables during migration', async () => {
-		process.env.DODO_PAYMENTS_API_KEY = 'test_key';
-		process.env.DODO_PAYMENTS_ENVIRONMENT = 'test_mode';
-		process.env.DODO_PAYMENTS_PRO_MONTHLY_PRODUCT_ID = 'prod_pro_monthly';
-		process.env.DODO_PAYMENTS_PRO_ANNUAL_PRODUCT_ID = 'prod_pro_annual';
-		const t = initConvexTest();
-		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', {
-				tierId: 'pro',
-				label: 'Pro',
-				weekly: 25 * MODEL_USAGE_UNITS_PER_DOLLAR,
-				monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR
-			});
-		});
-		const monthly = {
-			productId: 'prod_pro_monthly',
-			name: 'Pro Monthly',
-			amountMinor: 2_000,
-			currency: 'USD',
-			paymentFrequencyCount: 1,
-			paymentFrequencyInterval: 'Month'
-		};
-		const annual = {
-			productId: 'prod_pro_annual',
-			name: 'Pro Annual',
-			amountMinor: 20_000,
-			currency: 'USD',
-			paymentFrequencyCount: 1,
-			paymentFrequencyInterval: 'Year'
-		};
-		await t.mutation(internal.pricingData.cacheTierPrices, {
-			cacheKey: 'test_mode:pro:annual:prod_pro_annual|pro:monthly:prod_pro_monthly',
-			tierPrices: [
-				{ tierId: 'pro', interval: 'monthly', price: monthly },
-				{ tierId: 'pro', interval: 'annual', price: annual }
-			],
-			expiresAt: Date.now() + 60_000
-		});
-
-		const catalog = await t.action(api.pricing.getPublicCatalog, {});
-		expect(catalog.plans[0]?.prices).toEqual({ monthly, annual });
-		expect(catalog.proPrices).toEqual({ monthly, annual });
 	});
 });

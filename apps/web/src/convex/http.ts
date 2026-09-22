@@ -3,7 +3,6 @@ import { httpRouter, type GenericActionCtx, type GenericDataModel } from 'convex
 import type { Infer } from 'convex/values';
 import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
-import { tierForProductId } from '@convex/lib/dodoProducts';
 import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { vSubscriptionStatus } from '@convex/lib/validators';
 
@@ -65,7 +64,6 @@ async function persistSubscription(
 		metadataTier: metadata.success ? metadata.data.tierId : undefined,
 		existingTier,
 		configuredTier: storedTier,
-		legacyTier: tierForProductId(data.product_id),
 		preferConfiguredTier
 	});
 	if (!tier) {

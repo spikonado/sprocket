@@ -7,11 +7,9 @@ import { action, internalAction } from '@convex/_generated/server';
 import {
 	matchesBillingInterval,
 	readDodoEnvironment,
-	readProProductIds,
 	vDodoPublicPrice,
-	vDodoProPrices,
 	type BillingInterval,
-	type DodoProPrices
+	type DodoPublicPrice
 } from '@convex/lib/dodoProducts';
 import { vBillingInterval } from '@convex/lib/validators';
 
@@ -26,7 +24,7 @@ type PublicPricingPlan = {
 	features: string[];
 	displayOrder: number;
 	highlighted: boolean;
-	prices: { monthly: DodoProPrices['monthly'] | null; annual: DodoProPrices['annual'] | null };
+	prices: { monthly: DodoPublicPrice | null; annual: DodoPublicPrice | null };
 };
 
 type TierPricingConfig = Omit<PublicPricingPlan, 'prices'> & {
@@ -36,7 +34,6 @@ type TierPricingConfig = Omit<PublicPricingPlan, 'prices'> & {
 
 type PublicPricingCatalog = {
 	plans: PublicPricingPlan[];
-	proPrices: DodoProPrices | null;
 };
 
 function publicPlanFromConfig(
@@ -70,8 +67,7 @@ const vPublicPricingCatalog = v.object({
 			highlighted: v.boolean(),
 			prices: v.object({ monthly: vOptionalDodoPrice, annual: vOptionalDodoPrice })
 		})
-	),
-	proPrices: v.union(v.null(), vDodoProPrices)
+	)
 });
 
 function createDodoClient(): DodoPayments {
@@ -157,20 +153,10 @@ export const getPublicCatalog = action({
 			internal.pricingData.getPublicPlans,
 			{}
 		);
-		const legacyProProducts = readProProductIds();
-		const configs = tierConfigs.map((plan) =>
-			plan.id === 'pro'
-				? {
-						...plan,
-						monthlyProductId: plan.monthlyProductId ?? legacyProProducts.monthly ?? null,
-						annualProductId: plan.annualProductId ?? legacyProProducts.annual ?? null
-					}
-				: plan
-		);
-		const emptyPlans = configs.map((plan) =>
+		const emptyPlans = tierConfigs.map((plan) =>
 			publicPlanFromConfig(plan, { monthly: null, annual: null })
 		);
-		const configuredProducts = configs.flatMap((plan) =>
+		const configuredProducts = tierConfigs.flatMap((plan) =>
 			(['monthly', 'annual'] as const).flatMap((interval) => {
 				const productId = interval === 'monthly' ? plan.monthlyProductId : plan.annualProductId;
 				return productId ? [{ tierId: plan.id, interval, productId }] : [];
@@ -187,7 +173,7 @@ export const getPublicCatalog = action({
 			productOwners.set(product.productId, product);
 		}
 		if (configuredProducts.length === 0 || !process.env.DODO_PAYMENTS_API_KEY?.trim()) {
-			return { plans: emptyPlans, proPrices: null };
+			return { plans: emptyPlans };
 		}
 
 		try {
@@ -199,7 +185,7 @@ export const getPublicCatalog = action({
 			let tierPrices: Array<{
 				tierId: string;
 				interval: BillingInterval;
-				price: DodoProPrices['monthly'];
+				price: DodoPublicPrice;
 			}> | null = await ctx.runQuery(internal.pricingData.getCachedTierPrices, {
 				cacheKey,
 				now
@@ -213,7 +199,7 @@ export const getPublicCatalog = action({
 						price: await retrieveRecurringPrice(client, productId, interval)
 					}))
 				);
-				for (const plan of configs) {
+				for (const plan of tierConfigs) {
 					const prices = retrieved.filter((entry) => entry.tierId === plan.id);
 					if (prices.length === 2 && prices[0].price.currency !== prices[1].price.currency) {
 						throw new Error(`Dodo products for tier "${plan.id}" use different currencies.`);
@@ -226,7 +212,7 @@ export const getPublicCatalog = action({
 					expiresAt: now + DODO_PRICE_CACHE_TTL_MS
 				});
 			}
-			const plans = configs.map((plan) =>
+			const plans = tierConfigs.map((plan) =>
 				publicPlanFromConfig(plan, {
 					monthly:
 						tierPrices?.find((entry) => entry.tierId === plan.id && entry.interval === 'monthly')
@@ -236,15 +222,10 @@ export const getPublicCatalog = action({
 							?.price ?? null
 				})
 			);
-			const pro = plans.find((plan) => plan.id === 'pro');
-			const proPrices =
-				pro?.prices.monthly && pro.prices.annual
-					? { monthly: pro.prices.monthly, annual: pro.prices.annual }
-					: null;
-			return { plans, proPrices };
+			return { plans };
 		} catch (error) {
 			console.error('Could not load Dodo product prices.', error);
-			return { plans: emptyPlans, proPrices: null };
+			return { plans: emptyPlans };
 		}
 	}
 });

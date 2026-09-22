@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { vDodoProPrices, vDodoPublicPrice } from '@convex/lib/dodoProducts';
+import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import {
 	vMandateChargeStatus,
@@ -79,7 +79,7 @@ export default defineSchema({
 	billingCheckoutSessions: defineTable({
 		userId: v.string(),
 		attemptId: v.string(),
-		tierId: v.optional(v.string()),
+		tierId: v.string(),
 		interval: vBillingInterval,
 		productId: v.string(),
 		checkoutUrl: v.optional(v.string()),
@@ -87,15 +87,12 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	dodoPricingCache: defineTable({
 		cacheKey: v.string(),
-		proPrices: v.optional(vDodoProPrices),
-		tierPrices: v.optional(
-			v.array(
-				v.object({
-					tierId: v.string(),
-					interval: vBillingInterval,
-					price: vDodoPublicPrice
-				})
-			)
+		tierPrices: v.array(
+			v.object({
+				tierId: v.string(),
+				interval: vBillingInterval,
+				price: vDodoPublicPrice
+			})
 		),
 		expiresAt: v.number()
 	}).index('by_cacheKey', ['cacheKey']),
