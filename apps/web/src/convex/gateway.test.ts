@@ -114,6 +114,12 @@ describe('gateway quota', () => {
 			executionSecret
 		});
 
+		const before = await asUser.query(api.usage.getMyUsage, {});
+		const beforeWeekly = before.meters
+			.find((meter) => meter.id === 'modelUsage')
+			?.windows.find((window) => window.period === 'weekly')?.used;
+		expect(beforeWeekly).toBe(0);
+
 		for (const units of [Number.NaN, Number.POSITIVE_INFINITY, -5, 2_000_000_000_000]) {
 			await expect(
 				t.mutation(api.gateway.consumeQuota, { token: credential.token, units })
@@ -121,6 +127,11 @@ describe('gateway quota', () => {
 		}
 		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
 		expect(quota).toMatchObject({ userId: subject, exhausted: false });
+		const after = await asUser.query(api.usage.getMyUsage, {});
+		const afterWeekly = after.meters
+			.find((meter) => meter.id === 'modelUsage')
+			?.windows.find((window) => window.period === 'weekly')?.used;
+		expect(afterWeekly).toBe(beforeWeekly);
 	}, 15_000);
 
 	it('snapshots the gateway protocol on new runs', async () => {
