@@ -72,7 +72,7 @@ impl NativeAuthManager {
             .max(Duration::from_secs(1));
         let response = DeviceLoginResponse {
             verification_uri: authorization.verification_uri,
-            user_code: authorization.user_code,
+            user_code: authorization.user_code.into_inner(),
             expires_in: expires.as_secs(),
         };
         let id = Uuid::new_v4().to_string();
@@ -100,7 +100,7 @@ impl NativeAuthManager {
             let authkit = client.authkit();
             let polled = tokio::select! {
                 _ = cancel.cancelled() => return,
-                result = timeout(expires, authkit.poll_device_code(&authorization.device_code, interval)) => result,
+                result = timeout(expires, authkit.poll_device_code(authorization.device_code.expose(), interval)) => result,
             };
             let _operation = manager.credential_operation.lock().await;
             {
@@ -228,12 +228,12 @@ impl NativeAuthManager {
                 .context("invalid device polling interval")?
                 .max(Duration::from_secs(1));
             let authorization_url = match authorization.verification_uri_complete.clone() {
-                Some(url) => url,
+                Some(url) => url.into_inner(),
                 None => {
                     let mut url = url::Url::parse(&authorization.verification_uri)
                         .context("WorkOS returned an invalid verification URI")?;
                     url.query_pairs_mut()
-                        .append_pair("user_code", &authorization.user_code);
+                        .append_pair("user_code", authorization.user_code.expose());
                     url.to_string()
                 }
             };
@@ -267,7 +267,7 @@ impl NativeAuthManager {
             let authkit = client.authkit();
             let polled = tokio::select! {
                 _ = cancel.cancelled() => return,
-                result = timeout(expires, authkit.poll_device_code(&authorization.device_code, interval)) => result,
+                result = timeout(expires, authkit.poll_device_code(authorization.device_code.expose(), interval)) => result,
             };
             let result = match polled {
                 Ok(Ok(response)) => {
