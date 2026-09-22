@@ -4,10 +4,15 @@ import type { Infer } from 'convex/values';
 import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
 import { tierForProductId } from '@convex/lib/dodoProducts';
+import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { vSubscriptionStatus } from '@convex/lib/validators';
 
 const http = httpRouter();
-const subscriptionMetadataSchema = z.object({ userId: z.string().optional() });
+const subscriptionMetadataSchema = z.object({
+	userId: z.string().optional(),
+	tierId: z.string().optional(),
+	checkoutAttemptId: z.string().optional()
+});
 
 function eventTimestampMs(timestamp: Date | string | undefined): number {
 	const milliseconds =
@@ -24,7 +29,8 @@ async function persistSubscription(
 	ctx: GenericActionCtx<GenericDataModel>,
 	data: Subscription,
 	status: Infer<typeof vSubscriptionStatus>,
-	timestamp: Date | string | undefined
+	timestamp: Date | string | undefined,
+	preferConfiguredTier = false
 ): Promise<void> {
 	const metadata = subscriptionMetadataSchema.safeParse(data.metadata);
 	const metadataUserId = metadata.success ? metadata.data.userId : undefined;
@@ -38,18 +44,30 @@ async function persistSubscription(
 		console.error('Ignoring Dodo subscription without a Sprocket user.', data.subscription_id);
 		return;
 	}
+	const metadataCheckoutAttemptId = metadata.success ? metadata.data.checkoutAttemptId : undefined;
+	const checkoutTier: string | null =
+		metadataUserId && metadataCheckoutAttemptId
+			? await ctx.runQuery(internal.billing.getCheckoutTier, {
+					userId,
+					attemptId: metadataCheckoutAttemptId,
+					productId: data.product_id
+				})
+			: null;
+	const existingTier: string | null = await ctx.runQuery(internal.billing.getDodoSubscriptionTier, {
+		userId,
+		dodoSubscriptionId: data.subscription_id
+	});
 	const storedTier: string | null = await ctx.runQuery(internal.pricingData.getTierForProduct, {
 		productId: data.product_id
 	});
-	const configuredTier = storedTier ?? tierForProductId(data.product_id);
-	const existingTier =
-		!configuredTier && status !== 'active'
-			? await ctx.runQuery(internal.billing.getDodoSubscriptionTier, {
-					userId,
-					dodoSubscriptionId: data.subscription_id
-				})
-			: null;
-	const tier = configuredTier ?? existingTier;
+	const tier = resolveSubscriptionTier({
+		checkoutTier,
+		metadataTier: metadata.success ? metadata.data.tierId : undefined,
+		existingTier,
+		configuredTier: storedTier,
+		legacyTier: tierForProductId(data.product_id),
+		preferConfiguredTier
+	});
 	if (!tier) {
 		console.warn('Ignoring Dodo subscription for an unknown product.', data.product_id);
 		return;
@@ -75,7 +93,7 @@ http.route({
 		onSubscriptionRenewed: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'active', payload.timestamp),
 		onSubscriptionPlanChanged: (ctx, payload) =>
-			persistSubscription(ctx, payload.data, 'active', payload.timestamp),
+			persistSubscription(ctx, payload.data, 'active', payload.timestamp, true),
 		onSubscriptionOnHold: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'on_hold', payload.timestamp),
 		onSubscriptionCancelled: (ctx, payload) =>
