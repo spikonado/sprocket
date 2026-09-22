@@ -29,6 +29,7 @@
 		},
 		"files": [
 			"main.mjs",
+			"local-server.mjs",
 			"updater.mjs",
 			"preload.cjs",
 			"local-config.mjs",
