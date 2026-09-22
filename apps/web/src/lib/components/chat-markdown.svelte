@@ -11,13 +11,24 @@
 		className?: string;
 		artifacts?: ArtifactEntry[];
 		onOpenArtifact?: (artifactId: string) => void;
+		openLinksInNewTab?: boolean;
 	};
 
-	let { content, className = '', artifacts = [], onOpenArtifact }: Props = $props();
+	let {
+		content,
+		className = '',
+		artifacts = [],
+		onOpenArtifact,
+		openLinksInNewTab = false
+	}: Props = $props();
 
 	const artifactById = $derived(new Map(artifacts.map((artifact) => [artifact.key, artifact])));
 	const blocks = $derived(
-		renderMarkdownBlocks(content, onOpenArtifact ? new Set(artifactById.keys()) : NO_ARTIFACTS)
+		renderMarkdownBlocks(
+			content,
+			onOpenArtifact ? new Set(artifactById.keys()) : NO_ARTIFACTS,
+			openLinksInNewTab
+		)
 	);
 </script>
 

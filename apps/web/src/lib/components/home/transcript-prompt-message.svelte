@@ -40,7 +40,7 @@
 	{/if}
 	{#if message.text || !(message.attachments ?? []).length}
 		<div class={userMessageClass}>
-			<ChatMarkdown content={message.text || ' '} className="text-foreground" />
+			<ChatMarkdown content={message.text || ' '} className="text-foreground" openLinksInNewTab />
 		</div>
 	{/if}
 	{#if message.text}
