@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
 use tokio::sync::broadcast;
@@ -7,6 +6,7 @@ use tokio::task::JoinHandle;
 
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::{UserConvexClient, retry_after_failure};
+use crate::watch_registry::{WatchRegistry, WatchSession};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,13 +21,6 @@ pub struct TranscriptWatchEvent {
 struct WatchKey {
     user_id: String,
     thread_id: String,
-}
-
-struct WatchSlot {
-    id: uuid::Uuid,
-    refs: usize,
-    events: broadcast::Sender<TranscriptWatchEvent>,
-    task: JoinHandle<()>,
 }
 
 type WatchStarter = Arc<dyn Fn(WatchStart) -> JoinHandle<()> + Send + Sync>;
@@ -45,15 +38,12 @@ pub struct TranscriptWatchers {
     deployment_url: String,
     store: Arc<TranscriptStore>,
     native_auth: Arc<NativeAuthManager>,
-    inner: Mutex<HashMap<WatchKey, WatchSlot>>,
+    registry: Arc<WatchRegistry<WatchKey, TranscriptWatchEvent>>,
     start: WatchStarter,
 }
 
 pub struct TranscriptWatchSession {
-    watchers: Arc<TranscriptWatchers>,
-    key: WatchKey,
-    id: uuid::Uuid,
-    rx: broadcast::Receiver<TranscriptWatchEvent>,
+    session: WatchSession<WatchKey, TranscriptWatchEvent>,
 }
 
 impl TranscriptWatchers {
@@ -80,20 +70,16 @@ impl TranscriptWatchers {
             deployment_url,
             store,
             native_auth,
-            inner: Mutex::new(HashMap::new()),
+            registry: WatchRegistry::new(),
             start,
         })
     }
 
     pub async fn abort_thread(&self, user_id: &str, thread_id: &str) {
-        let key = WatchKey {
+        self.registry.abort(&WatchKey {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
-        };
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(slot) = inner.remove(&key) {
-            slot.task.abort();
-        }
+        });
     }
 
     pub async fn notify_local_update(
@@ -103,22 +89,17 @@ impl TranscriptWatchers {
         total_parts: u32,
         stale: bool,
     ) {
-        let key = WatchKey {
-            user_id: user_id.to_string(),
-            thread_id: thread_id.to_string(),
-        };
-        if let Some(slot) = self
-            .inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .get(&key)
-        {
-            let _ = slot.events.send(TranscriptWatchEvent {
+        self.registry.send_to(
+            &WatchKey {
+                user_id: user_id.to_string(),
+                thread_id: thread_id.to_string(),
+            },
+            TranscriptWatchEvent {
                 event_type: "updated",
                 total_parts: Some(total_parts),
                 stale,
-            });
-        }
+            },
+        );
     }
 
     pub async fn open(self: &Arc<Self>, user_id: &str, thread_id: &str) -> TranscriptWatchSession {
@@ -126,78 +107,33 @@ impl TranscriptWatchers {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
         };
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(slot) = inner.get_mut(&key) {
-            slot.refs += 1;
-            return TranscriptWatchSession {
-                watchers: Arc::clone(self),
-                key,
-                id: slot.id,
-                rx: slot.events.subscribe(),
-            };
-        }
-        let (events, rx) = broadcast::channel(16);
-        let id = uuid::Uuid::new_v4();
-        let task = (self.start)(WatchStart {
-            deployment_url: self.deployment_url.clone(),
-            store: Arc::clone(&self.store),
-            native_auth: Arc::clone(&self.native_auth),
-            user_id: user_id.to_string(),
-            thread_id: thread_id.to_string(),
-            events: events.clone(),
-        });
-        inner.insert(
+        let (session, ()) = self.registry.open_with(
             key.clone(),
-            WatchSlot {
-                id,
-                refs: 1,
-                events,
-                task,
+            16,
+            || (),
+            |events, ()| {
+                (self.start)(WatchStart {
+                    deployment_url: self.deployment_url.clone(),
+                    store: Arc::clone(&self.store),
+                    native_auth: Arc::clone(&self.native_auth),
+                    user_id: key.user_id.clone(),
+                    thread_id: key.thread_id.clone(),
+                    events,
+                })
             },
         );
-        TranscriptWatchSession {
-            watchers: Arc::clone(self),
-            key,
-            id,
-            rx,
-        }
-    }
-
-    fn close(&self, key: &WatchKey, id: uuid::Uuid) {
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(slot) = inner.get_mut(key) else {
-            return;
-        };
-        if slot.id != id {
-            return;
-        }
-        slot.refs = slot.refs.saturating_sub(1);
-        if slot.refs == 0 {
-            if let Some(slot) = inner.remove(key) {
-                slot.task.abort();
-            }
-        }
+        TranscriptWatchSession { session }
     }
 
     #[cfg(test)]
     pub fn active_count(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .len()
+        self.registry.active_count()
     }
 }
 
 impl TranscriptWatchSession {
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<TranscriptWatchEvent> {
-        &mut self.rx
-    }
-}
-
-impl Drop for TranscriptWatchSession {
-    fn drop(&mut self) {
-        // Sync close so shutdown / no-runtime drops still release the slot.
-        self.watchers.close(&self.key, self.id);
+        self.session.receiver()
     }
 }
 
