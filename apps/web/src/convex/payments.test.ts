@@ -234,9 +234,9 @@ describe('payments mandates', () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
-		await expect(
-			run.asUser.action(api.payments.mandateSetup, setupArgs(run))
-		).rejects.toThrow(/PRAVA_BACKEND_URL is not configured/);
+		await expect(run.asUser.action(api.payments.mandateSetup, setupArgs(run))).rejects.toThrow(
+			/PRAVA_BACKEND_URL is not configured/
+		);
 	});
 
 	it('resolves the synced account email without a caller identity', async () => {
