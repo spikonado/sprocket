@@ -471,7 +471,7 @@ describe('Dodo subscription persistence', () => {
 });
 
 describe('Dodo subscription tier resolution', () => {
-	it('keeps the purchase-time tier after a product is remapped', () => {
+	it('keeps the purchase-time or stored tier after a product is remapped', () => {
 		expect(
 			resolveSubscriptionTier({
 				checkoutTier: 'team',
@@ -484,7 +484,7 @@ describe('Dodo subscription tier resolution', () => {
 		expect(
 			resolveSubscriptionTier({
 				checkoutTier: null,
-				metadataTier: undefined,
+				metadataTier: 'pro',
 				existingTier: 'team',
 				configuredTier: 'max',
 				legacyTier: undefined

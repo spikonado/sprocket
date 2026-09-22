@@ -20,5 +20,5 @@ export function resolveSubscriptionTier({
 	}
 	if (checkoutTier) return checkoutTier;
 	if (preferConfiguredTier) return configuredTier ?? legacyTier;
-	return metadataTier ?? existingTier ?? configuredTier ?? legacyTier;
+	return existingTier ?? metadataTier ?? configuredTier ?? legacyTier;
 }
