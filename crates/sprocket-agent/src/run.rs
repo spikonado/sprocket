@@ -868,7 +868,8 @@ pub async fn run_agent(
         let prompt = Message::User {
             content: prompt_contents,
         };
-        let provider = AgentProvider::default_for_run(&context, &gateway_url);
+        let provider =
+            AgentProvider::default_for_run(&context, &gateway_url, &request.deployment_url);
         let prompt_context = build_workspace_prompt_context(
             &request.workspace_path,
             &workspace_instructions,

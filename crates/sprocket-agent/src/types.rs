@@ -79,12 +79,14 @@ pub struct OpenAiCredential {
     pub api_key: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatGptCredential {
     pub access_token: String,
     pub account_id: String,
     pub residency: Option<String>,
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub expires_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

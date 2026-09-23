@@ -656,7 +656,7 @@ describe('provider credentials', () => {
 		).rejects.toThrow('Run is no longer active.');
 	}, 30_000);
 
-	it('issues ChatGPT credentials only to an active ChatGPT run', async () => {
+	it('reuses an unexpired ChatGPT token and exposes its expiry to an active run', async () => {
 		const { t, runId, claimId, executionSecret } = await startedChatGptRun();
 		const name = await providerCredentialName('sprocket-chatgpt-');
 		const credential = {
@@ -665,7 +665,7 @@ describe('provider credentials', () => {
 			refreshToken: 'refresh-current',
 			accountId: 'account-1',
 			residency: 'eu',
-			expiresAt: Date.now() + 60 * 60 * 1_000
+			expiresAt: Date.now() + 60_000
 		};
 		const entries = new Map<string, VaultEntry>([
 			[name, vaultEntry(name, JSON.stringify(credential))]
@@ -683,7 +683,8 @@ describe('provider credentials', () => {
 		).resolves.toEqual({
 			accessToken: 'access-current',
 			accountId: 'account-1',
-			residency: 'eu'
+			residency: 'eu',
+			expiresAt: credential.expiresAt
 		});
 
 		await t.run(async (ctx) => {
@@ -739,6 +740,8 @@ describe('provider credentials', () => {
 		]);
 		expect(first.accessToken).toBe(rotatedAccessToken);
 		expect(second.accessToken).toBe(rotatedAccessToken);
+		expect(first.expiresAt).toBeGreaterThan(Date.now());
+		expect(second.expiresAt).toBe(first.expiresAt);
 		expect(refreshes).toBe(1);
 		expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
 			accessToken: rotatedAccessToken,

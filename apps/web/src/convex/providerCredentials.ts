@@ -24,7 +24,6 @@ const CHATGPT_VERIFICATION_URL = `${CHATGPT_AUTH_ORIGIN}/codex/device`;
 const CHATGPT_BROWSER_CALLBACK_URL = 'http://localhost:1455/auth/callback';
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
 const CHATGPT_CREDENTIAL_NAME_PREFIX = 'sprocket-chatgpt-';
-const CHATGPT_REFRESH_MARGIN_MS = 5 * 60 * 1_000;
 const CHATGPT_REFRESH_LEASE_MS = 90_000;
 const CHATGPT_REFRESH_WAIT_ATTEMPTS = 60;
 const CHATGPT_REFRESH_WAIT_MS = 500;
@@ -439,7 +438,7 @@ async function resolveChatGptCredentialWithLease(
 ): Promise<ChatGptCredential> {
 	const stored = await readChatGptCredential(userId);
 	if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
-	if (stored.credential.expiresAt > Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
+	if (stored.credential.expiresAt > Date.now()) {
 		return stored.credential;
 	}
 	await renewChatGptLease(ctx, userId, leaseId);
@@ -455,7 +454,7 @@ async function resolveChatGptCredential(
 ): Promise<ChatGptCredential> {
 	const stored = await readChatGptCredential(userId);
 	if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
-	if (stored.credential.expiresAt > Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
+	if (stored.credential.expiresAt > Date.now()) {
 		return stored.credential;
 	}
 
@@ -1271,7 +1270,8 @@ export const issueChatGptCredential = action({
 	returns: v.object({
 		accessToken: v.string(),
 		accountId: v.string(),
-		residency: v.optional(v.string())
+		residency: v.optional(v.string()),
+		expiresAt: v.number()
 	}),
 	handler: async (ctx, args) => {
 		const userId: string = await ctx.runQuery(
@@ -1283,7 +1283,8 @@ export const issueChatGptCredential = action({
 		return {
 			accessToken: credential.accessToken,
 			accountId: credential.accountId,
-			residency: credential.residency
+			residency: credential.residency,
+			expiresAt: credential.expiresAt
 		};
 	}
 });

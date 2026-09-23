@@ -1,6 +1,7 @@
 pub mod artifact_bindings;
 mod attachments;
 mod catalog;
+mod chatgpt;
 mod context_handoff;
 mod convex;
 mod hooks;

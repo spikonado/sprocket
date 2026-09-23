@@ -7,12 +7,12 @@ use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::{AgentClientExt, CompletionClient};
 use rig::completion::{FinishReason, Message};
-use rig::http_client::{HeaderMap, HeaderValue};
-use rig::providers::{chatgpt, openai};
+use rig::providers::openai;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
 
+use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
@@ -69,6 +69,8 @@ pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     gateway_url: String,
     model: String,
+    deployment_url: String,
+    user_id: String,
 }
 
 pub(crate) struct AgentProviderRequest {
@@ -104,11 +106,17 @@ pub(crate) enum AgentProviderResult {
 }
 
 impl AgentProvider {
-    pub(crate) fn default_for_run(context: &RunContextResponse, gateway_url: &str) -> Self {
+    pub(crate) fn default_for_run(
+        context: &RunContextResponse,
+        gateway_url: &str,
+        deployment_url: &str,
+    ) -> Self {
         Self {
             completion_provider: context.run.completion_provider,
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
+            deployment_url: deployment_url.to_string(),
+            user_id: context.run.user_id.clone(),
         }
     }
 
@@ -177,49 +185,13 @@ impl AgentProvider {
                 run_with_completion_client(completion_client, self.model, runtime, request).await
             }
             CompletionProvider::Chatgpt => {
-                let credential = match runtime
-                    .issue_chatgpt_credential(&request.run_id, &request.claim_id)
-                    .await
-                {
-                    Ok(credential) => credential,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error,
-                        };
-                    }
-                };
-                let mut headers = HeaderMap::new();
-                if let Some(residency) = credential.residency {
-                    let value = match HeaderValue::from_str(&residency) {
-                        Ok(value) => value,
-                        Err(error) => {
-                            return AgentProviderResult::Failed {
-                                text: String::new(),
-                                error: anyhow!("invalid ChatGPT residency claim: {error}"),
-                            };
-                        }
-                    };
-                    headers.insert("x-openai-internal-codex-residency", value);
-                }
-                let completion_client = match chatgpt::Client::builder()
-                    .api_key(chatgpt::ChatGPTAuth::AccessToken {
-                        access_token: credential.access_token,
-                        account_id: Some(credential.account_id),
-                    })
-                    .http_headers(headers)
-                    .originator("sprocket")
-                    .user_agent(format!("Sprocket/{}", env!("CARGO_PKG_VERSION")))
-                    .build()
-                {
-                    Ok(client) => client,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error: anyhow!(error),
-                        };
-                    }
-                };
+                let completion_client = ChatGptClient::new(
+                    runtime.clone(),
+                    request.run_id.clone(),
+                    request.claim_id.clone(),
+                    self.deployment_url,
+                    self.user_id,
+                );
                 run_with_completion_client(completion_client, self.model, runtime, request).await
             }
         }
