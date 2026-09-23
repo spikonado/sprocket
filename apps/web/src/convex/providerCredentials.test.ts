@@ -105,10 +105,7 @@ async function startedChatGptRun() {
 	await t.run(async (ctx) => {
 		await ctx.db.insert('providerCredentialStates', {
 			userId: 'user_alice',
-			provider: 'chatgpt',
-			connectionId: 'connection-1',
-			expiresAt: Date.now() + 3_600_000,
-			updatedAt: Date.now()
+			connectionId: 'connection-1'
 		});
 	});
 	return { t, asUser, runId: created.runId, claimId, executionSecret };
@@ -268,17 +265,26 @@ describe('provider credentials', () => {
 		});
 	});
 
-	it.each(['browser', 'device'] as const)(
-		'keeps the replacement credential when cancelling an older %s login',
-		async (firstFlow) => {
+	it.each([
+		['browser', 'device'],
+		['device', 'browser'],
+		['browser', 'browser'],
+		['device', 'device']
+	] as const)(
+		'keeps the %s login replacement via %s when cancelling the older login',
+		async (firstFlow, replacementFlow) => {
 			const { t, asUser: owner, runId, executionSecret } = await startedChatGptRun();
 			const connection = () =>
 				t.query(api.providerCredentials.chatGptConnection, { runId, executionSecret });
 			const entries = new Map<string, VaultEntry>();
 			let accountId = 'first-account';
+			let deviceAttempt = 0;
 			stubProviderFetch(entries, (url) => {
 				if (url.endsWith('/api/accounts/deviceauth/usercode')) {
-					return Response.json({ device_auth_id: 'device-1', user_code: 'ABCD-EFGH' });
+					return Response.json({
+						device_auth_id: `device-${++deviceAttempt}`,
+						user_code: 'ABCD-EFGH'
+					});
 				}
 				if (url.endsWith('/api/accounts/deviceauth/token')) {
 					return Response.json({ authorization_code: 'device-code', code_verifier: 'verifier' });
@@ -297,37 +303,36 @@ describe('provider credentials', () => {
 				}
 				throw new Error(`Unexpected provider request: ${url}`);
 			});
-			const state = 'e'.repeat(64);
-			const device = { deviceAuthId: 'device-1', userCode: 'ABCD-EFGH' };
+			let browserAttempt = 0;
 			const flows = {
-				browser: {
-					connect: async () => {
-						await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state });
-						await owner.action(api.providerCredentials.completeChatGptBrowserLogin, {
-							state,
-							code: 'browser-code'
-						});
-					},
-					cancel: () => owner.action(api.providerCredentials.cancelChatGptBrowserLogin, { state })
+				browser: async () => {
+					const state = String(++browserAttempt).repeat(64);
+					await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state });
+					await owner.action(api.providerCredentials.completeChatGptBrowserLogin, {
+						state,
+						code: 'browser-code'
+					});
+					return () => owner.action(api.providerCredentials.cancelChatGptBrowserLogin, { state });
 				},
-				device: {
-					connect: async () => {
-						await owner.action(api.providerCredentials.beginChatGptDeviceLogin, {});
-						await owner.action(api.providerCredentials.pollChatGptDeviceLogin, device);
-					},
-					cancel: () => owner.action(api.providerCredentials.cancelChatGptDeviceLogin, device)
+				device: async () => {
+					const { deviceAuthId, userCode } = await owner.action(
+						api.providerCredentials.beginChatGptDeviceLogin,
+						{}
+					);
+					const device = { deviceAuthId, userCode };
+					await owner.action(api.providerCredentials.pollChatGptDeviceLogin, device);
+					return () => owner.action(api.providerCredentials.cancelChatGptDeviceLogin, device);
 				}
 			};
-			await flows[firstFlow].connect();
+			const cancelFirst = await flows[firstFlow]();
 			const firstConnection = await connection();
 			expect(firstConnection).toEqual(expect.any(String));
 			accountId = 'replacement-account';
-			const replacementFlow = firstFlow === 'browser' ? 'device' : 'browser';
-			await flows[replacementFlow].connect();
+			const cancelReplacement = await flows[replacementFlow]();
 			const replacementConnection = await connection();
 			expect(replacementConnection).toEqual(expect.any(String));
 			expect(replacementConnection).not.toBe(firstConnection);
-			await flows[firstFlow].cancel();
+			await cancelFirst();
 			expect(await connection()).toBe(replacementConnection);
 			const name = await providerCredentialName('sprocket-chatgpt-');
 			expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
@@ -340,7 +345,7 @@ describe('provider credentials', () => {
 				chatgpt: true,
 				chatgptModelIds: ['gpt-5.4']
 			});
-			await flows[replacementFlow].cancel();
+			await cancelReplacement();
 			expect(await connection()).toBeNull();
 		}
 	);
@@ -436,10 +441,10 @@ describe('provider credentials', () => {
 		});
 		expect(stored).not.toHaveProperty('idToken');
 		await expect(
-			t.query(internal.providerCredentials.getChatGptCredentialState, {
+			t.query(internal.providerCredentials.getChatGptModels, {
 				userId: 'user_alice'
 			})
-		).resolves.toMatchObject({ expiresAt: exp * 1_000, modelIds: ['gpt-5.4'] });
+		).resolves.toEqual(['gpt-5.4']);
 		expect(fetchMock).toHaveBeenCalled();
 		await asUser.action(api.providerCredentials.cancelChatGptDeviceLogin, {
 			deviceAuthId: 'device-1',
@@ -846,9 +851,7 @@ describe('provider credentials', () => {
 					await t.run(async (ctx) => {
 						const state = await ctx.db
 							.query('providerCredentialStates')
-							.withIndex('by_userId_and_provider', (q) =>
-								q.eq('userId', 'user_alice').eq('provider', 'chatgpt')
-							)
+							.withIndex('by_userId', (q) => q.eq('userId', 'user_alice'))
 							.unique();
 						if (!state) throw new Error('Missing credential state');
 						await ctx.db.patch(state._id, { connectionId: 'replacement' });
@@ -924,14 +927,11 @@ describe('provider credentials', () => {
 		await t.run(async (ctx) => {
 			const state = await ctx.db
 				.query('providerCredentialStates')
-				.withIndex('by_userId_and_provider', (query) =>
-					query.eq('userId', 'user_alice').eq('provider', 'chatgpt')
-				)
+				.withIndex('by_userId', (query) => query.eq('userId', 'user_alice'))
 				.unique();
 			if (!state) throw new Error('Missing credential state');
 			await ctx.db.patch(state._id, {
-				refreshLeaseId: 'replacement-lease',
-				refreshLeaseExpiresAt: Date.now() - 1
+				lease: { id: 'replacement-lease', expiresAt: Date.now() - 1 }
 			});
 		});
 		finishVaultWrite?.();
@@ -1025,16 +1025,12 @@ describe('provider credentials', () => {
 		await t.run(async (ctx) => {
 			const state = await ctx.db
 				.query('providerCredentialStates')
-				.withIndex('by_userId_and_provider', (query) =>
-					query.eq('userId', 'user_alice').eq('provider', 'chatgpt')
-				)
+				.withIndex('by_userId', (query) => query.eq('userId', 'user_alice'))
 				.unique();
 			if (!state) throw new Error('Missing credential state');
 			await ctx.db.patch(state._id, {
-				expiresAt: Date.now() + 60 * 60 * 1_000,
 				modelIds: ['gpt-5.4'],
-				refreshLeaseId: undefined,
-				refreshLeaseExpiresAt: undefined
+				lease: undefined
 			});
 		});
 
@@ -1047,7 +1043,7 @@ describe('provider credentials', () => {
 			'version_secret_1'
 		);
 		await expect(
-			t.query(internal.providerCredentials.getChatGptCredentialState, {
+			t.query(internal.providerCredentials.getChatGptModels, {
 				userId: 'user_alice'
 			})
 		).resolves.toBe(null);

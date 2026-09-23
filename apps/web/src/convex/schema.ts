@@ -72,21 +72,17 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	providerCredentialStates: defineTable({
 		userId: v.string(),
-		provider: v.literal('chatgpt'),
 		connectionId: v.optional(v.string()),
-		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string())),
-		deviceAuthHash: v.optional(v.string()),
-		browserAuthHash: v.optional(v.string()),
-		browserCodeVerifier: v.optional(v.string()),
-		browserAuthExpiresAt: v.optional(v.number()),
-		completedBrowserAuthHash: v.optional(v.string()),
-		deviceAuthExpiresAt: v.optional(v.number()),
-		completedDeviceAuthHash: v.optional(v.string()),
-		refreshLeaseId: v.optional(v.string()),
-		refreshLeaseExpiresAt: v.optional(v.number()),
-		updatedAt: v.number()
-	}).index('by_userId_and_provider', ['userId', 'provider']),
+		browserLogin: v.optional(
+			v.object({ hash: v.string(), codeVerifier: v.string(), expiresAt: v.number() })
+		),
+		deviceLogin: v.optional(v.object({ hash: v.string(), expiresAt: v.number() })),
+		completedLogin: v.optional(
+			v.object({ flow: v.union(v.literal('browser'), v.literal('device')), hash: v.string() })
+		),
+		lease: v.optional(v.object({ id: v.string(), expiresAt: v.number() }))
+	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),
 		notBefore: v.number(),

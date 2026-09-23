@@ -25,19 +25,17 @@ const CHATGPT_VERIFICATION_URL = `${CHATGPT_AUTH_ORIGIN}/codex/device`;
 const CHATGPT_BROWSER_CALLBACK_URL = 'http://localhost:1455/auth/callback';
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
 const CHATGPT_CREDENTIAL_NAME_PREFIX = 'sprocket-chatgpt-';
-const CHATGPT_REFRESH_LEASE_MS = 90_000;
+const CHATGPT_CREDENTIAL_LEASE_MS = 90_000;
 const CHATGPT_REFRESH_MARGIN_MS = 30_000;
-const CHATGPT_REFRESH_WAIT_ATTEMPTS = 60;
-const CHATGPT_REFRESH_WAIT_MS = 500;
+const CHATGPT_LEASE_WAIT_ATTEMPTS = 60;
+const CHATGPT_LEASE_WAIT_MS = 500;
 const PROVIDER_FETCH_TIMEOUT_MS = 20_000;
 const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
 
 function chatGptState(ctx: QueryCtx, userId: string) {
 	return ctx.db
 		.query('providerCredentialStates')
-		.withIndex('by_userId_and_provider', (query) =>
-			query.eq('userId', userId).eq('provider', 'chatgpt')
-		)
+		.withIndex('by_userId', (query) => query.eq('userId', userId))
 		.unique();
 }
 
@@ -401,7 +399,7 @@ async function acquireChatGptLease(
 	ctx: ActionCtx,
 	userId: string,
 	leaseId: string,
-	attempts = CHATGPT_REFRESH_WAIT_ATTEMPTS
+	attempts = CHATGPT_LEASE_WAIT_ATTEMPTS
 ): Promise<void> {
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		const acquired: boolean = await ctx.runMutation(
@@ -409,7 +407,7 @@ async function acquireChatGptLease(
 			{ userId, leaseId }
 		);
 		if (acquired) return;
-		await new Promise((resolve) => setTimeout(resolve, CHATGPT_REFRESH_WAIT_MS));
+		await new Promise((resolve) => setTimeout(resolve, CHATGPT_LEASE_WAIT_MS));
 	}
 	throw new Error('ChatGPT credentials are busy. Try again shortly.');
 }
@@ -422,16 +420,10 @@ async function renewChatGptLease(ctx: ActionCtx, userId: string, leaseId: string
 	if (!renewed) throw new Error('ChatGPT credential update lost its lease. Try again.');
 }
 
-async function releaseChatGptLease(
-	ctx: ActionCtx,
-	userId: string,
-	leaseId: string,
-	expiresAt?: number
-): Promise<void> {
+async function releaseChatGptLease(ctx: ActionCtx, userId: string, leaseId: string): Promise<void> {
 	await ctx.runMutation(internal.providerCredentials.releaseChatGptCredentialLease, {
 		userId,
-		leaseId,
-		expiresAt
+		leaseId
 	});
 }
 
@@ -465,12 +457,9 @@ async function resolveChatGptCredential(
 	const leaseId = crypto.randomUUID();
 	await acquireChatGptLease(ctx, userId, leaseId);
 	try {
-		const credential = await resolveChatGptCredentialWithLease(ctx, userId, leaseId);
-		await releaseChatGptLease(ctx, userId, leaseId, credential.expiresAt);
-		return credential;
-	} catch (error) {
+		return await resolveChatGptCredentialWithLease(ctx, userId, leaseId);
+	} finally {
 		await releaseChatGptLease(ctx, userId, leaseId);
-		throw error;
 	}
 }
 
@@ -498,21 +487,21 @@ export const getMyConfiguration = action({
 	): Promise<{ openai: boolean; chatgpt: boolean; chatgptModelIds: string[] | null }> => {
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw new Error('Authentication required.');
-		const [openAiObject, chatGptObject, chatGptState]: [
+		const [openAiObject, chatGptObject, chatgptModelIds]: [
 			VaultObject | null,
 			VaultObject | null,
-			{ expiresAt: number; modelIds?: string[] } | null
+			string[] | null
 		] = await Promise.all([
 			readVaultObject(await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject)),
 			readVaultObject(await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, identity.subject)),
-			ctx.runQuery(internal.providerCredentials.getChatGptCredentialState, {
+			ctx.runQuery(internal.providerCredentials.getChatGptModels, {
 				userId: identity.subject
 			})
 		]);
 		return {
 			openai: openAiObject !== null,
 			chatgpt: chatGptObject !== null,
-			chatgptModelIds: chatGptState?.modelIds ?? null
+			chatgptModelIds
 		};
 	}
 });
@@ -617,7 +606,6 @@ export const completeChatGptBrowserLogin = action({
 				leaseId,
 				hash,
 				connectionId: credential.connectionId,
-				expiresAt: credential.expiresAt,
 				modelIds: modelIds ?? undefined
 			});
 			return modelIds;
@@ -637,7 +625,7 @@ export const cancelChatGptBrowserLogin = action({
 		if (!/^[a-f0-9]{64}$/.test(state)) throw new Error('Invalid ChatGPT sign-in request.');
 		const hash = await credentialName('', state);
 		const leaseId = crypto.randomUUID();
-		await acquireChatGptLease(ctx, identity.subject, leaseId, 4 * CHATGPT_REFRESH_WAIT_ATTEMPTS);
+		await acquireChatGptLease(ctx, identity.subject, leaseId, 4 * CHATGPT_LEASE_WAIT_ATTEMPTS);
 		try {
 			const completed: boolean = await ctx.runQuery(
 				internal.providerCredentials.isCompletedChatGptBrowserLogin,
@@ -776,7 +764,6 @@ export const pollChatGptDeviceLogin = action({
 				leaseId,
 				deviceAuthHash: hash,
 				connectionId: credential.connectionId,
-				expiresAt: credential.expiresAt,
 				modelIds: modelIds ?? undefined
 			});
 			return { status: 'connected' as const, modelIds };
@@ -834,7 +821,6 @@ export const refreshChatGptModels = action({
 			await ctx.runMutation(internal.providerCredentials.recordChatGptModels, {
 				userId: identity.subject,
 				leaseId,
-				expiresAt: credential.expiresAt,
 				modelIds
 			});
 			return modelIds;
@@ -869,15 +855,12 @@ export const removeChatGptCredential = action({
 	}
 });
 
-export const getChatGptCredentialState = internalQuery({
+export const getChatGptModels = internalQuery({
 	args: { userId: v.string() },
-	returns: v.union(
-		v.object({ expiresAt: v.number(), modelIds: v.optional(v.array(v.string())) }),
-		v.null()
-	),
+	returns: v.union(v.array(v.string()), v.null()),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		return state ? { expiresAt: state.expiresAt, modelIds: state.modelIds } : null;
+		return state?.modelIds ?? null;
 	}
 });
 
@@ -886,23 +869,23 @@ export const registerChatGptBrowserLogin = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId && (state.refreshLeaseExpiresAt ?? 0) > Date.now()) {
+		if (state?.lease && state.lease.expiresAt > Date.now()) {
 			throw new Error('ChatGPT credentials are busy. Try again shortly.');
 		}
-		const fields = {
-			browserAuthHash: args.hash,
-			browserCodeVerifier: args.verifier,
-			browserAuthExpiresAt: args.expiresAt,
-			completedBrowserAuthHash: undefined,
-			updatedAt: Date.now()
+		const browserLogin = {
+			hash: args.hash,
+			codeVerifier: args.verifier,
+			expiresAt: args.expiresAt
 		};
-		if (state) await ctx.db.patch(state._id, fields);
-		else {
+		if (state) {
+			await ctx.db.patch(state._id, {
+				browserLogin,
+				completedLogin: state.completedLogin?.flow === 'browser' ? undefined : state.completedLogin
+			});
+		} else {
 			await ctx.db.insert('providerCredentialStates', {
-				...fields,
 				userId: args.userId,
-				provider: 'chatgpt',
-				expiresAt: 0
+				browserLogin
 			});
 		}
 		return null;
@@ -915,13 +898,13 @@ export const authorizeChatGptBrowserLogin = internalQuery({
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
 		if (
-			state?.browserAuthHash !== args.hash ||
-			(state.browserAuthExpiresAt ?? 0) <= Date.now() ||
-			!state.browserCodeVerifier
+			state?.browserLogin?.hash !== args.hash ||
+			(state.browserLogin?.expiresAt ?? 0) <= Date.now() ||
+			!state.browserLogin?.codeVerifier
 		) {
 			throw new Error('ChatGPT sign-in expired or was cancelled. Start again.');
 		}
-		return state.browserCodeVerifier;
+		return state.browserLogin.codeVerifier;
 	}
 });
 
@@ -930,23 +913,17 @@ export const cancelChatGptBrowserLoginState = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId !== args.leaseId) {
+		if (state?.lease?.id !== args.leaseId) {
 			throw new Error('ChatGPT credential update lost its lease.');
 		}
-		const completed = state.completedBrowserAuthHash === args.hash;
+		const completed =
+			state.completedLogin?.flow === 'browser' && state.completedLogin.hash === args.hash;
 		await ctx.db.patch(state._id, {
-			browserAuthHash: state.browserAuthHash === args.hash ? undefined : state.browserAuthHash,
-			browserAuthExpiresAt:
-				state.browserAuthHash === args.hash ? undefined : state.browserAuthExpiresAt,
-			browserCodeVerifier:
-				state.browserAuthHash === args.hash ? undefined : state.browserCodeVerifier,
-			completedBrowserAuthHash: completed ? undefined : state.completedBrowserAuthHash,
+			browserLogin: state.browserLogin?.hash === args.hash ? undefined : state.browserLogin,
+			completedLogin: completed ? undefined : state.completedLogin,
 			connectionId: completed ? undefined : state.connectionId,
-			expiresAt: completed ? 0 : state.expiresAt,
 			modelIds: completed ? undefined : state.modelIds,
-			refreshLeaseId: undefined,
-			refreshLeaseExpiresAt: undefined,
-			updatedAt: Date.now()
+			lease: undefined
 		});
 		return null;
 	}
@@ -957,7 +934,11 @@ export const isCompletedChatGptBrowserLogin = internalQuery({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		return state?.refreshLeaseId === args.leaseId && state.completedBrowserAuthHash === args.hash;
+		return (
+			state?.lease?.id === args.leaseId &&
+			state.completedLogin?.flow === 'browser' &&
+			state.completedLogin.hash === args.hash
+		);
 	}
 });
 
@@ -967,27 +948,20 @@ export const recordChatGptBrowserCredential = internalMutation({
 		leaseId: v.string(),
 		hash: v.string(),
 		connectionId: v.string(),
-		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string()))
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId !== args.leaseId || state.browserAuthHash !== args.hash) {
+		if (state?.lease?.id !== args.leaseId || state.browserLogin?.hash !== args.hash) {
 			throw new Error('ChatGPT credential update lost its lease.');
 		}
 		await ctx.db.patch(state._id, {
-			expiresAt: args.expiresAt,
 			modelIds: args.modelIds,
-			browserAuthHash: undefined,
-			browserAuthExpiresAt: undefined,
-			browserCodeVerifier: undefined,
-			completedBrowserAuthHash: args.hash,
-			completedDeviceAuthHash: undefined,
+			browserLogin: undefined,
+			completedLogin: { flow: 'browser', hash: args.hash },
 			connectionId: args.connectionId,
-			refreshLeaseId: undefined,
-			refreshLeaseExpiresAt: undefined,
-			updatedAt: Date.now()
+			lease: undefined
 		});
 		return null;
 	}
@@ -998,23 +972,19 @@ export const registerChatGptDeviceLogin = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId && (state.refreshLeaseExpiresAt ?? 0) > Date.now()) {
+		if (state?.lease && state.lease.expiresAt > Date.now()) {
 			throw new Error('ChatGPT credentials are busy. Try again shortly.');
 		}
-		const fields = {
-			deviceAuthHash: args.hash,
-			deviceAuthExpiresAt: args.expiresAt,
-			completedDeviceAuthHash: undefined,
-			updatedAt: Date.now()
-		};
+		const deviceLogin = { hash: args.hash, expiresAt: args.expiresAt };
 		if (state) {
-			await ctx.db.patch(state._id, fields);
+			await ctx.db.patch(state._id, {
+				deviceLogin,
+				completedLogin: state.completedLogin?.flow === 'device' ? undefined : state.completedLogin
+			});
 		} else {
 			await ctx.db.insert('providerCredentialStates', {
-				...fields,
 				userId: args.userId,
-				provider: 'chatgpt',
-				expiresAt: 0
+				deviceLogin
 			});
 		}
 		return null;
@@ -1025,21 +995,17 @@ export const recordChatGptModels = internalMutation({
 	args: {
 		userId: v.string(),
 		leaseId: v.string(),
-		expiresAt: v.number(),
 		modelIds: v.array(v.string())
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId !== args.leaseId) {
+		if (state?.lease?.id !== args.leaseId) {
 			throw new Error('ChatGPT credential update lost its lease.');
 		}
 		await ctx.db.patch(state._id, {
-			expiresAt: args.expiresAt,
 			modelIds: args.modelIds,
-			refreshLeaseId: undefined,
-			refreshLeaseExpiresAt: undefined,
-			updatedAt: Date.now()
+			lease: undefined
 		});
 		return null;
 	}
@@ -1050,7 +1016,10 @@ export const authorizeChatGptDeviceLogin = internalQuery({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.deviceAuthHash !== args.hash || (state.deviceAuthExpiresAt ?? 0) <= Date.now()) {
+		if (
+			state?.deviceLogin?.hash !== args.hash ||
+			(state.deviceLogin?.expiresAt ?? 0) <= Date.now()
+		) {
 			throw new Error('ChatGPT sign-in expired or was cancelled. Start again.');
 		}
 		return null;
@@ -1062,7 +1031,11 @@ export const isCompletedChatGptDeviceLogin = internalQuery({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		return state?.refreshLeaseId === args.leaseId && state.completedDeviceAuthHash === args.hash;
+		return (
+			state?.lease?.id === args.leaseId &&
+			state.completedLogin?.flow === 'device' &&
+			state.completedLogin.hash === args.hash
+		);
 	}
 });
 
@@ -1071,29 +1044,18 @@ export const cancelChatGptDeviceLoginState = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId !== args.leaseId) {
+		if (state?.lease?.id !== args.leaseId) {
 			throw new Error('ChatGPT credential update lost its lease.');
 		}
-		if (state.completedDeviceAuthHash === args.hash) {
-			await ctx.db.patch(state._id, {
-				completedDeviceAuthHash: undefined,
-				connectionId: undefined,
-				expiresAt: 0,
-				modelIds: undefined,
-				refreshLeaseId: undefined,
-				refreshLeaseExpiresAt: undefined,
-				updatedAt: Date.now()
-			});
-		} else {
-			await ctx.db.patch(state._id, {
-				deviceAuthHash: state.deviceAuthHash === args.hash ? undefined : state.deviceAuthHash,
-				deviceAuthExpiresAt:
-					state.deviceAuthHash === args.hash ? undefined : state.deviceAuthExpiresAt,
-				refreshLeaseId: undefined,
-				refreshLeaseExpiresAt: undefined,
-				updatedAt: Date.now()
-			});
-		}
+		const completed =
+			state.completedLogin?.flow === 'device' && state.completedLogin.hash === args.hash;
+		await ctx.db.patch(state._id, {
+			deviceLogin: state.deviceLogin?.hash === args.hash ? undefined : state.deviceLogin,
+			completedLogin: completed ? undefined : state.completedLogin,
+			connectionId: completed ? undefined : state.connectionId,
+			modelIds: completed ? undefined : state.modelIds,
+			lease: undefined
+		});
 		return null;
 	}
 });
@@ -1104,27 +1066,16 @@ export const acquireChatGptCredentialLease = internalMutation({
 	handler: async (ctx, args) => {
 		const now = Date.now();
 		const state = await chatGptState(ctx, args.userId);
-		if (
-			state?.refreshLeaseId &&
-			state.refreshLeaseId !== args.leaseId &&
-			(state.refreshLeaseExpiresAt ?? 0) > now
-		) {
+		if (state?.lease && state.lease.id !== args.leaseId && state.lease.expiresAt > now) {
 			return false;
 		}
+		const lease = { id: args.leaseId, expiresAt: now + CHATGPT_CREDENTIAL_LEASE_MS };
 		if (state) {
-			await ctx.db.patch(state._id, {
-				refreshLeaseId: args.leaseId,
-				refreshLeaseExpiresAt: now + CHATGPT_REFRESH_LEASE_MS,
-				updatedAt: now
-			});
+			await ctx.db.patch(state._id, { lease });
 		} else {
 			await ctx.db.insert('providerCredentialStates', {
 				userId: args.userId,
-				provider: 'chatgpt',
-				expiresAt: 0,
-				refreshLeaseId: args.leaseId,
-				refreshLeaseExpiresAt: now + CHATGPT_REFRESH_LEASE_MS,
-				updatedAt: now
+				lease
 			});
 		}
 		return true;
@@ -1132,17 +1083,12 @@ export const acquireChatGptCredentialLease = internalMutation({
 });
 
 export const releaseChatGptCredentialLease = internalMutation({
-	args: { userId: v.string(), leaseId: v.string(), expiresAt: v.optional(v.number()) },
+	args: { userId: v.string(), leaseId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId !== args.leaseId) return null;
-		await ctx.db.patch(state._id, {
-			expiresAt: args.expiresAt ?? state.expiresAt,
-			refreshLeaseId: undefined,
-			refreshLeaseExpiresAt: undefined,
-			updatedAt: Date.now()
-		});
+		if (state?.lease?.id !== args.leaseId) return null;
+		await ctx.db.patch(state._id, { lease: undefined });
 		return null;
 	}
 });
@@ -1152,11 +1098,10 @@ export const renewChatGptCredentialLease = internalMutation({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId !== args.leaseId) return false;
+		if (state?.lease?.id !== args.leaseId) return false;
 		const now = Date.now();
 		await ctx.db.patch(state._id, {
-			refreshLeaseExpiresAt: now + CHATGPT_REFRESH_LEASE_MS,
-			updatedAt: now
+			lease: { id: args.leaseId, expiresAt: now + CHATGPT_CREDENTIAL_LEASE_MS }
 		});
 		return true;
 	}
@@ -1168,7 +1113,6 @@ export const recordChatGptCredential = internalMutation({
 		leaseId: v.string(),
 		deviceAuthHash: v.string(),
 		connectionId: v.string(),
-		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string()))
 	},
 	returns: v.null(),
@@ -1176,23 +1120,18 @@ export const recordChatGptCredential = internalMutation({
 		const state = await chatGptState(ctx, args.userId);
 		if (
 			!state ||
-			state.refreshLeaseId !== args.leaseId ||
-			state.deviceAuthHash !== args.deviceAuthHash ||
-			(state.deviceAuthExpiresAt ?? 0) <= Date.now()
+			state.lease?.id !== args.leaseId ||
+			state.deviceLogin?.hash !== args.deviceAuthHash ||
+			(state.deviceLogin?.expiresAt ?? 0) <= Date.now()
 		) {
 			throw new Error('ChatGPT credential update lost its lease.');
 		}
 		await ctx.db.patch(state._id, {
-			expiresAt: args.expiresAt,
 			modelIds: args.modelIds,
-			deviceAuthHash: undefined,
-			deviceAuthExpiresAt: undefined,
-			completedDeviceAuthHash: args.deviceAuthHash,
-			completedBrowserAuthHash: undefined,
+			deviceLogin: undefined,
+			completedLogin: { flow: 'device', hash: args.deviceAuthHash },
 			connectionId: args.connectionId,
-			refreshLeaseId: undefined,
-			refreshLeaseExpiresAt: undefined,
-			updatedAt: Date.now()
+			lease: undefined
 		});
 		return null;
 	}
@@ -1203,7 +1142,7 @@ export const deleteChatGptCredentialState = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		if (state?.refreshLeaseId === args.leaseId) await ctx.db.delete(state._id);
+		if (state?.lease?.id === args.leaseId) await ctx.db.delete(state._id);
 		return null;
 	}
 });
