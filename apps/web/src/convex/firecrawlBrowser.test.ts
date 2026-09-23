@@ -310,6 +310,32 @@ describe('Firecrawl browser lifecycle', () => {
 		});
 	});
 
+	it('releases a rate-limited creation when its run is cancelled before retry', async () => {
+		vi.useFakeTimers();
+		const fetch = remote().mockResolvedValueOnce(
+			new Response(JSON.stringify({ success: false, error: 'Rate limit exceeded.' }), {
+				status: 429,
+				headers: { 'Retry-After': '30' }
+			})
+		);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const retrying = interact(t, {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'agent-browser click @e1'
+		});
+		const rejected = expect(retrying).rejects.toThrow('No action ran');
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+		await t.run((ctx) => ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() }));
+		await vi.advanceTimersToNextTimerAsync();
+		await rejected;
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toEqual([]);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
+	});
+
 	it.each([503, 'timeout'] as const)(
 		'does not retry uncertain creation or fall back after %s',
 		async (failure) => {
@@ -1246,6 +1272,21 @@ describe('Firecrawl browser lifecycle', () => {
 			closing: false,
 			operationExpiresAt: 0
 		});
+	});
+
+	it('reports the provider wait when a body-only rate limit exceeds the retry budget', async () => {
+		const fetch = remote().mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({ success: false, error: 'Rate limit exceeded. Please retry after 121s.' }),
+				{ status: 429 }
+			)
+		);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		await expect(
+			interact(t, { runId, claimId, executionSecret, command: 'agent-browser get url' })
+		).rejects.toThrow('Wait at least 121 seconds before retrying.');
+		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 
 	it.each([

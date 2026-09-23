@@ -214,7 +214,7 @@ async function request(
 			retries >= MAX_RATE_LIMIT_RETRIES ||
 			retryWaitMs + delayMs > RATE_LIMIT_RETRY_BUDGET_MS
 		) {
-			throw new FirecrawlError(response.status, detail, headerDelay);
+			throw new FirecrawlError(response.status, detail, delaySeconds);
 		}
 		retries += 1;
 		retryWaitMs += delayMs;
@@ -232,9 +232,10 @@ async function request(
 async function provider(
 	method: string,
 	path: string,
-	body?: RequestBody
+	body?: RequestBody,
+	beforeRateLimitRetry?: () => Promise<void>
 ): Promise<z.infer<typeof providerResponseSchema>> {
-	const data = await request(method, path, body);
+	const data = await request(method, path, body, beforeRateLimitRetry);
 	const envelope = envelopeSchema.parse(data);
 	if (!envelope.success) throw new Error(envelope.error || 'Firecrawl request failed.');
 	return data;
@@ -370,7 +371,12 @@ type BrowserArgs = {
 	threadId: Id<'threadRecords'>;
 };
 
-async function createSession(ctx: ActionCtx, profileName: string, saveChanges: boolean) {
+async function createSession(
+	ctx: ActionCtx,
+	profileName: string,
+	saveChanges: boolean,
+	beforeRateLimitRetry: () => Promise<void>
+) {
 	if (!env.FIRECRAWL_BROWSER_API_KEY?.trim())
 		throw new Error('FIRECRAWL_BROWSER_API_KEY is not configured.');
 	const reservationId = crypto.randomUUID();
@@ -387,19 +393,25 @@ async function createSession(ctx: ActionCtx, profileName: string, saveChanges: b
 		await ctx.runMutation(internal.browserCapacity.reserve, reservation);
 	}
 	try {
-		const data = await provider('POST', '', {
-			ttl: SESSION_TTL_SECONDS,
-			activityTtl: ACTIVITY_TTL_SECONDS,
-			recordSession: false,
-			profile: { name: profileName, saveChanges }
-		});
+		const data = await provider(
+			'POST',
+			'',
+			{
+				ttl: SESSION_TTL_SECONDS,
+				activityTtl: ACTIVITY_TTL_SECONDS,
+				recordSession: false,
+				profile: { name: profileName, saveChanges }
+			},
+			beforeRateLimitRetry
+		);
 		const { id } = z.object({ id: z.string().min(1) }).parse(data);
 		await ctx.runMutation(internal.browserCapacity.attach, { reservationId, sessionId: id });
 		return data;
 	} catch (error) {
 		if (
-			error instanceof FirecrawlError &&
-			[400, 401, 402, 403, 404, 409, 422, 429].includes(error.status)
+			error instanceof RetryAbortedBeforeRequest ||
+			(error instanceof FirecrawlError &&
+				[400, 401, 402, 403, 404, 409, 422, 429].includes(error.status))
 		) {
 			await ctx.runMutation(internal.browserCapacity.releaseReservation, { reservationId });
 		}
@@ -453,7 +465,7 @@ async function execute(
 			let saveChanges = enforceSaving || session.saveChanges;
 			let data: unknown;
 			try {
-				data = await createSession(ctx, session.profileName, saveChanges);
+				data = await createSession(ctx, session.profileName, saveChanges, validateExecution);
 			} catch (error) {
 				if (!(error instanceof FirecrawlError && error.status === 409 && saveChanges)) {
 					throw error;
@@ -466,7 +478,7 @@ async function execute(
 					claimId: args.claimId
 				});
 				saveChanges = false;
-				data = await createSession(ctx, session.profileName, saveChanges);
+				data = await createSession(ctx, session.profileName, saveChanges, validateExecution);
 			}
 			createdId = z.object({ id: z.string().min(1) }).parse(data).id;
 			const created = createdSchema.parse(data);
