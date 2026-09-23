@@ -1991,7 +1991,7 @@
 					onclick={() => void closeSidebar()}
 				></button>
 			{/if}
-			<div class="inbox-sidebar-host" inert={!sidebarOpen && viewportWidth < 768}>
+			<div class="inbox-sidebar-host" inert={!sidebarOpen}>
 				{#if settingsOpen}
 					<SettingsSidebar
 						activePage={settingsPage}
@@ -2004,7 +2004,7 @@
 						}}
 						onNavigate={(nextPage) => {
 							settingsPage = nextPage;
-							if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+							if (matchMedia('(max-width: 767px)').matches) void closeSidebar();
 						}}
 					/>
 				{:else}
@@ -2035,7 +2035,12 @@
 
 			{#if !sidebarOpen}
 				<div class="inbox-collapsed-rail">
-					<BrandMark size="sm" label="Open sidebar" onclick={() => void openSidebar()} />
+					<BrandMark
+						size="sm"
+						class="inbox-icon inbox-rail-logo"
+						label="Open sidebar"
+						onclick={() => void openSidebar()}
+					/>
 					<button
 						class="inbox-icon"
 						type="button"
