@@ -285,7 +285,7 @@ describe('provider credentials', () => {
 		expect(entries.has(name)).toBe(false);
 	});
 
-	it('keeps model discovery unavailable if the latest Codex release cannot be retrieved', async () => {
+	it('uses a compatible Codex version when the release registry is unavailable', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
 		const name = await providerCredentialName('sprocket-chatgpt-');
@@ -307,16 +307,17 @@ describe('provider credentials', () => {
 		const fetchMock = stubProviderFetch(
 			entries,
 			(url) => {
-				throw new Error(`Unexpected provider request: ${url}`);
+				expect(new URL(url).searchParams.get('client_version')).toBe('0.156.1');
+				return Response.json({ models: [{ slug: 'gpt-6-luna' }] });
 			},
 			() => new Response(null, { status: 503 })
 		);
-		await expect(asUser.action(api.providerCredentials.refreshChatGptModels, {})).rejects.toThrow(
-			'Couldn’t load your ChatGPT models'
-		);
+		await expect(asUser.action(api.providerCredentials.refreshChatGptModels, {})).resolves.toEqual([
+			'gpt-6-luna'
+		]);
 		expect(
 			fetchMock.mock.calls.some(([url]) => String(url).includes('/backend-api/codex/models'))
-		).toBe(false);
+		).toBe(true);
 	});
 
 	it('rejects polling another user’s device authorization before contacting ChatGPT', async () => {
