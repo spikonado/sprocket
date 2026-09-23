@@ -7,7 +7,8 @@ use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::{AgentClientExt, CompletionClient};
 use rig::completion::{FinishReason, Message};
-use rig::providers::openai;
+use rig::http_client::{HeaderMap, HeaderValue};
+use rig::providers::{chatgpt, openai};
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
@@ -116,7 +117,10 @@ impl AgentProvider {
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        let (api_key, base_url) = match self.completion_provider {
+        if self.completion_provider != CompletionProvider::Spikonado {
+            request.fast_mode = false;
+        }
+        match self.completion_provider {
             CompletionProvider::Spikonado => {
                 let credential = match runtime
                     .issue_gateway_credential(&request.run_id, &request.claim_id)
@@ -130,10 +134,20 @@ impl AgentProvider {
                         };
                     }
                 };
-                (
-                    credential.token,
-                    Some(gateway_api_v1_url(&self.gateway_url)),
-                )
+                let completion_client = match openai::Client::builder()
+                    .api_key(credential.token)
+                    .base_url(&gateway_api_v1_url(&self.gateway_url))
+                    .build()
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error: anyhow!(error),
+                        };
+                    }
+                };
+                run_with_completion_client(completion_client, self.model, runtime, request).await
             }
             CompletionProvider::Openai => {
                 let credential = match runtime
@@ -148,27 +162,67 @@ impl AgentProvider {
                         };
                     }
                 };
-                (credential.api_key, None)
-            }
-        };
-        if self.completion_provider == CompletionProvider::Openai {
-            request.fast_mode = false;
-        }
-        let builder = openai::Client::builder().api_key(api_key);
-        let builder = match base_url {
-            Some(base_url) => builder.base_url(&base_url),
-            None => builder,
-        };
-        let completion_client = match builder.build() {
-            Ok(client) => client,
-            Err(error) => {
-                return AgentProviderResult::Failed {
-                    text: String::new(),
-                    error: anyhow!(error),
+                let completion_client = match openai::Client::builder()
+                    .api_key(credential.api_key)
+                    .build()
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error: anyhow!(error),
+                        };
+                    }
                 };
+                run_with_completion_client(completion_client, self.model, runtime, request).await
             }
-        };
-        run_with_completion_client(completion_client, self.model, runtime, request).await
+            CompletionProvider::Chatgpt => {
+                let credential = match runtime
+                    .issue_chatgpt_credential(&request.run_id, &request.claim_id)
+                    .await
+                {
+                    Ok(credential) => credential,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
+                };
+                let mut headers = HeaderMap::new();
+                if let Some(residency) = credential.residency {
+                    let value = match HeaderValue::from_str(&residency) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            return AgentProviderResult::Failed {
+                                text: String::new(),
+                                error: anyhow!("invalid ChatGPT residency claim: {error}"),
+                            };
+                        }
+                    };
+                    headers.insert("x-openai-internal-codex-residency", value);
+                }
+                let completion_client = match chatgpt::Client::builder()
+                    .api_key(chatgpt::ChatGPTAuth::AccessToken {
+                        access_token: credential.access_token,
+                        account_id: Some(credential.account_id),
+                    })
+                    .http_headers(headers)
+                    .originator("sprocket")
+                    .user_agent(format!("Sprocket/{}", env!("CARGO_PKG_VERSION")))
+                    .build()
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error: anyhow!(error),
+                        };
+                    }
+                };
+                run_with_completion_client(completion_client, self.model, runtime, request).await
+            }
+        }
     }
 }
 

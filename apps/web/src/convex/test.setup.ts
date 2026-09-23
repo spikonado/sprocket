@@ -139,7 +139,7 @@ export async function insertQueuedRun(
 		prompt: string;
 		imageUploadIds?: Id<'imageUploads'>[];
 		selectedModel?: string;
-		completionProvider?: 'spikonado' | 'openai';
+		completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		fastMode?: boolean;
 		machineId?: string;

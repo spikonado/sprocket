@@ -7,8 +7,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse, RunAgentRequest,
-    RunContextResponse, StartRunResponse,
+    ChatGptCredential, CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse,
+    RunAgentRequest, RunContextResponse, StartRunResponse,
 };
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
@@ -287,6 +287,18 @@ impl RuntimeClient {
     ) -> anyhow::Result<OpenAiCredential> {
         self.action_json(
             "providerCredentials:issueOpenAiCredential",
+            self.run_args_with_claim(run_id, claim_id),
+        )
+        .await
+    }
+
+    pub(crate) async fn issue_chatgpt_credential(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<ChatGptCredential> {
+        self.action_json(
+            "providerCredentials:issueChatGptCredential",
             self.run_args_with_claim(run_id, claim_id),
         )
         .await

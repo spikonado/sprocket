@@ -160,12 +160,16 @@
 	let catalogError = $state<string | null>(null);
 	let catalogLoading = $state(true);
 	let openAiConfigured = $state(false);
+	let chatGptConfigured = $state(false);
+	let chatGptModelIds = $state<string[] | null>(null);
 	let providerConfigurationLoading = $state(false);
 	let providerConfigurationReady = $state(false);
 	let providerConfigurationError = $state<string | null>(null);
-	const configuredProviders = $derived<CompletionProvider[]>(
-		openAiConfigured ? ['spikonado', 'openai'] : ['spikonado']
-	);
+	const configuredProviders = $derived<CompletionProvider[]>([
+		'spikonado',
+		...(openAiConfigured ? (['openai'] as const) : []),
+		...(chatGptConfigured ? (['chatgpt'] as const) : [])
+	]);
 
 	async function loadModelCatalog() {
 		catalogLoading = true;
@@ -191,6 +195,8 @@
 			const configuration = await getMyProviderConfiguration({});
 			if (getCurrentUserId() !== userId) return;
 			openAiConfigured = configuration.openai;
+			chatGptConfigured = configuration.chatgpt;
+			chatGptModelIds = configuration.chatgptModelIds;
 			providerConfigurationReady = true;
 		} catch (error) {
 			if (getCurrentUserId() !== userId) return;
@@ -965,11 +971,19 @@
 		}
 	}
 
-	function handleProviderConfigurationChange(configured: boolean) {
-		openAiConfigured = configured;
+	function handleProviderConfigurationChange(change: {
+		provider: 'openai' | 'chatgpt';
+		configured: boolean;
+		chatGptModelIds?: string[] | null;
+	}) {
+		if (change.provider === 'openai') openAiConfigured = change.configured;
+		if (change.provider === 'chatgpt') {
+			chatGptConfigured = change.configured;
+			chatGptModelIds = change.configured ? (change.chatGptModelIds ?? null) : null;
+		}
 		providerConfigurationReady = true;
 		providerConfigurationError = null;
-		if (!configured && selectedCompletionProvider === 'openai') {
+		if (!change.configured && selectedCompletionProvider === change.provider) {
 			selectedCompletionProvider = 'spikonado';
 			void persistCompletionSettings('spikonado', selectedModel);
 		}
@@ -1582,6 +1596,8 @@
 		ensureSubscriptionAttemptedFor = null;
 		providerConfigurationLoadedFor = null;
 		openAiConfigured = false;
+		chatGptConfigured = false;
+		chatGptModelIds = null;
 		providerConfigurationReady = false;
 		providerConfigurationError = null;
 		lastSyncedComposerThreadId = null;
@@ -2024,6 +2040,7 @@
 					{:else if settingsPage === 'providers'}
 						<SettingsProviders
 							{openAiConfigured}
+							{chatGptConfigured}
 							loading={providerConfigurationLoading}
 							loadError={providerConfigurationError}
 							onConfigurationChange={handleProviderConfigurationChange}
@@ -2135,6 +2152,7 @@
 								{modelCatalog}
 								bind:selectedModel
 								{configuredProviders}
+								{chatGptModelIds}
 								providersReady={providerConfigurationReady}
 								bind:selectedCompletionProvider
 								onCompletionSettingsChange={(provider, modelId) => {

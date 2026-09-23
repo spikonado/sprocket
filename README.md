@@ -137,7 +137,10 @@ bun dev
 ```
 
 After creating a Convex deployment and configuring AuthKit, set `WORKOS_API_KEY`
-on the deployment so it can store user-supplied provider keys in WorkOS Vault.
+and `WORKOS_CLIENT_ID` on the deployment. Sprocket stores user-supplied OpenAI
+API keys and ChatGPT OAuth credentials in WorkOS Vault. Users can connect either
+provider from Settings. ChatGPT uses OpenAI's device-code flow, which a ChatGPT
+workspace administrator can disable.
 
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 It targets the dev Convex deployment. To run against the production Convex

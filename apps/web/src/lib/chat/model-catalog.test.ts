@@ -134,6 +134,27 @@ describe('gateway model catalog', () => {
 			'openai-paid'
 		);
 	});
+
+	it('intersects ChatGPT models with the authenticated account model list', async () => {
+		const payload = structuredClone(catalogPayload);
+		payload.sprocket.models = [
+			{ ...payload.sprocket.models[0], id: 'gpt-5.4', provider: 'openai' },
+			{ ...payload.sprocket.models[0], id: 'gpt-api-only', provider: 'openai' },
+			{ ...payload.sprocket.models[0], id: 'other', provider: 'other' }
+		];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+
+		expect(modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-5.4'])).toEqual([
+			expect.objectContaining({ id: 'gpt-5.4', provider: 'openai' })
+		]);
+		expect(
+			resolveModelForCompletionProvider(catalog, 'free', 'chatgpt', 'gpt-api-only', ['gpt-5.4'])
+		).toBe('gpt-5.4');
+	});
 });
 
 describe('reasoning controls', () => {

@@ -425,6 +425,16 @@ mod tests {
     }
 
     #[test]
+    fn accepts_chatgpt_subscription_requests() {
+        let mut json = base_request();
+        json["completionProvider"] = "chatgpt".into();
+        assert_eq!(
+            request(json).completion_provider,
+            CompletionProvider::Chatgpt
+        );
+    }
+
+    #[test]
     fn requires_fast_mode() {
         let mut json = base_request();
         json.as_object_mut().unwrap().remove("fastMode");

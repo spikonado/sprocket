@@ -70,6 +70,15 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
+	providerCredentialStates: defineTable({
+		userId: v.string(),
+		provider: v.literal('chatgpt'),
+		expiresAt: v.number(),
+		modelIds: v.optional(v.array(v.string())),
+		refreshLeaseId: v.optional(v.string()),
+		refreshLeaseExpiresAt: v.optional(v.number()),
+		updatedAt: v.number()
+	}).index('by_userId_and_provider', ['userId', 'provider']),
 	migrationSchedules: defineTable({
 		name: v.string(),
 		notBefore: v.number(),

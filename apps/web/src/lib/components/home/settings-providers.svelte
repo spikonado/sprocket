@@ -1,66 +1,181 @@
 <script lang="ts">
-	import { Eye, EyeOff } from '@lucide/svelte';
+	import { onDestroy } from 'svelte';
+	import { Eye, EyeOff, ExternalLink } from '@lucide/svelte';
 	import { useAction } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import { convexClientErrorMessage } from '$lib/convex-error';
 
-	type Props = {
-		openAiConfigured: boolean;
-		loading: boolean;
-		loadError: string | null;
-		onConfigurationChange: (configured: boolean) => void;
+	type ProviderConfigurationChange = {
+		provider: 'openai' | 'chatgpt';
+		configured: boolean;
+		chatGptModelIds?: string[] | null;
 	};
 
-	let { openAiConfigured, loading, loadError, onConfigurationChange }: Props = $props();
+	type ChatGptLogin = {
+		deviceAuthId: string;
+		userCode: string;
+		verificationUrl: string;
+		intervalMs: number;
+		expiresAt: number;
+	};
+
+	type Props = {
+		openAiConfigured: boolean;
+		chatGptConfigured: boolean;
+		loading: boolean;
+		loadError: string | null;
+		onConfigurationChange: (change: ProviderConfigurationChange) => void;
+	};
+
+	let { openAiConfigured, chatGptConfigured, loading, loadError, onConfigurationChange }: Props =
+		$props();
 	const saveOpenAiKey = useAction(api.providerCredentials.saveOpenAiKey);
 	const removeOpenAiKey = useAction(api.providerCredentials.removeOpenAiKey);
+	const beginChatGptDeviceLogin = useAction(api.providerCredentials.beginChatGptDeviceLogin);
+	const pollChatGptDeviceLogin = useAction(api.providerCredentials.pollChatGptDeviceLogin);
+	const removeChatGptCredential = useAction(api.providerCredentials.removeChatGptCredential);
 	let apiKey = $state('');
 	let showKey = $state(false);
-	let pending = $state(false);
-	let confirmRemove = $state(false);
-	let actionError = $state<string | null>(null);
-	let saved = $state(false);
+	let openAiPending = $state(false);
+	let confirmOpenAiRemove = $state(false);
+	let openAiError = $state<string | null>(null);
+	let openAiSaved = $state(false);
+	let chatGptPending = $state(false);
+	let chatGptLogin = $state<ChatGptLogin | null>(null);
+	let confirmChatGptRemove = $state(false);
+	let chatGptError = $state<string | null>(null);
+	let loginGeneration = 0;
+
+	function errorMessage(error: Error | null, fallback: string): string {
+		return (error && convexClientErrorMessage(error)) || fallback;
+	}
+
+	function cancelChatGptLogin() {
+		loginGeneration += 1;
+		chatGptLogin = null;
+		chatGptPending = false;
+	}
+
+	async function waitForChatGptLogin(login: ChatGptLogin, generation: number) {
+		while (generation === loginGeneration && Date.now() < login.expiresAt) {
+			await new Promise((resolve) => setTimeout(resolve, login.intervalMs));
+			if (generation !== loginGeneration) return;
+			try {
+				const result = await pollChatGptDeviceLogin({
+					deviceAuthId: login.deviceAuthId,
+					userCode: login.userCode
+				});
+				if (result.status === 'pending') continue;
+				chatGptLogin = null;
+				chatGptPending = false;
+				onConfigurationChange({
+					provider: 'chatgpt',
+					configured: true,
+					chatGptModelIds: result.modelIds
+				});
+				return;
+			} catch (error) {
+				if (generation !== loginGeneration) return;
+				chatGptError = errorMessage(
+					error instanceof Error ? error : null,
+					'Couldn’t complete ChatGPT sign-in.'
+				);
+				chatGptLogin = null;
+				chatGptPending = false;
+				return;
+			}
+		}
+		if (generation === loginGeneration) {
+			chatGptError = 'ChatGPT sign-in expired. Start again.';
+			chatGptLogin = null;
+			chatGptPending = false;
+		}
+	}
+
+	async function connectChatGpt() {
+		if (chatGptPending) return;
+		chatGptPending = true;
+		chatGptError = null;
+		confirmChatGptRemove = false;
+		const generation = ++loginGeneration;
+		try {
+			const login = await beginChatGptDeviceLogin({});
+			if (generation !== loginGeneration) return;
+			chatGptLogin = login;
+			void waitForChatGptLogin(login, generation);
+		} catch (error) {
+			if (generation !== loginGeneration) return;
+			chatGptError = errorMessage(
+				error instanceof Error ? error : null,
+				'Couldn’t start ChatGPT sign-in.'
+			);
+			chatGptPending = false;
+		}
+	}
+
+	async function removeChatGpt() {
+		if (chatGptPending) return;
+		cancelChatGptLogin();
+		chatGptPending = true;
+		chatGptError = null;
+		try {
+			await removeChatGptCredential({});
+			confirmChatGptRemove = false;
+			onConfigurationChange({ provider: 'chatgpt', configured: false });
+		} catch (error) {
+			chatGptError = errorMessage(
+				error instanceof Error ? error : null,
+				'Couldn’t disconnect ChatGPT.'
+			);
+		} finally {
+			chatGptPending = false;
+		}
+	}
 
 	async function saveKey(event: Event) {
 		event.preventDefault();
-		if (!apiKey.trim() || pending) return;
-		pending = true;
-		actionError = null;
-		saved = false;
+		if (!apiKey.trim() || openAiPending) return;
+		openAiPending = true;
+		openAiError = null;
+		openAiSaved = false;
 		try {
 			await saveOpenAiKey({ apiKey });
 			apiKey = '';
 			showKey = false;
-			saved = true;
-			onConfigurationChange(true);
+			openAiSaved = true;
+			onConfigurationChange({ provider: 'openai', configured: true });
 		} catch (error) {
-			actionError =
-				(error instanceof Error && convexClientErrorMessage(error)) ||
-				'Couldn’t save the OpenAI key.';
+			openAiError = errorMessage(
+				error instanceof Error ? error : null,
+				'Couldn’t save the OpenAI key.'
+			);
 		} finally {
-			pending = false;
+			openAiPending = false;
 		}
 	}
 
 	async function removeKey() {
-		if (pending) return;
-		pending = true;
-		actionError = null;
-		saved = false;
+		if (openAiPending) return;
+		openAiPending = true;
+		openAiError = null;
+		openAiSaved = false;
 		try {
 			await removeOpenAiKey({});
-			confirmRemove = false;
-			onConfigurationChange(false);
+			confirmOpenAiRemove = false;
+			onConfigurationChange({ provider: 'openai', configured: false });
 		} catch (error) {
-			actionError =
-				(error instanceof Error && convexClientErrorMessage(error)) ||
-				'Couldn’t remove the OpenAI key.';
+			openAiError = errorMessage(
+				error instanceof Error ? error : null,
+				'Couldn’t remove the OpenAI key.'
+			);
 		} finally {
-			pending = false;
+			openAiPending = false;
 		}
 	}
+
+	onDestroy(cancelChatGptLogin);
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -69,17 +184,101 @@
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-		<div class="max-w-xl">
+		<div class="max-w-xl space-y-4">
 			<p class="text-muted-foreground mb-5 text-sm leading-6">
-				You can use your own API keys or subscriptions from other providers. Your credentials are
-				stored encrypted and are only accessible to you.
+				Connect a ChatGPT account or use an OpenAI API key. Credentials are encrypted in WorkOS
+				Vault and are released only to an active run on one of your linked machines.
 			</p>
 
 			<div class="border-border rounded-xl border p-5">
 				<div class="flex items-center gap-3">
 					<ProviderLogo provider="openai" className="size-5" />
 					<div class="min-w-0 flex-1">
-						<p class="text-foreground text-[15px] font-medium">OpenAI</p>
+						<p class="text-foreground text-[15px] font-medium">ChatGPT subscription</p>
+						<p class="text-muted-foreground mt-0.5 text-[12px]">
+							{loading
+								? 'Checking configuration…'
+								: chatGptConfigured
+									? 'Connected'
+									: 'Not connected'}
+						</p>
+					</div>
+				</div>
+
+				{#if chatGptLogin}
+					<div class="border-border bg-hover-fill mt-5 rounded-lg border p-4">
+						<p class="text-foreground text-sm">Open ChatGPT and enter this one-time code:</p>
+						<p class="text-foreground my-3 font-mono text-xl font-semibold tracking-[0.18em]">
+							{chatGptLogin.userCode}
+						</p>
+						<div class="flex flex-wrap items-center gap-3">
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- external ChatGPT verification URL -->
+							<a
+								href={chatGptLogin.verificationUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="bg-primary text-primary-foreground inline-flex h-10 items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-medium transition-opacity hover:opacity-90"
+							>
+								Open ChatGPT <ExternalLink class="size-3.5" />
+							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
+							<button
+								type="button"
+								class="text-muted-foreground hover:text-foreground text-[13px]"
+								onclick={cancelChatGptLogin}>Cancel</button
+							>
+							<span class="text-muted-foreground text-[12px]">Waiting for approval…</span>
+						</div>
+					</div>
+				{:else}
+					<div class="mt-5 flex flex-wrap items-center gap-3">
+						<Button disabled={chatGptPending || loading} onclick={connectChatGpt}>
+							{chatGptPending
+								? 'Starting…'
+								: chatGptConfigured
+									? 'Reconnect ChatGPT'
+									: 'Connect ChatGPT'}
+						</Button>
+						{#if chatGptConfigured && !confirmChatGptRemove}
+							<Button
+								type="button"
+								variant="outline"
+								disabled={chatGptPending}
+								onclick={() => (confirmChatGptRemove = true)}>Disconnect</Button
+							>
+						{:else if confirmChatGptRemove}
+							<Button
+								type="button"
+								variant="outline"
+								disabled={chatGptPending}
+								onclick={removeChatGpt}
+							>
+								{chatGptPending ? 'Disconnecting…' : 'Confirm disconnect'}
+							</Button>
+							<button
+								type="button"
+								class="text-muted-foreground hover:text-foreground text-[13px]"
+								disabled={chatGptPending}
+								onclick={() => (confirmChatGptRemove = false)}>Cancel</button
+							>
+						{/if}
+					</div>
+				{/if}
+
+				<p class="text-muted-foreground mt-4 text-[12px] leading-5">
+					ChatGPT device login must be enabled in your personal security settings or by your
+					workspace administrator. Usage counts against your ChatGPT Codex allowance.
+				</p>
+				{#if chatGptError}
+					<p class="text-destructive mt-4 text-sm" role="alert">{chatGptError}</p>
+				{/if}
+			</div>
+
+			<div class="border-border rounded-xl border p-5">
+				<div class="flex items-center gap-3">
+					<ProviderLogo provider="openai" className="size-5" />
+					<div class="min-w-0 flex-1">
+						<p class="text-foreground text-[15px] font-medium">OpenAI API</p>
 						<p class="text-muted-foreground mt-0.5 text-[12px]">
 							{loading
 								? 'Checking configuration…'
@@ -100,14 +299,14 @@
 								autocomplete="off"
 								spellcheck="false"
 								placeholder={openAiConfigured ? 'Enter a replacement key' : 'sk-…'}
-								disabled={pending || loading}
+								disabled={openAiPending || loading}
 								class="border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-10 w-full rounded-lg border pr-10 pl-3 font-mono text-[13px] outline-none disabled:opacity-50"
 							/>
 							<button
 								type="button"
 								class="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center"
 								aria-label={showKey ? 'Hide API key' : 'Show API key'}
-								disabled={pending || loading}
+								disabled={openAiPending || loading}
 								onclick={() => (showKey = !showKey)}
 							>
 								{#if showKey}<EyeOff class="size-4" />{:else}<Eye class="size-4" />{/if}
@@ -116,38 +315,39 @@
 					</label>
 
 					<div class="flex flex-wrap items-center gap-3">
-						<Button type="submit" disabled={pending || loading || !apiKey.trim()}>
-							{pending ? 'Saving…' : openAiConfigured ? 'Replace key' : 'Connect OpenAI'}
+						<Button type="submit" disabled={openAiPending || loading || !apiKey.trim()}>
+							{openAiPending ? 'Saving…' : openAiConfigured ? 'Replace key' : 'Connect API key'}
 						</Button>
-						{#if openAiConfigured && !confirmRemove}
+						{#if openAiConfigured && !confirmOpenAiRemove}
 							<Button
 								type="button"
 								variant="outline"
-								disabled={pending}
-								onclick={() => (confirmRemove = true)}>Remove</Button
+								disabled={openAiPending}
+								onclick={() => (confirmOpenAiRemove = true)}>Remove</Button
 							>
-						{:else if confirmRemove}
-							<Button type="button" variant="outline" disabled={pending} onclick={removeKey}>
-								{pending ? 'Removing…' : 'Confirm removal'}
+						{:else if confirmOpenAiRemove}
+							<Button type="button" variant="outline" disabled={openAiPending} onclick={removeKey}>
+								{openAiPending ? 'Removing…' : 'Confirm removal'}
 							</Button>
 							<button
 								type="button"
 								class="text-muted-foreground hover:text-foreground text-[13px]"
-								disabled={pending}
-								onclick={() => (confirmRemove = false)}>Cancel</button
+								disabled={openAiPending}
+								onclick={() => (confirmOpenAiRemove = false)}>Cancel</button
 							>
 						{/if}
-						{#if saved}<span class="text-muted-foreground text-[12px]">Saved</span>{/if}
+						{#if openAiSaved}<span class="text-muted-foreground text-[12px]">Saved</span>{/if}
 					</div>
 				</form>
 
-				{#if loadError}
-					<p class="text-destructive mt-4 text-sm" role="alert">{loadError}</p>
-				{/if}
-				{#if actionError}
-					<p class="text-destructive mt-4 text-sm" role="alert">{actionError}</p>
+				{#if openAiError}
+					<p class="text-destructive mt-4 text-sm" role="alert">{openAiError}</p>
 				{/if}
 			</div>
+
+			{#if loadError}
+				<p class="text-destructive text-sm" role="alert">{loadError}</p>
+			{/if}
 		</div>
 	</div>
 </section>

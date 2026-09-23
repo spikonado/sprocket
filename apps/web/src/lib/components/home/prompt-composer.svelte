@@ -41,6 +41,7 @@
 		modelCatalog?: ModelCatalog;
 		selectedModel?: CatalogModelId;
 		configuredProviders?: CompletionProvider[];
+		chatGptModelIds?: readonly string[] | null;
 		providersReady?: boolean;
 		selectedCompletionProvider?: CompletionProvider;
 		onCompletionSettingsChange?: (provider: CompletionProvider, modelId: CatalogModelId) => void;
@@ -72,6 +73,7 @@
 		modelCatalog,
 		selectedModel = $bindable(defaultModelId),
 		configuredProviders = ['spikonado'],
+		chatGptModelIds = null,
 		providersReady = true,
 		selectedCompletionProvider = $bindable<CompletionProvider>('spikonado'),
 		onCompletionSettingsChange,
@@ -101,7 +103,12 @@
 	const providerOptions = $derived(
 		configuredProviders.map((provider) => ({
 			id: provider,
-			label: provider === 'spikonado' ? 'Spikonado' : 'OpenAI'
+			label:
+				provider === 'spikonado'
+					? 'Spikonado'
+					: provider === 'chatgpt'
+						? 'ChatGPT subscription'
+						: 'OpenAI API'
 		}))
 	);
 	const modelOptions = $derived(
@@ -109,7 +116,8 @@
 			? modelOptionsForCompletionProvider(
 					modelCatalog,
 					subscriptionTier ?? 'free',
-					selectedCompletionProvider
+					selectedCompletionProvider,
+					chatGptModelIds
 				)
 			: []
 	);
@@ -118,7 +126,7 @@
 	);
 	const selectedFastModeAccess = $derived.by(() => {
 		if (!modelCatalog || !selectedCatalogModel) return undefined;
-		if (selectedCompletionProvider === 'openai') return 'unsupported';
+		if (selectedCompletionProvider !== 'spikonado') return 'unsupported';
 		if (!selectedCatalogModel.supportsFastMode) return 'unsupported';
 		if (!subscriptionTier) return undefined;
 		return fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, selectedCatalogModel);
@@ -129,7 +137,7 @@
 		(selectedCompletionProvider === 'spikonado' ||
 			(providersReady && configuredProviders.includes(selectedCompletionProvider))) &&
 			selectedCatalogModel !== undefined &&
-			((selectedCompletionProvider === 'openai' && selectedCatalogModel.provider === 'openai') ||
+			((selectedCompletionProvider !== 'spikonado' && selectedCatalogModel.provider === 'openai') ||
 				subscriptionFailed ||
 				(subscriptionTier !== undefined &&
 					modelCatalog !== undefined &&
@@ -447,7 +455,8 @@
 			modelCatalog,
 			subscriptionTier ?? 'free',
 			provider,
-			selectedModel
+			selectedModel,
+			chatGptModelIds
 		);
 		if (!modelId) return;
 		selectedModel = modelId;
@@ -464,12 +473,13 @@
 			selectedCompletionProvider = 'spikonado';
 		}
 		const resolvedModel =
-			selectedCompletionProvider === 'openai'
+			selectedCompletionProvider !== 'spikonado'
 				? resolveModelForCompletionProvider(
 						modelCatalog,
 						subscriptionTier ?? 'free',
 						selectedCompletionProvider,
-						selectedModel
+						selectedModel,
+						chatGptModelIds
 					)
 				: getCatalogModel(modelCatalog, selectedModel)
 					? selectedModel
@@ -484,7 +494,7 @@
 	});
 
 	$effect(() => {
-		if (selectedCompletionProvider === 'openai') {
+		if (selectedCompletionProvider !== 'spikonado') {
 			fastMode = false;
 		}
 	});
@@ -497,7 +507,8 @@
 			modelCatalog,
 			subscriptionTier,
 			selectedCompletionProvider,
-			selectedModel
+			selectedModel,
+			chatGptModelIds
 		);
 		if (!allowedModel) return;
 		if (allowedModel !== selectedModel) {
