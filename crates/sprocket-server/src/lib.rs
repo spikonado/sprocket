@@ -1,5 +1,6 @@
 mod artifact_watch;
 mod auth;
+mod chatgpt_oauth;
 pub mod cli_protocol;
 mod cli_sessions;
 mod config;
@@ -87,6 +88,7 @@ pub struct AppState {
     pub(crate) lifetime: Arc<cli_sessions::ServerLifetime>,
     pub auth: Arc<auth::AuthState>,
     pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
+    pub(crate) chatgpt_oauth: Arc<chatgpt_oauth::PendingLogins>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
@@ -130,6 +132,7 @@ impl AppState {
             lifetime: cli_sessions::ServerLifetime::new(false),
             auth,
             native_auth: Arc::clone(&native_auth),
+            chatgpt_oauth: Arc::new(chatgpt_oauth::PendingLogins::default()),
             project_attachments,
             transcript,
             transcript_watchers,
@@ -156,6 +159,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::health::routes())
         .merge(routes::config::routes())
         .merge(routes::auth::routes())
+        .merge(chatgpt_oauth::routes())
         .merge(routes::cli::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
@@ -214,10 +218,13 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
+    let pending_chatgpt_oauth = Arc::new(chatgpt_oauth::PendingLogins::default());
+
     let state = AppState {
         lifetime: Arc::clone(&lifetime),
         auth,
         native_auth: Arc::clone(&native_auth),
+        chatgpt_oauth: Arc::clone(&pending_chatgpt_oauth),
         project_attachments,
         transcript,
         transcript_watchers,
@@ -327,6 +334,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     };
     cleanup.abort();
     let _ = cleanup.await;
+    chatgpt_oauth::shutdown(&pending_chatgpt_oauth).await;
     machines.shutdown().await;
     result?;
     Ok(())

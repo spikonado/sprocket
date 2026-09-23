@@ -3,6 +3,10 @@
 	import { Eye, EyeOff, ExternalLink } from '@lucide/svelte';
 	import { useAction } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
+	import { z } from 'zod';
+	import { createLocalTransport } from '$lib/local/transport';
+	import { resolveLocalApiBaseUrl } from '$lib/local/client';
+	import { usesLoopbackBrowserAuth } from '../../../../../desktop/local-config.mjs';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import { convexClientErrorMessage } from '$lib/convex-error';
@@ -20,6 +24,12 @@
 		intervalMs: number;
 		expiresAt: number;
 	};
+	type BrowserLogin = { state: string; authorizationUrl: string; expiresAt: number };
+	const browserResultSchema = z.discriminatedUnion('status', [
+		z.object({ status: z.literal('pending') }),
+		z.object({ status: z.literal('connected'), code: z.string() }),
+		z.object({ status: z.literal('failed'), error: z.string() })
+	]);
 
 	type Props = {
 		openAiConfigured: boolean;
@@ -41,6 +51,11 @@
 	const saveOpenAiKey = useAction(api.providerCredentials.saveOpenAiKey);
 	const removeOpenAiKey = useAction(api.providerCredentials.removeOpenAiKey);
 	const beginChatGptDeviceLogin = useAction(api.providerCredentials.beginChatGptDeviceLogin);
+	const beginChatGptBrowserLogin = useAction(api.providerCredentials.beginChatGptBrowserLogin);
+	const completeChatGptBrowserLogin = useAction(
+		api.providerCredentials.completeChatGptBrowserLogin
+	);
+	const cancelChatGptBrowserLogin = useAction(api.providerCredentials.cancelChatGptBrowserLogin);
 	const pollChatGptDeviceLogin = useAction(api.providerCredentials.pollChatGptDeviceLogin);
 	const removeChatGptCredential = useAction(api.providerCredentials.removeChatGptCredential);
 	const cancelChatGptDeviceLogin = useAction(api.providerCredentials.cancelChatGptDeviceLogin);
@@ -53,9 +68,17 @@
 	let openAiSaved = $state(false);
 	let chatGptPending = $state(false);
 	let chatGptLogin = $state<ChatGptLogin | null>(null);
+	let browserLogin = $state<BrowserLogin | null>(null);
 	let confirmChatGptRemove = $state(false);
 	let chatGptError = $state<string | null>(null);
 	let loginGeneration = 0;
+	const appWindow = globalThis.window;
+	const isLocalAccess =
+		!!appWindow &&
+		usesLoopbackBrowserAuth(appWindow.location.hostname, !!appWindow.sprocketDesktopBridge);
+	const localTransport = isLocalAccess
+		? createLocalTransport(resolveLocalApiBaseUrl() ?? '')
+		: null;
 
 	function errorMessage(error: Error | null, fallback: string): string {
 		return (error && convexClientErrorMessage(error)) || fallback;
@@ -64,21 +87,32 @@
 	function cancelChatGptLogin() {
 		loginGeneration += 1;
 		const login = chatGptLogin;
+		const browser = browserLogin;
 		chatGptLogin = null;
+		browserLogin = null;
 		chatGptPending = false;
-		return login;
+		return { login, browser };
 	}
 
 	async function stopChatGptLogin() {
-		const login = cancelChatGptLogin();
-		if (!login) return;
+		const { login, browser } = cancelChatGptLogin();
+		if (!login && !browser) return;
 		const generation = loginGeneration;
 		chatGptPending = true;
 		try {
-			await cancelChatGptDeviceLogin({
-				deviceAuthId: login.deviceAuthId,
-				userCode: login.userCode
-			});
+			if (login) {
+				await cancelChatGptDeviceLogin({
+					deviceAuthId: login.deviceAuthId,
+					userCode: login.userCode
+				});
+			}
+			if (browser) {
+				await cancelChatGptBrowserLogin({ state: browser.state });
+				await localTransport?.response('/api/chatgpt/browser/cancel', {
+					method: 'POST',
+					body: JSON.stringify({ state: browser.state })
+				});
+			}
 			const configuration = await getMyConfiguration({});
 			if (generation === loginGeneration) {
 				onConfigurationChange({
@@ -136,6 +170,49 @@
 		}
 	}
 
+	async function waitForBrowserLogin(login: BrowserLogin, generation: number) {
+		while (generation === loginGeneration && Date.now() < login.expiresAt) {
+			await new Promise((resolve) => setTimeout(resolve, 1_500));
+			if (generation !== loginGeneration) return;
+			try {
+				const result = await localTransport!.request(
+					'/api/chatgpt/browser/result',
+					browserResultSchema,
+					{
+						method: 'POST',
+						body: JSON.stringify({ state: login.state })
+					}
+				);
+				if (generation !== loginGeneration) return;
+				if (result.status === 'pending') continue;
+				if (result.status === 'failed') throw new Error(result.error);
+				const modelIds = await completeChatGptBrowserLogin({
+					state: login.state,
+					code: result.code
+				});
+				if (generation !== loginGeneration) return;
+				browserLogin = null;
+				chatGptPending = false;
+				onConfigurationChange({ provider: 'chatgpt', configured: true, chatGptModelIds: modelIds });
+				return;
+			} catch (error) {
+				if (generation !== loginGeneration) return;
+				chatGptError = errorMessage(
+					error instanceof Error ? error : null,
+					'Couldn’t complete ChatGPT sign-in.'
+				);
+				browserLogin = null;
+				chatGptPending = false;
+				return;
+			}
+		}
+		if (generation === loginGeneration) {
+			chatGptError = 'ChatGPT sign-in expired. Start again.';
+			browserLogin = null;
+			chatGptPending = false;
+		}
+	}
+
 	async function connectChatGpt() {
 		if (chatGptPending) return;
 		chatGptPending = true;
@@ -143,6 +220,20 @@
 		confirmChatGptRemove = false;
 		const generation = ++loginGeneration;
 		try {
+			if (isLocalAccess && localTransport) {
+				const { state } = await localTransport.request(
+					'/api/chatgpt/browser/start',
+					z.object({ state: z.string() }),
+					{ method: 'POST' }
+				);
+				if (generation !== loginGeneration) return;
+				const authorizationUrl = await beginChatGptBrowserLogin({ state });
+				if (generation !== loginGeneration) return;
+				const login = { state, authorizationUrl, expiresAt: Date.now() + 5 * 60_000 };
+				browserLogin = login;
+				void waitForBrowserLogin(login, generation);
+				return;
+			}
 			const login = await beginChatGptDeviceLogin({});
 			if (generation !== loginGeneration) return;
 			chatGptLogin = login;
@@ -218,12 +309,21 @@
 	}
 
 	onDestroy(() => {
-		const login = cancelChatGptLogin();
+		const { login, browser } = cancelChatGptLogin();
 		if (login) {
 			void cancelChatGptDeviceLogin({
 				deviceAuthId: login.deviceAuthId,
 				userCode: login.userCode
 			}).catch(() => {});
+		}
+		if (browser) {
+			void cancelChatGptBrowserLogin({ state: browser.state }).catch(() => {});
+			void localTransport
+				?.response('/api/chatgpt/browser/cancel', {
+					method: 'POST',
+					body: JSON.stringify({ state: browser.state })
+				})
+				.catch(() => {});
 		}
 	});
 </script>
@@ -255,7 +355,28 @@
 					</div>
 				</div>
 
-				{#if chatGptLogin}
+				{#if browserLogin}
+					<div class="border-border bg-hover-fill mt-5 rounded-lg border p-4">
+						<p class="text-foreground text-sm">Sign in with your ChatGPT subscription:</p>
+						<div class="mt-3 flex items-center gap-3">
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- external ChatGPT authorization URL -->
+							<a
+								href={browserLogin.authorizationUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="bg-primary text-primary-foreground inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium"
+								>Open ChatGPT <ExternalLink class="ml-2 size-3.5" /></a
+							>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
+							<button
+								type="button"
+								class="text-muted-foreground text-[13px]"
+								onclick={stopChatGptLogin}>Cancel</button
+							>
+							<span class="text-muted-foreground text-[12px]">Waiting for approval…</span>
+						</div>
+					</div>
+				{:else if chatGptLogin}
 					<div class="border-border bg-hover-fill mt-5 rounded-lg border p-4">
 						<p class="text-foreground text-sm">Open ChatGPT and enter this one-time code:</p>
 						<p class="text-foreground my-3 font-mono text-xl font-semibold tracking-[0.18em]">
@@ -324,8 +445,9 @@
 					</p>
 				{/if}
 				<p class="text-muted-foreground mt-4 text-[12px] leading-5">
-					ChatGPT device login must be enabled in your personal security settings or by your
-					workspace administrator. Usage counts against your ChatGPT Codex allowance.
+					{!isLocalAccess
+						? 'ChatGPT device login must be enabled in your personal security settings or by your workspace administrator. '
+						: ''}Usage counts against your ChatGPT Codex allowance.
 				</p>
 				{#if chatGptError}
 					<p class="text-destructive mt-4 text-sm" role="alert">{chatGptError}</p>

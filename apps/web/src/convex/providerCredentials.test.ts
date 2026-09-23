@@ -118,6 +118,95 @@ describe('provider credentials', () => {
 		delete process.env.WORKOS_CLIENT_ID;
 	});
 
+	it('exchanges a loopback browser code with PKCE and saves the credential in Vault', async () => {
+		const t = initConvexTest();
+		const owner = t.withIdentity({ subject: 'user_alice' });
+		const other = t.withIdentity({ subject: 'user_bob' });
+		const state = 'a'.repeat(64);
+		const entries = new Map<string, VaultEntry>();
+		const exp = Math.floor(Date.now() / 1_000) + 3_600;
+		let verifier = '';
+		stubProviderFetch(entries, (url, init) => {
+			if (url.endsWith('/oauth/token')) {
+				const body = new URLSearchParams(String(init?.body));
+				expect(body.get('redirect_uri')).toBe('http://localhost:1455/auth/callback');
+				expect(body.get('code')).toBe('browser-code');
+				expect(body.get('code_verifier')).toBe(verifier);
+				return Response.json({
+					access_token: jwt({ exp, chatgpt_account_id: 'account-1' }),
+					refresh_token: 'browser-refresh'
+				});
+			}
+			if (url.includes('/backend-api/codex/models')) {
+				return Response.json({ models: [{ slug: 'gpt-5.4' }] });
+			}
+			throw new Error(`Unexpected provider request: ${url}`);
+		});
+		const authorizeUrl = new URL(
+			await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state })
+		);
+		verifier = await t.query(internal.providerCredentials.authorizeChatGptBrowserLogin, {
+			userId: 'user_alice',
+			hash: await providerCredentialName('', state)
+		});
+		const digest = new Uint8Array(
+			await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+		);
+		const expectedChallenge = Buffer.from(digest).toString('base64url');
+		expect(authorizeUrl.searchParams.get('code_challenge')).toBe(expectedChallenge);
+		expect(authorizeUrl.searchParams.get('state')).toBe(state);
+		expect(authorizeUrl.searchParams.get('redirect_uri')).toBe(
+			'http://localhost:1455/auth/callback'
+		);
+		await expect(
+			other.action(api.providerCredentials.completeChatGptBrowserLogin, {
+				state,
+				code: 'browser-code'
+			})
+		).rejects.toThrow('ChatGPT sign-in expired or was cancelled.');
+		await expect(
+			owner.action(api.providerCredentials.completeChatGptBrowserLogin, {
+				state,
+				code: 'browser-code'
+			})
+		).resolves.toEqual(['gpt-5.4']);
+		expect(
+			JSON.parse(entries.get(await providerCredentialName('sprocket-chatgpt-'))!.value)
+		).toMatchObject({
+			refreshToken: 'browser-refresh',
+			accountId: 'account-1'
+		});
+		await expect(
+			owner.action(api.providerCredentials.completeChatGptBrowserLogin, {
+				state,
+				code: 'browser-code'
+			})
+		).rejects.toThrow('ChatGPT sign-in expired or was cancelled.');
+	});
+
+	it('cancels a browser sign-in without affecting a later attempt', async () => {
+		const t = initConvexTest();
+		const owner = t.withIdentity({ subject: 'user_alice' });
+		const first = 'b'.repeat(64);
+		const second = 'c'.repeat(64);
+		await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state: first });
+		await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state: second });
+		await owner.action(api.providerCredentials.cancelChatGptBrowserLogin, { state: first });
+		await expect(
+			t.query(internal.providerCredentials.authorizeChatGptBrowserLogin, {
+				userId: 'user_alice',
+				hash: await providerCredentialName('', second)
+			})
+		).resolves.toBeTruthy();
+		await owner.action(api.providerCredentials.cancelChatGptBrowserLogin, { state: second });
+		await expect(
+			t.query(internal.providerCredentials.authorizeChatGptBrowserLogin, {
+				userId: 'user_alice',
+				hash: await providerCredentialName('', second)
+			})
+		).rejects.toThrow('ChatGPT sign-in expired or was cancelled.');
+	});
+
 	it('starts ChatGPT device login and reports pending authorization', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });

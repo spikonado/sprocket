@@ -20,6 +20,7 @@ const CHATGPT_API_ORIGIN = 'https://chatgpt.com/backend-api/codex';
 const CODEX_CLIENT_VERSION = '0.156.1';
 const CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CHATGPT_VERIFICATION_URL = `${CHATGPT_AUTH_ORIGIN}/codex/device`;
+const CHATGPT_BROWSER_CALLBACK_URL = 'http://localhost:1455/auth/callback';
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
 const CHATGPT_CREDENTIAL_NAME_PREFIX = 'sprocket-chatgpt-';
 const CHATGPT_REFRESH_MARGIN_MS = 5 * 60 * 1_000;
@@ -314,7 +315,8 @@ async function storeChatGptCredential(
 
 async function exchangeChatGptCode(
 	authorizationCode: string,
-	codeVerifier: string
+	codeVerifier: string,
+	redirectUri = `${CHATGPT_AUTH_ORIGIN}/deviceauth/callback`
 ): Promise<ChatGptTokenResponse> {
 	const response = await providerFetch(`${CHATGPT_AUTH_ORIGIN}/oauth/token`, {
 		method: 'POST',
@@ -322,7 +324,7 @@ async function exchangeChatGptCode(
 		body: new URLSearchParams({
 			grant_type: 'authorization_code',
 			code: authorizationCode,
-			redirect_uri: `${CHATGPT_AUTH_ORIGIN}/deviceauth/callback`,
+			redirect_uri: redirectUri,
 			client_id: CHATGPT_CLIENT_ID,
 			code_verifier: codeVerifier
 		}).toString()
@@ -515,6 +517,106 @@ export const removeOpenAiKey = action({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw new Error('Authentication required.');
 		await deleteVaultObject(await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject));
+		return null;
+	}
+});
+
+export const beginChatGptBrowserLogin = action({
+	args: { state: v.string() },
+	returns: v.string(),
+	handler: async (ctx, { state }) => {
+		const identity = await ctx.auth.getUserIdentity();
+		if (!identity) throw new Error('Authentication required.');
+		if (!/^[a-f0-9]{64}$/.test(state)) throw new Error('Invalid ChatGPT sign-in request.');
+		const verifier = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+			.replaceAll('+', '-')
+			.replaceAll('/', '_')
+			.replaceAll('=', '');
+		const digest = new Uint8Array(
+			await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+		);
+		const challenge = btoa(String.fromCharCode(...digest))
+			.replaceAll('+', '-')
+			.replaceAll('/', '_')
+			.replaceAll('=', '');
+		await ctx.runMutation(internal.providerCredentials.registerChatGptBrowserLogin, {
+			userId: identity.subject,
+			hash: await credentialName('', state),
+			verifier,
+			expiresAt: Date.now() + 5 * 60_000
+		});
+		const url = new URL(`${CHATGPT_AUTH_ORIGIN}/oauth/authorize`);
+		url.search = new URLSearchParams({
+			response_type: 'code',
+			client_id: CHATGPT_CLIENT_ID,
+			redirect_uri: CHATGPT_BROWSER_CALLBACK_URL,
+			scope: 'openid profile email offline_access',
+			code_challenge: challenge,
+			code_challenge_method: 'S256',
+			id_token_add_organizations: 'true',
+			codex_cli_simplified_flow: 'true',
+			state,
+			originator: 'sprocket'
+		}).toString();
+		return url.toString();
+	}
+});
+
+export const completeChatGptBrowserLogin = action({
+	args: { state: v.string(), code: v.string() },
+	returns: v.union(v.array(v.string()), v.null()),
+	handler: async (ctx, { state, code }) => {
+		const identity = await ctx.auth.getUserIdentity();
+		if (!identity) throw new Error('Authentication required.');
+		if (!/^[a-f0-9]{64}$/.test(state) || !code || code.length > 4096) {
+			throw new Error('Invalid ChatGPT sign-in request.');
+		}
+		const hash = await credentialName('', state);
+		const leaseId = crypto.randomUUID();
+		await acquireChatGptLease(ctx, identity.subject, leaseId);
+		try {
+			const verifier: string = await ctx.runQuery(
+				internal.providerCredentials.authorizeChatGptBrowserLogin,
+				{ userId: identity.subject, hash }
+			);
+			const tokens = await exchangeChatGptCode(code, verifier, CHATGPT_BROWSER_CALLBACK_URL);
+			const credential = chatGptCredentialFromTokens(tokens);
+			const modelIds = await chatGptModelIds(credential);
+			await renewChatGptLease(ctx, identity.subject, leaseId);
+			await ctx.runQuery(internal.providerCredentials.authorizeChatGptBrowserLogin, {
+				userId: identity.subject,
+				hash
+			});
+			await storeChatGptCredential(identity.subject, credential);
+			await ctx.runMutation(internal.providerCredentials.recordChatGptBrowserCredential, {
+				userId: identity.subject,
+				leaseId,
+				hash,
+				expiresAt: credential.expiresAt,
+				modelIds: modelIds ?? undefined
+			});
+			return modelIds;
+		} catch (error) {
+			await ctx.runMutation(internal.providerCredentials.releaseChatGptCredentialLease, {
+				userId: identity.subject,
+				leaseId
+			});
+			throw error;
+		}
+	}
+});
+
+export const cancelChatGptBrowserLogin = action({
+	args: { state: v.string() },
+	returns: v.null(),
+	handler: async (ctx, { state }) => {
+		const identity = await ctx.auth.getUserIdentity();
+		if (!identity) throw new Error('Authentication required.');
+		if (!/^[a-f0-9]{64}$/.test(state)) throw new Error('Invalid ChatGPT sign-in request.');
+		await ctx.runMutation(internal.providerCredentials.cancelChatGptBrowserLoginState, {
+			userId: identity.subject,
+			hash: await credentialName('', state)
+		});
 		return null;
 	}
 });
@@ -752,6 +854,118 @@ export const getChatGptCredentialState = internalQuery({
 			)
 			.unique();
 		return state ? { expiresAt: state.expiresAt, modelIds: state.modelIds } : null;
+	}
+});
+
+export const registerChatGptBrowserLogin = internalMutation({
+	args: { userId: v.string(), hash: v.string(), verifier: v.string(), expiresAt: v.number() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const state = await ctx.db
+			.query('providerCredentialStates')
+			.withIndex('by_userId_and_provider', (query) =>
+				query.eq('userId', args.userId).eq('provider', 'chatgpt')
+			)
+			.unique();
+		if (state?.refreshLeaseId && (state.refreshLeaseExpiresAt ?? 0) > Date.now()) {
+			throw new Error('ChatGPT credentials are busy. Try again shortly.');
+		}
+		const fields = {
+			browserAuthHash: args.hash,
+			browserCodeVerifier: args.verifier,
+			browserAuthExpiresAt: args.expiresAt,
+			updatedAt: Date.now()
+		};
+		if (state) await ctx.db.patch(state._id, fields);
+		else {
+			await ctx.db.insert('providerCredentialStates', {
+				...fields,
+				userId: args.userId,
+				provider: 'chatgpt',
+				expiresAt: 0
+			});
+		}
+		return null;
+	}
+});
+
+export const authorizeChatGptBrowserLogin = internalQuery({
+	args: { userId: v.string(), hash: v.string() },
+	returns: v.string(),
+	handler: async (ctx, args) => {
+		const state = await ctx.db
+			.query('providerCredentialStates')
+			.withIndex('by_userId_and_provider', (query) =>
+				query.eq('userId', args.userId).eq('provider', 'chatgpt')
+			)
+			.unique();
+		if (
+			state?.browserAuthHash !== args.hash ||
+			(state.browserAuthExpiresAt ?? 0) <= Date.now() ||
+			!state.browserCodeVerifier
+		) {
+			throw new Error('ChatGPT sign-in expired or was cancelled. Start again.');
+		}
+		return state.browserCodeVerifier;
+	}
+});
+
+export const cancelChatGptBrowserLoginState = internalMutation({
+	args: { userId: v.string(), hash: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const state = await ctx.db
+			.query('providerCredentialStates')
+			.withIndex('by_userId_and_provider', (query) =>
+				query.eq('userId', args.userId).eq('provider', 'chatgpt')
+			)
+			.unique();
+		if (state?.browserAuthHash === args.hash) {
+			await ctx.db.patch(state._id, {
+				browserAuthHash: undefined,
+				browserAuthExpiresAt: undefined,
+				browserCodeVerifier: undefined,
+				updatedAt: Date.now()
+			});
+		}
+		return null;
+	}
+});
+
+export const recordChatGptBrowserCredential = internalMutation({
+	args: {
+		userId: v.string(),
+		leaseId: v.string(),
+		hash: v.string(),
+		expiresAt: v.number(),
+		modelIds: v.optional(v.array(v.string()))
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const state = await ctx.db
+			.query('providerCredentialStates')
+			.withIndex('by_userId_and_provider', (query) =>
+				query.eq('userId', args.userId).eq('provider', 'chatgpt')
+			)
+			.unique();
+		if (
+			state?.refreshLeaseId !== args.leaseId ||
+			state.browserAuthHash !== args.hash ||
+			(state.browserAuthExpiresAt ?? 0) <= Date.now()
+		) {
+			throw new Error('ChatGPT credential update lost its lease.');
+		}
+		await ctx.db.patch(state._id, {
+			expiresAt: args.expiresAt,
+			modelIds: args.modelIds,
+			browserAuthHash: undefined,
+			browserAuthExpiresAt: undefined,
+			browserCodeVerifier: undefined,
+			refreshLeaseId: undefined,
+			refreshLeaseExpiresAt: undefined,
+			updatedAt: Date.now()
+		});
+		return null;
 	}
 });
 
