@@ -129,7 +129,8 @@ it('closes the sidebar from the top action and from the brand mark', async () =>
 	document.querySelector<HTMLButtonElement>('[aria-label="Close sidebar"]')!.click();
 	expect(input.onClose).toHaveBeenCalledOnce();
 
-	document.querySelector<HTMLButtonElement>('[aria-label="Open sidebar"]')!.click();
+	const brand = document.querySelector<HTMLButtonElement>('header [aria-label="Close sidebar"]')!;
+	brand.click();
 	expect(input.onClose).toHaveBeenCalledTimes(2);
 });
 

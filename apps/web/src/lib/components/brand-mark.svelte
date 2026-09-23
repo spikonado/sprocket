@@ -5,9 +5,10 @@
 		class?: string;
 		size?: 'sm' | 'md';
 		onclick?: () => void;
+		label?: string;
 	};
 
-	let { class: className = '', size = 'md', onclick }: Props = $props();
+	let { class: className = '', size = 'md', onclick, label }: Props = $props();
 
 	const sizeClass = $derived(size === 'sm' ? 'h-6 w-6' : 'h-7 w-7');
 	const textClass = $derived(size === 'sm' ? 'text-lg' : 'text-[1.15rem]');
@@ -17,8 +18,8 @@
 	<button
 		type="button"
 		class={cn('flex min-w-0 items-center gap-2', className)}
-		aria-label="Open sidebar"
-		title="Open sidebar"
+		aria-label={label}
+		title={label}
 		{onclick}
 	>
 		<img src="/logo.png" alt="" class={cn('shrink-0', sizeClass)} />

@@ -311,7 +311,7 @@
 
 <aside class="inbox-sidebar" aria-label="Thread inbox">
 	<header class="flex items-center gap-2 px-4 pt-4 pb-3">
-		<BrandMark size="sm" class="mr-auto" onclick={() => onClose()} />
+		<BrandMark size="sm" class="mr-auto" label="Close sidebar" onclick={() => onClose()} />
 		<SidebarTopActions {theme} {onThemeChange} {onClose} />
 	</header>
 

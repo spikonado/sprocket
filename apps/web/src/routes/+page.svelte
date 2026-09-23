@@ -2,7 +2,7 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
-	import { PanelRight } from '@lucide/svelte';
+	import { PanelRight, Settings } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAction, useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
 	import type { Doc, Id } from '$convex/_generated/dataModel';
@@ -27,6 +27,7 @@
 	import CreateThreadHeading from '$lib/components/home/create-thread-heading.svelte';
 	import '$lib/components/home/create-thread.css';
 	import '$lib/components/home/inbox.css';
+	import BrandMark from '$lib/components/brand-mark.svelte';
 	import InboxSidebar from '$lib/components/home/inbox-sidebar.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
@@ -1873,10 +1874,16 @@
 		};
 	});
 
+	async function openSidebar() {
+		sidebarOpen = true;
+		await tick();
+		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+	}
+
 	async function closeSidebar() {
 		sidebarOpen = false;
 		await tick();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		document.querySelector<HTMLButtonElement>('.inbox-collapsed-rail button')?.focus();
 	}
 </script>
 
@@ -1989,6 +1996,25 @@
 					/>
 				{/if}
 			</div>
+
+			{#if !sidebarOpen}
+				<div class="inbox-collapsed-rail">
+					<BrandMark size="sm" label="Open sidebar" onclick={() => void openSidebar()} />
+					<button
+						class="inbox-icon"
+						type="button"
+						aria-label="Settings"
+						title="Settings"
+						onclick={() => {
+							settingsPage = 'account';
+							settingsOpen = true;
+							sidebarOpen = true;
+						}}
+					>
+						<Settings size={16} />
+					</button>
+				</div>
+			{/if}
 
 			<main
 				class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
