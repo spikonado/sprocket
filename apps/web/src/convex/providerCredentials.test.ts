@@ -102,6 +102,15 @@ async function startedChatGptRun() {
 		claimId,
 		executionSecret
 	});
+	await t.run(async (ctx) => {
+		await ctx.db.insert('providerCredentialStates', {
+			userId: 'user_alice',
+			provider: 'chatgpt',
+			connectionId: 'connection-1',
+			expiresAt: Date.now() + 3_600_000,
+			updatedAt: Date.now()
+		});
+	});
 	return { t, asUser, runId: created.runId, claimId, executionSecret };
 }
 
@@ -262,8 +271,9 @@ describe('provider credentials', () => {
 	it.each(['browser', 'device'] as const)(
 		'keeps the replacement credential when cancelling an older %s login',
 		async (firstFlow) => {
-			const t = initConvexTest();
-			const owner = t.withIdentity({ subject: 'user_alice' });
+			const { t, asUser: owner, runId, executionSecret } = await startedChatGptRun();
+			const connection = () =>
+				t.query(api.providerCredentials.chatGptConnection, { runId, executionSecret });
 			const entries = new Map<string, VaultEntry>();
 			let accountId = 'first-account';
 			stubProviderFetch(entries, (url) => {
@@ -309,11 +319,19 @@ describe('provider credentials', () => {
 				}
 			};
 			await flows[firstFlow].connect();
+			const firstConnection = await connection();
+			expect(firstConnection).toEqual(expect.any(String));
 			accountId = 'replacement-account';
-			await flows[firstFlow === 'browser' ? 'device' : 'browser'].connect();
+			const replacementFlow = firstFlow === 'browser' ? 'device' : 'browser';
+			await flows[replacementFlow].connect();
+			const replacementConnection = await connection();
+			expect(replacementConnection).toEqual(expect.any(String));
+			expect(replacementConnection).not.toBe(firstConnection);
 			await flows[firstFlow].cancel();
+			expect(await connection()).toBe(replacementConnection);
 			const name = await providerCredentialName('sprocket-chatgpt-');
 			expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
+				connectionId: replacementConnection,
 				accountId: 'replacement-account',
 				refreshToken: 'refresh-replacement-account'
 			});
@@ -322,6 +340,8 @@ describe('provider credentials', () => {
 				chatgpt: true,
 				chatgptModelIds: ['gpt-5.4']
 			});
+			await flows[replacementFlow].cancel();
+			expect(await connection()).toBeNull();
 		}
 	);
 
@@ -444,6 +464,7 @@ describe('provider credentials', () => {
 					name,
 					JSON.stringify({
 						version: 1,
+						connectionId: 'connection-1',
 						accessToken: 'access-current',
 						refreshToken: 'refresh-current',
 						accountId: 'account-1',
@@ -661,6 +682,7 @@ describe('provider credentials', () => {
 		const name = await providerCredentialName('sprocket-chatgpt-');
 		const credential = {
 			version: 1,
+			connectionId: 'connection-1',
 			accessToken: 'access-current',
 			refreshToken: 'refresh-current',
 			accountId: 'account-1',
@@ -682,6 +704,7 @@ describe('provider credentials', () => {
 			})
 		).resolves.toEqual({
 			accessToken: 'access-current',
+			connectionId: 'connection-1',
 			accountId: 'account-1',
 			residency: 'eu',
 			expiresAt: credential.expiresAt
@@ -699,59 +722,149 @@ describe('provider credentials', () => {
 		).rejects.toThrow('Run is not configured to use ChatGPT.');
 	});
 
-	it('serializes refresh-token rotation across concurrent issuers', async () => {
-		const { t, runId, claimId, executionSecret } = await startedChatGptRun();
-		const name = await providerCredentialName('sprocket-chatgpt-');
-		const entries = new Map<string, VaultEntry>([
-			[
-				name,
-				vaultEntry(
+	it.each([-1, 10_000])(
+		'serializes rotation with %i ms of token lifetime remaining',
+		async (lifetime) => {
+			const { t, runId, claimId, executionSecret } = await startedChatGptRun();
+			const name = await providerCredentialName('sprocket-chatgpt-');
+			const entries = new Map<string, VaultEntry>([
+				[
 					name,
-					JSON.stringify({
-						version: 1,
-						accessToken: 'access-expired',
-						refreshToken: 'refresh-once',
-						accountId: 'account-1',
-						expiresAt: Date.now() - 1
-					})
-				)
-			]
-		]);
-		let refreshes = 0;
-		const rotatedAccessToken = jwt({
-			exp: Math.floor(Date.now() / 1_000) + 3_600,
-			chatgpt_account_id: 'account-1'
-		});
-		const fetchMock = stubProviderFetch(entries, async (url, init) => {
-			if (!url.endsWith('/oauth/token')) throw new Error(`Unexpected provider request: ${url}`);
-			expect(new URLSearchParams(String(init?.body)).get('refresh_token')).toBe('refresh-once');
-			refreshes += 1;
-			await new Promise((resolve) => setTimeout(resolve, 100));
-			return Response.json({
-				access_token: rotatedAccessToken,
-				refresh_token: 'refresh-rotated'
+					vaultEntry(
+						name,
+						JSON.stringify({
+							version: 1,
+							connectionId: 'connection-1',
+							accessToken: 'access-expired',
+							refreshToken: 'refresh-once',
+							accountId: 'account-1',
+							expiresAt: Date.now() + lifetime
+						})
+					)
+				]
+			]);
+			let refreshes = 0;
+			const rotatedAccessToken = jwt({
+				exp: Math.floor(Date.now() / 1_000) + 3_600,
+				chatgpt_account_id: 'account-1'
 			});
-		});
+			const fetchMock = stubProviderFetch(entries, async (url, init) => {
+				if (!url.endsWith('/oauth/token')) throw new Error(`Unexpected provider request: ${url}`);
+				expect(new URLSearchParams(String(init?.body)).get('refresh_token')).toBe('refresh-once');
+				refreshes += 1;
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				return Response.json({
+					access_token: rotatedAccessToken,
+					refresh_token: 'refresh-rotated'
+				});
+			});
 
-		const args = { runId, claimId, executionSecret };
-		const [first, second] = await Promise.all([
-			t.action(api.providerCredentials.issueChatGptCredential, args),
-			t.action(api.providerCredentials.issueChatGptCredential, args)
-		]);
-		expect(first.accessToken).toBe(rotatedAccessToken);
-		expect(second.accessToken).toBe(rotatedAccessToken);
-		expect(first.expiresAt).toBeGreaterThan(Date.now());
-		expect(second.expiresAt).toBe(first.expiresAt);
-		expect(refreshes).toBe(1);
-		expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
-			accessToken: rotatedAccessToken,
-			refreshToken: 'refresh-rotated'
+			const args = { runId, claimId, executionSecret };
+			const [first, second] = await Promise.all([
+				t.action(api.providerCredentials.issueChatGptCredential, args),
+				t.action(api.providerCredentials.issueChatGptCredential, args)
+			]);
+			expect(first.accessToken).toBe(rotatedAccessToken);
+			expect(second.accessToken).toBe(rotatedAccessToken);
+			expect(first.expiresAt).toBeGreaterThan(Date.now());
+			expect(second.expiresAt).toBe(first.expiresAt);
+			expect(first.connectionId).toBe('connection-1');
+			expect(second.connectionId).toBe(first.connectionId);
+			expect(refreshes).toBe(1);
+			expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
+				accessToken: rotatedAccessToken,
+				refreshToken: 'refresh-rotated'
+			});
+			const update = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+			expect(JSON.parse(String(update?.[1]?.body))).toMatchObject({
+				version_check: 'version_secret_1'
+			});
+		},
+		30_000
+	);
+
+	it('keeps the current connection during pending logins and clears it on disconnect', async () => {
+		const { t, asUser, runId, executionSecret } = await startedChatGptRun();
+		const args = { runId, executionSecret };
+		const connection = () => t.query(api.providerCredentials.chatGptConnection, args);
+		stubProviderFetch(new Map(), (url) => {
+			if (url.endsWith('/api/accounts/deviceauth/usercode')) {
+				return Response.json({ device_auth_id: 'device-pending', user_code: 'ABCD-EFGH' });
+			}
+			throw new Error(`Unexpected provider request: ${url}`);
 		});
-		const update = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
-		expect(JSON.parse(String(update?.[1]?.body))).toMatchObject({
-			version_check: 'version_secret_1'
+		expect(await connection()).toBe('connection-1');
+		await expect(
+			t.query(api.providerCredentials.chatGptConnection, {
+				...args,
+				executionSecret: 'wrong-secret'
+			})
+		).rejects.toThrow('Run not found.');
+		const state = 'f'.repeat(64);
+		await asUser.action(api.providerCredentials.beginChatGptBrowserLogin, { state });
+		expect(await connection()).toBe('connection-1');
+		await asUser.action(api.providerCredentials.cancelChatGptBrowserLogin, { state });
+		expect(await connection()).toBe('connection-1');
+		await asUser.action(api.providerCredentials.beginChatGptDeviceLogin, {});
+		expect(await connection()).toBe('connection-1');
+		await asUser.action(api.providerCredentials.cancelChatGptDeviceLogin, {
+			deviceAuthId: 'device-pending',
+			userCode: 'ABCD-EFGH'
 		});
-	}, 30_000);
+		expect(await connection()).toBe('connection-1');
+		await asUser.action(api.providerCredentials.removeChatGptCredential, {});
+		expect(await connection()).toBeNull();
+	});
+
+	it.each(['metadata', 'vault'] as const)(
+		'rejects issuance racing replacement in %s',
+		async (changed) => {
+			const { t, runId, claimId, executionSecret } = await startedChatGptRun();
+			const name = await providerCredentialName('sprocket-chatgpt-');
+			const entries = new Map([
+				[
+					name,
+					vaultEntry(
+						name,
+						JSON.stringify({
+							version: 1,
+							connectionId: changed === 'vault' ? 'replacement' : 'connection-1',
+							accessToken: 'access-token',
+							refreshToken: 'refresh-token',
+							accountId: 'account-1',
+							expiresAt: Date.now() + 3_600_000
+						})
+					)
+				]
+			]);
+			const fetchVault = stubProviderFetch(entries, (url) => {
+				throw new Error(`Unexpected provider request: ${url}`);
+			});
+			vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+				const response = await fetchVault(input, init);
+				if (changed === 'metadata') {
+					await t.run(async (ctx) => {
+						const state = await ctx.db
+							.query('providerCredentialStates')
+							.withIndex('by_userId_and_provider', (q) =>
+								q.eq('userId', 'user_alice').eq('provider', 'chatgpt')
+							)
+							.unique();
+						if (!state) throw new Error('Missing credential state');
+						await ctx.db.patch(state._id, { connectionId: 'replacement' });
+					});
+				}
+				return response;
+			});
+			await expect(
+				t.action(api.providerCredentials.issueChatGptCredential, {
+					runId,
+					claimId,
+					executionSecret
+				})
+			).rejects.toThrow('ChatGPT connection changed during credential issuance.');
+		}
+	);
 
 	it('recovers when model recording fails after a refreshed credential reaches Vault', async () => {
 		const t = initConvexTest();
@@ -764,6 +877,7 @@ describe('provider credentials', () => {
 					name,
 					JSON.stringify({
 						version: 1,
+						connectionId: 'connection-1',
 						accessToken: 'access-expired',
 						refreshToken: 'refresh-once',
 						accountId: 'account-1',
@@ -838,6 +952,7 @@ describe('provider credentials', () => {
 					name,
 					JSON.stringify({
 						version: 1,
+						connectionId: 'connection-1',
 						accessToken: 'access-expired',
 						refreshToken: 'refresh-invalid',
 						accountId: 'account-1',
@@ -891,6 +1006,7 @@ describe('provider credentials', () => {
 					name,
 					JSON.stringify({
 						version: 1,
+						connectionId: 'connection-1',
 						accessToken: 'access-current',
 						refreshToken: 'refresh-current',
 						accountId: 'account-1',

@@ -3,13 +3,14 @@ import {
 	env,
 	internalMutation,
 	internalQuery,
+	query,
 	type ActionCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { getExecutionRun } from '@convex/lib/auth';
+import { getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 
@@ -25,6 +26,7 @@ const CHATGPT_BROWSER_CALLBACK_URL = 'http://localhost:1455/auth/callback';
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
 const CHATGPT_CREDENTIAL_NAME_PREFIX = 'sprocket-chatgpt-';
 const CHATGPT_REFRESH_LEASE_MS = 90_000;
+const CHATGPT_REFRESH_MARGIN_MS = 30_000;
 const CHATGPT_REFRESH_WAIT_ATTEMPTS = 60;
 const CHATGPT_REFRESH_WAIT_MS = 500;
 const PROVIDER_FETCH_TIMEOUT_MS = 20_000;
@@ -49,6 +51,7 @@ type VaultObject = z.infer<typeof vaultObjectSchema>;
 
 const chatGptCredentialSchema = z.object({
 	version: z.literal(1),
+	connectionId: z.string().min(1),
 	accessToken: z
 		.string()
 		.min(1)
@@ -284,6 +287,7 @@ function chatGptCredentialFromTokens(
 	if (!refreshToken) throw new Error('ChatGPT did not return a refresh token.');
 	return {
 		version: 1,
+		connectionId: previous?.connectionId ?? crypto.randomUUID(),
 		accessToken: tokens.access_token,
 		refreshToken,
 		accountId,
@@ -438,7 +442,7 @@ async function resolveChatGptCredentialWithLease(
 ): Promise<ChatGptCredential> {
 	const stored = await readChatGptCredential(userId);
 	if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
-	if (stored.credential.expiresAt > Date.now()) {
+	if (stored.credential.expiresAt > Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
 		return stored.credential;
 	}
 	await renewChatGptLease(ctx, userId, leaseId);
@@ -454,7 +458,7 @@ async function resolveChatGptCredential(
 ): Promise<ChatGptCredential> {
 	const stored = await readChatGptCredential(userId);
 	if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
-	if (stored.credential.expiresAt > Date.now()) {
+	if (stored.credential.expiresAt > Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
 		return stored.credential;
 	}
 
@@ -612,6 +616,7 @@ export const completeChatGptBrowserLogin = action({
 				userId: identity.subject,
 				leaseId,
 				hash,
+				connectionId: credential.connectionId,
 				expiresAt: credential.expiresAt,
 				modelIds: modelIds ?? undefined
 			});
@@ -770,6 +775,7 @@ export const pollChatGptDeviceLogin = action({
 				userId: identity.subject,
 				leaseId,
 				deviceAuthHash: hash,
+				connectionId: credential.connectionId,
 				expiresAt: credential.expiresAt,
 				modelIds: modelIds ?? undefined
 			});
@@ -935,6 +941,7 @@ export const cancelChatGptBrowserLoginState = internalMutation({
 			browserCodeVerifier:
 				state.browserAuthHash === args.hash ? undefined : state.browserCodeVerifier,
 			completedBrowserAuthHash: completed ? undefined : state.completedBrowserAuthHash,
+			connectionId: completed ? undefined : state.connectionId,
 			expiresAt: completed ? 0 : state.expiresAt,
 			modelIds: completed ? undefined : state.modelIds,
 			refreshLeaseId: undefined,
@@ -959,6 +966,7 @@ export const recordChatGptBrowserCredential = internalMutation({
 		userId: v.string(),
 		leaseId: v.string(),
 		hash: v.string(),
+		connectionId: v.string(),
 		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string()))
 	},
@@ -976,6 +984,7 @@ export const recordChatGptBrowserCredential = internalMutation({
 			browserCodeVerifier: undefined,
 			completedBrowserAuthHash: args.hash,
 			completedDeviceAuthHash: undefined,
+			connectionId: args.connectionId,
 			refreshLeaseId: undefined,
 			refreshLeaseExpiresAt: undefined,
 			updatedAt: Date.now()
@@ -1068,6 +1077,7 @@ export const cancelChatGptDeviceLoginState = internalMutation({
 		if (state.completedDeviceAuthHash === args.hash) {
 			await ctx.db.patch(state._id, {
 				completedDeviceAuthHash: undefined,
+				connectionId: undefined,
 				expiresAt: 0,
 				modelIds: undefined,
 				refreshLeaseId: undefined,
@@ -1157,6 +1167,7 @@ export const recordChatGptCredential = internalMutation({
 		userId: v.string(),
 		leaseId: v.string(),
 		deviceAuthHash: v.string(),
+		connectionId: v.string(),
 		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string()))
 	},
@@ -1178,6 +1189,7 @@ export const recordChatGptCredential = internalMutation({
 			deviceAuthExpiresAt: undefined,
 			completedDeviceAuthHash: args.deviceAuthHash,
 			completedBrowserAuthHash: undefined,
+			connectionId: args.connectionId,
 			refreshLeaseId: undefined,
 			refreshLeaseExpiresAt: undefined,
 			updatedAt: Date.now()
@@ -1239,13 +1251,25 @@ export const issueOpenAiCredential = action({
 	}
 });
 
+export const chatGptConnection = query({
+	args: { runId: v.id('runs'), executionSecret: v.string() },
+	returns: v.union(v.string(), v.null()),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		if (run.completionProvider !== 'chatgpt') {
+			throw new Error('Run is not configured to use ChatGPT.');
+		}
+		return (await chatGptState(ctx, run.userId))?.connectionId ?? null;
+	}
+});
+
 export const authorizeChatGptCredential = internalQuery({
 	args: {
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
-	returns: v.string(),
+	returns: v.object({ userId: v.string(), connectionId: v.string() }),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (
@@ -1257,7 +1281,9 @@ export const authorizeChatGptCredential = internalQuery({
 		if ((run.completionProvider ?? 'spikonado') !== 'chatgpt') {
 			throw new Error('Run is not configured to use ChatGPT.');
 		}
-		return run.userId;
+		const connectionId = (await chatGptState(ctx, run.userId))?.connectionId;
+		if (!connectionId) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
+		return { userId: run.userId, connectionId };
 	}
 });
 
@@ -1269,19 +1295,30 @@ export const issueChatGptCredential = action({
 	},
 	returns: v.object({
 		accessToken: v.string(),
+		connectionId: v.string(),
 		accountId: v.string(),
 		residency: v.optional(v.string()),
 		expiresAt: v.number()
 	}),
 	handler: async (ctx, args) => {
-		const userId: string = await ctx.runQuery(
+		const connection: { userId: string; connectionId: string } = await ctx.runQuery(
 			internal.providerCredentials.authorizeChatGptCredential,
 			args
 		);
-		const credential = await resolveChatGptCredential(ctx, userId);
-		await ctx.runQuery(internal.providerCredentials.authorizeChatGptCredential, args);
+		const credential = await resolveChatGptCredential(ctx, connection.userId);
+		const current: { userId: string; connectionId: string } = await ctx.runQuery(
+			internal.providerCredentials.authorizeChatGptCredential,
+			args
+		);
+		if (
+			connection.connectionId !== credential.connectionId ||
+			current.connectionId !== credential.connectionId
+		) {
+			throw new Error('ChatGPT connection changed during credential issuance. Start a new run.');
+		}
 		return {
 			accessToken: credential.accessToken,
+			connectionId: credential.connectionId,
 			accountId: credential.accountId,
 			residency: credential.residency,
 			expiresAt: credential.expiresAt

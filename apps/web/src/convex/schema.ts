@@ -73,6 +73,7 @@ export default defineSchema({
 	providerCredentialStates: defineTable({
 		userId: v.string(),
 		provider: v.literal('chatgpt'),
+		connectionId: v.optional(v.string()),
 		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string())),
 		deviceAuthHash: v.optional(v.string()),

@@ -83,6 +83,7 @@ pub struct OpenAiCredential {
 #[serde(rename_all = "camelCase")]
 pub struct ChatGptCredential {
     pub access_token: String,
+    pub connection_id: String,
     pub account_id: String,
     pub residency: Option<String>,
     #[serde(deserialize_with = "deserialize_convex_u64")]

@@ -185,13 +185,23 @@ impl AgentProvider {
                 run_with_completion_client(completion_client, self.model, runtime, request).await
             }
             CompletionProvider::Chatgpt => {
-                let completion_client = ChatGptClient::new(
+                let completion_client = match ChatGptClient::new(
                     runtime.clone(),
                     request.run_id.clone(),
                     request.claim_id.clone(),
                     self.deployment_url,
                     self.user_id,
-                );
+                )
+                .await
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
+                };
                 run_with_completion_client(completion_client, self.model, runtime, request).await
             }
         }
