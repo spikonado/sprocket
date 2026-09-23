@@ -196,15 +196,15 @@ async fn result(
         logins.stop_if_idle().await;
         return Err(ApiError::authentication_required());
     }
-    let Some(outcome) = login.result.take() else {
+    let Some(outcome) = login.result.as_ref() else {
         return Ok(Json(LoginResult::Pending));
     };
     let completed = match outcome {
-        Ok(code) => LoginResult::Connected { code },
-        Err(error) => LoginResult::Failed { error },
+        Ok(code) => LoginResult::Connected { code: code.clone() },
+        Err(error) => LoginResult::Failed {
+            error: error.clone(),
+        },
     };
-    logins.attempts.remove(&request.state);
-    logins.stop_if_idle().await;
     Ok(Json(completed))
 }
 

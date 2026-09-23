@@ -207,6 +207,58 @@ describe('provider credentials', () => {
 		).rejects.toThrow('ChatGPT sign-in expired or was cancelled.');
 	});
 
+	it('removes a browser credential when cancellation races its Vault write', async () => {
+		const t = initConvexTest();
+		const owner = t.withIdentity({ subject: 'user_alice' });
+		const state = 'd'.repeat(64);
+		const entries = new Map<string, VaultEntry>();
+		const exp = Math.floor(Date.now() / 1_000) + 3_600;
+		const fetchVault = stubProviderFetch(entries, (url) => {
+			if (url.endsWith('/oauth/token')) {
+				return Response.json({
+					access_token: jwt({ exp, chatgpt_account_id: 'account-1' }),
+					refresh_token: 'browser-refresh'
+				});
+			}
+			if (url.includes('/backend-api/codex/models')) {
+				return Response.json({ models: [{ slug: 'gpt-5.4' }] });
+			}
+			throw new Error(`Unexpected provider request: ${url}`);
+		});
+		let enterVaultWrite: () => void = () => {};
+		const vaultWriteStarted = new Promise<void>((resolve) => {
+			enterVaultWrite = resolve;
+		});
+		let finishVaultWrite: () => void = () => {};
+		const vaultWriteFinished = new Promise<void>((resolve) => {
+			finishVaultWrite = resolve;
+		});
+		vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+			if (String(input) === 'https://api.workos.com/vault/v1/kv' && init?.method === 'POST') {
+				enterVaultWrite();
+				await vaultWriteFinished;
+			}
+			return fetchVault(input, init);
+		});
+
+		await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state });
+		const completing = owner.action(api.providerCredentials.completeChatGptBrowserLogin, {
+			state,
+			code: 'browser-code'
+		});
+		await vaultWriteStarted;
+		const cancelling = owner.action(api.providerCredentials.cancelChatGptBrowserLogin, { state });
+		finishVaultWrite();
+		await expect(completing).resolves.toEqual(['gpt-5.4']);
+		await expect(cancelling).resolves.toBeNull();
+		expect(entries.has(await providerCredentialName('sprocket-chatgpt-'))).toBe(false);
+		await expect(owner.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+			openai: false,
+			chatgpt: false,
+			chatgptModelIds: null
+		});
+	});
+
 	it('starts ChatGPT device login and reports pending authorization', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });

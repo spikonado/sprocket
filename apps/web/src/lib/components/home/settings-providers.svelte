@@ -94,6 +94,15 @@
 		return { login, browser };
 	}
 
+	function releaseBrowserCallback(state: string) {
+		void localTransport
+			?.response('/api/chatgpt/browser/cancel', {
+				method: 'POST',
+				body: JSON.stringify({ state })
+			})
+			.catch(() => {});
+	}
+
 	async function stopChatGptLogin() {
 		const { login, browser } = cancelChatGptLogin();
 		if (!login && !browser) return;
@@ -107,11 +116,8 @@
 				});
 			}
 			if (browser) {
+				releaseBrowserCallback(browser.state);
 				await cancelChatGptBrowserLogin({ state: browser.state });
-				await localTransport?.response('/api/chatgpt/browser/cancel', {
-					method: 'POST',
-					body: JSON.stringify({ state: browser.state })
-				});
 			}
 			const configuration = await getMyConfiguration({});
 			if (generation === loginGeneration) {
@@ -185,7 +191,14 @@
 				);
 				if (generation !== loginGeneration) return;
 				if (result.status === 'pending') continue;
-				if (result.status === 'failed') throw new Error(result.error);
+				if (result.status === 'failed') {
+					browserLogin = null;
+					chatGptPending = false;
+					chatGptError = result.error;
+					releaseBrowserCallback(login.state);
+					void cancelChatGptBrowserLogin({ state: login.state }).catch(() => {});
+					return;
+				}
 				const modelIds = await completeChatGptBrowserLogin({
 					state: login.state,
 					code: result.code
@@ -193,6 +206,7 @@
 				if (generation !== loginGeneration) return;
 				browserLogin = null;
 				chatGptPending = false;
+				releaseBrowserCallback(login.state);
 				onConfigurationChange({ provider: 'chatgpt', configured: true, chatGptModelIds: modelIds });
 				return;
 			} catch (error) {
@@ -201,7 +215,6 @@
 					error instanceof Error ? error : null,
 					'Couldn’t complete ChatGPT sign-in.'
 				);
-				browserLogin = null;
 				chatGptPending = false;
 				return;
 			}
@@ -211,6 +224,13 @@
 			browserLogin = null;
 			chatGptPending = false;
 		}
+	}
+
+	function retryBrowserLogin() {
+		if (!browserLogin || chatGptPending) return;
+		chatGptPending = true;
+		chatGptError = null;
+		void waitForBrowserLogin(browserLogin, ++loginGeneration);
 	}
 
 	async function connectChatGpt() {
@@ -317,13 +337,8 @@
 			}).catch(() => {});
 		}
 		if (browser) {
+			releaseBrowserCallback(browser.state);
 			void cancelChatGptBrowserLogin({ state: browser.state }).catch(() => {});
-			void localTransport
-				?.response('/api/chatgpt/browser/cancel', {
-					method: 'POST',
-					body: JSON.stringify({ state: browser.state })
-				})
-				.catch(() => {});
 		}
 	});
 </script>
@@ -373,7 +388,13 @@
 								class="text-muted-foreground text-[13px]"
 								onclick={stopChatGptLogin}>Cancel</button
 							>
-							<span class="text-muted-foreground text-[12px]">Waiting for approval…</span>
+							{#if chatGptError && !chatGptPending}
+								<button type="button" class="text-primary text-[13px]" onclick={retryBrowserLogin}
+									>Retry</button
+								>
+							{:else}
+								<span class="text-muted-foreground text-[12px]">Waiting for approval…</span>
+							{/if}
 						</div>
 					</div>
 				{:else if chatGptLogin}

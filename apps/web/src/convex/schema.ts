@@ -79,6 +79,7 @@ export default defineSchema({
 		browserAuthHash: v.optional(v.string()),
 		browserCodeVerifier: v.optional(v.string()),
 		browserAuthExpiresAt: v.optional(v.number()),
+		completedBrowserAuthHash: v.optional(v.string()),
 		deviceAuthExpiresAt: v.optional(v.number()),
 		completedDeviceAuthHash: v.optional(v.string()),
 		refreshLeaseId: v.optional(v.string()),
