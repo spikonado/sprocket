@@ -238,8 +238,15 @@ describe('provider credentials', () => {
 				)
 			]
 		]);
+		let delayModels = false;
+		let finishModels: ((response: Response) => void) | undefined;
 		stubProviderFetch(entries, (url) => {
 			if (url.includes('/backend-api/codex/models')) {
+				if (delayModels) {
+					return new Promise<Response>((resolve) => {
+						finishModels = resolve;
+					});
+				}
 				return Response.json({ models: [{ slug: 'gpt-5.4' }] });
 			}
 			throw new Error(`Unexpected provider request: ${url}`);
@@ -252,6 +259,17 @@ describe('provider credentials', () => {
 			chatgpt: true,
 			chatgptModelIds: ['gpt-5.4']
 		});
+
+		delayModels = true;
+		const retrying = asUser.action(api.providerCredentials.refreshChatGptModels, {});
+		await vi.waitFor(() => expect(finishModels).toBeDefined());
+		const disconnecting = asUser.action(api.providerCredentials.removeChatGptCredential, {});
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(entries.has(name)).toBe(true);
+		finishModels?.(Response.json({ models: [{ slug: 'gpt-5.4' }] }));
+		await expect(retrying).resolves.toEqual(['gpt-5.4']);
+		await expect(disconnecting).resolves.toBe(null);
+		expect(entries.has(name)).toBe(false);
 	});
 
 	it('rejects polling another user’s device authorization before contacting ChatGPT', async () => {

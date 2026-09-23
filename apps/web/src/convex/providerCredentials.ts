@@ -405,11 +405,28 @@ async function renewChatGptLease(ctx: ActionCtx, userId: string, leaseId: string
 	if (!renewed) throw new Error('ChatGPT credential update lost its lease. Try again.');
 }
 
+async function resolveChatGptCredentialWithLease(
+	ctx: ActionCtx,
+	userId: string,
+	leaseId: string
+): Promise<ChatGptCredential> {
+	const stored = await readChatGptCredential(userId);
+	if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
+	if (stored.credential.expiresAt > Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
+		return stored.credential;
+	}
+	await renewChatGptLease(ctx, userId, leaseId);
+	const credential = await refreshChatGptCredential(stored.credential);
+	await renewChatGptLease(ctx, userId, leaseId);
+	await storeChatGptCredential(userId, credential, stored.vaultObject);
+	return credential;
+}
+
 async function resolveChatGptCredential(
 	ctx: ActionCtx,
 	userId: string
 ): Promise<ChatGptCredential> {
-	let stored = await readChatGptCredential(userId);
+	const stored = await readChatGptCredential(userId);
 	if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
 	if (stored.credential.expiresAt > Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
 		return stored.credential;
@@ -418,15 +435,7 @@ async function resolveChatGptCredential(
 	const leaseId = crypto.randomUUID();
 	await acquireChatGptLease(ctx, userId, leaseId);
 	try {
-		stored = await readChatGptCredential(userId);
-		if (!stored) throw new Error('ChatGPT is no longer connected. Reconnect in Settings.');
-		let credential = stored.credential;
-		if (credential.expiresAt <= Date.now() + CHATGPT_REFRESH_MARGIN_MS) {
-			await renewChatGptLease(ctx, userId, leaseId);
-			credential = await refreshChatGptCredential(credential);
-			await renewChatGptLease(ctx, userId, leaseId);
-			await storeChatGptCredential(userId, credential, stored.vaultObject);
-		}
+		const credential = await resolveChatGptCredentialWithLease(ctx, userId, leaseId);
 		await ctx.runMutation(internal.providerCredentials.releaseChatGptCredentialLease, {
 			userId,
 			leaseId,
@@ -682,15 +691,16 @@ export const refreshChatGptModels = action({
 	handler: async (ctx) => {
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw new Error('Authentication required.');
-		const credential = await resolveChatGptCredential(ctx, identity.subject);
 		const leaseId = crypto.randomUUID();
 		await acquireChatGptLease(ctx, identity.subject, leaseId);
 		try {
+			const credential = await resolveChatGptCredentialWithLease(ctx, identity.subject, leaseId);
 			const modelIds = await chatGptModelIds(credential);
 			if (modelIds === null) throw new Error('Couldn’t load your ChatGPT models. Try again.');
 			await ctx.runMutation(internal.providerCredentials.recordChatGptModels, {
 				userId: identity.subject,
 				leaseId,
+				expiresAt: credential.expiresAt,
 				modelIds
 			});
 			return modelIds;
@@ -782,7 +792,12 @@ export const registerChatGptDeviceLogin = internalMutation({
 });
 
 export const recordChatGptModels = internalMutation({
-	args: { userId: v.string(), leaseId: v.string(), modelIds: v.array(v.string()) },
+	args: {
+		userId: v.string(),
+		leaseId: v.string(),
+		expiresAt: v.number(),
+		modelIds: v.array(v.string())
+	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await ctx.db
@@ -795,6 +810,7 @@ export const recordChatGptModels = internalMutation({
 			throw new Error('ChatGPT credential update lost its lease.');
 		}
 		await ctx.db.patch(state._id, {
+			expiresAt: args.expiresAt,
 			modelIds: args.modelIds,
 			refreshLeaseId: undefined,
 			refreshLeaseExpiresAt: undefined,
