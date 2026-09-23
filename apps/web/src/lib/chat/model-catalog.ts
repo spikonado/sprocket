@@ -90,7 +90,7 @@ export function modelOptionsForCompletionProvider(
 		.filter(
 			(model) =>
 				model.provider === 'openai' &&
-				(provider !== 'chatgpt' || chatGptModelIds === null || chatGptModelIds.includes(model.id))
+				(provider !== 'chatgpt' || chatGptModelIds?.includes(model.id))
 		)
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
 }

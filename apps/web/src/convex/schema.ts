@@ -75,6 +75,9 @@ export default defineSchema({
 		provider: v.literal('chatgpt'),
 		expiresAt: v.number(),
 		modelIds: v.optional(v.array(v.string())),
+		deviceAuthHash: v.optional(v.string()),
+		deviceAuthExpiresAt: v.optional(v.number()),
+		completedDeviceAuthHash: v.optional(v.string()),
 		refreshLeaseId: v.optional(v.string()),
 		refreshLeaseExpiresAt: v.optional(v.number()),
 		updatedAt: v.number()

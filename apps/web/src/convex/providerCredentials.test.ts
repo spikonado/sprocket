@@ -163,6 +163,9 @@ describe('provider credentials', () => {
 			}
 		});
 		const fetchMock = stubProviderFetch(entries, (url, init) => {
+			if (url.endsWith('/api/accounts/deviceauth/usercode')) {
+				return Response.json({ device_auth_id: 'device-1', user_code: 'ABCD-EFGH' });
+			}
 			if (url.endsWith('/api/accounts/deviceauth/token')) {
 				return Response.json({
 					authorization_code: 'authorization-1',
@@ -179,6 +182,7 @@ describe('provider credentials', () => {
 			}
 			throw new Error(`Unexpected provider request: ${url}`);
 		});
+		await asUser.action(api.providerCredentials.beginChatGptDeviceLogin, {});
 
 		await expect(
 			asUser.action(api.providerCredentials.pollChatGptDeviceLogin, {
@@ -203,6 +207,102 @@ describe('provider credentials', () => {
 			})
 		).resolves.toMatchObject({ expiresAt: exp * 1_000, modelIds: ['gpt-5.4'] });
 		expect(fetchMock).toHaveBeenCalled();
+		await asUser.action(api.providerCredentials.cancelChatGptDeviceLogin, {
+			deviceAuthId: 'device-1',
+			userCode: 'ABCD-EFGH'
+		});
+		expect(entries.has(name)).toBe(false);
+		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+			openai: false,
+			chatgpt: false,
+			chatgptModelIds: null
+		});
+	});
+
+	it('retries model discovery after the ChatGPT account is connected', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_alice' });
+		const name = await providerCredentialName('sprocket-chatgpt-');
+		const entries = new Map<string, VaultEntry>([
+			[
+				name,
+				vaultEntry(
+					name,
+					JSON.stringify({
+						version: 1,
+						accessToken: 'access-current',
+						refreshToken: 'refresh-current',
+						accountId: 'account-1',
+						expiresAt: Date.now() + 60 * 60 * 1_000
+					})
+				)
+			]
+		]);
+		stubProviderFetch(entries, (url) => {
+			if (url.includes('/backend-api/codex/models')) {
+				return Response.json({ models: [{ slug: 'gpt-5.4' }] });
+			}
+			throw new Error(`Unexpected provider request: ${url}`);
+		});
+		await expect(asUser.action(api.providerCredentials.refreshChatGptModels, {})).resolves.toEqual([
+			'gpt-5.4'
+		]);
+		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+			openai: false,
+			chatgpt: true,
+			chatgptModelIds: ['gpt-5.4']
+		});
+	});
+
+	it('rejects polling another user’s device authorization before contacting ChatGPT', async () => {
+		const t = initConvexTest();
+		const owner = t.withIdentity({ subject: 'user_alice' });
+		const other = t.withIdentity({ subject: 'user_bob' });
+		const fetchMock = vi.fn(async () =>
+			Response.json({ device_auth_id: 'device-1', user_code: 'ABCD-EFGH' })
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		await owner.action(api.providerCredentials.beginChatGptDeviceLogin, {});
+		await expect(
+			other.action(api.providerCredentials.pollChatGptDeviceLogin, {
+				deviceAuthId: 'device-1',
+				userCode: 'ABCD-EFGH'
+			})
+		).rejects.toThrow('ChatGPT sign-in expired or was cancelled.');
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('cancels a pending device login before an in-flight poll stores credentials', async () => {
+		const t = initConvexTest();
+		const owner = t.withIdentity({ subject: 'user_alice' });
+		let approve: ((response: Response) => void) | undefined;
+		const entries = new Map<string, VaultEntry>();
+		stubProviderFetch(entries, (url) => {
+			if (url.endsWith('/api/accounts/deviceauth/usercode')) {
+				return Response.json({ device_auth_id: 'device-1', user_code: 'ABCD-EFGH' });
+			}
+			if (url.endsWith('/api/accounts/deviceauth/token')) {
+				return new Promise<Response>((resolve) => {
+					approve = resolve;
+				});
+			}
+			throw new Error(`Unexpected provider request: ${url}`);
+		});
+		await owner.action(api.providerCredentials.beginChatGptDeviceLogin, {});
+		const polling = owner.action(api.providerCredentials.pollChatGptDeviceLogin, {
+			deviceAuthId: 'device-1',
+			userCode: 'ABCD-EFGH'
+		});
+		await vi.waitFor(() => expect(approve).toBeDefined());
+		await owner.action(api.providerCredentials.cancelChatGptDeviceLogin, {
+			deviceAuthId: 'device-1',
+			userCode: 'ABCD-EFGH'
+		});
+		approve?.(
+			Response.json({ authorization_code: 'authorization-1', code_verifier: 'verifier-1' })
+		);
+		await expect(polling).rejects.toThrow('ChatGPT sign-in expired or was cancelled.');
+		expect(entries.size).toBe(0);
 	});
 
 	it('validates and stores an OpenAI key without returning it', async () => {
@@ -496,11 +596,20 @@ describe('provider credentials', () => {
 			userId: 'user_alice',
 			leaseId: 'setup'
 		});
-		await t.mutation(internal.providerCredentials.recordChatGptCredential, {
-			userId: 'user_alice',
-			leaseId: 'setup',
-			expiresAt: Date.now() + 60 * 60 * 1_000,
-			modelIds: ['gpt-5.4']
+		await t.run(async (ctx) => {
+			const state = await ctx.db
+				.query('providerCredentialStates')
+				.withIndex('by_userId_and_provider', (query) =>
+					query.eq('userId', 'user_alice').eq('provider', 'chatgpt')
+				)
+				.unique();
+			if (!state) throw new Error('Missing credential state');
+			await ctx.db.patch(state._id, {
+				expiresAt: Date.now() + 60 * 60 * 1_000,
+				modelIds: ['gpt-5.4'],
+				refreshLeaseId: undefined,
+				refreshLeaseExpiresAt: undefined
+			});
 		});
 
 		await expect(asUser.action(api.providerCredentials.removeChatGptCredential, {})).resolves.toBe(

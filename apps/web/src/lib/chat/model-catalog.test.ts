@@ -154,6 +154,7 @@ describe('gateway model catalog', () => {
 		expect(
 			resolveModelForCompletionProvider(catalog, 'free', 'chatgpt', 'gpt-api-only', ['gpt-5.4'])
 		).toBe('gpt-5.4');
+		expect(modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', null)).toEqual([]);
 	});
 });
 

@@ -654,6 +654,9 @@
 	const canSend = $derived(
 		Boolean(
 			currentProjectPath &&
+			(pendingAgentQuestion ||
+				selectedCompletionProvider !== 'chatgpt' ||
+				chatGptModelIds?.includes(selectedModel) === true) &&
 			currentProject?.localAttachmentAvailability === 'available' &&
 			!isSubmittingPrompt &&
 			!answeringAgentQuestion &&
@@ -2041,6 +2044,7 @@
 						<SettingsProviders
 							{openAiConfigured}
 							{chatGptConfigured}
+							{chatGptModelIds}
 							loading={providerConfigurationLoading}
 							loadError={providerConfigurationError}
 							onConfigurationChange={handleProviderConfigurationChange}

@@ -137,11 +137,14 @@
 		(selectedCompletionProvider === 'spikonado' ||
 			(providersReady && configuredProviders.includes(selectedCompletionProvider))) &&
 			selectedCatalogModel !== undefined &&
-			((selectedCompletionProvider !== 'spikonado' && selectedCatalogModel.provider === 'openai') ||
-				subscriptionFailed ||
-				(subscriptionTier !== undefined &&
-					modelCatalog !== undefined &&
-					isModelAllowedForTier(modelCatalog, subscriptionTier, selectedModel)))
+			(selectedCompletionProvider !== 'spikonado'
+				? selectedCatalogModel.provider === 'openai' &&
+					(selectedCompletionProvider !== 'chatgpt' ||
+						chatGptModelIds?.includes(selectedModel) === true)
+				: subscriptionFailed ||
+					(subscriptionTier !== undefined &&
+						modelCatalog !== undefined &&
+						isModelAllowedForTier(modelCatalog, subscriptionTier, selectedModel)))
 	);
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);

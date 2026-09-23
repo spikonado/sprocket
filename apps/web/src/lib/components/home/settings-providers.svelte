@@ -24,18 +24,28 @@
 	type Props = {
 		openAiConfigured: boolean;
 		chatGptConfigured: boolean;
+		chatGptModelIds: readonly string[] | null;
 		loading: boolean;
 		loadError: string | null;
 		onConfigurationChange: (change: ProviderConfigurationChange) => void;
 	};
 
-	let { openAiConfigured, chatGptConfigured, loading, loadError, onConfigurationChange }: Props =
-		$props();
+	let {
+		openAiConfigured,
+		chatGptConfigured,
+		chatGptModelIds,
+		loading,
+		loadError,
+		onConfigurationChange
+	}: Props = $props();
 	const saveOpenAiKey = useAction(api.providerCredentials.saveOpenAiKey);
 	const removeOpenAiKey = useAction(api.providerCredentials.removeOpenAiKey);
 	const beginChatGptDeviceLogin = useAction(api.providerCredentials.beginChatGptDeviceLogin);
 	const pollChatGptDeviceLogin = useAction(api.providerCredentials.pollChatGptDeviceLogin);
 	const removeChatGptCredential = useAction(api.providerCredentials.removeChatGptCredential);
+	const cancelChatGptDeviceLogin = useAction(api.providerCredentials.cancelChatGptDeviceLogin);
+	const refreshChatGptModels = useAction(api.providerCredentials.refreshChatGptModels);
+	const getMyConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	let apiKey = $state('');
 	let showKey = $state(false);
 	let openAiPending = $state(false);
@@ -54,8 +64,40 @@
 
 	function cancelChatGptLogin() {
 		loginGeneration += 1;
+		const login = chatGptLogin;
 		chatGptLogin = null;
 		chatGptPending = false;
+		return login;
+	}
+
+	async function stopChatGptLogin() {
+		const login = cancelChatGptLogin();
+		if (!login) return;
+		const generation = loginGeneration;
+		chatGptPending = true;
+		try {
+			await cancelChatGptDeviceLogin({
+				deviceAuthId: login.deviceAuthId,
+				userCode: login.userCode
+			});
+			const configuration = await getMyConfiguration({});
+			if (generation === loginGeneration) {
+				onConfigurationChange({
+					provider: 'chatgpt',
+					configured: configuration.chatgpt,
+					chatGptModelIds: configuration.chatgptModelIds
+				});
+			}
+		} catch (error) {
+			if (generation === loginGeneration) {
+				chatGptError = errorMessage(
+					error instanceof Error ? error : null,
+					'Couldn’t stop ChatGPT sign-in. Check your connection status.'
+				);
+			}
+		} finally {
+			if (generation === loginGeneration) chatGptPending = false;
+		}
 	}
 
 	async function waitForChatGptLogin(login: ChatGptLogin, generation: number) {
@@ -67,6 +109,7 @@
 					deviceAuthId: login.deviceAuthId,
 					userCode: login.userCode
 				});
+				if (generation !== loginGeneration) return;
 				if (result.status === 'pending') continue;
 				chatGptLogin = null;
 				chatGptPending = false;
@@ -117,7 +160,7 @@
 
 	async function removeChatGpt() {
 		if (chatGptPending) return;
-		cancelChatGptLogin();
+		await stopChatGptLogin();
 		chatGptPending = true;
 		chatGptError = null;
 		try {
@@ -128,6 +171,23 @@
 			chatGptError = errorMessage(
 				error instanceof Error ? error : null,
 				'Couldn’t disconnect ChatGPT.'
+			);
+		} finally {
+			chatGptPending = false;
+		}
+	}
+
+	async function retryChatGptModels() {
+		if (chatGptPending) return;
+		chatGptPending = true;
+		chatGptError = null;
+		try {
+			const modelIds = await refreshChatGptModels({});
+			onConfigurationChange({ provider: 'chatgpt', configured: true, chatGptModelIds: modelIds });
+		} catch (error) {
+			chatGptError = errorMessage(
+				error instanceof Error ? error : null,
+				'Couldn’t load ChatGPT models.'
 			);
 		} finally {
 			chatGptPending = false;
@@ -175,7 +235,15 @@
 		}
 	}
 
-	onDestroy(cancelChatGptLogin);
+	onDestroy(() => {
+		const login = cancelChatGptLogin();
+		if (login) {
+			void cancelChatGptDeviceLogin({
+				deviceAuthId: login.deviceAuthId,
+				userCode: login.userCode
+			}).catch(() => {});
+		}
+	});
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -225,7 +293,7 @@
 							<button
 								type="button"
 								class="text-muted-foreground hover:text-foreground text-[13px]"
-								onclick={cancelChatGptLogin}>Cancel</button
+								onclick={stopChatGptLogin}>Cancel</button
 							>
 							<span class="text-muted-foreground text-[12px]">Waiting for approval…</span>
 						</div>
@@ -263,6 +331,22 @@
 							>
 						{/if}
 					</div>
+				{/if}
+				{#if chatGptConfigured && chatGptModelIds === null}
+					<div class="mt-4 flex items-center gap-3">
+						<p class="text-muted-foreground text-[12px]">ChatGPT models are unavailable.</p>
+						<Button variant="outline" disabled={chatGptPending} onclick={retryChatGptModels}>
+							Retry models
+						</Button>
+					</div>
+				{/if}
+				{#if chatGptConfigured && chatGptModelIds?.length === 0}
+					<p class="text-muted-foreground mt-4 text-[12px]">
+						No supported ChatGPT models found for this account.
+						<button type="button" class="text-foreground underline" onclick={retryChatGptModels}>
+							Retry
+						</button>
+					</p>
 				{/if}
 
 				<p class="text-muted-foreground mt-4 text-[12px] leading-5">
