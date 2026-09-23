@@ -259,6 +259,72 @@ describe('provider credentials', () => {
 		});
 	});
 
+	it.each(['browser', 'device'] as const)(
+		'keeps the replacement credential when cancelling an older %s login',
+		async (firstFlow) => {
+			const t = initConvexTest();
+			const owner = t.withIdentity({ subject: 'user_alice' });
+			const entries = new Map<string, VaultEntry>();
+			let accountId = 'first-account';
+			stubProviderFetch(entries, (url) => {
+				if (url.endsWith('/api/accounts/deviceauth/usercode')) {
+					return Response.json({ device_auth_id: 'device-1', user_code: 'ABCD-EFGH' });
+				}
+				if (url.endsWith('/api/accounts/deviceauth/token')) {
+					return Response.json({ authorization_code: 'device-code', code_verifier: 'verifier' });
+				}
+				if (url.endsWith('/oauth/token')) {
+					return Response.json({
+						access_token: jwt({
+							exp: Math.floor(Date.now() / 1_000) + 3_600,
+							chatgpt_account_id: accountId
+						}),
+						refresh_token: `refresh-${accountId}`
+					});
+				}
+				if (url.includes('/backend-api/codex/models')) {
+					return Response.json({ models: [{ slug: 'gpt-5.4' }] });
+				}
+				throw new Error(`Unexpected provider request: ${url}`);
+			});
+			const state = 'e'.repeat(64);
+			const device = { deviceAuthId: 'device-1', userCode: 'ABCD-EFGH' };
+			const flows = {
+				browser: {
+					connect: async () => {
+						await owner.action(api.providerCredentials.beginChatGptBrowserLogin, { state });
+						await owner.action(api.providerCredentials.completeChatGptBrowserLogin, {
+							state,
+							code: 'browser-code'
+						});
+					},
+					cancel: () => owner.action(api.providerCredentials.cancelChatGptBrowserLogin, { state })
+				},
+				device: {
+					connect: async () => {
+						await owner.action(api.providerCredentials.beginChatGptDeviceLogin, {});
+						await owner.action(api.providerCredentials.pollChatGptDeviceLogin, device);
+					},
+					cancel: () => owner.action(api.providerCredentials.cancelChatGptDeviceLogin, device)
+				}
+			};
+			await flows[firstFlow].connect();
+			accountId = 'replacement-account';
+			await flows[firstFlow === 'browser' ? 'device' : 'browser'].connect();
+			await flows[firstFlow].cancel();
+			const name = await providerCredentialName('sprocket-chatgpt-');
+			expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
+				accountId: 'replacement-account',
+				refreshToken: 'refresh-replacement-account'
+			});
+			await expect(owner.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+				openai: false,
+				chatgpt: true,
+				chatgptModelIds: ['gpt-5.4']
+			});
+		}
+	);
+
 	it('starts ChatGPT device login and reports pending authorization', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
@@ -644,7 +710,6 @@ describe('provider credentials', () => {
 						version: 1,
 						accessToken: 'access-expired',
 						refreshToken: 'refresh-once',
-						idToken: 'previously-stored-id-token',
 						accountId: 'account-1',
 						expiresAt: Date.now() - 1
 					})
@@ -679,7 +744,6 @@ describe('provider credentials', () => {
 			accessToken: rotatedAccessToken,
 			refreshToken: 'refresh-rotated'
 		});
-		expect(JSON.parse(entries.get(name)?.value ?? '{}')).not.toHaveProperty('idToken');
 		const update = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
 		expect(JSON.parse(String(update?.[1]?.body))).toMatchObject({
 			version_check: 'version_secret_1'
