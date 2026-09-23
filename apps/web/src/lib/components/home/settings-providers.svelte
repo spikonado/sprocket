@@ -44,7 +44,6 @@
 	const pollChatGptDeviceLogin = useAction(api.providerCredentials.pollChatGptDeviceLogin);
 	const removeChatGptCredential = useAction(api.providerCredentials.removeChatGptCredential);
 	const cancelChatGptDeviceLogin = useAction(api.providerCredentials.cancelChatGptDeviceLogin);
-	const refreshChatGptModels = useAction(api.providerCredentials.refreshChatGptModels);
 	const getMyConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	let apiKey = $state('');
 	let showKey = $state(false);
@@ -177,23 +176,6 @@
 		}
 	}
 
-	async function retryChatGptModels() {
-		if (chatGptPending) return;
-		chatGptPending = true;
-		chatGptError = null;
-		try {
-			const modelIds = await refreshChatGptModels({});
-			onConfigurationChange({ provider: 'chatgpt', configured: true, chatGptModelIds: modelIds });
-		} catch (error) {
-			chatGptError = errorMessage(
-				error instanceof Error ? error : null,
-				'Couldn’t load ChatGPT models.'
-			);
-		} finally {
-			chatGptPending = false;
-		}
-	}
-
 	async function saveKey(event: Event) {
 		event.preventDefault();
 		if (!apiKey.trim() || openAiPending) return;
@@ -254,8 +236,9 @@
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl space-y-4">
 			<p class="text-muted-foreground mb-5 text-sm leading-6">
-				You can use your own API keys or subscriptions from other providers. Your credentials are
-				stored encrypted and are only accessible to you.
+				You can use your own API keys or subscriptions from other providers. Sprocket stores your
+				credentials in WorkOS Vault. For an active run, the agent receives your OpenAI API key or a
+				ChatGPT access token.
 			</p>
 
 			<div class="border-border rounded-xl border p-5">
@@ -333,23 +316,14 @@
 					</div>
 				{/if}
 				{#if chatGptConfigured && chatGptModelIds === null}
-					<p class="text-muted-foreground mt-4 text-[12px]">ChatGPT models are unavailable.</p>
+					<p class="text-muted-foreground mt-4 text-[12px]">
+						ChatGPT models are unavailable. Reload the page to try again.
+					</p>
 				{:else if chatGptConfigured && chatGptModelIds?.length === 0}
 					<p class="text-muted-foreground mt-4 text-[12px]">
 						No ChatGPT models returned for this account.
 					</p>
 				{/if}
-				{#if chatGptConfigured}
-					<Button
-						variant="outline"
-						className="mt-4"
-						disabled={chatGptPending || loading}
-						onclick={retryChatGptModels}
-					>
-						{chatGptPending ? 'Refreshing…' : 'Refresh models'}
-					</Button>
-				{/if}
-
 				<p class="text-muted-foreground mt-4 text-[12px] leading-5">
 					ChatGPT device login must be enabled in your personal security settings or by your
 					workspace administrator. Usage counts against your ChatGPT Codex allowance.

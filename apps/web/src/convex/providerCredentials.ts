@@ -47,11 +47,6 @@ const chatGptCredentialSchema = z.object({
 		.string()
 		.min(1)
 		.max(128 * 1024),
-	idToken: z
-		.string()
-		.min(1)
-		.max(128 * 1024)
-		.optional(),
 	accountId: z.string().min(1).max(512),
 	residency: z.string().min(1).max(128).optional(),
 	expiresAt: z.number().int().positive()
@@ -281,7 +276,6 @@ function chatGptCredentialFromTokens(
 		version: 1,
 		accessToken: tokens.access_token,
 		refreshToken,
-		idToken: tokens.id_token ?? previous?.idToken,
 		accountId,
 		residency: residency === 'no_constraint' ? undefined : residency,
 		expiresAt

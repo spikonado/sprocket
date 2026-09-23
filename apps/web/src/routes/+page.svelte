@@ -210,7 +210,7 @@
 				} catch {
 					if (getCurrentUserId() === userId && generation === providerConfigurationGeneration) {
 						providerConfigurationError =
-							'Couldn’t refresh ChatGPT models. Retry in provider settings.';
+							'Couldn’t refresh ChatGPT models. Reload the page to try again.';
 					}
 				}
 			}

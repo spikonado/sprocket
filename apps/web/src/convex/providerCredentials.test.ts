@@ -174,7 +174,11 @@ describe('provider credentials', () => {
 			}
 			if (url.endsWith('/oauth/token')) {
 				expect(String(init?.body)).toContain('grant_type=authorization_code');
-				return Response.json({ access_token: accessToken, refresh_token: 'refresh-1' });
+				return Response.json({
+					access_token: accessToken,
+					refresh_token: 'refresh-1',
+					id_token: jwt({ exp, chatgpt_account_id: 'account-1' })
+				});
 			}
 			if (url.includes('/backend-api/codex/models')) {
 				const clientVersion = new URL(url).searchParams.get('client_version');
@@ -203,6 +207,7 @@ describe('provider credentials', () => {
 			residency: 'us',
 			expiresAt: exp * 1_000
 		});
+		expect(stored).not.toHaveProperty('idToken');
 		await expect(
 			t.query(internal.providerCredentials.getChatGptCredentialState, {
 				userId: 'user_alice'
@@ -498,6 +503,7 @@ describe('provider credentials', () => {
 						version: 1,
 						accessToken: 'access-expired',
 						refreshToken: 'refresh-once',
+						idToken: 'previously-stored-id-token',
 						accountId: 'account-1',
 						expiresAt: Date.now() - 1
 					})
@@ -532,10 +538,86 @@ describe('provider credentials', () => {
 			accessToken: rotatedAccessToken,
 			refreshToken: 'refresh-rotated'
 		});
+		expect(JSON.parse(entries.get(name)?.value ?? '{}')).not.toHaveProperty('idToken');
 		const update = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
 		expect(JSON.parse(String(update?.[1]?.body))).toMatchObject({
 			version_check: 'version_secret_1'
 		});
+	}, 30_000);
+
+	it('recovers when model recording fails after a refreshed credential reaches Vault', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_alice' });
+		const name = await providerCredentialName('sprocket-chatgpt-');
+		const entries = new Map<string, VaultEntry>([
+			[
+				name,
+				vaultEntry(
+					name,
+					JSON.stringify({
+						version: 1,
+						accessToken: 'access-expired',
+						refreshToken: 'refresh-once',
+						accountId: 'account-1',
+						expiresAt: Date.now() - 1
+					})
+				)
+			]
+		]);
+		const rotatedAccessToken = jwt({
+			exp: Math.floor(Date.now() / 1_000) + 3_600,
+			chatgpt_account_id: 'account-1'
+		});
+		let refreshes = 0;
+		const fetchMock = stubProviderFetch(entries, (url) => {
+			if (url.endsWith('/oauth/token')) {
+				refreshes += 1;
+				return Response.json({
+					access_token: rotatedAccessToken,
+					refresh_token: 'refresh-rotated'
+				});
+			}
+			if (url.includes('/backend-api/codex/models')) {
+				return Response.json({ models: [{ slug: 'gpt-5.4' }] });
+			}
+			throw new Error(`Unexpected provider request: ${url}`);
+		});
+		let finishVaultWrite: (() => void) | undefined;
+		vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+			const response = await fetchMock(input, init);
+			if (init?.method === 'PUT') {
+				await new Promise<void>((resolve) => {
+					finishVaultWrite = resolve;
+				});
+			}
+			return response;
+		});
+
+		const refreshing = asUser.action(api.providerCredentials.refreshChatGptModels, {});
+		await vi.waitFor(() => expect(finishVaultWrite).toBeDefined());
+		expect(JSON.parse(entries.get(name)?.value ?? '{}')).toMatchObject({
+			accessToken: rotatedAccessToken,
+			refreshToken: 'refresh-rotated'
+		});
+		await t.run(async (ctx) => {
+			const state = await ctx.db
+				.query('providerCredentialStates')
+				.withIndex('by_userId_and_provider', (query) =>
+					query.eq('userId', 'user_alice').eq('provider', 'chatgpt')
+				)
+				.unique();
+			if (!state) throw new Error('Missing credential state');
+			await ctx.db.patch(state._id, {
+				refreshLeaseId: 'replacement-lease',
+				refreshLeaseExpiresAt: Date.now() - 1
+			});
+		});
+		finishVaultWrite?.();
+		await expect(refreshing).rejects.toThrow('ChatGPT credential update lost its lease.');
+		await expect(asUser.action(api.providerCredentials.refreshChatGptModels, {})).resolves.toEqual([
+			'gpt-5.4'
+		]);
+		expect(refreshes).toBe(1);
 	}, 30_000);
 
 	it('releases the refresh lease after ChatGPT rejects a refresh token', async () => {
