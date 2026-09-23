@@ -167,40 +167,32 @@ impl rig::tool::Tool for AskQuestionTool {
     ) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| {
-                let runtime = self.0.runtime.clone();
-                let run_id = self.0.run_id.clone();
-                let claim_id = self.0.claim_id.clone();
-                async move {
-                    let created = create_agent_question(
-                        &runtime,
-                        &run_id,
-                        &claim_id,
-                        &prepared.question,
-                        &prepared.options,
-                        args.timeout_ms,
-                    )
-                    .await?;
-                    observe_question(
-                        &runtime,
-                        &run_id,
-                        &created.question_id,
-                        &created.question,
-                        &created.options,
-                        args.yield_time_ms,
-                        cancellation,
-                    )
-                    .await
-                }
-            },
-        )
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
+            let runtime = self.0.runtime.clone();
+            let run_id = self.0.run_id.clone();
+            let claim_id = self.0.claim_id.clone();
+            async move {
+                let created = create_agent_question(
+                    &runtime,
+                    &run_id,
+                    &claim_id,
+                    &prepared.question,
+                    &prepared.options,
+                    args.timeout_ms,
+                )
+                .await?;
+                observe_question(
+                    &runtime,
+                    &run_id,
+                    &created.question_id,
+                    &created.question,
+                    &created.options,
+                    args.yield_time_ms,
+                    cancellation,
+                )
+                .await
+            }
+        })
         .await
     }
 }
@@ -229,40 +221,32 @@ impl rig::tool::Tool for AwaitQuestionTool {
             return Err(tool_failure("questionId cannot be empty"));
         }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| {
-                let runtime = self.0.runtime.clone();
-                let run_id = self.0.run_id.clone();
-                let question_id = args.question_id.clone();
-                async move {
-                    let snapshot = fetch_question_snapshot(&runtime, &run_id, &question_id).await?;
-                    let Some(snapshot) = snapshot else {
-                        return Err(tool_failure(format!("Unknown questionId '{question_id}'")));
-                    };
-                    // Avoid racing the yield deadline against a slow first subscription
-                    // update when the question is already terminal.
-                    if snapshot.status != "pending" {
-                        return question_result_from_snapshot(&snapshot);
-                    }
-                    observe_question(
-                        &runtime,
-                        &run_id,
-                        &snapshot.question_id,
-                        &snapshot.question,
-                        &snapshot.options,
-                        args.yield_time_ms,
-                        cancellation,
-                    )
-                    .await
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
+            let runtime = self.0.runtime.clone();
+            let run_id = self.0.run_id.clone();
+            let question_id = args.question_id.clone();
+            async move {
+                let snapshot = fetch_question_snapshot(&runtime, &run_id, &question_id).await?;
+                let Some(snapshot) = snapshot else {
+                    return Err(tool_failure(format!("Unknown questionId '{question_id}'")));
+                };
+                // Avoid racing the yield deadline against a slow first subscription
+                // update when the question is already terminal.
+                if snapshot.status != "pending" {
+                    return question_result_from_snapshot(&snapshot);
                 }
-            },
-        )
+                observe_question(
+                    &runtime,
+                    &run_id,
+                    &snapshot.question_id,
+                    &snapshot.question,
+                    &snapshot.options,
+                    args.yield_time_ms,
+                    cancellation,
+                )
+                .await
+            }
+        })
         .await
     }
 }

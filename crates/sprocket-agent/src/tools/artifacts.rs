@@ -238,24 +238,16 @@ impl rig::tool::Tool for AddArtifactTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| async move {
-                register_file(
-                    &self.0,
-                    cancellation,
-                    "artifacts:addArtifact",
-                    &args.path,
-                    json!({"scope": args.scope}),
-                )
-                .await
-            },
-        )
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
+            register_file(
+                &self.0,
+                cancellation,
+                "artifacts:addArtifact",
+                &args.path,
+                json!({"scope": args.scope}),
+            )
+            .await
+        })
         .await
     }
 }
@@ -280,24 +272,16 @@ impl rig::tool::Tool for EditArtifactTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| async move {
-                register_file(
-                    &self.0,
-                    cancellation,
-                    "artifacts:editArtifact",
-                    &args.path,
-                    json!({"artifactId": args.artifact_id}),
-                )
-                .await
-            },
-        )
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
+            register_file(
+                &self.0,
+                cancellation,
+                "artifacts:editArtifact",
+                &args.path,
+                json!({"artifactId": args.artifact_id}),
+            )
+            .await
+        })
         .await
     }
 }
@@ -322,8 +306,7 @@ impl rig::tool::Tool for SaveArtifactTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
-        execute_tool_job(&self.0.runtime, &self.0.run_id, &self.0.claim_id, Self::NAME,
-            &self.0.tool_call_tracker, payload, |cancellation| async move {
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
                 let mut bindings = tokio::select! {
                     _ = cancellation.cancelled() => return Err(cancelled_error()),
                     result = self.0.artifact_bindings.lock() => result.map_err(tool_error)?,
@@ -371,11 +354,8 @@ impl rig::tool::Tool for ListArtifactsTool {
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&_args).map_err(|error| tool_error(error.into()))?;
         execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
+            &self.0,
             Self::NAME,
-            &self.0.tool_call_tracker,
             payload,
             |cancellation| async move {
                 for _ in 0..3 {

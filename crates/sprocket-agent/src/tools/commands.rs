@@ -138,11 +138,8 @@ impl rig::tool::Tool for ExecCommandTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
+            &self.0,
             Self::NAME,
-            &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
             |cancellation| async {
                 let output = self
@@ -187,11 +184,8 @@ impl rig::tool::Tool for WriteStdinTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
+            &self.0,
             Self::NAME,
-            &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
             |cancellation| async {
                 let output = self
