@@ -10,14 +10,19 @@
 	let { provider, className = '' }: Props = $props();
 
 	let failed = $state(false);
+
+	$effect(() => {
+		void provider;
+		failed = false;
+	});
 </script>
 
 {#if provider === 'spikonado'}
-	<img src="/logo.png" alt="" class={cn('size-4 shrink-0', className)} />
+	<img src="/logo.png" alt="spikonado" class={cn('size-4 shrink-0', className)} />
 {:else if !failed}
 	<img
 		src="https://models.dev/logos/{provider}.svg"
-		alt=""
+		alt={provider}
 		class={cn('size-4 shrink-0 dark:invert', className)}
 		onerror={() => (failed = true)}
 	/>
