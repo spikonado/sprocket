@@ -61,6 +61,7 @@ function props(records: Doc<'threadRecords'>[]) {
 		onNew: vi.fn(),
 		onAddProject: vi.fn(),
 		onSettings: vi.fn(),
+		onClose: vi.fn(),
 		onChange: vi.fn().mockResolvedValue(undefined),
 		onRename: vi.fn().mockResolvedValue(undefined)
 	};
@@ -98,7 +99,6 @@ it('renders simple navigation and a collapsible settled section', async () => {
 	newThread?.click();
 	expect(input.onNew).toHaveBeenCalledOnce();
 	expect(document.querySelector('.inbox-jumps')).toBeNull();
-	expect(document.querySelector('[aria-label="Close sidebar"]')).toBeNull();
 	expect(document.querySelector('#inbox-unsettled .inbox-section-heading')).toBeNull();
 	const settledHeading = document.querySelector<HTMLButtonElement>(
 		'#inbox-settled .inbox-section-heading'
@@ -121,6 +121,16 @@ it('restores the settled section preference from local storage', async () => {
 		document.querySelector('#inbox-settled .inbox-section-heading')?.getAttribute('aria-expanded')
 	).toBe('true');
 	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
+});
+
+it('closes the sidebar from the top action and from the brand mark', async () => {
+	const input = await render([thread()]);
+
+	document.querySelector<HTMLButtonElement>('[aria-label="Close sidebar"]')!.click();
+	expect(input.onClose).toHaveBeenCalledOnce();
+
+	document.querySelector<HTMLButtonElement>('[aria-label="Open sidebar"]')!.click();
+	expect(input.onClose).toHaveBeenCalledTimes(2);
 });
 
 it('loads more threads only after the user clicks Show more', async () => {

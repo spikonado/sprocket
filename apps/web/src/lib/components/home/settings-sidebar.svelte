@@ -16,11 +16,12 @@
 		activePage: SettingsPage;
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
+		onClose: () => void;
 		onBack: () => void;
 		onNavigate: (page: SettingsPage) => void;
 	};
 
-	let { activePage, theme, onThemeChange, onBack, onNavigate }: Props = $props();
+	let { activePage, theme, onThemeChange, onClose, onBack, onNavigate }: Props = $props();
 
 	const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
 		{ id: 'account', label: 'Account', icon: UserRound },
@@ -47,7 +48,7 @@
 				<ArrowLeft class="size-3.5" aria-hidden="true" />
 				Back
 			</button>
-			<SidebarTopActions {theme} {onThemeChange} />
+			<SidebarTopActions {theme} {onThemeChange} {onClose} />
 		</div>
 
 		<nav

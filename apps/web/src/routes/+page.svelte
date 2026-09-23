@@ -2,7 +2,7 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
-	import { PanelLeft, PanelRight } from '@lucide/svelte';
+	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAction, useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
 	import type { Doc, Id } from '$convex/_generated/dataModel';
@@ -1873,16 +1873,10 @@
 		};
 	});
 
-	async function openSidebar() {
-		sidebarOpen = true;
-		await tick();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
-	}
-
 	async function closeSidebar() {
 		sidebarOpen = false;
 		await tick();
-		document.querySelector<HTMLButtonElement>('[aria-label="Open sidebar"]')?.focus();
+		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
 	}
 </script>
 
@@ -1960,6 +1954,7 @@
 						activePage={settingsPage}
 						theme={workspaceTheme}
 						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onClose={() => void closeSidebar()}
 						onBack={() => {
 							settingsOpen = false;
 							settingsPage = 'account';
@@ -1980,6 +1975,7 @@
 						mutationsEnabled={authReady}
 						theme={workspaceTheme}
 						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onClose={() => void closeSidebar()}
 						onFilter={(keys) => (projectFilter = keys)}
 						onSelect={selectInboxThread}
 						onNew={startThreadDraft}
@@ -1998,14 +1994,6 @@
 				class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
 				inert={sidebarOpen && viewportWidth < 768}
 			>
-				{#if !sidebarOpen}
-					<button
-						class="inbox-icon absolute top-3 left-3 z-50 md:hidden"
-						type="button"
-						aria-label="Open sidebar"
-						onclick={() => void openSidebar()}><PanelLeft size={18} /></button
-					>
-				{/if}
 				{#if !settingsOpen && !artifactPanel.panel.open}
 					<button
 						type="button"

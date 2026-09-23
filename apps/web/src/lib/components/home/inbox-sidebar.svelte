@@ -41,6 +41,7 @@
 		onNew: () => void;
 		onAddProject: () => void;
 		onSettings: () => void;
+		onClose: () => void;
 		onChange: (thread: Thread, state: InboxState) => Promise<void>;
 		onRename: (thread: Thread, title: string) => Promise<void>;
 	};
@@ -60,6 +61,7 @@
 		onNew,
 		onAddProject,
 		onSettings,
+		onClose,
 		onChange,
 		onRename
 	}: Props = $props();
@@ -309,8 +311,8 @@
 
 <aside class="inbox-sidebar" aria-label="Thread inbox">
 	<header class="flex items-center gap-2 px-4 pt-4 pb-3">
-		<BrandMark size="sm" class="mr-auto" />
-		<SidebarTopActions {theme} {onThemeChange} />
+		<BrandMark size="sm" class="mr-auto" onclick={() => onClose()} />
+		<SidebarTopActions {theme} {onThemeChange} {onClose} />
 	</header>
 
 	<div class="px-3 pb-3">
