@@ -325,6 +325,7 @@
 	let settingsPage = $state<SettingsPage>('account');
 	let sidebarOpen = $state(true);
 	let viewportWidth = $state(0);
+	const sidebarVisible = $derived(sidebarOpen || (settingsOpen && viewportWidth >= 768));
 	let projectFilter = $state<string[]>([]);
 	let settledInboxOpen = $state(false);
 	let pendingProjectLaunches = $state<string[]>([]);
@@ -1921,6 +1922,25 @@
 		await tick();
 		document.querySelector<HTMLButtonElement>('.inbox-collapsed-rail button')?.focus();
 	}
+
+	async function openSettingsFromRail() {
+		settingsPage = 'account';
+		settingsOpen = true;
+		if (viewportWidth < 768) sidebarOpen = true;
+		await tick();
+		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+	}
+
+	async function leaveSettings() {
+		settingsOpen = false;
+		settingsPage = 'account';
+		await tick();
+		document
+			.querySelector<HTMLButtonElement>(
+				sidebarOpen ? '.inbox-sidebar-host button' : '.inbox-collapsed-rail button'
+			)
+			?.focus();
+	}
 </script>
 
 <svelte:head>
@@ -1976,7 +1996,7 @@
 			!artifactPanel.panel.expanded
 				? 'pr-[20rem]'
 				: ''}"
-			class:sidebar-hidden={!sidebarOpen}
+			class:sidebar-hidden={!sidebarVisible}
 			class:settings-open={settingsOpen}
 			inert={artifactPanel.fullscreenArtifact ||
 			(artifactPanel.panel.open && artifactPanel.panel.expanded)
@@ -1991,20 +2011,16 @@
 					onclick={() => void closeSidebar()}
 				></button>
 			{/if}
-			<div class="inbox-sidebar-host" inert={!sidebarOpen && viewportWidth < 768}>
+			<div class="inbox-sidebar-host" inert={!sidebarVisible}>
 				{#if settingsOpen}
 					<SettingsSidebar
 						activePage={settingsPage}
 						theme={workspaceTheme}
 						onThemeChange={(theme) => void handleThemeChange(theme)}
-						onClose={() => void closeSidebar()}
-						onBack={() => {
-							settingsOpen = false;
-							settingsPage = 'account';
-						}}
+						onBack={() => void leaveSettings()}
 						onNavigate={(nextPage) => {
 							settingsPage = nextPage;
-							if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+							if (matchMedia('(max-width: 767px)').matches) void closeSidebar();
 						}}
 					/>
 				{:else}
@@ -2033,19 +2049,20 @@
 				{/if}
 			</div>
 
-			{#if !sidebarOpen}
+			{#if !sidebarVisible}
 				<div class="inbox-collapsed-rail">
-					<BrandMark size="sm" label="Open sidebar" onclick={() => void openSidebar()} />
+					<BrandMark
+						size="sm"
+						class="inbox-icon inbox-rail-logo"
+						label="Open sidebar"
+						onclick={() => void openSidebar()}
+					/>
 					<button
 						class="inbox-icon"
 						type="button"
 						aria-label="Settings"
 						title="Settings"
-						onclick={() => {
-							settingsPage = 'account';
-							settingsOpen = true;
-							void openSidebar();
-						}}
+						onclick={() => void openSettingsFromRail()}
 					>
 						<Settings size={16} />
 					</button>

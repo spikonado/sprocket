@@ -398,7 +398,7 @@
 }
 
 .sidebar-hidden .inbox-sidebar-host {
-	border-right: 0;
+	display: none;
 }
 
 .inbox-sidebar-host > .app-sidebar-panel {
@@ -424,13 +424,17 @@
 	height: 32px;
 }
 
+.inbox-collapsed-rail .inbox-rail-logo span {
+	display: none;
+}
+
 @media (max-width: 767px) {
 	.inbox-layout {
 		display: block;
 	}
 
 	.inbox-layout.sidebar-hidden {
-		grid-template-columns: none;
+		display: grid;
 	}
 
 	.inbox-sidebar-host {
@@ -439,14 +443,6 @@
 		z-index: 150;
 		width: min(340px, 88vw);
 		box-shadow: 12px 0 40px #0004;
-	}
-
-	.sidebar-hidden .inbox-sidebar-host {
-		display: none;
-	}
-
-	.inbox-collapsed-rail {
-		display: none;
 	}
 }
 
