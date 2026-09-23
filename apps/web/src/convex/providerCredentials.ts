@@ -16,8 +16,8 @@ const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
 const OPENAI_API_ORIGIN = 'https://api.openai.com';
 const CHATGPT_AUTH_ORIGIN = 'https://auth.openai.com';
 const CHATGPT_API_ORIGIN = 'https://chatgpt.com/backend-api/codex';
-const CODEX_LATEST_RELEASE_URL = 'https://registry.npmjs.org/@openai/codex/latest';
-const CODEX_FALLBACK_CLIENT_VERSION = '0.156.1';
+// Bump this when Codex requires a newer client version to return current models.
+const CODEX_CLIENT_VERSION = '0.156.1';
 const CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CHATGPT_VERIFICATION_URL = `${CHATGPT_AUTH_ORIGIN}/codex/device`;
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
@@ -365,24 +365,8 @@ async function refreshChatGptCredential(credential: ChatGptCredential): Promise<
 	return chatGptCredentialFromTokens(tokens, credential);
 }
 
-async function codexClientVersion(): Promise<string> {
-	try {
-		const release = await providerFetch(CODEX_LATEST_RELEASE_URL, { cache: 'no-store' });
-		if (!release.ok) return CODEX_FALLBACK_CLIENT_VERSION;
-		const { version } = await responseJson(
-			release,
-			'Codex release registry',
-			z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) })
-		);
-		return version;
-	} catch {
-		return CODEX_FALLBACK_CLIENT_VERSION;
-	}
-}
-
 async function chatGptModelIds(credential: ChatGptCredential): Promise<string[] | null> {
 	try {
-		const version = await codexClientVersion();
 		const headers = new Headers({
 			authorization: `Bearer ${credential.accessToken}`,
 			'ChatGPT-Account-ID': credential.accountId,
@@ -392,9 +376,10 @@ async function chatGptModelIds(credential: ChatGptCredential): Promise<string[] 
 		if (credential.residency) {
 			headers.set('x-openai-internal-codex-residency', credential.residency);
 		}
-		const response = await providerFetch(`${CHATGPT_API_ORIGIN}/models?client_version=${version}`, {
-			headers
-		});
+		const response = await providerFetch(
+			`${CHATGPT_API_ORIGIN}/models?client_version=${CODEX_CLIENT_VERSION}`,
+			{ headers }
+		);
 		if (!response.ok) return null;
 		const models = await responseJson(response, 'ChatGPT', chatGptModelsSchema);
 		return [...new Set(models.models.map((model) => model.slug))];
