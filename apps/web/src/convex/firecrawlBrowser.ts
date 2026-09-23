@@ -18,8 +18,10 @@ const RATE_LIMIT_RETRY_BUDGET_MS = 120_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_RESULT_CHARS = 8_000;
 const MAX_SCREENSHOT_BYTES = 600_000;
-const SAVING_IN_USE_ERROR =
-	"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session.";
+const SAVING_PROVIDER_CONFLICT_ERROR =
+	'Firecrawl refused to open a saving browser for this profile (HTTP 409). Sprocket has no other active saving session for it. Try again shortly. If it persists, ask support to check Firecrawl sessions. Do not reset the profile unless you are willing to lose saved logins.';
+const SAVING_IN_OTHER_CONVERSATION_ERROR =
+	'Sprocket lists a saving browser for this profile in another conversation. Stop that browser session or wait for it to close, then retry.';
 const GONE_STATUSES = new Set([404, 410]);
 const CHROME_WRAPPER_DEV_FD_FAILURE =
 	/\/usr\/bin\/google-chrome-stable: line \d+: \/dev\/fd\/\d+: No such file or directory/;
@@ -470,7 +472,20 @@ async function execute(
 				if (!(error instanceof FirecrawlError && error.status === 409 && saveChanges)) {
 					throw error;
 				}
-				if (enforceSaving) throw new ConvexError(SAVING_IN_USE_ERROR);
+				if (enforceSaving) {
+					const otherSavingSession = await ctx.runQuery(
+						internal.browserSessions.hasOtherSavingSession,
+						{
+							userId: args.userId,
+							threadId: args.threadId,
+							profileName: session.profileName,
+							now: Date.now()
+						}
+					);
+					throw new ConvexError(
+						otherSavingSession ? SAVING_IN_OTHER_CONVERSATION_ERROR : SAVING_PROVIDER_CONFLICT_ERROR
+					);
+				}
 				await ctx.runMutation(internal.browserSessions.beforeExecute, {
 					id: session._id,
 					operationId,

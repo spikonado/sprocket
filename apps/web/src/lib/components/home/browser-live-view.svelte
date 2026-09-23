@@ -10,9 +10,10 @@
 		liveView: BrowserLiveViewState | null | undefined;
 		/** Whether the agent is actively working in the browser. */
 		active: boolean;
+		statusError?: boolean;
 	};
 
-	let { liveView, active }: Props = $props();
+	let { liveView, active, statusError = false }: Props = $props();
 
 	const setHumanControl = useMutation(api.browserProfiles.setHumanControl);
 	const stopSession = useMutation(api.browserSessions.stop);
@@ -188,9 +189,20 @@
 			{/key}
 		{:else}
 			<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-				<LoaderCircle class="text-muted-foreground size-5 animate-spin" aria-hidden="true" />
-				<p class="text-muted-foreground text-sm">Starting the live view…</p>
-				<p class="text-muted-foreground text-xs">The agent is browsing in the meantime.</p>
+				{#if active && !providerSessionId}
+					<LoaderCircle class="text-muted-foreground size-5 animate-spin" aria-hidden="true" />
+					<p class="text-muted-foreground text-sm">Starting the browser session…</p>
+				{:else if providerSessionId}
+					<p class="text-muted-foreground text-sm" role="status">
+						The browser session is running, but its live view is unavailable. Stop it above if you
+						no longer need it.
+					</p>
+				{:else}
+					<p class="text-muted-foreground text-sm" role="status">
+						No live view is available yet. If the browser isn't starting, stop this session above
+						and retry.
+					</p>
+				{/if}
 			</div>
 		{/if}
 	{:else if ended || liveView === null}
@@ -201,9 +213,15 @@
 				When the agent browses again, a new session will appear here.
 			</p>
 		</div>
+	{:else if statusError}
+		<div class="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+			<p class="text-destructive text-sm" role="alert">
+				Couldn't load browser status. Check your connection and reload.
+			</p>
+		</div>
 	{:else}
-		<div class="flex min-h-0 flex-1 items-center justify-center">
-			<LoaderCircle class="text-muted-foreground size-5 animate-spin" aria-hidden="true" />
+		<div class="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+			<p class="text-muted-foreground text-sm" role="status">Checking browser status…</p>
 		</div>
 	{/if}
 </div>

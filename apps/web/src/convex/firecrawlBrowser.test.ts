@@ -294,7 +294,7 @@ describe('Firecrawl browser lifecycle', () => {
 			command: 'agent-browser get url'
 		};
 		await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
-			"Saving can't be enforced currently"
+			'Sprocket has no other active saving session'
 		);
 
 		const retrying = interact(t, args);
@@ -411,7 +411,7 @@ describe('Firecrawl browser lifecycle', () => {
 			fetch.mockResolvedValueOnce(new Response('{}', { status }));
 			await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
 				status === 409
-					? "Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
+					? 'Sprocket has no other active saving session'
 					: 'A request-rate or concurrency limit was reached.'
 			);
 			expect(fetch).toHaveBeenCalledTimes(4);
@@ -805,11 +805,25 @@ describe('Firecrawl browser lifecycle', () => {
 				command: 'agent-browser click @e1',
 				enforce_saving: true
 			})
-		).rejects.toThrow(
-			"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
-		);
+		).rejects.toThrow('Sprocket has no other active saving session');
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
+	});
+
+	it('identifies a saving session in another conversation without closing it', async () => {
+		const fetch = remote();
+		const t = initConvexTest();
+		const first = await fixture(t);
+		const second = await fixture(t);
+		await interact(t, { ...first, command: 'agent-browser get url' });
+		fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
+		await expect(
+			interact(t, { ...second, command: 'agent-browser get url', enforce_saving: true })
+		).rejects.toThrow('Sprocket lists a saving browser for this profile in another conversation');
+		expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toMatchObject([
+			{ sessionId: 'session-1', closing: false }
+		]);
 	});
 
 	it('fixes saving mode for a session and applies preference only to new sessions', async () => {

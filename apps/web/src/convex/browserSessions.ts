@@ -209,6 +209,31 @@ export const needsProviderReconciliation = internalQuery({
 	}
 });
 
+export const hasOtherSavingSession = internalQuery({
+	args: {
+		userId: v.string(),
+		threadId: v.id('threadRecords'),
+		profileName: v.string(),
+		now: v.number()
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const sessions = await ctx.db
+			.query('browserSessions')
+			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
+			.take(100);
+		return sessions.some(
+			(session) =>
+				session.threadId !== args.threadId &&
+				session.profileName === args.profileName &&
+				session.saveChanges &&
+				session.sessionId !== undefined &&
+				!session.closing &&
+				session.expiresAt > args.now
+		);
+	}
+});
+
 export const attach = internalMutation({
 	args: {
 		id: v.id('browserSessions'),

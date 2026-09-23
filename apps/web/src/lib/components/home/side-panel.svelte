@@ -14,6 +14,7 @@
 		liveView: BrowserLiveViewState | null | undefined;
 		/** Whether the agent is actively working in the browser. */
 		liveActive: boolean;
+		liveViewError?: boolean;
 		/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 		expanded: boolean;
 		stale?: boolean;
@@ -33,6 +34,7 @@
 		tab,
 		liveView,
 		liveActive,
+		liveViewError = false,
 		expanded,
 		stale = false,
 		error = null,
@@ -153,7 +155,7 @@
 		class="flex min-h-0 flex-1 flex-col"
 	>
 		{#if tab === 'live'}
-			<BrowserLiveView {liveView} active={liveActive} />
+			<BrowserLiveView {liveView} active={liveActive} statusError={liveViewError} />
 		{:else}
 			{#if error || stale}
 				<div class="space-y-1 border-b px-3 py-2">
