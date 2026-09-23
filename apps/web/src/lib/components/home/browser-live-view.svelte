@@ -20,6 +20,14 @@
 
 	let pending = $state<'control' | 'stop' | null>(null);
 	let actionError = $state<string | null>(null);
+	let statusTimedOut = $state(false);
+
+	$effect(() => {
+		statusTimedOut = false;
+		if (liveView !== undefined || statusError) return;
+		const timeout = setTimeout(() => (statusTimedOut = true), 15_000);
+		return () => clearTimeout(timeout);
+	});
 
 	const threadId = $derived(liveView?.threadId);
 	const sessionRecordId = $derived(liveView?.id);
@@ -213,10 +221,10 @@
 				When the agent browses again, a new session will appear here.
 			</p>
 		</div>
-	{:else if statusError}
+	{:else if statusError || statusTimedOut}
 		<div class="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
 			<p class="text-destructive text-sm" role="alert">
-				Couldn't load browser status. Check your connection and reload.
+				Browser status hasn't loaded. Check your connection and reload.
 			</p>
 		</div>
 	{:else}

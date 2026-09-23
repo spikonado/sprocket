@@ -227,9 +227,25 @@ it('shows a status error instead of an endless loading spinner', () => {
 	cleanup = () => unmount(component);
 	flushSync();
 	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-		"Couldn't load browser status"
+		"Browser status hasn't loaded"
 	);
 	expect(document.querySelector('.animate-spin')).toBeNull();
+});
+
+it('reports a stalled browser status query rather than waiting forever', () => {
+	vi.useFakeTimers();
+	const component = mount(BrowserLiveView, {
+		target: document.body,
+		props: { active: false, liveView: undefined }
+	});
+	cleanup = () => unmount(component);
+	flushSync();
+	expect(document.body.textContent).toContain('Checking browser status');
+	vi.advanceTimersByTime(15_000);
+	flushSync();
+	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+		"Browser status hasn't loaded"
+	);
 });
 
 it('offers a stop action for a session without a live view', () => {
