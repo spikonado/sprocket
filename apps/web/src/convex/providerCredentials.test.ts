@@ -37,11 +37,15 @@ async function providerCredentialName(prefix: string, userId = 'user_alice'): Pr
 
 function stubProviderFetch(
 	entries: Map<string, VaultEntry>,
-	providerResponse: (url: string, init?: RequestInit) => Response | Promise<Response>
+	providerResponse: (url: string, init?: RequestInit) => Response | Promise<Response>,
+	codexRelease: () => Response = () => Response.json({ version: '0.156.1' })
 ) {
 	let nextId = entries.size + 1;
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input);
+		if (url === 'https://registry.npmjs.org/@openai/codex/latest') {
+			return codexRelease();
+		}
 		if (!url.startsWith('https://api.workos.com/')) return await providerResponse(url, init);
 
 		const parsedUrl = new URL(url);
@@ -177,6 +181,8 @@ describe('provider credentials', () => {
 				return Response.json({ access_token: accessToken, refresh_token: 'refresh-1' });
 			}
 			if (url.includes('/backend-api/codex/models')) {
+				const clientVersion = new URL(url).searchParams.get('client_version');
+				expect(clientVersion).toBe('0.156.1');
 				expect(new Headers(init?.headers).get('x-openai-internal-codex-residency')).toBe('us');
 				return Response.json({ models: [{ slug: 'gpt-5.4' }, { slug: 'gpt-5.4' }] });
 			}
@@ -239,18 +245,24 @@ describe('provider credentials', () => {
 			]
 		]);
 		let delayModels = false;
+		let codexVersion = '0.156.1';
 		let finishModels: ((response: Response) => void) | undefined;
-		stubProviderFetch(entries, (url) => {
-			if (url.includes('/backend-api/codex/models')) {
-				if (delayModels) {
-					return new Promise<Response>((resolve) => {
-						finishModels = resolve;
-					});
+		stubProviderFetch(
+			entries,
+			(url) => {
+				if (url.includes('/backend-api/codex/models')) {
+					expect(new URL(url).searchParams.get('client_version')).toBe(codexVersion);
+					if (delayModels) {
+						return new Promise<Response>((resolve) => {
+							finishModels = resolve;
+						});
+					}
+					return Response.json({ models: [{ slug: 'gpt-5.4' }] });
 				}
-				return Response.json({ models: [{ slug: 'gpt-5.4' }] });
-			}
-			throw new Error(`Unexpected provider request: ${url}`);
-		});
+				throw new Error(`Unexpected provider request: ${url}`);
+			},
+			() => Response.json({ version: codexVersion })
+		);
 		await expect(asUser.action(api.providerCredentials.refreshChatGptModels, {})).resolves.toEqual([
 			'gpt-5.4'
 		]);
@@ -261,6 +273,7 @@ describe('provider credentials', () => {
 		});
 
 		delayModels = true;
+		codexVersion = '0.157.0';
 		const retrying = asUser.action(api.providerCredentials.refreshChatGptModels, {});
 		await vi.waitFor(() => expect(finishModels).toBeDefined());
 		const disconnecting = asUser.action(api.providerCredentials.removeChatGptCredential, {});
@@ -270,6 +283,40 @@ describe('provider credentials', () => {
 		await expect(retrying).resolves.toEqual(['gpt-5.4']);
 		await expect(disconnecting).resolves.toBe(null);
 		expect(entries.has(name)).toBe(false);
+	});
+
+	it('keeps model discovery unavailable if the latest Codex release cannot be retrieved', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_alice' });
+		const name = await providerCredentialName('sprocket-chatgpt-');
+		const entries = new Map<string, VaultEntry>([
+			[
+				name,
+				vaultEntry(
+					name,
+					JSON.stringify({
+						version: 1,
+						accessToken: 'access-current',
+						refreshToken: 'refresh-current',
+						accountId: 'account-1',
+						expiresAt: Date.now() + 60 * 60 * 1_000
+					})
+				)
+			]
+		]);
+		const fetchMock = stubProviderFetch(
+			entries,
+			(url) => {
+				throw new Error(`Unexpected provider request: ${url}`);
+			},
+			() => new Response(null, { status: 503 })
+		);
+		await expect(asUser.action(api.providerCredentials.refreshChatGptModels, {})).rejects.toThrow(
+			'Couldn’t load your ChatGPT models'
+		);
+		expect(
+			fetchMock.mock.calls.some(([url]) => String(url).includes('/backend-api/codex/models'))
+		).toBe(false);
 	});
 
 	it('rejects polling another user’s device authorization before contacting ChatGPT', async () => {

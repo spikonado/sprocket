@@ -135,11 +135,11 @@ describe('gateway model catalog', () => {
 		);
 	});
 
-	it('intersects ChatGPT models with the authenticated account model list', async () => {
+	it('offers only ChatGPT account models present in the gateway catalog', async () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models = [
 			{ ...payload.sprocket.models[0], id: 'gpt-5.4', provider: 'openai' },
-			{ ...payload.sprocket.models[0], id: 'gpt-api-only', provider: 'openai' },
+			{ ...payload.sprocket.models[0], id: 'gpt-gateway-only', provider: 'openai' },
 			{ ...payload.sprocket.models[0], id: 'other', provider: 'other' }
 		];
 		vi.stubGlobal(
@@ -147,13 +147,19 @@ describe('gateway model catalog', () => {
 			vi.fn(async () => Response.json(payload))
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-
-		expect(modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-5.4'])).toEqual([
-			expect.objectContaining({ id: 'gpt-5.4', provider: 'openai' })
-		]);
 		expect(
-			resolveModelForCompletionProvider(catalog, 'free', 'chatgpt', 'gpt-api-only', ['gpt-5.4'])
+			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-5.4', 'gpt-account-only'])
+		).toEqual([expect.objectContaining({ id: 'gpt-5.4', provider: 'openai' })]);
+		expect(
+			resolveModelForCompletionProvider(catalog, 'free', 'chatgpt', 'gpt-account-only', ['gpt-5.4'])
 		).toBe('gpt-5.4');
+		expect(
+			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-account-only'])
+		).toEqual([]);
+		expect(modelOptionsForCompletionProvider(catalog, 'free', 'openai')).toEqual([
+			expect.objectContaining({ id: 'gpt-5.4' }),
+			expect.objectContaining({ id: 'gpt-gateway-only' })
+		]);
 		expect(modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', null)).toEqual([]);
 	});
 });

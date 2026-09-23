@@ -107,7 +107,7 @@
 				provider === 'spikonado'
 					? 'Spikonado'
 					: provider === 'chatgpt'
-						? 'ChatGPT subscription'
+						? 'ChatGPT Subscription'
 						: 'OpenAI API'
 		}))
 	);

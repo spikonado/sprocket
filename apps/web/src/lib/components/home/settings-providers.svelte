@@ -254,15 +254,15 @@
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl space-y-4">
 			<p class="text-muted-foreground mb-5 text-sm leading-6">
-				Connect a ChatGPT account or use an OpenAI API key. Credentials are encrypted in WorkOS
-				Vault and are released only to an active run on one of your linked machines.
+				You can use your own API keys or subscriptions from other providers. Your credentials are
+				stored encrypted and are only accessible to you.
 			</p>
 
 			<div class="border-border rounded-xl border p-5">
 				<div class="flex items-center gap-3">
 					<ProviderLogo provider="openai" className="size-5" />
 					<div class="min-w-0 flex-1">
-						<p class="text-foreground text-[15px] font-medium">ChatGPT subscription</p>
+						<p class="text-foreground text-[15px] font-medium">ChatGPT Subscription</p>
 						<p class="text-muted-foreground mt-0.5 text-[12px]">
 							{loading
 								? 'Checking configuration…'
@@ -333,20 +333,21 @@
 					</div>
 				{/if}
 				{#if chatGptConfigured && chatGptModelIds === null}
-					<div class="mt-4 flex items-center gap-3">
-						<p class="text-muted-foreground text-[12px]">ChatGPT models are unavailable.</p>
-						<Button variant="outline" disabled={chatGptPending} onclick={retryChatGptModels}>
-							Retry models
-						</Button>
-					</div>
-				{/if}
-				{#if chatGptConfigured && chatGptModelIds?.length === 0}
+					<p class="text-muted-foreground mt-4 text-[12px]">ChatGPT models are unavailable.</p>
+				{:else if chatGptConfigured && chatGptModelIds?.length === 0}
 					<p class="text-muted-foreground mt-4 text-[12px]">
-						No supported ChatGPT models found for this account.
-						<button type="button" class="text-foreground underline" onclick={retryChatGptModels}>
-							Retry
-						</button>
+						No ChatGPT models returned for this account.
 					</p>
+				{/if}
+				{#if chatGptConfigured}
+					<Button
+						variant="outline"
+						className="mt-4"
+						disabled={chatGptPending || loading}
+						onclick={retryChatGptModels}
+					>
+						{chatGptPending ? 'Refreshing…' : 'Refresh models'}
+					</Button>
 				{/if}
 
 				<p class="text-muted-foreground mt-4 text-[12px] leading-5">

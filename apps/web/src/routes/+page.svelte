@@ -150,6 +150,7 @@
 	});
 	const setThreadCompletionSettings = useMutation(api.threads.setCompletionSettings);
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
+	const refreshMyChatGptModels = useAction(api.providerCredentials.refreshChatGptModels);
 	const renameThreadRecord = useMutation(api.threads.rename);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
@@ -186,6 +187,7 @@
 	}
 	let ensureSubscriptionAttemptedFor: string | null = null;
 	let providerConfigurationLoadedFor: string | null = null;
+	let providerConfigurationGeneration = 0;
 
 	async function loadProviderConfiguration(userId: string) {
 		providerConfigurationLoading = true;
@@ -198,6 +200,20 @@
 			chatGptConfigured = configuration.chatgpt;
 			chatGptModelIds = configuration.chatgptModelIds;
 			providerConfigurationReady = true;
+			if (configuration.chatgpt) {
+				const generation = providerConfigurationGeneration;
+				try {
+					const modelIds = await refreshMyChatGptModels({});
+					if (getCurrentUserId() === userId && generation === providerConfigurationGeneration) {
+						chatGptModelIds = modelIds;
+					}
+				} catch {
+					if (getCurrentUserId() === userId && generation === providerConfigurationGeneration) {
+						providerConfigurationError =
+							'Couldn’t refresh ChatGPT models. Retry in provider settings.';
+					}
+				}
+			}
 		} catch (error) {
 			if (getCurrentUserId() !== userId) return;
 			providerConfigurationError =
@@ -979,6 +995,7 @@
 		configured: boolean;
 		chatGptModelIds?: string[] | null;
 	}) {
+		providerConfigurationGeneration += 1;
 		if (change.provider === 'openai') openAiConfigured = change.configured;
 		if (change.provider === 'chatgpt') {
 			chatGptConfigured = change.configured;

@@ -16,6 +16,7 @@ const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
 const OPENAI_API_ORIGIN = 'https://api.openai.com';
 const CHATGPT_AUTH_ORIGIN = 'https://auth.openai.com';
 const CHATGPT_API_ORIGIN = 'https://chatgpt.com/backend-api/codex';
+const CODEX_LATEST_RELEASE_URL = 'https://registry.npmjs.org/@openai/codex/latest';
 const CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CHATGPT_VERIFICATION_URL = `${CHATGPT_AUTH_ORIGIN}/codex/device`;
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
@@ -365,6 +366,13 @@ async function refreshChatGptCredential(credential: ChatGptCredential): Promise<
 
 async function chatGptModelIds(credential: ChatGptCredential): Promise<string[] | null> {
 	try {
+		const release = await providerFetch(CODEX_LATEST_RELEASE_URL, { cache: 'no-store' });
+		if (!release.ok) return null;
+		const { version } = await responseJson(
+			release,
+			'Codex release registry',
+			z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) })
+		);
 		const headers = new Headers({
 			authorization: `Bearer ${credential.accessToken}`,
 			'ChatGPT-Account-ID': credential.accountId,
@@ -374,7 +382,7 @@ async function chatGptModelIds(credential: ChatGptCredential): Promise<string[] 
 		if (credential.residency) {
 			headers.set('x-openai-internal-codex-residency', credential.residency);
 		}
-		const response = await providerFetch(`${CHATGPT_API_ORIGIN}/models?client_version=0.0.0`, {
+		const response = await providerFetch(`${CHATGPT_API_ORIGIN}/models?client_version=${version}`, {
 			headers
 		});
 		if (!response.ok) return null;
