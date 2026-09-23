@@ -236,9 +236,8 @@
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl space-y-4">
 			<p class="text-muted-foreground mb-5 text-sm leading-6">
-				You can use your own API keys or subscriptions from other providers. Sprocket stores your
-				credentials in WorkOS Vault. For an active run, the agent receives your OpenAI API key or a
-				ChatGPT access token.
+				You can use your own API keys or subscriptions from other providers. Your credentials are
+				stored encrypted and are only accessible to your account.
 			</p>
 
 			<div class="border-border rounded-xl border p-5">
