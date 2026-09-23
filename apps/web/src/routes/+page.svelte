@@ -2008,7 +2008,7 @@
 						onclick={() => {
 							settingsPage = 'account';
 							settingsOpen = true;
-							sidebarOpen = true;
+							void openSidebar();
 						}}
 					>
 						<Settings size={16} />
