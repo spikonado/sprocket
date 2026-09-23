@@ -12,6 +12,7 @@ use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
 
+use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
@@ -68,6 +69,8 @@ pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     gateway_url: String,
     model: String,
+    deployment_url: String,
+    user_id: String,
 }
 
 pub(crate) struct AgentProviderRequest {
@@ -103,11 +106,17 @@ pub(crate) enum AgentProviderResult {
 }
 
 impl AgentProvider {
-    pub(crate) fn default_for_run(context: &RunContextResponse, gateway_url: &str) -> Self {
+    pub(crate) fn default_for_run(
+        context: &RunContextResponse,
+        gateway_url: &str,
+        deployment_url: &str,
+    ) -> Self {
         Self {
             completion_provider: context.run.completion_provider,
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
+            deployment_url: deployment_url.to_string(),
+            user_id: context.run.user_id.clone(),
         }
     }
 
@@ -116,7 +125,10 @@ impl AgentProvider {
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        let (api_key, base_url) = match self.completion_provider {
+        if self.completion_provider != CompletionProvider::Spikonado {
+            request.fast_mode = false;
+        }
+        match self.completion_provider {
             CompletionProvider::Spikonado => {
                 let credential = match runtime
                     .issue_gateway_credential(&request.run_id, &request.claim_id)
@@ -130,10 +142,20 @@ impl AgentProvider {
                         };
                     }
                 };
-                (
-                    credential.token,
-                    Some(gateway_api_v1_url(&self.gateway_url)),
-                )
+                let completion_client = match openai::Client::builder()
+                    .api_key(credential.token)
+                    .base_url(&gateway_api_v1_url(&self.gateway_url))
+                    .build()
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error: anyhow!(error),
+                        };
+                    }
+                };
+                run_with_completion_client(completion_client, self.model, runtime, request).await
             }
             CompletionProvider::Openai => {
                 let credential = match runtime
@@ -148,27 +170,41 @@ impl AgentProvider {
                         };
                     }
                 };
-                (credential.api_key, None)
-            }
-        };
-        if self.completion_provider == CompletionProvider::Openai {
-            request.fast_mode = false;
-        }
-        let builder = openai::Client::builder().api_key(api_key);
-        let builder = match base_url {
-            Some(base_url) => builder.base_url(&base_url),
-            None => builder,
-        };
-        let completion_client = match builder.build() {
-            Ok(client) => client,
-            Err(error) => {
-                return AgentProviderResult::Failed {
-                    text: String::new(),
-                    error: anyhow!(error),
+                let completion_client = match openai::Client::builder()
+                    .api_key(credential.api_key)
+                    .build()
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error: anyhow!(error),
+                        };
+                    }
                 };
+                run_with_completion_client(completion_client, self.model, runtime, request).await
             }
-        };
-        run_with_completion_client(completion_client, self.model, runtime, request).await
+            CompletionProvider::Chatgpt => {
+                let completion_client = match ChatGptClient::new(
+                    runtime.clone(),
+                    request.run_id.clone(),
+                    request.claim_id.clone(),
+                    self.deployment_url,
+                    self.user_id,
+                )
+                .await
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
+                };
+                run_with_completion_client(completion_client, self.model, runtime, request).await
+            }
+        }
     }
 }
 

@@ -70,6 +70,19 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
+	providerCredentialStates: defineTable({
+		userId: v.string(),
+		connectionId: v.optional(v.string()),
+		modelIds: v.optional(v.array(v.string())),
+		browserLogin: v.optional(
+			v.object({ hash: v.string(), codeVerifier: v.string(), expiresAt: v.number() })
+		),
+		deviceLogin: v.optional(v.object({ hash: v.string(), expiresAt: v.number() })),
+		completedLogin: v.optional(
+			v.object({ flow: v.union(v.literal('browser'), v.literal('device')), hash: v.string() })
+		),
+		lease: v.optional(v.object({ id: v.string(), expiresAt: v.number() }))
+	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),
 		notBefore: v.number(),

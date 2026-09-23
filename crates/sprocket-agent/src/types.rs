@@ -13,6 +13,7 @@ pub enum CompletionProvider {
     #[default]
     Spikonado,
     Openai,
+    Chatgpt,
 }
 
 impl CompletionProvider {
@@ -20,6 +21,7 @@ impl CompletionProvider {
         match self {
             Self::Spikonado => "spikonado",
             Self::Openai => "openai",
+            Self::Chatgpt => "chatgpt",
         }
     }
 }
@@ -75,6 +77,17 @@ pub struct GatewayCredential {
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiCredential {
     pub api_key: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatGptCredential {
+    pub access_token: String,
+    pub connection_id: String,
+    pub account_id: String,
+    pub residency: Option<String>,
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub expires_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

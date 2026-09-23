@@ -1,5 +1,5 @@
 pub mod agent;
-mod api_error;
+pub(crate) mod api_error;
 pub mod artifacts;
 mod attachment_upload;
 pub mod auth;

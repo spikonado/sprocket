@@ -136,9 +136,6 @@ Start the browser development environment:
 bun dev
 ```
 
-After creating a Convex deployment and configuring AuthKit, set `WORKOS_API_KEY`
-on the deployment so it can store user-supplied provider keys in WorkOS Vault.
-
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 It targets the dev Convex deployment. To run against the production Convex
 deployment with `~/.sprocket` state instead:

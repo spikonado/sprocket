@@ -82,11 +82,16 @@ export function modelOptionsForTier(catalog: ModelCatalog, tier: string): ModelS
 export function modelOptionsForCompletionProvider(
 	catalog: ModelCatalog,
 	tier: string,
-	provider: CompletionProvider
+	provider: CompletionProvider,
+	chatGptModelIds: readonly string[] | null = null
 ): ModelSelectorOption[] {
 	if (provider === 'spikonado') return modelOptionsForTier(catalog, tier);
 	return catalog.models
-		.filter((model) => model.provider === provider)
+		.filter(
+			(model) =>
+				model.provider === 'openai' &&
+				(provider !== 'chatgpt' || chatGptModelIds?.includes(model.id))
+		)
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
 }
 
@@ -94,9 +99,10 @@ export function resolveModelForCompletionProvider(
 	catalog: ModelCatalog,
 	tier: string,
 	provider: CompletionProvider,
-	modelId: CatalogModelId
+	modelId: CatalogModelId,
+	chatGptModelIds: readonly string[] | null = null
 ): CatalogModelId | undefined {
-	const options = modelOptionsForCompletionProvider(catalog, tier, provider);
+	const options = modelOptionsForCompletionProvider(catalog, tier, provider, chatGptModelIds);
 	if (options.some((option) => option.id === modelId && !option.locked)) return modelId;
 	return options.find((option) => !option.locked)?.id;
 }
