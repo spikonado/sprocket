@@ -5,7 +5,7 @@
 	type Props = {
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
-		onClose: () => void;
+		onClose?: () => void;
 	};
 
 	let { theme, onThemeChange, onClose }: Props = $props();
@@ -27,12 +27,14 @@
 		<Moon class="size-3.5" aria-hidden="true" />
 	{/if}
 </button>
-<button
-	type="button"
-	class={buttonClass}
-	aria-label="Close sidebar"
-	title="Close sidebar"
-	onclick={onClose}
->
-	<PanelLeft class="size-3.5" aria-hidden="true" />
-</button>
+{#if onClose}
+	<button
+		type="button"
+		class={buttonClass}
+		aria-label="Close sidebar"
+		title="Close sidebar"
+		onclick={onClose}
+	>
+		<PanelLeft class="size-3.5" aria-hidden="true" />
+	</button>
+{/if}
