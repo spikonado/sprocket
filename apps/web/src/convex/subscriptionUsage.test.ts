@@ -68,6 +68,36 @@ describe('subscription and usage backend', () => {
 		).rejects.toThrow(/per-call limit/);
 	});
 
+	it('rejects fractional and non-finite internal usage charges', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_fractional';
+		for (const count of [1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+			await expect(
+				t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+					userId,
+					count
+				})
+			).rejects.toThrow(/per-call limit/);
+		}
+	});
+
+	it('accepts an internal usage charge exactly at the per-call cap', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_exactcap';
+		const asUser = t.withIdentity({ subject: userId });
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId,
+			count: 1_000_000_000_000
+		});
+
+		const usage = await asUser.query(api.usage.getMyUsage, {});
+		const model = usage.meters.find((meter) => meter.id === 'modelUsage');
+		const weekly = model?.windows.find((window) => window.period === 'weekly');
+		expect(weekly?.used).toBe(1_000_000_000_000);
+	});
+
 	it('reports usage overdraft and preserves it', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
