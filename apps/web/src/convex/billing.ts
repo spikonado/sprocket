@@ -15,7 +15,9 @@ import {
 	ensureSubscription,
 	getSubscriptionDoc,
 	getSubscriptionDocExclusive,
-	getTierLabel
+	getTierLabel,
+	resolveTierLimits,
+	subscriptionIsActive
 } from '@convex/lib/tiers';
 import { vBillingInterval, vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
 
@@ -68,7 +70,7 @@ export const getMySubscription = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const subscription = await getSubscriptionDoc(ctx, userId);
-		const tier = subscription?.status === 'active' ? subscription.tier : 'free';
+		const tier = subscriptionIsActive(subscription) ? subscription!.tier : 'free';
 		const customer = subscription?.dodoSubscriptionId
 			? await ctx.db
 					.query('billingCustomers')
@@ -79,8 +81,8 @@ export const getMySubscription = query({
 			tier,
 			tierLabel: await getTierLabel(ctx, tier),
 			billingManaged:
-				subscription?.status === 'active' &&
-				Boolean(subscription.dodoSubscriptionId) &&
+				subscriptionIsActive(subscription) &&
+				Boolean(subscription?.dodoSubscriptionId) &&
 				customer !== null
 		};
 	}
@@ -257,15 +259,29 @@ export const upsertDodoSubscription = internalMutation({
 		dodoProductId: v.string(),
 		dodoCustomerId: v.string(),
 		status: vSubscriptionStatus,
-		eventAt: v.number()
+		eventAt: v.number(),
+		billingInterval: vBillingInterval,
+		billingPeriodStart: v.number(),
+		billingPeriodEnd: v.number(),
+		cancelAtNextBillingDate: v.boolean()
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		if (args.billingPeriodEnd <= args.billingPeriodStart) {
+			throw new Error('Dodo billing period must have a positive duration.');
+		}
 		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
 		if (existing?.status === 'active' && existing.tier !== 'free' && !existing.dodoSubscriptionId) {
 			return null;
 		}
 		if (existing && args.eventAt < existing.eventAt) return null;
+		if (
+			existing?.dodoSubscriptionId &&
+			existing.dodoSubscriptionId !== args.dodoSubscriptionId &&
+			subscriptionIsActive(existing)
+		) {
+			return null;
+		}
 		if (existing && args.eventAt === existing.eventAt && existing.status !== 'active') {
 			if (args.status === 'active') return null;
 		}
@@ -289,11 +305,40 @@ export const upsertDodoSubscription = internalMutation({
 			});
 		}
 
+		const effectiveStatus =
+			args.status === 'cancelled' &&
+			args.cancelAtNextBillingDate &&
+			args.eventAt < args.billingPeriodEnd
+				? 'active'
+				: args.status;
+		const isNewPaidTerm =
+			effectiveStatus === 'active' &&
+			(!existing || existing.dodoSubscriptionId !== args.dodoSubscriptionId);
+		const oldLimits =
+			args.status === 'active' && existing && existing.tier !== args.tier
+				? await resolveTierLimits(ctx, existing.tier)
+				: null;
+		const newLimits = oldLimits ? await resolveTierLimits(ctx, args.tier) : null;
+		const isUpgrade =
+			oldLimits !== null &&
+			newLimits !== null &&
+			newLimits.modelUsage.weekly >= oldLimits.modelUsage.weekly &&
+			newLimits.modelUsage.monthly >= oldLimits.modelUsage.monthly &&
+			(newLimits.modelUsage.weekly > oldLimits.modelUsage.weekly ||
+				newLimits.modelUsage.monthly > oldLimits.modelUsage.monthly);
 		const subscription = {
 			userId: args.userId,
 			tier: args.tier,
-			status: args.status,
+			status: effectiveStatus,
 			eventAt: args.eventAt,
+			billingInterval: args.billingInterval,
+			billingPeriodStart: args.billingPeriodStart,
+			billingPeriodEnd: args.billingPeriodEnd,
+			cancelAtNextBillingDate: args.cancelAtNextBillingDate,
+			quotaResetAt:
+				isNewPaidTerm || isUpgrade
+					? Math.max(args.eventAt, (existing?.quotaResetAt ?? -Infinity) + 1)
+					: existing?.quotaResetAt,
 			dodoSubscriptionId: args.dodoSubscriptionId,
 			dodoProductId: args.dodoProductId
 		};

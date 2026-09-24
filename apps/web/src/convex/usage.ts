@@ -2,7 +2,7 @@ import { query } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
 import { vMyUsage } from '@convex/lib/docs';
 import { getMeterWindow, usageMeters, usagePeriods } from '@convex/lib/rateLimits';
-import { getSubscriptionTier, resolveTierInfo } from '@convex/lib/tiers';
+import { getSubscriptionDoc, getSubscriptionTier, resolveTierInfo } from '@convex/lib/tiers';
 
 export const getMyUsage = query({
 	args: {},
@@ -10,6 +10,7 @@ export const getMyUsage = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const tier = await getSubscriptionTier(ctx, userId);
+		const subscription = await getSubscriptionDoc(ctx, userId);
 		const { limits, label: tierLabel } = await resolveTierInfo(ctx, tier);
 		const meters = await Promise.all(
 			usageMeters.map(async (meter) => ({
@@ -19,7 +20,7 @@ export const getMyUsage = query({
 				windows: await Promise.all(
 					usagePeriods.map(async (period) => ({
 						period,
-						...(await getMeterWindow(ctx, meter.id, period, userId, limits))
+						...(await getMeterWindow(ctx, meter.id, period, userId, limits, subscription))
 					}))
 				)
 			}))

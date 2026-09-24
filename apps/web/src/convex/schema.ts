@@ -102,6 +102,11 @@ export default defineSchema({
 		tier: v.string(),
 		status: vSubscriptionStatus,
 		eventAt: v.number(),
+		billingInterval: v.optional(vBillingInterval),
+		billingPeriodStart: v.optional(v.number()),
+		billingPeriodEnd: v.optional(v.number()),
+		cancelAtNextBillingDate: v.optional(v.boolean()),
+		quotaResetAt: v.optional(v.number()),
 		dodoSubscriptionId: v.optional(v.string()),
 		dodoProductId: v.optional(v.string())
 	}).index('by_userId', ['userId']),

@@ -6,6 +6,8 @@ import { internal } from '@convex/_generated/api';
 import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { vSubscriptionStatus } from '@convex/lib/validators';
 
+type BillingInterval = 'monthly' | 'annual';
+
 const http = httpRouter();
 const subscriptionMetadataSchema = z.object({
 	userId: z.string().optional(),
@@ -22,6 +24,17 @@ function eventTimestampMs(timestamp: Date | string | undefined): number {
 				: Number.NaN;
 	if (!Number.isFinite(milliseconds)) throw new Error('Dodo webhook has an invalid timestamp.');
 	return milliseconds;
+}
+
+function billingInterval(data: Subscription): BillingInterval {
+	if (data.payment_frequency_interval === 'Month' && data.payment_frequency_count === 1)
+		return 'monthly';
+	if (
+		(data.payment_frequency_interval === 'Year' && data.payment_frequency_count === 1) ||
+		(data.payment_frequency_interval === 'Month' && data.payment_frequency_count === 12)
+	)
+		return 'annual';
+	throw new Error('Dodo subscription has an unsupported billing interval.');
 }
 
 async function persistSubscription(
@@ -64,7 +77,10 @@ async function persistSubscription(
 		metadataTier: metadata.success ? metadata.data.tierId : undefined,
 		existingTier,
 		configuredTier: storedTier,
-		preferConfiguredTier
+		preferConfiguredTier:
+			preferConfiguredTier &&
+			(!data.scheduled_change ||
+				eventTimestampMs(data.scheduled_change.effective_at) <= eventTimestampMs(timestamp))
 	});
 	if (!tier) {
 		console.warn('Ignoring Dodo subscription for an unknown product.', data.product_id);
@@ -78,7 +94,11 @@ async function persistSubscription(
 		dodoProductId: data.product_id,
 		dodoCustomerId: data.customer.customer_id,
 		status,
-		eventAt: eventTimestampMs(timestamp)
+		eventAt: eventTimestampMs(timestamp),
+		billingInterval: billingInterval(data),
+		billingPeriodStart: eventTimestampMs(data.previous_billing_date),
+		billingPeriodEnd: eventTimestampMs(data.next_billing_date),
+		cancelAtNextBillingDate: data.cancel_at_next_billing_date
 	});
 }
 
@@ -92,8 +112,23 @@ http.route({
 			persistSubscription(ctx, payload.data, 'active', payload.timestamp),
 		onSubscriptionPlanChanged: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'active', payload.timestamp, true),
+		onSubscriptionUpdated: async (ctx, payload) => {
+			const status = payload.data.status;
+			if (!['active', 'on_hold', 'cancelled', 'expired', 'failed'].includes(status)) return;
+			await persistSubscription(
+				ctx,
+				payload.data,
+				status as Infer<typeof vSubscriptionStatus>,
+				payload.timestamp,
+				true
+			);
+		},
 		onSubscriptionOnHold: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'on_hold', payload.timestamp),
+		onSubscriptionPaused: (ctx, payload) =>
+			persistSubscription(ctx, payload.data, 'on_hold', payload.timestamp),
+		onSubscriptionUnpaused: (ctx, payload) =>
+			persistSubscription(ctx, payload.data, 'active', payload.timestamp),
 		onSubscriptionCancelled: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'cancelled', payload.timestamp),
 		onSubscriptionExpired: (ctx, payload) =>

@@ -119,7 +119,16 @@ export async function getSubscriptionTier(
 	userId: string
 ): Promise<SubscriptionTier> {
 	const subscription = await getSubscriptionDoc(ctx, userId);
-	return subscription?.status === 'active' ? subscription.tier : 'free';
+	return subscriptionIsActive(subscription) ? subscription!.tier : 'free';
+}
+
+export function subscriptionIsActive(subscription: Doc<'subscriptions'> | null): boolean {
+	return (
+		subscription?.status === 'active' &&
+		(!subscription.dodoSubscriptionId ||
+			subscription.billingPeriodEnd === undefined ||
+			Date.now() < subscription.billingPeriodEnd)
+	);
 }
 
 /** Insert a free/active row when missing; never overwrites an existing grant. */
@@ -128,7 +137,7 @@ export async function ensureSubscription(
 	userId: string
 ): Promise<SubscriptionTier> {
 	const existing = await getSubscriptionDocExclusive(ctx, userId);
-	if (existing) return existing.status === 'active' ? existing.tier : 'free';
+	if (existing) return subscriptionIsActive(existing) ? existing.tier : 'free';
 	// eventAt 0 so bootstrap rows never win ordering over operator edits.
 	await ctx.db.insert('subscriptions', {
 		userId,

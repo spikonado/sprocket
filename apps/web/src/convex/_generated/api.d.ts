@@ -34,6 +34,7 @@ import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentQuestions from "../lib/agentQuestions.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_billingWindows from "../lib/billingWindows.js";
 import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
 import type * as lib_docs from "../lib/docs.js";
@@ -125,6 +126,7 @@ declare const fullApi: ApiFromModules<{
   "lib/agentQuestions": typeof lib_agentQuestions;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/auth": typeof lib_auth;
+  "lib/billingWindows": typeof lib_billingWindows;
   "lib/claimedWebJob": typeof lib_claimedWebJob;
   "lib/contextHandoff": typeof lib_contextHandoff;
   "lib/docs": typeof lib_docs;

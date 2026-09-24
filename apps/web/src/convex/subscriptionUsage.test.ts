@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { api, internal } from '@convex/_generated/api';
+import { api, components, internal } from '@convex/_generated/api';
 import { initConvexTest, type ConvexTestInstance } from './test.setup';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
@@ -51,8 +51,8 @@ describe('subscription and usage backend', () => {
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
 		expect(usage.meters[0]?.windows).toEqual([
-			{ period: 'weekly', used: 0, limit: 170 * UNITS_PER_DOLLAR, resetsAt: null },
-			{ period: 'monthly', used: 0, limit: 500 * UNITS_PER_DOLLAR, resetsAt: null }
+			{ period: 'weekly', used: 0, limit: 170 * UNITS_PER_DOLLAR, resetsAt: expect.any(Number) },
+			{ period: 'monthly', used: 0, limit: 500 * UNITS_PER_DOLLAR, resetsAt: expect.any(Number) }
 		]);
 	});
 
@@ -78,6 +78,37 @@ describe('subscription and usage backend', () => {
 				userId
 			})
 		).rejects.toThrow(/model usage limit reached/);
+	});
+
+	it('carries old first-use usage into the calendar window on the first new charge', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_legacy_usage';
+		const today = new Date();
+		const monday =
+			Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) -
+			((today.getUTCDay() + 6) % 7) * 86_400_000;
+		await t.mutation(components.rateLimiter.lib.rateLimit, {
+			name: 'modelUsageWeekly',
+			key: userId,
+			config: {
+				kind: 'fixed window',
+				rate: 5 * UNITS_PER_DOLLAR,
+				period: 7 * 86_400_000,
+				start: monday
+			},
+			count: 2 * UNITS_PER_DOLLAR,
+			reserve: true
+		});
+		const asUser = t.withIdentity({ subject: userId });
+		const used = async () =>
+			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows[0]?.used;
+		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId,
+			count: UNITS_PER_DOLLAR
+		});
+		expect(await used()).toBe(3 * UNITS_PER_DOLLAR);
 	});
 
 	it('uses only active subscriptions and ignores stale rows', async () => {
@@ -265,6 +296,62 @@ describe('subscription and usage backend', () => {
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
 		expect(weekly).toMatchObject({ used: 6 * UNITS_PER_DOLLAR });
+	});
+
+	it('resets both windows on a paid upgrade, but not on a downgrade or duplicate webhook', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_upgrade';
+		const now = Date.now();
+		const subscription = {
+			userId,
+			tier: 'pro',
+			dodoSubscriptionId: 'sub_upgrade',
+			dodoProductId: 'prod_pro',
+			dodoCustomerId: 'cus_upgrade',
+			status: 'active' as const,
+			eventAt: now,
+			billingInterval: 'monthly' as const,
+			billingPeriodStart: now - 60_000,
+			billingPeriodEnd: now + 30 * 86_400_000,
+			cancelAtNextBillingDate: false
+		};
+		await t.mutation(internal.billing.upsertDodoSubscription, subscription);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId,
+			count: 8 * UNITS_PER_DOLLAR
+		});
+		const asUser = t.withIdentity({ subject: userId });
+		const weeklyUsed = async () =>
+			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows[0]?.used;
+		expect(await weeklyUsed()).toBe(8 * UNITS_PER_DOLLAR);
+
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			tier: 'max',
+			dodoProductId: 'prod_max',
+			eventAt: now + 1
+		});
+		expect(await weeklyUsed()).toBe(0);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId,
+			count: 30 * UNITS_PER_DOLLAR
+		});
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			tier: 'max',
+			dodoProductId: 'prod_max',
+			eventAt: now + 2
+		});
+		expect(await weeklyUsed()).toBe(30 * UNITS_PER_DOLLAR);
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			eventAt: now + 3
+		});
+		expect(await weeklyUsed()).toBe(30 * UNITS_PER_DOLLAR);
+		await expect(t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId })).rejects.toThrow(
+			/Weekly model usage limit reached/
+		);
 	});
 
 	it('materializes exactly one users row per subject across repeated page loads', async () => {
