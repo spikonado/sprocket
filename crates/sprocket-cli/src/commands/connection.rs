@@ -199,6 +199,10 @@ async fn post<T: DeserializeOwned>(
             .unwrap_or_else(|_| format!("local server returned {status}"));
         let message = if status == reqwest::StatusCode::NOT_FOUND {
             format!("{message}. Update and restart the local Sprocket server to use CLI commands.")
+        } else if operation == "bootstrap" && status == reqwest::StatusCode::UNAUTHORIZED {
+            format!(
+                "{message}. Older Sprocket servers also report this when the CLI version or Convex deployment differs. If you updated Sprocket, restart the running app or server. Otherwise, check that both use the same PUBLIC_CONVEX_URL and SPROCKET_DATA_DIR."
+            )
         } else {
             message
         };
@@ -372,6 +376,42 @@ mod tests {
         ] {
             assert!(validate_local_url(url).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn legacy_bootstrap_rejection_includes_restart_guidance() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            let body = r#"{"error":"authentication required"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            )
+            .unwrap();
+        });
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let error = post::<CliBootstrapResponse>(&http, &address, "", "bootstrap", &())
+            .await
+            .err()
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            error.downcast_ref::<HttpError>().unwrap().status,
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let message = error.to_string();
+        assert!(message.contains("authentication required"), "{message}");
+        assert!(
+            message.contains("restart the running app or server"),
+            "{message}"
+        );
+        assert!(message.contains("PUBLIC_CONVEX_URL"), "{message}");
+        assert!(!transient(&error));
     }
 
     #[tokio::test]
