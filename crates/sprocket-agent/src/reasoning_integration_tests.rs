@@ -709,7 +709,15 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
 
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 2);
-    let replay: JsonValue = serde_json::from_slice(&requests[1]).unwrap();
+    let requests = requests
+        .iter()
+        .map(|body| serde_json::from_slice::<JsonValue>(body).unwrap())
+        .collect::<Vec<_>>();
+    for request in &requests {
+        assert_eq!(request["store"], false);
+        assert_eq!(request["include"], json!(["reasoning.encrypted_content"]));
+    }
+    let replay = &requests[1];
     let input = replay["input"].as_array().unwrap();
     assert_eq!(input.len(), 5);
     assert_eq!(input[0]["content"][0]["text"], "Where is the workspace?");
@@ -732,6 +740,4 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
     assert_eq!(input[4]["type"], "function_call_output");
     assert_eq!(input[4]["call_id"], TOOL_CALL_ID);
     assert_eq!(input[4]["output"], "/workspace");
-    assert_eq!(replay["store"], false);
-    assert_eq!(replay["include"], json!(["reasoning.encrypted_content"]));
 }
