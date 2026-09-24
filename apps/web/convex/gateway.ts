@@ -2,7 +2,11 @@ import { v, ConvexError, type Infer } from 'convex/values';
 import { mutation } from '@convex/_generated/server';
 import { modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { verifyGatewayToken } from '@convex/lib/gatewayToken';
-import { MAX_QUOTA_CHARGE_UNITS, applyGatewayUsageCharge, gatewayQuotaStatus } from '@convex/lib/rateLimits';
+import {
+	MAX_QUOTA_CHARGE_UNITS,
+	applyGatewayUsageCharge,
+	gatewayQuotaStatus
+} from '@convex/lib/rateLimits';
 import { vSubscriptionTier } from '@convex/lib/validators';
 
 const vQuota = v.object({
