@@ -91,9 +91,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 				executionSecret: 'empty-prompt-secret'
 			})
 		).rejects.toThrow('Message cannot be empty.');
-		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toMatchObject({
-			selectedModel: 'gpt-5.6-sol'
-		});
+		const unchangedThread = await asUser.query(api.threads.getByThreadId, { threadId });
+		expect(unchangedThread.selectedModel).toBe('gpt-5.6-sol');
+		expect(unchangedThread.completionProvider).toBeUndefined();
 	});
 
 	it('creates a queued run and is idempotent for the same submission', async () => {
