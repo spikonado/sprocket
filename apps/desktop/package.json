@@ -31,6 +31,7 @@
 			"main.mjs",
 			"local-server.mjs",
 			"navigation-guard.mjs",
+			"pairing-proof.mjs",
 			"updater.mjs",
 			"preload.cjs",
 			"local-config.mjs",
