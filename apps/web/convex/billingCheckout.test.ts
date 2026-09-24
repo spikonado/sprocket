@@ -290,6 +290,7 @@ describe('Dodo subscription persistence', () => {
 
 	it('activates an arbitrary Dodo tier, links the customer, and ignores an older cancellation', async () => {
 		const t = initConvexTest();
+		const now = Date.now();
 		await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_1',
 			attemptId: 'attempt_1',
@@ -305,6 +306,10 @@ describe('Dodo subscription persistence', () => {
 			dodoProductId: 'prod_monthly',
 			dodoCustomerId: 'cus_1',
 			status: 'active' as const,
+			billingInterval: 'monthly' as const,
+			billingPeriodStart: now - 60_000,
+			billingPeriodEnd: now + 60_000,
+			cancelAtNextBillingDate: false,
 			eventAt: 2_000
 		};
 		await t.mutation(internal.billing.upsertDodoSubscription, args);
@@ -360,6 +365,10 @@ describe('Dodo subscription persistence', () => {
 			dodoProductId: 'prod_monthly',
 			dodoCustomerId: 'cus_lapsed',
 			status: 'cancelled' as const,
+			billingInterval: 'monthly' as const,
+			billingPeriodStart: 1_000,
+			billingPeriodEnd: 3_000,
+			cancelAtNextBillingDate: false,
 			eventAt: 2_000
 		};
 		await t.mutation(internal.billing.upsertDodoSubscription, args);
@@ -391,6 +400,10 @@ describe('Dodo subscription persistence', () => {
 			dodoProductId: 'prod_monthly',
 			dodoCustomerId: 'cus_1',
 			status: 'active',
+			billingInterval: 'monthly',
+			billingPeriodStart: 1_000,
+			billingPeriodEnd: 3_000,
+			cancelAtNextBillingDate: false,
 			eventAt: 2
 		});
 		const subscription = await t.run(async (ctx) =>
@@ -414,6 +427,71 @@ describe('Dodo subscription persistence', () => {
 		await expect(
 			t.withIdentity({ subject: 'user_max' }).query(api.billing.getMySubscription, {})
 		).resolves.toMatchObject({ tier: 'max', billingManaged: false });
+	});
+
+	it('keeps a scheduled cancellation paid until renewal, then permits a new interval checkout', async () => {
+		const t = initConvexTest();
+		const now = Date.now();
+		const args = {
+			userId: 'user_interval_change',
+			tier: 'pro',
+			dodoSubscriptionId: 'sub_monthly',
+			dodoProductId: 'prod_monthly',
+			dodoCustomerId: 'cus_interval_change',
+			status: 'active' as const,
+			eventAt: now - 1_000,
+			billingInterval: 'monthly' as const,
+			billingPeriodStart: now - 86_400_000,
+			billingPeriodEnd: now + 86_400_000,
+			cancelAtNextBillingDate: false
+		};
+		await t.mutation(internal.billing.upsertDodoSubscription, args);
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...args,
+			status: 'cancelled',
+			cancelAtNextBillingDate: true,
+			eventAt: now
+		});
+		const before = await t.run(async (ctx) =>
+			ctx.db
+				.query('subscriptions')
+				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
+				.unique()
+		);
+		expect(before).toMatchObject({ status: 'active', tier: 'pro', cancelAtNextBillingDate: true });
+		const annualCheckout = {
+			userId: args.userId,
+			attemptId: 'attempt_annual',
+			tierId: 'pro',
+			interval: 'annual' as const,
+			productId: 'prod_annual',
+			now
+		};
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				...annualCheckout
+			})
+		).rejects.toThrow('A paid plan is already active');
+		await t.run(async (ctx) => {
+			if (!before) throw new Error('Expected paid subscription.');
+			await ctx.db.patch(before._id, { billingPeriodEnd: now - 1 });
+		});
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, annualCheckout)
+		).rejects.toThrow('A paid plan is already active');
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...args,
+			status: 'expired',
+			cancelAtNextBillingDate: true,
+			billingPeriodEnd: now - 1,
+			eventAt: now + 1
+		});
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, annualCheckout)
+		).resolves.toMatchObject({
+			kind: 'create',
+			interval: 'annual'
+		});
 	});
 });
 

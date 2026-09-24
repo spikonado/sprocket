@@ -43,4 +43,11 @@ crons.interval(
 	{ cursor: null, vaultAfter: null, tableScanDone: false }
 );
 
+crons.interval(
+	'expire completed usage windows',
+	{ hours: 24 },
+	internal.lib.rateLimits.cleanupUsageWindows,
+	{}
+);
+
 export default crons;
