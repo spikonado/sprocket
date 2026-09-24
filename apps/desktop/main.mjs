@@ -7,6 +7,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
 import { waitForServerReady } from './local-server.mjs';
+import { parsePairingProof } from './pairing-proof.mjs';
 import { createAppImageUpdater, DesktopUpdater, stopUpdateProcess } from './updater.mjs';
 
 const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
@@ -67,25 +68,6 @@ function parseNonEmptyString(value) {
 	}
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : null;
-}
-
-function parsePairingProof(value) {
-	if (!isPlainObject(value)) {
-		return null;
-	}
-	const httpBaseUrl = parseNonEmptyString(value.httpBaseUrl);
-	if (
-		httpBaseUrl === null ||
-		(value.webUiEnabled !== true && value.webUiEnabled !== false) ||
-		!Array.isArray(value.proof)
-	) {
-		return null;
-	}
-	return {
-		httpBaseUrl,
-		webUiEnabled: value.webUiEnabled,
-		proof: value.proof
-	};
 }
 
 function parseDesktopBootstrap(value) {
