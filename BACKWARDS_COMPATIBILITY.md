@@ -11,14 +11,13 @@ the next completion. OpenAI rejects the surviving message or function item IDs
 when their required reasoning items are missing. `OpenAiReplayClient` clears
 assistant message IDs and function item IDs on outgoing BYOK requests and sets
 `store: false`. It requests and replays encrypted reasoning, and keeps function
-call IDs used to pair tool results. Historical reasoning without encrypted
-content cannot be replayed without server storage, so the adapter omits it,
-including any assistant message left empty. Stored transcripts remain unchanged.
+call IDs used to pair tool results. Reasoning without encrypted content cannot
+be replayed without server storage, so the adapter omits it. Stored transcripts
+remain unchanged. Repairing older history is outside this fix's scope.
 
 Remove this adapter only after the installed Rig version preserves complete
 response item relationships through streaming and replay, and the BYOK
-multi-turn regression passes with native item IDs. Existing reconstructed
-transcripts must also remain replayable.
+multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
