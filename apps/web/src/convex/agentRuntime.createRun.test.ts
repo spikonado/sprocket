@@ -43,9 +43,12 @@ describe('agentRuntime.insertGatewayRun', () => {
 		expect(run).not.toHaveProperty('serviceTier');
 	});
 
-	it('persists direct OpenAI routing on the thread and run', async () => {
+	it('updates the thread model and provider when the next run is submitted', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+		const initialThread = await asUser.query(api.threads.getByThreadId, { threadId });
+		expect(initialThread.selectedModel).toBe('gpt-5.6-sol');
+		expect(initialThread.completionProvider).toBeUndefined();
 		const created = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'direct-openai',
@@ -81,12 +84,16 @@ describe('agentRuntime.insertGatewayRun', () => {
 				threadId,
 				prompt: '   ',
 				imageUploadIds: [],
-				selectedModel: 'gpt-5.6-sol',
+				selectedModel: 'openai-model',
+				completionProvider: 'openai',
 				reasoningEffort: 'medium',
 				fastMode: false,
 				executionSecret: 'empty-prompt-secret'
 			})
 		).rejects.toThrow('Message cannot be empty.');
+		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toMatchObject({
+			selectedModel: 'gpt-5.6-sol'
+		});
 	});
 
 	it('creates a queued run and is idempotent for the same submission', async () => {
