@@ -865,13 +865,25 @@ export const mandateCharge = action({
 			}
 
 			const { credentials, transactionId } = result;
-			if (result.status === 'failed' || !credentials || !transactionId) {
+			if (result.status === 'failed') {
 				await ctx.runMutation(internal.payments.updateChargeStatus, {
 					chargeId: reservation.chargeId,
 					userId: actor.userId,
 					status: 'failed'
 				});
 				throw new Error(result.errorMessage ?? result.errorCode ?? 'Mandate charge failed.');
+			}
+			if (!credentials || !transactionId) {
+				// The response is unusable but the charge may still have committed
+				// at Prava, exactly like a lost response. Keep providerRequestedAt
+				// so a same-reference retry cannot POST a second charge.
+				await ctx.runMutation(internal.payments.releaseChargeReservation, {
+					chargeId: reservation.chargeId,
+					userId: actor.userId
+				});
+				throw new Error(
+					'Prava returned an incomplete charge response and the charge may have been submitted; refusing a same-reference retry to avoid a duplicate charge.'
+				);
 			}
 			await ctx.runMutation(internal.payments.completeCharge, {
 				chargeId: reservation.chargeId,
