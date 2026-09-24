@@ -56,6 +56,18 @@ describe('subscription and usage backend', () => {
 		]);
 	});
 
+	it('rejects internal usage charges over the per-call cap', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_overcap';
+		await expect(
+			t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+				userId,
+				count: 2_000_000_000_000
+			})
+		).rejects.toThrow(/per-call limit/);
+	});
+
 	it('reports usage overdraft and preserves it', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
