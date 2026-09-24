@@ -16,7 +16,7 @@
 		"@convex-dev/action-retrier": "^0.3.1",
 		"@convex-dev/aggregate": "^0.3.0",
 		"@convex-dev/migrations": "^0.3.6",
-		"@convex-dev/rate-limiter": "^0.3.2",
+		"@convex-dev/rate-limiter": "^0.4.0",
 		"@convex-dev/workpool": "^0.4.10",
 		"@exalabs/convex-exa": "^0.1.1",
 		"@firecrawl/firecrawl-convex": "^0.1.1",
