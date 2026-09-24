@@ -149,7 +149,6 @@
 			convexAuthRetryPending.set(false);
 		}
 	});
-	const setThreadCompletionSettings = useMutation(api.threads.setCompletionSettings);
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	const refreshMyChatGptModels = useAction(api.providerCredentials.refreshChatGptModels);
 	const renameThreadRecord = useMutation(api.threads.rename);
@@ -968,30 +967,6 @@
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	async function persistCompletionSettings(
-		completionProvider: CompletionProvider,
-		modelId: CatalogModelId
-	) {
-		const threadId = currentThreadId;
-		const userId = getCurrentUserId();
-		if (!threadId || !userId) {
-			return;
-		}
-
-		try {
-			await setThreadCompletionSettings({
-				threadId,
-				selectedModel: modelId,
-				completionProvider
-			});
-		} catch (error) {
-			if (currentThreadId === threadId && getCurrentUserId() === userId) {
-				currentError =
-					error instanceof Error ? error.message : 'Failed to save the selected model.';
-			}
-		}
-	}
-
 	function handleProviderConfigurationChange(change: {
 		provider: 'openai' | 'chatgpt';
 		configured: boolean;
@@ -1007,7 +982,6 @@
 		providerConfigurationError = null;
 		if (!change.configured && selectedCompletionProvider === change.provider) {
 			selectedCompletionProvider = 'spikonado';
-			void persistCompletionSettings('spikonado', selectedModel);
 		}
 	}
 
@@ -2207,9 +2181,6 @@
 								{chatGptModelIds}
 								providersReady={providerConfigurationReady}
 								bind:selectedCompletionProvider
-								onCompletionSettingsChange={(provider, modelId) => {
-									void persistCompletionSettings(provider, modelId);
-								}}
 								bind:selectedReasoningEffort
 								bind:fastMode
 								pendingQuestion={pendingAgentQuestion}

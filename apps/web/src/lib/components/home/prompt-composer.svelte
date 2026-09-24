@@ -44,7 +44,6 @@
 		chatGptModelIds?: readonly string[] | null;
 		providersReady?: boolean;
 		selectedCompletionProvider?: CompletionProvider;
-		onCompletionSettingsChange?: (provider: CompletionProvider, modelId: CatalogModelId) => void;
 		selectedReasoningEffort?: string;
 		fastMode?: boolean;
 		pendingQuestion?: PendingAgentQuestion | null;
@@ -76,7 +75,6 @@
 		chatGptModelIds = null,
 		providersReady = true,
 		selectedCompletionProvider = $bindable<CompletionProvider>('spikonado'),
-		onCompletionSettingsChange,
 		selectedReasoningEffort = $bindable<string>(defaultReasoningEffort),
 		fastMode = $bindable(false),
 		pendingQuestion = null,
@@ -448,7 +446,6 @@
 		selectedModel = modelId;
 		const model = getCatalogModel(modelCatalog, modelId);
 		if (model) selectedReasoningEffort = model.defaultReasoningEffort;
-		onCompletionSettingsChange?.(selectedCompletionProvider, modelId);
 	}
 
 	function handleProviderChange(provider: CompletionProvider) {
@@ -467,7 +464,6 @@
 			getCatalogModel(modelCatalog, modelId)?.defaultReasoningEffort ??
 			modelCatalog.defaultReasoningEffort;
 		fastMode = false;
-		onCompletionSettingsChange?.(provider, modelId);
 	}
 
 	$effect(() => {
