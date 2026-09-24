@@ -126,29 +126,6 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             .await
             .authenticated
     );
-    let mut incompatible = CliBootstrapRequest {
-        client: CliConnectRequest {
-            client_id: uuid::Uuid::new_v4().to_string(),
-            client_version: "999.0.0".into(),
-            deployment_url: state.convex_deployment_url.clone(),
-        },
-        session_token: uuid::Uuid::new_v4().to_string(),
-        proof: Vec::new(),
-    };
-    incompatible.proof = state
-        .auth
-        .pairing_proof(&cli_bootstrap_message(
-            &discovered.instance_id,
-            &discovered.http_base_url,
-            &incompatible,
-        ))
-        .unwrap();
-    assert_eq!(
-        call(&state, "", "bootstrap", &incompatible, "127.0.0.1:1000")
-            .await
-            .0,
-        StatusCode::UNAUTHORIZED
-    );
     state
         .auth
         .sync_sessions_with_owner(Some("user"))
@@ -183,6 +160,65 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             .0,
         StatusCode::UNAUTHORIZED
     );
+}
+
+#[tokio::test]
+async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
+    let (_directory, state, token, _) = fixture().await;
+    for (version, deployment, guidance) in [
+        ("999.0.0", state.convex_deployment_url.as_str(), "Restart"),
+        (
+            sprocket_workspace::SPROCKET_VERSION,
+            "https://other.convex.cloud",
+            "PUBLIC_CONVEX_URL",
+        ),
+    ] {
+        let mut request = CliBootstrapRequest {
+            client: CliConnectRequest {
+                client_id: uuid::Uuid::new_v4().to_string(),
+                client_version: version.into(),
+                deployment_url: deployment.into(),
+            },
+            session_token: uuid::Uuid::new_v4().to_string(),
+            proof: Vec::new(),
+        };
+        let (status, _) = call(&state, "", "bootstrap", &request, "127.0.0.1:1000").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        request.proof = state
+            .auth
+            .pairing_proof(&cli_bootstrap_message(
+                &state.auth.instance_id,
+                &state.http_base_url,
+                &request,
+            ))
+            .unwrap();
+        let bootstrap = call(&state, "", "bootstrap", &request, "127.0.0.1:1000").await;
+        let connect = call(&state, &token, "connect", &request.client, "127.0.0.1:1000").await;
+        assert_eq!(bootstrap, connect);
+        assert_eq!(bootstrap.0, StatusCode::CONFLICT);
+        let error = bootstrap.1["error"].as_str().unwrap();
+        assert!(error.contains(guidance), "{error}");
+        if version == "999.0.0" {
+            assert!(error.contains(version), "{error}");
+            assert!(
+                error.contains(sprocket_workspace::SPROCKET_VERSION),
+                "{error}"
+            );
+        }
+        assert!(
+            !state
+                .auth
+                .session_state(Some(&request.session_token))
+                .await
+                .authenticated
+        );
+        assert!(
+            state
+                .lifetime
+                .client(&request.client.client_id, &request.session_token)
+                .is_err()
+        );
+    }
 }
 
 async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {

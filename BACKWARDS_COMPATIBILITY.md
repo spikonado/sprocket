@@ -4,6 +4,13 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Local data directory backwards compatibility
 
+### CLI bootstrap error guidance
+
+Older servers return HTTP 401 for CLI version and Convex deployment mismatches.
+The CLI adds restart and configuration guidance to bootstrap 401 responses.
+Remove that fallback and its legacy-response test once servers without the
+separate HTTP 409 compatibility errors are outside the supported upgrade window.
+
 ### Retired repository rekey metadata
 
 Older servers may have written `previousRepositoryKey` into

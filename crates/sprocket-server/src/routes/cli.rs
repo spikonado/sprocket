@@ -70,9 +70,6 @@ async fn bootstrap(
 ) -> Result<Json<CliBootstrapResponse>, ApiError> {
     if !peer.ip().is_loopback()
         || uuid::Uuid::parse_str(&request.session_token).is_err()
-        || request.client.client_version != sprocket_workspace::SPROCKET_VERSION
-        || request.client.deployment_url.trim_end_matches('/')
-            != state.convex_deployment_url.trim_end_matches('/')
         || !crate::verify_pairing_proof(
             state.auth.pairing_credential(),
             &cli_bootstrap_message(&state.auth.instance_id, &state.http_base_url, &request),
@@ -81,6 +78,7 @@ async fn bootstrap(
     {
         return Err(ApiError::authentication_required());
     }
+    require_compatible_client(&state, &request.client)?;
     let proof = state
         .auth
         .pairing_proof(&cli_bootstrap_response_message(
@@ -135,22 +133,39 @@ async fn connect(
     Json(request): Json<CliConnectRequest>,
 ) -> Result<Json<bool>, ApiError> {
     let token = session(&state, peer, &headers).await?;
-    if request.client_version != sprocket_workspace::SPROCKET_VERSION
-        || request.deployment_url.trim_end_matches('/')
-            != state.convex_deployment_url.trim_end_matches('/')
-    {
-        return Err(ApiError::with_status(
-            StatusCode::CONFLICT,
-            anyhow::anyhow!(
-                "incompatible Sprocket server; update it or select a different data directory"
-            ),
-        ));
-    }
+    require_compatible_client(&state, &request)?;
     state
         .lifetime
         .connect(&request.client_id, &token)
         .map_err(ApiError::bad_request)?;
     Ok(Json(true))
+}
+
+fn require_compatible_client(
+    state: &AppState,
+    request: &CliConnectRequest,
+) -> Result<(), ApiError> {
+    if request.client_version != sprocket_workspace::SPROCKET_VERSION {
+        return Err(ApiError::with_status(
+            StatusCode::CONFLICT,
+            anyhow::anyhow!(
+                "Sprocket CLI version {} does not match running server version {}. Restart the Sprocket app or server after updating so both use the same version.",
+                request.client_version,
+                sprocket_workspace::SPROCKET_VERSION,
+            ),
+        ));
+    }
+    if request.deployment_url.trim_end_matches('/')
+        != state.convex_deployment_url.trim_end_matches('/')
+    {
+        return Err(ApiError::with_status(
+            StatusCode::CONFLICT,
+            anyhow::anyhow!(
+                "Sprocket CLI and running server use different Convex deployments. Use the same PUBLIC_CONVEX_URL or select a separate profile with SPROCKET_DATA_DIR."
+            ),
+        ));
+    }
+    Ok(())
 }
 
 async fn heartbeat(
