@@ -2,6 +2,24 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Provider SDK backwards compatibility
+
+### OpenAI BYOK response item replay
+
+Rig 0.42 can drop contentless reasoning items and regroup streamed output before
+the next completion. OpenAI rejects the surviving message or function item IDs
+when their required reasoning items are missing. `OpenAiReplayClient` clears
+assistant message IDs and function item IDs on outgoing BYOK requests and sets
+`store: false`. It requests and replays encrypted reasoning, and keeps function
+call IDs used to pair tool results. Historical reasoning without encrypted
+content cannot be replayed without server storage, so the adapter omits it,
+including any assistant message left empty. Stored transcripts remain unchanged.
+
+Remove this adapter only after the installed Rig version preserves complete
+response item relationships through streaming and replay, and the BYOK
+multi-turn regression passes with native item IDs. Existing reconstructed
+transcripts must also remain replayable.
+
 ## Local data directory backwards compatibility
 
 ### CLI bootstrap error guidance

@@ -20,6 +20,7 @@ use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
 };
+use crate::openai::OpenAiReplayClient;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
 use crate::types::{CompletionProvider, ContextBudget, RunContextResponse, gateway_api_v1_url};
@@ -182,7 +183,13 @@ impl AgentProvider {
                         };
                     }
                 };
-                run_with_completion_client(completion_client, self.model, runtime, request).await
+                run_with_completion_client(
+                    OpenAiReplayClient(completion_client),
+                    self.model,
+                    runtime,
+                    request,
+                )
+                .await
             }
             CompletionProvider::Chatgpt => {
                 let completion_client = match ChatGptClient::new(

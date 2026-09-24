@@ -6,6 +6,7 @@ mod context_handoff;
 mod convex;
 mod hooks;
 mod live;
+mod openai;
 mod output;
 mod provider;
 mod reasoning;

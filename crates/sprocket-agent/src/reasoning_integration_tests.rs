@@ -7,15 +7,17 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use rig::client::CompletionClient;
+use rig::client::{AgentClientExt, CompletionClient};
 use rig::completion::{CompletionModel, Message};
 use rig::message::{AssistantContent, Reasoning};
 use rig::providers::openai;
-use rig::streaming::StreamedAssistantContent;
+use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+use rig::tool::{DynamicTool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
 use super::{contiguous_text_id, durable_items_json};
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
+use crate::openai::OpenAiReplayClient;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{AgentHistoryMessage, deserialize_agent_history};
@@ -209,11 +211,12 @@ fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
     Vec::new()
 }
 
-fn spawn_gateway_sse(sse_body: String) -> (String, thread::JoinHandle<Vec<Vec<u8>>>) {
+fn spawn_responses_sse(bodies: Vec<String>) -> (String, thread::JoinHandle<Vec<Vec<u8>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("ephemeral listener");
     listener.set_nonblocking(true).expect("nonblocking accept");
     let addr = listener.local_addr().expect("listener address");
     let handle = thread::spawn(move || {
+        let mut bodies = bodies.into_iter();
         let mut captured = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut idle_since = None;
@@ -224,6 +227,7 @@ fn spawn_gateway_sse(sse_body: String) -> (String, thread::JoinHandle<Vec<Vec<u8
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
                     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
                     captured.push(read_http_request(&mut stream));
+                    let sse_body = bodies.next().expect("unexpected completion request");
                     let response = format!(
                         "HTTP/1.1 200 OK\r\n\
                          Content-Type: text/event-stream\r\n\
@@ -236,7 +240,9 @@ fn spawn_gateway_sse(sse_body: String) -> (String, thread::JoinHandle<Vec<Vec<u8
                     );
                     let _ = stream.write_all(response.as_bytes());
                     let _ = stream.flush();
-                    idle_since = Some(Instant::now());
+                    if bodies.len() == 0 {
+                        idle_since = Some(Instant::now());
+                    }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if idle_since.is_some_and(|since| since.elapsed() > Duration::from_millis(250))
@@ -355,7 +361,7 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
 
 #[tokio::test]
 async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
-    let (base_url, server) = spawn_gateway_sse(gateway_sse_body());
+    let (base_url, server) = spawn_responses_sse(vec![gateway_sse_body()]);
     let client = openai::Client::builder()
         .api_key("test-key")
         .base_url(&base_url)
@@ -595,4 +601,137 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         }),
         "mocked Responses API POST should be a stream request, got {requests:?}"
     );
+}
+
+fn output_items_sse(output: Vec<JsonValue>) -> String {
+    let mut events = vec![json!({
+        "type": "response.created",
+        "response": gateway_response("in_progress", vec![]),
+    })];
+    for (index, item) in output.iter().enumerate() {
+        events.push(json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": item,
+        }));
+        if item["type"] == "message" {
+            events.push(json!({
+                "type": "response.output_text.delta",
+                "item_id": item["id"],
+                "output_index": index,
+                "content_index": 0,
+                "delta": item["content"][0]["text"],
+            }));
+        }
+        events.push(json!({
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": item,
+        }));
+    }
+    events.push(json!({
+        "type": "response.completed",
+        "response": gateway_response("completed", output),
+    }));
+    events
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, mut event)| {
+            event["sequence_number"] = json!(sequence);
+            sse(event)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
+    let message = |id, text| {
+        json!({
+            "type": "message",
+            "id": id,
+            "role": "assistant",
+            "status": "completed",
+            "content": [{ "type": "output_text", "text": text }],
+        })
+    };
+    let (base_url, server) = spawn_responses_sse(vec![
+        output_items_sse(vec![
+            json!({
+                "type": "reasoning", "id": "rs_empty", "summary": [],
+                "status": "completed",
+            }),
+            message("msg_commentary", "Checking the workspace."),
+            json!({
+                "type": "reasoning", "id": ITEM_ID, "summary": [],
+                "encrypted_content": ENVELOPE, "status": "completed",
+            }),
+            json!({
+                "type": "function_call", "id": "fc_1", "call_id": TOOL_CALL_ID,
+                "name": TOOL_NAME, "arguments": "{\"cmd\":\"pwd\"}",
+                "status": "completed",
+            }),
+        ]),
+        output_items_sse(vec![message("msg_final", "The workspace is /workspace.")]),
+    ]);
+    let client = OpenAiReplayClient(
+        openai::Client::builder()
+            .api_key("test-key")
+            .base_url(&base_url)
+            .build()
+            .unwrap(),
+    );
+    let agent = client
+        .agent("gateway-model")
+        .additional_params(responses_api_params(false))
+        .dynamic_tool(DynamicTool::new(
+            TOOL_NAME,
+            "Read the workspace path",
+            json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
+            |_context, args| {
+                Box::pin(async move {
+                    assert_eq!(args, json!({ "cmd": "pwd" }));
+                    Ok(ToolOutput::text("/workspace"))
+                })
+            },
+        ))
+        .build();
+    let mut stream = agent
+        .stream_prompt("Where is the workspace?")
+        .max_turns(2)
+        .await;
+    let mut answer = None;
+    while let Some(item) = stream.next().await {
+        if let rig::agent::MultiTurnStreamItem::FinalResponse(response) = item.unwrap() {
+            answer = Some(response.output().to_string());
+        }
+    }
+    assert_eq!(answer.as_deref(), Some("The workspace is /workspace."));
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+    let replay: JsonValue = serde_json::from_slice(&requests[1]).unwrap();
+    let input = replay["input"].as_array().unwrap();
+    assert_eq!(input.len(), 5);
+    assert_eq!(input[0]["content"][0]["text"], "Where is the workspace?");
+    assert_eq!(input[1]["type"], "reasoning");
+    assert_eq!(input[1]["id"], ITEM_ID);
+    assert_eq!(input[1]["encrypted_content"], ENVELOPE);
+    assert_eq!(
+        input[2],
+        json!({
+            "role": "assistant", "content": "Checking the workspace.",
+        })
+    );
+    assert_eq!(
+        input[3],
+        json!({
+            "type": "function_call", "call_id": TOOL_CALL_ID,
+            "name": TOOL_NAME, "arguments": "{\"cmd\":\"pwd\"}", "status": "completed",
+        })
+    );
+    assert_eq!(input[4]["type"], "function_call_output");
+    assert_eq!(input[4]["call_id"], TOOL_CALL_ID);
+    assert_eq!(input[4]["output"], "/workspace");
+    assert_eq!(replay["store"], false);
+    assert_eq!(replay["include"], json!(["reasoning.encrypted_content"]));
 }
