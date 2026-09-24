@@ -727,7 +727,7 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
     assert_eq!(
         input[2],
         json!({
-            "role": "assistant", "content": "Checking the workspace.",
+            "type": "message", "role": "assistant", "content": "Checking the workspace.",
         })
     );
     assert_eq!(
