@@ -32,6 +32,7 @@ import type * as lib_agentQuestions from "../lib/agentQuestions.js";
 import type * as lib_artifactRegistry from "../lib/artifactRegistry.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_billingWindows from "../lib/billingWindows.js";
 import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_commandSessions from "../lib/commandSessions.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
@@ -125,6 +126,7 @@ declare const fullApi: ApiFromModules<{
   "lib/artifactRegistry": typeof lib_artifactRegistry;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/auth": typeof lib_auth;
+  "lib/billingWindows": typeof lib_billingWindows;
   "lib/claimedWebJob": typeof lib_claimedWebJob;
   "lib/commandSessions": typeof lib_commandSessions;
   "lib/contextHandoff": typeof lib_contextHandoff;

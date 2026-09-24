@@ -37,10 +37,8 @@ export async function getCachedTier(
 		.query('tiers')
 		.withIndex('by_tierId', (query) => query.eq('tierId', tierId))
 		.collect();
-
 	if (rows.length > 1) throw new Error(`Duplicate tiers rows for tier "${tierId}".`);
 	const row = rows[0];
-
 	return row ? rowToCachedTier(row) : null;
 }
 
@@ -50,9 +48,7 @@ export async function resolveTierLimits(
 	tierId: string
 ): Promise<TierLimits> {
 	const match = (await getCachedTier(ctx, tierId)) ?? (await getCachedTier(ctx, 'free'));
-
 	if (!match) throw new Error('Subscription tiers are unavailable.');
-
 	return match.limits;
 }
 
@@ -62,9 +58,7 @@ export async function resolveTierInfo(
 	tierId: string
 ): Promise<{ limits: TierLimits; label: string }> {
 	const match = (await getCachedTier(ctx, tierId)) ?? (await getCachedTier(ctx, 'free'));
-
 	if (!match) throw new Error('Subscription tiers are unavailable.');
-
 	return { limits: match.limits, label: match.label };
 }
 
@@ -73,22 +67,18 @@ export async function getTierLabel(
 	tierId: string
 ): Promise<string> {
 	const tier = await getCachedTier(ctx, tierId);
-
 	return tier?.label ?? tierId;
 }
 
 function pickSubscription(rows: Doc<'subscriptions'>[]): Doc<'subscriptions'> | null {
 	if (rows.length === 0) return null;
-
 	return rows.reduce((best, row) => {
 		// Recency wins so a newer row supersedes an older one.
 		if (row.eventAt !== best.eventAt) return row.eventAt > best.eventAt ? row : best;
 		// Same event time (e.g. retried edits): keep an active row over a lapsed one.
 		const rowActive = row.status === 'active';
 		const bestActive = best.status === 'active';
-
 		if (rowActive !== bestActive) return rowActive ? row : best;
-
 		return best;
 	});
 }
@@ -117,13 +107,10 @@ export async function getSubscriptionDocExclusive(
 ): Promise<Doc<'subscriptions'> | null> {
 	const rows = await listSubscriptions(ctx, userId);
 	const keep = pickSubscription(rows);
-
 	if (!keep) return null;
-
 	for (const row of rows) {
 		if (row._id !== keep._id) await ctx.db.delete('subscriptions', row._id);
 	}
-
 	return keep;
 }
 
@@ -132,8 +119,16 @@ export async function getSubscriptionTier(
 	userId: string
 ): Promise<SubscriptionTier> {
 	const subscription = await getSubscriptionDoc(ctx, userId);
+	return subscriptionIsActive(subscription) ? subscription!.tier : 'free';
+}
 
-	return subscription?.status === 'active' ? subscription.tier : 'free';
+export function subscriptionIsActive(subscription: Doc<'subscriptions'> | null): boolean {
+	return (
+		subscription?.status === 'active' &&
+		(!subscription.dodoSubscriptionId ||
+			subscription.billingPeriodEnd === undefined ||
+			Date.now() < subscription.billingPeriodEnd)
+	);
 }
 
 /** Insert a free/active row when missing; never overwrites an existing grant. */
@@ -142,8 +137,7 @@ export async function ensureSubscription(
 	userId: string
 ): Promise<SubscriptionTier> {
 	const existing = await getSubscriptionDocExclusive(ctx, userId);
-
-	if (existing) return existing.status === 'active' ? existing.tier : 'free';
+	if (existing) return subscriptionIsActive(existing) ? existing.tier : 'free';
 	// eventAt 0 so bootstrap rows never win ordering over operator edits.
 	await ctx.db.insert('subscriptions', {
 		userId,
@@ -151,6 +145,5 @@ export async function ensureSubscription(
 		status: 'active',
 		eventAt: 0
 	});
-
 	return 'free';
 }
