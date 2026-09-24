@@ -94,6 +94,7 @@
           packages =
             with pkgs;
             [
+              agent-browser
               bun
               commitlint
               cargo
