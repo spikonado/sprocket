@@ -68,11 +68,6 @@
             ++ electronRuntimeLibs;
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath electronRuntimeLibs;
-          shellHook = ''
-            if [[ -z "''${CI:-}" ]]; then
-              export RUSTC_WRAPPER="${pkgs.lib.getExe kache}"
-            fi
-          '';
         };
       }
     );
