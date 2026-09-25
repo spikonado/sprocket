@@ -125,10 +125,6 @@ http.route({
 		},
 		onSubscriptionOnHold: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'on_hold', payload.timestamp),
-		onSubscriptionPaused: (ctx, payload) =>
-			persistSubscription(ctx, payload.data, 'on_hold', payload.timestamp),
-		onSubscriptionUnpaused: (ctx, payload) =>
-			persistSubscription(ctx, payload.data, 'active', payload.timestamp),
 		onSubscriptionCancelled: (ctx, payload) =>
 			persistSubscription(ctx, payload.data, 'cancelled', payload.timestamp),
 		onSubscriptionExpired: (ctx, payload) =>
