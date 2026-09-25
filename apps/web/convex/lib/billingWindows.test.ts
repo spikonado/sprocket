@@ -5,6 +5,8 @@ import { billingWindow } from './billingWindows';
 const timestamp = (value: string) => Date.parse(value);
 
 function paidSubscription(interval: 'monthly' | 'annual', start: string, end: string) {
+	// SAFETY: the literal sets exactly the subscription fields billingWindow reads,
+	// and the remaining Doc<'subscriptions'> fields are unused by the code under test.
 	return {
 		status: 'active',
 		billingInterval: interval,
