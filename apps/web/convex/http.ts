@@ -118,6 +118,7 @@ http.route({
 			await persistSubscription(
 				ctx,
 				payload.data,
+				// SAFETY: the includes check above narrows status to the five vSubscriptionStatus literals.
 				status as Infer<typeof vSubscriptionStatus>,
 				payload.timestamp,
 				true

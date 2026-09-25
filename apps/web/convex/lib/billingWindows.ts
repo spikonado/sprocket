@@ -3,6 +3,8 @@ import type { UsagePeriod } from '@convex/lib/usageMeters';
 
 const DAY = 86_400_000;
 
+type UsageWindow = { start: number; end: number };
+
 function utcMonth(year: number, month: number, day: number, anchor: Date): number {
 	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 	return Date.UTC(
@@ -20,7 +22,7 @@ export function billingWindow(
 	period: UsagePeriod,
 	subscription: Doc<'subscriptions'> | null,
 	now: number
-): { start: number; end: number } {
+): UsageWindow {
 	const date = new Date(now);
 	if (period === 'weekly') {
 		const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
