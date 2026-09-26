@@ -43,6 +43,12 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Calendar usage windows
+
+Old rate-limiter rows use seven-day or thirty-day windows with randomized starts. The current quota reader carries usage from an old row into the current UTC calendar window only if the old window began inside that calendar window. The old rows do not record charge timestamps, so usage from a window that began before the new calendar boundary cannot be safely attributed to the current window. On first charge, the current window records eligible old usage along with the new charge. New paid terms never inherit an old window. Existing operator-managed subscriptions may omit billing dates and continue to use calendar months; Dodo subscriptions created by the new webhook persist their billing dates.
+
+Remove the old rate-limiter read path once every deployment has been running calendar windows for at least 30 days. Old component rows are removed by the 62-day retention job. Leave the optional subscription fields in place until any older subscription rows have billing dates or have ended.
+
 ### Retired repository rekey calls
 
 Released local servers may still call `threads.rekeyRepository`, and deployments

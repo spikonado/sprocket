@@ -7,6 +7,7 @@ import migrations from '@convex-dev/migrations/convex.config';
 import aggregate from '@convex-dev/aggregate/convex.config';
 import actionRetrier from '@convex-dev/action-retrier/convex.config';
 import workpool from '@convex-dev/workpool/convex.config';
+import dodopayments from '@dodopayments/convex/convex.config';
 
 const app = defineApp({
 	env: {
@@ -34,5 +35,6 @@ app.use(actionRetrier);
 app.use(workpool, { name: 'webSearchWorkpool' });
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
 app.use(workpool, { name: 'firecrawlBrowserWorkpool' });
+app.use(dodopayments);
 
 export default app;

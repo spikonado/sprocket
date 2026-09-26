@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import {
 	vMandateChargeStatus,
@@ -21,6 +22,7 @@ import {
 	vExecutorJobStatus,
 	vReasoningEffort,
 	vRunStatus,
+	vBillingInterval,
 	vSubscriptionStatus,
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
@@ -57,14 +59,56 @@ export default defineSchema({
 		tierId: v.string(),
 		label: v.string(),
 		weekly: v.number(),
-		monthly: v.number()
-	}).index('by_tierId', ['tierId']),
+		monthly: v.number(),
+		description: v.optional(v.string()),
+		features: v.optional(v.array(v.string())),
+		displayOrder: v.optional(v.number()),
+		highlighted: v.optional(v.boolean()),
+		monthlyProductId: v.optional(v.string()),
+		annualProductId: v.optional(v.string())
+	})
+		.index('by_tierId', ['tierId'])
+		.index('by_monthlyProductId', ['monthlyProductId'])
+		.index('by_annualProductId', ['annualProductId']),
+	billingCustomers: defineTable({
+		userId: v.string(),
+		dodoCustomerId: v.string()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_dodoCustomerId', ['dodoCustomerId']),
+	billingCheckoutSessions: defineTable({
+		userId: v.string(),
+		attemptId: v.string(),
+		tierId: v.string(),
+		interval: vBillingInterval,
+		productId: v.string(),
+		checkoutUrl: v.optional(v.string()),
+		expiresAt: v.number()
+	}).index('by_userId', ['userId']),
+	dodoPricingCache: defineTable({
+		cacheKey: v.string(),
+		tierPrices: v.array(
+			v.object({
+				tierId: v.string(),
+				interval: vBillingInterval,
+				price: vDodoPublicPrice
+			})
+		),
+		expiresAt: v.number()
+	}).index('by_cacheKey', ['cacheKey']),
 	subscriptions: defineTable({
 		userId: v.string(),
 		// Operator-managed tier id (see the `tiers` table).
 		tier: v.string(),
 		status: vSubscriptionStatus,
-		eventAt: v.number()
+		eventAt: v.number(),
+		billingInterval: v.optional(vBillingInterval),
+		billingPeriodStart: v.optional(v.number()),
+		billingPeriodEnd: v.optional(v.number()),
+		cancelAtNextBillingDate: v.optional(v.boolean()),
+		quotaResetAt: v.optional(v.number()),
+		dodoSubscriptionId: v.optional(v.string()),
+		dodoProductId: v.optional(v.string())
 	}).index('by_userId', ['userId']),
 	uiPreferences: defineTable({
 		userId: v.string(),

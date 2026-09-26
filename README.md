@@ -136,6 +136,25 @@ Start the browser development environment:
 bun dev
 ```
 
+After creating a Convex deployment and configuring AuthKit, give the deployment an API key for each model provider you want to enable.
+
+### Dodo Payments
+
+Self-serve checkout on `spikonado.com/pricing` uses the Sprocket Convex deployment. Configure these variables in each Convex deployment:
+
+- `DODO_PAYMENTS_API_KEY`
+- `DODO_PAYMENTS_ENVIRONMENT`, set to `test_mode` or `live_mode`
+- `DODO_PAYMENTS_WEBHOOK_SECRET`
+- `SPROCKET_MARKETING_ORIGIN`, set to `https://spikonado.com` in production
+
+Every row in the Convex `tiers` table appears on the pricing page. Set `monthlyProductId` and `annualProductId` on a row to the matching recurring Dodo products. Either product can be omitted to make that billing interval unavailable. Product IDs must be unique across all tier and interval fields. The optional `description`, `features`, `displayOrder`, and `highlighted` fields control the pricing card.
+
+Put **only monthly products** in one Dodo Product Collection and **only annual products** in a second collection. Enable portal plan changes within each collection. Set upgrades to `immediately` with `prorated_immediately`, payment-link checkout for positive upgrade balances, and `prevent_change` on failed payment. Set downgrades to `next_billing_date` without a mid-term refund. Allow cancellation only at the next billing date, and disable pause. A customer switching billing intervals must cancel, wait for the subscription to end, then check out again. Do not configure Dodo usage meters or credit entitlements: Convex owns the AI quota. Test these dashboard settings in test mode before enabling live checkout.
+
+Weekly usage resets Monday at 00:00 UTC. Free monthly usage resets on the first of the month. Monthly paid usage follows Dodo's billing dates. Annual paid usage resets each month on the UTC day and time of the current annual term's start; a missing day clamps to the last day of that month, then returns to the original day when possible. Paid access ends at the known Dodo billing-period end until a renewal webhook confirms the next term. A successful paid upgrade resets both usage allowances; downgrades and cancellations do not reset them early.
+
+Point the Dodo webhook at `https://<deployment>.convex.site/dodopayments-webhook`. The webhook, rather than the browser redirect, grants and removes paid access. AuthKit must allow `https://spikonado.com` as a CORS origin and `https://spikonado.com/pricing/callback` as a redirect URI.
+
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 It targets the dev Convex deployment. To run against the production Convex
 deployment with `~/.sprocket` state instead:
