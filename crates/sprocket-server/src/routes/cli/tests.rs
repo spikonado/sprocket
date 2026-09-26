@@ -20,6 +20,11 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
         submission.result = Some(Ok(RunStarted {
             run_id: "run".into(),
             thread_id: "thread".into(),
+            settings: crate::cli_protocol::CliRunSettings {
+                model: "model".into(),
+                reasoning: "high".into(),
+                fast: false,
+            },
         }));
     }
     let request = CliOutputRequest {
@@ -288,6 +293,11 @@ async fn concurrent_retries_recover_the_same_submission_and_reject_argument_chan
         submission.result = Some(Ok(RunStarted {
             run_id: "run".into(),
             thread_id: "thread".into(),
+            settings: crate::cli_protocol::CliRunSettings {
+                model: "model".into(),
+                reasoning: "high".into(),
+                fast: false,
+            },
         }));
     }
     let (first, second) = tokio::join!(

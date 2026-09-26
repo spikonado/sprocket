@@ -21,6 +21,14 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### CLI run header settings
+
+`RunStarted.settings` carries the model, reasoning effort, and fast mode the
+server resolved for a CLI run so the client can print them with the thread and
+run ids. Servers released before this field do not send it, and the CLI treats
+it as optional. Make the field required once servers without it are outside
+the supported upgrade window.
+
 ### CLI bootstrap error guidance
 
 Older servers return HTTP 401 for CLI version and Convex deployment mismatches.

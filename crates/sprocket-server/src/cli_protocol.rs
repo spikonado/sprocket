@@ -126,6 +126,16 @@ pub struct CliModelsResponse {
 pub struct RunStarted {
     pub run_id: String,
     pub thread_id: String,
+    /// Model settings the server resolved for this run.
+    pub settings: CliRunSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliRunSettings {
+    pub model: String,
+    pub reasoning: String,
+    pub fast: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
