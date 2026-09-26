@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { ExternalLink, Globe, LoaderCircle, Square } from '@lucide/svelte';
-	import { useMutation } from 'convex-svelte';
-	import { api } from '$convex/_generated/api';
 	import type { BrowserLiveViewState } from '$lib/chat/side-panel';
-	import { convexClientErrorMessage } from '$lib/convex-error';
 
 	type Props = {
 		/** undefined while the query is loading, null when no session exists. */
@@ -14,8 +11,15 @@
 
 	let { liveView, active }: Props = $props();
 
-	const setHumanControl = useMutation(api.browserProfiles.setHumanControl);
-	const stopSession = useMutation(api.browserSessions.stop);
+	// No browser backend is wired up yet; these stubs keep the component in
+	// place for the future local browser implementation.
+	const BROWSER_UNAVAILABLE = 'Browser sessions are not available yet.';
+	const setHumanControl = async () => {
+		throw new Error(BROWSER_UNAVAILABLE);
+	};
+	const stopSession = async () => {
+		throw new Error(BROWSER_UNAVAILABLE);
+	};
 
 	let pending = $state<'control' | 'stop' | null>(null);
 	let actionError = $state<string | null>(null);
@@ -51,7 +55,7 @@
 	});
 
 	function catchMessage<T>(error: T, fallback: string): string {
-		return (error instanceof Error && convexClientErrorMessage(error)) || fallback;
+		return (error instanceof Error && error.message) || fallback;
 	}
 
 	function formatExpiry(expiresAt: number): string {
@@ -70,7 +74,7 @@
 		pending = 'control';
 		actionError = null;
 		try {
-			await setHumanControl({ threadId, enabled });
+			await setHumanControl();
 		} catch (error) {
 			if (sessionRecordId === id && providerSessionId === providerId)
 				actionError = catchMessage(
@@ -89,7 +93,7 @@
 		pending = 'stop';
 		actionError = null;
 		try {
-			await stopSession({ id, providerSessionId: providerId });
+			await stopSession();
 		} catch (error) {
 			if (sessionRecordId === id && providerSessionId === providerId)
 				actionError = catchMessage(error, 'Couldn’t stop the browser session.');

@@ -51,7 +51,6 @@ async function settled(
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.stubEnv('FIRECRAWL_API_KEY', 'scrape-key');
-	vi.stubEnv('FIRECRAWL_BROWSER_API_KEY', 'browser-key');
 });
 
 afterEach(() => {
@@ -111,32 +110,13 @@ describe('Firecrawl request queue', () => {
 		await t.mutation(api.firecrawlRequests.dispose, args);
 	});
 
-	it('never falls back to the scrape key for browsers', async () => {
-		vi.stubEnv('FIRECRAWL_BROWSER_API_KEY', '   ');
-		const t = initConvexTest();
-		const auth = await fixture(t);
-		await expect(
-			t.mutation(api.firecrawlRequests.start, {
-				...auth,
-				kind: 'browser_interact',
-				command: 'get url'
-			})
-		).rejects.toThrow('FIRECRAWL_BROWSER_API_KEY');
-		expect(await t.run((ctx) => ctx.db.query('firecrawlRequests').collect())).toEqual([]);
-	});
-
-	it('limits scrapes to two and lets browser work proceed while both scrapes are blocked', async () => {
+	it('limits scrapes to two at a time', async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, true);
 		const gate = Promise.withResolvers<{ markdown: string }>();
 		const scrape = vi
 			.spyOn(FirecrawlClient.prototype, 'scrape')
 			.mockImplementation(() => gate.promise);
-		const fetch = vi.fn(async (_url: string, options: RequestInit) => {
-			expect(options.headers).toMatchObject({ Authorization: 'Bearer browser-key' });
-			return new Response('{}', { status: 503 });
-		});
-		vi.stubGlobal('fetch', fetch);
 		const ids = [];
 		for (let i = 0; i < 3; i++)
 			ids.push(await t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'scrape' }));
@@ -144,15 +124,6 @@ describe('Firecrawl request queue', () => {
 			await vi.waitFor(() => expect(scrape).toHaveBeenCalledTimes(2));
 			await vi.advanceTimersByTimeAsync(1_000);
 			expect(scrape).toHaveBeenCalledTimes(2);
-			const browser = await fixture(t);
-			const id = await t.mutation(api.firecrawlRequests.start, {
-				...browser,
-				kind: 'browser_interact',
-				command: 'get url'
-			});
-			expect(await settled(t, browser, id)).toMatchObject({ status: 'failed' });
-			await vi.advanceTimersByTimeAsync(5_000);
-			expect(fetch).toHaveBeenCalledTimes(1);
 		} finally {
 			gate.resolve({ markdown: 'Done' });
 			for (const id of ids) await settled(t, auth, id);
@@ -172,70 +143,6 @@ describe('Firecrawl request queue', () => {
 		expect(await t.query(api.firecrawlRequests.getResult, resultArgs(auth, id))).toMatchObject({
 			status: 'failed'
 		});
-	});
-
-	it('limits browser commands to two without blocking scrape work or session deletion', async () => {
-		const t = initConvexTest();
-		const browsers = [await fixture(t), await fixture(t), await fixture(t)];
-		const gate = Promise.withResolvers<void>();
-		let sessions = 0;
-		let executions = 0;
-		const fetch = vi.fn(async (url: string, options: RequestInit) => {
-			if (url.endsWith('/execute')) {
-				executions++;
-				await gate.promise;
-			} else if (options.method === 'POST') {
-				return Response.json({
-					success: true,
-					id: `browser-${++sessions}`,
-					expiresAt: new Date(Date.now() + 3_600_000).toISOString()
-				});
-			}
-			return Response.json({ success: true, stdout: 'Done', exitCode: 0 });
-		});
-		vi.stubGlobal('fetch', fetch);
-		const ids = [];
-		for (const auth of browsers)
-			ids.push(
-				await t.mutation(api.firecrawlRequests.start, {
-					...auth,
-					kind: 'browser_interact',
-					command: 'get url'
-				})
-			);
-		try {
-			await vi.waitFor(() => expect(executions).toBe(2));
-			await vi.advanceTimersByTimeAsync(1_000);
-			expect(sessions).toBe(2);
-			expect(executions).toBe(2);
-			const scrapeAuth = await fixture(t, true);
-			vi.spyOn(FirecrawlClient.prototype, 'scrape').mockResolvedValue({ markdown: 'Independent' });
-			const scrapeId = await t.mutation(api.firecrawlRequests.start, {
-				...scrapeAuth,
-				kind: 'scrape'
-			});
-			expect(await settled(t, scrapeAuth, scrapeId)).toMatchObject({ status: 'completed' });
-			const run = await t.run((ctx) => ctx.db.get('runs', browsers[0].runId));
-			const session = await t.run((ctx) =>
-				ctx.db
-					.query('browserSessions')
-					.withIndex('by_threadId', (q) => q.eq('threadId', run!.threadId))
-					.unique()
-			);
-			await t
-				.withIdentity({ subject: browsers[0].executionSecret })
-				.mutation(api.browserSessions.stop, {
-					id: session!._id,
-					providerSessionId: session!.sessionId!
-				});
-			await vi.waitFor(() =>
-				expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(true)
-			);
-			expect(executions).toBe(2);
-		} finally {
-			gate.resolve();
-			for (const [index, id] of ids.entries()) await settled(t, browsers[index], id);
-		}
 	});
 
 	it('rejects a stale claim before queued work reaches the provider', async () => {

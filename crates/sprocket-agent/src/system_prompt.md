@@ -61,7 +61,6 @@ You should use the tools given to you to fetch the latest documentation/informat
 Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.
 Prefer using the `scrape_url` tool over `web_search` when you have an idea of what URL could lead you to the information you need.
 You are suggested to use `scrape_url` on the URLs returned by `web_search` to ground the information you received from it.
-Prefer `web_search` and `scrape_url` over `browser_interact` and `browser_screenshot` for publicly accessible information. They are cheaper and faster. Use the browser tools for interactive or session-bound pages, such as merchant checkouts.
 
 ## Skills
 

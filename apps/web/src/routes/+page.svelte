@@ -30,7 +30,6 @@
 	import BrandMark from '$lib/components/brand-mark.svelte';
 	import InboxSidebar from '$lib/components/home/inbox-sidebar.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
-	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
 	import SettingsProviders from '$lib/components/home/settings-providers.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
@@ -435,10 +434,9 @@
 			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
 	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedThreadQueryArgs);
-	const browserLiveViewQuery = useQuery(
-		api.browserSessions.liveViewForThread,
-		authenticatedThreadQueryArgs
-	);
+	// No browser backend is wired up; the live view stays empty until the local
+	// browser implementation provides session state.
+	const browserLiveView = { data: null, error: null };
 	const pendingAgentQuestionQuery = useQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -448,7 +446,6 @@
 			uiPreferencesQuery,
 			activeThreadQuery,
 			lifecycleQuery,
-			browserLiveViewQuery,
 			pendingAgentQuestionQuery
 		]) {
 			if (query.error) {
@@ -2071,8 +2068,6 @@
 							loadError={providerConfigurationError}
 							onConfigurationChange={handleProviderConfigurationChange}
 						/>
-					{:else if settingsPage === 'browser'}
-						<SettingsBrowser />
 					{:else if settingsPage === 'payments'}
 						<SettingsPayments />
 					{:else}
@@ -2221,8 +2216,8 @@
 					artifacts={artifactPanel.artifacts}
 					selectedKey={artifactPanel.panel.selectedKey}
 					tab={artifactPanel.panel.tab}
-					liveView={currentThreadId ? browserLiveViewQuery.data : null}
-					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
+					liveView={browserLiveView.data}
+					liveActive={false}
 					expanded={artifactPanel.panel.expanded}
 					stale={artifactPanel.watchState.stale}
 					error={artifactPanel.watchState.error}
