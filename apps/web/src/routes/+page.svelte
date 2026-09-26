@@ -30,7 +30,6 @@
 	import BrandMark from '$lib/components/brand-mark.svelte';
 	import InboxSidebar from '$lib/components/home/inbox-sidebar.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
-	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
 	import SettingsProviders from '$lib/components/home/settings-providers.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
@@ -2069,8 +2068,6 @@
 							loadError={providerConfigurationError}
 							onConfigurationChange={handleProviderConfigurationChange}
 						/>
-					{:else if settingsPage === 'browser'}
-						<SettingsBrowser />
 					{:else if settingsPage === 'payments'}
 						<SettingsPayments />
 					{:else}
