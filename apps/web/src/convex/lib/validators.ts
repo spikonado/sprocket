@@ -106,7 +106,8 @@ const vHistoricalBrowserActPayload = v.object({
 	startUrl: v.optional(v.string())
 });
 
-export const vBrowserInteractPayload = v.object({
+// Stored executorJobs payloads from the retired Firecrawl browser tools.
+const vBrowserInteractPayload = v.object({
 	command: v.string(),
 	enforce_saving: v.optional(v.boolean())
 });
@@ -212,7 +213,6 @@ export const vCurrentExecutorJobPayload = v.union(
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
-	vBrowserInteractPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
@@ -221,7 +221,8 @@ export const vCurrentExecutorJobPayload = v.union(
 
 export const vExecutorJobPayload = v.union(
 	vCurrentExecutorJobPayload,
-	vHistoricalBrowserActPayload
+	vHistoricalBrowserActPayload,
+	vBrowserInteractPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -534,8 +535,6 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
-	v.literal('browser_interact'),
-	v.literal('browser_screenshot'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
@@ -557,6 +556,8 @@ export const vCurrentExecutorJobKind = v.union(
 
 export const vExecutorJobKind = v.union(
 	vCurrentExecutorJobKind,
+	v.literal('browser_interact'),
+	v.literal('browser_screenshot'),
 	v.literal('browser_observe'),
 	v.literal('browser_act'),
 	v.literal('browser_extract')

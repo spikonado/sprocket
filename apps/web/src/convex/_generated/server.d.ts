@@ -32,7 +32,6 @@ type Env = {
   readonly CONVEX_SITE_URL: string;
   readonly EXA_API_KEY: string;
   readonly FIRECRAWL_API_KEY: string;
-  readonly FIRECRAWL_BROWSER_API_KEY: string | undefined;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
   readonly PRAVA_BACKEND_URL:

@@ -89,7 +89,7 @@ returned as provider URLs, not downloaded media files.
 `screenshot` format with `maxAge: 0` for a fresh capture. It shares `scrape_url`'s
 image size limits. The tool is not registered for models without image support.
 History stores the page URL, not the signed screenshot URL. Captures do
-not share the user's browser session; use browser tools for signed-in pages.
+not share the user's browser session.
 
 Image results from `parse_file`, `scrape_url`, and `screenshot_url` keep their
 original bytes in the thread's local `parse_file/` directory. Convex stores only

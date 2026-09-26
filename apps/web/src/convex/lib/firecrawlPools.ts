@@ -5,8 +5,3 @@ export const firecrawlScrapePool = new Workpool(components.firecrawlScrapeWorkpo
 	maxParallelism: 2,
 	retryActionsByDefault: false
 });
-
-export const firecrawlBrowserPool = new Workpool(components.firecrawlBrowserWorkpool, {
-	maxParallelism: 2,
-	retryActionsByDefault: false
-});

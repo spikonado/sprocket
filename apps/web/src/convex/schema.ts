@@ -260,14 +260,7 @@ export default defineSchema({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		jobId: v.optional(v.id('executorJobs')),
-		kind: v.union(
-			v.literal('scrape'),
-			v.literal('screenshot'),
-			v.literal('browser_interact'),
-			v.literal('browser_screenshot')
-		),
-		command: v.optional(v.string()),
-		enforce_saving: v.optional(v.boolean()),
+		kind: v.union(v.literal('scrape'), v.literal('screenshot')),
 		status: v.union(
 			v.literal('queued'),
 			v.literal('running'),
@@ -279,14 +272,6 @@ export default defineSchema({
 		error: v.optional(v.string()),
 		expiresAt: v.number()
 	}).index('by_runId', ['runId']),
-	browserCapacity: defineTable({
-		reservationId: v.string(),
-		sessionId: v.optional(v.string()),
-		expiresAt: v.number()
-	})
-		.index('by_reservationId', ['reservationId'])
-		.index('by_sessionId', ['sessionId'])
-		.index('by_expiresAt', ['expiresAt']),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
