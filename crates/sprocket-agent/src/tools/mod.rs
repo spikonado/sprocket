@@ -1,5 +1,4 @@
 mod artifacts;
-mod browser;
 mod commands;
 mod context;
 mod firecrawl;
@@ -21,7 +20,6 @@ use std::sync::Arc;
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
 use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool};
-use self::browser::{BrowserInteractTool, BrowserScreenshotTool};
 use self::commands::{ExecCommandTool, WriteStdinTool};
 use self::context::AgentToolContext;
 use self::mandates::{
@@ -64,8 +62,6 @@ pub(crate) struct AgentToolSet {
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) edit_artifact: EditArtifactTool,
     pub(crate) save_artifact: SaveArtifactTool,
-    pub(crate) browser_interact: BrowserInteractTool,
-    pub(crate) browser_screenshot: BrowserScreenshotTool,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -82,10 +78,7 @@ pub(crate) async fn hydrate_tool_history(
     let mut results = std::collections::HashMap::new();
     for tool in parts.iter().filter_map(|part| part.tool.as_ref()) {
         if (parse_file::is_parse_file_tool(&tool.name)
-            || matches!(
-                tool.name.as_str(),
-                "scrape_url" | "screenshot_url" | "browser_screenshot"
-            ))
+            || matches!(tool.name.as_str(), "scrape_url" | "screenshot_url"))
             && tool.status != "started"
         {
             results.entry(tool.call_id.as_str()).or_insert(tool);
@@ -173,8 +166,6 @@ pub(crate) fn agent_tools(
         list_artifacts: ListArtifactsTool(context.clone()),
         edit_artifact: EditArtifactTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
-        browser_interact: BrowserInteractTool(context.clone()),
-        browser_screenshot: BrowserScreenshotTool(context.clone()),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),

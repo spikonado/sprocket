@@ -39,7 +39,7 @@ pub(super) async fn run(
         biased;
         _ = cancellation.cancelled() => return Err(cancelled_error()),
         result = tokio::time::timeout(Duration::from_secs(30), runtime.mutation_json("firecrawlRequests:start", args)) => {
-            result.map_err(|_| tool_failure("Firecrawl submission timed out. Its outcome is unknown; check before repeating browser actions."))?.map_err(tool_error)?
+            result.map_err(|_| tool_failure("Firecrawl submission timed out. Its outcome is unknown; check before repeating the request."))?.map_err(tool_error)?
         }
     };
     let result_args = BTreeMap::from([("id".into(), id.into()), ("runId".into(), run_id)]);
@@ -47,7 +47,7 @@ pub(super) async fn run(
         biased;
         _ = cancellation.cancelled() => Err(cancelled_error()),
         result = tokio::time::timeout(Duration::from_secs(510), wait(runtime, result_args.clone())) => {
-            result.unwrap_or_else(|_| Err(tool_failure("Firecrawl request timed out. Check the outcome before repeating browser actions.")))
+            result.unwrap_or_else(|_| Err(tool_failure("Firecrawl request timed out. Check the outcome before repeating the request.")))
         }
     };
     let _ = tokio::time::timeout(
@@ -77,7 +77,7 @@ async fn wait(
         }
     }
     Err(tool_failure(
-        "Firecrawl result subscription closed. Check the outcome before repeating browser actions.",
+        "Firecrawl result subscription closed. Check the outcome before repeating the request.",
     ))
 }
 

@@ -3,17 +3,11 @@ import { ConvexError, v } from 'convex/values';
 import { getRunWithExecution } from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import {
-	env,
-	internalMutation,
-	mutation,
-	query,
-	type MutationCtx
-} from '@convex/_generated/server';
+import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { getExecutionRun } from '@convex/lib/auth';
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { firecrawlBrowserPool, firecrawlScrapePool } from '@convex/lib/firecrawlPools';
+import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
 import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
 import schema from '@convex/schema';
 import { isRunFinalStatus } from '@convex/lib/validators';
@@ -21,7 +15,7 @@ import { isRunFinalStatus } from '@convex/lib/validators';
 export const REQUEST_TTL_MS = 8 * 60_000;
 export const vRequestArgs = schema
 	.doc('firecrawlRequests')
-	.pick('runId', 'claimId', 'jobId', 'kind', 'command', 'enforce_saving');
+	.pick('runId', 'claimId', 'jobId', 'kind');
 
 export const scrapeJob = internalMutation({
 	args: { runId: v.id('runs'), claimId: v.string(), jobId: v.id('executorJobs') },
@@ -33,10 +27,6 @@ export const scrapeJob = internalMutation({
 		return { kind: active.job.kind, payload: active.job.payload };
 	}
 });
-
-function poolFor(request: Pick<Doc<'firecrawlRequests'>, 'kind'>) {
-	return request.kind.startsWith('browser_') ? firecrawlBrowserPool : firecrawlScrapePool;
-}
 
 async function activeRun(
 	ctx: MutationCtx,
@@ -51,17 +41,15 @@ async function activeRun(
 	) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
-	if (request.kind === 'scrape' || request.kind === 'screenshot') {
-		if (!request.jobId) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-		const active = await claimedJobForActiveRun(ctx, { ...request, jobId: request.jobId });
-		if (
-			!active ||
-			active.job.kind !== `${request.kind}_url` ||
-			active.job.status !== 'claimed' ||
-			active.job.cloudWorkId !== undefined
-		) {
-			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-		}
+	if (!request.jobId) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+	const active = await claimedJobForActiveRun(ctx, { ...request, jobId: request.jobId });
+	if (
+		!active ||
+		active.job.kind !== `${request.kind}_url` ||
+		active.job.status !== 'claimed' ||
+		active.job.cloudWorkId !== undefined
+	) {
+		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
 	return run;
 }
@@ -72,15 +60,12 @@ export const enqueue = internalMutation({
 	handler: async (ctx, { executionSecret, ...args }) => {
 		await getExecutionRun(ctx, args.runId, executionSecret);
 		await activeRun(ctx, args);
-		if (args.kind.startsWith('browser_') && !env.FIRECRAWL_BROWSER_API_KEY?.trim()) {
-			throw new ConvexError('FIRECRAWL_BROWSER_API_KEY is not configured.');
-		}
 		const id = await ctx.db.insert('firecrawlRequests', {
 			...args,
 			status: 'queued',
 			expiresAt: Date.now() + REQUEST_TTL_MS
 		});
-		const workId = await poolFor(args).enqueueAction(
+		const workId = await firecrawlScrapePool.enqueueAction(
 			ctx,
 			internal.firecrawlRequestActions.execute,
 			{ id },
@@ -122,8 +107,7 @@ export const getResult = query({
 		) {
 			return {
 				status: 'failed' as const,
-				error:
-					'Firecrawl request ended. If a browser command was submitted, check its outcome before repeating purchases, messages, or other actions.'
+				error: 'Firecrawl request ended. Check its outcome before repeating the request.'
 			};
 		}
 		if (request.status === 'failed')
@@ -224,8 +208,7 @@ export const poll = internalMutation({
 		if (!request || request.expiresAt <= Date.now()) {
 			return {
 				status: 'failed',
-				error:
-					'Firecrawl request timed out. If a browser command was submitted, check its outcome before repeating purchases, messages, or other actions.'
+				error: 'Firecrawl request timed out. Check its outcome before repeating the request.'
 			};
 		}
 		await activeRun(ctx, request);
@@ -236,7 +219,7 @@ export const poll = internalMutation({
 async function remove(ctx: MutationCtx, request: Doc<'firecrawlRequests'>) {
 	if (request.workId && (request.status === 'queued' || request.status === 'running')) {
 		// SAFETY: Stored directly from this pool's enqueueAction result.
-		await poolFor(request).cancel(ctx, request.workId as WorkId);
+		await firecrawlScrapePool.cancel(ctx, request.workId as WorkId);
 	}
 	if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);
 	await ctx.db.delete('firecrawlRequests', request._id);

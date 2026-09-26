@@ -118,6 +118,17 @@ their old payload and result shapes. Their validators remain so conversation
 history can load. There is no lossless rewrite into current tool shapes, so
 those validators stay permanently.
 
+#### Historical Firecrawl browser tools
+
+The Firecrawl browser provider is gone. `browser_interact` and
+`browser_screenshot` moved out of `vCurrentExecutorJobKind`, so `beginToolJob`
+rejects new jobs for them while stored jobs keep their validators so
+conversation history remains readable. The `browserSessions` and
+`browserProfiles` tables are dropped; the next browser implementation is local
+and keeps its own state. Any remote Firecrawl session still live at deploy time
+expires on its own within the provider's hard TTL. The browser live-view UI
+components stay in place, stubbed against local state, for the local browser.
+
 #### Mandate setup email
 
 Mandate setup jobs written through v0.3.2 may contain `payload.userEmail`.
