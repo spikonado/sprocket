@@ -65,12 +65,8 @@ export const stop = mutation({
 		if (!session) return null;
 		await getOwnedThreadRecord(ctx.db, userId, session.threadId);
 		if (session.closing || (session.sessionId ?? null) !== providerSessionId) return null;
-		await ctx.db.patch('browserSessions', id, {
-			closing: true,
-			operationId: undefined,
-			operationExpiresAt: 0
-		});
 		scheduleProviderClose(ctx, session.sessionId);
+		await ctx.db.delete('browserSessions', id);
 		return null;
 	}
 });
@@ -82,8 +78,8 @@ export const expire = internalMutation({
 	handler: async (ctx, { id }) => {
 		const session = await ctx.db.get('browserSessions', id);
 		if (session && session.expiresAt <= Date.now()) {
-			await ctx.db.patch('browserSessions', id, { closing: true });
 			scheduleProviderClose(ctx, session.sessionId);
+			await ctx.db.delete('browserSessions', id);
 		}
 		return null;
 	}

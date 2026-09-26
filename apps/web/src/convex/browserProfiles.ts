@@ -55,16 +55,12 @@ export const reset = mutation({
 			.withIndex('by_userId', (q) => q.eq('userId', userId))
 			.take(100);
 		for (const session of sessions) {
-			await ctx.db.patch('browserSessions', session._id, {
-				closing: true,
-				operationId: undefined,
-				operationExpiresAt: 0
-			});
 			if (session.sessionId) {
 				void ctx.scheduler.runAfter(0, internal.firecrawlBrowserCleanup.closeLegacySession, {
 					sessionId: session.sessionId
 				});
 			}
+			await ctx.db.delete('browserSessions', session._id);
 		}
 		return null;
 	}

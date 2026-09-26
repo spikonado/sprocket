@@ -52,12 +52,8 @@ describe('browserSessions', () => {
 		expect((await t.run((ctx) => ctx.db.get('browserSessions', id)))?.closing).toBe(false);
 		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
 		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
-		expect(await asUser.query(api.browserSessions.liveViewForThread, { threadId })).toMatchObject({
-			id,
-			ended: true,
-			url: null,
-			interactiveUrl: null
-		});
+		expect(await t.run((ctx) => ctx.db.get('browserSessions', id))).toBeNull();
+		expect(await asUser.query(api.browserSessions.liveViewForThread, { threadId })).toBeNull();
 		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toEqual(run);
 	});
 
@@ -77,6 +73,29 @@ describe('browserSessions', () => {
 			'https://api.firecrawl.dev/v2/interact/fc-1',
 			expect.objectContaining({ method: 'DELETE' })
 		);
+	});
+
+	it('retries the remote close until the provider confirms or the session is gone', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'browser-retry');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id } = await insertSession(t, { threadId, userId: 'browser-retry', runId });
+		vi.stubEnv('FIRECRAWL_BROWSER_API_KEY', 'legacy-key');
+		const fetch = vi
+			.fn<typeof globalThis.fetch>()
+			.mockRejectedValueOnce(new Error('network down'))
+			.mockResolvedValueOnce(new Response('{"success":false}', { status: 500 }))
+			.mockResolvedValueOnce(new Response('{"success":true}', { status: 404 }))
+			.mockResolvedValue(new Response('{"success":true}'));
+		vi.stubGlobal('fetch', fetch);
+		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
+		for (let attempt = 0; attempt < 4; attempt++) {
+			await vi.advanceTimersByTimeAsync(30_000 * 2 ** attempt + 1_000);
+			await t.finishInProgressScheduledFunctions();
+		}
+		// Two failures retried with backoff; the 404 ends the retries.
+		expect(fetch).toHaveBeenCalledTimes(3);
 	});
 
 	it('serves live-view fields to the thread owner only', async () => {
