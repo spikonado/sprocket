@@ -197,7 +197,8 @@ export const syncMandate = internalMutation({
 const reserveChargeResult = v.union(
 	v.object({
 		kind: v.literal('reserved'),
-		chargeId: v.id('mandateCharges')
+		chargeId: v.id('mandateCharges'),
+		chargingStartedAt: v.number()
 	}),
 	v.object({
 		kind: v.literal('existing'),
@@ -273,7 +274,7 @@ export const reserveCharge = internalMutation({
 							chargingStartedAt: now,
 							updatedAt: now
 						});
-						return { kind: 'reserved' as const, chargeId: existing._id };
+						return { kind: 'reserved' as const, chargeId: existing._id, chargingStartedAt: now };
 					}
 					if (
 						existing.chargingStartedAt !== undefined &&
@@ -289,7 +290,7 @@ export const reserveCharge = internalMutation({
 						chargingStartedAt: now,
 						updatedAt: now
 					});
-					return { kind: 'reserved' as const, chargeId: existing._id };
+					return { kind: 'reserved' as const, chargeId: existing._id, chargingStartedAt: now };
 				}
 			}
 
@@ -306,7 +307,7 @@ export const reserveCharge = internalMutation({
 				createdAt: now,
 				updatedAt: now
 			});
-			return { kind: 'reserved' as const, chargeId };
+			return { kind: 'reserved' as const, chargeId, chargingStartedAt: now };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -346,11 +347,24 @@ export const completeCharge = internalMutation({
 });
 
 export const releaseChargeReservation = internalMutation({
-	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
+	args: {
+		chargeId: v.id('mandateCharges'),
+		userId: v.string(),
+		expectedChargingStartedAt: v.optional(v.number())
+	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.pravaTransactionId) {
+			// Only release our own claim. A stale caller must not clear a newer
+			// reclaim, or a third caller could reclaim while the second is live
+			// and both could reach the provider POST.
+			if (
+				args.expectedChargingStartedAt !== undefined &&
+				charge.chargingStartedAt !== args.expectedChargingStartedAt
+			) {
+				return null;
+			}
 			// Drop the live claim so callers aren't stuck in inFlight, but keep
 			// providerRequestedAt, since an ambiguous POST must not be reclaimed.
 			await ctx.db.patch('mandateCharges', args.chargeId, {
@@ -817,11 +831,22 @@ export const mandateCharge = action({
 				throw new Error('A charge with this reference is already in progress. Retry shortly.');
 			}
 
-			const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
+			let prava: Awaited<ReturnType<typeof resolvePravaMandate>>;
+			try {
+				prava = await resolvePravaMandate(ctx, actor.userId, mandate);
+			} catch (error) {
+				await ctx.runMutation(internal.payments.releaseChargeReservation, {
+					chargeId: reservation.chargeId,
+					userId: actor.userId,
+					expectedChargingStartedAt: reservation.chargingStartedAt
+				});
+				throw error;
+			}
 			if ((prava.status ?? '').toLowerCase() !== 'active') {
 				await ctx.runMutation(internal.payments.releaseChargeReservation, {
 					chargeId: reservation.chargeId,
-					userId: actor.userId
+					userId: actor.userId,
+					expectedChargingStartedAt: reservation.chargingStartedAt
 				});
 				throw new Error('Mandate is not active and cannot be charged.');
 			}
@@ -859,7 +884,8 @@ export const mandateCharge = action({
 			} catch (error) {
 				await ctx.runMutation(internal.payments.releaseChargeReservation, {
 					chargeId: reservation.chargeId,
-					userId: actor.userId
+					userId: actor.userId,
+					expectedChargingStartedAt: reservation.chargingStartedAt
 				});
 				throw error;
 			}

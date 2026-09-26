@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { JsonObject, JsonValue } from '@convex/lib/json';
 import {
 	createQueuedRun,
@@ -324,6 +324,100 @@ describe('payments mandates', () => {
 		expect(stored).not.toHaveProperty('dynamicCvv');
 		expect(stored).not.toHaveProperty('expiryMonth');
 		expect(stored).not.toHaveProperty('expiryYear');
+	});
+
+	it('releases the charge reservation when mandate resolution fails', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const fetchMock = vi.fn(async () => jsonResponse({ mandates: [] }));
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				session_id: 'prava-session-1',
+				iframe_url: 'https://pay.prava.space/approve/1',
+				session_token: 'session-token-1',
+				expires_at: '2026-08-01T10:15:00Z'
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const setup = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+
+		const charges = await t.run(async (ctx) =>
+			ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+				)
+				.collect()
+		);
+		expect(charges).toHaveLength(1);
+		expect(charges[0]?.chargingStartedAt).toBeUndefined();
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+	});
+
+	it('keeps a newer claim when a stale resolve failure releases', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup } = await createApprovedMandate(t, run);
+
+		const first = await t.mutation(internal.payments.reserveCharge, {
+			mandateId: setup.mandateId,
+			runId: run.runId,
+			userId: 'user_alice',
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-stale-release'
+		});
+		if (first.kind !== 'reserved') throw new Error('expected reserved');
+
+		const newerClaim = first.chargingStartedAt + 120_000;
+		await t.run(async (ctx) => {
+			await ctx.db.patch('mandateCharges', first.chargeId, {
+				chargingStartedAt: newerClaim
+			});
+		});
+
+		await t.mutation(internal.payments.releaseChargeReservation, {
+			chargeId: first.chargeId,
+			userId: 'user_alice',
+			expectedChargingStartedAt: first.chargingStartedAt
+		});
+
+		const kept = await t.run(async (ctx) => ctx.db.get('mandateCharges', first.chargeId));
+		expect(kept?.chargingStartedAt).toBe(newerClaim);
+
+		await t.mutation(internal.payments.releaseChargeReservation, {
+			chargeId: first.chargeId,
+			userId: 'user_alice',
+			expectedChargingStartedAt: newerClaim
+		});
+
+		const released = await t.run(async (ctx) => ctx.db.get('mandateCharges', first.chargeId));
+		expect(released?.chargingStartedAt).toBeUndefined();
 	});
 
 	it('reuses a completed charge handle without replaying credentials', async () => {
