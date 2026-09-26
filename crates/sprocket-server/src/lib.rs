@@ -16,6 +16,7 @@ mod static_dir;
 mod static_files;
 mod transcript_client;
 mod transcript_watch;
+mod watch_registry;
 mod work_sync;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
