@@ -434,6 +434,52 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
 
+	it('refuses to re-POST after an incomplete Prava charge response for the same reference', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		// A 200 whose body is missing the charge credentials is ambiguous: the
+		// charge may have committed at Prava even though we cannot complete it.
+		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'awaiting_result' }));
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/incomplete charge response/);
+
+		const afterIncomplete = await t.run(async (ctx) =>
+			ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+				)
+				.unique()
+		);
+		expect(afterIncomplete?.providerRequestedAt).toEqual(expect.any(Number));
+		expect(afterIncomplete?.pravaTransactionId).toBeUndefined();
+		expect(afterIncomplete?.status).not.toBe('failed');
+
+		fetchMock.mockClear();
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/may have already been submitted/);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+	});
+
 	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
