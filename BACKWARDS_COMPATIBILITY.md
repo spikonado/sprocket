@@ -125,6 +125,10 @@ The Firecrawl browser provider is gone. `browser_interact` and
 rejects new jobs for them while stored jobs keep their validators so
 conversation history remains readable. The browser live-view UI and its
 `browserSessions`/`browserProfiles` tables stay for the next browser provider.
+`firecrawlBrowserCleanup.closeLegacySession` still sends the provider DELETE
+for sessions created before the shutdown; remove it once every stored session
+predates the shutdown (the provider's hard TTL is one hour) or
+`FIRECRAWL_BROWSER_API_KEY` is unset in the deployment.
 
 #### Mandate setup email
 

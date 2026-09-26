@@ -18,6 +18,7 @@ import type * as browserSessions from "../browserSessions.js";
 import type * as chat from "../chat.js";
 import type * as crons from "../crons.js";
 import type * as executor from "../executor.js";
+import type * as firecrawlBrowserCleanup from "../firecrawlBrowserCleanup.js";
 import type * as firecrawlRequestActions from "../firecrawlRequestActions.js";
 import type * as firecrawlRequests from "../firecrawlRequests.js";
 import type * as gateway from "../gateway.js";
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   crons: typeof crons;
   executor: typeof executor;
+  firecrawlBrowserCleanup: typeof firecrawlBrowserCleanup;
   firecrawlRequestActions: typeof firecrawlRequestActions;
   firecrawlRequests: typeof firecrawlRequests;
   gateway: typeof gateway;

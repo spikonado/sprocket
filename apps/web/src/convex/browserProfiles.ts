@@ -1,4 +1,5 @@
 import { ConvexError, v } from 'convex/values';
+import { internal } from '@convex/_generated/api';
 import { mutation, query } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -59,6 +60,11 @@ export const reset = mutation({
 				operationId: undefined,
 				operationExpiresAt: 0
 			});
+			if (session.sessionId) {
+				void ctx.scheduler.runAfter(0, internal.firecrawlBrowserCleanup.closeLegacySession, {
+					sessionId: session.sessionId
+				});
+			}
 		}
 		return null;
 	}

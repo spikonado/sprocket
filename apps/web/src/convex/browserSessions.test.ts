@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -61,6 +61,24 @@ describe('browserSessions', () => {
 		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toEqual(run);
 	});
 
+	it('schedules a remote close for sessions created before the provider shutdown', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'browser-legacy');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id } = await insertSession(t, { threadId, userId: 'browser-legacy', runId });
+		vi.stubEnv('FIRECRAWL_BROWSER_API_KEY', 'legacy-key');
+		const fetch = vi.fn(async () => new Response('{"success":true}'));
+		vi.stubGlobal('fetch', fetch);
+		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
+		await vi.advanceTimersByTimeAsync(1_000);
+		await t.finishInProgressScheduledFunctions();
+		expect(fetch).toHaveBeenCalledWith(
+			'https://api.firecrawl.dev/v2/interact/fc-1',
+			expect.objectContaining({ method: 'DELETE' })
+		);
+	});
+
 	it('serves live-view fields to the thread owner only', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_live');
@@ -113,4 +131,10 @@ describe('browserSessions', () => {
 			asUser.query(api.browserSessions.liveViewForThread, { threadId })
 		).resolves.toMatchObject({ ended: true, url: null, interactiveUrl: null, lastUsedRunId: null });
 	});
+});
+
+afterEach(() => {
+	vi.useRealTimers();
+	vi.unstubAllEnvs();
+	vi.unstubAllGlobals();
 });

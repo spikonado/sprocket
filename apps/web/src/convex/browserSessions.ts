@@ -1,7 +1,16 @@
 import { v } from 'convex/values';
-import { mutation, query } from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
+import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+
+function scheduleProviderClose(ctx: MutationCtx, sessionId: string | undefined) {
+	if (sessionId) {
+		void ctx.scheduler.runAfter(0, internal.firecrawlBrowserCleanup.closeLegacySession, {
+			sessionId
+		});
+	}
+}
 
 /** The browser live-view state shown in the thread's side panel. */
 export const liveViewForThread = query({
@@ -61,6 +70,21 @@ export const stop = mutation({
 			operationId: undefined,
 			operationExpiresAt: 0
 		});
+		scheduleProviderClose(ctx, session.sessionId);
+		return null;
+	}
+});
+
+/** Marks sessions whose hard expiry passed as ended so the UI stops showing them. */
+export const expire = internalMutation({
+	args: { id: v.id('browserSessions') },
+	returns: v.null(),
+	handler: async (ctx, { id }) => {
+		const session = await ctx.db.get('browserSessions', id);
+		if (session && session.expiresAt <= Date.now()) {
+			await ctx.db.patch('browserSessions', id, { closing: true });
+			scheduleProviderClose(ctx, session.sessionId);
+		}
 		return null;
 	}
 });
