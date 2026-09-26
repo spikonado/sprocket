@@ -167,9 +167,17 @@ fn select(
         // when the inherited model is locked.
         _ => (resolve_model_for_tier(&catalog, &context.tier)?, true),
     };
+    // Like the UI, coercion to a different model drops the thread's fast mode setting;
+    // only an explicit --fast asks for it on the replacement model.
     let fast = request
         .fast
-        .or_else(|| context.thread.as_ref().map(|thread| thread.fast_mode))
+        .or_else(|| {
+            if coerced {
+                None
+            } else {
+                context.thread.as_ref().map(|thread| thread.fast_mode)
+            }
+        })
         .unwrap_or(false);
     let entry = catalog
         .models
@@ -355,6 +363,59 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn coercion_drops_the_inherited_fast_mode_like_the_ui() {
+        let settings = select(
+            catalog(),
+            &RunContext {
+                gateway_url: String::new(),
+                tier: "free".into(),
+                thread: Some(super::super::ThreadSettings {
+                    repository_key: "repo".into(),
+                    selected_model: "paid".into(),
+                    reasoning_effort: "max".into(),
+                    fast_mode: true,
+                }),
+            },
+            &CliRunRequest {
+                client_id: "client".into(),
+                prompt: "task".into(),
+                directory: "/tmp".into(),
+                thread_id: Some("thread".into()),
+                model: None,
+                reasoning: None,
+                fast: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(settings.model, "default");
+        assert!(!settings.fast);
+
+        // An explicit --fast still applies to the replacement model.
+        let request = CliRunRequest {
+            client_id: "client".into(),
+            prompt: "task".into(),
+            directory: "/tmp".into(),
+            thread_id: Some("thread".into()),
+            model: None,
+            reasoning: None,
+            fast: Some(true),
+        };
+        let context = RunContext {
+            gateway_url: String::new(),
+            tier: "free".into(),
+            thread: Some(super::super::ThreadSettings {
+                repository_key: "repo".into(),
+                selected_model: "paid".into(),
+                reasoning_effort: "max".into(),
+                fast_mode: true,
+            }),
+        };
+        // The free tier allows no fast service tier, so --fast still errors.
+        assert!(select(catalog(), &context, &request).is_err());
     }
 
     #[test]
