@@ -130,6 +130,14 @@ validator keeps that field optional. Current status calls always return it.
 There is no source to backfill the missing descriptions from, so that variant
 stays permanently.
 
+### Mandate charge claim generation
+
+Older `mandateCharges` rows may omit `claimGeneration`. Readers treat a missing
+value as generation 0. Reserve and reclaim operations write the field.
+
+Make the field required after a migration sets `claimGeneration` on every row,
+or after a production scan finds no row without it.
+
 #### Web tool result fields
 
 Stored `scrape_url` results may contain `truncated`. Results written before the
