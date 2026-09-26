@@ -4,44 +4,7 @@
 	// No browser backend is wired up yet; the local browser implementation will
 	// own cookie and profile persistence. These stubs keep the settings UI in
 	// place until then.
-	const BROWSER_UNAVAILABLE = 'Browser settings are not available yet.';
-	let pending = $state(false);
-	let confirmReset = $state(false);
-	let actionError = $state<string | null>(null);
 	let savingEnabled = $state(true);
-
-	const loaded = $derived(true);
-	const controlsDisabled = $derived(!loaded || pending);
-
-	function catchMessage<T>(error: T, fallback: string): string {
-		return (error instanceof Error && error.message) || fallback;
-	}
-
-	async function toggleSaving() {
-		if (controlsDisabled) return;
-		pending = true;
-		actionError = null;
-		try {
-			throw new Error(BROWSER_UNAVAILABLE);
-		} catch (error) {
-			actionError = catchMessage(error, 'Couldn’t update browser saving.');
-		} finally {
-			pending = false;
-		}
-	}
-
-	async function runReset() {
-		if (controlsDisabled) return;
-		pending = true;
-		actionError = null;
-		try {
-			throw new Error(BROWSER_UNAVAILABLE);
-		} catch (error) {
-			actionError = catchMessage(error, 'Couldn’t reset browser profile.');
-		} finally {
-			pending = false;
-		}
-	}
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -51,19 +14,21 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl space-y-8">
+			<p class="text-muted-foreground text-sm leading-6">
+				Browser sessions run locally and these settings are not available yet.
+			</p>
+
 			<div class="flex items-center justify-between gap-4">
 				<p class="text-foreground text-[15px]">Save cookies and login state</p>
 				<button
 					type="button"
 					role="switch"
 					aria-checked={savingEnabled}
-					aria-busy={!loaded || pending}
 					aria-label="Save cookies and login state"
-					disabled={controlsDisabled}
+					disabled
 					class="focus-visible:ring-ring/50 relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 {savingEnabled
 						? 'bg-foreground'
 						: 'bg-hover-fill-strong'}"
-					onclick={() => void toggleSaving()}
 				>
 					<span
 						class="bg-background inline-block size-3.5 rounded-full transition {savingEnabled
@@ -74,42 +39,8 @@
 				</button>
 			</div>
 
-			{#if actionError}
-				<p class="text-destructive text-sm" role="alert">{actionError}</p>
-			{/if}
-
 			<div>
-				{#if confirmReset}
-					<p class="text-muted-foreground text-sm leading-6">
-						This reset closes your current browser sessions, signs future sessions out, and starts
-						fresh.
-					</p>
-					<div class="mt-4 flex flex-wrap items-center gap-3">
-						<Button onclick={() => void runReset()} disabled={controlsDisabled}>
-							{pending ? 'Resetting…' : 'Confirm reset'}
-						</Button>
-						<Button
-							variant="outline"
-							disabled={pending}
-							onclick={() => {
-								confirmReset = false;
-							}}
-						>
-							Cancel
-						</Button>
-					</div>
-				{:else}
-					<Button
-						variant="outline"
-						disabled={controlsDisabled}
-						onclick={() => {
-							confirmReset = true;
-							actionError = null;
-						}}
-					>
-						Reset browser profile
-					</Button>
-				{/if}
+				<Button variant="outline" disabled>Reset browser profile</Button>
 			</div>
 		</div>
 	</div>
