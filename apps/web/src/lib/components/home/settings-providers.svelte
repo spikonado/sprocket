@@ -140,7 +140,8 @@
 	}
 
 	async function waitForChatGptLogin(login: ChatGptLogin, generation: number) {
-		while (generation === loginGeneration && Date.now() < login.expiresAt) {
+		while (Date.now() < login.expiresAt) {
+			if (generation !== loginGeneration) return;
 			await new Promise((resolve) => setTimeout(resolve, login.intervalMs));
 			if (generation !== loginGeneration) return;
 			try {
@@ -177,7 +178,8 @@
 	}
 
 	async function waitForBrowserLogin(login: BrowserLogin, generation: number) {
-		while (generation === loginGeneration && Date.now() < login.expiresAt) {
+		while (Date.now() < login.expiresAt) {
+			if (generation !== loginGeneration) return;
 			await new Promise((resolve) => setTimeout(resolve, 1_500));
 			if (generation !== loginGeneration) return;
 			try {
