@@ -91,12 +91,11 @@ fn validate(catalog: &Catalog) -> anyhow::Result<()> {
 
 fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsResponse> {
     validate(&catalog)?;
-    let allowed = allowed_models(&catalog, tier)?;
-    let default_model_id = default_model_for_tier(&catalog, allowed)?.id.clone();
+    let default_model_id = resolve_model_for_tier(&catalog, tier)?;
     let models: Vec<CliModel> = catalog
         .models
         .iter()
-        .filter(|model| allowed.contains(&model.id))
+        .filter(|model| model_is_allowed(&catalog, tier, &model.id))
         .map(|model| CliModel {
             id: model.id.clone(),
             label: model.label.clone(),
@@ -110,28 +109,40 @@ fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsR
     })
 }
 
-fn allowed_models<'a>(catalog: &'a Catalog, tier: &str) -> anyhow::Result<&'a [String]> {
+// Mirrors the UI's resolveModelForTier: prefer the catalog default when the tier allows it,
+// then the tier's first allowed model, then the catalog default.
+fn resolve_model_for_tier(catalog: &Catalog, tier: &str) -> anyhow::Result<String> {
+    if model_is_allowed(catalog, tier, &catalog.default_model_id) {
+        return Ok(catalog.default_model_id.clone());
+    }
+    let allowed = catalog
+        .tier_allowed_models
+        .get(tier)
+        .context("no models are available for this account")?;
+    allowed
+        .first()
+        .cloned()
+        .context("no models are available for this account")
+}
+
+// Tiers missing from the catalog allow every model, matching the UI's isModelAllowedForTier.
+fn model_is_allowed(catalog: &Catalog, tier: &str, model: &str) -> bool {
     catalog
         .tier_allowed_models
         .get(tier)
-        .map(Vec::as_slice)
-        .context("model catalog does not define this account tier")
+        .is_none_or(|allowed| allowed.iter().any(|id| id == model))
 }
 
-fn default_model_for_tier<'a>(
-    catalog: &'a Catalog,
-    allowed: &[String],
-) -> anyhow::Result<&'a Model> {
-    catalog
-        .models
+// Tiers missing from the catalog allow fast mode, matching the UI's fastModeAccessForModelAndTier.
+fn fast_mode_is_allowed(catalog: &Catalog, tier: &str, model: &Model) -> bool {
+    model
+        .service_tiers
         .iter()
-        .find(|model| model.id == catalog.default_model_id && allowed.contains(&model.id))
-        .or_else(|| {
-            allowed
-                .iter()
-                .find_map(|id| catalog.models.iter().find(|model| model.id == *id))
-        })
-        .context("no models are available for this account")
+        .any(|service_tier| service_tier == "fast")
+        && catalog
+            .tier_allowed_service_tiers
+            .get(tier)
+            .is_none_or(|tiers| tiers.iter().any(|service_tier| service_tier == "fast"))
 }
 
 fn select(
@@ -147,12 +158,14 @@ fn select(
             .as_ref()
             .map(|thread| thread.selected_model.clone())
     });
-    let allowed = allowed_models(&catalog, &context.tier)?;
-    let uses_tier_fallback =
-        inherited_model.is_none() && !allowed.contains(&catalog.default_model_id);
-    let model = match inherited_model {
-        Some(model) => model,
-        None => default_model_for_tier(&catalog, allowed)?.id.clone(),
+    let (model, coerced) = match inherited_model {
+        Some(model) if model_is_allowed(&catalog, &context.tier, &model) => (model, false),
+        Some(model) if model_overridden => {
+            anyhow::bail!("model {model} is unavailable for this account")
+        }
+        // Like the UI's resolveModelForTier, fall back to the tier's first allowed model
+        // when the inherited model is locked.
+        _ => (resolve_model_for_tier(&catalog, &context.tier)?, true),
     };
     let fast = request
         .fast
@@ -163,15 +176,11 @@ fn select(
         .iter()
         .find(|entry| entry.id == model)
         .with_context(|| format!("unknown model {model}"))?;
-    anyhow::ensure!(
-        allowed.contains(&model),
-        "model {model} is unavailable for this account"
-    );
     let reasoning = request
         .reasoning
         .clone()
         .or_else(|| {
-            if model_overridden {
+            if model_overridden || coerced {
                 None
             } else {
                 context
@@ -181,7 +190,7 @@ fn select(
             }
         })
         .unwrap_or_else(|| {
-            if model_overridden || uses_tier_fallback {
+            if model_overridden || coerced {
                 entry.default_reasoning_effort.clone()
             } else {
                 catalog.default_reasoning_effort.clone()
@@ -193,11 +202,7 @@ fn select(
     );
     if fast {
         anyhow::ensure!(
-            entry.service_tiers.iter().any(|tier| tier == "fast")
-                && catalog
-                    .tier_allowed_service_tiers
-                    .get(&context.tier)
-                    .is_some_and(|tiers| tiers.iter().any(|tier| tier == "fast")),
+            fast_mode_is_allowed(&catalog, &context.tier, entry),
             "fast mode is unavailable for this model or account"
         );
     }
@@ -265,13 +270,77 @@ mod tests {
             }]
         );
         let paid = available_for_tier(catalog(), "paid").unwrap();
-        assert_eq!(paid.default_model_id, "paid-first");
+        // The tier's first allowed model wins even when it is stale, matching the UI's
+        // resolveModelForTier.
+        assert_eq!(paid.default_model_id, "stale");
 
+        // Stale allowed ids not present in the catalog surface as an error.
+        assert!(
+            select(
+                catalog(),
+                &RunContext {
+                    gateway_url: String::new(),
+                    tier: "paid".into(),
+                    thread: None,
+                },
+                &CliRunRequest {
+                    client_id: "client".into(),
+                    prompt: "task".into(),
+                    directory: "/tmp".into(),
+                    thread_id: None,
+                    model: None,
+                    reasoning: None,
+                    fast: None,
+                },
+            )
+            .is_err()
+        );
+
+        // Tiers missing from the catalog allow everything, like the UI.
+        let enterprise = available_for_tier(catalog(), "enterprise").unwrap();
+        assert_eq!(enterprise.default_model_id, "default");
+        assert_eq!(enterprise.models.len(), catalog().models.len());
+    }
+
+    #[test]
+    fn locked_inherited_model_falls_back_to_the_tiers_first_allowed_model() {
         let settings = select(
             catalog(),
             &RunContext {
                 gateway_url: String::new(),
-                tier: "paid".into(),
+                tier: "free".into(),
+                thread: Some(super::super::ThreadSettings {
+                    repository_key: "repo".into(),
+                    selected_model: "paid".into(),
+                    reasoning_effort: "max".into(),
+                    fast_mode: false,
+                }),
+            },
+            &CliRunRequest {
+                client_id: "client".into(),
+                prompt: "task".into(),
+                directory: "/tmp".into(),
+                thread_id: Some("thread".into()),
+                model: None,
+                reasoning: None,
+                fast: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(settings.model, "default");
+        // Coerced to a model with a different effort set, so the inherited effort is
+        // dropped for the model's own default.
+        assert_eq!(settings.reasoning, "high");
+    }
+
+    #[test]
+    fn locked_explicit_model_is_an_error() {
+        let result = select(
+            catalog(),
+            &RunContext {
+                gateway_url: String::new(),
+                tier: "free".into(),
                 thread: None,
             },
             &CliRunRequest {
@@ -279,16 +348,38 @@ mod tests {
                 prompt: "task".into(),
                 directory: "/tmp".into(),
                 thread_id: None,
-                model: None,
+                model: Some("paid".into()),
                 reasoning: None,
                 fast: None,
             },
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tiers_missing_from_the_catalog_allow_every_model_and_fast_mode() {
+        let settings = select(
+            catalog(),
+            &RunContext {
+                gateway_url: String::new(),
+                tier: "enterprise".into(),
+                thread: None,
+            },
+            &CliRunRequest {
+                client_id: "client".into(),
+                prompt: "task".into(),
+                directory: "/tmp".into(),
+                thread_id: None,
+                model: Some("default".into()),
+                reasoning: None,
+                fast: Some(true),
+            },
         )
         .unwrap();
-        assert_eq!(settings.model, "paid-first");
-        assert_eq!(settings.reasoning, "xhigh");
 
-        assert!(available_for_tier(catalog(), "unknown").is_err());
+        assert_eq!(settings.model, "default");
+        assert!(settings.fast);
     }
 
     #[test]
