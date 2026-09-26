@@ -2223,6 +2223,7 @@
 					tab={artifactPanel.panel.tab}
 					liveView={currentThreadId ? browserLiveViewQuery.data : null}
 					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
+					liveViewError={browserLiveViewQuery.error != null}
 					expanded={artifactPanel.panel.expanded}
 					stale={artifactPanel.watchState.stale}
 					error={artifactPanel.watchState.error}

@@ -270,6 +270,72 @@ describe('Firecrawl browser lifecycle', () => {
 		});
 	});
 
+	it('waits for the browser create limit when retrying without saving', async () => {
+		vi.useFakeTimers();
+		const fetch = remote()
+			.mockResolvedValueOnce(new Response('{}', { status: 409 }))
+			.mockResolvedValueOnce(new Response('{}', { status: 409 }))
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						success: false,
+						error:
+							'Rate limit exceeded. Consumed (req/min): 3, Remaining (req/min): 0. Please retry after 38s.'
+					}),
+					{ status: 429 }
+				)
+			);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const args = {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'agent-browser get url'
+		};
+		await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
+			'Sprocket has no other active saving session'
+		);
+
+		const retrying = interact(t, args);
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+		await vi.advanceTimersToNextTimerAsync();
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
+		await expect(retrying).resolves.toEqual({ text: 'Done', truncated: false });
+		expect(fetch).toHaveBeenCalledTimes(5);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-1',
+			saveChanges: false,
+			closing: false
+		});
+	});
+
+	it('releases a rate-limited creation when its run is cancelled before retry', async () => {
+		vi.useFakeTimers();
+		const fetch = remote().mockResolvedValueOnce(
+			new Response(JSON.stringify({ success: false, error: 'Rate limit exceeded.' }), {
+				status: 429,
+				headers: { 'Retry-After': '30' }
+			})
+		);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const retrying = interact(t, {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'agent-browser click @e1'
+		});
+		const rejected = expect(retrying).rejects.toThrow('No action ran');
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+		await t.run((ctx) => ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() }));
+		await vi.advanceTimersToNextTimerAsync();
+		await rejected;
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toEqual([]);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
+	});
+
 	it.each([503, 'timeout'] as const)(
 		'does not retry uncertain creation or fall back after %s',
 		async (failure) => {
@@ -345,7 +411,7 @@ describe('Firecrawl browser lifecycle', () => {
 			fetch.mockResolvedValueOnce(new Response('{}', { status }));
 			await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
 				status === 409
-					? "Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
+					? 'Sprocket has no other active saving session'
 					: 'A request-rate or concurrency limit was reached.'
 			);
 			expect(fetch).toHaveBeenCalledTimes(4);
@@ -739,11 +805,25 @@ describe('Firecrawl browser lifecycle', () => {
 				command: 'agent-browser click @e1',
 				enforce_saving: true
 			})
-		).rejects.toThrow(
-			"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
-		);
+		).rejects.toThrow('Sprocket has no other active saving session');
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
+	});
+
+	it('identifies a saving session in another conversation without closing it', async () => {
+		const fetch = remote();
+		const t = initConvexTest();
+		const first = await fixture(t);
+		const second = await fixture(t);
+		await interact(t, { ...first, command: 'agent-browser get url' });
+		fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
+		await expect(
+			interact(t, { ...second, command: 'agent-browser get url', enforce_saving: true })
+		).rejects.toThrow('Sprocket lists a saving browser for this profile in another conversation');
+		expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toMatchObject([
+			{ sessionId: 'session-1', closing: false }
+		]);
 	});
 
 	it('fixes saving mode for a session and applies preference only to new sessions', async () => {
@@ -1136,7 +1216,7 @@ describe('Firecrawl browser lifecycle', () => {
 	});
 
 	it.each(['seconds', 'date'])(
-		'keeps a rate-limited session open and reports Retry-After as %s without replaying the command',
+		'backs off from an execute rate limit reported as %s and runs the command once',
 		async (format) => {
 			vi.useFakeTimers();
 			vi.setSystemTime(new Date('2026-09-10T12:00:00Z'));
@@ -1159,18 +1239,69 @@ describe('Firecrawl browser lifecycle', () => {
 					}
 				})
 			);
-			await expect(interact(t, args)).rejects.toThrow(
-				'Firecrawl request failed (HTTP 429). Rate limit exceeded. Wait at least 30 seconds before retrying. The command did not run.'
-			);
-			await vi.advanceTimersByTimeAsync(0);
-			await t.finishInProgressScheduledFunctions();
-			expect(fetch).toHaveBeenCalledTimes(3);
-			expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toEqual(session);
-			await interact(t, args);
+			const retrying = interact(t, args);
+			await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+			await vi.advanceTimersToNextTimerAsync();
+			await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+			await expect(retrying).resolves.toEqual({ text: 'Done', truncated: false });
 			expect(fetch).toHaveBeenCalledTimes(4);
 			expect(fetch.mock.lastCall?.[0]).toContain('/session-1/execute');
+			expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+				_id: session!._id,
+				sessionId: session!.sessionId,
+				closing: false,
+				operationExpiresAt: 0
+			});
 		}
 	);
+
+	it('does not execute a rate-limited command after its run is cancelled', async () => {
+		vi.useFakeTimers();
+		const fetch = remote();
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const args = {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'agent-browser click @e1'
+		};
+		await interact(t, args);
+		fetch.mockResolvedValueOnce(
+			new Response(JSON.stringify({ success: false, error: 'Rate limit exceeded.' }), {
+				status: 429,
+				headers: { 'Retry-After': '30' }
+			})
+		);
+
+		const retrying = interact(t, args);
+		const rejected = expect(retrying).rejects.toThrow('No action ran');
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+		await t.run((ctx) => ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() }));
+		await vi.advanceTimersToNextTimerAsync();
+		await rejected;
+		expect(fetch).toHaveBeenCalledTimes(3);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			sessionId: 'session-1',
+			closing: false,
+			operationExpiresAt: 0
+		});
+	});
+
+	it('reports the provider wait when a body-only rate limit exceeds the retry budget', async () => {
+		const fetch = remote().mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({ success: false, error: 'Rate limit exceeded. Please retry after 121s.' }),
+				{ status: 429 }
+			)
+		);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		await expect(
+			interact(t, { runId, claimId, executionSecret, command: 'agent-browser get url' })
+		).rejects.toThrow('Wait at least 121 seconds before retrying.');
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
 
 	it.each([
 		['<html>Too many requests</html>', 'invalid'],

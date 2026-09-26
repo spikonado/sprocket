@@ -218,3 +218,54 @@ it.each([true, false])(
 		expect(document.querySelector('button')?.textContent?.trim()).toBe('Take control');
 	}
 );
+
+it('shows a status error instead of an endless loading spinner', () => {
+	const component = mount(BrowserLiveView, {
+		target: document.body,
+		props: { active: false, liveView: undefined, statusError: true }
+	});
+	cleanup = () => unmount(component);
+	flushSync();
+	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+		"Browser status hasn't loaded"
+	);
+	expect(document.querySelector('.animate-spin')).toBeNull();
+});
+
+it('reports a stalled browser status query rather than waiting forever', () => {
+	vi.useFakeTimers();
+	const component = mount(BrowserLiveView, {
+		target: document.body,
+		props: { active: false, liveView: undefined }
+	});
+	cleanup = () => unmount(component);
+	flushSync();
+	expect(document.body.textContent).toContain('Checking browser status');
+	vi.advanceTimersByTime(15_000);
+	flushSync();
+	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+		"Browser status hasn't loaded"
+	);
+});
+
+it('offers a stop action for a session without a live view', () => {
+	initConvex('https://example.convex.cloud', { disabled: true });
+	const component = mount(BrowserLiveView, {
+		target: document.body,
+		props: {
+			active: false,
+			liveView: {
+				...session(Date.now() + 60_000),
+				providerSessionId: null,
+				url: null,
+				interactiveUrl: null,
+				humanControl: false
+			}
+		}
+	});
+	cleanup = () => unmount(component);
+	flushSync();
+	expect(document.body.textContent).toContain('No live view is available yet');
+	expect(document.querySelector('button[aria-label="Stop browser session"]')).not.toBeNull();
+	expect(document.querySelector('.animate-spin')).toBeNull();
+});

@@ -10,15 +10,24 @@
 		liveView: BrowserLiveViewState | null | undefined;
 		/** Whether the agent is actively working in the browser. */
 		active: boolean;
+		statusError?: boolean;
 	};
 
-	let { liveView, active }: Props = $props();
+	let { liveView, active, statusError = false }: Props = $props();
 
 	const setHumanControl = useMutation(api.browserProfiles.setHumanControl);
 	const stopSession = useMutation(api.browserSessions.stop);
 
 	let pending = $state<'control' | 'stop' | null>(null);
 	let actionError = $state<string | null>(null);
+	let statusTimedOut = $state(false);
+
+	$effect(() => {
+		statusTimedOut = false;
+		if (liveView !== undefined || statusError) return;
+		const timeout = setTimeout(() => (statusTimedOut = true), 15_000);
+		return () => clearTimeout(timeout);
+	});
 
 	const threadId = $derived(liveView?.threadId);
 	const sessionRecordId = $derived(liveView?.id);
@@ -188,9 +197,20 @@
 			{/key}
 		{:else}
 			<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-				<LoaderCircle class="text-muted-foreground size-5 animate-spin" aria-hidden="true" />
-				<p class="text-muted-foreground text-sm">Starting the live view…</p>
-				<p class="text-muted-foreground text-xs">The agent is browsing in the meantime.</p>
+				{#if active && !providerSessionId}
+					<LoaderCircle class="text-muted-foreground size-5 animate-spin" aria-hidden="true" />
+					<p class="text-muted-foreground text-sm">Starting the browser session…</p>
+				{:else if providerSessionId}
+					<p class="text-muted-foreground text-sm" role="status">
+						The browser session is running, but its live view is unavailable. Stop it above if you
+						no longer need it.
+					</p>
+				{:else}
+					<p class="text-muted-foreground text-sm" role="status">
+						No live view is available yet. If the browser isn't starting, stop this session above
+						and retry.
+					</p>
+				{/if}
 			</div>
 		{/if}
 	{:else if ended || liveView === null}
@@ -201,9 +221,15 @@
 				When the agent browses again, a new session will appear here.
 			</p>
 		</div>
+	{:else if statusError || statusTimedOut}
+		<div class="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+			<p class="text-destructive text-sm" role="alert">
+				Browser status hasn't loaded. Check your connection and reload.
+			</p>
+		</div>
 	{:else}
-		<div class="flex min-h-0 flex-1 items-center justify-center">
-			<LoaderCircle class="text-muted-foreground size-5 animate-spin" aria-hidden="true" />
+		<div class="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+			<p class="text-muted-foreground text-sm" role="status">Checking browser status…</p>
 		</div>
 	{/if}
 </div>

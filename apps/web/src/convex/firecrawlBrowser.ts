@@ -13,11 +13,15 @@ const SESSION_TTL_SECONDS = 3600;
 const ACTIVITY_TTL_SECONDS = 450;
 const EXECUTE_TIMEOUT_SECONDS = 120;
 const FETCH_TIMEOUT_MS = 140_000;
+const MAX_RATE_LIMIT_RETRIES = 2;
+const RATE_LIMIT_RETRY_BUDGET_MS = 120_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_RESULT_CHARS = 8_000;
 const MAX_SCREENSHOT_BYTES = 600_000;
-const SAVING_IN_USE_ERROR =
-	"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session.";
+const SAVING_PROVIDER_CONFLICT_ERROR =
+	'Firecrawl refused to open a saving browser for this profile (HTTP 409). Sprocket has no other active saving session for it. Try again shortly. If it persists, ask support to check Firecrawl sessions. Do not reset the profile unless you are willing to lose saved logins.';
+const SAVING_IN_OTHER_CONVERSATION_ERROR =
+	'Sprocket lists a saving browser for this profile in another conversation. Stop that browser session or wait for it to close, then retry.';
 const GONE_STATUSES = new Set([404, 410]);
 const CHROME_WRAPPER_DEV_FD_FAILURE =
 	/\/usr\/bin\/google-chrome-stable: line \d+: \/dev\/fd\/\d+: No such file or directory/;
@@ -88,11 +92,22 @@ class FirecrawlError extends Error {
 
 class BrowserWorkerStartupError extends Error {}
 
+class RetryAbortedBeforeRequest extends Error {
+	constructor(readonly reason: Error) {
+		super('Browser request retry aborted before sending.');
+	}
+}
+
 function retryAfterSeconds(response: Response): number | undefined {
 	const value = response.headers.get('retry-after')?.trim();
 	if (!value) return undefined;
 	const numeric = Number(value);
 	const seconds = Number.isFinite(numeric) ? numeric : (Date.parse(value) - Date.now()) / 1_000;
+	return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
+}
+
+function retryAfterDetailSeconds(detail: string | null | undefined): number | undefined {
+	const seconds = Number(detail?.match(/\bretry after\s+(\d+(?:\.\d+)?)s\b/i)?.[1]);
 	return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
 }
 
@@ -175,34 +190,54 @@ type RequestBody = {
 async function request(
 	method: string,
 	path: string,
-	body?: RequestBody
+	body?: RequestBody,
+	beforeRateLimitRetry?: () => Promise<void>
 ): Promise<z.infer<typeof providerResponseSchema>> {
 	const key = env.FIRECRAWL_BROWSER_API_KEY?.trim();
 	if (!key) throw new Error('FIRECRAWL_BROWSER_API_KEY is not configured.');
-	const response = await fetch(`https://api.firecrawl.dev/v2/interact${path}`, {
-		method,
-		headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-		body: body === undefined ? undefined : JSON.stringify(body),
-		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-	});
-	if (!response.ok) {
-		const retryAfter = retryAfterSeconds(response);
+	let retries = 0;
+	let retryWaitMs = 0;
+	for (;;) {
+		const response = await fetch(`https://api.firecrawl.dev/v2/interact${path}`, {
+			method,
+			headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+		});
+		if (response.ok) return readJson(response, method === 'DELETE' ? 'success' : 'reject');
+		const headerDelay = retryAfterSeconds(response);
 		const data = await readJson(response, 'reject').catch(() => null);
-		throw new FirecrawlError(
-			response.status,
-			data?.error?.trim().slice(0, MAX_RESULT_CHARS),
-			retryAfter
-		);
+		const detail = data?.error?.trim().slice(0, MAX_RESULT_CHARS);
+		const delaySeconds = headerDelay ?? retryAfterDetailSeconds(detail);
+		const delayMs = delaySeconds === undefined ? undefined : delaySeconds * 1_000;
+		if (
+			response.status !== 429 ||
+			delayMs === undefined ||
+			retries >= MAX_RATE_LIMIT_RETRIES ||
+			retryWaitMs + delayMs > RATE_LIMIT_RETRY_BUDGET_MS
+		) {
+			throw new FirecrawlError(response.status, detail, delaySeconds);
+		}
+		retries += 1;
+		retryWaitMs += delayMs;
+		await new Promise((resolve) => setTimeout(resolve, delayMs));
+		try {
+			await beforeRateLimitRetry?.();
+		} catch (error) {
+			throw new RetryAbortedBeforeRequest(
+				error instanceof Error ? error : new Error(String(error))
+			);
+		}
 	}
-	return readJson(response, method === 'DELETE' ? 'success' : 'reject');
 }
 
 async function provider(
 	method: string,
 	path: string,
-	body?: RequestBody
+	body?: RequestBody,
+	beforeRateLimitRetry?: () => Promise<void>
 ): Promise<z.infer<typeof providerResponseSchema>> {
-	const data = await request(method, path, body);
+	const data = await request(method, path, body, beforeRateLimitRetry);
 	const envelope = envelopeSchema.parse(data);
 	if (!envelope.success) throw new Error(envelope.error || 'Firecrawl request failed.');
 	return data;
@@ -338,7 +373,12 @@ type BrowserArgs = {
 	threadId: Id<'threadRecords'>;
 };
 
-async function createSession(ctx: ActionCtx, profileName: string, saveChanges: boolean) {
+async function createSession(
+	ctx: ActionCtx,
+	profileName: string,
+	saveChanges: boolean,
+	beforeRateLimitRetry: () => Promise<void>
+) {
 	if (!env.FIRECRAWL_BROWSER_API_KEY?.trim())
 		throw new Error('FIRECRAWL_BROWSER_API_KEY is not configured.');
 	const reservationId = crypto.randomUUID();
@@ -355,19 +395,25 @@ async function createSession(ctx: ActionCtx, profileName: string, saveChanges: b
 		await ctx.runMutation(internal.browserCapacity.reserve, reservation);
 	}
 	try {
-		const data = await provider('POST', '', {
-			ttl: SESSION_TTL_SECONDS,
-			activityTtl: ACTIVITY_TTL_SECONDS,
-			recordSession: false,
-			profile: { name: profileName, saveChanges }
-		});
+		const data = await provider(
+			'POST',
+			'',
+			{
+				ttl: SESSION_TTL_SECONDS,
+				activityTtl: ACTIVITY_TTL_SECONDS,
+				recordSession: false,
+				profile: { name: profileName, saveChanges }
+			},
+			beforeRateLimitRetry
+		);
 		const { id } = z.object({ id: z.string().min(1) }).parse(data);
 		await ctx.runMutation(internal.browserCapacity.attach, { reservationId, sessionId: id });
 		return data;
 	} catch (error) {
 		if (
-			error instanceof FirecrawlError &&
-			[400, 401, 402, 403, 404, 409, 422, 429].includes(error.status)
+			error instanceof RetryAbortedBeforeRequest ||
+			(error instanceof FirecrawlError &&
+				[400, 401, 402, 403, 404, 409, 422, 429].includes(error.status))
 		) {
 			await ctx.runMutation(internal.browserCapacity.releaseReservation, { reservationId });
 		}
@@ -408,17 +454,38 @@ async function execute(
 	const creationDeadline = startedAt + SESSION_TTL_SECONDS * 1_000;
 	let destroyed = false;
 	let executing = false;
+	const validateExecution = async () => {
+		await ctx.runMutation(internal.browserSessions.beforeExecute, {
+			id: session._id,
+			operationId,
+			runId: args.runId,
+			claimId: args.claimId
+		});
+	};
 	try {
 		if (!sessionId || (enforceSaving && !session.saveChanges)) {
 			let saveChanges = enforceSaving || session.saveChanges;
 			let data: unknown;
 			try {
-				data = await createSession(ctx, session.profileName, saveChanges);
+				data = await createSession(ctx, session.profileName, saveChanges, validateExecution);
 			} catch (error) {
 				if (!(error instanceof FirecrawlError && error.status === 409 && saveChanges)) {
 					throw error;
 				}
-				if (enforceSaving) throw new ConvexError(SAVING_IN_USE_ERROR);
+				if (enforceSaving) {
+					const otherSavingSession = await ctx.runQuery(
+						internal.browserSessions.hasOtherSavingSession,
+						{
+							userId: args.userId,
+							threadId: args.threadId,
+							profileName: session.profileName,
+							now: Date.now()
+						}
+					);
+					throw new ConvexError(
+						otherSavingSession ? SAVING_IN_OTHER_CONVERSATION_ERROR : SAVING_PROVIDER_CONFLICT_ERROR
+					);
+				}
 				await ctx.runMutation(internal.browserSessions.beforeExecute, {
 					id: session._id,
 					operationId,
@@ -426,7 +493,7 @@ async function execute(
 					claimId: args.claimId
 				});
 				saveChanges = false;
-				data = await createSession(ctx, session.profileName, saveChanges);
+				data = await createSession(ctx, session.profileName, saveChanges, validateExecution);
 			}
 			createdId = z.object({ id: z.string().min(1) }).parse(data).id;
 			const created = createdSchema.parse(data);
@@ -452,19 +519,19 @@ async function execute(
 			}
 			sessionId = created.id;
 		}
-		await ctx.runMutation(internal.browserSessions.beforeExecute, {
-			id: session._id,
-			operationId,
-			runId: args.runId,
-			claimId: args.claimId
-		});
+		await validateExecution();
 		executing = true;
 		const parsed = executionSchema.safeParse(
-			await request('POST', `/${encodeURIComponent(sessionId)}/execute`, {
-				code,
-				language,
-				timeout: EXECUTE_TIMEOUT_SECONDS
-			})
+			await request(
+				'POST',
+				`/${encodeURIComponent(sessionId)}/execute`,
+				{
+					code,
+					language,
+					timeout: EXECUTE_TIMEOUT_SECONDS
+				},
+				validateExecution
+			)
 		);
 		if (!parsed.success) {
 			throw new Error('Firecrawl execute response was incomplete.');
@@ -504,6 +571,7 @@ async function execute(
 				expiresAt: creationDeadline
 			});
 		}
+		if (error instanceof RetryAbortedBeforeRequest) throw error.reason;
 		if (executing && isGone(error)) {
 			await ctx.runMutation(internal.browserCapacity.releaseSession, { sessionId: sessionId! });
 			destroyed = true;
