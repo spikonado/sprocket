@@ -435,10 +435,9 @@
 			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
 	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedThreadQueryArgs);
-	const browserLiveViewQuery = useQuery(
-		api.browserSessions.liveViewForThread,
-		authenticatedThreadQueryArgs
-	);
+	// No browser backend is wired up; the live view stays empty until the local
+	// browser implementation provides session state.
+	const browserLiveView = { data: null, error: null };
 	const pendingAgentQuestionQuery = useQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -448,7 +447,6 @@
 			uiPreferencesQuery,
 			activeThreadQuery,
 			lifecycleQuery,
-			browserLiveViewQuery,
 			pendingAgentQuestionQuery
 		]) {
 			if (query.error) {
@@ -2221,8 +2219,8 @@
 					artifacts={artifactPanel.artifacts}
 					selectedKey={artifactPanel.panel.selectedKey}
 					tab={artifactPanel.panel.tab}
-					liveView={currentThreadId ? browserLiveViewQuery.data : null}
-					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
+					liveView={browserLiveView.data}
+					liveActive={false}
 					expanded={artifactPanel.panel.expanded}
 					stale={artifactPanel.watchState.stale}
 					error={artifactPanel.watchState.error}

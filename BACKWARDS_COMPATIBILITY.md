@@ -123,12 +123,11 @@ those validators stay permanently.
 The Firecrawl browser provider is gone. `browser_interact` and
 `browser_screenshot` moved out of `vCurrentExecutorJobKind`, so `beginToolJob`
 rejects new jobs for them while stored jobs keep their validators so
-conversation history remains readable. The browser live-view UI and its
-`browserSessions`/`browserProfiles` tables stay for the next browser provider.
-`firecrawlBrowserCleanup.closeLegacySession` still sends the provider DELETE
-for sessions created before the shutdown; remove it once every stored session
-predates the shutdown (the provider's hard TTL is one hour) or
-`FIRECRAWL_BROWSER_API_KEY` is unset in the deployment.
+conversation history remains readable. The `browserSessions` and
+`browserProfiles` tables are dropped; the next browser implementation is local
+and keeps its own state. Any remote Firecrawl session still live at deploy time
+expires on its own within the provider's hard TTL. The browser live-view UI
+components stay in place, stubbed against local state, for the local browser.
 
 #### Mandate setup email
 

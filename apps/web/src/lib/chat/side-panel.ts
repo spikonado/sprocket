@@ -22,7 +22,7 @@ export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 
 /** Live-view state for the thread's shared browser session. */
 export type BrowserLiveViewState = {
-	id: Id<'browserSessions'>;
+	id: string;
 	providerSessionId: string | null;
 	/** Embeddable watch-only live view URL; null while it is being set up. */
 	url: string | null;
@@ -30,15 +30,15 @@ export type BrowserLiveViewState = {
 	interactiveUrl: string | null;
 	/** Whether this session persists cookies and login state. */
 	saving: boolean;
-	/** Hard deadline for the Firecrawl session. */
+	/** Hard deadline for the browser session. */
 	expiresAt: number;
 	/** Backend expiry, reset, or quarantine has made the session unavailable. */
 	ended: boolean;
 	/** True after the user takes control; agent browser calls are blocked. */
 	humanControl: boolean;
-	threadId: Id<'threadRecords'>;
+	threadId: Id<'threadRecords'> | string;
 	/** Run that most recently drove the browser, matched against the active run for liveness. */
-	lastUsedRunId: Id<'runs'> | null;
+	lastUsedRunId: Id<'runs'> | string | null;
 	/** Session (re)start time. */
 	startedAt: number;
 };

@@ -1,26 +1,20 @@
 <script lang="ts">
-	import { useAuth, useMutation, useQuery } from 'convex-svelte';
-	import { api } from '$convex/_generated/api';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import { convexClientErrorMessage } from '$lib/convex-error';
 
-	const convexAuth = useAuth();
-	const profileQuery = useQuery(api.browserProfiles.getMine, () =>
-		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
-	);
-	const setSaving = useMutation(api.browserProfiles.setSaving);
-	const resetProfile = useMutation(api.browserProfiles.reset);
-
+	// No browser backend is wired up yet; the local browser implementation will
+	// own cookie and profile persistence. These stubs keep the settings UI in
+	// place until then.
+	const BROWSER_UNAVAILABLE = 'Browser settings are not available yet.';
 	let pending = $state(false);
 	let confirmReset = $state(false);
 	let actionError = $state<string | null>(null);
+	let savingEnabled = $state(true);
 
-	const loaded = $derived(profileQuery.data !== undefined);
-	const savingEnabled = $derived(profileQuery.data?.savingEnabled ?? true);
+	const loaded = $derived(true);
 	const controlsDisabled = $derived(!loaded || pending);
 
 	function catchMessage<T>(error: T, fallback: string): string {
-		return (error instanceof Error && convexClientErrorMessage(error)) || fallback;
+		return (error instanceof Error && error.message) || fallback;
 	}
 
 	async function toggleSaving() {
@@ -28,7 +22,7 @@
 		pending = true;
 		actionError = null;
 		try {
-			await setSaving({ enabled: !savingEnabled });
+			throw new Error(BROWSER_UNAVAILABLE);
 		} catch (error) {
 			actionError = catchMessage(error, 'Couldn’t update browser saving.');
 		} finally {
@@ -41,8 +35,7 @@
 		pending = true;
 		actionError = null;
 		try {
-			await resetProfile({});
-			confirmReset = false;
+			throw new Error(BROWSER_UNAVAILABLE);
 		} catch (error) {
 			actionError = catchMessage(error, 'Couldn’t reset browser profile.');
 		} finally {
@@ -81,11 +74,6 @@
 				</button>
 			</div>
 
-			{#if profileQuery.error}
-				<p class="text-destructive text-sm" role="alert">
-					Couldn't load your browser settings right now.
-				</p>
-			{/if}
 			{#if actionError}
 				<p class="text-destructive text-sm" role="alert">{actionError}</p>
 			{/if}
