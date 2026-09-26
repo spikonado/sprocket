@@ -3,6 +3,17 @@ use std::io::Write;
 
 use sprocket_server::cli_protocol::{CliRunSettings, CliRunSnapshot, RunStarted};
 
+fn run_header(started: &RunStarted) -> String {
+    format!(
+        "Thread {} | Run {}\nModel {} | Reasoning {} | Fast {}",
+        started.thread_id,
+        started.run_id,
+        started.settings.model,
+        started.settings.reasoning,
+        if started.settings.fast { "on" } else { "off" }
+    )
+}
+
 pub(super) struct Output {
     started: Option<RunStarted>,
     after_part: i64,
@@ -38,13 +49,7 @@ impl Output {
     }
 
     pub fn start(&mut self, started: RunStarted) -> anyhow::Result<()> {
-        eprintln!("Thread {} | Run {}", started.thread_id, started.run_id);
-        eprintln!(
-            "Model {} | Reasoning {} | Fast {}",
-            started.settings.model,
-            started.settings.reasoning,
-            if started.settings.fast { "on" } else { "off" }
-        );
+        eprintln!("{}", run_header(&started));
         self.started = Some(started);
         Ok(())
     }
@@ -156,10 +161,10 @@ mod tests {
                 },
             })
             .unwrap();
-        let settings = &output.started().unwrap().settings;
-        assert_eq!(settings.model, "model");
-        assert_eq!(settings.reasoning, "high");
-        assert!(settings.fast);
+        assert_eq!(
+            run_header(output.started().unwrap()),
+            "Thread thread | Run run\nModel model | Reasoning high | Fast on"
+        );
     }
 
     #[test]

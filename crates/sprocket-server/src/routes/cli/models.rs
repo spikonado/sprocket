@@ -109,20 +109,20 @@ fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsR
     })
 }
 
-// Mirrors the UI's resolveModelForTier: prefer the catalog default when the tier allows it,
-// then the tier's first allowed model, then the catalog default.
+// Mirrors the UI's resolveModelForTier, additionally skipping allowed ids that are no longer
+// in the catalog so listing and runs never name a model the gateway removed.
 fn resolve_model_for_tier(catalog: &Catalog, tier: &str) -> anyhow::Result<String> {
     if model_is_allowed(catalog, tier, &catalog.default_model_id) {
         return Ok(catalog.default_model_id.clone());
     }
-    let allowed = catalog
-        .tier_allowed_models
-        .get(tier)
-        .context("no models are available for this account")?;
-    allowed
-        .first()
-        .cloned()
-        .context("no models are available for this account")
+    match catalog.tier_allowed_models.get(tier) {
+        Some(allowed) => allowed
+            .iter()
+            .find(|id| catalog.models.iter().any(|model| model.id == **id))
+            .cloned()
+            .context("no models are available for this account"),
+        None => Ok(catalog.default_model_id.clone()),
+    }
 }
 
 // Tiers missing from the catalog allow every model, matching the UI's isModelAllowedForTier.
@@ -165,7 +165,14 @@ fn select(
         }
         // Like the UI's resolveModelForTier, fall back to the tier's first allowed model
         // when the inherited model is locked.
-        _ => (resolve_model_for_tier(&catalog, &context.tier)?, true),
+        Some(_) => (resolve_model_for_tier(&catalog, &context.tier)?, true),
+        None => {
+            let resolved = resolve_model_for_tier(&catalog, &context.tier)?;
+            // A fresh run uses the model's own default effort when the catalog default
+            // was not allowed for this tier, and the catalog-wide default otherwise.
+            let tier_fallback = resolved != catalog.default_model_id;
+            (resolved, tier_fallback)
+        }
     };
     // Like the UI, coercion to a different model drops the thread's fast mode setting;
     // only an explicit --fast asks for it on the replacement model.
@@ -278,31 +285,31 @@ mod tests {
             }]
         );
         let paid = available_for_tier(catalog(), "paid").unwrap();
-        // The tier's first allowed model wins even when it is stale, matching the UI's
-        // resolveModelForTier.
-        assert_eq!(paid.default_model_id, "stale");
+        // Allowed ids the gateway removed from the catalog are skipped.
+        assert_eq!(paid.default_model_id, "paid-first");
 
-        // Stale allowed ids not present in the catalog surface as an error.
-        assert!(
-            select(
-                catalog(),
-                &RunContext {
-                    gateway_url: String::new(),
-                    tier: "paid".into(),
-                    thread: None,
-                },
-                &CliRunRequest {
-                    client_id: "client".into(),
-                    prompt: "task".into(),
-                    directory: "/tmp".into(),
-                    thread_id: None,
-                    model: None,
-                    reasoning: None,
-                    fast: None,
-                },
-            )
-            .is_err()
-        );
+        let settings = select(
+            catalog(),
+            &RunContext {
+                gateway_url: String::new(),
+                tier: "paid".into(),
+                thread: None,
+            },
+            &CliRunRequest {
+                client_id: "client".into(),
+                prompt: "task".into(),
+                directory: "/tmp".into(),
+                thread_id: None,
+                model: None,
+                reasoning: None,
+                fast: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(settings.model, "paid-first");
+        // The catalog default is not allowed for this tier, so the run uses the
+        // replacement model's own default effort.
+        assert_eq!(settings.reasoning, "xhigh");
 
         // Tiers missing from the catalog allow everything, like the UI.
         let enterprise = available_for_tier(catalog(), "enterprise").unwrap();
