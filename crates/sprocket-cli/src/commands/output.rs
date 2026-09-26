@@ -1,7 +1,18 @@
 use std::collections::HashSet;
 use std::io::Write;
 
-use sprocket_server::cli_protocol::{CliRunSnapshot, RunStarted};
+use sprocket_server::cli_protocol::{CliRunSettings, CliRunSnapshot, RunStarted};
+
+fn run_header(started: &RunStarted) -> String {
+    format!(
+        "Thread {} | Run {}\nModel {} | Reasoning {} | Fast {}",
+        started.thread_id,
+        started.run_id,
+        started.settings.model,
+        started.settings.reasoning,
+        if started.settings.fast { "on" } else { "off" }
+    )
+}
 
 pub(super) struct Output {
     started: Option<RunStarted>,
@@ -38,7 +49,7 @@ impl Output {
     }
 
     pub fn start(&mut self, started: RunStarted) -> anyhow::Result<()> {
-        eprintln!("Thread {} | Run {}", started.thread_id, started.run_id);
+        eprintln!("{}", run_header(&started));
         self.started = Some(started);
         Ok(())
     }
@@ -137,11 +148,36 @@ mod tests {
     }
 
     #[test]
+    fn start_keeps_the_resolved_settings_for_the_run_header() {
+        let mut output = Output::new();
+        output
+            .start(RunStarted {
+                run_id: "run".into(),
+                thread_id: "thread".into(),
+                settings: CliRunSettings {
+                    model: "model".into(),
+                    reasoning: "high".into(),
+                    fast: true,
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            run_header(output.started().unwrap()),
+            "Thread thread | Run run\nModel model | Reasoning high | Fast on"
+        );
+    }
+
+    #[test]
     fn final_answer_comes_from_the_confirmed_result_not_transcript_commentary() {
         let mut output = Output::new();
         output.started = Some(RunStarted {
             run_id: "run".into(),
             thread_id: "thread".into(),
+            settings: CliRunSettings {
+                model: "model".into(),
+                reasoning: "high".into(),
+                fast: false,
+            },
         });
         let commentary = snapshot(serde_json::json!([{
             "number": 1, "sourceKey": "one", "kind": "completion", "runId": "run",
@@ -172,6 +208,11 @@ mod tests {
         output.started = Some(RunStarted {
             run_id: "run".into(),
             thread_id: "thread".into(),
+            settings: CliRunSettings {
+                model: "model".into(),
+                reasoning: "high".into(),
+                fast: false,
+            },
         });
         let page = snapshot(serde_json::json!([{
             "number": 1, "sourceKey": "one", "kind": "completion", "runId": "other",

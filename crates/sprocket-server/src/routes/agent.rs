@@ -142,6 +142,11 @@ pub(crate) async fn launch_agent(
     let auth_token_fetcher = state
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
+    let settings = crate::cli_protocol::CliRunSettings {
+        model: payload.selected_model.clone(),
+        reasoning: payload.reasoning_effort.clone(),
+        fast: payload.fast_mode,
+    };
     let request = RunAgentRequest {
         allow_interaction,
         cancellation,
@@ -267,7 +272,11 @@ pub(crate) async fn launch_agent(
             )
         })?
         .map_err(|error| ApiError::internal_with("failed to start agent run", anyhow!(error)))?;
-    Ok(RunStarted { run_id, thread_id })
+    Ok(RunStarted {
+        run_id,
+        thread_id,
+        settings,
+    })
 }
 
 #[derive(Debug, Deserialize)]
