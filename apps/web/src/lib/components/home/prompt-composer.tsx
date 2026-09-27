@@ -22,6 +22,7 @@ import {
 } from '$lib/chat/model-catalog';
 import { formatCountdownDuration } from '$lib/format';
 import AgentQuestion from '$lib/components/home/agent-question';
+import RunElapsed from '$lib/components/home/run-elapsed';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import OptionSelector from '$lib/components/option-selector';
@@ -62,7 +63,7 @@ export type PromptComposerProps = {
 	isSubmitting: boolean;
 	isStarting: boolean;
 	isRunning: boolean;
-	elapsedLabel: string | null;
+	runStartedAt: number | null;
 	/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 	projectSkills?: {
 		workspacePath: string | null;
@@ -118,7 +119,7 @@ export function PromptComposerView({
 	isSubmitting,
 	isStarting,
 	isRunning,
-	elapsedLabel,
+	runStartedAt,
 	projectSkills = null,
 	onSubmit,
 	onCancel,
@@ -621,14 +622,16 @@ export function PromptComposerView({
 		<>
 			<footer className="shrink-0 px-6 py-4">
 				<div className="mx-auto max-w-336">
-					{elapsedLabel ? (
+					{runStartedAt !== null && runStartedAt > 0 && Number.isFinite(runStartedAt) ? (
 						<div className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]">
 							<span className="inline-flex items-center gap-0.75">
 								<span className="bg-foreground/28 size-1 animate-pulse rounded-full"></span>
 								<span className="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:200ms]"></span>
 								<span className="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:400ms]"></span>
 							</span>
-							<span>Working for {elapsedLabel}</span>
+							<span>
+								Working for <RunElapsed startedAt={runStartedAt} />
+							</span>
 						</div>
 					) : isSubmitting ? (
 						<div

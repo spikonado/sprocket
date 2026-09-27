@@ -7,7 +7,6 @@ import {
 	useRef,
 	useState
 } from 'react';
-import { elapsedSeconds, useTickingNow } from '$lib/chat/elapsed-time';
 import { PanelRight, Settings } from 'lucide-react';
 import {
 	useAction,
@@ -66,7 +65,6 @@ import {
 	verifyProjectAttachment as verifyProjectAttachmentForExecution,
 	type ProjectState
 } from '$lib/home/desktop';
-import { formatElapsedDuration } from '$lib/format';
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
@@ -719,10 +717,6 @@ export default function App({
 		isLifecycleInProgress(currentLifecycle.phase) &&
 		!isRetryableQueuedRun;
 	const isRunning = isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested';
-	const tickingNow = useTickingNow(isRunInProgress);
-	const runElapsedSeconds = isRunInProgress
-		? elapsedSeconds(runState?.startedAt, tickingNow)
-		: undefined;
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 	const latestRunResumeKind =
 		hasPendingAgentLaunch || isRunInProgress
@@ -2327,11 +2321,7 @@ export default function App({
 										}
 										isStarting={hasPendingAgentLaunch}
 										isRunning={isRunning}
-										elapsedLabel={
-											runElapsedSeconds === undefined
-												? null
-												: formatElapsedDuration(runElapsedSeconds)
-										}
+										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
 										onSubmit={() => void submitPrompt()}
 										onCancel={() => void cancelRun()}
