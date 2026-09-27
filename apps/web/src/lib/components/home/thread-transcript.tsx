@@ -378,7 +378,7 @@ export default function ThreadTranscript({
 		const root = viewportRef.current;
 		if (!root) return;
 		if (stickToBottomRef.current) {
-			scrollToBottom();
+			scrollToBottomRef.current();
 			return;
 		}
 		const snapshot = anchorRef.current;
@@ -707,6 +707,7 @@ export default function ThreadTranscript({
 			</div>
 
 			<div className="transcript-fade pointer-events-none absolute inset-x-0 bottom-0 h-16"></div>
+			<ImageViewer image={viewerImage} onClose={() => setViewerImage(null)} />
 		</div>
 	);
 }
