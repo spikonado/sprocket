@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { api } from '$convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { ensureLocalSession, resolveLocalApiBaseUrl } from '$lib/local/client';
-import { derived, get, writable } from 'svelte/store';
+import { createStore, selectStore } from './store';
 
 export type AuthUser = Pick<User, 'id' | 'email' | 'firstName' | 'lastName' | 'profilePictureUrl'>;
 
@@ -29,13 +29,15 @@ const initialState: AuthStatus = {
 	error: null
 };
 
-export const authState = writable<AuthStatus>(initialState);
-// Primitive stores suppress same-user refresh notifications before setupAuth's effect.
-export const convexAuthUserId = derived(authState, (state) => state.user?.id ?? null);
-export const convexAuthLoading = derived(authState, (state) => !state.isReady || state.isLoading);
-export const convexAuthRetryVersion = writable(0);
+export const authState = createStore<AuthStatus>(initialState);
+export const convexAuthUserId = selectStore(authState, (state) => state.user?.id ?? null);
+export const convexAuthLoading = selectStore(
+	authState,
+	(state) => !state.isReady || state.isLoading
+);
+export const convexAuthRetryVersion = createStore(0);
 /** UI-only: stays true until Convex confirms or rejects the post-retry token. */
-export const convexAuthRetryPending = writable(false);
+export const convexAuthRetryPending = createStore(false);
 
 type AuthClient = Pick<
 	Awaited<ReturnType<typeof createClient>>,
@@ -320,7 +322,7 @@ async function getAuthClient() {
 				isWaitingForBrowserSignIn: false,
 				browserSignInUrl: null,
 				user: user ? toAuthUser(user) : null,
-				nativeSession: get(authState).nativeSession,
+				nativeSession: authState.getSnapshot().nativeSession,
 				error: null
 			});
 			return client;
@@ -340,7 +342,7 @@ export async function initializeAuth(
 	machineAuthEnabled = options.machine === true;
 	bootstrapClient = convexClient;
 	const generation = authGeneration;
-	const previous = get(authState);
+	const previous = authState.getSnapshot();
 	authState.set({
 		...previous,
 		isLoading: true,
@@ -1064,7 +1066,7 @@ function clearConvexRecovery() {
 export async function getConvexAccessToken(options: { forceRefreshToken: boolean }) {
 	const generation = authGeneration;
 	try {
-		if (isMachineApp() && get(authState).nativeSession === 'unavailable') {
+		if (isMachineApp() && authState.getSnapshot().nativeSession === 'unavailable') {
 			await establishLocalSession();
 			if (generation !== authGeneration) return null;
 		}
@@ -1078,11 +1080,11 @@ export async function getConvexAccessToken(options: { forceRefreshToken: boolean
 			...current,
 			error: error instanceof Error ? error.message : 'Session refresh is temporarily unavailable.'
 		}));
-		const state = get(authState);
+		const state = authState.getSnapshot();
 		if (state.user && state.nativeSession !== 'mismatch' && convexRecoveryTimer === null) {
 			convexRecoveryTimer = setTimeout(() => {
 				convexRecoveryTimer = null;
-				if (generation === authGeneration && get(authState).user) {
+				if (generation === authGeneration && authState.getSnapshot().user) {
 					convexAuthRetryVersion.update((version) => version + 1);
 				}
 			}, 5_000);

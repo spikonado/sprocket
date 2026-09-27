@@ -9,7 +9,7 @@
 		"@eslint/js": "^10.0.0",
 		"eslint": "^10.0.0",
 		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-svelte": "^3.17.1",
+		"eslint-plugin-react-hooks": "^7.1.1",
 		"globals": "^17.6.0",
 		"typescript-eslint": "^8.59.1"
 	}

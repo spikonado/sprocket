@@ -1,6 +1,14 @@
 {
-	"extends": ["@sprocket/typescript-config/svelte.json", "./.svelte-kit/tsconfig.json"],
+	"extends": "@sprocket/typescript-config/react.json",
 	"compilerOptions": {
-		"strictNullChecks": true
-	}
+		"paths": {
+			"$lib/*": ["./src/lib/*"],
+			"$convex/*": ["./src/convex/*"],
+			"@convex/*": ["./src/convex/*"],
+			"@web-lib/*": ["./src/lib/*"]
+		},
+		"types": ["node", "vite/client"],
+		"noEmit": true
+	},
+	"include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
 }

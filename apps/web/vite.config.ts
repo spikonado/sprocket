@@ -1,12 +1,15 @@
 import path from 'node:path';
-import { sveltekit } from '@sveltejs/kit/vite';
+import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
 export default defineConfig({
+	publicDir: 'static',
 	resolve: {
 		alias: {
+			$lib: path.resolve('./src/lib'),
+			$convex: path.resolve('./src/convex'),
 			'@convex': path.resolve('./src/convex'),
 			'@web-lib': path.resolve('./src/lib')
 		}
@@ -21,7 +24,7 @@ export default defineConfig({
 			}
 		}
 	},
-	plugins: [tailwindcss(), sveltekit()],
+	plugins: [tailwindcss(), react()],
 	test: {
 		// Component `/test` entrypoints use `import.meta.glob`; Vite must transform them.
 		server: {
@@ -51,16 +54,16 @@ export default defineConfig({
 				test: {
 					name: 'frontend',
 					include: ['src/**/*.test.{ts,js}'],
-					exclude: ['src/convex/**', 'src/**/*.svelte.test.{ts,js}'],
+					exclude: ['src/convex/**'],
 					environment: 'node'
 				}
 			},
 			{
 				extends: true,
-				resolve: { conditions: ['browser'] },
 				test: {
 					name: 'components',
-					include: ['src/**/*.svelte.test.{ts,js}'],
+					include: ['src/**/*.test.{tsx,jsx}'],
+					setupFiles: ['src/test-setup.ts'],
 					environment: 'jsdom'
 				}
 			}
