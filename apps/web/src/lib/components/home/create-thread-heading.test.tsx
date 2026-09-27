@@ -1,12 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
-import CreateThreadHeading from './create-thread-heading.svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, type ComponentProps } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import type { Project } from '$lib/types/sprocket';
+import CreateThreadHeading from './create-thread-heading';
 
-let cleanup: (() => Promise<void>) | undefined;
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+	container = document.createElement('div');
+	document.body.append(container);
+	root = createRoot(container);
+});
 
 afterEach(async () => {
-	await cleanup?.();
-	cleanup = undefined;
+	await act(async () => {
+		root.unmount();
+	});
+	container.remove();
 	document.body.replaceChildren();
 });
 
@@ -18,24 +29,39 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 		onAddProject: vi.fn(),
 		...overrides
 	};
-	const component = mount(CreateThreadHeading, { target: document.body, props });
-	cleanup = () => unmount(component);
-	flushSync();
+	act(() => {
+		root.render(<CreateThreadHeading {...props} />);
+	});
 	return props;
 }
 
+async function click(target: Element | null) {
+	if (!target) throw new Error('Expected element to click was not rendered');
+	await act(async () => {
+		(target as HTMLElement).click();
+		await Promise.resolve();
+	});
+}
+
+async function dispatchKeydown(target: EventTarget, key: string) {
+	await act(async () => {
+		target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+		await Promise.resolve();
+	});
+}
+
 describe('CreateThreadHeading', () => {
-	it('prompts the user to add their first project', () => {
+	it('prompts the user to add their first project', async () => {
 		const props = renderHeading();
 		const addProjectButton = document.querySelector<HTMLButtonElement>('button');
 
 		expect(document.body.textContent).toContain('What should we work on?');
 		expect(addProjectButton).not.toBeNull();
-		addProjectButton!.click();
+		await click(addProjectButton);
 		expect(props.onAddProject).toHaveBeenCalledOnce();
 	});
 
-	it('selects worktrees by path and disambiguates matching project names', () => {
+	it('selects worktrees by path and disambiguates matching project names', async () => {
 		const props = renderHeading({
 			projects: [
 				{ repositoryKey: 'sprocket', displayName: 'Sprocket', workspacePath: '/sprocket' },
@@ -47,57 +73,43 @@ describe('CreateThreadHeading', () => {
 
 		expect(document.querySelector('select')).toBeNull();
 		expect(trigger?.textContent).toContain('Sprocket');
-		trigger!.click();
-		flushSync();
+		await click(trigger);
 
 		const projectOptions = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
 		expect(projectOptions).toHaveLength(2);
 		expect(projectOptions[0]?.getAttribute('aria-checked')).toBe('true');
 		expect(projectOptions[1]?.getAttribute('aria-label')).toBe('Sprocket, /other');
 		expect(projectOptions[1]?.textContent).toContain('/other');
-		projectOptions[1]!.click();
-		flushSync();
+		await click(projectOptions[1]);
 		expect(props.onProject).toHaveBeenCalledWith('/other');
 		expect(document.querySelector('[role="menu"]')).toBeNull();
 
-		trigger!.click();
-		flushSync();
-		document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click();
+		await click(trigger);
+		await click(document.querySelector<HTMLButtonElement>('[role="menuitem"]'));
 		expect(props.onAddProject).toHaveBeenCalledOnce();
 	});
 
 	it('supports keyboard navigation and restores focus after Escape', async () => {
-		const props = renderHeading({
-			projects: [
-				{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' },
-				{ repositoryKey: 'second', displayName: 'Second', workspacePath: '/second' }
-			],
-			workspacePath: '/first'
-		});
+		const projects: Project[] = [
+			{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' },
+			{ repositoryKey: 'second', displayName: 'Second', workspacePath: '/second' }
+		];
+		const props = renderHeading({ projects, workspacePath: '/first' });
 		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
 
-		trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-		flushSync();
-		await Promise.resolve();
+		await dispatchKeydown(trigger, 'ArrowDown');
 
 		const projectOptions = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
 		expect(document.activeElement).toBe(projectOptions[0]);
-		projectOptions[0]!.dispatchEvent(
-			new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
-		);
-		await Promise.resolve();
+		await dispatchKeydown(projectOptions[0]!, 'ArrowDown');
 		expect(document.activeElement).toBe(projectOptions[1]);
 
-		projectOptions[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		await dispatchKeydown(projectOptions[1]!, 'Enter');
 		expect(props.onProject).toHaveBeenCalledWith('/second');
-		await Promise.resolve();
 		expect(document.activeElement).toBe(trigger);
 
-		trigger.click();
-		flushSync();
-		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-		flushSync();
-		await Promise.resolve();
+		await click(trigger);
+		await dispatchKeydown(document, 'Escape');
 		expect(trigger.getAttribute('aria-expanded')).toBe('false');
 		expect(document.activeElement).toBe(trigger);
 	});
