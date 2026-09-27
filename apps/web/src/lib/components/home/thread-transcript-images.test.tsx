@@ -7,7 +7,7 @@ import ThreadTranscript from './thread-transcript';
 it('opens a transcript attachment in the image viewer and restores focus after Escape', async () => {
 	const imageUrl = 'https://example.com/board.png';
 	const loadAttachment = vi.fn(async () => imageUrl);
-	const message: TranscriptDisplayRow = {
+	const message = {
 		id: 'prompt:1',
 		// SAFETY: Fixture IDs never leave the mounted component.
 		threadId: 'thread' as Id<'threadRecords'>,
@@ -29,7 +29,7 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 		pendingTools: 0,
 		closed: true,
 		revision: 1
-	};
+	} satisfies TranscriptDisplayRow;
 	render(
 		<ThreadTranscript
 			currentError={null}
