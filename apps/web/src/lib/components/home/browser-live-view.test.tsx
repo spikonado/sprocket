@@ -16,10 +16,10 @@ afterEach(async () => {
 	document.body.replaceChildren();
 });
 
-function session(expiresAt: number, ended = false): BrowserLiveViewState {
+function session(expiresAt: number, ended = false, id = 'session'): BrowserLiveViewState {
 	return {
-		id: 'session',
-		providerSessionId: 'provider-session',
+		id,
+		providerSessionId: `provider-${id}`,
 		url: 'https://example.com/passive',
 		interactiveUrl: 'https://example.com/interactive',
 		saving: true,
@@ -68,4 +68,19 @@ it('shows the ended state and hides controls for an ended session', () => {
 it('shows the empty state when there is no session', () => {
 	renderLiveView({ active: false, liveView: null });
 	expect(document.body.textContent).toContain('No active browser session.');
+});
+
+it('does not surface an action failure after the session rotates', async () => {
+	renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
+	await act(async () => {
+		document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
+		root.render(
+			<BrowserLiveView active liveView={session(Date.now() + 60_000, false, 'rotated-session')} />
+		);
+	});
+	// The stop request rejects only after the rotation has already rendered.
+	await act(async () => {
+		await Promise.resolve();
+	});
+	expect(document.querySelector('[role="alert"]')).toBeNull();
 });

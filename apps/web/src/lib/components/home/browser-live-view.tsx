@@ -32,9 +32,15 @@ function catchMessage<T>(error: T, fallback: string): string {
 	return (error instanceof Error && error.message) || fallback;
 }
 
+type SessionActionError = {
+	recordId: string | undefined;
+	providerId: string | null;
+	message: string;
+};
+
 export default function BrowserLiveView({ liveView, active }: Props) {
 	const [pending, setPending] = useState<'control' | 'stop' | null>(null);
-	const [actionError, setActionError] = useState<string | null>(null);
+	const [actionError, setActionError] = useState<SessionActionError | null>(null);
 	const threadId = liveView?.threadId;
 	const sessionRecordId = liveView?.id;
 	const providerSessionId = liveView?.providerSessionId ?? null;
@@ -58,6 +64,14 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 		: active
 			? 'The agent is browsing'
 			: 'Browser session';
+	// Failures are tagged with the session they started on, so a rotation while
+	// the request is in flight cannot surface them for the new session.
+	const visibleActionError =
+		actionError !== null &&
+		actionError.recordId === sessionRecordId &&
+		actionError.providerId === providerSessionId
+			? actionError.message
+			: null;
 
 	useEffect(() => {
 		setActionError(null);
@@ -65,17 +79,19 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 
 	async function setControl(enabled: boolean) {
 		if (threadId == null || controlDisabled) return;
-		const id = sessionRecordId;
-		const providerId = providerSessionId;
 		setPending('control');
 		setActionError(null);
 		try {
 			await setHumanControl();
 		} catch (error) {
-			if (sessionRecordId === id && providerSessionId === providerId)
-				setActionError(
-					catchMessage(error, enabled ? 'Couldn’t take control.' : 'Couldn’t give control back.')
-				);
+			setActionError({
+				recordId: sessionRecordId,
+				providerId: providerSessionId,
+				message: catchMessage(
+					error,
+					enabled ? 'Couldn’t take control.' : 'Couldn’t give control back.'
+				)
+			});
 		} finally {
 			setPending(null);
 		}
@@ -83,15 +99,16 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 
 	async function stopBrowser() {
 		if (sessionRecordId == null || ended || pending !== null) return;
-		const id = sessionRecordId;
-		const providerId = providerSessionId;
 		setPending('stop');
 		setActionError(null);
 		try {
 			await stopSession();
 		} catch (error) {
-			if (sessionRecordId === id && providerSessionId === providerId)
-				setActionError(catchMessage(error, 'Couldn’t stop the browser session.'));
+			setActionError({
+				recordId: sessionRecordId,
+				providerId: providerSessionId,
+				message: catchMessage(error, 'Couldn’t stop the browser session.')
+			});
 		} finally {
 			setPending(null);
 		}
@@ -169,9 +186,9 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 							)}
 						</button>
 					</div>
-					{actionError ? (
+					{visibleActionError ? (
 						<p className="text-destructive border-b px-3 py-1.5 text-xs" role="alert">
-							{actionError}
+							{visibleActionError}
 						</p>
 					) : null}
 					{iframeUrl ? (
