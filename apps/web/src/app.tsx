@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import {
+	useCallback,
+	useEffect,
+	useEffectEvent,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState
+} from 'react';
 import { elapsedSeconds, useTickingNow } from '$lib/chat/elapsed-time';
 import { PanelRight, Settings } from 'lucide-react';
 import {
@@ -8,7 +16,7 @@ import {
 	useMutation,
 	useQuery_experimental as useConvexQueryResult
 } from 'convex/react';
-import type { FunctionArgs, FunctionReference, FunctionReturnType } from 'convex/server';
+import type { FunctionArgs, FunctionReference } from 'convex/server';
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import { api } from '$convex/_generated/api';
 import {
@@ -94,11 +102,7 @@ import { useThreadInbox } from '$lib/project/inbox';
 import type { InboxState } from '$convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
-import {
-	clearLaunchHash,
-	readWorkspaceLaunchFromHash,
-	resolveDesktopApi
-} from '$lib/local/client';
+import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveDesktopApi } from '$lib/local/client';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
 	DesktopApi,
@@ -110,15 +114,8 @@ import { cn } from '$lib/utils';
 
 type ConvexQuery = FunctionReference<'query'>;
 
-type DesktopBridge = NonNullable<Window['sprocketDesktopBridge']>;
-
-// The page surfaces query errors inline, so read through the experimental
-// result-object form instead of plain useQuery, which collapses errors to
-// `undefined`.
-function usePageQuery<Query extends ConvexQuery>(
-	query: Query,
-	args: FunctionArgs<Query> | 'skip'
-): { data: FunctionReturnType<Query> | undefined; error: Error | null } {
+// Query failures belong in the page's inline error UI, not the startup boundary.
+function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArgs<Query> | 'skip') {
 	const result = useConvexQueryResult({ query, args });
 	if (result.status === 'error') return { data: undefined, error: result.error };
 	if (result.status === 'pending') return { data: undefined, error: null };
@@ -127,6 +124,13 @@ function usePageQuery<Query extends ConvexQuery>(
 
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 const agentLaunchTimeoutMs = 30_000;
+
+export type AppRuntime = {
+	resolveDesktopApi: () => Promise<DesktopApi>;
+	fetchGatewayModelCatalog: (origin: string) => Promise<ModelCatalog>;
+};
+
+const productionAppRuntime: AppRuntime = { resolveDesktopApi, fetchGatewayModelCatalog };
 
 function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: string | null) {
 	return threadId ? `thread:${threadId}` : workspacePath ? `draft:${workspacePath}` : null;
@@ -150,9 +154,16 @@ type ComposerRecovery = {
 	autoSubmit?: boolean;
 };
 
-export default function App({ config }: { config: RuntimeConfig }) {
+export default function App({
+	config,
+	runtime = productionAppRuntime
+}: {
+	config: RuntimeConfig;
+	runtime?: AppRuntime;
+}) {
 	const configRef = useRef(config);
-	configRef.current = config;
+	const runtimeRef = useRef(runtime);
+	runtimeRef.current = runtime;
 
 	const convexAuth = useConvexAuth();
 	const convexClient = useConvex();
@@ -164,7 +175,6 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	// account that is signed in when it resumes, not the one captured by the
 	// render that started it.
 	const signedInUserIdRef = useRef(signedInUserId);
-	signedInUserIdRef.current = signedInUserId;
 	const nativeAuthLoading = auth.nativeSession === 'loading';
 	const nativeAuthBlocked =
 		auth.nativeSession === 'missing' ||
@@ -202,7 +212,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		if (next.clearPending) {
 			convexAuthRetryPending.set(false);
 		}
-	});
+	}, [retryPending, convexAuth.isAuthenticated, convexAuth.isLoading, sawAuthLoadingDuringRetry]);
 
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	const refreshMyChatGptModels = useAction(api.providerCredentials.refreshChatGptModels);
@@ -221,9 +231,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	const [chatGptModelIds, setChatGptModelIds] = useState<string[] | null>(null);
 	const [providerConfigurationLoading, setProviderConfigurationLoading] = useState(false);
 	const [providerConfigurationReady, setProviderConfigurationReady] = useState(false);
-	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(
-		null
-	);
+	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(null);
 	const configuredProviders = useMemo<CompletionProvider[]>(
 		() => [
 			'spikonado',
@@ -237,7 +245,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		setCatalogLoading(true);
 		try {
 			const origin = configRef.current.env.PUBLIC_MODEL_GATEWAY_URL?.trim() ?? '';
-			setModelCatalog(await fetchGatewayModelCatalog(origin));
+			setModelCatalog(await runtimeRef.current.fetchGatewayModelCatalog(origin));
 			setCatalogError(null);
 		} catch {
 			setCatalogError(CATALOG_UNAVAILABLE_MESSAGE);
@@ -321,7 +329,6 @@ export default function App({ config }: { config: RuntimeConfig }) {
 
 	const [desktopApi, setDesktopApi] = useState<DesktopApi | null>(null);
 	const desktopApiRef = useRef(desktopApi);
-	desktopApiRef.current = desktopApi;
 	const [desktopApiResolved, setDesktopApiResolved] = useState(false);
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
@@ -337,16 +344,18 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	const [prompt, setPrompt] = useState('');
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
 	const [answeringAgentQuestion, setAnsweringAgentQuestion] = useState(false);
-	const [composerContinuationOfRunId, setComposerContinuationOfRunId] =
-		useState<Id<'runs'> | null>(null);
+	const [composerContinuationOfRunId, setComposerContinuationOfRunId] = useState<Id<'runs'> | null>(
+		null
+	);
 	const [autoSubmitComposerContinuation, setAutoSubmitComposerContinuation] = useState(false);
 	const [currentError, setCurrentError] = useState<string | null>(null);
 
 	const [pendingAgentLaunches, setPendingAgentLaunches] = useState<PendingAgentLaunches>({});
 	const [hasResolvedInitialSelection, setHasResolvedInitialSelection] = useState(false);
-	const [projectSelectionGeneration, setProjectSelectionGeneration] = useState(0);
-	const [pendingCreatedThreadId, setPendingCreatedThreadId] =
-		useState<Id<'threadRecords'> | null>(null);
+	const projectSelectionGeneration = useRef(0);
+	const [pendingCreatedThreadId, setPendingCreatedThreadId] = useState<Id<'threadRecords'> | null>(
+		null
+	);
 	const [desktopProjectAttachmentsByPath, setDesktopProjectAttachmentsByPath] = useState<
 		Record<string, ProjectAttachment>
 	>({});
@@ -398,7 +407,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	const nextSubmissionSequence = useRef(0);
 	const lastSyncedComposerThreadId = useRef<Id<'threadRecords'> | null>(null);
 	const desktopProjectAttachmentsGeneration = useRef(0);
-	const projectLaunchInFlight = useRef(false);
+	const [projectLaunchInFlight, setProjectLaunchInFlight] = useState(false);
 	const hasHydratedTheme = useRef(false);
 	const lastServerTheme = useRef<SprocketTheme | null | undefined>(undefined);
 	const pendingTheme = useRef<SprocketTheme | null>(null);
@@ -450,10 +459,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
-	const artifactClient = useMemo(
-		() => createConvexArtifactClient(convexClient),
-		[convexClient]
-	);
+	const artifactClient = useMemo(() => createConvexArtifactClient(convexClient), [convexClient]);
 
 	// Queries stay skipped until Convex confirms the token; running them on the
 	// account id alone surfaces a spurious auth error during sign-in.
@@ -461,9 +467,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
 	const authenticatedThreadQueryArgs =
-		currentThreadId && authenticatedQueryArgs !== 'skip'
-			? { threadId: currentThreadId }
-			: 'skip';
+		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
 	const activeThreadQuery = usePageQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
 	const lifecycleQuery = usePageQuery(
 		api.chat.selectedThreadLifecycle,
@@ -484,9 +488,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		pendingAgentQuestionQuery.error;
 
 	const createThreadError =
-		currentError ??
-		auth.error ??
-		(queryError ? convexClientErrorMessage(queryError) : null);
+		currentError ?? auth.error ?? (queryError ? convexClientErrorMessage(queryError) : null);
 
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
 	useEffect(() => {
@@ -613,7 +615,9 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	}, [currentThreadId, desktopApi, isSignedIn, transcript, signedInUserId]);
 
 	const currentThreadIdRef = useRef(currentThreadId);
-	currentThreadIdRef.current = currentThreadId;
+	const currentWorkspacePathRef = useRef(currentWorkspacePath);
+	const currentRepositoryKeyRef = useRef(currentRepositoryKey);
+	const draftWorkspacePathRef = useRef(draftWorkspacePath);
 
 	useEffect(() => {
 		transcript.syncOverlays(transcript.overlays);
@@ -654,8 +658,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		if (!currentProject?.repositoryKey) return [];
 		return threads
 			.filter(
-				(thread) =>
-					thread.repositoryKey === currentProject.repositoryKey && isActiveThread(thread)
+				(thread) => thread.repositoryKey === currentProject.repositoryKey && isActiveThread(thread)
 			)
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	}, [threads, currentProject]);
@@ -735,14 +738,14 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	);
 	const canSend = Boolean(
 		currentProjectPath &&
-			(pendingAgentQuestion ||
-				selectedCompletionProvider !== 'chatgpt' ||
-				chatGptModelIds?.includes(selectedModel) === true) &&
-			currentProject?.localAttachmentAvailability === 'available' &&
-			!isSubmittingPrompt &&
-			!answeringAgentQuestion &&
-			!hasPendingAgentLaunch &&
-			((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
+		(pendingAgentQuestion ||
+			selectedCompletionProvider !== 'chatgpt' ||
+			chatGptModelIds?.includes(selectedModel) === true) &&
+		currentProject?.localAttachmentAvailability === 'available' &&
+		!isSubmittingPrompt &&
+		!answeringAgentQuestion &&
+		!hasPendingAgentLaunch &&
+		((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
 	);
 	const recentProjectDirectories = useMemo(() => {
 		const seen = new Set<string>();
@@ -753,42 +756,46 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			}
 			seen.add(attachment.workspacePath);
 			const displayName =
-				attachment.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ??
-				attachment.workspacePath;
+				attachment.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? attachment.workspacePath;
 			recents.push({ workspacePath: attachment.workspacePath, displayName });
 		}
 		return recents.sort((left, right) => right.displayName.localeCompare(left.displayName));
 	}, [desktopProjectAttachmentsByPath]);
 
-	async function refreshDesktopProjectAttachments() {
+	async function refreshDesktopProjectAttachments(
+		client = desktopApiRef.current
+	): Promise<Record<string, ProjectAttachment>> {
 		const refreshGeneration = ++desktopProjectAttachmentsGeneration.current;
-		const selectedWorkspacePath = currentWorkspacePath;
-		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(desktopApi);
-		if (refreshGeneration !== desktopProjectAttachmentsGeneration.current) return;
+		const selectedWorkspacePath = currentWorkspacePathRef.current;
+		const selectionGeneration = projectSelectionGeneration.current;
+		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(client);
+		if (refreshGeneration !== desktopProjectAttachmentsGeneration.current) return nextAttachments;
 
 		setDesktopProjectAttachmentsByPath(nextAttachments);
 		setHasLoadedDesktopProjectAttachments(true);
-		if (!selectedWorkspacePath || currentWorkspacePath !== selectedWorkspacePath) return;
+		if (!selectedWorkspacePath || selectionGeneration !== projectSelectionGeneration.current) {
+			return nextAttachments;
+		}
 
 		let selectedAttachment: ProjectAttachment | undefined = nextAttachments[selectedWorkspacePath];
-		if (!selectedAttachment && desktopApi) {
-			const resolution = await desktopApi.resolveWorkspacePath({
+		if (!selectedAttachment && client) {
+			const resolution = await client.resolveWorkspacePath({
 				workspacePath: selectedWorkspacePath
 			});
 			if (
 				refreshGeneration !== desktopProjectAttachmentsGeneration.current ||
-				currentWorkspacePath !== selectedWorkspacePath
+				selectionGeneration !== projectSelectionGeneration.current
 			) {
-				return;
+				return nextAttachments;
 			}
 			selectedAttachment = findCanonicalProjectAttachment(nextAttachments, resolution);
 		}
-		if (!selectedAttachment) return;
+		if (!selectedAttachment) return nextAttachments;
 
-		const repositoryChanged = selectedAttachment.repositoryKey !== currentRepositoryKey;
+		const repositoryChanged = selectedAttachment.repositoryKey !== currentRepositoryKeyRef.current;
 		if (selectedAttachment.workspacePath !== selectedWorkspacePath || repositoryChanged) {
-			const draft = draftWorkspacePath === selectedWorkspacePath;
-			setProjectSelectionGeneration((generation) => generation + 1);
+			const draft = draftWorkspacePathRef.current === selectedWorkspacePath;
+			bumpProjectSelectionGeneration();
 			setCurrentWorkspacePath(selectedAttachment.workspacePath);
 			setCurrentRepositoryKey(selectedAttachment.repositoryKey);
 			setDraftWorkspacePath(draft ? selectedAttachment.workspacePath : null);
@@ -797,6 +804,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				setPendingCreatedThreadId(null);
 			}
 		}
+		return nextAttachments;
 	}
 
 	function localThreadCommandContext() {
@@ -835,11 +843,13 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	function applyProjectSelection(
 		workspacePath: string,
 		threadId: Id<'threadRecords'> | null = null,
-		draft = false
+		draft = false,
+		repositoryKey?: string
 	) {
 		const project = findProjectByWorkspacePath(projects, workspacePath);
+		const nextRepositoryKey = repositoryKey ?? project?.repositoryKey ?? null;
 		setCurrentWorkspacePath(workspacePath);
-		setCurrentRepositoryKey(project?.repositoryKey ?? null);
+		setCurrentRepositoryKey(nextRepositoryKey);
 		setCurrentThreadId(threadId);
 		setDraftWorkspacePath(draft ? workspacePath : null);
 		if (threadId !== pendingCreatedThreadId) {
@@ -847,29 +857,39 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		}
 	}
 
+	function bumpProjectSelectionGeneration() {
+		return ++projectSelectionGeneration.current;
+	}
+
 	function setProjectSelection(
 		workspacePath: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft = false,
-		preserveError = false
+		preserveError = false,
+		repositoryKey?: string
 	) {
-		setProjectSelectionGeneration((generation) => generation + 1);
+		const generation = bumpProjectSelectionGeneration();
 		if (!preserveError) setCurrentError(null);
-		applyProjectSelection(workspacePath, threadId, draft);
+		applyProjectSelection(workspacePath, threadId, draft, repositoryKey);
+		return generation;
 	}
 
-	async function attachLocalProject(workspacePath: string, replaceWorkspacePath?: string) {
-		if (!desktopApi) {
+	async function attachLocalProject(
+		workspacePath: string,
+		replaceWorkspacePath?: string,
+		client = desktopApiRef.current
+	) {
+		if (!client) {
 			throw new Error(localServerRequiredMessage);
 		}
 		const attachment = await attachLocalProjectForPath({
-			desktopApi,
+			desktopApi: client,
 			workspacePath,
 			replaceWorkspacePath
 		});
 		desktopProjectAttachmentsGeneration.current += 1;
-		setDesktopProjectAttachmentsByPath(
-			upsertDesktopProjectAttachment(desktopProjectAttachmentsByPath, attachment, replaceWorkspacePath)
+		setDesktopProjectAttachmentsByPath((attachments) =>
+			upsertDesktopProjectAttachment(attachments, attachment, replaceWorkspacePath)
 		);
 		setHasLoadedDesktopProjectAttachments(true);
 		return attachment;
@@ -884,19 +904,22 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			setCurrentError('Choose a project first.');
 			return;
 		}
-		setProjectSelection(workspacePath, selection.threadId, selection.draft);
-		const selectionGeneration = projectSelectionGeneration + 1;
+		const selectionGeneration = setProjectSelection(
+			workspacePath,
+			selection.threadId,
+			selection.draft
+		);
 		void verifyProject(project.workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGenerationRef.current) {
+			if (selectionGeneration === projectSelectionGeneration.current) {
 				setCurrentError(error instanceof Error ? error.message : 'Failed to attach project.');
 			}
 		});
 	}
 
-	const projectSelectionGenerationRef = useRef(projectSelectionGeneration);
-	projectSelectionGenerationRef.current = projectSelectionGeneration;
-
-	function openProjectPicker(mode: 'add' | 'reconnect' = 'add', workspacePath: string | null = null) {
+	function openProjectPicker(
+		mode: 'add' | 'reconnect' = 'add',
+		workspacePath: string | null = null
+	) {
 		if (!desktopApi) {
 			setCurrentError(localServerRequiredMessage);
 			return;
@@ -939,27 +962,35 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		}
 	}
 
-	async function addProjectSelection(selection: ProjectSelection, expectedUserId: string) {
-		await attachLocalProject(selection.workspacePath);
+	async function addProjectSelection(
+		selection: ProjectSelection,
+		expectedUserId: string,
+		client?: DesktopApi
+	) {
+		await attachLocalProject(selection.workspacePath, undefined, client);
 		if (signedInUserIdRef.current !== expectedUserId) return;
-		setProjectSelection(selection.workspacePath, null, true);
+		setProjectSelection(selection.workspacePath, null, true, false, selection.repositoryKey);
 		setCurrentError(null);
 	}
 
 	async function reconnectProjectSelection(
 		selection: ProjectSelection,
 		previousWorkspacePath: string,
-		expectedUserId: string
+		expectedUserId: string,
+		client?: DesktopApi
 	) {
 		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
 		await attachLocalProject(
 			selection.workspacePath,
-			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath
+			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath,
+			client
 		);
 		if (signedInUserIdRef.current !== expectedUserId) return;
 		const keepThread =
-			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
-		setProjectSelection(selection.workspacePath, keepThread);
+			previousProject?.repositoryKey === selection.repositoryKey
+				? currentThreadIdRef.current
+				: null;
+		setProjectSelection(selection.workspacePath, keepThread, false, false, selection.repositoryKey);
 		setCurrentError(null);
 	}
 
@@ -970,7 +1001,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	}
 
 	async function takeDesktopProjectLaunches() {
-		const bridge = (window as Window).sprocketDesktopBridge as DesktopBridge | undefined;
+		const bridge = window.sprocketDesktopBridge;
 		if (!bridge?.takeWorkspaceLaunch) return;
 		for (;;) {
 			const workspacePath = await bridge.takeWorkspaceLaunch();
@@ -982,13 +1013,15 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	async function openLaunchedProject(workspacePath: string, client: DesktopApi, userId: string) {
 		const selection = await client.resolveWorkspacePath({ workspacePath });
 		if (signedInUserIdRef.current !== userId) return;
-		await addProjectSelection(selection, userId);
+		await addProjectSelection(selection, userId, client);
 	}
 
 	async function verifyProject(workspacePath: string) {
 		await verifyProjectAttachmentForExecution({
 			desktopApi,
-			refreshDesktopProjectAttachments,
+			refreshDesktopProjectAttachments: async () => {
+				await refreshDesktopProjectAttachments();
+			},
 			workspacePath
 		});
 	}
@@ -1096,10 +1129,10 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			if (state === 'settled') await settleThreadRecord(request);
 			else await unsettleThreadRecord(request);
 			if (signedInUserIdRef.current === expectedUserId) {
-				if (state === 'settled' && currentThreadId === thread._id) {
+				if (state === 'settled' && currentThreadIdRef.current === thread._id) {
 					setCurrentThreadId(null);
-					setDraftWorkspacePath(currentWorkspacePath);
-					setProjectSelectionGeneration((generation) => generation + 1);
+					setDraftWorkspacePath(currentWorkspacePathRef.current);
+					bumpProjectSelectionGeneration();
 				}
 				setCurrentError(null);
 			}
@@ -1148,6 +1181,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			}
 		} catch (error) {
 			if (
+				signedInUserIdRef.current === userId &&
 				currentThreadIdRef.current === threadId &&
 				pendingAgentQuestionRef.current?.questionId === question.questionId
 			) {
@@ -1156,8 +1190,9 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				setCurrentError(error instanceof Error ? error.message : String(error));
 			}
 		} finally {
-			setAnsweringAgentQuestion(false);
+			if (signedInUserIdRef.current === userId) setAnsweringAgentQuestion(false);
 		}
+		if (signedInUserIdRef.current !== userId) return;
 		if (continuationPrompt !== null && currentThreadIdRef.current !== threadId) {
 			storeComposerRecovery(userId, `thread:${threadId}`, {
 				message: 'Continuing from your answer when you return to this thread.',
@@ -1176,21 +1211,27 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		if (continuationPrompt !== null) {
 			setComposerContinuationOfRunId(continuationOfRunId ?? null);
 			setPrompt(continuationPrompt);
-			await submitPrompt({ answeredQuestionId: question.questionId, continuationOfRunId });
+			await submitPrompt(
+				{ answeredQuestionId: question.questionId, continuationOfRunId },
+				continuationPrompt
+			);
 		}
 	}
 
 	const pendingAgentQuestionRef = useRef(pendingAgentQuestion);
-	pendingAgentQuestionRef.current = pendingAgentQuestion;
 
-	async function submitPrompt(options?: {
-		answeredQuestionId: Id<'agentQuestions'>;
-		continuationOfRunId: Id<'runs'> | undefined;
-	}) {
-		if (pendingAgentQuestion) {
+	async function submitPrompt(
+		options?: {
+			answeredQuestionId: Id<'agentQuestions'>;
+			continuationOfRunId: Id<'runs'> | undefined;
+		},
+		promptOverride?: string
+	) {
+		const currentQuestion = pendingAgentQuestionRef.current;
+		if (currentQuestion) {
 			if (
 				options?.answeredQuestionId &&
-				pendingAgentQuestion.questionId !== options.answeredQuestionId
+				currentQuestion.questionId !== options.answeredQuestionId
 			) {
 				setCurrentError('Answer the new agent question before continuing.');
 				return;
@@ -1201,8 +1242,9 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			}
 		}
 
+		const promptText = promptOverride ?? prompt;
 		if (isSubmittingPrompt) return;
-		if (!prompt.trim() && composerAttachments.items.length === 0) return;
+		if (!promptText.trim() && composerAttachments.items.length === 0) return;
 		if (composerAttachments.items.some((attachment) => attachment.status !== 'ready')) {
 			setCurrentError('Wait for file uploads to finish, or remove failed files before sending.');
 			return;
@@ -1244,7 +1286,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			return;
 		}
 		const isSubmittedUserCurrent = () => signedInUserIdRef.current === submittedUserId;
-		const submittedPrompt = prompt.trim();
+		const submittedPrompt = promptText.trim();
 		const submittedAttachments = composerAttachments.snapshot();
 		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
 			attachment.storageId ? [attachment.storageId] : []
@@ -1321,14 +1363,13 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		};
 		const clearSubmissionDelay = () => {
 			clearComposerRecovery(submittedUserId, recoveryScope);
-			if (isSubmittedUserCurrent() && currentError === submissionDelayMessage) {
-				setCurrentError(null);
+			if (isSubmittedUserCurrent()) {
+				setCurrentError((error) => (error === submissionDelayMessage ? null : error));
 			}
 		};
 		const submissionTimeoutId = window.setTimeout(() => {
 			if (
-				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) !==
-				submissionSequence
+				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) !== submissionSequence
 			) {
 				return;
 			}
@@ -1346,19 +1387,15 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				const resolution = await desktopApi.resolveWorkspacePath({ workspacePath });
 				if (!isSubmissionCurrent()) return;
 				if (resolution.repositoryKey !== submittedRepositoryKey) {
-					await refreshDesktopProjectAttachments();
+					const nextAttachments = await refreshDesktopProjectAttachments();
 					if (!isSubmissionCurrent()) return;
-					const canonicalAttachment = findCanonicalProjectAttachment(
-						desktopProjectAttachmentsByPath,
-						resolution
-					);
+					const canonicalAttachment = findCanonicalProjectAttachment(nextAttachments, resolution);
 					if (!canonicalAttachment) {
 						throw new Error('The repository changed and its project attachment is unavailable.');
 					}
 					workspacePath = canonicalAttachment.workspacePath;
 					submittedRepositoryKey = canonicalAttachment.repositoryKey;
-					setProjectSelection(workspacePath, null, true, true);
-					setCurrentRepositoryKey(submittedRepositoryKey);
+					setProjectSelection(workspacePath, null, true, true, submittedRepositoryKey);
 
 					const nextSubmissionScope = `draft:${workspacePath}`;
 					if (nextSubmissionScope !== submissionScope) {
@@ -1366,14 +1403,8 @@ export default function App({ config }: { config: RuntimeConfig }) {
 						latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 						submissionScope = nextSubmissionScope;
 						recoveryScope = nextSubmissionScope;
-						submissionTrackingKey = getComposerRecoveryKey(
-							submittedUserId,
-							nextSubmissionScope
-						);
-						latestSubmissionSequencesByRecoveryScope.set(
-							submissionTrackingKey,
-							submissionSequence
-						);
+						submissionTrackingKey = getComposerRecoveryKey(submittedUserId, nextSubmissionScope);
+						latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
 						submittingPromptScopes.set(submissionScope, submissionSequence);
 						bumpSubmissionTracking();
 					}
@@ -1387,11 +1418,6 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				return;
 			}
 			launchedThreadId = threadId;
-			if (!isSubmissionCurrent()) return;
-			if (!isSubmittedUserCurrent()) {
-				recoverSubmission(sessionChangedMessage);
-				return;
-			}
 			clearSubmissionDelay();
 			const launchId = ++nextAgentLaunchId.current;
 			agentLaunchId = launchId;
@@ -1402,7 +1428,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			};
 			if (runState?.startedAt) launch.previousStartedAt = runState.startedAt;
 			if (threadId) {
-				setPendingAgentLaunches(beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch));
+				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
 			}
 			if (threadId) {
 				window.setTimeout(() => {
@@ -1450,10 +1476,15 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				},
 				onStarted: (_runId, createdThreadId) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					launchedThreadId = createdThreadId;
+					if (
+						currentThreadIdRef.current !== selectedThreadId ||
+						currentWorkspacePathRef.current !== workspacePath
+					)
+						return;
 					if (!selectedThreadId) {
-						launchedThreadId = createdThreadId;
 						setPendingCreatedThreadId(createdThreadId);
-						setProjectSelectionGeneration((generation) => generation + 1);
+						bumpProjectSelectionGeneration();
 						setCurrentThreadId(createdThreadId);
 						setDraftWorkspacePath(null);
 					}
@@ -1501,18 +1532,51 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	}
 
 	const runStateRef = useRef(runState);
-	runStateRef.current = runState;
 	const pendingAgentLaunchesRef = useRef(pendingAgentLaunches);
-	pendingAgentLaunchesRef.current = pendingAgentLaunches;
 	const composerContinuationOfRunIdRef = useRef(composerContinuationOfRunId);
-	composerContinuationOfRunIdRef.current = composerContinuationOfRunId;
+
+	// Async callbacks observe committed selections, never an abandoned render.
+	useLayoutEffect(() => {
+		configRef.current = config;
+		signedInUserIdRef.current = signedInUserId;
+		desktopApiRef.current = desktopApi;
+		currentThreadIdRef.current = currentThreadId;
+		currentWorkspacePathRef.current = currentWorkspacePath;
+		currentRepositoryKeyRef.current = currentRepositoryKey;
+		draftWorkspacePathRef.current = draftWorkspacePath;
+		pendingAgentQuestionRef.current = pendingAgentQuestion;
+		runStateRef.current = runState;
+		pendingAgentLaunchesRef.current = pendingAgentLaunches;
+		composerContinuationOfRunIdRef.current = composerContinuationOfRunId;
+	}, [
+		config,
+		signedInUserId,
+		desktopApi,
+		currentThreadId,
+		currentWorkspacePath,
+		currentRepositoryKey,
+		draftWorkspacePath,
+		pendingAgentQuestion,
+		runState,
+		pendingAgentLaunches,
+		composerContinuationOfRunId
+	]);
 
 	async function cancelRun() {
 		if (!runState?.runId || !isRunInProgress) return;
+		const expectedUserId = signedInUserIdRef.current;
+		const expectedThreadId = currentThreadId;
+		const expectedRunId = runState.runId;
 		try {
 			const { api, userId } = localThreadCommandContext();
-			await api.requestRunCancellation({ userId, runId: runState.runId });
+			await api.requestRunCancellation({ userId, runId: expectedRunId });
 		} catch (error) {
+			if (
+				signedInUserIdRef.current !== expectedUserId ||
+				currentThreadIdRef.current !== expectedThreadId ||
+				runStateRef.current?.runId !== expectedRunId
+			)
+				return;
 			setCurrentError(error instanceof Error ? error.message : 'Failed to cancel run.');
 		}
 	}
@@ -1545,7 +1609,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			previousRunId,
 			previousStartedAt
 		};
-		setPendingAgentLaunches(beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch));
+		setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
 		try {
 			if (signedInUserIdRef.current !== userId) {
 				throw new Error('User session is not ready.');
@@ -1554,9 +1618,11 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				userId,
 				desktopApi,
 				onError: (error) => {
-					setPendingAgentLaunches(
-						clearPendingAgentLaunch(pendingAgentLaunchesRef.current, threadId, launchId)
+					setPendingAgentLaunches((launches) =>
+						clearPendingAgentLaunch(launches, threadId, launchId)
 					);
+					if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId)
+						return;
 					setCurrentError(error.message);
 				},
 				onStarted: () => {},
@@ -1572,9 +1638,8 @@ export default function App({ config }: { config: RuntimeConfig }) {
 				continuationOfRunId: previousRunId
 			});
 		} catch (error) {
-			setPendingAgentLaunches(
-				clearPendingAgentLaunch(pendingAgentLaunchesRef.current, threadId, launchId)
-			);
+			setPendingAgentLaunches((launches) => clearPendingAgentLaunch(launches, threadId, launchId));
+			if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId) return;
 			setCurrentError(error instanceof Error ? error.message : 'Failed to continue the run.');
 		}
 	}
@@ -1599,11 +1664,17 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		setProviderConfigurationReady(false);
 		setProviderConfigurationError(null);
 		lastSyncedComposerThreadId.current = null;
-		setProjectSelectionGeneration((generation) => generation + 1);
+		bumpProjectSelectionGeneration();
 		setPrompt('');
+		setAnsweringAgentQuestion(false);
+		setSelectedQuestionOptionId(null);
 		setComposerContinuationOfRunId(null);
 		setAutoSubmitComposerContinuation(false);
-		composerAttachments.clear({ discard: true, userId: previousUserId, threadId: previousThreadId });
+		composerAttachments.clear({
+			discard: true,
+			userId: previousUserId,
+			threadId: previousThreadId
+		});
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId ?? defaultModelId);
 		setSelectedCompletionProvider('spikonado');
@@ -1633,24 +1704,24 @@ export default function App({ config }: { config: RuntimeConfig }) {
 
 	const startPendingProjectLaunch = useEffectEvent(
 		(workspacePath: string, client: DesktopApi, userId: string) => {
-		setPendingProjectLaunches((launches) => launches.slice(1));
-		projectLaunchInFlight.current = true;
-		setHasResolvedInitialSelection(true);
-		setProjectPickerOpen(false);
-		setSettingsOpen(false);
-		setCurrentError(null);
-		void openLaunchedProject(workspacePath, client, userId)
-			.catch((error) => {
-				if (signedInUserIdRef.current === userId) {
-					setHasResolvedInitialSelection(false);
-					setCurrentError(
-						error instanceof Error ? error.message : 'Failed to open the requested project.'
-					);
-				}
-			})
-			.finally(() => {
-				projectLaunchInFlight.current = false;
-			});
+			setPendingProjectLaunches((launches) => launches.slice(1));
+			setProjectLaunchInFlight(true);
+			setHasResolvedInitialSelection(true);
+			setProjectPickerOpen(false);
+			setSettingsOpen(false);
+			setCurrentError(null);
+			void openLaunchedProject(workspacePath, client, userId)
+				.catch((error) => {
+					if (signedInUserIdRef.current === userId) {
+						setHasResolvedInitialSelection(false);
+						setCurrentError(
+							error instanceof Error ? error.message : 'Failed to open the requested project.'
+						);
+					}
+				})
+				.finally(() => {
+					setProjectLaunchInFlight(false);
+				});
 		}
 	);
 
@@ -1658,7 +1729,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		const workspacePath = pendingProjectLaunches[0];
 		if (
 			!workspacePath ||
-			projectLaunchInFlight.current ||
+			projectLaunchInFlight ||
 			!authReady ||
 			!desktopApi ||
 			!signedInUserId ||
@@ -1669,6 +1740,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		startPendingProjectLaunch(workspacePath, desktopApi, signedInUserId);
 	}, [
 		pendingProjectLaunches,
+		projectLaunchInFlight,
 		desktopApi,
 		signedInUserId,
 		authReady,
@@ -1741,6 +1813,8 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		currentProjectPath,
 		prompt,
 		composerAttachments,
+		composerRecoveries,
+		recoveredSubmissionIds,
 		bumpSubmissionTracking
 	]);
 
@@ -1777,10 +1851,9 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	const adoptInitialDraftSelection = useEffectEvent((workspacePath: string | null) => {
 		setHasResolvedInitialSelection(true);
 		if (!workspacePath) return;
-		setProjectSelection(workspacePath, null, true, true);
-		const selectionGeneration = projectSelectionGenerationRef.current;
+		const selectionGeneration = setProjectSelection(workspacePath, null, true, true);
 		void verifyProject(workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGenerationRef.current) {
+			if (selectionGeneration === projectSelectionGeneration.current) {
 				setCurrentError(error instanceof Error ? error.message : 'Failed to attach project.');
 			}
 		});
@@ -1792,7 +1865,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 			hasResolvedInitialSelection,
 			initialProjectLaunchResolved,
 			hasPendingProjectLaunches: pendingProjectLaunches.length > 0,
-			projectLaunchInFlight: projectLaunchInFlight.current,
+			projectLaunchInFlight,
 			hasLoadedProjects: hasLoadedDesktopProjectAttachments,
 			signedInUserId,
 			projects
@@ -1803,10 +1876,10 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		hasResolvedInitialSelection,
 		initialProjectLaunchResolved,
 		pendingProjectLaunches.length,
+		projectLaunchInFlight,
 		hasLoadedDesktopProjectAttachments,
 		signedInUserId,
-		projects,
-		adoptInitialDraftSelection
+		projects
 	]);
 
 	const syncWorkspaceToThread = useEffectEvent((threadProject: ProjectState) => {
@@ -1832,8 +1905,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		currentThreadId,
 		currentWorkspacePath,
 		projects,
-		draftWorkspacePath,
-		syncWorkspaceToThread
+		draftWorkspacePath
 	]);
 
 	const selectProjectThread = useEffectEvent(
@@ -1858,8 +1930,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		hasResolvedInitialSelection,
 		currentWorkspacePath,
 		currentThreadId,
-		draftWorkspacePath,
-		selectProjectThread
+		draftWorkspacePath
 	]);
 
 	useEffect(() => {
@@ -1881,7 +1952,7 @@ export default function App({ config }: { config: RuntimeConfig }) {
 	// Boot sequence: viewport tracking, model catalog, hash/bridge workspace
 	// launches, and the local server connection. Runs exactly once per mount.
 	const boot = useEffectEvent(() => {
-		const bridge = (window as Window).sprocketDesktopBridge as DesktopBridge | undefined;
+		const bridge = window.sprocketDesktopBridge;
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
 			? bridge.onWorkspaceLaunch(() => {
 					void takeDesktopProjectLaunches();
@@ -1897,12 +1968,13 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		} else {
 			setInitialProjectLaunchResolved(true);
 		}
-		void resolveDesktopApi()
+		void runtime
+			.resolveDesktopApi()
 			.then(async (client) => {
 				setDesktopApi(client);
 				await reconcileNativeAuthentication();
 				setDesktopApiResolved(true);
-				void refreshDesktopProjectAttachments().catch((error) => {
+				void refreshDesktopProjectAttachments(client).catch((error) => {
 					setCurrentError(
 						error instanceof Error ? error.message : 'Failed to load local project attachments.'
 					);
@@ -2159,7 +2231,8 @@ export default function App({ config }: { config: RuntimeConfig }) {
 									loadingOlder={transcript.loadingOlder}
 									nextBefore={transcript.nextBefore ?? undefined}
 									emptyStateMessage={
-										currentThreadId && (transcript.loading || transcript.threadId !== currentThreadId)
+										currentThreadId &&
+										(transcript.loading || transcript.threadId !== currentThreadId)
 											? 'Loading conversation history...'
 											: currentProject
 												? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
@@ -2299,7 +2372,9 @@ export default function App({ config }: { config: RuntimeConfig }) {
 								void document.documentElement.requestFullscreen?.().catch(() => {});
 							}
 						}}
-						onToggleExpanded={() => artifactPanel.update({ expanded: !artifactPanel.panel.expanded })}
+						onToggleExpanded={() =>
+							artifactPanel.update({ expanded: !artifactPanel.panel.expanded })
+						}
 						onClose={() => artifactPanel.update({ open: false, expanded: false })}
 					/>
 				</div>

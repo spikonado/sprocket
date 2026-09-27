@@ -14,7 +14,7 @@ const user: AuthUser = {
 };
 
 afterEach(() => {
-	authState.set(initialState);
+	act(() => authState.set(initialState));
 });
 
 it('keeps the Convex identity stable through token refreshes and observes account changes', () => {
