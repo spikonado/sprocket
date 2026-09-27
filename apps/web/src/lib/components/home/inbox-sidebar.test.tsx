@@ -1,26 +1,39 @@
+import { act, useState, type ComponentProps } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { flushSync, mount, tick, unmount } from 'svelte';
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import { INBOX_STATES } from '$convex/lib/inboxState';
-import InboxSidebar from './inbox-sidebar.svelte';
+import InboxSidebar from './inbox-sidebar';
 
-let component: ReturnType<typeof mount>;
+type SidebarProps = Omit<ComponentProps<typeof InboxSidebar>, 'settledOpen' | 'onSettledOpenChange'>;
+type Thread = Doc<'threadRecords'>;
+
+let container: HTMLDivElement;
+let root: Root;
 
 beforeEach(() => {
 	vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
 	Element.prototype.scrollIntoView = vi.fn();
 	localStorage.clear();
+	container = document.createElement('div');
+	document.body.append(container);
+	root = createRoot(container);
 });
+
 afterEach(async () => {
-	if (component) await unmount(component);
+	await act(async () => {
+		root.unmount();
+	});
+	container.remove();
 	document.body.replaceChildren();
 	vi.unstubAllGlobals();
 });
 
-function thread(settled = false, status: Doc<'threadRecords'>['status'] = 'completed') {
+function thread(settled = false, status: Thread['status'] = 'completed') {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	const record: Doc<'threadRecords'> = {
+	const record: Thread = {
 		_id: 'thread' as Id<'threadRecords'>,
 		_creationTime: 1,
 		userId: 'alice',
@@ -37,7 +50,7 @@ function thread(settled = false, status: Doc<'threadRecords'>['status'] = 'compl
 	return record;
 }
 
-function props(records: Doc<'threadRecords'>[]) {
+function props(records: Thread[]) {
 	return {
 		sections: INBOX_STATES.map((state) => ({
 			state,
@@ -67,18 +80,32 @@ function props(records: Doc<'threadRecords'>[]) {
 	};
 }
 
-async function render(records: Doc<'threadRecords'>[]) {
+function Harness(input: SidebarProps) {
+	const [settledOpen, setSettledOpen] = useState(false);
+	return (
+		<InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />
+	);
+}
+
+async function render(records: Thread[]) {
 	const input = props(records);
-	component = mount(InboxSidebar, { target: document.body, props: input });
-	flushSync();
-	await tick();
+	act(() => {
+		root.render(<Harness {...input} />);
+	});
+	await act(async () => {});
 	return input;
+}
+
+async function flush() {
+	await act(async () => {});
 }
 
 it('settles an idle thread without offering snooze actions', async () => {
 	const input = await render([thread()]);
-	document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!.click();
-	await tick();
+	act(() => {
+		document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!.click();
+	});
+	await flush();
 
 	expect(input.onChange).toHaveBeenCalledWith(
 		expect.objectContaining({ _id: 'thread' }),
@@ -96,7 +123,9 @@ it('renders simple navigation and a collapsible settled section', async () => {
 
 	expect(newThread).toBeTruthy();
 	expect(newThread?.querySelector('.lucide-square-pen')).toBeTruthy();
-	newThread?.click();
+	act(() => {
+		newThread?.click();
+	});
 	expect(input.onNew).toHaveBeenCalledOnce();
 	expect(document.querySelector('.inbox-jumps')).toBeNull();
 	expect(document.querySelector('#inbox-unsettled .inbox-section-heading')).toBeNull();
@@ -106,8 +135,10 @@ it('renders simple navigation and a collapsible settled section', async () => {
 	expect(settledHeading.textContent?.trim()).toBe('Settled Threads');
 	expect(settledHeading.getAttribute('aria-expanded')).toBe('false');
 	expect(document.querySelector('#inbox-settled .inbox-row')).toBeNull();
-	settledHeading.click();
-	await tick();
+	act(() => {
+		settledHeading.click();
+	});
+	await flush();
 	expect(settledHeading.getAttribute('aria-expanded')).toBe('true');
 	expect(document.querySelector('#inbox-settled .inbox-row')).toBeTruthy();
 	expect(localStorage.getItem('sprocket.inbox.settled-open')).toBe('true');
@@ -126,11 +157,15 @@ it('restores the settled section preference from local storage', async () => {
 it('closes the sidebar from the top action and from the brand mark', async () => {
 	const input = await render([thread()]);
 
-	document.querySelector<HTMLButtonElement>('[aria-label="Close sidebar"]')!.click();
+	act(() => {
+		document.querySelector<HTMLButtonElement>('[aria-label="Close sidebar"]')!.click();
+	});
 	expect(input.onClose).toHaveBeenCalledOnce();
 
 	const brand = document.querySelector<HTMLButtonElement>('header [aria-label="Close sidebar"]')!;
-	brand.click();
+	act(() => {
+		brand.click();
+	});
 	expect(input.onClose).toHaveBeenCalledTimes(2);
 });
 
@@ -138,23 +173,28 @@ it('loads more threads only after the user clicks Show more', async () => {
 	const input = props([thread()]);
 	const unsettled = input.sections.find((section) => section.state === 'unsettled')!;
 	unsettled.canLoadMore = true;
-	component = mount(InboxSidebar, { target: document.body, props: input });
-	flushSync();
-	await tick();
+	act(() => {
+		root.render(<Harness {...input} />);
+	});
+	await flush();
 
 	const showMore = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
 		(button) => button.textContent?.trim() === 'Show more'
 	)!;
 	expect(showMore).toBeTruthy();
 	expect(unsettled.loadMore).not.toHaveBeenCalled();
-	showMore.click();
+	act(() => {
+		showMore.click();
+	});
 	expect(unsettled.loadMore).toHaveBeenCalledOnce();
 });
 
 it('starts a new thread with Alt+N', async () => {
 	const input = await render([]);
 
-	window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', altKey: true }));
+	act(() => {
+		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', altKey: true }));
+	});
 
 	expect(input.onNew).toHaveBeenCalledOnce();
 });
@@ -184,18 +224,19 @@ it('shows project, title, age, provider, and model name without a model slug', a
 
 it('filters the project picker and selects one project', async () => {
 	const input = await render([thread()]);
-	document.querySelector<HTMLDetailsElement>('details')!.open = true;
-	await tick();
+	act(() => {
+		document.querySelector<HTMLDetailsElement>('details')!.open = true;
+	});
 	const search = document.querySelector<HTMLInputElement>('.inbox-project-search input')!;
 	expect(search.placeholder).toBe('Search projects');
-	search.value = 'repo';
-	search.dispatchEvent(new InputEvent('input', { bubbles: true }));
-	await tick();
+	fireEvent.change(search, { target: { value: 'repo' } });
 	const options = [...document.querySelectorAll<HTMLButtonElement>('.inbox-project-option')];
 	const project = options.find((button) => button.textContent?.trim() === 'Repository')!;
 
 	expect(options.some((button) => button.textContent?.trim() === 'Other project')).toBe(false);
-	project.click();
+	act(() => {
+		project.click();
+	});
 	expect(input.onFilter).toHaveBeenCalledWith(['repo']);
 });
 
@@ -205,16 +246,20 @@ it('puts the add-project action beside the project selector', async () => {
 
 	expect(action.closest('.inbox-project-controls')).toBeTruthy();
 	expect(action.closest('.inbox-project-menu')).toBeNull();
-	action.click();
+	act(() => {
+		action.click();
+	});
 	expect(input.onAddProject).toHaveBeenCalledOnce();
 });
 
 it('shows an icon for every thread menu action without selection controls', async () => {
 	await render([thread()]);
-	document
-		.querySelector('.inbox-row')!
-		.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }));
-	await tick();
+	act(() => {
+		document
+			.querySelector('.inbox-row')!
+			.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }));
+	});
+	await flush();
 	const actions = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
 
 	expect(actions.map((action) => action.textContent?.trim())).toEqual([
@@ -231,8 +276,10 @@ it('does not attach keyboard context-menu behavior to thread rows', async () => 
 	await render([thread()]);
 	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
 
-	rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
-	await tick();
+	act(() => {
+		rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
+	});
+	await flush();
 
 	expect(rowButton.hasAttribute('aria-haspopup')).toBe(false);
 	expect(document.querySelector('.inbox-context-menu')).toBeNull();
@@ -252,23 +299,26 @@ it('labels settle and unsettle controls with tooltips', async () => {
 
 it('renames a thread inline', async () => {
 	const input = await render([thread()]);
-	document
-		.querySelector('.inbox-row')!
-		.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }));
-	await tick();
+	act(() => {
+		document
+			.querySelector('.inbox-row')!
+			.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }));
+	});
+	await flush();
 	const renameAction = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
 		(action) => action.textContent?.trim() === 'Rename'
 	)!;
 
-	renameAction.click();
-	await tick();
+	act(() => {
+		renameAction.click();
+	});
+	await flush();
 	const renameInput = document.querySelector<HTMLInputElement>('[aria-label="Rename thread"]')!;
 	expect(renameInput.closest('.inbox-row')).toBeTruthy();
 	expect(document.querySelector('dialog')).toBeNull();
-	renameInput.value = 'Updated thread';
-	renameInput.dispatchEvent(new InputEvent('input', { bubbles: true }));
-	renameInput.closest('form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true }));
-	await tick();
+	fireEvent.change(renameInput, { target: { value: 'Updated thread' } });
+	fireEvent.submit(renameInput.closest('form')!);
+	await flush();
 
 	expect(input.onRename).toHaveBeenCalledWith(
 		expect.objectContaining({ _id: 'thread' }),
@@ -281,8 +331,10 @@ it('does not allow a running thread to settle', async () => {
 	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
 
 	expect(settleButton.disabled).toBe(true);
-	settleButton.click();
-	await tick();
+	act(() => {
+		settleButton.click();
+	});
+	await flush();
 	expect(input.onChange).not.toHaveBeenCalled();
 });
 
@@ -293,8 +345,10 @@ it('unsettles a settled thread', async () => {
 		'[aria-label="Unsettle Thread"]'
 	)!;
 	expect(unsettleButton.querySelector('.lucide-rotate-ccw')).toBeTruthy();
-	unsettleButton.click();
-	await tick();
+	act(() => {
+		unsettleButton.click();
+	});
+	await flush();
 
 	expect(input.onChange).toHaveBeenCalledWith(
 		expect.objectContaining({ _id: 'thread' }),
@@ -305,9 +359,11 @@ it('unsettles a settled thread', async () => {
 it('shows a failed settle', async () => {
 	const input = await render([thread()]);
 	input.onChange.mockRejectedValue(new Error('Changed elsewhere'));
-	document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!.click();
-	await tick();
-	await tick();
+	act(() => {
+		document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!.click();
+	});
+	await flush();
+	await flush();
 
 	expect(document.querySelector('.inbox-notice')?.textContent).toContain('Changed elsewhere');
 });

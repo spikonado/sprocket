@@ -1,12 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
-import ProjectPicker from './project-picker.svelte';
+import { act, type ComponentProps } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { fireEvent } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import ProjectPicker from './project-picker';
 
-let cleanup: (() => Promise<void>) | undefined;
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+	container = document.createElement('div');
+	document.body.append(container);
+	root = createRoot(container);
+});
 
 afterEach(async () => {
-	await cleanup?.();
-	cleanup = undefined;
+	await act(async () => {
+		root.unmount();
+	});
+	container.remove();
 	document.body.replaceChildren();
 });
 
@@ -64,14 +75,35 @@ function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> =
 		onSelect: vi.fn(),
 		...overrides
 	};
-	const component = mount(ProjectPicker, { target: document.body, props });
-	cleanup = () => unmount(component);
-	flushSync();
+	act(() => {
+		root.render(<ProjectPicker {...props} />);
+	});
 	return { ...api, props };
 }
 
+function keydown(target: Element, init: KeyboardEventInit) {
+	act(() => {
+		target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
+	});
+}
+
+async function waitUntil(check: () => void) {
+	const deadline = Date.now() + 2_000;
+	while (true) {
+		try {
+			check();
+			return;
+		} catch (error) {
+			if (Date.now() > deadline) throw error;
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			});
+		}
+	}
+}
+
 async function waitForDirectories() {
-	await vi.waitFor(() => {
+	await waitUntil(() => {
 		expect(document.querySelectorAll('[role="option"]')).toHaveLength(3);
 	});
 }
@@ -88,14 +120,12 @@ describe('ProjectPicker', () => {
 		expect(document.activeElement).toBe(input);
 		expect(options()[0]?.getAttribute('aria-selected')).toBe('true');
 
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-		flushSync();
+		keydown(input, { key: 'ArrowDown' });
 		expect(options()[1]?.getAttribute('aria-selected')).toBe('true');
 
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-		flushSync();
+		keydown(input, { key: 'ArrowUp' });
+		keydown(input, { key: 'ArrowDown' });
+		keydown(input, { key: 'Enter' });
 
 		expect(input.value).toBe('/home/me/Desktop/');
 		expect(resolveWorkspacePath).not.toHaveBeenCalled();
@@ -108,11 +138,10 @@ describe('ProjectPicker', () => {
 			'[aria-label="Project directory path"]'
 		)!;
 
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
-		flushSync();
+		keydown(input, { key: 'Backspace' });
 		expect(input.value).toBe('/home/');
 
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		keydown(input, { key: 'Escape' });
 		expect(props.onClose).toHaveBeenCalledOnce();
 	});
 
@@ -123,15 +152,11 @@ describe('ProjectPicker', () => {
 			'[aria-label="Project directory path"]'
 		)!;
 
-		input.value = '/tmp/';
-		input.dispatchEvent(new Event('input', { bubbles: true }));
-		flushSync();
+		fireEvent.change(input, { target: { value: '/tmp/' } });
 		expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
 
-		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-		input.dispatchEvent(
-			new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
-		);
+		keydown(input, { key: 'Enter' });
+		keydown(input, { key: 'Enter', ctrlKey: true });
 		expect(input.value).toBe('/tmp/');
 		expect(resolveWorkspacePath).not.toHaveBeenCalled();
 	});
@@ -143,11 +168,9 @@ describe('ProjectPicker', () => {
 			'[aria-label="Project directory path"]'
 		)!;
 
-		input.dispatchEvent(
-			new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
-		);
+		keydown(input, { key: 'Enter', ctrlKey: true });
 
-		await vi.waitFor(() => {
+		await waitUntil(() => {
 			expect(resolveWorkspacePath).toHaveBeenCalledWith({
 				workspacePath: '/home/me',
 				createIfMissing: false
