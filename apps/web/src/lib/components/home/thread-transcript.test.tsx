@@ -12,8 +12,6 @@ import ThreadTranscript from './thread-transcript';
 
 type Props = React.ComponentProps<typeof ThreadTranscript>;
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 let cleanup: (() => Promise<void>) | undefined;
 let resize: () => void;
 

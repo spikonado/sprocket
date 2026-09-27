@@ -7,8 +7,6 @@ import WorkSectionDetails from './work-section-details';
 
 type Props = React.ComponentProps<typeof WorkSectionDetails>;
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 let cleanup: (() => Promise<void>) | undefined;
 let intersection: () => void;
 let disconnect: ReturnType<typeof vi.fn>;

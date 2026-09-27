@@ -4,8 +4,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { BrowserLiveViewState } from '$lib/chat/side-panel';
 import BrowserLiveView from './browser-live-view';
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 let container: HTMLDivElement;
 let root: Root;
 afterEach(async () => {

@@ -9,12 +9,15 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 	const loadAttachment = vi.fn(async () => imageUrl);
 	const message: TranscriptDisplayRow = {
 		id: 'prompt:1',
+		// SAFETY: Fixture IDs never leave the mounted component.
 		threadId: 'thread' as Id<'threadRecords'>,
+		// SAFETY: Fixture IDs never leave the mounted component.
 		runId: 'run' as Id<'runs'>,
 		kind: 'prompt',
 		text: 'Check this board',
 		attachments: [
 			{
+				// SAFETY: The test loader resolves this fixture ID without a backend.
 				storageId: 'image' as Id<'_storage'>,
 				name: 'board.png',
 				mediaType: 'image/png',
