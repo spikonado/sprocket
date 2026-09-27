@@ -1,12 +1,11 @@
 import { ArrowUp, CircleAlert, Paperclip, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery_experimental } from 'convex/react';
+import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import { api } from '$convex/_generated/api';
 import type { Id } from '$convex/_generated/dataModel';
 import { canSubmitQuestionAnswer, type AgentQuestionOption } from '$convex/lib/agentQuestions';
 import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { CompletionProvider } from '$convex/lib/validators';
-import { useSprocketAuth } from '$lib/auth-provider';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
@@ -114,7 +113,7 @@ export default function PromptComposer({
 	onSubmit,
 	onCancel
 }: PromptComposerProps) {
-	const convexAuth = useSprocketAuth();
+	const convexAuth = useConvexAuth();
 	const usageQuery = useQuery_experimental({
 		query: api.usage.getMyUsage,
 		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'

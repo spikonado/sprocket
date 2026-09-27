@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, type ComponentProps } from 'react';
+import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { Id } from '$convex/_generated/dataModel';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
@@ -16,14 +16,10 @@ const { usageState } = vi.hoisted(() => ({
 }));
 
 vi.mock('convex/react', () => ({
-	useQuery_experimental: () => usageState.value
-}));
-
-vi.mock('$lib/auth-provider', () => ({
-	useSprocketAuth: () => ({
+	useQuery_experimental: () => usageState.value,
+	useConvexAuth: () => ({
 		isLoading: false,
-		isAuthenticated: true,
-		fetchAccessToken: async () => null
+		isAuthenticated: true
 	})
 }));
 

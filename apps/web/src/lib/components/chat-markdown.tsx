@@ -52,6 +52,7 @@ export default function ChatMarkdown({
 				return (
 					<div
 						key={`${block.type}-${index}`}
+						className="chat-markdown-html"
 						dangerouslySetInnerHTML={{ __html: block.html }}
 					/>
 				);

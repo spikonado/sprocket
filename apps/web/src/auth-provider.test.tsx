@@ -14,8 +14,10 @@ const user: AuthUser = {
 };
 
 afterEach(() => {
-	authState.set(initialState);
-	convexAuthRetryVersion.set(initialRetryVersion);
+	act(() => {
+		authState.set(initialState);
+		convexAuthRetryVersion.set(initialRetryVersion);
+	});
 });
 
 it('reinstalls the Convex token fetcher for recovery and account changes, not token refreshes', () => {

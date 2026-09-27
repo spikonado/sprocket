@@ -5,6 +5,7 @@ import { loadRuntimeConfig } from '$lib/runtime-config';
 import AuthProvider from './auth-provider';
 import App from './app';
 import Callback from './callback';
+import ErrorBoundary from './error-boundary';
 import CalmCentered from '$lib/components/home/calm-centered';
 import './app.css';
 
@@ -26,9 +27,11 @@ async function start() {
 		if (!convexUrl) throw new Error('Sprocket is missing its Convex configuration.');
 		const client = new ConvexReactClient(convexUrl, { unsavedChangesWarning: false });
 		root.render(
-			<AuthProvider client={client} machine={config.machine}>
-				{window.location.pathname === '/callback' ? <Callback /> : <App config={config} />}
-			</AuthProvider>
+			<ErrorBoundary>
+				<AuthProvider client={client} machine={config.machine}>
+					{window.location.pathname === '/callback' ? <Callback /> : <App config={config} />}
+				</AuthProvider>
+			</ErrorBoundary>
 		);
 	} catch (error) {
 		root.render(
