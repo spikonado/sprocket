@@ -1,38 +1,63 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
-import { TranscriptReplica, useTranscriptReplica } from '$lib/home/transcript-replica';
+import {
+	TranscriptReplica,
+	useTranscriptReplica,
+	type TranscriptReplicaApi
+} from '$lib/home/transcript-replica';
 import type {
-	DesktopApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
+	TranscriptDisplayPage,
+	TranscriptDisplayRow,
 	TranscriptWatchEvent
 } from '$lib/types/sprocket';
 
-const threadId = (value: string) => value as Id<'threadRecords'>;
+function threadId(value: string): Id<'threadRecords'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'threadRecords'>;
+}
 
-type DisplayWatchOptions = { onEvent: (event: TranscriptWatchEvent) => void };
-type LiveWatchOptions = { onEvent: (event: LiveCompletionWatchEvent) => void };
+function runId(value: string): Id<'runs'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'runs'>;
+}
+
+function displayRow(sequence: number): TranscriptDisplayRow {
+	return {
+		id: `row-${sequence}`,
+		threadId: threadId('thread-a'),
+		runId: runId('run-a'),
+		sequence,
+		kind: 'text',
+		text: 'Working',
+		itemCount: 0,
+		pendingTools: 0,
+		closed: true,
+		revision: sequence
+	};
+}
 
 function createFakeApi() {
 	const displayEvents: Array<(event: TranscriptWatchEvent) => void> = [];
 	const liveEvents: Array<(event: LiveCompletionWatchEvent) => void> = [];
-	const api = {
+	const api: TranscriptReplicaApi = {
 		// Never resolves: the replica stays in its initial loading window.
-		fetchTranscriptDisplay: vi.fn(() => new Promise(() => {})),
-		watchTranscript: vi.fn(async (_args: unknown, options: DisplayWatchOptions) => {
-			displayEvents.push(options.onEvent);
-		}),
-		watchLiveCompletion: vi.fn(async (_args: unknown, options: LiveWatchOptions) => {
-			liveEvents.push(options.onEvent);
-		})
-	} as unknown as DesktopApi;
+		fetchTranscriptDisplay: () => new Promise<TranscriptDisplayPage>(() => {}),
+		watchTranscript: async (_request, handlers) => {
+			displayEvents.push(handlers.onEvent);
+		},
+		watchLiveCompletion: async (_request, handlers) => {
+			liveEvents.push(handlers.onEvent);
+		}
+	};
 	return { api, displayEvents, liveEvents };
 }
 
 const overlay = (streamId: string): LiveCompletionOverlay => ({
 	threadId: threadId('thread-a'),
-	runId: 'run-1' as Id<'runs'>,
+	runId: runId('run-1'),
 	runStatus: 'running',
 	streamId,
 	text: 'Working',
@@ -42,9 +67,9 @@ const overlay = (streamId: string): LiveCompletionOverlay => ({
 
 it('clears the previous thread window and notifies subscribers on selection', () => {
 	const replica = new TranscriptReplica();
-	const listener = vi.fn();
+	const listener = vi.fn<() => void>();
 	replica.subscribe(listener);
-	replica.messages = [{ id: 'row-1' } as never];
+	replica.messages = [displayRow(1)];
 	replica.stale = true;
 	replica.error = 'old error';
 	replica.windowVersion = 4;
@@ -97,7 +122,7 @@ it('drops transcript events that arrive after the selected thread changed', asyn
 it('tracks and clears the live completion stream and notifies subscribers', async () => {
 	const { api, liveEvents } = createFakeApi();
 	const replica = new TranscriptReplica();
-	const listener = vi.fn();
+	const listener = vi.fn<() => void>();
 	replica.subscribe(listener);
 	const tid = threadId('thread-a');
 	replica.selectThread(tid);
@@ -131,9 +156,15 @@ it('withholds visible messages for other threads and accounts', () => {
 	const replica = new TranscriptReplica();
 	replica.selectThread(threadId('thread-a'));
 
-	expect(replica.visibleMessages({ threadId: threadId('thread-b'), userId: 'user-a', run: null })).toEqual([]);
-	expect(replica.visibleMessages({ threadId: threadId('thread-a'), userId: null, run: null })).toEqual([]);
-	expect(replica.visibleMessages({ threadId: threadId('thread-a'), userId: 'user-a', run: null })).toEqual([]);
+	expect(
+		replica.visibleMessages({ threadId: threadId('thread-b'), userId: 'user-a', run: null })
+	).toEqual([]);
+	expect(
+		replica.visibleMessages({ threadId: threadId('thread-a'), userId: null, run: null })
+	).toEqual([]);
+	expect(
+		replica.visibleMessages({ threadId: threadId('thread-a'), userId: 'user-a', run: null })
+	).toEqual([]);
 });
 
 it('keeps one replica per mount and re-renders on changes', () => {

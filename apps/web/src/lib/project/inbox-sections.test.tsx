@@ -1,102 +1,148 @@
 import { renderHook } from '@testing-library/react';
-import { beforeEach, expect, it, vi } from 'vitest';
-import type { Doc } from '$convex/_generated/dataModel';
-import type { PaginatedQueryArgs } from 'convex/react';
-import { api } from '$convex/_generated/api';
-import { useThreadInbox } from '$lib/project/inbox';
+import { expect, it } from 'vitest';
+import type { Doc, Id } from '$convex/_generated/dataModel';
+import {
+	useThreadInbox,
+	type InboxQueryHook,
+	type InboxQueryOptions,
+	type InboxQueryResult
+} from '$lib/project/inbox';
 
-const usePaginatedQueryResult = vi.fn();
+type ThreadRecord = Doc<'threadRecords'>;
 
-vi.mock('convex/react', () => ({
-	usePaginatedQuery_experimental: (options: unknown) => usePaginatedQueryResult(options)
-}));
-
-type InboxArgs = PaginatedQueryArgs<typeof api.inbox.list>;
-
-function sectionResult(overrides: Record<string, unknown> = {}) {
+function threadRecord(): ThreadRecord {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return {
-		data: [],
-		status: 'success',
-		canLoadMore: false,
-		isLoading: false,
-		error: undefined,
-		loadMore: vi.fn(),
-		...overrides
+		_id: 'thread-1' as Id<'threadRecords'>,
+		_creationTime: 1,
+		userId: 'user-a',
+		repositoryKey: 'alpha',
+		submissionId: 'submission-1',
+		selectedModel: 'model',
+		reasoningEffort: 'high' as const,
+		fastMode: false,
+		title: 'Thread',
+		lastMessageAt: 1,
+		status: 'completed'
 	};
 }
 
-beforeEach(() => {
-	usePaginatedQueryResult.mockReset();
-	usePaginatedQueryResult.mockImplementation(() => sectionResult());
-});
+function inboxQuery(
+	overrides: {
+		data?: ThreadRecord[];
+		canLoadMore?: boolean;
+		error?: Error;
+		loadMore?: (numItems: number) => void;
+	} = {}
+): InboxQueryResult {
+	const loadMore = overrides.loadMore ?? (() => {});
+	if (overrides.error) {
+		return {
+			data: overrides.data ?? [],
+			status: 'error',
+			canLoadMore: false,
+			isLoading: false,
+			error: overrides.error,
+			loadMore
+		};
+	}
+	return {
+		data: overrides.data ?? [],
+		status: 'success',
+		canLoadMore: overrides.canLoadMore ?? false,
+		isLoading: false,
+		error: undefined,
+		loadMore
+	};
+}
+
+function inboxQueryFixture(
+	resolve: (options: InboxQueryOptions) => InboxQueryResult = () => inboxQuery()
+) {
+	const calls: InboxQueryOptions[] = [];
+	const hook: InboxQueryHook = (options) => {
+		calls.push(options);
+		return resolve(options);
+	};
+	return { hook, calls };
+}
 
 it('requests both sections with normalized repositories when enabled', () => {
+	const fixture = inboxQueryFixture();
 	renderHook(() =>
-		useThreadInbox({
-			enabled: () => true,
-			projects: () => ['zeta', 'alpha', 'zeta'],
-			settledOpen: () => true
-		})
+		useThreadInbox(
+			{
+				enabled: () => true,
+				projects: () => ['zeta', 'alpha', 'zeta'],
+				settledOpen: () => true
+			},
+			fixture.hook
+		)
 	);
 
-	expect(usePaginatedQueryResult).toHaveBeenCalledTimes(2);
-	const args = usePaginatedQueryResult.mock.calls.map(
-		([options]) => (options as { args: InboxArgs | 'skip' }).args
-	);
-	expect(args).toEqual([
+	expect(fixture.calls).toHaveLength(2);
+	expect(fixture.calls.map((call) => call.args)).toEqual([
 		{ state: 'unsettled', repositoryKeys: ['alpha', 'zeta'] },
 		{ state: 'settled', repositoryKeys: ['alpha', 'zeta'] }
 	]);
-	expect(usePaginatedQueryResult.mock.calls[0][0]).toMatchObject({ initialNumItems: 10 });
+	expect(fixture.calls[0]).toMatchObject({ initialNumItems: 10 });
 });
 
 it('skips the settled section until it is opened', () => {
+	const fixture = inboxQueryFixture();
 	renderHook(() =>
-		useThreadInbox({
-			enabled: () => true,
-			projects: () => ['alpha'],
-			settledOpen: () => false
-		})
+		useThreadInbox(
+			{ enabled: () => true, projects: () => ['alpha'], settledOpen: () => false },
+			fixture.hook
+		)
 	);
 
-	const args = usePaginatedQueryResult.mock.calls.map(
-		([options]) => (options as { args: InboxArgs | 'skip' }).args
-	);
-	expect(args).toEqual([{ state: 'unsettled', repositoryKeys: ['alpha'] }, 'skip']);
+	expect(fixture.calls.map((call) => call.args)).toEqual([
+		{ state: 'unsettled', repositoryKeys: ['alpha'] },
+		'skip'
+	]);
 });
 
 it('skips every section while disabled or without attached projects', () => {
+	const disabled = inboxQueryFixture();
 	renderHook(() =>
-		useThreadInbox({ enabled: () => false, projects: () => ['alpha'], settledOpen: () => true })
-	);
-	expect(
-		usePaginatedQueryResult.mock.calls.map(
-			([options]) => (options as { args: InboxArgs | 'skip' }).args
+		useThreadInbox(
+			{ enabled: () => false, projects: () => ['alpha'], settledOpen: () => true },
+			disabled.hook
 		)
-	).toEqual(['skip', 'skip']);
+	);
+	expect(disabled.calls.map((call) => call.args)).toEqual(['skip', 'skip']);
 
-	usePaginatedQueryResult.mockClear();
+	const noProjects = inboxQueryFixture();
 	renderHook(() =>
-		useThreadInbox({ enabled: () => true, projects: () => [], settledOpen: () => true })
-	);
-	expect(
-		usePaginatedQueryResult.mock.calls.map(
-			([options]) => (options as { args: InboxArgs | 'skip' }).args
+		useThreadInbox(
+			{ enabled: () => true, projects: () => [], settledOpen: () => true },
+			noProjects.hook
 		)
-	).toEqual(['skip', 'skip']);
+	);
+	expect(noProjects.calls.map((call) => call.args)).toEqual(['skip', 'skip']);
 });
 
 it('maps query state into sections, preserving errors and pagination', () => {
-	const loadMore = vi.fn();
-	const rows = [{ _id: 'thread-1' } as unknown as Doc<'threadRecords'>];
-	usePaginatedQueryResult.mockImplementation(({ args }: { args: InboxArgs | 'skip' }) =>
-		args !== 'skip' && args.state === 'unsettled'
-			? sectionResult({ data: rows, canLoadMore: true, loadMore })
-			: sectionResult({ status: 'error', error: new Error('Inbox query failed.') })
+	const loadMoreCalls: number[] = [];
+	const rows = [threadRecord()];
+	const fixture = inboxQueryFixture((options) =>
+		options.args !== 'skip' && options.args.state === 'unsettled'
+			? inboxQuery({
+					data: rows,
+					canLoadMore: true,
+					loadMore: (numItems) => {
+						loadMoreCalls.push(numItems);
+					}
+				})
+			: inboxQuery({ error: new Error('Inbox query failed.') })
 	);
 
 	const { result } = renderHook(() =>
-		useThreadInbox({ enabled: () => true, projects: () => ['alpha'], settledOpen: () => true })
+		useThreadInbox(
+			{ enabled: () => true, projects: () => ['alpha'], settledOpen: () => true },
+			fixture.hook
+		)
 	);
 
 	const [unsettled, settled] = result.current.sections;
@@ -108,6 +154,6 @@ it('maps query state into sections, preserving errors and pagination', () => {
 		error: undefined
 	});
 	unsettled.loadMore();
-	expect(loadMore).toHaveBeenCalledWith(10);
+	expect(loadMoreCalls).toEqual([10]);
 	expect(settled.error).toBe('Inbox query failed.');
 });

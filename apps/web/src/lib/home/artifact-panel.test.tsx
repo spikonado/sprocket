@@ -1,14 +1,18 @@
 import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { ConvexReactClient } from 'convex/react';
 import { api } from '$convex/_generated/api';
-import { ArtifactPanel, createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
+import {
+	ArtifactPanel,
+	createConvexArtifactClient,
+	useArtifactPanel,
+	type ConvexArtifactClient
+} from '$lib/home/artifact-panel';
 
 function createFakeClient(readRevision: () => number | undefined) {
 	const listeners = new Set<() => void>();
-	const disposed = vi.fn();
-	const watch = {
-		onUpdate: (callback: () => void) => {
+	const disposed = vi.fn<() => void>();
+	const watch: ReturnType<ConvexArtifactClient['watchQuery']> = {
+		onUpdate: (callback) => {
 			listeners.add(callback);
 			return () => {
 				listeners.delete(callback);
@@ -17,13 +21,15 @@ function createFakeClient(readRevision: () => number | undefined) {
 		},
 		localQueryResult: readRevision
 	};
-	const client = {
-		query: vi.fn(),
-		watchQuery: vi.fn(() => watch)
-	} as unknown as ConvexReactClient;
+	const watchQuery = vi.fn<ConvexArtifactClient['watchQuery']>(() => watch);
+	const client: ConvexArtifactClient = {
+		query: async () => ({ page: [], isDone: true, continueCursor: '', revision: 0 }),
+		watchQuery
+	};
 	return {
 		client,
 		disposed,
+		watchQuery,
 		notify: () => {
 			for (const listener of listeners) listener();
 		}
@@ -40,8 +46,8 @@ const scope = (repositoryKey: string) => ({
 it('delivers the current registry revision immediately and on every change', () => {
 	let revision = 7;
 	const fake = createFakeClient(() => revision);
-	const onUpdate = vi.fn();
-	const onError = vi.fn();
+	const onUpdate = vi.fn<(revision: number) => void>();
+	const onError = vi.fn<(error: Error) => void>();
 
 	const unsubscribe = createConvexArtifactClient(fake.client).onUpdate(
 		api.artifacts.getArtifactState,
@@ -50,7 +56,7 @@ it('delivers the current registry revision immediately and on every change', () 
 		onError
 	);
 
-	expect(fake.client.watchQuery).toHaveBeenCalledWith(api.artifacts.getArtifactState, {
+	expect(fake.watchQuery).toHaveBeenCalledWith(api.artifacts.getArtifactState, {
 		repositoryKey: 'github.com/acme/robot'
 	});
 	expect(onUpdate).toHaveBeenCalledWith(7);
@@ -68,8 +74,8 @@ it('surfaces registry failures without throwing at the caller', () => {
 	const fake = createFakeClient(() => {
 		throw new Error('Artifact registry unavailable.');
 	});
-	const onUpdate = vi.fn();
-	const onError = vi.fn();
+	const onUpdate = vi.fn<(revision: number) => void>();
+	const onError = vi.fn<(error: Error) => void>();
 
 	createConvexArtifactClient(fake.client).onUpdate(
 		api.artifacts.getArtifactState,
@@ -86,7 +92,7 @@ it('surfaces registry failures without throwing at the caller', () => {
 it('notifies subscribers on panel changes and keeps one instance per mount', () => {
 	const { result, rerender } = renderHook(() => useArtifactPanel());
 	const instance = result.current;
-	const listener = vi.fn();
+	const listener = vi.fn<() => void>();
 	const unsubscribe = instance.subscribe(listener);
 	const before = instance.getSnapshot();
 
@@ -105,7 +111,7 @@ it('notifies subscribers on panel changes and keeps one instance per mount', () 
 
 it('keeps a side panel snapshot per scope and restores it on return', () => {
 	const panel = new ArtifactPanel();
-	const listener = vi.fn();
+	const listener = vi.fn<() => void>();
 	panel.subscribe(listener);
 
 	panel.selectScope(scope('robot'));

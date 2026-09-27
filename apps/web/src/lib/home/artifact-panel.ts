@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
-import type { ConvexReactClient } from 'convex/react';
+import type { Watch } from 'convex/react';
+import type { FunctionArgs, FunctionReturnType } from 'convex/server';
+import { api } from '$convex/_generated/api';
 import type { Id } from '$convex/_generated/dataModel';
 import {
 	EMPTY_ARTIFACT_WATCH_STATE,
@@ -17,6 +19,21 @@ import { useStore, type Store } from '$lib/store';
 import type { DesktopApi } from '$lib/types/sprocket';
 
 type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
+type ArtifactLocalApi = Pick<DesktopApi, 'watchArtifacts'>;
+type ArtifactRegistryQuery = typeof api.artifacts.listArtifacts;
+type ArtifactStateQuery = typeof api.artifacts.getArtifactState;
+
+export type ConvexArtifactClient = {
+	query: (
+		query: ArtifactRegistryQuery,
+		args: FunctionArgs<ArtifactRegistryQuery>
+	) => Promise<FunctionReturnType<ArtifactRegistryQuery>>;
+	watchQuery: (
+		query: ArtifactStateQuery,
+		args: Pick<FunctionArgs<ArtifactStateQuery>, 'repositoryKey'>
+	) => Pick<Watch<FunctionReturnType<ArtifactStateQuery>>, 'localQueryResult' | 'onUpdate'>;
+};
+
 type Scope = {
 	userId: string;
 	repositoryKey: string;
@@ -66,7 +83,7 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	watch(args: {
-		localApi: DesktopApi | null;
+		localApi: ArtifactLocalApi | null;
 		artifactClient: ArtifactClient;
 		cloudReady: boolean;
 		scope: Scope | null;
@@ -142,7 +159,7 @@ export class ArtifactPanel implements Store<number> {
 	}
 
 	async #watchLocal(
-		localApi: DesktopApi | null,
+		localApi: ArtifactLocalApi | null,
 		workspacePath: string,
 		request: ReturnType<typeof artifactsWatchRequest>,
 		state: {
@@ -191,12 +208,12 @@ export function useArtifactPanel() {
 }
 
 /**
- * Adapts a Convex React client to the watcher interface used by the artifact
- * panel. The watcher reloads artifacts whenever the registry revision changes,
- * so the subscription must deliver the current revision immediately and on
- * every later change, and surface query failures instead of throwing.
+ * Adapts the Convex registry query surface to the watcher interface used by the
+ * artifact panel. The watcher reloads artifacts whenever the registry revision
+ * changes, so the subscription must deliver the current revision immediately
+ * and on every later change, and surface query failures instead of throwing.
  */
-export function createConvexArtifactClient(client: ConvexReactClient): ArtifactClient {
+export function createConvexArtifactClient(client: ConvexArtifactClient): ArtifactClient {
 	return {
 		query: (query, args) => client.query(query, args),
 		onUpdate: (query, args, onUpdate, onError) => {

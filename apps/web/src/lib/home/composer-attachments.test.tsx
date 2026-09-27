@@ -1,59 +1,45 @@
 import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
-import { useComposerAttachments } from '$lib/home/composer-attachments';
-import type { DesktopApi } from '$lib/types/sprocket';
+import {
+	useComposerAttachments,
+	type ComposerAttachmentApi,
+	type ComposerAttachmentContext
+} from '$lib/home/composer-attachments';
+import type { TranscriptUploadResult } from '$lib/types/sprocket';
 
-type AttachmentContext = {
-	api: DesktopApi | null;
-	userId: string | null;
-	threadId: Id<'threadRecords'> | null;
-};
-
-type UploadResult = {
-	storageId: Id<'_storage'>;
-	name: string;
-	mediaType: string;
-	size: number;
-	url: string;
-};
-
-function deferred<T>() {
-	let resolve!: (value: T) => void;
-	let reject!: (error: Error) => void;
-	const promise = new Promise<T>((next, fail) => {
-		resolve = next;
-		reject = fail;
-	});
-	return { promise, resolve, reject };
+function storageId(value: string): Id<'_storage'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'_storage'>;
 }
 
 function createDesktopApi(overrides: { uploadFails?: Error } = {}) {
 	const uploads: Array<{ userId: string; name: string }> = [];
-	const discards: Array<{ userId: string; storageId: string }> = [];
-	const pending: Array<{ resolve: (value: UploadResult) => void }> = [];
-	const api = {
-		uploadTranscriptAttachment: vi.fn(async (args: { userId: string; name: string }) => {
-			uploads.push({ userId: args.userId, name: args.name });
+	const discards: Array<{ userId: string; storageId: Id<'_storage'> }> = [];
+	const pending: Array<{ resolve: (value: TranscriptUploadResult) => void }> = [];
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: async (request) => {
+			uploads.push({ userId: request.userId, name: request.name });
 			if (overrides.uploadFails) throw overrides.uploadFails;
-			const result = deferred<UploadResult>();
-			pending.push(result);
-			return result.promise;
-		}),
-		discardTranscriptAttachment: vi.fn(async (args: { userId: string; storageId: string }) => {
-			discards.push({ userId: args.userId, storageId: args.storageId });
-		})
-	} as unknown as DesktopApi;
+			return new Promise<TranscriptUploadResult>((resolve) => {
+				pending.push({ resolve });
+			});
+		},
+		discardTranscriptAttachment: async (request) => {
+			discards.push({ userId: request.userId, storageId: request.storageId });
+			return true;
+		}
+	};
 	return { api, uploads, discards, pending };
 }
 
 type AttachmentHarness = {
-	context: AttachmentContext;
+	context: ComposerAttachmentContext;
 	onError: (message: string) => void;
 };
 
 function attachmentHarness(
-	context: AttachmentContext,
+	context: ComposerAttachmentContext,
 	onError: (message: string) => void = () => {}
 ): AttachmentHarness {
 	return { context, onError };
@@ -96,7 +82,7 @@ it('uploads with the context committed when the file is added, not the first ren
 
 	await act(async () => {
 		pending[0].resolve({
-			storageId: 'storage-1' as Id<'_storage'>,
+			storageId: storageId('storage-1'),
 			name: 'notes.txt',
 			mediaType: 'text/plain',
 			size: 8,
@@ -108,7 +94,7 @@ it('uploads with the context committed when the file is added, not the first ren
 });
 
 it('reports an unavailable server when the context is still the unconnected one', async () => {
-	const onError = vi.fn();
+	const onError = vi.fn<(message: string) => void>();
 	const harness = attachmentHarness({ api: null, userId: null, threadId: null }, onError);
 	const { result } = renderAttachments(harness);
 
@@ -117,9 +103,7 @@ it('reports an unavailable server when the context is still the unconnected one'
 	});
 	await flushUploadStart();
 
-	expect(onError).toHaveBeenCalledWith(
-		'Connect to a running Sprocket server to use this project.'
-	);
+	expect(onError).toHaveBeenCalledWith('Connect to a running Sprocket server to use this project.');
 	expect(result.current.items[0]?.status).toBe('error');
 });
 
@@ -142,7 +126,7 @@ it('discards a late upload under the account that owned it, not the current one'
 	});
 	await act(async () => {
 		pending[0].resolve({
-			storageId: 'storage-9' as Id<'_storage'>,
+			storageId: storageId('storage-9'),
 			name: 'notes.txt',
 			mediaType: 'text/plain',
 			size: 8,
@@ -159,7 +143,7 @@ it('keeps one stable instance across renders and notifies subscribers on change'
 	const harness = attachmentHarness({ api, userId: 'user-a', threadId: null });
 	const { result, rerender } = renderAttachments(harness);
 	const instance = result.current;
-	const listener = vi.fn();
+	const listener = vi.fn<() => void>();
 	const unsubscribe = instance.subscribe(listener);
 	const before = instance.getSnapshot();
 
@@ -178,7 +162,7 @@ it('keeps one stable instance across renders and notifies subscribers on change'
 
 it('reports upload failures through onError', async () => {
 	const { api } = createDesktopApi({ uploadFails: new Error('Gateway rejected the upload.') });
-	const onError = vi.fn();
+	const onError = vi.fn<(message: string) => void>();
 	const harness = attachmentHarness({ api, userId: 'user-a', threadId: null }, onError);
 	const { result } = renderAttachments(harness);
 

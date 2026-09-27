@@ -10,8 +10,13 @@ import {
 import { useStore, type Store } from '$lib/store';
 import type { DesktopApi } from '$lib/types/sprocket';
 
-type AttachmentContext = {
-	api: DesktopApi | null;
+export type ComposerAttachmentApi = Pick<
+	DesktopApi,
+	'uploadTranscriptAttachment' | 'discardTranscriptAttachment'
+>;
+
+export type ComposerAttachmentContext = {
+	api: ComposerAttachmentApi | null;
 	userId: string | null;
 	threadId: Id<'threadRecords'> | null;
 };
@@ -23,7 +28,7 @@ type ClearOptions = {
 };
 
 type Dependencies = {
-	getContext: () => AttachmentContext;
+	getContext: () => ComposerAttachmentContext;
 	onError: (message: string) => void;
 	localServerRequiredMessage: string;
 };
@@ -111,7 +116,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 	}
 
 	#discard(args: {
-		api?: DesktopApi | null;
+		api?: ComposerAttachmentApi | null;
 		userId?: string | null;
 		threadId?: Id<'threadRecords'> | null;
 		storageId: Id<'_storage'>;

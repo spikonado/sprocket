@@ -10,6 +10,11 @@ import type {
 	TranscriptMessage
 } from '$lib/types/sprocket';
 
+export type TranscriptReplicaApi = Pick<
+	DesktopApi,
+	'fetchTranscriptDisplay' | 'watchTranscript' | 'watchLiveCompletion'
+>;
+
 type RunTiming = {
 	runId: Id<'runs'>;
 	startedAt: number;
@@ -17,7 +22,7 @@ type RunTiming = {
 } | null;
 
 type WatchArgs = {
-	api: DesktopApi;
+	api: TranscriptReplicaApi;
 	userId: string;
 	threadId: Id<'threadRecords'>;
 	isCurrent: () => boolean;
@@ -161,7 +166,7 @@ export class TranscriptReplica implements Store<number> {
 	}
 
 	async #watchDisplayEvents(
-		api: DesktopApi,
+		api: TranscriptReplicaApi,
 		userId: string,
 		threadId: Id<'threadRecords'>,
 		history: DisplayHistory,
@@ -193,7 +198,7 @@ export class TranscriptReplica implements Store<number> {
 	}
 
 	async #watchLiveEvents(
-		api: DesktopApi,
+		api: TranscriptReplicaApi,
 		userId: string,
 		threadId: Id<'threadRecords'>,
 		ac: AbortController,
