@@ -81,8 +81,8 @@ function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> =
 	return { ...api, props };
 }
 
-function keydown(target: Element, init: KeyboardEventInit) {
-	act(() => {
+async function keydown(target: Element, init: KeyboardEventInit) {
+	await act(async () => {
 		target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
 	});
 }
@@ -120,12 +120,12 @@ describe('ProjectPicker', () => {
 		expect(document.activeElement).toBe(input);
 		expect(options()[0]?.getAttribute('aria-selected')).toBe('true');
 
-		keydown(input, { key: 'ArrowDown' });
+		await keydown(input, { key: 'ArrowDown' });
 		expect(options()[1]?.getAttribute('aria-selected')).toBe('true');
 
-		keydown(input, { key: 'ArrowUp' });
-		keydown(input, { key: 'ArrowDown' });
-		keydown(input, { key: 'Enter' });
+		await keydown(input, { key: 'ArrowUp' });
+		await keydown(input, { key: 'ArrowDown' });
+		await keydown(input, { key: 'Enter' });
 
 		expect(input.value).toBe('/home/me/Desktop/');
 		expect(resolveWorkspacePath).not.toHaveBeenCalled();
@@ -138,10 +138,10 @@ describe('ProjectPicker', () => {
 			'[aria-label="Project directory path"]'
 		)!;
 
-		keydown(input, { key: 'Backspace' });
+		await keydown(input, { key: 'Backspace' });
 		expect(input.value).toBe('/home/');
 
-		keydown(input, { key: 'Escape' });
+		await keydown(input, { key: 'Escape' });
 		expect(props.onClose).toHaveBeenCalledOnce();
 	});
 
@@ -155,8 +155,8 @@ describe('ProjectPicker', () => {
 		fireEvent.change(input, { target: { value: '/tmp/' } });
 		expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
 
-		keydown(input, { key: 'Enter' });
-		keydown(input, { key: 'Enter', ctrlKey: true });
+		await keydown(input, { key: 'Enter' });
+		await keydown(input, { key: 'Enter', ctrlKey: true });
 		expect(input.value).toBe('/tmp/');
 		expect(resolveWorkspacePath).not.toHaveBeenCalled();
 	});
@@ -168,7 +168,7 @@ describe('ProjectPicker', () => {
 			'[aria-label="Project directory path"]'
 		)!;
 
-		keydown(input, { key: 'Enter', ctrlKey: true });
+		await keydown(input, { key: 'Enter', ctrlKey: true });
 
 		await waitUntil(() => {
 			expect(resolveWorkspacePath).toHaveBeenCalledWith({
