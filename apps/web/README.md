@@ -4,6 +4,10 @@ This is Sprocket's React web app. Vite builds static assets into `dist` for Rust
 to serve in a browser or Electron. Both clients use the same build and load
 runtime configuration from `/api/config`.
 
+Vite writes hashed chunks and assets under `_app/immutable` to preserve Rust's
+immutable-cache and missing-asset responses. Browsers revalidate `index.html`
+on every request.
+
 ## Development checks
 
 Run these commands from `apps/web`:

@@ -6,6 +6,10 @@ import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
 export default defineConfig({
 	publicDir: 'static',
+	build: {
+		// Rust gives this directory immutable caching and returns 404 for missing chunks.
+		assetsDir: '_app/immutable'
+	},
 	resolve: {
 		alias: {
 			$lib: path.resolve('./src/lib'),
