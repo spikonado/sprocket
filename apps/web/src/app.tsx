@@ -455,7 +455,10 @@ export default function App({ config }: { config: RuntimeConfig }) {
 		[convexClient]
 	);
 
-	const authenticatedQueryArgs = signedInUserId ? {} : 'skip';
+	// Queries stay skipped until Convex confirms the token; running them on the
+	// account id alone surfaces a spurious auth error during sign-in.
+	const authenticatedQueryArgs =
+		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip'
