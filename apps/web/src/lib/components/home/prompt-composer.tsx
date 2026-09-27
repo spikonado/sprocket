@@ -1,8 +1,8 @@
 import { ArrowUp, CircleAlert, Paperclip, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConvexAuth, useQuery_experimental } from 'convex/react';
+import type { FunctionReturnType } from 'convex/server';
 import { api } from '$convex/_generated/api';
-import type { Id } from '$convex/_generated/dataModel';
 import { canSubmitQuestionAnswer, type AgentQuestionOption } from '$convex/lib/agentQuestions';
 import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { CompletionProvider } from '$convex/lib/validators';
@@ -30,7 +30,7 @@ import ReasoningSelector from '$lib/components/reasoning-selector';
 import type { SkillSummary } from '$lib/types/sprocket';
 
 export type PendingAgentQuestion = {
-	questionId: Id<'agentQuestions'>;
+	questionId: string;
 	question: string;
 	options: AgentQuestionOption[];
 };
@@ -72,6 +72,16 @@ export type PromptComposerProps = {
 	onCancel: () => void;
 };
 
+export type ComposerUsage = Pick<
+	FunctionReturnType<typeof api.usage.getMyUsage>,
+	'tier' | 'exhausted' | 'resetsAt'
+>;
+
+export type PromptComposerViewProps = PromptComposerProps & {
+	usage: ComposerUsage | undefined;
+	usageFailed: boolean;
+};
+
 const COMPOSER_MIN_HEIGHT_PX = 68;
 const COMPOSER_MAX_HEIGHT_PX = 160;
 const SUPPORTS_FIELD_SIZING = Boolean(globalThis.CSS?.supports('field-sizing', 'content'));
@@ -81,7 +91,7 @@ const COMPOSER_SHELL_CLASS =
 const COMPOSER_INNER_CLASS =
 	'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
 
-export default function PromptComposer({
+export function PromptComposerView({
 	prompt = '',
 	onPromptChange,
 	attachments,
@@ -111,16 +121,11 @@ export default function PromptComposer({
 	elapsedLabel,
 	projectSkills = null,
 	onSubmit,
-	onCancel
-}: PromptComposerProps) {
-	const convexAuth = useConvexAuth();
-	const usageQuery = useQuery_experimental({
-		query: api.usage.getMyUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
-	});
-	const usage = usageQuery.status === 'success' ? usageQuery.data : undefined;
+	onCancel,
+	usage,
+	usageFailed
+}: PromptComposerViewProps) {
 	const subscriptionTier = usage?.tier;
-	const subscriptionFailed = usageQuery.status === 'error';
 	const [now, setNow] = useState(() => Date.now());
 
 	useEffect(() => {
@@ -170,7 +175,7 @@ export default function PromptComposer({
 			? selectedCatalogModel.provider === 'openai' &&
 				(selectedCompletionProvider !== 'chatgpt' ||
 					chatGptModelIds?.includes(selectedModel) === true)
-			: subscriptionFailed ||
+			: usageFailed ||
 				(subscriptionTier !== undefined &&
 					modelCatalog !== undefined &&
 					isModelAllowedForTier(modelCatalog, subscriptionTier, selectedModel)));
@@ -878,5 +883,20 @@ export default function PromptComposer({
 				</div>
 			) : null}
 		</>
+	);
+}
+
+export default function PromptComposer(props: PromptComposerProps) {
+	const convexAuth = useConvexAuth();
+	const usageQuery = useQuery_experimental({
+		query: api.usage.getMyUsage,
+		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	});
+	return (
+		<PromptComposerView
+			{...props}
+			usage={usageQuery.status === 'success' ? usageQuery.data : undefined}
+			usageFailed={usageQuery.status === 'error'}
+		/>
 	);
 }

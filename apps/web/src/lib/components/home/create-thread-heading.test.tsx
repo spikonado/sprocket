@@ -35,10 +35,10 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 	return props;
 }
 
-async function click(target: Element | null) {
+async function click(target: HTMLElement | null) {
 	if (!target) throw new Error('Expected element to click was not rendered');
 	await act(async () => {
-		(target as HTMLElement).click();
+		target.click();
 		await Promise.resolve();
 	});
 }

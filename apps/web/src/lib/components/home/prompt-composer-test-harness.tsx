@@ -1,5 +1,5 @@
 import { useState, type ComponentProps } from 'react';
-import PromptComposer from './prompt-composer';
+import { PromptComposerView } from './prompt-composer';
 
 /**
  * Test host for the composer's bindable props. The composer is fully controlled, so tests
@@ -10,7 +10,7 @@ import PromptComposer from './prompt-composer';
 export default function PromptComposerTestHarness({
 	composerProps
 }: {
-	composerProps: ComponentProps<typeof PromptComposer>;
+	composerProps: ComponentProps<typeof PromptComposerView>;
 }) {
 	const [prompt, setPrompt] = useState(composerProps.prompt ?? '');
 	const [selectedModel, setSelectedModel] = useState(composerProps.selectedModel);
@@ -26,7 +26,7 @@ export default function PromptComposerTestHarness({
 	);
 
 	return (
-		<PromptComposer
+		<PromptComposerView
 			{...composerProps}
 			prompt={prompt}
 			onPromptChange={(next) => {

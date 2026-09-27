@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAction, useConvexAuth } from 'convex/react';
+import type { Infer } from 'convex/values';
 import type { Id } from '$convex/_generated/dataModel';
 import { api } from '$convex/_generated/api';
+import type { vMandateFrequency, vMandateScope } from '$convex/lib/validators';
 import type { MandateApproval } from '$lib/chat/mandate';
 import MandateApprovalForm from '$lib/components/home/mandate-approval-form';
 import Button from '$lib/components/ui/button/button';
 import { convexClientErrorMessage } from '$lib/convex-error';
 
-type MandateFrequency = 'one_time' | 'weekly' | 'monthly' | 'yearly';
-type MandateScope = 'listed' | 'any';
+type MandateFrequency = Infer<typeof vMandateFrequency>;
+type MandateScope = Infer<typeof vMandateScope>;
 type LifecycleAction = 'pause' | 'resume' | 'cancel';
 
 type MandateRow = {
@@ -23,8 +25,6 @@ type MandateRow = {
 	validUntil?: string;
 	renewsAt?: string;
 };
-
-const browser = typeof window !== 'undefined';
 
 function friendlyError(error: Error, fallback: string): string {
 	return convexClientErrorMessage(error) || fallback;
@@ -44,6 +44,25 @@ const lifecycleLabels = {
 	resume: { idle: 'Resume', busy: 'Resuming…' },
 	cancel: { idle: 'Cancel', busy: 'Cancelling…' }
 } as const satisfies Record<LifecycleAction, { idle: string; busy: string }>;
+
+const mandateFrequencyOptions = [
+	{ value: 'one_time', label: 'One time' },
+	{ value: 'weekly', label: 'Weekly' },
+	{ value: 'monthly', label: 'Monthly' },
+	{ value: 'yearly', label: 'Yearly' }
+] as const satisfies readonly { value: MandateFrequency; label: string }[];
+
+const mandateScopeOptions = [
+	{ value: 'listed', label: 'Listed merchant' },
+	{ value: 'any', label: 'Any merchant' }
+] as const satisfies readonly { value: MandateScope; label: string }[];
+
+function parseSelectValue<Value extends string>(
+	options: readonly { value: Value }[],
+	raw: string
+): Value | null {
+	return options.find((option) => option.value === raw)?.value ?? null;
+}
 
 export default function SettingsPayments() {
 	const convexAuth = useConvexAuth();
@@ -116,7 +135,7 @@ export default function SettingsPayments() {
 	// After the user finishes Prava approval in another tab, refresh when they
 	// return so Pause/Cancel appear without a full page reload.
 	useEffect(() => {
-		if (!browser || !pendingApproval || !convexAuth.isAuthenticated) {
+		if (!pendingApproval || !convexAuth.isAuthenticated) {
 			return;
 		}
 		const onReturn = () => {
@@ -258,15 +277,20 @@ export default function SettingsPayments() {
 									<select
 										className={fieldClass}
 										value={frequency}
-										onChange={(event) =>
-											setFrequency(event.currentTarget.value as MandateFrequency)
-										}
+										onChange={(event) => {
+											const next = parseSelectValue(
+												mandateFrequencyOptions,
+												event.currentTarget.value
+											);
+											if (next) setFrequency(next);
+										}}
 										disabled={setupSubmitting || scope === 'any'}
 									>
-										<option value="one_time">One time</option>
-										<option value="weekly">Weekly</option>
-										<option value="monthly">Monthly</option>
-										<option value="yearly">Yearly</option>
+										{mandateFrequencyOptions.map((option) => (
+											<option key={option.value} value={option.value}>
+												{option.label}
+											</option>
+										))}
 									</select>
 								</label>
 								<label className="block space-y-1.5 sm:col-span-2">
@@ -274,11 +298,17 @@ export default function SettingsPayments() {
 									<select
 										className={fieldClass}
 										value={scope}
-										onChange={(event) => setScope(event.currentTarget.value as MandateScope)}
+										onChange={(event) => {
+											const next = parseSelectValue(mandateScopeOptions, event.currentTarget.value);
+											if (next) setScope(next);
+										}}
 										disabled={setupSubmitting}
 									>
-										<option value="listed">Listed merchant</option>
-										<option value="any">Any merchant</option>
+										{mandateScopeOptions.map((option) => (
+											<option key={option.value} value={option.value}>
+												{option.label}
+											</option>
+										))}
 									</select>
 								</label>
 								<label className="block space-y-1.5 sm:col-span-2">

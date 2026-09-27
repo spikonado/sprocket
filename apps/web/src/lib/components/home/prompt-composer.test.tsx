@@ -1,27 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import type { Id } from '$convex/_generated/dataModel';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
-import type { PromptComposerProps } from './prompt-composer';
-
-type UsageQueryState =
-	| { status: 'pending' }
-	| { status: 'error'; error: Error }
-	| { status: 'success'; data: { tier: string; exhausted: boolean; resetsAt: number | null } };
-
-const { usageState } = vi.hoisted(() => ({
-	usageState: { value: { status: 'pending' } as UsageQueryState }
-}));
-
-vi.mock('convex/react', () => ({
-	useQuery_experimental: () => usageState.value,
-	useConvexAuth: () => ({
-		isLoading: false,
-		isAuthenticated: true
-	})
-}));
+import type { PromptComposerViewProps } from './prompt-composer';
 
 const modelCatalog: ModelCatalog = {
 	defaultModelId: 'model-one',
@@ -68,7 +50,6 @@ beforeEach(() => {
 	container = document.createElement('div');
 	document.body.append(container);
 	root = createRoot(container);
-	usageState.value = { status: 'pending' };
 });
 
 afterEach(async () => {
@@ -79,14 +60,7 @@ afterEach(async () => {
 	document.body.replaceChildren();
 });
 
-function useProUsage() {
-	usageState.value = {
-		status: 'success',
-		data: { tier: 'pro', exhausted: false, resetsAt: null }
-	};
-}
-
-function composerProps(overrides: Partial<PromptComposerProps> = {}): PromptComposerProps {
+function composerProps(overrides: Partial<PromptComposerViewProps> = {}): PromptComposerViewProps {
 	return {
 		attachments: [],
 		onAttachFiles: vi.fn(),
@@ -96,13 +70,15 @@ function composerProps(overrides: Partial<PromptComposerProps> = {}): PromptComp
 		isStarting: false,
 		isRunning: false,
 		elapsedLabel: null,
+		usage: undefined,
+		usageFailed: false,
 		onSubmit: vi.fn(),
 		onCancel: vi.fn(),
 		...overrides
 	};
 }
 
-function renderComposer(overrides: Partial<PromptComposerProps> = {}) {
+function renderComposer(overrides: Partial<PromptComposerViewProps> = {}) {
 	const props = composerProps(overrides);
 	act(() => {
 		root.render(<PromptComposerTestHarness composerProps={props} />);
@@ -114,16 +90,16 @@ function renderComposer(overrides: Partial<PromptComposerProps> = {}) {
 	return { props, composer, textarea };
 }
 
-function rerenderComposer(props: PromptComposerProps) {
+function rerenderComposer(props: PromptComposerViewProps) {
 	act(() => {
 		root.render(<PromptComposerTestHarness composerProps={props} />);
 	});
 }
 
-async function click(target: Element | null) {
+async function click(target: HTMLElement | null) {
 	if (!target) throw new Error('Expected element to click was not rendered');
 	await act(async () => {
-		(target as HTMLElement).click();
+		target.click();
 		await Promise.resolve();
 	});
 }
@@ -243,11 +219,11 @@ describe('PromptComposer file drag and drop', () => {
 
 describe('PromptComposer submission', () => {
 	it('submits on Enter, ignores Shift+Enter, and ignores Enter while composing', async () => {
-		useProUsage();
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
-			prompt: 'Hello'
+			prompt: 'Hello',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
 		});
 
 		await pressKey(textarea, { key: 'Enter' });
@@ -261,14 +237,11 @@ describe('PromptComposer submission', () => {
 	});
 
 	it('blocks submission and explains the limit when usage is exhausted', async () => {
-		usageState.value = {
-			status: 'success',
-			data: { tier: 'pro', exhausted: true, resetsAt: null }
-		};
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
-			prompt: 'Hello'
+			prompt: 'Hello',
+			usage: { tier: 'pro', exhausted: true, resetsAt: null }
 		});
 
 		const alert = document.querySelector('[role="alert"]');
@@ -325,7 +298,7 @@ describe('PromptComposer attachments', () => {
 				?.getAttribute('title')
 		).toBe('Upload failed');
 
-		await click(document.querySelector('[aria-label="Remove board.kicad_sch"]'));
+		await click(document.querySelector<HTMLButtonElement>('[aria-label="Remove board.kicad_sch"]'));
 		expect(props.onRemoveAttachment).toHaveBeenCalledWith('ready-1');
 	});
 
@@ -421,18 +394,18 @@ describe('PromptComposer skill menu', () => {
 
 describe('PromptComposer model selection', () => {
 	it('reports the selected model and resets reasoning effort', async () => {
-		useProUsage();
 		const onSelectedModelChange = vi.fn();
 		const onSelectedReasoningEffortChange = vi.fn();
 		renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
 			selectedReasoningEffort: 'medium',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
 			onSelectedModelChange,
 			onSelectedReasoningEffortChange
 		});
 
-		await click(document.querySelector('[aria-label="Select model"]'));
+		await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
 		await click(findButton('Model Two'));
 
 		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
@@ -446,7 +419,7 @@ describe('PromptComposer agent questions', () => {
 		const { textarea } = renderComposer({
 			prompt: 'draft answer',
 			pendingQuestion: {
-				questionId: 'question-1' as Id<'agentQuestions'>,
+				questionId: 'question-1',
 				question: 'Which board should I target?',
 				options: [
 					{ id: 'option-a', label: 'Option A' },
