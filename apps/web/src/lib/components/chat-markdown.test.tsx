@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mount, unmount } from 'svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import ChatMarkdown from './chat-markdown.svelte';
+import ChatMarkdown from './chat-markdown';
 
 const artifact: ArtifactEntry = {
 	key: 'ks73zzsnfj2najtd871p43f45s8ec23d',
@@ -11,7 +12,21 @@ const artifact: ArtifactEntry = {
 	scope: 'thread'
 };
 
-let cleanup: (() => Promise<void>) | undefined;
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+	container = document.createElement('div');
+	document.body.append(container);
+	root = createRoot(container);
+});
+
+afterEach(async () => {
+	await act(async () => {
+		root.unmount();
+	});
+	container.remove();
+});
 
 function renderChatMarkdown(props: {
 	content: string;
@@ -19,14 +34,10 @@ function renderChatMarkdown(props: {
 	onOpenArtifact?: (artifactId: string) => void;
 	openLinksInNewTab?: boolean;
 }) {
-	const component = mount(ChatMarkdown, { target: document.body, props });
-	cleanup = () => unmount(component);
+	act(() => {
+		root.render(<ChatMarkdown {...props} />);
+	});
 }
-
-afterEach(async () => {
-	await cleanup?.();
-	cleanup = undefined;
-});
 
 describe('links', () => {
 	it('opens links in a new tab when requested', () => {
@@ -55,7 +66,9 @@ describe('artifact references', () => {
 		expect(reference?.textContent).toContain('Artifact · Thread');
 
 		const view = reference?.querySelector<HTMLButtonElement>('button');
-		view?.click();
+		act(() => {
+			view?.click();
+		});
 		expect(onOpenArtifact).toHaveBeenCalledOnce();
 		expect(onOpenArtifact).toHaveBeenCalledWith(artifact.key);
 	});

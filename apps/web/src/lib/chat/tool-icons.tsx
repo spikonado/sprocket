@@ -19,7 +19,7 @@ import {
 	Wallet,
 	Wrench,
 	type LucideIcon
-} from '@lucide/svelte';
+} from 'lucide-react';
 
 /** Small lucide icon for a tool kind / tool-group key. */
 export function toolKindIcon(kind: string): LucideIcon {

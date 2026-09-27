@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
-import ReasoningSelector from './reasoning-selector.svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import ReasoningSelector from './reasoning-selector';
 
 const model = {
 	id: 'model-small',
@@ -20,28 +21,42 @@ const providerManagedModel = {
 	defaultReasoningEffort: 'none'
 } as const;
 
-let cleanup: (() => Promise<void>) | undefined;
+type SelectorProps = React.ComponentProps<typeof ReasoningSelector>;
 
-afterEach(async () => {
-	await cleanup?.();
-	cleanup = undefined;
-	document.body.replaceChildren();
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+	container = document.createElement('div');
+	document.body.append(container);
+	root = createRoot(container);
 });
 
-function renderSelector(overrides: Partial<ComponentProps<typeof ReasoningSelector>> = {}) {
-	const component = mount(ReasoningSelector, {
-		target: document.body,
-		props: { model, reasoningEffort: 'medium', ...overrides }
+afterEach(async () => {
+	await act(async () => {
+		root.unmount();
 	});
-	cleanup = () => unmount(component);
-	flushSync();
+	container.remove();
+});
+
+function renderSelector(overrides: Partial<SelectorProps> = {}) {
+	act(() => {
+		root.render(<ReasoningSelector model={model} reasoningEffort="medium" {...overrides} />);
+	});
+}
+
+function rerenderSelector(overrides: Partial<SelectorProps> = {}) {
+	act(() => {
+		root.render(<ReasoningSelector model={model} reasoningEffort="medium" {...overrides} />);
+	});
 }
 
 function openSelector() {
 	const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]');
 	if (!trigger) throw new Error('Reasoning selector trigger was not rendered');
-	trigger.click();
-	flushSync();
+	act(() => {
+		trigger.click();
+	});
 }
 
 describe('ReasoningSelector provider-managed reasoning', () => {
@@ -83,12 +98,16 @@ describe('ReasoningSelector Fast mode', () => {
 	});
 
 	it('renders an enabled toggle when Fast mode is available', () => {
-		renderSelector({ fastModeAccess: 'available' });
+		const onFastModeChange = vi.fn();
+		renderSelector({ fastModeAccess: 'available', onFastModeChange });
 		openSelector();
 		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
 		expect(toggle?.getAttribute('aria-checked')).toBe('false');
-		toggle?.click();
-		flushSync();
+		act(() => {
+			toggle?.click();
+		});
+		expect(onFastModeChange).toHaveBeenCalledWith(true);
+		rerenderSelector({ fastModeAccess: 'available', fastMode: true, onFastModeChange });
 		expect(toggle?.getAttribute('aria-checked')).toBe('true');
 	});
 
