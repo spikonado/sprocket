@@ -62,10 +62,7 @@ export default function ReasoningSelector({
 		if (!model.reasoningEfforts.includes(reasoningEffort)) {
 			onReasoningEffortChange?.(model.defaultReasoningEffort);
 		}
-		if (
-			(fastModeAccess === 'unsupported' || fastModeAccess === 'locked') &&
-			fastMode
-		) {
+		if ((fastModeAccess === 'unsupported' || fastModeAccess === 'locked') && fastMode) {
 			onFastModeChange?.(false);
 		}
 	}, [model, reasoningEffort, fastMode, fastModeAccess, onReasoningEffortChange, onFastModeChange]);
@@ -76,8 +73,7 @@ export default function ReasoningSelector({
 
 	function toggleFastMode(event: React.MouseEvent) {
 		if (fastModeAccess === 'locked') {
-			if (fastModeLockTooltip)
-				lockTooltipState.showLockTooltip(event, fastModeLockTooltip, true);
+			if (fastModeLockTooltip) lockTooltipState.showLockTooltip(event, fastModeLockTooltip, true);
 			return;
 		}
 		if (fastModeAccess === 'available') onFastModeChange?.(!fastMode);

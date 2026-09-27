@@ -42,7 +42,5 @@ export default function BrandMark({
 		);
 	}
 
-	return (
-		<div className={cn('flex min-w-0 items-center gap-2', className)}>{content}</div>
-	);
+	return <div className={cn('flex min-w-0 items-center gap-2', className)}>{content}</div>;
 }

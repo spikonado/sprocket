@@ -419,7 +419,9 @@ export default function SettingsProviders({
 							</div>
 						) : chatGptLogin ? (
 							<div className="border-border bg-hover-fill mt-5 rounded-lg border p-4">
-								<p className="text-foreground text-sm">Open ChatGPT and enter this one-time code:</p>
+								<p className="text-foreground text-sm">
+									Open ChatGPT and enter this one-time code:
+								</p>
 								<p className="text-foreground my-3 font-mono text-xl font-semibold tracking-[0.18em]">
 									{chatGptLogin.userCode}
 								</p>

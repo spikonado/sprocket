@@ -146,7 +146,10 @@ export default function ImageViewer({
 			const first = focusable[0];
 			const last = focusable[focusable.length - 1];
 			const active = document.activeElement;
-			if (event.shiftKey && (active === dialogEl || active === first || !dialogEl.contains(active))) {
+			if (
+				event.shiftKey &&
+				(active === dialogEl || active === first || !dialogEl.contains(active))
+			) {
 				event.preventDefault();
 				last.focus();
 			} else if (

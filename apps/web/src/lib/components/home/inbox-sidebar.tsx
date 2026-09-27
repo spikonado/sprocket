@@ -112,8 +112,8 @@ export default function InboxSidebar({
 		selectedProjects.length === 0
 			? 'All projects'
 			: selectedProjects.length === 1
-				? (projects.find((project) => project.repositoryKey === selectedProjects[0])
-						?.displayName ?? 'All projects')
+				? (projects.find((project) => project.repositoryKey === selectedProjects[0])?.displayName ??
+					'All projects')
 				: `${selectedProjects.length} projects`;
 	const menuThread = menu?.thread ?? null;
 
@@ -144,9 +144,7 @@ export default function InboxSidebar({
 
 	useEffect(() => {
 		if (!menu) return;
-		document
-			.querySelector<HTMLButtonElement>('.inbox-context-menu button:not(:disabled)')
-			?.focus();
+		document.querySelector<HTMLButtonElement>('.inbox-context-menu button:not(:disabled)')?.focus();
 	}, [menu]);
 
 	function projectName(thread: Thread) {
@@ -344,7 +342,8 @@ export default function InboxSidebar({
 
 			<div className="px-3 pb-3">
 				<button className="inbox-menu-item inbox-primary-navigation" type="button" onClick={onNew}>
-					<SquarePen size={15} />New thread
+					<SquarePen size={15} />
+					New thread
 				</button>
 				<div className="inbox-project-controls">
 					<details ref={projectMenuRef}>
@@ -364,7 +363,7 @@ export default function InboxSidebar({
 							</label>
 							<div className="inbox-project-list">
 								<button
-									className={`inbox-project-option${selectedProjects.length === 0 ? ' inbox-project-selected' : ''}`}
+									className={`inbox-project-option${selectedProjects.length === 0 ? 'inbox-project-selected' : ''}`}
 									type="button"
 									aria-pressed={selectedProjects.length === 0}
 									onClick={() => filterProjects([])}
@@ -373,12 +372,11 @@ export default function InboxSidebar({
 								</button>
 								{filteredProjects.map((project) => {
 									const selected =
-										selectedProjects.length === 1 &&
-										selectedProjects[0] === project.repositoryKey;
+										selectedProjects.length === 1 && selectedProjects[0] === project.repositoryKey;
 									return (
 										<button
 											key={project.repositoryKey}
-											className={`inbox-project-option${selected ? ' inbox-project-selected' : ''}`}
+											className={`inbox-project-option${selected ? 'inbox-project-selected' : ''}`}
 											type="button"
 											aria-pressed={selected}
 											onClick={() => filterProjects([project.repositoryKey])}
@@ -437,7 +435,7 @@ export default function InboxSidebar({
 										return (
 											<div
 												key={thread._id}
-												className={`inbox-row${thread._id === currentThreadId ? ' inbox-row-selected' : ''}`}
+												className={`inbox-row${thread._id === currentThreadId ? 'inbox-row-selected' : ''}`}
 												draggable={mutationsEnabled && !busy && !isRenaming}
 												onDragStart={(event) => {
 													setDragging(thread);
@@ -527,9 +525,9 @@ export default function InboxSidebar({
 																<span
 																	className={`inbox-status${
 																		thread.status === 'queued' || thread.status === 'running'
-																			? ' inbox-working'
+																			? 'inbox-working'
 																			: ''
-																	}${thread.status === 'failed' ? ' inbox-attention' : ''}`}
+																	}${thread.status === 'failed' ? 'inbox-attention' : ''}`}
 																>
 																	{stateLabel}
 																</span>
@@ -543,7 +541,9 @@ export default function InboxSidebar({
 															<button
 																className="inbox-icon inbox-row-state-action"
 																type="button"
-																disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
+																disabled={
+																	!mutationsEnabled || busy || !canChange(thread, 'settled')
+																}
 																aria-label={`Settle ${thread.title ?? 'thread'}`}
 																data-tooltip="Settle"
 																onClick={() => void change(thread, 'settled')}
@@ -578,19 +578,20 @@ export default function InboxSidebar({
 			{notice && (
 				<div className="inbox-notice" role="status">
 					<span>{notice}</span>
-					<button
-						type="button"
-						aria-label="Dismiss notification"
-						onClick={() => setNotice(null)}
-					>
+					<button type="button" aria-label="Dismiss notification" onClick={() => setNotice(null)}>
 						<X size={13} />
 					</button>
 				</div>
 			)}
 
 			<footer className="inbox-footer">
-				<button className="inbox-menu-item inbox-primary-navigation" type="button" onClick={onSettings}>
-					<Settings size={15} />Settings
+				<button
+					className="inbox-menu-item inbox-primary-navigation"
+					type="button"
+					onClick={onSettings}
+				>
+					<Settings size={15} />
+					Settings
 				</button>
 				<AppUpdate />
 			</footer>

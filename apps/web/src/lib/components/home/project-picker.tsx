@@ -160,7 +160,8 @@ export default function ProjectPicker({
 		!errorMessage &&
 		resolvedWorkspacePath.length > 0 &&
 		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0);
-	const submitLabel = mode === 'reconnect' ? 'Reconnect' : willCreateDirectory ? 'Create & add' : 'Add';
+	const submitLabel =
+		mode === 'reconnect' ? 'Reconnect' : willCreateDirectory ? 'Create & add' : 'Add';
 	const parentEntry = currentBrowseEntries.find((entry) => entry.name === '..');
 	const displayedEntries = useMemo(() => {
 		if (filteredEntries.length > 0) {

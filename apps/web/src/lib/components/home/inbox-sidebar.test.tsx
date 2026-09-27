@@ -6,7 +6,10 @@ import type { Doc, Id } from '$convex/_generated/dataModel';
 import { INBOX_STATES } from '$convex/lib/inboxState';
 import InboxSidebar from './inbox-sidebar';
 
-type SidebarProps = Omit<ComponentProps<typeof InboxSidebar>, 'settledOpen' | 'onSettledOpenChange'>;
+type SidebarProps = Omit<
+	ComponentProps<typeof InboxSidebar>,
+	'settledOpen' | 'onSettledOpenChange'
+>;
 type Thread = Doc<'threadRecords'>;
 
 let container: HTMLDivElement;
@@ -82,9 +85,7 @@ function props(records: Thread[]) {
 
 function Harness(input: SidebarProps) {
 	const [settledOpen, setSettledOpen] = useState(false);
-	return (
-		<InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />
-	);
+	return <InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />;
 }
 
 async function render(records: Thread[]) {

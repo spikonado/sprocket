@@ -14,7 +14,7 @@ export default function ProviderLogo({
 	}
 
 	if (provider === 'openai' || provider === 'chatgpt') {
-		return <OpenAiBlossom className={cn('size-4 text-foreground', className)} />;
+		return <OpenAiBlossom className={cn('text-foreground size-4', className)} />;
 	}
 
 	if (provider === 'anthropic') {

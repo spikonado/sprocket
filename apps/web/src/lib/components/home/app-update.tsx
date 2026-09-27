@@ -128,7 +128,11 @@ export default function AppUpdate() {
 						<code>sprocket update</code> instead.
 					</p>
 					<div className="mt-2 flex gap-3">
-						<button type="button" className="text-foreground underline" onClick={() => void update()}>
+						<button
+							type="button"
+							className="text-foreground underline"
+							onClick={() => void update()}
+						>
 							Install update
 						</button>
 						<button type="button" className="underline" onClick={() => setConfirmInstall(false)}>

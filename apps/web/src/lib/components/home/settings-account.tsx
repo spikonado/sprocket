@@ -20,8 +20,7 @@ export default function SettingsAccount({
 	});
 	const subscription = subscriptionQuery.status === 'success' ? subscriptionQuery.data : null;
 	const subscriptionError = subscriptionQuery.status === 'error';
-	const displayName =
-		[user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || null;
+	const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || null;
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -68,7 +67,10 @@ export default function SettingsAccount({
 								Couldn’t load your subscription right now.
 							</p>
 						) : (
-							<div className="bg-hover-fill mt-3.5 h-4 w-16 animate-pulse rounded" aria-hidden="true" />
+							<div
+								className="bg-hover-fill mt-3.5 h-4 w-16 animate-pulse rounded"
+								aria-hidden="true"
+							/>
 						)}
 					</div>
 
