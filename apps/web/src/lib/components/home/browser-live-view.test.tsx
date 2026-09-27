@@ -1,11 +1,18 @@
 import { afterEach, expect, it } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { BrowserLiveViewState } from '$lib/chat/side-panel';
-import BrowserLiveView from './browser-live-view.svelte';
+import BrowserLiveView from './browser-live-view';
 
-let cleanup: () => Promise<void>;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let container: HTMLDivElement;
+let root: Root;
 afterEach(async () => {
-	await cleanup();
+	await act(async () => {
+		root?.unmount();
+	});
+	container?.remove();
 	document.body.replaceChildren();
 });
 
@@ -25,49 +32,40 @@ function session(expiresAt: number, ended = false): BrowserLiveViewState {
 	};
 }
 
-it('renders the iframe for an active session', () => {
-	const component = mount(BrowserLiveView, {
-		target: document.body,
-		props: { active: true, liveView: session(Date.now() + 60_000) }
+function renderLiveView(props: {
+	liveView: BrowserLiveViewState | null | undefined;
+	active: boolean;
+}) {
+	container = document.createElement('div');
+	document.body.append(container);
+	root = createRoot(container);
+	act(() => {
+		root.render(<BrowserLiveView {...props} />);
 	});
-	cleanup = () => unmount(component);
-	flushSync();
+}
+
+it('renders the iframe for an active session', () => {
+	renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
 	expect(document.querySelector('iframe')).not.toBeNull();
 });
 
 it('reports that browser actions are unavailable until a backend exists', async () => {
-	const component = mount(BrowserLiveView, {
-		target: document.body,
-		props: { active: true, liveView: session(Date.now() + 60_000) }
+	renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
+	await act(async () => {
+		document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
 	});
-	cleanup = () => unmount(component);
-	flushSync();
-	document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
-	flushSync();
-	await Promise.resolve();
-	flushSync();
 	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
 		'Browser sessions are not available yet.'
 	);
 });
 
 it('shows the ended state and hides controls for an ended session', () => {
-	const component = mount(BrowserLiveView, {
-		target: document.body,
-		props: { active: false, liveView: session(Date.now() + 60_000, true) }
-	});
-	cleanup = () => unmount(component);
-	flushSync();
+	renderLiveView({ active: false, liveView: session(Date.now() + 60_000, true) });
 	expect(document.querySelector('iframe, button, a')).toBeNull();
 	expect(document.body.textContent).toContain('Browser session ended.');
 });
 
 it('shows the empty state when there is no session', () => {
-	const component = mount(BrowserLiveView, {
-		target: document.body,
-		props: { active: false, liveView: null }
-	});
-	cleanup = () => unmount(component);
-	flushSync();
+	renderLiveView({ active: false, liveView: null });
 	expect(document.body.textContent).toContain('No active browser session.');
 });

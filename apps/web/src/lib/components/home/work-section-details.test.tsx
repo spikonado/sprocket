@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushSync, mount, tick, unmount, type ComponentProps } from 'svelte';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { Id } from '$convex/_generated/dataModel';
 import type { TranscriptDisplayDetails } from '$lib/types/sprocket';
-import WorkSectionDetails from './work-section-details.svelte';
+import WorkSectionDetails from './work-section-details';
+
+type Props = React.ComponentProps<typeof WorkSectionDetails>;
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let cleanup: (() => Promise<void>) | undefined;
 let intersection: () => void;
@@ -39,16 +44,12 @@ function tools(ids: number[], previousBefore?: number): TranscriptDisplayDetails
 }
 
 async function settle() {
-	flushSync();
-	await tick();
-	await vi.advanceTimersByTimeAsync(16);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(16);
+	});
 }
 
-async function render(
-	load: ComponentProps<typeof WorkSectionDetails>['load'],
-	inProgress = false,
-	visible = false
-) {
+async function render(load: Props['load'], inProgress = false, visible = false) {
 	const viewport = document.createElement('div');
 	document.body.append(viewport);
 	Object.defineProperty(viewport, 'clientHeight', { value: 600 });
@@ -61,7 +62,7 @@ async function render(
 		return new DOMRect(0, edge === 'older' ? edges.older : edges.newer, 800, 1);
 	});
 	const restore = vi.fn();
-	const props = $state<ComponentProps<typeof WorkSectionDetails>>({
+	const props: Props = {
 		row: {
 			id: 'work',
 			// SAFETY: Fixture IDs never leave the mounted component.
@@ -80,14 +81,32 @@ async function render(
 		inProgress,
 		viewport,
 		beforeChange: vi.fn(() => restore)
-	});
-	const component = mount(WorkSectionDetails, { target: viewport, props });
+	};
+	const container = document.createElement('div');
+	viewport.append(container);
+	const root: Root = createRoot(container);
+	const renderTree = (next: Props) =>
+		act(() => {
+			root.render(<WorkSectionDetails {...next} />);
+		});
+	renderTree(props);
 	cleanup = async () => {
-		await unmount(component);
+		await act(async () => {
+			root.unmount();
+		});
 		viewport.remove();
 	};
 	await settle();
-	return { viewport, props, edges, restore };
+	return {
+		viewport,
+		props,
+		edges,
+		restore,
+		setProps(patch: Partial<Props>) {
+			Object.assign(props, patch);
+			renderTree({ ...props });
+		}
+	};
 }
 
 beforeEach(() => {
@@ -122,10 +141,12 @@ describe('scrolling work details', () => {
 		const { viewport, edges, props, restore } = await render(load);
 		expect(load.mock.calls[0][1]).toEqual({});
 		const reasoning = viewport.querySelector<HTMLButtonElement>('button');
-		reasoning?.click();
+		act(() => {
+			reasoning?.click();
+		});
 		await settle();
 		edges.newer = 1_500;
-		intersection();
+		act(() => intersection());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 1 });
 		expect(viewport.querySelector('button')).toBe(reasoning);
@@ -144,7 +165,7 @@ describe('scrolling work details', () => {
 			.mockResolvedValueOnce({ ...tools([2, 3]), nextAfter: 3 })
 			.mockResolvedValueOnce({ ...tools([4, 5], 4), nextAfter: 5 })
 			.mockResolvedValueOnce(tools([6, 7], 6));
-		const { viewport, edges, props } = await render(load, true);
+		const { viewport, edges, props, setProps } = await render(load, true);
 		expect(load.mock.calls[0][1]).toEqual({});
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 		const group = viewport.querySelector<HTMLButtonElement>('button');
@@ -152,7 +173,7 @@ describe('scrolling work details', () => {
 		expect(originalTool).not.toBeNull();
 		expect(group?.getAttribute('aria-expanded')).toBe('true');
 		edges.newer = 1_500;
-		intersection();
+		act(() => intersection());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 3 });
 		expect(viewport.querySelector('button')).toBe(group);
@@ -163,10 +184,12 @@ describe('scrolling work details', () => {
 			[...viewport.querySelectorAll<HTMLElement>('[title^="echo "]')].map((item) => item.title)
 		).toEqual(['echo 2', 'echo 3', 'echo 4', 'echo 5', 'echo 6', 'echo 7']);
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
-		group?.click();
+		act(() => {
+			group?.click();
+		});
 		await settle();
-		props.row = { ...props.row, revision: 2 };
 		load.mockResolvedValue(tools([2, 3, 4, 5, 6, 7]));
+		setProps({ row: { ...props.row, revision: 2 } });
 		await settle();
 		expect(viewport.querySelector('button')).toBe(group);
 		expect(group?.getAttribute('aria-expanded')).toBe('false');
@@ -179,7 +202,7 @@ describe('scrolling work details', () => {
 			.mockResolvedValueOnce(page([2], 2));
 		const { viewport, edges } = await render(load);
 		edges.newer = 2_000;
-		intersection();
+		act(() => intersection());
 		await settle();
 		expect(load).toHaveBeenCalledTimes(2);
 		expect(viewport.textContent).not.toMatch(/Scroll (up|down)/);
@@ -193,25 +216,29 @@ describe('scrolling work details', () => {
 		});
 		const { viewport } = await render(load, false, true);
 		expect(load).toHaveBeenCalledTimes(3);
-		intersection();
+		act(() => intersection());
 		await settle();
 		expect(load).toHaveBeenCalledTimes(3);
 		viewport.scrollTop = 100;
-		viewport.dispatchEvent(new Event('scroll'));
+		act(() => {
+			viewport.dispatchEvent(new Event('scroll'));
+		});
 		await settle();
 		expect(load).toHaveBeenCalledTimes(5);
 		await cleanup?.();
 		cleanup = undefined;
 		expect(disconnect).toHaveBeenCalledTimes(1);
 		expect(load.mock.calls[4][2].aborted).toBe(true);
-		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 10 }));
+		act(() => {
+			viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 10, bubbles: true }));
+		});
 		await settle();
 		expect(load).toHaveBeenCalledTimes(5);
 	});
 
 	it('continues loading live additions at the visible end without disabling bottom-following', async () => {
 		const load = vi.fn().mockResolvedValueOnce(page([1]));
-		const { props, viewport } = await render(load, true, true);
+		const { props, viewport, setProps } = await render(load, true, true);
 		for (let revision = 2; revision <= 5; revision += 1) {
 			load
 				.mockResolvedValueOnce(
@@ -222,7 +249,7 @@ describe('scrolling work details', () => {
 					)
 				)
 				.mockResolvedValueOnce(page([revision], revision));
-			props.row = { ...props.row, revision };
+			setProps({ row: { ...props.row, revision } });
 			await settle();
 			expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(revision);
 			expect(props.beforeChange).toHaveBeenLastCalledWith(true);
@@ -237,13 +264,15 @@ describe('scrolling work details', () => {
 			.mockResolvedValueOnce(page([2], 2));
 		const { viewport, edges } = await render(load);
 		edges.newer = 1_500;
-		intersection();
+		act(() => intersection());
 		await settle();
 		expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(1);
 		expect(viewport.textContent).toContain('Could not load these details.');
-		[...viewport.querySelectorAll('button')]
-			.find((button) => button.textContent === 'Retry')
-			?.click();
+		act(() => {
+			[...viewport.querySelectorAll('button')]
+				.find((button) => button.textContent === 'Retry')
+				?.click();
+		});
 		await settle();
 		expect(load.mock.calls[2][1]).toEqual({ after: 1 });
 		expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(2);

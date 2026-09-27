@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushSync, mount, tick, unmount, type ComponentProps } from 'svelte';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { Id } from '$convex/_generated/dataModel';
 import type {
 	TranscriptMessage,
@@ -7,7 +8,11 @@ import type {
 	TranscriptDisplayRow,
 	LiveTranscriptMessage
 } from '$lib/types/sprocket';
-import ThreadTranscript from './thread-transcript.svelte';
+import ThreadTranscript from './thread-transcript';
+
+type Props = React.ComponentProps<typeof ThreadTranscript>;
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let cleanup: (() => Promise<void>) | undefined;
 let resize: () => void;
@@ -43,14 +48,20 @@ function liveMessage(): LiveTranscriptMessage {
 	};
 }
 
-async function settle() {
-	flushSync();
-	await tick();
-	await vi.advanceTimersByTimeAsync(16);
+function click(element: Element | null | undefined) {
+	act(() => {
+		element?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+	});
+}
+
+async function settle(milliseconds = 16) {
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(milliseconds);
+	});
 }
 
 async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 600) {
-	const props = $state<ComponentProps<typeof ThreadTranscript>>({
+	const props: Props = {
 		currentError: null,
 		runError: null,
 		messages,
@@ -59,10 +70,16 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 		project: null,
 		nextBefore: undefined,
 		onLoadOlder: vi.fn()
-	});
-	const component = mount(ThreadTranscript, { target: document.body, props });
-	cleanup = () => unmount(component);
-	const viewport = document.querySelector<HTMLDivElement>('[aria-label="Conversation history"]');
+	};
+	const container = document.createElement('div');
+	document.body.append(container);
+	const root: Root = createRoot(container);
+	const renderTree = (next: Props) =>
+		act(() => {
+			root.render(<ThreadTranscript {...next} />);
+		});
+	renderTree(props);
+	const viewport = container.querySelector<HTMLDivElement>('[aria-label="Conversation history"]');
 	if (!viewport) throw new Error('Missing transcript viewport');
 	const messageElements = () => [
 		...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]')
@@ -97,13 +114,28 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 			index < 0 ? viewportHeight : 300
 		);
 	});
+	// Layout is only observable after the mocks above, so deliver a fresh actions
+	// array to make the first commit re-measure the mocked viewport.
+	renderTree({ ...props, actions: [...props.actions] });
 	await settle();
+	cleanup = async () => {
+		await act(async () => {
+			root.unmount();
+		});
+		container.remove();
+	};
 	return {
 		props,
 		viewport,
+		setProps(patch: Partial<Props>) {
+			Object.assign(props, patch);
+			renderTree({ ...props });
+		},
 		scrollTo(top: number) {
-			viewport.scrollTop = top;
-			viewport.dispatchEvent(new Event('scroll'));
+			act(() => {
+				viewport.scrollTop = top;
+				viewport.dispatchEvent(new Event('scroll'));
+			});
 		}
 	};
 }
@@ -121,6 +153,7 @@ beforeEach(() => {
 		}
 	);
 });
+
 afterEach(async () => {
 	await cleanup?.();
 	cleanup = undefined;
@@ -195,12 +228,14 @@ describe('transcript viewport paging', () => {
 							id: 'work-3',
 							itemCount: 3
 						};
-			const { props, viewport } = await renderTranscript([response]);
-			props.loadSectionDetails = vi
-				.fn()
-				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false });
+			const { props, viewport, setProps } = await renderTranscript([response]);
+			setProps({
+				loadSectionDetails: vi
+					.fn()
+					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+			});
 			await settle();
-			viewport.querySelector<HTMLButtonElement>('button[aria-expanded]')?.click();
+			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 			const patch = [...viewport.querySelectorAll('button')].find((button) =>
 				button.textContent?.includes('Changed Files')
@@ -215,6 +250,7 @@ describe('transcript viewport paging', () => {
 			expect(viewport.querySelector('details [role="status"]')?.textContent).toBe(
 				'stopped by user'
 			);
+			expect(props.loadSectionDetails).toBeDefined();
 		}
 	);
 
@@ -241,18 +277,20 @@ describe('transcript viewport paging', () => {
 							closed: false,
 							pendingTools: 1
 						};
-			const { props, viewport } = await renderTranscript([response]);
-			props.activeRunId = response.runId;
-			props.loadSectionDetails = vi
-				.fn()
-				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false });
+			const { viewport, setProps } = await renderTranscript([response]);
+			setProps({
+				activeRunId: response.runId,
+				loadSectionDetails: vi
+					.fn()
+					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+			});
 			await settle();
 			const work = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
 				button.textContent?.trim().startsWith('Working')
 			);
 			expect(work?.getAttribute('aria-expanded')).toBe('false');
 			if (kind === 'persisted') {
-				work?.click();
+				click(work);
 				await settle();
 			}
 			const running = [...viewport.querySelectorAll('button')].find((button) =>
@@ -286,21 +324,23 @@ describe('transcript viewport paging', () => {
 				}
 			]
 		};
-		const { props, viewport } = await renderTranscript([work, live]);
-		props.activeRunId = live.runId;
-		props.loadSectionDetails = vi.fn().mockResolvedValue({
-			parts: [
-				{
-					type: 'reasoning',
-					id: 'saved-reasoning',
-					text: 'Saved reasoning',
-					startedAt: 1_000,
-					completedAt: 1_500
-				}
-			],
-			revision: 1,
-			stale: false,
-			indexing: false
+		const { props, viewport, setProps } = await renderTranscript([work, live]);
+		setProps({
+			activeRunId: live.runId,
+			loadSectionDetails: vi.fn().mockResolvedValue({
+				parts: [
+					{
+						type: 'reasoning',
+						id: 'saved-reasoning',
+						text: 'Saved reasoning',
+						startedAt: 1_000,
+						completedAt: 1_500
+					}
+				],
+				revision: 1,
+				stale: false,
+				indexing: false
+			})
 		});
 		await settle();
 
@@ -311,7 +351,7 @@ describe('transcript viewport paging', () => {
 		expect(workButtons[0].getAttribute('aria-expanded')).toBe('false');
 		expect(props.loadSectionDetails).not.toHaveBeenCalled();
 		expect(viewport.textContent).not.toContain('Current reasoning');
-		workButtons[0].click();
+		click(workButtons[0]);
 		await settle();
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
@@ -350,8 +390,8 @@ describe('transcript viewport paging', () => {
 				}
 			]
 		};
-		const { props, viewport } = await renderTranscript([work, live]);
-		props.activeRunId = live.runId;
+		const { viewport, setProps } = await renderTranscript([work, live]);
+		setProps({ activeRunId: live.runId });
 		await settle();
 
 		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
@@ -381,7 +421,7 @@ describe('transcript viewport paging', () => {
 			completedAt: 3_001_000
 		});
 		const first = summary(1);
-		const { props, viewport } = await renderTranscript([message(0), first, summary(2)]);
+		const { viewport, setProps } = await renderTranscript([message(0), first, summary(2)]);
 		let edgeVisible = false;
 		const geometry = vi.mocked(HTMLElement.prototype.getBoundingClientRect).getMockImplementation();
 		if (!geometry) throw new Error('Missing viewport geometry');
@@ -402,7 +442,7 @@ describe('transcript viewport paging', () => {
 				indexing: false
 			})
 			.mockImplementation(() => new Promise(() => {}));
-		props.loadSectionDetails = load;
+		setProps({ loadSectionDetails: load });
 		await settle();
 		expect(load).not.toHaveBeenCalled();
 		expect(viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(3);
@@ -413,18 +453,18 @@ describe('transcript viewport paging', () => {
 			'Worked for 50m 0s',
 			'Worked for 50m 0s'
 		]);
-		buttons[0].click();
+		click(buttons[0]);
 		await settle();
 		expect(load).toHaveBeenCalledTimes(1);
 		expect(load.mock.calls[0][0].id).toBe(first.id);
 		expect(load.mock.calls[0][1]).toEqual({});
 		expect(viewport.textContent).not.toMatch(/Next details|Previous details/);
 		edgeVisible = true;
-		resize();
+		act(() => resize());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 5 });
 		const signal: AbortSignal = load.mock.calls[1][2];
-		buttons[0].click();
+		click(buttons[0]);
 		await settle();
 		expect(signal.aborted).toBe(true);
 		expect(viewport.textContent).not.toContain('Next details');
@@ -440,13 +480,13 @@ describe('transcript viewport paging', () => {
 				itemCount: 10,
 				closed: false
 			};
-			const { props, viewport, scrollTo } = await renderTranscript([
+			const { viewport, scrollTo, setProps } = await renderTranscript([
 				message(0),
 				message(1),
 				work,
 				message(3)
 			]);
-			props.nextBefore = undefined;
+			setProps({ nextBefore: undefined });
 			const rows = () =>
 				[...viewport.querySelectorAll<HTMLElement>('[data-work-detail]')].filter(
 					(element) => !element.querySelector('[data-work-detail]')
@@ -503,14 +543,13 @@ describe('transcript viewport paging', () => {
 							resolve = done;
 						})
 				);
-			props.loadSectionDetails = load;
-			props.activeRunId = work.runId;
+			setProps({ loadSectionDetails: load, activeRunId: work.runId });
 			await settle();
 			const disclosure = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
 				(button) => button.textContent?.trim().startsWith('Working')
 			);
 			expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
-			disclosure?.click();
+			click(disclosure);
 			await settle();
 			expect(load).toHaveBeenCalledTimes(1);
 			scrollTo(700);
@@ -521,19 +560,21 @@ describe('transcript viewport paging', () => {
 			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
 			if (moveWhileLoading) scrollTo(660);
 			const offset = anchor.getBoundingClientRect().top;
-			resolve(page([4, 5]));
+			await act(async () => {
+				resolve(page([4, 5]));
+			});
 			await settle();
 			expect(anchor.isConnected).toBe(true);
 			expect(anchor.getBoundingClientRect().top).toBe(offset);
 			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
-			resize();
+			act(() => resize());
 			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
 		}
 	);
 
 	it('does not claim an empty thread has a local copy when reconnecting', async () => {
-		const { props, viewport } = await renderTranscript([]);
-		props.stale = true;
+		const { viewport, setProps } = await renderTranscript([]);
+		setProps({ stale: true });
 		await settle();
 		expect(viewport.querySelector('[role="status"]')?.textContent).toContain(
 			'Reconnecting to conversation history.'
@@ -542,56 +583,58 @@ describe('transcript viewport paging', () => {
 	});
 
 	it('keeps prefetching nearby history without rendering pagination controls', async () => {
-		const { props, viewport } = await renderTranscript([message(3)]);
-		props.nextBefore = 3;
+		const { props, viewport, setProps } = await renderTranscript([message(3)]);
+		setProps({ nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.nextBefore = 2;
+		setProps({ nextBefore: 2 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
-		props.nextBefore = 1;
+		setProps({ nextBefore: 1 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
 		expect(viewport.textContent).not.toMatch(/Load(?:ing)? older messages/);
 	});
 
 	it('fills ahead after the first page arrives until history is outside the lookahead range', async () => {
-		const { props, viewport } = await renderTranscript([]);
+		const { props, viewport, setProps } = await renderTranscript([]);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		props.messages = [message(3)];
-		props.nextBefore = 3;
+		setProps({ messages: [message(3)], nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.messages = [1, 2, 3].map(message);
-		props.nextBefore = 1;
+		setProps({ messages: [1, 2, 3].map(message), nextBefore: 1 });
 		await settle();
-		resize();
+		act(() => resize());
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 		expect(viewport.scrollTop).toBe(300);
 	});
 
 	it('does not drop an upward scroll just after a resize notification', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
-		resize();
+		const { props, viewport, scrollTo, setProps } = await renderTranscript(
+			[1, 2, 3, 4, 5].map(message)
+		);
+		act(() => resize());
 		scrollTo(500);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		props.messages = [...props.messages, message(6)];
+		setProps({ messages: [...props.messages, message(6)] });
 		await settle();
-		resize();
+		act(() => resize());
 		expect(viewport.scrollTop).toBe(500);
 	});
 
 	it('follows new output only at the bottom, and resumes after scrolling back down', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4].map(message));
-		props.messages = [...props.messages, message(5)];
+		const { props, viewport, scrollTo, setProps } = await renderTranscript(
+			[1, 2, 3, 4].map(message)
+		);
+		setProps({ messages: [...props.messages, message(5)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(900);
 		scrollTo(500);
-		props.messages = [...props.messages, message(6)];
+		setProps({ messages: [...props.messages, message(6)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(500);
 		scrollTo(1200);
-		props.messages = [...props.messages, message(7)];
+		setProps({ messages: [...props.messages, message(7)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(1500);
 	});
@@ -599,56 +642,62 @@ describe('transcript viewport paging', () => {
 	it.each(['wheel', 'touch', 'ArrowUp', 'PageUp', 'Home', 'Shift+Space'])(
 		'stops following on upward %s input before a scroll event, even without older pages',
 		async (input) => {
-			const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
-			props.nextBefore = undefined;
+			const { props, viewport, scrollTo, setProps } = await renderTranscript(
+				[1, 2, 3, 4, 5].map(message)
+			);
+			setProps({ nextBefore: undefined });
 			await settle();
-			if (input === 'wheel') {
-				viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -10 }));
-			} else if (input === 'touch') {
-				for (const [type, clientY] of [
-					['touchstart', 100],
-					['touchmove', 110]
-				] as const) {
-					const event = new Event(type, { bubbles: true });
-					Object.defineProperty(event, 'touches', { value: [{ clientY }] });
-					viewport.dispatchEvent(event);
+			act(() => {
+				if (input === 'wheel') {
+					viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -10, bubbles: true }));
+				} else if (input === 'touch') {
+					for (const [type, clientY] of [
+						['touchstart', 100],
+						['touchmove', 110]
+					] as const) {
+						const event = new Event(type, { bubbles: true });
+						Object.defineProperty(event, 'touches', { value: [{ clientY }] });
+						viewport.dispatchEvent(event);
+					}
+				} else {
+					viewport.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: input === 'Shift+Space' ? ' ' : input,
+							shiftKey: input === 'Shift+Space',
+							bubbles: true
+						})
+					);
 				}
-			} else {
-				viewport.dispatchEvent(
-					new KeyboardEvent('keydown', {
-						key: input === 'Shift+Space' ? ' ' : input,
-						shiftKey: input === 'Shift+Space',
-						bubbles: true
-					})
-				);
-			}
-			props.messages = [...props.messages, message(6)];
+			});
+			setProps({ messages: [...props.messages, message(6)] });
 			await settle();
-			resize();
+			act(() => resize());
 			expect(viewport.scrollTop).toBe(900);
 			expect(props.onLoadOlder).not.toHaveBeenCalled();
 			scrollTo(1200);
-			props.messages = [...props.messages, message(7)];
+			setProps({ messages: [...props.messages, message(7)] });
 			await settle();
 			expect(viewport.scrollTop).toBe(1500);
 		}
 	);
 
 	it('does not pull a small upward scroll back into the bottom tolerance', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+		const { props, viewport, scrollTo, setProps } = await renderTranscript(
+			[1, 2, 3, 4, 5].map(message)
+		);
 		scrollTo(890);
-		props.messages = [...props.messages, message(6)];
+		setProps({ messages: [...props.messages, message(6)] });
 		await settle();
-		resize();
+		act(() => resize());
 		expect(viewport.scrollTop).toBe(890);
 	});
 
 	it('respects a scrollbar move before its scroll event reaches the component', async () => {
-		const { props, viewport } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+		const { props, viewport, setProps } = await renderTranscript([1, 2, 3, 4, 5].map(message));
 		viewport.scrollTop = 700;
-		resize();
+		act(() => resize());
 		expect(viewport.scrollTop).toBe(700);
-		props.messages = [...props.messages, message(6)];
+		setProps({ messages: [...props.messages, message(6)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(700);
 	});
@@ -656,23 +705,26 @@ describe('transcript viewport paging', () => {
 	it('does not write the scroll position for a resize that leaves the bottom unchanged', async () => {
 		const { viewport } = await renderTranscript([1, 2, 3, 4].map(message));
 		const writeScrollTop = vi.spyOn(viewport, 'scrollTop', 'set');
-		resize();
-		resize();
+		act(() => resize());
+		act(() => resize());
 		expect(writeScrollTop).not.toHaveBeenCalled();
 	});
 
 	it.each([true, false])(
 		'preserves bottom-following state %s when shrinking content clamps the scroll position',
 		async (following) => {
-			const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+			const { props, viewport, scrollTo, setProps } = await renderTranscript(
+				[1, 2, 3, 4, 5].map(message)
+			);
 			if (!following) scrollTo(700);
-			props.messages = props.messages.slice(0, 3);
-			flushSync();
-			viewport.dispatchEvent(new Event('scroll'));
+			setProps({ messages: props.messages.slice(0, 3) });
+			act(() => {
+				viewport.dispatchEvent(new Event('scroll'));
+			});
 			await settle();
-			resize();
+			act(() => resize());
 			expect(viewport.scrollTop).toBe(300);
-			props.messages = [...props.messages, message(4)];
+			setProps({ messages: [...props.messages, message(4)] });
 			await settle();
 			expect(viewport.scrollTop).toBe(following ? 600 : 300);
 		}
@@ -683,17 +735,17 @@ describe('transcript viewport paging', () => {
 		first.scrollTo(100);
 		await cleanup?.();
 		const second = await renderTranscript([]);
-		second.props.messages = [11, 12, 13, 14, 15].map(message);
+		second.setProps({ messages: [11, 12, 13, 14, 15].map(message) });
 		await settle();
 		expect(second.viewport.scrollTop).toBe(900);
 		expect(second.viewport.textContent).not.toContain('Message 4');
 	});
 
 	it('starts loading three viewports ahead of the top', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript(
+		const { props, viewport, scrollTo, setProps } = await renderTranscript(
 			[1, 2, 3, 4, 5, 6, 7, 8, 9].map(message)
 		);
-		props.nextBefore = 3;
+		setProps({ nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
 		expect(viewport.scrollTop).toBe(2_100);
@@ -703,51 +755,53 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		scrollTo(1_900);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.loadingOlder = true;
+		setProps({ loadingOlder: true });
 		await settle();
 		scrollTo(0);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
 
 	it('bounds short-history lookahead until the reader moves', async () => {
-		const { props, viewport } = await renderTranscript([message(3)]);
+		const { props, viewport, setProps } = await renderTranscript([message(3)]);
 		expect(viewport.textContent).not.toContain('Load earlier messages');
-		props.nextBefore = 3;
+		setProps({ nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.loadingOlder = true;
+		setProps({ loadingOlder: true });
 		await settle();
 		expect(viewport.textContent).not.toContain('Loading earlier messages');
-		props.nextBefore = 2;
-		props.loadingOlder = false;
+		setProps({ nextBefore: 2, loadingOlder: false });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
-		props.nextBefore = 1;
+		setProps({ nextBefore: 1 });
 		await settle();
-		props.nextBefore = 0;
+		setProps({ nextBefore: 0 });
 		await settle();
-		await vi.advanceTimersByTimeAsync(10_000);
+		await settle(10_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
-		viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
+		act(() => {
+			viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
+		});
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(4);
 	});
 
 	it('does not duplicate a pending cursor during repeated input', async () => {
-		const { props, viewport } = await renderTranscript([message(3)]);
+		const { props, viewport, setProps } = await renderTranscript([message(3)]);
 		const touch = (type: string, clientY: number) => {
-			const event = new Event(type, { bubbles: true });
-			Object.defineProperty(event, 'touches', { value: [{ clientY }] });
-			viewport.dispatchEvent(event);
+			act(() => {
+				const event = new Event(type, { bubbles: true });
+				Object.defineProperty(event, 'touches', { value: [{ clientY }] });
+				viewport.dispatchEvent(event);
+			});
 		};
-		props.nextBefore = 3;
+		setProps({ nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.loadingOlder = true;
+		setProps({ loadingOlder: true });
 		await settle();
-		props.stale = true;
-		props.loadingOlder = false;
+		setProps({ stale: true, loadingOlder: false });
 		await settle();
-		await vi.advanceTimersByTimeAsync(10_000);
+		await settle(10_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		touch('touchstart', 100);
 		touch('touchmove', 150);
@@ -763,19 +817,21 @@ describe('transcript viewport paging', () => {
 				text: `Part ${number}`
 			}))
 		};
-		const { props, viewport, scrollTo } = await renderTranscript([response]);
+		const { viewport, scrollTo, setProps } = await renderTranscript([response]);
 		scrollTo(150);
 		const anchor = viewport.querySelector<HTMLElement>(
 			'[data-transcript-anchor="response:run:text::text-3"]'
 		);
 		if (!anchor) throw new Error('Missing visible response section');
 		const offset = anchor.getBoundingClientRect().top;
-		props.messages = [
-			{
-				...response,
-				parts: [{ type: 'text', id: 'text-2', text: 'Older part' }, ...response.parts]
-			}
-		];
+		setProps({
+			messages: [
+				{
+					...response,
+					parts: [{ type: 'text', id: 'text-2', text: 'Older part' }, ...response.parts]
+				}
+			]
+		});
 		await settle();
 		expect(anchor.isConnected).toBe(true);
 		expect(anchor.getBoundingClientRect().top).toBe(offset);
@@ -783,14 +839,18 @@ describe('transcript viewport paging', () => {
 	});
 
 	it('preserves the visible message offset when an older page is prepended', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([3, 4, 5, 6].map(message));
+		const { props, viewport, scrollTo, setProps } = await renderTranscript(
+			[3, 4, 5, 6].map(message)
+		);
 		scrollTo(150);
 		const anchor = viewport.querySelector<HTMLElement>('[data-message-id="prompt:3"]');
 		if (!anchor) throw new Error('Missing visible message');
 		const offset = anchor.getBoundingClientRect().top;
-		props.messages = [message(1), message(2), ...props.messages];
+		setProps({ messages: [message(1), message(2), ...props.messages] });
 		await settle();
-		viewport.dispatchEvent(new Event('scroll'));
+		act(() => {
+			viewport.dispatchEvent(new Event('scroll'));
+		});
 		expect(viewport.scrollTop).toBe(750);
 		expect(anchor.getBoundingClientRect().top).toBe(offset);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
@@ -804,18 +864,20 @@ describe('transcript viewport paging', () => {
 				{ type: 'text', id: 't4', text: 'Answer' }
 			]
 		};
-		const { props, viewport } = await renderTranscript([response]);
+		const { setProps, viewport } = await renderTranscript([response]);
 		const button = viewport.querySelector<HTMLButtonElement>('button[aria-expanded]');
 		if (!button) throw new Error('Missing work disclosure');
-		button.click();
+		click(button);
 		await settle();
 		expect(button.getAttribute('aria-expanded')).toBe('true');
-		props.messages = [
-			{
-				...response,
-				parts: [{ type: 'reasoning', id: 'r2', text: 'Older reasoning' }, ...response.parts]
-			}
-		];
+		setProps({
+			messages: [
+				{
+					...response,
+					parts: [{ type: 'reasoning', id: 'r2', text: 'Older reasoning' }, ...response.parts]
+				}
+			]
+		});
 		await settle();
 		expect(button.isConnected).toBe(true);
 		expect(button.getAttribute('aria-expanded')).toBe('true');
@@ -830,16 +892,18 @@ describe('transcript viewport paging', () => {
 				...liveMessage(),
 				parts: split ? [first, second] : [first]
 			};
-			const { props, viewport } = await renderTranscript([response]);
+			const { setProps, viewport } = await renderTranscript([response]);
 			const original = viewport.querySelector<HTMLButtonElement>(
 				'[data-transcript-anchor] > div > button'
 			);
 			if (!original) throw new Error('Missing original work disclosure');
-			original.click();
+			click(original);
 			await settle();
-			props.messages = [
-				{ ...response, parts: [first, { type: 'text', id: 't1', text: 'Update' }, second] }
-			];
+			setProps({
+				messages: [
+					{ ...response, parts: [first, { type: 'text', id: 't1', text: 'Update' }, second] }
+				]
+			});
 			await settle();
 			const buttons = viewport.querySelectorAll<HTMLButtonElement>(
 				'[data-transcript-anchor] > div > button'
