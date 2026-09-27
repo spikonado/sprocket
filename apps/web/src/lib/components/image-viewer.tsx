@@ -1,5 +1,5 @@
 import { Check, Copy, Download, LoaderCircle } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type ViewerImage = {
 	url: string;
@@ -91,7 +91,9 @@ export default function ImageViewer({
 	const copiedTimeoutRef = useRef<number | null>(null);
 	const generationRef = useRef(0);
 	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
+	useLayoutEffect(() => {
+		onCloseRef.current = onClose;
+	}, [onClose]);
 
 	useEffect(() => {
 		generationRef.current += 1;

@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
@@ -18,7 +18,9 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 	/** Shown only when the Fullscreen API is unavailable or rejects (iframe Escape cannot reach us). */
 	const [showFallbackClose, setShowFallbackClose] = useState(false);
 	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
+	useLayoutEffect(() => {
+		onCloseRef.current = onClose;
+	}, [onClose]);
 
 	useEffect(() => {
 		const el = rootRef.current;

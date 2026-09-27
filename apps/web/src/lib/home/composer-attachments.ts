@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { Id } from '$convex/_generated/dataModel';
 import {
 	attachmentMediaType,
@@ -176,7 +176,9 @@ export function useComposerAttachments(dependencies: () => Dependencies) {
 	// but it may never capture the first render's context: the desktop API,
 	// user, and thread are all resolved later. Resolve them per call instead.
 	const dependenciesRef = useRef(dependencies);
-	dependenciesRef.current = dependencies;
+	useLayoutEffect(() => {
+		dependenciesRef.current = dependencies;
+	}, [dependencies]);
 	const attachments = useMemo(
 		() =>
 			new ComposerAttachments({

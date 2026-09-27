@@ -1,5 +1,5 @@
 import { FileText } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
 	isPreviewableImageMediaType,
 	revokeAttachmentPreview,
@@ -24,7 +24,9 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 	const [downloadPending, setDownloadPending] = useState(false);
 	const downloadGeneration = useRef(0);
 	const loadAttachmentRef = useRef(loadAttachment);
-	loadAttachmentRef.current = loadAttachment;
+	useLayoutEffect(() => {
+		loadAttachmentRef.current = loadAttachment;
+	}, [loadAttachment]);
 
 	const url = ownedUrl ?? attachment.url ?? null;
 	const previewable = isPreviewableImageMediaType(attachment.mediaType);
