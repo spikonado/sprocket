@@ -23,7 +23,7 @@ import {
 	vMandateChargeResult,
 	vMandateReportResult
 } from '@convex/lib/validators';
-import { requireMoneyMinor } from '@convex/lib/payments/money';
+import { formatMoneyMinor, requireMoneyMinor } from '@convex/lib/payments/money';
 import { pravaRequest, type PravaMandate } from '@convex/lib/payments/prava';
 import {
 	activeActor,
@@ -1110,7 +1110,11 @@ export const mandateReport = action({
 				outcome: args.outcome
 			};
 
-			if (args.amountPaid !== undefined) startArgs.amountPaid = args.amountPaid;
+			if (args.amountPaid !== undefined) {
+				startArgs.amountPaid = formatMoneyMinor(
+					requireMoneyMinor(args.amountPaid, 'Amount paid')
+				);
+			}
 			await ctx.runMutation(internal.payments.startChargeReportRetrier, startArgs);
 
 			return { reported: false, inFlight: true };
