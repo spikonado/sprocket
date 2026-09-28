@@ -46,7 +46,7 @@
 		"@vitejs/plugin-react": "^6.1.1",
 		"@testing-library/react": "^16.3.3",
 		"@testing-library/user-event": "^14.6.7",
-		"convex-test": "^0.0.59",
+		"convex-test": "^0.0.60",
 		"eslint": "^10.0.0",
 		"jsdom": "^30.0.1",
 		"tailwindcss": "^4.2.4",
