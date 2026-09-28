@@ -96,11 +96,15 @@ it('refreshes approved mandates on focus and removes the listener on unmount', a
 	client.on(api.payments.setupMyMandate, async () => approval);
 	const view = await mount(client);
 	fillSetup();
-	fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
-	await screen.findByRole('link', { name: 'Approve mandate' });
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
+	});
+	expect(screen.getByRole('link', { name: 'Approve mandate' })).toBeTruthy();
 	approved = true;
-	fireEvent.focus(window);
-	expect(await screen.findByRole('button', { name: 'Pause' })).toBeTruthy();
+	await act(async () => {
+		fireEvent.focus(window);
+	});
+	expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
 	view.unmount();
 	const calls = list.mock.calls.length;
 	await act(async () => {
