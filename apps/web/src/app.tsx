@@ -357,6 +357,7 @@ export default function App({
 	const [desktopProjectAttachmentsByPath, setDesktopProjectAttachmentsByPath] = useState<
 		Record<string, ProjectAttachment>
 	>({});
+	const desktopProjectAttachmentsRef = useRef(desktopProjectAttachmentsByPath);
 	const [hasLoadedDesktopProjectAttachments, setHasLoadedDesktopProjectAttachments] =
 		useState(false);
 	const [selectionUserId, setSelectionUserId] = useState<string | null>(null);
@@ -408,7 +409,7 @@ export default function App({
 	const [projectLaunchInFlight, setProjectLaunchInFlight] = useState(false);
 	const hasHydratedTheme = useRef(false);
 	const lastServerTheme = useRef<SprocketTheme | null | undefined>(undefined);
-	const pendingTheme = useRef<SprocketTheme | null>(null);
+	const [pendingTheme, setPendingTheme] = useState<SprocketTheme | null>(null);
 	const themeSaveGeneration = useRef(0);
 
 	const [, setSubmissionTrackingVersion] = useState(0);
@@ -493,15 +494,15 @@ export default function App({
 		if (!authReady) {
 			hasHydratedTheme.current = false;
 			lastServerTheme.current = undefined;
-			pendingTheme.current = null;
-			themeSaveGeneration.current = 0;
+			setPendingTheme(null);
+			themeSaveGeneration.current += 1;
 			return;
 		}
 		const preferences = uiPreferencesQuery.data;
 		// Wait for Convex before applying a workspace theme (boot script stays light for entry).
 		if (preferences === undefined) return;
 		// Ignore preference snapshots while a theme save is in flight.
-		if (pendingTheme.current !== null) return;
+		if (pendingTheme !== null) return;
 		const serverTheme = preferences?.theme;
 		if (hasHydratedTheme.current && serverTheme === lastServerTheme.current) return;
 		hasHydratedTheme.current = true;
@@ -509,12 +510,12 @@ export default function App({
 		const nextTheme = resolveTheme(serverTheme);
 		setWorkspaceTheme(nextTheme);
 		applyTheme(nextTheme);
-	}, [authReady, uiPreferencesQuery.data]);
+	}, [authReady, uiPreferencesQuery.data, pendingTheme]);
 
 	async function handleThemeChange(theme: SprocketTheme) {
 		const previous = workspaceTheme;
 		const generation = ++themeSaveGeneration.current;
-		pendingTheme.current = theme;
+		setPendingTheme(theme);
 		setWorkspaceTheme(theme);
 		applyTheme(theme);
 		try {
@@ -527,7 +528,7 @@ export default function App({
 			applyTheme(previous);
 			setCurrentError(error instanceof Error ? error.message : 'Failed to save theme preference.');
 		} finally {
-			if (generation === themeSaveGeneration.current) pendingTheme.current = null;
+			if (generation === themeSaveGeneration.current) setPendingTheme(null);
 		}
 	}
 
@@ -756,6 +757,12 @@ export default function App({
 		return recents.sort((left, right) => right.displayName.localeCompare(left.displayName));
 	}, [desktopProjectAttachmentsByPath]);
 
+	function publishDesktopProjectAttachments(attachments: Record<string, ProjectAttachment>) {
+		desktopProjectAttachmentsRef.current = attachments;
+		setDesktopProjectAttachmentsByPath(attachments);
+		setHasLoadedDesktopProjectAttachments(true);
+	}
+
 	async function refreshDesktopProjectAttachments(
 		client = desktopApiRef.current
 	): Promise<Record<string, ProjectAttachment>> {
@@ -763,10 +770,11 @@ export default function App({
 		const selectedWorkspacePath = currentWorkspacePathRef.current;
 		const selectionGeneration = projectSelectionGeneration.current;
 		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(client);
-		if (refreshGeneration !== desktopProjectAttachmentsGeneration.current) return nextAttachments;
+		if (refreshGeneration !== desktopProjectAttachmentsGeneration.current) {
+			return desktopProjectAttachmentsRef.current;
+		}
 
-		setDesktopProjectAttachmentsByPath(nextAttachments);
-		setHasLoadedDesktopProjectAttachments(true);
+		publishDesktopProjectAttachments(nextAttachments);
 		if (!selectedWorkspacePath || selectionGeneration !== projectSelectionGeneration.current) {
 			return nextAttachments;
 		}
@@ -780,7 +788,7 @@ export default function App({
 				refreshGeneration !== desktopProjectAttachmentsGeneration.current ||
 				selectionGeneration !== projectSelectionGeneration.current
 			) {
-				return nextAttachments;
+				return desktopProjectAttachmentsRef.current;
 			}
 			selectedAttachment = findCanonicalProjectAttachment(nextAttachments, resolution);
 		}
@@ -882,10 +890,13 @@ export default function App({
 			replaceWorkspacePath
 		});
 		desktopProjectAttachmentsGeneration.current += 1;
-		setDesktopProjectAttachmentsByPath((attachments) =>
-			upsertDesktopProjectAttachment(attachments, attachment, replaceWorkspacePath)
+		publishDesktopProjectAttachments(
+			upsertDesktopProjectAttachment(
+				desktopProjectAttachmentsRef.current,
+				attachment,
+				replaceWorkspacePath
+			)
 		);
-		setHasLoadedDesktopProjectAttachments(true);
 		return attachment;
 	}
 

@@ -18,9 +18,7 @@ export default function CalmCentered({
 	children?: ReactNode;
 	actions?: ReactNode;
 }) {
-	useLayoutEffect(() => {
-		forceEntryTheme();
-	}, []);
+	useLayoutEffect(forceEntryTheme, []);
 	return (
 		<div
 			className={cn(

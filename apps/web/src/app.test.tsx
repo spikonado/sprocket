@@ -72,6 +72,7 @@ class FixtureConvexClient extends ConvexReactClient {
 	#paginatedFixtures = new Map<string, FixtureReader>();
 	#actionFixtures = new Map<string, FixtureReader>();
 	#mutationFixtures = new Map<string, FixtureReader>();
+	#queryListeners = new Map<string, Set<() => void>>();
 
 	constructor() {
 		super('https://fixtures.invalid');
@@ -81,7 +82,9 @@ class FixtureConvexClient extends ConvexReactClient {
 		query: Query,
 		result: FunctionReturnType<Query>
 	): void {
-		this.#queryFixtures.set(getFunctionName(query), fixtureReader(result));
+		const name = getFunctionName(query);
+		this.#queryFixtures.set(name, fixtureReader(result));
+		this.#queryListeners.get(name)?.forEach((listener) => listener());
 	}
 
 	registerPaginatedQuery<Query extends ConvexQueryReference>(
@@ -100,7 +103,7 @@ class FixtureConvexClient extends ConvexReactClient {
 
 	registerMutation<Mutation extends ConvexMutationReference>(
 		mutation: Mutation,
-		result: FunctionReturnType<Mutation>
+		result: FunctionReturnType<Mutation> | Promise<FunctionReturnType<Mutation>>
 	): void {
 		this.#mutationFixtures.set(getFunctionName(mutation), fixtureReader(result));
 	}
@@ -110,10 +113,20 @@ class FixtureConvexClient extends ConvexReactClient {
 		...argsAndOptions: ArgsAndOptions<Query, WatchQueryOptions>
 	): Watch<FunctionReturnType<Query>> {
 		void argsAndOptions;
-		const reader = this.#queryFixtures.get(getFunctionName(query));
+		const name = getFunctionName(query);
 		const watch: FixtureWatch<FunctionReturnType<Query>> = {
-			onUpdate: () => () => {},
-			localQueryResult: () => reader?.read<FunctionReturnType<Query>>(),
+			onUpdate: (callback) => {
+				let listeners = this.#queryListeners.get(name);
+				if (!listeners) {
+					listeners = new Set();
+					this.#queryListeners.set(name, listeners);
+				}
+				listeners.add(callback);
+				return () => {
+					listeners.delete(callback);
+				};
+			},
+			localQueryResult: () => this.#queryFixtures.get(name)?.read<FunctionReturnType<Query>>(),
 			journal: () => undefined
 		};
 		return watch;
@@ -485,6 +498,93 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 
 	expect(await projectTrigger('Gamma')).toBeTruthy();
 	expect(resolveWorkspacePath).not.toHaveBeenCalled();
+});
+
+it('applies a remote theme update received while a local theme save is pending', async () => {
+	const client = createConvexFixtures();
+	const save = deferred<null>();
+	const preferences: Doc<'uiPreferences'> = {
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		_id: 'preferences-a' as Id<'uiPreferences'>,
+		_creationTime: 1,
+		userId: 'user-a',
+		theme: 'light'
+	};
+	client.registerQuery(api.uiPreferences.getMine, preferences);
+	client.registerMutation(api.uiPreferences.setTheme, save.promise);
+	await renderApp(client, createRuntime(createDesktopApi()));
+	fireEvent.click(await screen.findByRole('button', { name: 'Switch to dark mode' }));
+	expect(document.documentElement.dataset.theme).toBe('dark');
+	await act(async () => {
+		client.registerQuery(api.uiPreferences.getMine, { ...preferences, theme: 'dark' });
+	});
+	await act(async () => {
+		client.registerQuery(api.uiPreferences.getMine, { ...preferences, theme: 'light' });
+	});
+	expect(document.documentElement.dataset.theme).toBe('dark');
+	await act(async () => {
+		save.resolve(null);
+	});
+	expect(document.documentElement.dataset.theme).toBe('light');
+	expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeTruthy();
+});
+
+it('submits with current attachments when a newer refresh supersedes the submission refresh', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+	const changedAlpha = projectAttachment('/work/alpha', 'repo-new-alpha', 'Alpha');
+	const staleRefresh = deferred<ProjectAttachment[]>();
+	const runAgent = vi.fn(async () => ({
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		runId: 'run-new' as Id<'runs'>,
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		threadId: 'thread-new' as Id<'threadRecords'>
+	}));
+	let listCalls = 0;
+	const listProjectAttachments = async () => {
+		listCalls += 1;
+		if (listCalls <= 3) return [alpha, beta];
+		if (listCalls === 4) return staleRefresh.promise;
+		return [changedAlpha, beta];
+	};
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments,
+				resolveWorkspacePath: async () => ({
+					workspacePath: changedAlpha.workspacePath,
+					repositoryKey: changedAlpha.repositoryKey,
+					displayName: changedAlpha.displayName
+				}),
+				runAgent
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	await waitFor(() => expect(listCalls).toBe(3));
+	fireEvent.change(
+		screen.getByPlaceholderText(
+			'Ask anything, @tag files/directories, or use $ to show available skills'
+		),
+		{ target: { value: 'Fix the robot' } }
+	);
+	fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+	await waitFor(() => expect(listCalls).toBe(4));
+	await openProjectFromHeading('Alpha', 'Beta');
+	await waitFor(() => expect(listCalls).toBe(6));
+	await act(async () => {
+		staleRefresh.resolve([]);
+	});
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				workspacePath: '/work/alpha',
+				repositoryKey: 'repo-new-alpha',
+				prompt: 'Fix the robot'
+			})
+		)
+	);
 });
 
 it('launches the continuation prompt after an agent question is answered', async () => {
