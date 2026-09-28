@@ -1,5 +1,5 @@
 function isPlainObject(value) {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
+	return value !== null && !Array.isArray(value) && value === Object(value);
 }
 
 export function parseNonEmptyString(value) {

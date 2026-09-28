@@ -20,6 +20,10 @@ test('rejects non-byte proof entries instead of throwing in Buffer.from', () => 
 		[256],
 		[-1],
 		Array.from({ length: 32 }, () => 'x'),
+		Array.from({ length: 32 }, () => ({})),
+		Array.from({ length: 32 }, () => 1.5),
+		Array.from({ length: 32 }, () => 256),
+		Array.from({ length: 32 }, () => -1),
 		Array.from({ length: 32 }, () => null)
 	]) {
 		assert.equal(parsePairingProof({ ...validProof, proof }), null);
