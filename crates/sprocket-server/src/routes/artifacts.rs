@@ -18,7 +18,6 @@ use tokio::time::timeout;
 use crate::AppState;
 use crate::artifact_watch::is_native_account_revoked;
 use crate::routes::api_error::ApiError;
-use crate::transcript_client::UserConvexClient;
 
 const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -36,22 +35,6 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new().route("/artifacts/watch", post(watch_handler))
 }
 
-async fn require_session_user(
-    state: &AppState,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    user_id: &str,
-) -> Result<(), ApiError> {
-    crate::auth::require_session_user(&state.auth, headers, jar, user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    state
-        .native_auth
-        .require_user(user_id)
-        .await
-        .map_err(ApiError::unauthorized)
-}
-
 fn normalize_thread_id(thread_id: Option<&str>) -> Option<&str> {
     thread_id.map(str::trim).filter(|id| !id.is_empty())
 }
@@ -62,7 +45,9 @@ async fn watch_handler(
     jar: CookieJar,
     Json(payload): Json<ArtifactWatchRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     if repository_key.is_empty() || workspace_path.is_empty() {
@@ -125,13 +110,7 @@ async fn authorize_watch_scope(
         args.insert("threadId".to_string(), Value::String(thread_id.to_string()));
     }
     let query = timeout(AUTHORIZE_TIMEOUT, async {
-        let client = UserConvexClient::connect_with_fetcher(
-            &state.convex_deployment_url,
-            state
-                .native_auth
-                .auth_token_fetcher_for_user(user_id.to_string()),
-        )
-        .await?;
+        let client = state.convex_client_for(user_id).await?;
         client
             .query::<serde_json::Value>("artifacts:getArtifactState", args)
             .await
