@@ -118,9 +118,16 @@ function parseDesktopBootstrap(value) {
 	if (!isPlainObject(value)) {
 		return null;
 	}
+<<<<<<< HEAD
 
+=======
+	const httpBaseUrl = parseNonEmptyString(value.httpBaseUrl);
+	if (httpBaseUrl === null) {
+		return null;
+	}
+>>>>>>> 08e796f (fix(desktop): Reject invalid bootstrap payloads instead of ignoring them)
 	return {
-		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl)
+		httpBaseUrl
 	};
 }
 
