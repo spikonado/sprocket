@@ -460,7 +460,11 @@ function createMainWindow() {
 	});
 
 	const preventUntrustedNavigation = (event, url) => {
-		if (new URL(url).origin !== rendererOrigin) {
+		try {
+			if (new URL(url).origin !== rendererOrigin) {
+				event.preventDefault();
+			}
+		} catch {
 			event.preventDefault();
 		}
 	};
