@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import { watchCloudArtifacts } from './cloud-artifacts';
 import { mergeArtifactSources, type ArtifactWatchState } from './artifacts';
 

@@ -1,5 +1,5 @@
-import type { AssistantPart } from '$convex/lib/assistantParts';
-import type { DataModel, Id } from '$convex/_generated/dataModel';
+import type { AssistantPart } from '@convex/lib/assistantParts';
+import type { DataModel, Id } from '@convex/_generated/dataModel';
 import type {
 	ArtifactsWatchEvent,
 	DesktopApi,

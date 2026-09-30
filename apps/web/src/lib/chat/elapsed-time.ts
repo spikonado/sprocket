@@ -1,13 +1,14 @@
-import { createSubscriber } from 'svelte/reactivity';
+import { useEffect, useState } from 'react';
 
-const subscribe = createSubscriber((update) => {
-	const interval = setInterval(update, 1_000);
-	return () => clearInterval(interval);
-});
-
-export function tickingNow(): number {
-	subscribe();
-	return Date.now();
+export function useTickingNow(enabled: boolean): number {
+	const [now, setNow] = useState(Date.now);
+	useEffect(() => {
+		if (!enabled) return;
+		setNow(Date.now());
+		const interval = setInterval(() => setNow(Date.now()), 1_000);
+		return () => clearInterval(interval);
+	}, [enabled]);
+	return now;
 }
 
 export function elapsedSeconds(

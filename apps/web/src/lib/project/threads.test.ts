@@ -13,8 +13,8 @@ import {
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
-import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
-import type { Id } from '$convex/_generated/dataModel';
+import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
+import type { Id } from '@convex/_generated/dataModel';
 import type { ThreadSummary, Project } from '$lib/types/sprocket';
 
 type RunId = Id<'runs'>;

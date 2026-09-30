@@ -1,6 +1,6 @@
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 
-export { areStorageIdsEqual } from '$convex/lib/imageUploads';
+export { areStorageIdsEqual } from '@convex/lib/imageUploads';
 
 const PREVIEWABLE_IMAGE_MEDIA_TYPES = new Set([
 	'image/jpeg',

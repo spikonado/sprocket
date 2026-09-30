@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeRepositoryKeys } from './inbox.svelte';
+import { normalizeRepositoryKeys } from './inbox';
 
 describe('normalizeRepositoryKeys', () => {
 	it('deduplicates and sorts repository keys without changing the input', () => {

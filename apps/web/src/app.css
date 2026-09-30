@@ -282,11 +282,17 @@ body::after {
 	line-height: 1.9;
 }
 
-.chat-markdown > :first-child {
+.chat-markdown-html {
+	display: contents;
+}
+
+.chat-markdown > :first-child,
+.chat-markdown > .chat-markdown-html:first-child > :first-child {
 	margin-top: 0;
 }
 
-.chat-markdown > :last-child {
+.chat-markdown > :last-child,
+.chat-markdown > .chat-markdown-html:last-child > :last-child {
 	margin-bottom: 0;
 }
 

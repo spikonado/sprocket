@@ -74,8 +74,8 @@ repos:
         entry: bun run lint:oxlint
         pass_filenames: false
 
-      - id: svelte-check
-        name: svelte-check
+      - id: typescript-check
+        name: typescript-check
         language: system
         entry: bun turbo run check
         pass_filenames: false

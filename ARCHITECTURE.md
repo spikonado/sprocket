@@ -26,7 +26,7 @@ the READMEs under [`crates/`](crates/).
 
 ```mermaid
 flowchart LR
-    User[User] --> Web[Svelte web app]
+    User[User] --> Web[React web app]
     CLI[Sprocket CLI] --> Desktop[Electron shell]
     Desktop --> Web
     CLI --> Local[Local Rust server]
@@ -45,7 +45,7 @@ flowchart LR
 
 The system has three main planes:
 
-1. **Client plane:** Svelte provides the UI; Electron supplies a desktop shell;
+1. **Client plane:** React provides the UI; Electron supplies a desktop shell;
    the CLI launches clients and the local server.
 2. **Local execution plane:** the Rust server authenticates local requests,
    resolves workspace attachments, starts agent runs, and executes tools.
@@ -68,7 +68,7 @@ authenticate the server process.
 
 | Component         | Owns                                                                                           | Does not own                                                       |
 | ----------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Svelte app        | User interaction, reactive views, thread inbox, submission recovery                            | Transcript synchronization, filesystem access, or provider secrets |
+| React app         | User interaction, reactive views, thread inbox, submission recovery                            | Transcript synchronization, filesystem access, or provider secrets |
 | Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process                               | Conversation or agent state                                        |
 | CLI               | Process launch and server-mode selection                                                       | Agent implementation                                               |
 | Local server      | Local authorization, transcript replica and live stream, machine presence, agent task lifetime | Durable conversation source of truth                               |
@@ -246,7 +246,7 @@ one.
 
 The transcript renderer never reads transcript content from Convex. It pages
 durable parts from the Rust replica and overlays the current Rust
-live-completion stream. Convex assigns durable part numbers; Svelte renders
+live-completion stream. Convex assigns durable part numbers; React renders
 that order and keeps no cross-thread transcript cache.
 
 ## Authentication and trust boundaries
@@ -258,7 +258,7 @@ Cloud and local authorization solve different problems:
   the same-origin native token endpoint. Remote browser sessions must first
   prove the same WorkOS identity through an isolated device authorization. That
   flow does not replace the host session or persist its returned tokens. Convex
-  validates the host token as a JWT (`apps/web/src/convex/auth.config.ts`) and
+  validates the host token as a JWT (`apps/web/convex/auth.config.ts`) and
   checks ownership before reading or changing user records.
 - **Native cloud identity:** Rust owns the installed client's WorkOS authorization-code
   session. It generates PKCE and state, exchanges the
@@ -335,16 +335,16 @@ in the Rust agent and Convex backend together.
 
 ## Repository layout
 
-| Path                         | Responsibility                        |
-| ---------------------------- | ------------------------------------- |
-| `apps/web/`                  | Svelte application and Convex backend |
-| `apps/desktop/`              | Electron shell and packaging          |
-| `crates/sprocket-cli/`       | User-facing launcher                  |
-| `crates/sprocket-server/`    | Local HTTP and process boundary       |
-| `crates/sprocket-agent/`     | Agent run lifecycle and tools         |
-| `crates/sprocket-convex/`    | Neutral Convex RPC/auth client        |
-| `crates/sprocket-workspace/` | Local workspace primitives            |
-| `packages/`                  | Shared JavaScript configuration       |
+| Path                         | Responsibility                       |
+| ---------------------------- | ------------------------------------ |
+| `apps/web/`                  | React application and Convex backend |
+| `apps/desktop/`              | Electron shell and packaging         |
+| `crates/sprocket-cli/`       | User-facing launcher                 |
+| `crates/sprocket-server/`    | Local HTTP and process boundary      |
+| `crates/sprocket-agent/`     | Agent run lifecycle and tools        |
+| `crates/sprocket-convex/`    | Neutral Convex RPC/auth client       |
+| `crates/sprocket-workspace/` | Local workspace primitives           |
+| `packages/`                  | Shared JavaScript configuration      |
 
 The AI gateway (`spikonado/ai-gateway`) is a separate private repository. Its
 public origin is `https://ai-gateway.spikonado.com`, with Responses API and catalog
@@ -352,7 +352,10 @@ routes under `/api/`.
 
 ## Build and deployment
 
-`apps/web` builds to static assets. Those assets are packaged in two separate products:
+Vite builds `apps/web` to static assets in `apps/web/dist`. The client loads
+public runtime configuration from Rust's `/api/config` endpoint before creating
+its Convex client. There is no frontend application server. Those assets are
+packaged in two separate products:
 
 - **`sprocket-desktop`** (GitHub Releases): Electron app that embeds the static web UI and a native `sprocket` server binary. Users get `.AppImage`/`.dmg`/`.exe` installers.
 - **`sprocket` CLI** (npm `@spikonado/sprocket`): the same native binary plus the static web UI for `sprocket --web`. No Electron.

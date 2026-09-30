@@ -1,7 +1,7 @@
-import type { Id } from '$convex/_generated/dataModel';
-import type { AssistantPart } from '$convex/lib/assistantParts';
+import type { Id } from '@convex/_generated/dataModel';
+import type { AssistantPart } from '@convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
-import type { displayRowValidator } from '$convex/lib/transcriptDisplayTypes';
+import type { displayRowValidator } from '@convex/lib/transcriptDisplayTypes';
 import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
@@ -10,7 +10,7 @@ import {
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
 	type WorkspaceInstruction
-} from '$convex/lib/validators';
+} from '@convex/lib/validators';
 
 export type LocalAttachmentAvailability = 'available' | 'unavailable';
 

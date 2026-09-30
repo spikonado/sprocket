@@ -1,26 +1,49 @@
 # `apps/web`
 
-This is Sprocket's web app. It is bundled into Electron and can also run in a browser.
+This is Sprocket's React web app. Vite builds static assets into `dist` for Rust
+to serve in a browser or Electron. Both clients use the same build and load
+runtime configuration from `/api/config`.
+
+Vite writes hashed chunks and assets under `_app/immutable` to preserve Rust's
+immutable-cache and missing-asset responses. Browsers revalidate `index.html`
+on every request.
+
+## Source layout
+
+React code and its tests live in `src/`. Convex functions, their tests, and
+generated API files live in `convex/`, the default layout from the
+[Convex React quickstart](https://docs.convex.dev/quickstart/react). Function
+names are relative to `convex/`, so the directory move did not rename any
+functions.
+
+Frontend imports use `$lib` for `src/lib` and `@convex` for `convex`. Both are
+mapped in `vite.config.ts` and the `tsconfig.json` paths.
+
+## Development checks
+
+Run these commands from `apps/web`:
+
+- `bun run check` checks TypeScript, including JSX and component tests.
+- `bun run test` runs the frontend, React component, and Convex tests.
+- `bun run build` produces the static client.
+
+The client handles `/` and `/callback`. Rust supplies the SPA fallback for
+installed clients, and Vite supplies it during development.
 
 ## Authentication
 
 The hosted web app uses one AuthKit JS session for direct Convex access.
-Installed browser and Electron clients use two independent WorkOS sessions:
+Installed browser and Electron clients use Rust's native WorkOS session. Rust
+owns PKCE, state, code exchange, access-token refresh, and the persisted refresh
+token. The renderer requests short-lived access tokens from the local API for
+direct Convex calls. It never receives the native authorization code or refresh
+token. Remote HTTPS browsers authenticate their browser session as the host
+owner without replacing the host's native session.
 
-- Rust owns a native session for agent runs and machine registration. It owns
-  PKCE, state, code exchange, access-token refresh, and the persisted refresh
-  token.
-- AuthKit JS owns the renderer session used for direct browser-to-Convex calls.
-
-Installed sign-in completes the Rust loopback flow first, then redirects through
-AuthKit again to establish the renderer session. The renderer polls the local
-API for native login status but never receives the native authorization code or
-refresh token. Installed sign-out clears the native session before clearing the
-AuthKit JS session.
-
-The two sessions must use the same WorkOS account. Machine registration returns
-the native user's canonical ID, and agent launch rejects it when it differs from
-the browser user ID.
+`ConvexProviderWithAuth` connects this session to React. The token fetcher remains
+stable across routine token refreshes and changes when the account changes or
+authentication recovery requests a retry. Machine registration returns the native
+user's canonical ID, and agent launch rejects a different browser user ID.
 
 ### Local setup
 

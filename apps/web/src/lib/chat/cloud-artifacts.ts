@@ -1,5 +1,5 @@
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
-import { api } from '$convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import type { LocalArtifact } from '$lib/types/sprocket';
 import type { ArtifactWatchState } from './artifacts';
 

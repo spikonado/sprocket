@@ -1,4 +1,4 @@
-import type { ArtifactType } from '$convex/lib/validators';
+import type { ArtifactType } from '@convex/lib/validators';
 import { z } from 'zod';
 
 const artifactTypeSchema = z.enum(['markdown', 'html', 'react']);
