@@ -11,13 +11,13 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-function mount(client: ConvexTestClient, openAiConfigured = false) {
+function mount(client: ConvexTestClient, openAiConfigured = false, chatGptConfigured = false) {
 	const onConfigurationChange = vi.fn();
 	const view = render(
 		<ConvexTestProvider client={client}>
 			<SettingsProviders
 				openAiConfigured={openAiConfigured}
-				chatGptConfigured={false}
+				chatGptConfigured={chatGptConfigured}
 				chatGptModelIds={null}
 				loading={false}
 				loadError={null}
@@ -98,7 +98,7 @@ it('completes device sign-in and reports the available models', async () => {
 	}));
 	const view = mount(client);
 	await act(async () => {
-		fireEvent.click(screen.getByRole('button', { name: 'Connect ChatGPT' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
 	expect(screen.getByText('TEST-CODE')).toBeTruthy();
 	await act(async () => {
@@ -124,7 +124,7 @@ it('cancels device sign-in on unmount while its completion is in flight', async 
 	client.handleAction(api.providerCredentials.cancelChatGptDeviceLogin, cancel);
 	const view = mount(client);
 	await act(async () => {
-		fireEvent.click(screen.getByRole('button', { name: 'Connect ChatGPT' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(1_000);
@@ -135,4 +135,74 @@ it('cancels device sign-in on unmount while its completion is in flight', async 
 	});
 	expect(cancel).toHaveBeenCalledWith({ deviceAuthId: 'device-test', userCode: 'TEST-CODE' });
 	expect(view.onConfigurationChange).toHaveBeenCalledTimes(0);
+});
+
+it('labels the connected ChatGPT action as Reconnect ChatGPT', () => {
+	const client = new ConvexTestClient();
+	mount(client, false, true);
+	expect(screen.getByRole('button', { name: 'Reconnect ChatGPT' })).toBeTruthy();
+	expect(screen.queryByRole('button', { name: 'Continue with ChatGPT' })).toBeNull();
+});
+
+it('links to ChatGPT usage settings', () => {
+	const client = new ConvexTestClient();
+	mount(client);
+	const link = screen.getByRole('link', { name: 'Manage usage' });
+	expect(link).toHaveProperty('href', 'https://chatgpt.com/settings/usage');
+	expect(link).toHaveProperty('target', '_blank');
+});
+
+function confirmChatGptDisconnect() {
+	fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Confirm disconnect' }));
+}
+
+it('reports a confirmed ChatGPT revocation without a warning', async () => {
+	const client = new ConvexTestClient();
+	const remove = vi.fn(async () => ({ revoked: true }));
+	client.handleAction(api.providerCredentials.removeChatGptCredential, remove);
+	const view = mount(client, false, true);
+	confirmChatGptDisconnect();
+	await waitFor(() =>
+		expect(view.onConfigurationChange).toHaveBeenCalledWith({
+			provider: 'chatgpt',
+			configured: false
+		})
+	);
+	expect(remove).toHaveBeenCalledWith({ reportRevocation: true });
+	expect(screen.queryByText(/remote revocation was not confirmed/)).toBeNull();
+});
+
+it('warns when ChatGPT revocation is not confirmed', async () => {
+	const client = new ConvexTestClient();
+	const remove = vi.fn(async () => ({ revoked: false }));
+	client.handleAction(api.providerCredentials.removeChatGptCredential, remove);
+	const view = mount(client, false, true);
+	confirmChatGptDisconnect();
+	await waitFor(() =>
+		expect(view.onConfigurationChange).toHaveBeenCalledWith({
+			provider: 'chatgpt',
+			configured: false
+		})
+	);
+	expect(remove).toHaveBeenCalledWith({ reportRevocation: true });
+	const warning = await screen.findByText(/remote revocation was not confirmed/);
+	expect(warning).toBeTruthy();
+	const settingsLink = screen.getByRole('link', { name: 'ChatGPT settings' });
+	expect(settingsLink).toHaveProperty('href', 'https://chatgpt.com/settings');
+});
+
+it('warns when ChatGPT removal returns no revocation confirmation', async () => {
+	const client = new ConvexTestClient();
+	const remove = vi.fn(async () => null);
+	client.handleAction(api.providerCredentials.removeChatGptCredential, remove);
+	const view = mount(client, false, true);
+	confirmChatGptDisconnect();
+	await waitFor(() =>
+		expect(view.onConfigurationChange).toHaveBeenCalledWith({
+			provider: 'chatgpt',
+			configured: false
+		})
+	);
+	expect(await screen.findByText(/remote revocation was not confirmed/)).toBeTruthy();
 });

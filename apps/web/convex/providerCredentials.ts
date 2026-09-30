@@ -8,7 +8,7 @@ import {
 	type QueryCtx
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { z } from 'zod';
 import { getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
@@ -30,6 +30,8 @@ const CHATGPT_REFRESH_MARGIN_MS = 30_000;
 const CHATGPT_LEASE_WAIT_ATTEMPTS = 60;
 const CHATGPT_LEASE_WAIT_MS = 500;
 const PROVIDER_FETCH_TIMEOUT_MS = 20_000;
+const CHATGPT_REVOCATION_TIMEOUT_MS = 10_000;
+const CHATGPT_REVOCATION_ATTEMPTS = 3;
 const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
 
 function chatGptState(ctx: QueryCtx, userId: string) {
@@ -92,6 +94,13 @@ const chatGptTokenSchema = z.object({
 	expires_in: z.number().positive().optional()
 });
 type ChatGptTokenResponse = z.infer<typeof chatGptTokenSchema>;
+const chatGptTokenErrorSchema = z.object({
+	error: z.union([
+		z.string().max(256),
+		z.object({ code: z.string().max(256) }).transform((error) => error.code)
+	])
+});
+class UnusableChatGptRefreshTokenError extends ConvexError<string> {}
 const chatGptModelsSchema = z.object({
 	models: z.array(z.looseObject({ slug: z.string().min(1).max(256) })).max(1_000)
 });
@@ -144,8 +153,12 @@ function workosHeaders(): HeadersInit {
 	};
 }
 
-function providerFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-	return fetch(input, { ...init, signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS) });
+function providerFetch(
+	input: string | URL,
+	init: RequestInit = {},
+	timeoutMs = PROVIDER_FETCH_TIMEOUT_MS
+): Promise<Response> {
+	return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 async function responseJson<T>(
@@ -230,8 +243,8 @@ async function storeVaultObject(
 	if (!response.ok) throw new Error('Couldn’t save the provider credential in WorkOS Vault.');
 }
 
-async function deleteVaultObject(name: string): Promise<void> {
-	const object = await readVaultObject(name);
+async function deleteVaultObject(name: string, existingObject?: VaultObject): Promise<void> {
+	const object = existingObject ?? (await readVaultObject(name));
 	if (!object) return;
 	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(object.id)}`);
 	url.searchParams.set('version_check', object.metadata.version_id);
@@ -359,10 +372,35 @@ async function refreshChatGptCredential(credential: ChatGptCredential): Promise<
 			refresh_token: credential.refreshToken
 		}).toString()
 	});
-	if (response.status === 400 || response.status === 401 || response.status === 403) {
-		throw new Error('ChatGPT sign-in expired. Reconnect ChatGPT in Settings.');
+	if (!response.ok) {
+		const code = await chatGptTokenErrorCode(response);
+		switch (code) {
+			case 'invalid_grant':
+			case 'invalid_refresh_token':
+			case 'token_expired':
+			case 'refresh_token_expired':
+			case 'refresh_token_invalidated':
+			case 'refresh_token_reused':
+				throw new UnusableChatGptRefreshTokenError(
+					'ChatGPT sign-in expired. Reconnect ChatGPT in Settings.'
+				);
+			case 'invalid_client':
+				throw new ConvexError(
+					'ChatGPT sign-in is not configured correctly on this Sprocket deployment.'
+				);
+		}
+		if (response.status === 403) {
+			throw new ConvexError(
+				'ChatGPT blocked the sign-in refresh. Check your account or workspace policy.'
+			);
+		}
+		if (response.status === 400) {
+			throw new ConvexError(
+				"ChatGPT rejected the sign-in refresh request. Check this Sprocket deployment's auth configuration."
+			);
+		}
+		throw new ConvexError('ChatGPT could not refresh your sign-in. Try again shortly.');
 	}
-	if (!response.ok) throw new Error('ChatGPT could not refresh your sign-in. Try again shortly.');
 	const tokens = await responseJson(
 		response,
 		'ChatGPT',
@@ -370,6 +408,50 @@ async function refreshChatGptCredential(credential: ChatGptCredential): Promise<
 		'ChatGPT returned an invalid token refresh response.'
 	);
 	return chatGptCredentialFromTokens(tokens, credential);
+}
+
+async function chatGptTokenErrorCode(response: Response): Promise<string | null> {
+	try {
+		const result = await responseJson(response, 'ChatGPT', chatGptTokenErrorSchema);
+		return result.error;
+	} catch {
+		return null;
+	}
+}
+
+async function revokeChatGptCredential(value: string): Promise<boolean> {
+	let credential: ChatGptCredential;
+	try {
+		credential = chatGptCredentialSchema.parse(JSON.parse(value));
+	} catch {
+		return false;
+	}
+	for (let attempt = 0; attempt < CHATGPT_REVOCATION_ATTEMPTS; attempt += 1) {
+		try {
+			const response = await providerFetch(
+				`${CHATGPT_AUTH_ORIGIN}/oauth/revoke`,
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						token: credential.refreshToken,
+						token_type_hint: 'refresh_token',
+						client_id: CHATGPT_CLIENT_ID
+					})
+				},
+				CHATGPT_REVOCATION_TIMEOUT_MS
+			);
+			await response.body?.cancel();
+			if (response.ok) return true;
+			if (response.status < 500 && response.status !== 429) return false;
+		} catch {
+			// Revocation may have succeeded before the connection failed. Repeating it is safe.
+		}
+		if (attempt + 1 < CHATGPT_REVOCATION_ATTEMPTS) {
+			await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+		}
+	}
+	return false;
 }
 
 async function chatGptModelIds(credential: ChatGptCredential): Promise<string[] | null> {
@@ -438,7 +520,23 @@ async function resolveChatGptCredentialWithLease(
 		return stored.credential;
 	}
 	await renewChatGptLease(ctx, userId, leaseId);
-	const credential = await refreshChatGptCredential(stored.credential);
+	let credential: ChatGptCredential;
+	try {
+		credential = await refreshChatGptCredential(stored.credential);
+	} catch (error) {
+		if (error instanceof UnusableChatGptRefreshTokenError) {
+			await renewChatGptLease(ctx, userId, leaseId);
+			await ctx.runMutation(internal.providerCredentials.clearChatGptConnection, {
+				userId,
+				leaseId
+			});
+			await deleteVaultObject(
+				await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, userId),
+				stored.vaultObject
+			);
+		}
+		throw error;
+	}
 	await renewChatGptLease(ctx, userId, leaseId);
 	await storeChatGptCredential(userId, credential, stored.vaultObject);
 	return credential;
@@ -832,22 +930,28 @@ export const refreshChatGptModels = action({
 });
 
 export const removeChatGptCredential = action({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
+	args: { reportRevocation: v.optional(v.boolean()) },
+	returns: v.union(v.null(), v.object({ revoked: v.boolean() })),
+	handler: async (ctx, { reportRevocation }) => {
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw new Error('Authentication required.');
 		const leaseId = crypto.randomUUID();
 		await acquireChatGptLease(ctx, identity.subject, leaseId);
 		try {
-			await deleteVaultObject(
-				await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, identity.subject)
-			);
+			const name = await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, identity.subject);
+			const object = await readVaultObject(name);
+			await ctx.runMutation(internal.providerCredentials.clearChatGptConnection, {
+				userId: identity.subject,
+				leaseId
+			});
+			const revoked = object ? await revokeChatGptCredential(object.value) : true;
+			await renewChatGptLease(ctx, identity.subject, leaseId);
+			if (object) await deleteVaultObject(name, object);
 			await ctx.runMutation(internal.providerCredentials.deleteChatGptCredentialState, {
 				userId: identity.subject,
 				leaseId
 			});
-			return null;
+			return reportRevocation ? { revoked } : null;
 		} catch (error) {
 			await releaseChatGptLease(ctx, identity.subject, leaseId);
 			throw error;
@@ -1132,6 +1236,23 @@ export const recordChatGptCredential = internalMutation({
 			completedLogin: { flow: 'device', hash: args.deviceAuthHash },
 			connectionId: args.connectionId,
 			lease: undefined
+		});
+		return null;
+	}
+});
+
+export const clearChatGptConnection = internalMutation({
+	args: { userId: v.string(), leaseId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const state = await chatGptState(ctx, args.userId);
+		if (state?.lease?.id !== args.leaseId || state.lease.expiresAt <= Date.now()) {
+			throw new Error('ChatGPT credential update lost its lease.');
+		}
+		await ctx.db.patch(state._id, {
+			connectionId: undefined,
+			modelIds: undefined,
+			completedLogin: undefined
 		});
 		return null;
 	}

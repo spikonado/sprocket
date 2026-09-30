@@ -68,6 +68,7 @@ export default function SettingsProviders({
 	const [browserLogin, setBrowserLoginState] = useState<BrowserLogin | null>(null);
 	const [confirmChatGptRemove, setConfirmChatGptRemove] = useState(false);
 	const [chatGptError, setChatGptError] = useState<string | null>(null);
+	const [chatGptRevocationUnconfirmed, setChatGptRevocationUnconfirmed] = useState(false);
 	const chatGptLoginRef = useRef<ChatGptLogin | null>(null);
 	const browserLoginRef = useRef<BrowserLogin | null>(null);
 	const loginGenerationRef = useRef(0);
@@ -250,6 +251,7 @@ export default function SettingsProviders({
 		if (chatGptPending) return;
 		setChatGptPending(true);
 		setChatGptError(null);
+		setChatGptRevocationUnconfirmed(false);
 		setConfirmChatGptRemove(false);
 		const generation = ++loginGenerationRef.current;
 		try {
@@ -285,9 +287,13 @@ export default function SettingsProviders({
 		await stopChatGptLogin();
 		setChatGptPending(true);
 		setChatGptError(null);
+		setChatGptRevocationUnconfirmed(false);
 		try {
-			await removeChatGptCredential({});
+			const result = await removeChatGptCredential({
+				reportRevocation: true
+			});
 			setConfirmChatGptRemove(false);
+			if (result?.revoked !== true) setChatGptRevocationUnconfirmed(true);
 			onConfigurationChange({ provider: 'chatgpt', configured: false });
 		} catch (error) {
 			setChatGptError(
@@ -451,7 +457,7 @@ export default function SettingsProviders({
 										? 'Starting…'
 										: chatGptConfigured
 											? 'Reconnect ChatGPT'
-											: 'Connect ChatGPT'}
+											: 'Continue with ChatGPT'}
 								</Button>
 								{chatGptConfigured && !confirmChatGptRemove ? (
 									<Button
@@ -497,8 +503,31 @@ export default function SettingsProviders({
 							{!isLocalAccess
 								? 'ChatGPT device login must be enabled in your personal security settings or by your workspace administrator. '
 								: ''}
-							Usage counts against your ChatGPT Codex allowance.
+							Sprocket uses your ChatGPT plan's Codex usage limits.{' '}
+							<a
+								href="https://chatgpt.com/settings/usage"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="text-foreground underline underline-offset-2"
+							>
+								Manage usage
+							</a>
 						</p>
+						{chatGptRevocationUnconfirmed && (
+							<p className="mt-4 text-sm text-amber-800 dark:text-amber-200" role="alert">
+								Sprocket disconnected ChatGPT, but remote revocation was not confirmed. To fully
+								disconnect, revoke access in your{' '}
+								<a
+									href="https://chatgpt.com/settings"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="underline underline-offset-2"
+								>
+									ChatGPT settings
+								</a>
+								.
+							</p>
+						)}
 						{chatGptError && (
 							<p className="text-destructive mt-4 text-sm" role="alert">
 								{chatGptError}

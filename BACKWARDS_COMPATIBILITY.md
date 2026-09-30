@@ -43,6 +43,17 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### ChatGPT disconnect result
+
+Released clients call `providerCredentials.removeChatGptCredential` without
+arguments and expect `null`. The action still returns `null` for those calls.
+Current clients send `reportRevocation: true` and receive `{ revoked: boolean }`
+so they can warn when OpenAI session revocation was not confirmed. All callers
+attempt revocation before deleting the stored credential.
+
+Once clients expecting `null` have aged out, remove the optional flag and return
+the revocation result unconditionally.
+
 ### Retired repository rekey calls
 
 Released local servers may still call `threads.rekeyRepository`, and deployments
