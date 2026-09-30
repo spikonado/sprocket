@@ -49,4 +49,4 @@ dotenvy = "0.15.7"
 
 [dev-dependencies]
 tokio = { version = "1.52.1", features = ["test-util"] }
-gix = { version = "0.87", default-features = false, features = ["sha1", "max-performance-safe"] }
+gix = { version = "0.88", default-features = false, features = ["sha1", "max-performance-safe"] }
