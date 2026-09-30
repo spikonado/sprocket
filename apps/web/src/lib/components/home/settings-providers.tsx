@@ -299,6 +299,17 @@ export default function SettingsProviders({
 			setChatGptError(
 				errorMessage(error instanceof Error ? error : null, 'Couldn’t disconnect ChatGPT.')
 			);
+			setChatGptRevocationUnconfirmed(true);
+			try {
+				const configuration = await getMyConfiguration({});
+				onConfigurationChange({
+					provider: 'chatgpt',
+					configured: configuration.chatgpt,
+					chatGptModelIds: configuration.chatgptModelIds
+				});
+			} catch {
+				// Keep the disconnect error if the status check also fails.
+			}
 		} finally {
 			setChatGptPending(false);
 		}
@@ -515,13 +526,27 @@ export default function SettingsProviders({
 						</p>
 						{chatGptRevocationUnconfirmed && (
 							<p className="mt-4 text-sm text-amber-800 dark:text-amber-200" role="alert">
-								Sprocket disconnected ChatGPT, but remote revocation was not confirmed. To fully
-								disconnect, revoke access in your{' '}
+								ChatGPT remote revocation was not confirmed. To fully disconnect, revoke access in
+								your{' '}
 								<a
 									href="https://chatgpt.com/settings"
 									target="_blank"
 									rel="noopener noreferrer"
 									className="underline underline-offset-2"
+								>
+									ChatGPT settings
+								</a>
+								.
+							</p>
+						)}
+						{!loading && !chatGptConfigured && !chatGptRevocationUnconfirmed && (
+							<p className="text-muted-foreground mt-4 text-sm">
+								If a previous disconnect could not confirm remote revocation, revoke access in your{' '}
+								<a
+									href="https://chatgpt.com/settings"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="text-foreground underline underline-offset-2"
 								>
 									ChatGPT settings
 								</a>

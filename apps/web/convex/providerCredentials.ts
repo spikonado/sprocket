@@ -307,22 +307,24 @@ function chatGptCredentialFromTokens(
 	};
 }
 
+function parseChatGptCredential(value: string): ChatGptCredential | null {
+	try {
+		return chatGptCredentialSchema.parse(JSON.parse(value));
+	} catch {
+		return null;
+	}
+}
+
 async function readChatGptCredential(userId: string): Promise<StoredChatGptCredential | null> {
 	const object = await readVaultObject(
 		await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, userId)
 	);
 	if (!object) return null;
-	let value: unknown;
-	try {
-		value = JSON.parse(object.value);
-	} catch {
+	const credential = parseChatGptCredential(object.value);
+	if (!credential) {
 		throw new Error('The stored ChatGPT credential is invalid. Reconnect ChatGPT.');
 	}
-	const parsed = chatGptCredentialSchema.safeParse(value);
-	if (!parsed.success) {
-		throw new Error('The stored ChatGPT credential is invalid. Reconnect ChatGPT.');
-	}
-	return { credential: parsed.data, vaultObject: object };
+	return { credential, vaultObject: object };
 }
 
 async function storeChatGptCredential(
@@ -420,12 +422,8 @@ async function chatGptTokenErrorCode(response: Response): Promise<string | null>
 }
 
 async function revokeChatGptCredential(value: string): Promise<boolean> {
-	let credential: ChatGptCredential;
-	try {
-		credential = chatGptCredentialSchema.parse(JSON.parse(value));
-	} catch {
-		return false;
-	}
+	const credential = parseChatGptCredential(value);
+	if (!credential) return false;
 	for (let attempt = 0; attempt < CHATGPT_REVOCATION_ATTEMPTS; attempt += 1) {
 		try {
 			const response = await providerFetch(
@@ -585,21 +583,24 @@ export const getMyConfiguration = action({
 	): Promise<{ openai: boolean; chatgpt: boolean; chatgptModelIds: string[] | null }> => {
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw new Error('Authentication required.');
-		const [openAiObject, chatGptObject, chatgptModelIds]: [
+		const [openAiObject, chatGptObject, chatGptConfiguration]: [
 			VaultObject | null,
 			VaultObject | null,
-			string[] | null
+			{ connectionId: string | null; modelIds: string[] | null }
 		] = await Promise.all([
 			readVaultObject(await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject)),
 			readVaultObject(await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, identity.subject)),
-			ctx.runQuery(internal.providerCredentials.getChatGptModels, {
+			ctx.runQuery(internal.providerCredentials.getChatGptConfiguration, {
 				userId: identity.subject
 			})
 		]);
+		const credential = chatGptObject ? parseChatGptCredential(chatGptObject.value) : null;
+		const chatgpt =
+			credential !== null && credential.connectionId === chatGptConfiguration.connectionId;
 		return {
 			openai: openAiObject !== null,
-			chatgpt: chatGptObject !== null,
-			chatgptModelIds
+			chatgpt,
+			chatgptModelIds: chatgpt ? chatGptConfiguration.modelIds : null
 		};
 	}
 });
@@ -959,12 +960,15 @@ export const removeChatGptCredential = action({
 	}
 });
 
-export const getChatGptModels = internalQuery({
+export const getChatGptConfiguration = internalQuery({
 	args: { userId: v.string() },
-	returns: v.union(v.array(v.string()), v.null()),
+	returns: v.object({
+		connectionId: v.union(v.string(), v.null()),
+		modelIds: v.union(v.array(v.string()), v.null())
+	}),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
-		return state?.modelIds ?? null;
+		return { connectionId: state?.connectionId ?? null, modelIds: state?.modelIds ?? null };
 	}
 });
 

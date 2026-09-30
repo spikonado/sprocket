@@ -190,6 +190,15 @@ it('warns when ChatGPT revocation is not confirmed', async () => {
 	expect(warning).toBeTruthy();
 	const settingsLink = screen.getByRole('link', { name: 'ChatGPT settings' });
 	expect(settingsLink).toHaveProperty('href', 'https://chatgpt.com/settings');
+	view.unmount();
+	mount(client);
+	expect(
+		screen.getByText(/If a previous disconnect could not confirm remote revocation/)
+	).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'ChatGPT settings' })).toHaveProperty(
+		'href',
+		'https://chatgpt.com/settings'
+	);
 });
 
 it('warns when ChatGPT removal returns no revocation confirmation', async () => {
@@ -205,4 +214,27 @@ it('warns when ChatGPT removal returns no revocation confirmation', async () => 
 		})
 	);
 	expect(await screen.findByText(/remote revocation was not confirmed/)).toBeTruthy();
+});
+
+it('reloads ChatGPT connection status when disconnect cleanup fails', async () => {
+	const client = new ConvexTestClient();
+	client.handleAction(api.providerCredentials.removeChatGptCredential, async () => {
+		throw new Error('Vault deletion failed');
+	});
+	client.handleAction(api.providerCredentials.getMyConfiguration, async () => ({
+		openai: false,
+		chatgpt: false,
+		chatgptModelIds: null
+	}));
+	const view = mount(client, false, true);
+	confirmChatGptDisconnect();
+	await waitFor(() =>
+		expect(view.onConfigurationChange).toHaveBeenCalledWith({
+			provider: 'chatgpt',
+			configured: false,
+			chatGptModelIds: null
+		})
+	);
+	expect(screen.getByText('Vault deletion failed')).toBeTruthy();
+	expect(screen.getByRole('link', { name: 'ChatGPT settings' })).toBeTruthy();
 });

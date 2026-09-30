@@ -455,10 +455,10 @@ describe('provider credentials', () => {
 		});
 		expect(stored).not.toHaveProperty('idToken');
 		await expect(
-			t.query(internal.providerCredentials.getChatGptModels, {
+			t.query(internal.providerCredentials.getChatGptConfiguration, {
 				userId: 'user_alice'
 			})
-		).resolves.toEqual(['gpt-5.4']);
+		).resolves.toEqual({ connectionId: stored.connectionId, modelIds: ['gpt-5.4'] });
 		expect(fetchMock).toHaveBeenCalled();
 		await asUser.action(api.providerCredentials.cancelChatGptDeviceLogin, {
 			deviceAuthId: 'device-1',
@@ -475,6 +475,12 @@ describe('provider credentials', () => {
 	it('retries model discovery after the ChatGPT account is connected', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
+		await t.run(async (ctx) => {
+			await ctx.db.insert('providerCredentialStates', {
+				userId: 'user_alice',
+				connectionId: 'connection-1'
+			});
+		});
 		const name = await providerCredentialName('sprocket-chatgpt-');
 		const entries = new Map<string, VaultEntry>([
 			[
@@ -1127,10 +1133,10 @@ describe('provider credentials', () => {
 				'version_secret_1'
 			);
 			await expect(
-				t.query(internal.providerCredentials.getChatGptModels, {
+				t.query(internal.providerCredentials.getChatGptConfiguration, {
 					userId: 'user_alice'
 				})
-			).resolves.toBe(null);
+			).resolves.toEqual({ connectionId: null, modelIds: null });
 		}
 	);
 
@@ -1155,7 +1161,59 @@ describe('provider credentials', () => {
 			t.action(api.providerCredentials.issueChatGptCredential, { runId, claimId, executionSecret })
 		).rejects.toThrow('Couldn’t remove the provider credential');
 		expect(JSON.parse(entries.get(name)!.value)).toEqual(replacement);
+		await expect(
+			t
+				.withIdentity({ subject: 'user_alice' })
+				.action(api.providerCredentials.getMyConfiguration, {})
+		).resolves.toEqual({ openai: false, chatgpt: false, chatgptModelIds: null });
 	});
+
+	it.each(['disconnect', 'refresh'] as const)(
+		'reports disconnected after %s cleanup fails to delete a Vault credential',
+		async (operation) => {
+			const { t, asUser, runId, claimId, executionSecret } = await startedChatGptRun();
+			const { name, entries, credential } = await chatGptVault(
+				operation === 'refresh' ? Date.now() - 1 : Date.now() + 60_000
+			);
+			const fetchVault = stubProviderFetch(entries, (url) => {
+				if (url.endsWith('/oauth/revoke')) return new Response(null, { status: 200 });
+				if (url.endsWith('/oauth/token')) {
+					return Response.json({ error: 'invalid_grant' }, { status: 400 });
+				}
+				throw new Error(`Unexpected provider request: ${url}`);
+			});
+			vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) =>
+				init?.method === 'DELETE'
+					? Promise.resolve(new Response(null, { status: 503 }))
+					: fetchVault(input, init)
+			);
+			await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+				openai: false,
+				chatgpt: true,
+				chatgptModelIds: null
+			});
+			const cleanup =
+				operation === 'disconnect'
+					? asUser.action(api.providerCredentials.removeChatGptCredential, {
+							reportRevocation: true
+						})
+					: t.action(api.providerCredentials.issueChatGptCredential, {
+							runId,
+							claimId,
+							executionSecret
+						});
+			await expect(cleanup).rejects.toThrow('Couldn’t remove the provider credential');
+			expect(JSON.parse(entries.get(name)!.value)).toEqual(credential);
+			await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+				openai: false,
+				chatgpt: false,
+				chatgptModelIds: null
+			});
+			await expect(
+				t.query(api.providerCredentials.chatGptConnection, { runId, executionSecret })
+			).resolves.toBeNull();
+		}
+	);
 
 	it('preserves a replacement session when revocation finishes after a lease takeover', async () => {
 		const { t, asUser } = await startedChatGptRun();
@@ -1248,6 +1306,11 @@ describe('provider credentials', () => {
 		entries.get(name)!.value = 'invalid-json';
 		stubProviderFetch(entries, (url) => {
 			throw new Error(`Unexpected provider request: ${url}`);
+		});
+		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
+			openai: false,
+			chatgpt: false,
+			chatgptModelIds: null
 		});
 		await expect(
 			asUser.action(api.providerCredentials.removeChatGptCredential, { reportRevocation: true })
