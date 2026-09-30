@@ -87,8 +87,11 @@ async fn download_file(
             reqwest::StatusCode::NOT_FOUND => {
                 "Check the repository, branch or commit, and file path. The file may have moved or been deleted. Private files can also return 404 because this fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
             }
-            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+            reqwest::StatusCode::UNAUTHORIZED => {
                 "GitHub denied access. This fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
+            }
+            reqwest::StatusCode::FORBIDDEN => {
+                "GitHub refused the request. This can be caused by rate limiting or access restrictions. If rate limited, wait before trying again. This fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
             }
             reqwest::StatusCode::TOO_MANY_REQUESTS => {
                 "GitHub is rate limiting requests. Wait before trying again."
@@ -288,7 +291,7 @@ mod tests {
         for (status, hint) in [
             (404, "Check the repository"),
             (401, "GitHub denied access"),
-            (403, "GitHub denied access"),
+            (403, "rate limiting or access restrictions"),
             (429, "rate limiting"),
             (503, "Try again later"),
             (206, "Expected a complete file response"),
