@@ -71,7 +71,7 @@ pub(super) async fn fetch_github_file(
                 "summary": "Summary not generated; file was read directly from GitHub.",
                 "images": [],
             }))
-        } => result.context("failed to read GitHub file locally"),
+        } => result.context("Failed to read GitHub file"),
     }
 }
 
@@ -80,10 +80,12 @@ async fn download_file(
     url: Url,
     mut max_bytes: u64,
 ) -> anyhow::Result<(Url, Vec<u8>)> {
-    let mut response = client.get(url).send().await?.error_for_status()?;
+    let mut response = client.get(url).send().await?;
+    let status = response.status();
     anyhow::ensure!(
-        response.status() == reqwest::StatusCode::OK,
-        "expected a complete GitHub file response"
+        status == reqwest::StatusCode::OK,
+        "HTTP {status} for {}",
+        response.url()
     );
     let content_length = response.content_length();
     anyhow::ensure!(
@@ -264,6 +266,48 @@ mod tests {
                 .unwrap()
                 .contains("| sprocket | 42 |")
         );
+        assert_eq!(server.await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn http_errors_report_the_status_and_url() {
+        let cache = tempfile::tempdir().unwrap();
+        for status in [404, 401, 403, 429, 503, 206] {
+            let (url, server) = serve(vec![response(status, "text/plain", b"error")]).await;
+            let error = fetch_github_file(
+                url.clone(),
+                false,
+                cache.path(),
+                &WorkspaceCancellation::new(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                format!("{error:#}"),
+                format!(
+                    "Failed to read GitHub file: HTTP {} for {url}",
+                    reqwest::StatusCode::from_u16(status).unwrap()
+                )
+            );
+            assert_eq!(server.await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn http_errors_identify_the_url_after_redirects() {
+        let cache = tempfile::tempdir().unwrap();
+        let (url, server) = serve(vec![
+            b"HTTP/1.1 302 Found\r\nLocation: /missing.rs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+            response(404, "text/plain", b"Not Found"),
+        ])
+        .await;
+        let expected_url = url.join("/missing.rs").unwrap();
+        let error = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
+            .await
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("404 Not Found"));
+        assert!(message.contains(expected_url.as_str()));
         assert_eq!(server.await.unwrap().len(), 2);
     }
 
