@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { Id } from '$convex/_generated/dataModel';
 import {
 	attachmentMediaType,
@@ -171,22 +171,21 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 	}
 }
 
-export function useComposerAttachments(dependencies: () => Dependencies) {
-	// The instance must outlive every render because it owns uploads in flight,
-	// but it may never capture the first render's context: the desktop API,
-	// user, and thread are all resolved later. Resolve them per call instead.
+export function useComposerAttachments(
+	dependencies: Omit<Dependencies, 'getContext'> & { context: ComposerAttachmentContext }
+) {
+	// Uploads keep their instance but read context and callbacks from the latest commit.
 	const dependenciesRef = useRef(dependencies);
 	useLayoutEffect(() => {
 		dependenciesRef.current = dependencies;
 	}, [dependencies]);
-	const attachments = useMemo(
+	const [attachments] = useState(
 		() =>
 			new ComposerAttachments({
-				getContext: () => dependenciesRef.current().getContext(),
-				onError: (message) => dependenciesRef.current().onError(message),
-				localServerRequiredMessage: dependenciesRef.current().localServerRequiredMessage
-			}),
-		[]
+				getContext: () => dependenciesRef.current.context,
+				onError: (message) => dependenciesRef.current.onError(message),
+				localServerRequiredMessage: dependencies.localServerRequiredMessage
+			})
 	);
 	useStore(attachments);
 	return attachments;

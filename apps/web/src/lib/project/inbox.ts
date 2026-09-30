@@ -14,7 +14,7 @@ export type InboxQueryResult = UsePaginatedQueryObjectReturnType<typeof api.inbo
 export type InboxQueryHook = (options: InboxQueryOptions) => InboxQueryResult;
 
 export function normalizeRepositoryKeys(repositoryKeys: string[]): string[] {
-	return [...repositoryKeys].sort().filter((key, index, sorted) => key !== sorted[index - 1]);
+	return [...new Set(repositoryKeys)].sort();
 }
 
 type InboxSectionInput = {
@@ -44,9 +44,9 @@ function useInboxSection(input: InboxSectionInput, queryHook: InboxQueryHook): I
 }
 
 type InboxInput = {
-	enabled: () => boolean;
-	projects: () => string[];
-	settledOpen: () => boolean;
+	enabled: boolean;
+	repositoryKeys: string[];
+	settledOpen: boolean;
 };
 
 export function useThreadInbox(
@@ -54,11 +54,9 @@ export function useThreadInbox(
 	queryHook: InboxQueryHook = usePaginatedQueryResult
 ) {
 	const sectionInput = {
-		enabled: input.enabled(),
-		settledOpen: input.settledOpen(),
-		repositoryKeys: normalizeRepositoryKeys(input.projects())
+		enabled: input.enabled,
+		repositoryKeys: normalizeRepositoryKeys(input.repositoryKeys)
 	};
-	// Not a loop: one hook call per inbox state, in a fixed order.
 	const unsettled = useInboxSection(
 		{ state: 'unsettled', sectionOpen: true, ...sectionInput },
 		queryHook
@@ -66,7 +64,7 @@ export function useThreadInbox(
 	const settled = useInboxSection(
 		{
 			state: 'settled',
-			sectionOpen: sectionInput.settledOpen,
+			sectionOpen: input.settledOpen,
 			...sectionInput
 		},
 		queryHook

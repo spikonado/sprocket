@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from '@testing-library/react';
 import type { Id } from '$convex/_generated/dataModel';
 import type {
 	TranscriptMessage,
@@ -12,7 +12,6 @@ import ThreadTranscript from './thread-transcript';
 
 type Props = React.ComponentProps<typeof ThreadTranscript>;
 
-let cleanup: (() => Promise<void>) | undefined;
 let resize: () => void;
 
 function message(number: number): TranscriptDisplayRow {
@@ -69,14 +68,8 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 		nextBefore: undefined,
 		onLoadOlder: vi.fn()
 	};
-	const container = document.createElement('div');
-	document.body.append(container);
-	const root: Root = createRoot(container);
-	const renderTree = (next: Props) =>
-		act(() => {
-			root.render(<ThreadTranscript {...next} />);
-		});
-	renderTree(props);
+	const rendered = render(<ThreadTranscript {...props} />);
+	const container = rendered.container;
 	const viewport = container.querySelector<HTMLDivElement>('[aria-label="Conversation history"]');
 	if (!viewport) throw new Error('Missing transcript viewport');
 	const messageElements = () => [
@@ -114,20 +107,15 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 	});
 	// Layout is only observable after the mocks above, so deliver a fresh actions
 	// array to make the first commit re-measure the mocked viewport.
-	renderTree({ ...props, actions: [...props.actions] });
+	rendered.rerender(<ThreadTranscript {...props} actions={[...props.actions]} />);
 	await settle();
-	cleanup = async () => {
-		await act(async () => {
-			root.unmount();
-		});
-		container.remove();
-	};
 	return {
 		props,
 		viewport,
+		unmount: rendered.unmount,
 		setProps(patch: Partial<Props>) {
 			Object.assign(props, patch);
-			renderTree({ ...props });
+			rendered.rerender(<ThreadTranscript {...props} />);
 		},
 		scrollTo(top: number) {
 			act(() => {
@@ -152,9 +140,7 @@ beforeEach(() => {
 	);
 });
 
-afterEach(async () => {
-	await cleanup?.();
-	cleanup = undefined;
+afterEach(() => {
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
@@ -731,7 +717,7 @@ describe('transcript viewport paging', () => {
 	it('opens a newly mounted thread at the bottom rather than reusing the previous reading position', async () => {
 		const first = await renderTranscript([1, 2, 3, 4].map(message));
 		first.scrollTo(100);
-		await cleanup?.();
+		first.unmount();
 		const second = await renderTranscript([]);
 		second.setProps({ messages: [11, 12, 13, 14, 15].map(message) });
 		await settle();

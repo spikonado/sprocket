@@ -3,8 +3,8 @@ import { expect, it, vi } from 'vitest';
 import type { FunctionReturnType } from 'convex/server';
 import type { Id } from '$convex/_generated/dataModel';
 import { api } from '$convex/_generated/api';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import SettingsPayments from './settings-payments';
-import { SettingsTestClient, SettingsTestProvider } from './settings-test-client';
 
 // SAFETY: this opaque id is used only by the in-memory action client.
 const mandateId = 'mandate-test' as Id<'mandates'>;
@@ -14,13 +14,13 @@ const approval = {
 	expiresAt: '2099-01-01'
 };
 
-async function mount(client: SettingsTestClient) {
+async function mount(client: ConvexTestClient) {
 	let view!: ReturnType<typeof render>;
 	await act(async () => {
 		view = render(
-			<SettingsTestProvider client={client}>
+			<ConvexTestProvider client={client}>
 				<SettingsPayments />
-			</SettingsTestProvider>
+			</ConvexTestProvider>
 		);
 	});
 	return view;
@@ -33,10 +33,10 @@ function fillSetup() {
 }
 
 it('submits any-merchant mandates as one-time and presents the passkey approval link', async () => {
-	const client = new SettingsTestClient();
-	client.on(api.payments.listMyMandates, async () => ({ mandates: [] }));
+	const client = new ConvexTestClient();
+	client.handleAction(api.payments.listMyMandates, async () => ({ mandates: [] }));
 	const setup = vi.fn(async () => approval);
-	client.on(api.payments.setupMyMandate, setup);
+	client.handleAction(api.payments.setupMyMandate, setup);
 	await mount(client);
 	fillSetup();
 	fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'any' } });
@@ -57,12 +57,12 @@ it('submits any-merchant mandates as one-time and presents the passkey approval 
 });
 
 it('keeps a failed setup editable and retries with the entered values', async () => {
-	const client = new SettingsTestClient();
-	client.on(api.payments.listMyMandates, async () => ({ mandates: [] }));
+	const client = new ConvexTestClient();
+	client.handleAction(api.payments.listMyMandates, async () => ({ mandates: [] }));
 	const setup = vi
 		.fn(async () => approval)
 		.mockRejectedValueOnce(new Error('Approval service unavailable'));
-	client.on(api.payments.setupMyMandate, setup);
+	client.handleAction(api.payments.setupMyMandate, setup);
 	await mount(client);
 	fillSetup();
 	fireEvent.click(screen.getByRole('button', { name: 'Set up mandate' }));
@@ -76,7 +76,7 @@ it('keeps a failed setup editable and retries with the entered values', async ()
 });
 
 it('refreshes approved mandates on focus and removes the listener on unmount', async () => {
-	const client = new SettingsTestClient();
+	const client = new ConvexTestClient();
 	let approved = false;
 	const list = vi.fn(async () => ({
 		mandates: approved
@@ -92,8 +92,8 @@ it('refreshes approved mandates on focus and removes the listener on unmount', a
 				]
 			: []
 	}));
-	client.on(api.payments.listMyMandates, list);
-	client.on(api.payments.setupMyMandate, async () => approval);
+	client.handleAction(api.payments.listMyMandates, list);
+	client.handleAction(api.payments.setupMyMandate, async () => approval);
 	const view = await mount(client);
 	fillSetup();
 	await act(async () => {
@@ -114,9 +114,9 @@ it('refreshes approved mandates on focus and removes the listener on unmount', a
 });
 
 it('pauses, resumes, and cancels the selected mandate and refreshes its status', async () => {
-	const client = new SettingsTestClient();
+	const client = new ConvexTestClient();
 	let status: FunctionReturnType<typeof api.payments.setMyMandateLifecycle>['status'] = 'active';
-	client.on(api.payments.listMyMandates, async () => ({
+	client.handleAction(api.payments.listMyMandates, async () => ({
 		mandates: [
 			{
 				mandateId,
@@ -141,7 +141,7 @@ it('pauses, resumes, and cancels the selected mandate and refreshes its status',
 			} satisfies FunctionReturnType<typeof api.payments.setMyMandateLifecycle>;
 		}
 	);
-	client.on(api.payments.setMyMandateLifecycle, lifecycle);
+	client.handleAction(api.payments.setMyMandateLifecycle, lifecycle);
 	await mount(client);
 	fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
 	fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));

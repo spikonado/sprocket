@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useState } from 'react';
 import type { Watch } from 'convex/react';
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 import { api } from '$convex/_generated/api';
@@ -202,17 +202,11 @@ export class ArtifactPanel implements Store<number> {
 }
 
 export function useArtifactPanel() {
-	const panel = useMemo(() => new ArtifactPanel(), []);
+	const [panel] = useState(() => new ArtifactPanel());
 	useStore(panel);
 	return panel;
 }
 
-/**
- * Adapts the Convex registry query surface to the watcher interface used by the
- * artifact panel. The watcher reloads artifacts whenever the registry revision
- * changes, so the subscription must deliver the current revision immediately
- * and on every later change, and surface query failures instead of throwing.
- */
 export function createConvexArtifactClient(client: ConvexArtifactClient): ArtifactClient {
 	return {
 		query: (query, args) => client.query(query, args),

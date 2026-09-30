@@ -1,18 +1,8 @@
-import { afterEach, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from '@testing-library/react';
 import type { BrowserLiveViewState } from '$lib/chat/side-panel';
 import BrowserLiveView from './browser-live-view';
-
-let container: HTMLDivElement;
-let root: Root;
-afterEach(async () => {
-	await act(async () => {
-		root?.unmount();
-	});
-	container?.remove();
-	document.body.replaceChildren();
-});
 
 function session(expiresAt: number, ended = false, id = 'session'): BrowserLiveViewState {
 	return {
@@ -34,12 +24,7 @@ function renderLiveView(props: {
 	liveView: BrowserLiveViewState | null | undefined;
 	active: boolean;
 }) {
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
-	act(() => {
-		root.render(<BrowserLiveView {...props} />);
-	});
+	return render(<BrowserLiveView {...props} />);
 }
 
 it('renders the iframe for an active session', () => {
@@ -69,10 +54,10 @@ it('shows the empty state when there is no session', () => {
 });
 
 it('does not surface an action failure after the session rotates', async () => {
-	renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
+	const { rerender } = renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
 	await act(async () => {
 		document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
-		root.render(
+		rerender(
 			<BrowserLiveView active liveView={session(Date.now() + 60_000, false, 'rotated-session')} />
 		);
 	});

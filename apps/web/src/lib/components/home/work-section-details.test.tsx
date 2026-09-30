@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render as renderView } from '@testing-library/react';
 import type { Id } from '$convex/_generated/dataModel';
 import type { TranscriptDisplayDetails } from '$lib/types/sprocket';
 import WorkSectionDetails from './work-section-details';
 
 type Props = React.ComponentProps<typeof WorkSectionDetails>;
 
-let cleanup: (() => Promise<void>) | undefined;
 let intersection: () => void;
 let disconnect: ReturnType<typeof vi.fn>;
 
@@ -80,29 +79,17 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 		viewport,
 		beforeChange: vi.fn(() => restore)
 	};
-	const container = document.createElement('div');
-	viewport.append(container);
-	const root: Root = createRoot(container);
-	const renderTree = (next: Props) =>
-		act(() => {
-			root.render(<WorkSectionDetails {...next} />);
-		});
-	renderTree(props);
-	cleanup = async () => {
-		await act(async () => {
-			root.unmount();
-		});
-		viewport.remove();
-	};
+	const rendered = renderView(<WorkSectionDetails {...props} />, { container: viewport });
 	await settle();
 	return {
 		viewport,
 		props,
 		edges,
 		restore,
+		unmount: rendered.unmount,
 		setProps(patch: Partial<Props>) {
 			Object.assign(props, patch);
-			renderTree({ ...props });
+			rendered.rerender(<WorkSectionDetails {...props} />);
 		}
 	};
 }
@@ -122,9 +109,7 @@ beforeEach(() => {
 	);
 });
 
-afterEach(async () => {
-	await cleanup?.();
-	cleanup = undefined;
+afterEach(() => {
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
@@ -212,7 +197,7 @@ describe('scrolling work details', () => {
 			id += 1;
 			return page([id], id === 1 ? undefined : id, id);
 		});
-		const { viewport } = await render(load, false, true);
+		const { viewport, unmount } = await render(load, false, true);
 		expect(load).toHaveBeenCalledTimes(3);
 		act(() => intersection());
 		await settle();
@@ -223,8 +208,7 @@ describe('scrolling work details', () => {
 		});
 		await settle();
 		expect(load).toHaveBeenCalledTimes(5);
-		await cleanup?.();
-		cleanup = undefined;
+		unmount();
 		expect(disconnect).toHaveBeenCalledTimes(1);
 		expect(load.mock.calls[4][2].aborted).toBe(true);
 		act(() => {

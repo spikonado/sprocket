@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import ChatMarkdown from './chat-markdown';
 
@@ -12,31 +11,13 @@ const artifact: ArtifactEntry = {
 	scope: 'thread'
 };
 
-let container: HTMLDivElement;
-let root: Root;
-
-beforeEach(() => {
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
-});
-
-afterEach(async () => {
-	await act(async () => {
-		root.unmount();
-	});
-	container.remove();
-});
-
 function renderChatMarkdown(props: {
 	content: string;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
 	openLinksInNewTab?: boolean;
 }) {
-	act(() => {
-		root.render(<ChatMarkdown {...props} />);
-	});
+	render(<ChatMarkdown {...props} />);
 }
 
 describe('links', () => {
@@ -65,10 +46,7 @@ describe('artifact references', () => {
 		expect(reference?.textContent).toContain('About Me.md');
 		expect(reference?.textContent).toContain('Artifact · Thread');
 
-		const view = reference?.querySelector<HTMLButtonElement>('button');
-		act(() => {
-			view?.click();
-		});
+		fireEvent.click(reference!.querySelector<HTMLButtonElement>('button')!);
 		expect(onOpenArtifact).toHaveBeenCalledOnce();
 		expect(onOpenArtifact).toHaveBeenCalledWith(artifact.key);
 	});

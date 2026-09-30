@@ -1,25 +1,7 @@
 import { act, type ComponentProps } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { fireEvent } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import ProjectPicker from './project-picker';
-
-let container: HTMLDivElement;
-let root: Root;
-
-beforeEach(() => {
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
-});
-
-afterEach(async () => {
-	await act(async () => {
-		root.unmount();
-	});
-	container.remove();
-	document.body.replaceChildren();
-});
 
 function createDesktopApi() {
 	const browseFilesystem = vi.fn(async ({ partialPath }: { partialPath: string }) => {
@@ -75,9 +57,7 @@ function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> =
 		onSelect: vi.fn(),
 		...overrides
 	};
-	act(() => {
-		root.render(<ProjectPicker {...props} />);
-	});
+	render(<ProjectPicker {...props} />);
 	return { ...api, props };
 }
 
@@ -87,24 +67,10 @@ async function keydown(target: Element, init: KeyboardEventInit) {
 	});
 }
 
-async function waitUntil(check: () => void) {
-	const deadline = Date.now() + 2_000;
-	while (true) {
-		try {
-			check();
-			return;
-		} catch (error) {
-			if (Date.now() > deadline) throw error;
-			await act(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			});
-		}
-	}
-}
-
 async function waitForDirectories() {
-	await waitUntil(() => {
+	await waitFor(() => {
 		expect(document.querySelectorAll('[role="option"]')).toHaveLength(3);
+		expect(document.querySelector('[role="option"][aria-selected="true"]')).not.toBeNull();
 	});
 }
 
@@ -170,7 +136,7 @@ describe('ProjectPicker', () => {
 
 		await keydown(input, { key: 'Enter', ctrlKey: true });
 
-		await waitUntil(() => {
+		await waitFor(() => {
 			expect(resolveWorkspacePath).toHaveBeenCalledWith({
 				workspacePath: '/home/me',
 				createIfMissing: false

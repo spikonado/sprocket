@@ -1,12 +1,6 @@
 import { useState, type ComponentProps } from 'react';
 import { PromptComposerView } from './prompt-composer';
 
-/**
- * Test host for the composer's bindable props. The composer is fully controlled, so tests
- * render this harness instead of mocking every callback: harness state stands in for the
- * parent state that a real screen would own, and writes are still forwarded to the callbacks
- * the test passes in.
- */
 export default function PromptComposerTestHarness({
 	composerProps
 }: {

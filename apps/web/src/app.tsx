@@ -411,7 +411,7 @@ export default function App({
 	const [pendingTheme, setPendingTheme] = useState<SprocketTheme | null>(null);
 	const themeSaveGeneration = useRef(0);
 
-	const [, setSubmissionTrackingVersion] = useState(0);
+	const [submissionTrackingVersion, setSubmissionTrackingVersion] = useState(0);
 	const bumpSubmissionTracking = useCallback(
 		() => setSubmissionTrackingVersion((version) => version + 1),
 		[]
@@ -445,15 +445,15 @@ export default function App({
 		[bumpSubmissionTracking, composerRecoveries, recoveredSubmissionIds]
 	);
 
-	const composerAttachments = useComposerAttachments(() => ({
-		getContext: () => ({
+	const composerAttachments = useComposerAttachments({
+		context: {
 			api: desktopApi,
 			userId: signedInUserId,
 			threadId: currentThreadId
-		}),
-		onError: (message) => setCurrentError(message),
+		},
+		onError: setCurrentError,
 		localServerRequiredMessage
-	}));
+	});
 
 	const transcript = useTranscriptReplica();
 	const artifactPanel = useArtifactPanel();
@@ -551,9 +551,9 @@ export default function App({
 	}, [inboxProjects, projectFilter]);
 
 	const inbox = useThreadInbox({
-		enabled: () => authReady,
-		projects: () => inboxProjectKeys,
-		settledOpen: () => settledInboxOpen
+		enabled: authReady,
+		repositoryKeys: inboxProjectKeys,
+		settledOpen: settledInboxOpen
 	});
 
 	const currentActiveThread = dataForThread(activeThreadQuery.data, currentThreadId);
@@ -1760,7 +1760,6 @@ export default function App({
 		setFastMode(thread.fastMode ?? false);
 	}, [currentActiveThread]);
 
-	// Restore a pending composer recovery when the composer scope changes.
 	useEffect(() => {
 		const userId = signedInUserId;
 		const recoveryScope = getComposerScope(currentThreadId, currentProjectPath);
@@ -1814,6 +1813,7 @@ export default function App({
 		composerAttachments,
 		composerRecoveries,
 		recoveredSubmissionIds,
+		submissionTrackingVersion,
 		bumpSubmissionTracking
 	]);
 

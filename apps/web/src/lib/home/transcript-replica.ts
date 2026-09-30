@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useState } from 'react';
 import type { Id } from '$convex/_generated/dataModel';
 import { DisplayHistory, visibleDisplayMessages } from '$lib/project/display-history';
 import { mergeLiveOverlays } from '$lib/project/transcript';
@@ -236,7 +236,7 @@ export class TranscriptReplica implements Store<number> {
 }
 
 export function useTranscriptReplica() {
-	const replica = useMemo(() => new TranscriptReplica(), []);
+	const [replica] = useState(() => new TranscriptReplica());
 	useStore(replica);
 	return replica;
 }

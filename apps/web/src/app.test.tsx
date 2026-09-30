@@ -1,206 +1,17 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import {
-	ConvexProviderWithAuth,
-	ConvexReactClient,
-	type AuthTokenFetcher,
-	type MutationOptions,
-	type Watch,
-	type WatchQueryOptions
-} from 'convex/react';
-import {
-	getFunctionName,
-	type ArgsAndOptions,
-	type FunctionArgs,
-	type FunctionReference,
-	type FunctionReference_future,
-	type FunctionReturnType,
-	type OptionalRestArgs
-} from 'convex/server';
 import { api } from '$convex/_generated/api';
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { AgentQuestionSnapshot } from '$convex/agentQuestions';
 import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import type { UpdateState } from '$lib/updates';
 import type { DesktopApi, ProjectAttachment, TranscriptDisplayPage } from '$lib/types/sprocket';
 import App, { type AppRuntime } from './app';
-
-type ConvexQueryReference = FunctionReference<'query'> | FunctionReference_future<'query'>;
-type ConvexMutationReference = FunctionReference<'mutation'> | FunctionReference_future<'mutation'>;
-type ConvexActionReference = FunctionReference<'action'> | FunctionReference_future<'action'>;
-
-type FixtureReader = {
-	read: <Result>() => Result;
-};
-
-function fixtureReader<Value>(value: Value): FixtureReader {
-	const read = <Result,>(): Result => {
-		// SAFETY: register* methods store a function reference's
-		// FunctionReturnType under its getFunctionName key, and reads request
-		// the FunctionReturnType of the reference with that same name.
-		return value as Value & Result;
-	};
-	return { read };
-}
-
-type FixtureWatch<Result> = {
-	onUpdate(callback: () => void): () => void;
-	localQueryResult(): Result | undefined;
-	journal(): undefined;
-};
-
-type FixturePaginatedWatch<Item> = {
-	onUpdate(callback: () => void): () => void;
-	localQueryResult():
-		{ results: Item[]; status: 'Exhausted'; loadMore: (numItems: number) => boolean } | undefined;
-};
-
-type FixturePaginatedOptions = {
-	initialNumItems: number;
-	id: number;
-};
-
-// Matches the real client's watch contract closely enough for convex/react hooks:
-// queries resolve from registered fixtures, and paginated queries resolve to one
-// exhausted page. The tests never contact a server.
-class FixtureConvexClient extends ConvexReactClient {
-	#queryFixtures = new Map<string, FixtureReader>();
-	#paginatedFixtures = new Map<string, FixtureReader>();
-	#actionFixtures = new Map<string, FixtureReader>();
-	#mutationFixtures = new Map<string, FixtureReader>();
-	#queryListeners = new Map<string, Set<() => void>>();
-
-	constructor() {
-		super('https://fixtures.invalid');
-	}
-
-	registerQuery<Query extends ConvexQueryReference>(
-		query: Query,
-		result: FunctionReturnType<Query>
-	): void {
-		const name = getFunctionName(query);
-		this.#queryFixtures.set(name, fixtureReader(result));
-		this.#queryListeners.get(name)?.forEach((listener) => listener());
-	}
-
-	registerPaginatedQuery<Query extends ConvexQueryReference>(
-		query: Query,
-		page: FunctionReturnType<Query>['page']
-	): void {
-		this.#paginatedFixtures.set(getFunctionName(query), fixtureReader(page));
-	}
-
-	registerAction<Action extends ConvexActionReference>(
-		action: Action,
-		result: FunctionReturnType<Action>
-	): void {
-		this.#actionFixtures.set(getFunctionName(action), fixtureReader(result));
-	}
-
-	registerMutation<Mutation extends ConvexMutationReference>(
-		mutation: Mutation,
-		result: FunctionReturnType<Mutation> | Promise<FunctionReturnType<Mutation>>
-	): void {
-		this.#mutationFixtures.set(getFunctionName(mutation), fixtureReader(result));
-	}
-
-	override watchQuery<Query extends ConvexQueryReference>(
-		query: Query,
-		...argsAndOptions: ArgsAndOptions<Query, WatchQueryOptions>
-	): Watch<FunctionReturnType<Query>> {
-		void argsAndOptions;
-		const name = getFunctionName(query);
-		const watch: FixtureWatch<FunctionReturnType<Query>> = {
-			onUpdate: (callback) => {
-				let listeners = this.#queryListeners.get(name);
-				if (!listeners) {
-					listeners = new Set();
-					this.#queryListeners.set(name, listeners);
-				}
-				listeners.add(callback);
-				return () => {
-					listeners.delete(callback);
-				};
-			},
-			localQueryResult: () => this.#queryFixtures.get(name)?.read<FunctionReturnType<Query>>(),
-			journal: () => undefined
-		};
-		return watch;
-	}
-
-	override query<Query extends ConvexQueryReference>(
-		query: Query,
-		...args: OptionalRestArgs<Query>
-	): Promise<FunctionReturnType<Query>> {
-		void args;
-		return Promise.resolve(this.#readQueryFixture(query));
-	}
-
-	watchPaginatedQuery<Query extends ConvexQueryReference>(
-		query: Query,
-		args: FunctionArgs<Query>,
-		options: FixturePaginatedOptions
-	): FixturePaginatedWatch<FunctionReturnType<Query>['page'][number]> {
-		void args;
-		void options;
-		const reader = this.#paginatedFixtures.get(getFunctionName(query));
-		const page = reader?.read<FunctionReturnType<Query>['page']>();
-		return {
-			onUpdate: () => () => {},
-			localQueryResult: () =>
-				page ? { results: page, status: 'Exhausted', loadMore: () => false } : undefined
-		};
-	}
-
-	override mutation<Mutation extends ConvexMutationReference>(
-		mutation: Mutation,
-		...argsAndOptions: ArgsAndOptions<Mutation, MutationOptions<FunctionArgs<Mutation>>>
-	): Promise<FunctionReturnType<Mutation>> {
-		void argsAndOptions;
-		const name = getFunctionName(mutation);
-		const reader = this.#mutationFixtures.get(name);
-		if (!reader) throw new Error(`No mutation fixture registered for ${name}`);
-		return Promise.resolve(reader.read<FunctionReturnType<Mutation>>());
-	}
-
-	override action<Action extends ConvexActionReference>(
-		action: Action,
-		...args: OptionalRestArgs<Action>
-	): Promise<FunctionReturnType<Action>> {
-		void args;
-		const name = getFunctionName(action);
-		const reader = this.#actionFixtures.get(name);
-		if (!reader) throw new Error(`No action fixture registered for ${name}`);
-		return Promise.resolve(reader.read<FunctionReturnType<Action>>());
-	}
-
-	override setAuth(
-		fetchToken: AuthTokenFetcher,
-		onChange?: (isAuthenticated: boolean) => void
-	): void {
-		void fetchToken;
-		onChange?.(true);
-	}
-
-	override clearAuth(): void {}
-
-	#readQueryFixture<Query extends ConvexQueryReference>(query: Query): FunctionReturnType<Query> {
-		const name = getFunctionName(query);
-		const reader = this.#queryFixtures.get(name);
-		if (!reader) throw new Error(`No query fixture registered for ${name}`);
-		return reader.read<FunctionReturnType<Query>>();
-	}
-}
-
-const fetchTestAccessToken = async () => 'test-access-token';
-
-function useTestAuth() {
-	return { isLoading: false, isAuthenticated: true, fetchAccessToken: fetchTestAccessToken };
-}
 
 const modelCatalog: ModelCatalog = {
 	defaultModelId,
@@ -305,16 +116,8 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 	};
 }
 
-function deferred<T>() {
-	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((res) => {
-		resolve = res;
-	});
-	return { promise, resolve };
-}
-
-function createConvexFixtures(): FixtureConvexClient {
-	const client = new FixtureConvexClient();
+function createConvexFixtures(): ConvexTestClient {
+	const client = new ConvexTestClient();
 	client.registerQuery(api.uiPreferences.getMine, null);
 	client.registerQuery(api.usage.getMyUsage, {
 		tier: 'free',
@@ -346,12 +149,12 @@ function createRuntime(desktopApi: DesktopApi): AppRuntime {
 	};
 }
 
-async function renderApp(client: FixtureConvexClient, runtime: AppRuntime): Promise<void> {
+async function renderApp(client: ConvexTestClient, runtime: AppRuntime): Promise<void> {
 	await act(async () => {
 		render(
-			<ConvexProviderWithAuth client={client} useAuth={useTestAuth}>
+			<ConvexTestProvider client={client}>
 				<App config={testConfig} runtime={runtime} />
-			</ConvexProviderWithAuth>
+			</ConvexTestProvider>
 		);
 		// Let the boot promise chain settle inside act so every state update is covered.
 		await new Promise((resolve) => setTimeout(resolve, 0));
@@ -453,8 +256,8 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
 	const gamma = projectAttachment('/work/gamma', 'repo-gamma', 'Gamma');
 	const canonicalAlpha = projectAttachment('/work/alpha-renamed', 'repo-alpha', 'Alpha (renamed)');
-	const verifyBeta = deferred<ProjectAttachment[]>();
-	const staleRefresh = deferred<ProjectAttachment[]>();
+	const verifyBeta = Promise.withResolvers<ProjectAttachment[]>();
+	const staleRefresh = Promise.withResolvers<ProjectAttachment[]>();
 	const resolveWorkspacePath = vi.fn(async () => ({
 		workspacePath: alpha.workspacePath,
 		displayName: alpha.displayName,
@@ -502,7 +305,7 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 
 it('keeps a saved theme until the preference subscription advances', async () => {
 	const client = createConvexFixtures();
-	const save = deferred<null>();
+	const save = Promise.withResolvers<null>();
 	const preferences: Doc<'uiPreferences'> = {
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		_id: 'preferences-a' as Id<'uiPreferences'>,
@@ -532,7 +335,7 @@ it('keeps a saved theme until the preference subscription advances', async () =>
 
 it('applies a remote theme update received while a local theme save is pending', async () => {
 	const client = createConvexFixtures();
-	const save = deferred<null>();
+	const save = Promise.withResolvers<null>();
 	const preferences: Doc<'uiPreferences'> = {
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		_id: 'preferences-a' as Id<'uiPreferences'>,
@@ -563,7 +366,7 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
 	const changedAlpha = projectAttachment('/work/alpha', 'repo-new-alpha', 'Alpha');
-	const staleRefresh = deferred<ProjectAttachment[]>();
+	const staleRefresh = Promise.withResolvers<ProjectAttachment[]>();
 	const runAgent = vi.fn(async () => ({
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		runId: 'run-new' as Id<'runs'>,
@@ -615,6 +418,37 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 			})
 		)
 	);
+});
+
+it('restores the submitted prompt and error when an agent launch fails', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const listProjectAttachments = vi.fn(async () => [alpha]);
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments,
+				resolveWorkspacePath: async () => alpha,
+				runAgent
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	await waitFor(() => expect(listProjectAttachments).toHaveBeenCalledTimes(3));
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	expect(composer).toHaveProperty('value', '');
+	await act(async () => {
+		launch.reject(new Error('Local agent unavailable.'));
+	});
+	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
+	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
 });
 
 it('launches the continuation prompt after an agent question is answered', async () => {

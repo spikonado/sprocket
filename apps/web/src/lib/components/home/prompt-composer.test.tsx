@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
@@ -43,23 +43,6 @@ const skills = [
 	{ name: 'zap', description: 'Zap tooling' }
 ];
 
-let container: HTMLDivElement;
-let root: Root;
-
-beforeEach(() => {
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
-});
-
-afterEach(async () => {
-	await act(async () => {
-		root.unmount();
-	});
-	container.remove();
-	document.body.replaceChildren();
-});
-
 function composerProps(overrides: Partial<PromptComposerViewProps> = {}): PromptComposerViewProps {
 	return {
 		attachments: [],
@@ -80,20 +63,18 @@ function composerProps(overrides: Partial<PromptComposerViewProps> = {}): Prompt
 
 function renderComposer(overrides: Partial<PromptComposerViewProps> = {}) {
 	const props = composerProps(overrides);
-	act(() => {
-		root.render(<PromptComposerTestHarness composerProps={props} />);
-	});
+	const view = render(<PromptComposerTestHarness composerProps={props} />);
 	const composer = document.querySelector<HTMLElement>('[aria-label="Message composer"]');
 	if (!composer) throw new Error('Message composer was not rendered');
 	const textarea = composer.querySelector<HTMLTextAreaElement>('textarea');
 	if (!textarea) throw new Error('Composer textarea was not rendered');
-	return { props, composer, textarea };
-}
-
-function rerenderComposer(props: PromptComposerViewProps) {
-	act(() => {
-		root.render(<PromptComposerTestHarness composerProps={props} />);
-	});
+	return {
+		props,
+		composer,
+		textarea,
+		rerender: (next: PromptComposerViewProps) =>
+			view.rerender(<PromptComposerTestHarness composerProps={next} />)
+	};
 }
 
 async function click(target: HTMLElement | null) {
@@ -186,12 +167,12 @@ describe('PromptComposer file drag and drop', () => {
 	});
 
 	it('clears the drop target and rejects files when attachments become disabled', () => {
-		const { composer, props } = renderComposer();
+		const { composer, props, rerender } = renderComposer();
 		const transfer = dataTransfer(['Files'], [new File(['data'], 'notes.txt')]);
 
 		dispatchDrag(composer, 'dragenter', transfer);
 		expect(document.querySelector('[role="status"]')).not.toBeNull();
-		rerenderComposer({ ...props, isRunning: true });
+		rerender({ ...props, isRunning: true });
 		expect(document.querySelector('[role="status"]')).toBeNull();
 
 		dispatchDrag(composer, 'dragover', transfer);

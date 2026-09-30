@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from '@testing-library/react';
 import ReasoningSelector from './reasoning-selector';
 
 const model = {
@@ -23,32 +23,8 @@ const providerManagedModel = {
 
 type SelectorProps = React.ComponentProps<typeof ReasoningSelector>;
 
-let container: HTMLDivElement;
-let root: Root;
-
-beforeEach(() => {
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
-});
-
-afterEach(async () => {
-	await act(async () => {
-		root.unmount();
-	});
-	container.remove();
-});
-
 function renderSelector(overrides: Partial<SelectorProps> = {}) {
-	act(() => {
-		root.render(<ReasoningSelector model={model} reasoningEffort="medium" {...overrides} />);
-	});
-}
-
-function rerenderSelector(overrides: Partial<SelectorProps> = {}) {
-	act(() => {
-		root.render(<ReasoningSelector model={model} reasoningEffort="medium" {...overrides} />);
-	});
+	return render(<ReasoningSelector model={model} reasoningEffort="medium" {...overrides} />);
 }
 
 function openSelector() {
@@ -99,7 +75,7 @@ describe('ReasoningSelector Fast mode', () => {
 
 	it('renders an enabled toggle when Fast mode is available', () => {
 		const onFastModeChange = vi.fn();
-		renderSelector({ fastModeAccess: 'available', onFastModeChange });
+		const { rerender } = renderSelector({ fastModeAccess: 'available', onFastModeChange });
 		openSelector();
 		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
 		expect(toggle?.getAttribute('aria-checked')).toBe('false');
@@ -107,7 +83,15 @@ describe('ReasoningSelector Fast mode', () => {
 			toggle?.click();
 		});
 		expect(onFastModeChange).toHaveBeenCalledWith(true);
-		rerenderSelector({ fastModeAccess: 'available', fastMode: true, onFastModeChange });
+		rerender(
+			<ReasoningSelector
+				model={model}
+				reasoningEffort="medium"
+				fastModeAccess="available"
+				fastMode
+				onFastModeChange={onFastModeChange}
+			/>
+		);
 		expect(toggle?.getAttribute('aria-checked')).toBe('true');
 	});
 

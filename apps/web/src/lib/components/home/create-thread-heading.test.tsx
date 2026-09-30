@@ -1,25 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act, type ComponentProps } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { render } from '@testing-library/react';
 import type { Project } from '$lib/types/sprocket';
 import CreateThreadHeading from './create-thread-heading';
-
-let container: HTMLDivElement;
-let root: Root;
-
-beforeEach(() => {
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
-});
-
-afterEach(async () => {
-	await act(async () => {
-		root.unmount();
-	});
-	container.remove();
-	document.body.replaceChildren();
-});
 
 function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHeading>> = {}) {
 	const props: ComponentProps<typeof CreateThreadHeading> = {
@@ -29,9 +12,7 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 		onAddProject: vi.fn(),
 		...overrides
 	};
-	act(() => {
-		root.render(<CreateThreadHeading {...props} />);
-	});
+	render(<CreateThreadHeading {...props} />);
 	return props;
 }
 

@@ -13,45 +13,25 @@ function storageId(value: string): Id<'_storage'> {
 	return value as Id<'_storage'>;
 }
 
-function createDesktopApi(overrides: { uploadFails?: Error } = {}) {
-	const uploads: Array<{ userId: string; name: string }> = [];
-	const discards: Array<{ userId: string; storageId: Id<'_storage'> }> = [];
-	const pending: Array<{ resolve: (value: TranscriptUploadResult) => void }> = [];
-	const api: ComposerAttachmentApi = {
-		uploadTranscriptAttachment: async (request) => {
-			uploads.push({ userId: request.userId, name: request.name });
-			if (overrides.uploadFails) throw overrides.uploadFails;
-			return new Promise<TranscriptUploadResult>((resolve) => {
-				pending.push({ resolve });
-			});
-		},
-		discardTranscriptAttachment: async (request) => {
-			discards.push({ userId: request.userId, storageId: request.storageId });
-			return true;
-		}
+function uploadResult(storage: string): TranscriptUploadResult {
+	return {
+		storageId: storageId(storage),
+		name: 'notes.txt',
+		mediaType: 'text/plain',
+		size: 8,
+		url: 'blob:local'
 	};
-	return { api, uploads, discards, pending };
 }
 
-type AttachmentHarness = {
-	context: ComposerAttachmentContext;
-	onError: (message: string) => void;
-};
-
-function attachmentHarness(
-	context: ComposerAttachmentContext,
-	onError: (message: string) => void = () => {}
-): AttachmentHarness {
-	return { context, onError };
-}
-
-function renderAttachments(harness: AttachmentHarness) {
-	return renderHook(() =>
-		useComposerAttachments(() => ({
-			getContext: () => harness.context,
-			onError: harness.onError,
-			localServerRequiredMessage: 'Connect to a running Sprocket server to use this project.'
-		}))
+function renderAttachments(context: ComposerAttachmentContext, onError = vi.fn()) {
+	return renderHook(
+		(context: ComposerAttachmentContext) =>
+			useComposerAttachments({
+				context,
+				onError,
+				localServerRequiredMessage: 'Connect to a running Sprocket server to use this project.'
+			}),
+		{ initialProps: context }
 	);
 }
 
@@ -59,91 +39,82 @@ function textFile(name = 'notes.txt') {
 	return new File(['contents'], name, { type: 'text/plain' });
 }
 
-async function flushUploadStart() {
-	await act(async () => {
-		await Promise.resolve();
-		await Promise.resolve();
-	});
-}
-
 it('uploads with the context committed when the file is added, not the first render', async () => {
-	const { api, uploads, pending } = createDesktopApi();
-	const harness = attachmentHarness({ api: null, userId: null, threadId: null });
-	const { result, rerender } = renderAttachments(harness);
+	const gate = Promise.withResolvers<TranscriptUploadResult>();
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(async () => gate.promise),
+		discardTranscriptAttachment: vi.fn(async () => true)
+	};
+	const { result, rerender } = renderAttachments({ api: null, userId: null, threadId: null });
 
-	rerender();
-	harness.context = { api, userId: 'user-a', threadId: null };
-	act(() => {
+	rerender({ api, userId: 'user-a', threadId: null });
+	await act(async () => {
 		result.current.add([textFile()]);
 	});
-	await flushUploadStart();
 
-	expect(uploads).toEqual([{ userId: 'user-a', name: 'notes.txt' }]);
+	expect(api.uploadTranscriptAttachment).toHaveBeenCalledWith({
+		userId: 'user-a',
+		name: 'notes.txt',
+		file: expect.any(File),
+		threadId: undefined
+	});
 
 	await act(async () => {
-		pending[0].resolve({
-			storageId: storageId('storage-1'),
-			name: 'notes.txt',
-			mediaType: 'text/plain',
-			size: 8,
-			url: 'blob:local'
-		});
+		gate.resolve(uploadResult('storage-1'));
 	});
 	expect(result.current.items[0]?.status).toBe('ready');
 	expect(result.current.items[0]?.storageId).toBe('storage-1');
 });
 
 it('reports an unavailable server when the context is still the unconnected one', async () => {
-	const onError = vi.fn<(message: string) => void>();
-	const harness = attachmentHarness({ api: null, userId: null, threadId: null }, onError);
-	const { result } = renderAttachments(harness);
+	const onError = vi.fn();
+	const { result } = renderAttachments({ api: null, userId: null, threadId: null }, onError);
 
-	act(() => {
+	await act(async () => {
 		result.current.add([textFile()]);
 	});
-	await flushUploadStart();
 
 	expect(onError).toHaveBeenCalledWith('Connect to a running Sprocket server to use this project.');
 	expect(result.current.items[0]?.status).toBe('error');
 });
 
 it('discards a late upload under the account that owned it, not the current one', async () => {
-	const { api, pending, discards } = createDesktopApi();
-	const harness = attachmentHarness({ api, userId: 'user-a', threadId: null });
-	const { result } = renderAttachments(harness);
+	const gate = Promise.withResolvers<TranscriptUploadResult>();
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(async () => gate.promise),
+		discardTranscriptAttachment: vi.fn(async () => true)
+	};
+	const { result, rerender } = renderAttachments({ api, userId: 'user-a', threadId: null });
 
-	act(() => {
+	await act(async () => {
 		result.current.add([textFile()]);
 	});
-	await flushUploadStart();
-	const localId = result.current.items[0]?.localId;
-	expect(localId).toBeDefined();
+	const { localId } = result.current.items[0];
 
-	// The account changes and the attachment is gone before the upload lands.
-	harness.context = { api, userId: 'user-b', threadId: null };
+	rerender({ api, userId: 'user-b', threadId: null });
 	act(() => {
-		result.current.remove(localId!);
+		result.current.remove(localId);
 	});
 	await act(async () => {
-		pending[0].resolve({
-			storageId: storageId('storage-9'),
-			name: 'notes.txt',
-			mediaType: 'text/plain',
-			size: 8,
-			url: 'blob:local'
-		});
+		gate.resolve(uploadResult('storage-9'));
 	});
 
-	expect(discards).toEqual([{ userId: 'user-a', storageId: 'storage-9' }]);
+	expect(api.discardTranscriptAttachment).toHaveBeenCalledWith({
+		userId: 'user-a',
+		storageId: storageId('storage-9'),
+		threadId: undefined
+	});
 	expect(result.current.items).toEqual([]);
 });
 
 it('keeps one stable instance across renders and notifies subscribers on change', () => {
-	const { api } = createDesktopApi();
-	const harness = attachmentHarness({ api, userId: 'user-a', threadId: null });
-	const { result, rerender } = renderAttachments(harness);
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(),
+		discardTranscriptAttachment: vi.fn(async () => true)
+	};
+	const { result, rerender } = renderAttachments({ api, userId: 'user-a', threadId: null });
 	const instance = result.current;
-	const listener = vi.fn<() => void>();
+	const listener = vi.fn();
 	const unsubscribe = instance.subscribe(listener);
 	const before = instance.getSnapshot();
 
@@ -160,16 +131,27 @@ it('keeps one stable instance across renders and notifies subscribers on change'
 	unsubscribe();
 });
 
-it('reports upload failures through onError', async () => {
-	const { api } = createDesktopApi({ uploadFails: new Error('Gateway rejected the upload.') });
-	const onError = vi.fn<(message: string) => void>();
-	const harness = attachmentHarness({ api, userId: 'user-a', threadId: null }, onError);
-	const { result } = renderAttachments(harness);
-
-	act(() => {
+it('reports a pending upload failure through the latest committed onError', async () => {
+	const gate = Promise.withResolvers<TranscriptUploadResult>();
+	const api: ComposerAttachmentApi = {
+		uploadTranscriptAttachment: vi.fn(async () => gate.promise),
+		discardTranscriptAttachment: vi.fn(async () => true)
+	};
+	const context = { api, userId: 'user-a', threadId: null };
+	const previousOnError = vi.fn();
+	const { result, rerender } = renderHook(
+		(onError) =>
+			useComposerAttachments({ context, onError, localServerRequiredMessage: 'Connect a server.' }),
+		{ initialProps: previousOnError }
+	);
+	await act(async () => {
 		result.current.add([textFile()]);
 	});
-	await flushUploadStart();
+	const onError = vi.fn();
+	rerender(onError);
+	await act(async () => {
+		gate.reject(new Error('Gateway rejected the upload.'));
+	});
 
 	expect(onError).toHaveBeenCalledWith('Gateway rejected the upload.');
 	expect(result.current.items[0]?.status).toBe('error');

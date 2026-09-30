@@ -1,6 +1,5 @@
 import { act, useState, type ComponentProps } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, render as renderView } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import { INBOX_STATES } from '$convex/lib/inboxState';
@@ -12,25 +11,13 @@ type SidebarProps = Omit<
 >;
 type Thread = Doc<'threadRecords'>;
 
-let container: HTMLDivElement;
-let root: Root;
-
 beforeEach(() => {
 	vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
-	Element.prototype.scrollIntoView = vi.fn();
 	localStorage.clear();
-	container = document.createElement('div');
-	document.body.append(container);
-	root = createRoot(container);
 });
 
-afterEach(async () => {
-	await act(async () => {
-		root.unmount();
-	});
-	container.remove();
-	document.body.replaceChildren();
+afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
@@ -90,9 +77,7 @@ function Harness(input: SidebarProps) {
 
 async function render(records: Thread[]) {
 	const input = props(records);
-	act(() => {
-		root.render(<Harness {...input} />);
-	});
+	renderView(<Harness {...input} />);
 	await act(async () => {});
 	return input;
 }
@@ -174,9 +159,7 @@ it('loads more threads only after the user clicks Show more', async () => {
 	const input = props([thread()]);
 	const unsettled = input.sections.find((section) => section.state === 'unsettled')!;
 	unsettled.canLoadMore = true;
-	act(() => {
-		root.render(<Harness {...input} />);
-	});
+	renderView(<Harness {...input} />);
 	await flush();
 
 	const showMore = [...document.querySelectorAll<HTMLButtonElement>('button')].find(

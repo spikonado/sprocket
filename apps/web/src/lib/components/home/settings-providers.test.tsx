@@ -3,18 +3,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, expect, it, vi } from 'vitest';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '$convex/_generated/api';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import SettingsProviders from './settings-providers';
-import { deferred, SettingsTestClient, SettingsTestProvider } from './settings-test-client';
 
 afterEach(() => {
 	cleanup();
 	vi.useRealTimers();
 });
 
-function mount(client: SettingsTestClient, openAiConfigured = false) {
+function mount(client: ConvexTestClient, openAiConfigured = false) {
 	const onConfigurationChange = vi.fn();
 	const view = render(
-		<SettingsTestProvider client={client}>
+		<ConvexTestProvider client={client}>
 			<SettingsProviders
 				openAiConfigured={openAiConfigured}
 				chatGptConfigured={false}
@@ -23,15 +23,15 @@ function mount(client: SettingsTestClient, openAiConfigured = false) {
 				loadError={null}
 				onConfigurationChange={onConfigurationChange}
 			/>
-		</SettingsTestProvider>
+		</ConvexTestProvider>
 	);
 	return { ...view, onConfigurationChange };
 }
 
 it('saves an API key, clears the input, and reports the configured provider', async () => {
-	const client = new SettingsTestClient();
+	const client = new ConvexTestClient();
 	const save = vi.fn(async () => null);
-	client.on(api.providerCredentials.saveOpenAiKey, save);
+	client.handleAction(api.providerCredentials.saveOpenAiKey, save);
 	const view = mount(client);
 	fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'sk-test-not-a-secret' } });
 	fireEvent.click(screen.getByRole('button', { name: 'Connect API key' }));
@@ -46,9 +46,9 @@ it('saves an API key, clears the input, and reports the configured provider', as
 });
 
 it('shows key validation failures and permits a successful retry', async () => {
-	const client = new SettingsTestClient();
+	const client = new ConvexTestClient();
 	const save = vi.fn(async () => null).mockRejectedValueOnce(new Error('Invalid API key'));
-	client.on(api.providerCredentials.saveOpenAiKey, save);
+	client.handleAction(api.providerCredentials.saveOpenAiKey, save);
 	const view = mount(client);
 	fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'sk-test-not-a-secret' } });
 	fireEvent.click(screen.getByRole('button', { name: 'Connect API key' }));
@@ -63,9 +63,9 @@ it('shows key validation failures and permits a successful retry', async () => {
 });
 
 it('removes a configured key after confirmation', async () => {
-	const client = new SettingsTestClient();
+	const client = new ConvexTestClient();
 	const remove = vi.fn(async () => null);
-	client.on(api.providerCredentials.removeOpenAiKey, remove);
+	client.handleAction(api.providerCredentials.removeOpenAiKey, remove);
 	const view = mount(client, true);
 	fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
@@ -90,9 +90,9 @@ function deviceLogin() {
 
 it('completes device sign-in and reports the available models', async () => {
 	vi.useFakeTimers();
-	const client = new SettingsTestClient();
-	client.on(api.providerCredentials.beginChatGptDeviceLogin, async () => deviceLogin());
-	client.on(api.providerCredentials.pollChatGptDeviceLogin, async () => ({
+	const client = new ConvexTestClient();
+	client.handleAction(api.providerCredentials.beginChatGptDeviceLogin, async () => deviceLogin());
+	client.handleAction(api.providerCredentials.pollChatGptDeviceLogin, async () => ({
 		status: 'connected' as const,
 		modelIds: ['test-model']
 	}));
@@ -113,13 +113,15 @@ it('completes device sign-in and reports the available models', async () => {
 
 it('cancels device sign-in on unmount while its completion is in flight', async () => {
 	vi.useFakeTimers();
-	const client = new SettingsTestClient();
+	const client = new ConvexTestClient();
 	const poll =
-		deferred<FunctionReturnType<typeof api.providerCredentials.pollChatGptDeviceLogin>>();
+		Promise.withResolvers<
+			FunctionReturnType<typeof api.providerCredentials.pollChatGptDeviceLogin>
+		>();
 	const cancel = vi.fn(async () => null);
-	client.on(api.providerCredentials.beginChatGptDeviceLogin, async () => deviceLogin());
-	client.on(api.providerCredentials.pollChatGptDeviceLogin, () => poll.promise);
-	client.on(api.providerCredentials.cancelChatGptDeviceLogin, cancel);
+	client.handleAction(api.providerCredentials.beginChatGptDeviceLogin, async () => deviceLogin());
+	client.handleAction(api.providerCredentials.pollChatGptDeviceLogin, () => poll.promise);
+	client.handleAction(api.providerCredentials.cancelChatGptDeviceLogin, cancel);
 	const view = mount(client);
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Connect ChatGPT' }));
