@@ -82,27 +82,11 @@ async fn download_file(
 ) -> anyhow::Result<(Url, Vec<u8>)> {
     let mut response = client.get(url).send().await?;
     let status = response.status();
-    if status != reqwest::StatusCode::OK {
-        let hint = match status {
-            reqwest::StatusCode::NOT_FOUND => {
-                "Check the repository, branch or commit, and file path. The file may have moved or been deleted. Private files can also return 404 because this fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
-            }
-            reqwest::StatusCode::UNAUTHORIZED => {
-                "GitHub denied access. This fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
-            }
-            reqwest::StatusCode::FORBIDDEN => {
-                "GitHub refused the request. This can be caused by rate limiting or access restrictions. If rate limited, wait before trying again. This fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
-            }
-            reqwest::StatusCode::TOO_MANY_REQUESTS => {
-                "GitHub is rate limiting requests. Wait before trying again."
-            }
-            _ if status.is_server_error() => {
-                "GitHub could not complete the request. Try again later."
-            }
-            _ => "Expected a complete file response with HTTP 200 OK.",
-        };
-        anyhow::bail!("GitHub returned {status} for {}. {hint}", response.url());
-    }
+    anyhow::ensure!(
+        status == reqwest::StatusCode::OK,
+        "HTTP {status} for {}",
+        response.url()
+    );
     let content_length = response.content_length();
     anyhow::ensure!(
         content_length.is_none_or(|size| size <= max_bytes),
@@ -286,16 +270,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_errors_explain_the_status_and_next_step() {
+    async fn http_errors_report_the_status_and_url() {
         let cache = tempfile::tempdir().unwrap();
-        for (status, hint) in [
-            (404, "Check the repository"),
-            (401, "GitHub denied access"),
-            (403, "rate limiting or access restrictions"),
-            (429, "rate limiting"),
-            (503, "Try again later"),
-            (206, "Expected a complete file response"),
-        ] {
+        for status in [404, 401, 403, 429, 503, 206] {
             let (url, server) = serve(vec![response(status, "text/plain", b"error")]).await;
             let error = fetch_github_file(
                 url.clone(),
@@ -305,25 +282,13 @@ mod tests {
             )
             .await
             .unwrap_err();
-            let message = format!("{error:#}");
-            assert!(
-                message.starts_with(&format!(
-                    "Failed to read GitHub file: GitHub returned {} for {url}.",
+            assert_eq!(
+                format!("{error:#}"),
+                format!(
+                    "Failed to read GitHub file: HTTP {} for {url}",
                     reqwest::StatusCode::from_u16(status).unwrap()
-                )),
-                "{message}"
+                )
             );
-            assert!(message.contains(hint), "{message}");
-            if matches!(status, 401 | 403 | 404) {
-                assert!(
-                    message.contains("does not use your GitHub login"),
-                    "{message}"
-                );
-                assert!(
-                    message.contains("authenticated local checkout and parse_file"),
-                    "{message}"
-                );
-            }
             assert_eq!(server.await.unwrap().len(), 1);
         }
     }
