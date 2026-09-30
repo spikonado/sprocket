@@ -5,10 +5,12 @@ import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import SettingsProviders from './settings-providers';
+import { convexAuthUserId } from '$lib/auth';
 
 afterEach(() => {
 	cleanup();
 	vi.useRealTimers();
+	vi.restoreAllMocks();
 });
 
 function mount(client: ConvexTestClient, openAiConfigured = false, chatGptConfigured = false) {
@@ -238,3 +240,29 @@ it('reloads ChatGPT connection status when disconnect cleanup fails', async () =
 	expect(screen.getByText('Vault deletion failed')).toBeTruthy();
 	expect(screen.getByRole('link', { name: 'ChatGPT settings' })).toBeTruthy();
 });
+
+it.each(['unmount', 'account switch'] as const)(
+	'discards a failed-disconnect status reload after %s',
+	async (change) => {
+		const userId = vi.spyOn(convexAuthUserId, 'getSnapshot').mockReturnValue('user_alice');
+		const client = new ConvexTestClient();
+		const configuration =
+			Promise.withResolvers<
+				FunctionReturnType<typeof api.providerCredentials.getMyConfiguration>
+			>();
+		client.handleAction(api.providerCredentials.removeChatGptCredential, async () => {
+			throw new Error('Vault deletion failed');
+		});
+		const reload = vi.fn(() => configuration.promise);
+		client.handleAction(api.providerCredentials.getMyConfiguration, reload);
+		const view = mount(client, false, true);
+		confirmChatGptDisconnect();
+		await waitFor(() => expect(reload).toHaveBeenCalled());
+		if (change === 'unmount') view.unmount();
+		else userId.mockReturnValue('user_bob');
+		await act(async () => {
+			configuration.resolve({ openai: false, chatgpt: false, chatgptModelIds: null });
+		});
+		expect(view.onConfigurationChange).toHaveBeenCalledTimes(0);
+	}
+);

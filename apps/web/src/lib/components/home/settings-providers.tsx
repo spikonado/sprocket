@@ -9,6 +9,7 @@ import { usesLoopbackBrowserAuth } from '../../../../../desktop/local-config.mjs
 import Button from '$lib/components/ui/button/button';
 import ProviderLogo from '$lib/components/provider-logo';
 import { convexClientErrorMessage } from '$lib/convex-error';
+import { convexAuthUserId } from '$lib/auth';
 
 type ProviderConfigurationChange = {
 	provider: 'openai' | 'chatgpt';
@@ -284,7 +285,13 @@ export default function SettingsProviders({
 
 	async function removeChatGpt() {
 		if (chatGptPending) return;
-		await stopChatGptLogin();
+		const userId = convexAuthUserId.getSnapshot();
+		const stoppingLogin = stopChatGptLogin();
+		const generation = loginGenerationRef.current;
+		const isCurrent = () =>
+			generation === loginGenerationRef.current && userId === convexAuthUserId.getSnapshot();
+		await stoppingLogin;
+		if (!isCurrent()) return;
 		setChatGptPending(true);
 		setChatGptError(null);
 		setChatGptRevocationUnconfirmed(false);
@@ -292,16 +299,19 @@ export default function SettingsProviders({
 			const result = await removeChatGptCredential({
 				reportRevocation: true
 			});
+			if (!isCurrent()) return;
 			setConfirmChatGptRemove(false);
 			if (result?.revoked !== true) setChatGptRevocationUnconfirmed(true);
 			onConfigurationChange({ provider: 'chatgpt', configured: false });
 		} catch (error) {
+			if (!isCurrent()) return;
 			setChatGptError(
 				errorMessage(error instanceof Error ? error : null, 'Couldn’t disconnect ChatGPT.')
 			);
 			setChatGptRevocationUnconfirmed(true);
 			try {
 				const configuration = await getMyConfiguration({});
+				if (!isCurrent()) return;
 				onConfigurationChange({
 					provider: 'chatgpt',
 					configured: configuration.chatgpt,
@@ -311,7 +321,7 @@ export default function SettingsProviders({
 				// Keep the disconnect error if the status check also fails.
 			}
 		} finally {
-			setChatGptPending(false);
+			if (isCurrent()) setChatGptPending(false);
 		}
 	}
 
