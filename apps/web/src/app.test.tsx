@@ -500,6 +500,36 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	expect(resolveWorkspacePath).not.toHaveBeenCalled();
 });
 
+it('keeps a saved theme until the preference subscription advances', async () => {
+	const client = createConvexFixtures();
+	const save = deferred<null>();
+	const preferences: Doc<'uiPreferences'> = {
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		_id: 'preferences-a' as Id<'uiPreferences'>,
+		_creationTime: 1,
+		userId: 'user-a',
+		theme: 'light'
+	};
+	client.registerQuery(api.uiPreferences.getMine, preferences);
+	client.registerMutation(api.uiPreferences.setTheme, save.promise);
+	await renderApp(client, createRuntime(createDesktopApi()));
+	fireEvent.click(await screen.findByRole('button', { name: 'Switch to dark mode' }));
+	await act(async () => {
+		save.resolve(null);
+	});
+	expect(document.documentElement.dataset.theme).toBe('dark');
+	expect(screen.getByRole('button', { name: 'Switch to light mode' })).toBeTruthy();
+	await act(async () => {
+		client.registerQuery(api.uiPreferences.getMine, { ...preferences, theme: 'dark' });
+	});
+	expect(document.documentElement.dataset.theme).toBe('dark');
+	await act(async () => {
+		client.registerQuery(api.uiPreferences.getMine, { ...preferences, theme: 'light' });
+	});
+	expect(document.documentElement.dataset.theme).toBe('light');
+	expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeTruthy();
+});
+
 it('applies a remote theme update received while a local theme save is pending', async () => {
 	const client = createConvexFixtures();
 	const save = deferred<null>();

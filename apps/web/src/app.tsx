@@ -407,8 +407,7 @@ export default function App({
 	const lastSyncedComposerThreadId = useRef<Id<'threadRecords'> | null>(null);
 	const desktopProjectAttachmentsGeneration = useRef(0);
 	const [projectLaunchInFlight, setProjectLaunchInFlight] = useState(false);
-	const hasHydratedTheme = useRef(false);
-	const lastServerTheme = useRef<SprocketTheme | null | undefined>(undefined);
+	const lastAppliedThemePreferences = useRef<Doc<'uiPreferences'> | null | undefined>(undefined);
 	const [pendingTheme, setPendingTheme] = useState<SprocketTheme | null>(null);
 	const themeSaveGeneration = useRef(0);
 
@@ -492,8 +491,7 @@ export default function App({
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
 	useEffect(() => {
 		if (!authReady) {
-			hasHydratedTheme.current = false;
-			lastServerTheme.current = undefined;
+			lastAppliedThemePreferences.current = undefined;
 			setPendingTheme(null);
 			themeSaveGeneration.current += 1;
 			return;
@@ -503,11 +501,9 @@ export default function App({
 		if (preferences === undefined) return;
 		// Ignore preference snapshots while a theme save is in flight.
 		if (pendingTheme !== null) return;
-		const serverTheme = preferences?.theme;
-		if (hasHydratedTheme.current && serverTheme === lastServerTheme.current) return;
-		hasHydratedTheme.current = true;
-		lastServerTheme.current = serverTheme;
-		const nextTheme = resolveTheme(serverTheme);
+		if (preferences === lastAppliedThemePreferences.current) return;
+		lastAppliedThemePreferences.current = preferences;
+		const nextTheme = resolveTheme(preferences?.theme);
 		setWorkspaceTheme(nextTheme);
 		applyTheme(nextTheme);
 	}, [authReady, uiPreferencesQuery.data, pendingTheme]);
@@ -520,8 +516,6 @@ export default function App({
 		applyTheme(theme);
 		try {
 			await setThemePreference({ theme });
-			if (generation !== themeSaveGeneration.current) return;
-			lastServerTheme.current = theme;
 		} catch (error) {
 			if (generation !== themeSaveGeneration.current) return;
 			setWorkspaceTheme(previous);
