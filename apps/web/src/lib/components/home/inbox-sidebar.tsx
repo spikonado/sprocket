@@ -15,9 +15,9 @@ import type {
 	KeyboardEvent as ReactKeyboardEvent,
 	MouseEvent as ReactMouseEvent
 } from 'react';
-import type { Doc, Id } from '$convex/_generated/dataModel';
-import type { CatalogModel } from '$convex/lib/uiModelCatalog';
-import { inboxState, type InboxState } from '$convex/lib/inboxState';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { CatalogModel } from '@convex/lib/uiModelCatalog';
+import { inboxState, type InboxState } from '@convex/lib/inboxState';
 import type { Project } from '$lib/types/sprocket';
 import type { SprocketTheme } from '$lib/theme';
 import type { InboxSectionData } from '$lib/project/inbox';

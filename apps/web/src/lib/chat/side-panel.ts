@@ -1,4 +1,4 @@
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 
 /** The right sidebar shows the agent's browser live view alongside thread artifacts. */
 export type SidePanelTab = 'live' | 'artifacts';

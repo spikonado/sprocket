@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { Watch } from 'convex/react';
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
-import { api } from '$convex/_generated/api';
-import type { Id } from '$convex/_generated/dataModel';
+import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import {
 	EMPTY_ARTIFACT_WATCH_STATE,
 	applyArtifactsWatchEvent,

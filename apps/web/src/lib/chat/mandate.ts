@@ -1,4 +1,4 @@
-import { isJsonObject, type JsonValue } from '$convex/lib/json';
+import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
 

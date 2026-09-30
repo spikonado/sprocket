@@ -3,12 +3,10 @@
 	"compilerOptions": {
 		"paths": {
 			"$lib/*": ["./src/lib/*"],
-			"$convex/*": ["./src/convex/*"],
-			"@convex/*": ["./src/convex/*"],
-			"@web-lib/*": ["./src/lib/*"]
+			"@convex/*": ["./convex/*"]
 		},
 		"types": ["node", "vite/client"],
 		"noEmit": true
 	},
-	"include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+	"include": ["src/**/*.ts", "src/**/*.tsx", "convex/**/*.ts", "vite.config.ts"]
 }

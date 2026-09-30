@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { FunctionReturnType } from 'convex/server';
-import type { Id } from '$convex/_generated/dataModel';
-import { api } from '$convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
+import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import SettingsPayments from './settings-payments';
 

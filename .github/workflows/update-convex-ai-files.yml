@@ -48,7 +48,7 @@ jobs:
               apps/web/CLAUDE.md | \
               apps/web/skills-lock.json | \
               apps/web/.agents/skills/* | \
-              apps/web/src/convex/_generated/ai/*) ;;
+              apps/web/convex/_generated/ai/*) ;;
               *)
                 echo "::error::Convex AI file update changed unexpected path: $path"
                 exit 1
@@ -64,7 +64,7 @@ jobs:
             apps/web/CLAUDE.md \
             apps/web/skills-lock.json \
             apps/web/.agents/skills \
-            apps/web/src/convex/_generated/ai
+            apps/web/convex/_generated/ai
           git commit -m "chore(convex): Update Convex AI files"
 
           git fetch origin "$BRANCH_NAME:refs/remotes/origin/$BRANCH_NAME" || true

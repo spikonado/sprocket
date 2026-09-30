@@ -16,8 +16,8 @@ import {
 	useQuery_experimental as useConvexQueryResult
 } from 'convex/react';
 import type { FunctionArgs, FunctionReference } from 'convex/server';
-import type { Doc, Id } from '$convex/_generated/dataModel';
-import { api } from '$convex/_generated/api';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import { api } from '@convex/_generated/api';
 import {
 	advanceConvexAuthRetryPending,
 	authState,
@@ -68,15 +68,15 @@ import {
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
-import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
-import type { CompletionProvider } from '$convex/lib/validators';
+import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
+import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
-import { isLifecycleInProgress } from '$convex/lib/runCancellation';
+import { isLifecycleInProgress } from '@convex/lib/runCancellation';
 import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
@@ -97,7 +97,7 @@ import {
 	type PendingAgentLaunches
 } from '$lib/project/threads';
 import { useThreadInbox } from '$lib/project/inbox';
-import type { InboxState } from '$convex/lib/inboxState';
+import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveDesktopApi } from '$lib/local/client';

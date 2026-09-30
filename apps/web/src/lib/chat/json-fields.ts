@@ -1,4 +1,4 @@
-import { isJsonBoolean, isJsonObject, isJsonString, type JsonValue } from '$convex/lib/json';
+import { isJsonBoolean, isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 
 export function jsonString(value: JsonValue | undefined): string | undefined {
 	return isJsonString(value) ? value : undefined;

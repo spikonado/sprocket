@@ -8,6 +8,17 @@ Vite writes hashed chunks and assets under `_app/immutable` to preserve Rust's
 immutable-cache and missing-asset responses. Browsers revalidate `index.html`
 on every request.
 
+## Source layout
+
+React code and its tests live in `src/`. Convex functions, their tests, and
+generated API files live in `convex/`, the default layout from the
+[Convex React quickstart](https://docs.convex.dev/quickstart/react). Function
+names are relative to `convex/`, so the directory move did not rename any
+functions.
+
+Frontend imports use `$lib` for `src/lib` and `@convex` for `convex`. Both are
+mapped in `vite.config.ts` and the `tsconfig.json` paths.
+
 ## Development checks
 
 Run these commands from `apps/web`:

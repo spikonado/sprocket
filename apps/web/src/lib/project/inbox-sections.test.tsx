@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Doc, Id } from '$convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { useThreadInbox, type InboxQueryHook, type InboxQueryResult } from '$lib/project/inbox';
 
 function threadRecord(): Doc<'threadRecords'> {

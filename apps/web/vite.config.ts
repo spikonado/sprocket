@@ -13,9 +13,7 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			$lib: path.resolve('./src/lib'),
-			$convex: path.resolve('./src/convex'),
-			'@convex': path.resolve('./src/convex'),
-			'@web-lib': path.resolve('./src/lib')
+			'@convex': path.resolve('./convex')
 		}
 	},
 	server: {
@@ -49,7 +47,7 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: 'convex',
-					include: ['src/convex/**/*.test.{ts,js}'],
+					include: ['convex/**/*.test.{ts,js}'],
 					environment: 'edge-runtime'
 				}
 			},
@@ -58,7 +56,6 @@ export default defineConfig({
 				test: {
 					name: 'frontend',
 					include: ['src/**/*.test.{ts,js}'],
-					exclude: ['src/convex/**'],
 					environment: 'node'
 				}
 			},

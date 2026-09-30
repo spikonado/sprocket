@@ -3,9 +3,9 @@ import {
 	type UsePaginatedQueryObjectReturnType,
 	type UsePaginatedQueryOptions
 } from 'convex/react';
-import { api } from '$convex/_generated/api';
-import type { Doc } from '$convex/_generated/dataModel';
-import type { InboxState } from '$convex/lib/inboxState';
+import { api } from '@convex/_generated/api';
+import type { Doc } from '@convex/_generated/dataModel';
+import type { InboxState } from '@convex/lib/inboxState';
 
 const INBOX_PAGE_SIZE = 10;
 

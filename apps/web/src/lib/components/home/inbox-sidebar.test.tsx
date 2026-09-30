@@ -1,8 +1,8 @@
 import { act, useState, type ComponentProps } from 'react';
 import { fireEvent, render as renderView } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { Doc, Id } from '$convex/_generated/dataModel';
-import { INBOX_STATES } from '$convex/lib/inboxState';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import { INBOX_STATES } from '@convex/lib/inboxState';
 import InboxSidebar from './inbox-sidebar';
 
 type SidebarProps = Omit<

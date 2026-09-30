@@ -4,7 +4,7 @@ import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserLiveView from '$lib/components/home/browser-live-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import type { BrowserLiveViewState, SidePanelTab } from '$lib/chat/side-panel';
-import type { ArtifactType } from '$convex/lib/validators';
+import type { ArtifactType } from '@convex/lib/validators';
 
 type Props = {
 	artifacts: ArtifactEntry[];

@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { api } from '$convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import {
 	ArtifactPanel,
 	createConvexArtifactClient,

@@ -258,7 +258,7 @@ Cloud and local authorization solve different problems:
   the same-origin native token endpoint. Remote browser sessions must first
   prove the same WorkOS identity through an isolated device authorization. That
   flow does not replace the host session or persist its returned tokens. Convex
-  validates the host token as a JWT (`apps/web/src/convex/auth.config.ts`) and
+  validates the host token as a JWT (`apps/web/convex/auth.config.ts`) and
   checks ownership before reading or changing user records.
 - **Native cloud identity:** Rust owns the installed client's WorkOS authorization-code
   session. It generates PKCE and state, exchanges the

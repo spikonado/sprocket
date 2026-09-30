@@ -1,6 +1,6 @@
 import { Check, ChevronDown, Lock, Zap } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { defaultReasoningEffort } from '$convex/lib/models';
+import { defaultReasoningEffort } from '@convex/lib/models';
 import {
 	type CatalogModel,
 	type FastModeAccess,

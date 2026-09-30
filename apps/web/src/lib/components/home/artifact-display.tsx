@@ -1,7 +1,7 @@
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
-import type { ArtifactType } from '$convex/lib/validators';
+import type { ArtifactType } from '@convex/lib/validators';
 import type { ArtifactScope } from '$lib/types/sprocket';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 

@@ -1,4 +1,4 @@
-import { AGENT_DECIDE_OPTION_ID, type AgentQuestionOption } from '$convex/lib/agentQuestions';
+import { AGENT_DECIDE_OPTION_ID, type AgentQuestionOption } from '@convex/lib/agentQuestions';
 
 type Props = {
 	question: string;

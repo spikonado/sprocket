@@ -1,4 +1,4 @@
-import { joinAssistantTextParts, type AssistantPart } from '$convex/lib/assistantParts';
+import { joinAssistantTextParts, type AssistantPart } from '@convex/lib/assistantParts';
 import type { LiveCompletionOverlay, LiveTranscriptMessage } from '$lib/types/sprocket';
 
 function partKey(part: AssistantPart): string {

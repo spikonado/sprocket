@@ -1,6 +1,6 @@
 import { createClient, type User } from '@workos-inc/authkit-js';
 import { z } from 'zod';
-import { api } from '$convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { ensureLocalSession, resolveLocalApiBaseUrl } from '$lib/local/client';
 import { createStore, selectStore } from './store';

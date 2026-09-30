@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { LogOut } from 'lucide-react';
 import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
-import { api } from '$convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import type { AuthUser } from '$lib/auth';
 import Button from '$lib/components/ui/button/button';
 

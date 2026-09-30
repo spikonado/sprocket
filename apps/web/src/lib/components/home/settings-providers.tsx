@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Eye, EyeOff, ExternalLink } from 'lucide-react';
 import { useAction } from 'convex/react';
-import { api } from '$convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import { z } from 'zod';
 import { createLocalTransport } from '$lib/local/transport';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';

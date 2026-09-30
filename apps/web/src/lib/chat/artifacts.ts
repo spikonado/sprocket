@@ -1,4 +1,4 @@
-import type { ArtifactType } from '$convex/lib/validators';
+import type { ArtifactType } from '@convex/lib/validators';
 import type {
 	ArtifactScope,
 	ArtifactsWatchEvent,

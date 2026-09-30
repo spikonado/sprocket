@@ -1,4 +1,4 @@
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import type {
 	AgentRunRequest,
 	DesktopApi,
@@ -8,9 +8,9 @@ import type {
 	ProjectAttachmentRequest,
 	RunState
 } from '$lib/types/sprocket';
-import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
-import { isRunFinalStatus } from '$convex/lib/validators';
-import type { SelectedThreadLifecyclePhase } from '$convex/lib/runCancellation';
+import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { isRunFinalStatus } from '@convex/lib/validators';
+import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
 import { areStorageIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {

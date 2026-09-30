@@ -3,8 +3,8 @@ import {
 	parseAssistantToolResultError,
 	type AssistantPart,
 	type AssistantToolCallPart
-} from '$convex/lib/assistantParts';
-import { isJsonObject, type JsonValue } from '$convex/lib/json';
+} from '@convex/lib/assistantParts';
+import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import { jsonBoolean, jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 

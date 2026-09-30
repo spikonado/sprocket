@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { render } from '@testing-library/react';
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import type {
 	TranscriptMessage,
 	TranscriptDisplayDetails,

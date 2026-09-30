@@ -1,4 +1,4 @@
-import { isJsonObject, type JsonValue } from '$convex/lib/json';
+import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
 	assistantTimelineToolError,
 	isAssistantTimelineToolRunning,

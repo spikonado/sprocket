@@ -1,10 +1,10 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { api } from '$convex/_generated/api';
-import type { Doc, Id } from '$convex/_generated/dataModel';
-import type { AgentQuestionSnapshot } from '$convex/agentQuestions';
-import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
+import { api } from '@convex/_generated/api';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
+import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';

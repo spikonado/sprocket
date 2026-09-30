@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import { DisplayHistory, visibleDisplayMessages } from '$lib/project/display-history';
 import { mergeLiveOverlays } from '$lib/project/transcript';
 import { useStore, type Store } from '$lib/store';

@@ -2,7 +2,6 @@
 	"aiFiles": {
 		"enabled": true
 	},
-	"functions": "src/convex/",
 	"authKit": {
 		"dev": {
 			"configure": {

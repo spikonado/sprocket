@@ -25,7 +25,7 @@ use crate::transcript::{
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
-// apps/web/src/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
+// apps/web/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
 const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(120);
 const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(40);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -38,7 +38,7 @@ const START_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 /// Must match the createGatewayRun conflict ConvexErrors in
-/// apps/web/src/convex/agentRuntime.ts ("Submission belongs to a different ...").
+/// apps/web/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
 const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");

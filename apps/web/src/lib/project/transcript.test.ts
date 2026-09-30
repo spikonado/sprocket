@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import type { LiveCompletionOverlay } from '$lib/types/sprocket';
 import { mergeLiveOverlays } from './transcript';
 

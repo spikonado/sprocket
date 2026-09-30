@@ -1,10 +1,10 @@
-import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
-import type { CompletionProvider } from '$convex/lib/validators';
+import type { CatalogModel, ModelCatalog } from '@convex/lib/uiModelCatalog';
+import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	GATEWAY_API_PREFIX,
 	GATEWAY_PROTOCOL_VERSION
-} from '$convex/lib/gatewayProtocol';
+} from '@convex/lib/gatewayProtocol';
 import { z } from 'zod';
 
 export type { CatalogModel, ModelCatalog };

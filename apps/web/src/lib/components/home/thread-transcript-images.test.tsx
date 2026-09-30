@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { Id } from '$convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import type { TranscriptDisplayRow } from '$lib/types/sprocket';
 import ThreadTranscript from './thread-transcript';
 

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAction, useConvexAuth } from 'convex/react';
 import type { Infer } from 'convex/values';
-import type { Id } from '$convex/_generated/dataModel';
-import { api } from '$convex/_generated/api';
-import type { vMandateFrequency, vMandateScope } from '$convex/lib/validators';
+import type { Id } from '@convex/_generated/dataModel';
+import { api } from '@convex/_generated/api';
+import type { vMandateFrequency, vMandateScope } from '@convex/lib/validators';
 import type { MandateApproval } from '$lib/chat/mandate';
 import MandateApprovalForm from '$lib/components/home/mandate-approval-form';
 import Button from '$lib/components/ui/button/button';

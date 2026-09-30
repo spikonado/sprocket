@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
-import { api } from '$convex/_generated/api';
-import { usageMeters, usagePeriods } from '$convex/lib/usageMeters';
-import { MODEL_USAGE_UNITS_PER_DOLLAR } from '$convex/lib/tiers';
+import { api } from '@convex/_generated/api';
+import { usageMeters, usagePeriods } from '@convex/lib/usageMeters';
+import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { formatRemainingDuration } from '$lib/format';
 
 const dollars = new Intl.NumberFormat('en-US', {
