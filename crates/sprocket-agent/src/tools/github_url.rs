@@ -71,7 +71,7 @@ pub(super) async fn fetch_github_file(
                 "summary": "Summary not generated; file was read directly from GitHub.",
                 "images": [],
             }))
-        } => result.context("failed to read GitHub file locally"),
+        } => result.context("Failed to read GitHub file"),
     }
 }
 
@@ -80,11 +80,26 @@ async fn download_file(
     url: Url,
     mut max_bytes: u64,
 ) -> anyhow::Result<(Url, Vec<u8>)> {
-    let mut response = client.get(url).send().await?.error_for_status()?;
-    anyhow::ensure!(
-        response.status() == reqwest::StatusCode::OK,
-        "expected a complete GitHub file response"
-    );
+    let mut response = client.get(url).send().await?;
+    let status = response.status();
+    if status != reqwest::StatusCode::OK {
+        let hint = match status {
+            reqwest::StatusCode::NOT_FOUND => {
+                "Check the repository, branch or commit, and file path. The file may have moved or been deleted. Private files can also return 404 because this fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
+            }
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+                "GitHub denied access. This fetch does not use your GitHub login. For private files, use an authenticated local checkout and parse_file."
+            }
+            reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                "GitHub is rate limiting requests. Wait before trying again."
+            }
+            _ if status.is_server_error() => {
+                "GitHub could not complete the request. Try again later."
+            }
+            _ => "Expected a complete file response with HTTP 200 OK.",
+        };
+        anyhow::bail!("GitHub returned {status} for {}. {hint}", response.url());
+    }
     let content_length = response.content_length();
     anyhow::ensure!(
         content_length.is_none_or(|size| size <= max_bytes),
@@ -264,6 +279,67 @@ mod tests {
                 .unwrap()
                 .contains("| sprocket | 42 |")
         );
+        assert_eq!(server.await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn http_errors_explain_the_status_and_next_step() {
+        let cache = tempfile::tempdir().unwrap();
+        for (status, hint) in [
+            (404, "Check the repository"),
+            (401, "GitHub denied access"),
+            (403, "GitHub denied access"),
+            (429, "rate limiting"),
+            (503, "Try again later"),
+            (206, "Expected a complete file response"),
+        ] {
+            let (url, server) = serve(vec![response(status, "text/plain", b"error")]).await;
+            let error = fetch_github_file(
+                url.clone(),
+                false,
+                cache.path(),
+                &WorkspaceCancellation::new(),
+            )
+            .await
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.starts_with(&format!(
+                    "Failed to read GitHub file: GitHub returned {} for {url}.",
+                    reqwest::StatusCode::from_u16(status).unwrap()
+                )),
+                "{message}"
+            );
+            assert!(message.contains(hint), "{message}");
+            if matches!(status, 401 | 403 | 404) {
+                assert!(
+                    message.contains("does not use your GitHub login"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("authenticated local checkout and parse_file"),
+                    "{message}"
+                );
+            }
+            assert_eq!(server.await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn http_errors_identify_the_url_after_redirects() {
+        let cache = tempfile::tempdir().unwrap();
+        let (url, server) = serve(vec![
+            b"HTTP/1.1 302 Found\r\nLocation: /missing.rs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+            response(404, "text/plain", b"Not Found"),
+        ])
+        .await;
+        let expected_url = url.join("/missing.rs").unwrap();
+        let error = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
+            .await
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("404 Not Found"));
+        assert!(message.contains(expected_url.as_str()));
         assert_eq!(server.await.unwrap().len(), 2);
     }
 
