@@ -871,6 +871,7 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
+		(pendingAgentQuestion || selectedCompletionProvider !== 'chatgpt' || chatGptConfigured) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
