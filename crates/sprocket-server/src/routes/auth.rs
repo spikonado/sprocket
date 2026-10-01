@@ -15,7 +15,7 @@ use crate::auth::{
     peer_may_complete_desktop_login_callback, require_bootstrap_session,
 };
 use crate::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
-use crate::routes::api_error::ApiError;
+use crate::routes::api_error::{ApiError, no_store};
 use crate::{AppState, PairingProofRequest, PairingProofResponse};
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
@@ -425,11 +425,7 @@ async fn native_session_token(
         Err(error) => return ApiError::bad_request(error).into_response(),
     };
     let result = native_session_token_response(&state, peer, &headers, &jar, payload).await;
-    let mut response = result.into_response();
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-    response
+    no_store(result)
 }
 
 async fn native_session_token_response(

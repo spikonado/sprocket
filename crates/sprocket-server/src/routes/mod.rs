@@ -6,6 +6,7 @@ pub mod auth;
 pub(crate) mod cli;
 pub mod config;
 pub mod health;
+pub(crate) mod session;
 pub mod threads;
 pub mod transcript;
 pub mod update;

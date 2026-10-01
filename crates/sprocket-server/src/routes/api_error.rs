@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::http::StatusCode;
+use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
 
 #[derive(Debug)]
@@ -59,4 +60,14 @@ impl IntoResponse for ApiError {
         )
             .into_response()
     }
+}
+
+/// Attach `cache-control: no-store` to a response carrying sensitive payloads.
+pub(crate) fn no_store(response: impl IntoResponse) -> Response {
+    let mut response = response.into_response();
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
