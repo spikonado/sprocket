@@ -21,15 +21,36 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### Forgotten SIWC accounts
+
+Older servers kept tokenless ChatGPT account records after sign-out. Loading
+`chatgpt-siwc.json` now removes tokenless records with no outstanding revocations,
+clears tokenless active selections, and removes empty user entries before saving
+the store. Records with retained refresh tokens stay until a status check
+attempts their revocation through the normal sign-out path, then deletes them.
+Interrupted-refresh recovery moves the refresh token into that retained list.
+An unconfirmed revocation produces a status warning with ChatGPT settings
+guidance. Records left by terminal refresh failures follow the same rule.
+Sign-out saves a hidden tokenless revocation record until its bounded attempt
+finishes, so a restart can retry an interrupted attempt. This record keeps only
+the existing client/connection IDs, a new session ID and refresh tokens. The
+subject becomes the non-identifying `signed-out` placeholder so older readers
+still accept the record. The label and other tokens are cleared before the
+attempt.
+The host ID stays unchanged. Remove this cleanup
+only after releases that retained signed-out records are outside the
+supported direct-upgrade window and supported stores have been rewritten.
+
 ### Replaced SIWC sessions
 
 Local SIWC accounts accept an absent `retiredRefreshTokens` list in older files.
 Reconnects record replaced refresh tokens there before trying revocation, then
 remove confirmed revocations. Sign-out attempts every retained revocation before
-clearing the tokens. Remove the default only after a migration writes this field
-into every supported older store and direct upgrades from unmigrated stores no
-longer need support. An unreadable credential file disables only ChatGPT, leaves
-the file untouched, and reports repair guidance in settings.
+deleting the local account record. Remove the default only after a migration
+writes this field into every supported older store and direct upgrades from
+unmigrated stores no longer need support. An unreadable credential file
+disables only ChatGPT, leaves the file untouched, and reports repair guidance
+in settings.
 
 ### CLI bootstrap error guidance
 

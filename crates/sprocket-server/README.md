@@ -96,8 +96,13 @@ start this flow and there is no device-login fallback.
 
 The server saves credentials in an owner-only private file in its data directory.
 Records belong to a Sprocket user and a verified OpenAI subject/client registration.
-Sign-out clears tokens but retains registration metadata for reconnecting. Agent
-runs pin the selected session and stop using it after sign-out or account changes.
+Sign-out hides the selected account and saves a revocation marker until its
+bounded attempt finishes, then deletes its tokens and registration metadata.
+Startup removes older tokenless records or retains pending revocations for the
+next status check. The installation's opaque host ID stays unchanged.
+Agent runs pin the selected
+session and stop using it after sign-out or account changes. Signing out does
+not delete conversations or projects.
 Inference and the visible model list use the public OpenAI API, not Convex or
 ChatGPT's private backend.
 
