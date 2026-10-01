@@ -325,7 +325,6 @@ export default function SettingsProviders({
 						(account) => account.connectionId !== connectionId
 					),
 					activeConnectionId,
-					models: activeConnectionId ? chatGptStatus.models : [],
 					loginAvailable: chatGptStatus.loginAvailable
 				});
 			}
