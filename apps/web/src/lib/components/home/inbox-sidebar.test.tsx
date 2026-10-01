@@ -1,5 +1,6 @@
 import { act, useState, type ComponentProps } from 'react';
 import { fireEvent, render as renderView } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { INBOX_STATES } from '@convex/lib/inboxState';
@@ -22,7 +23,9 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-function thread(settled = false, status: Thread['status'] = 'completed') {
+type ThreadStatus = Thread['status'];
+
+function thread(settled = false, status: ThreadStatus = 'completed') {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	const record: Thread = {
 		_id: 'thread' as Id<'threadRecords'>,
@@ -77,6 +80,18 @@ function Harness(input: SidebarProps) {
 	const [settledOpen, setSettledOpen] = useState(false);
 
 	return <InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />;
+}
+
+function NavigationHarness(input: SidebarProps) {
+	const [currentThreadId, setCurrentThreadId] = useState<Id<'threadRecords'> | null>(null);
+
+	return (
+		<Harness
+			{...input}
+			currentThreadId={currentThreadId}
+			onSelect={(record) => setCurrentThreadId(record._id)}
+		/>
+	);
 }
 
 async function render(records: Thread[]) {
@@ -213,6 +228,73 @@ it('shows project, title, age, provider, and model name without a model slug', a
 	expect(row.textContent).not.toContain('model');
 	expect(row.textContent).not.toContain('submission');
 	expect(row.querySelector('.inbox-row-main')?.getAttribute('title')).not.toContain('model');
+});
+
+it('keeps thread rows styled when selection moves by click and keyboard', async () => {
+	const first = thread();
+
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const second = {
+		...thread(),
+		_id: 'second-thread' as Id<'threadRecords'>,
+		title: 'Second thread'
+	};
+
+	const input = props([first, second]);
+	const user = userEvent.setup();
+
+	renderView(<NavigationHarness {...input} />);
+	const buttons = [...document.querySelectorAll<HTMLButtonElement>('.inbox-row-main')];
+
+	function expectSelected(button: HTMLButtonElement) {
+		expect(button.getAttribute('aria-current')).toBe('page');
+		expect(button.closest('.inbox-row.inbox-row-selected')).toBeTruthy();
+		expect(document.querySelectorAll('.inbox-row')).toHaveLength(2);
+		expect(document.querySelectorAll('.inbox-row-selected')).toHaveLength(1);
+	}
+
+	await user.click(buttons[0]);
+	expectSelected(buttons[0]);
+	await user.keyboard('{Alt>}{ArrowDown}{/Alt}');
+	expectSelected(buttons[1]);
+	await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+	expectSelected(buttons[0]);
+	await user.click(buttons[1]);
+	expectSelected(buttons[1]);
+});
+
+it.each([
+	{ status: 'queued', label: 'Starting', className: 'inbox-working' },
+	{ status: 'running', label: 'Working', className: 'inbox-working' },
+	{ status: 'failed', label: 'Failed', className: 'inbox-attention' }
+] satisfies { status: ThreadStatus; label: string; className: string }[])(
+	'styles the $label thread status',
+	async ({ status, label, className }) => {
+		await render([thread(false, status)]);
+		const badge = document.querySelector(`.inbox-row-model .inbox-status.${className}`);
+
+		expect(badge?.textContent).toBe(label);
+	}
+);
+
+it('keeps the selected project filter styled for all projects and a single project', async () => {
+	const input = props([thread()]);
+	const view = renderView(<Harness {...input} />);
+
+	function selectedLabel() {
+		const selected = document.querySelector('.inbox-project-option.inbox-project-selected');
+		expect(selected?.getAttribute('aria-pressed')).toBe('true');
+		expect(document.querySelectorAll('.inbox-project-option')).toHaveLength(3);
+		expect(document.querySelectorAll('.inbox-project-selected')).toHaveLength(1);
+
+		return selected?.textContent;
+	}
+
+	expect(selectedLabel()).toBe('All projects');
+	view.rerender(<Harness {...input} selectedProjects={['repo']} />);
+	expect(selectedLabel()).toBe('Repository');
+	view.rerender(<Harness {...input} selectedProjects={[]} />);
+	expect(selectedLabel()).toBe('All projects');
 });
 
 it('filters the project picker and selects one project', async () => {
