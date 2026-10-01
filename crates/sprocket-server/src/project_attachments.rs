@@ -114,7 +114,10 @@ impl ProjectAttachmentStore {
             }
             validated.last_message_sent_at = sessions
                 .values()
-                .filter(|attachment| attachment.attachment_key == validated.attachment_key)
+                .filter(|attachment| {
+                    attachment.attachment_key == validated.attachment_key
+                        || attachment.workspace_path == validated.workspace_path
+                })
                 .map(|attachment| attachment.last_message_sent_at)
                 .max()
                 .unwrap_or_default();
@@ -141,6 +144,10 @@ impl ProjectAttachmentStore {
         let changed = {
             let mut attachments = self.attachments.write().await;
             let mut changed = deduplicate_repository_attachments(&mut attachments, None);
+            resolved.last_message_sent_at = attachments
+                .get(&resolved.workspace_path)
+                .map(|attachment| attachment.last_message_sent_at)
+                .unwrap_or_default();
             let existing = attachments
                 .values()
                 .find(|attachment| same_attachment_identity(attachment, &resolved))
@@ -148,7 +155,9 @@ impl ProjectAttachmentStore {
 
             match existing {
                 Some(existing) => {
-                    resolved.last_message_sent_at = existing.last_message_sent_at;
+                    resolved.last_message_sent_at = resolved
+                        .last_message_sent_at
+                        .max(existing.last_message_sent_at);
                     if existing.workspace_path == resolved.workspace_path {
                         attachments.insert(resolved.workspace_path.clone(), resolved.clone());
                         changed = true;
@@ -345,7 +354,7 @@ impl ProjectAttachmentStore {
             .cloned()
             .collect();
 
-        sessions.sort_by(compare_project_recency);
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
         sessions.truncate(MAX_PERSISTED_PROJECT_ATTACHMENTS);
 
         store.clear();
@@ -731,6 +740,100 @@ mod tests {
             store.list().await.expect("ordered records")[0].workspace_path,
             alpha.to_string_lossy()
         );
+    }
+
+    #[tokio::test]
+    async fn newly_attached_project_survives_retention_after_older_projects_sent_messages() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        store.ensure_loaded().await.expect("load store");
+        {
+            let mut attachments = store.attachments.write().await;
+            for index in 0..MAX_PERSISTED_PROJECT_ATTACHMENTS {
+                let mut record = attachment_record(
+                    temp_root
+                        .path()
+                        .join(format!("old-{index}"))
+                        .to_string_lossy(),
+                    &format!("old-{index}"),
+                    index as u64 + 1,
+                );
+                record.last_message_sent_at = 500;
+                attachments.insert(record.workspace_path.clone(), record);
+            }
+        }
+        let workspace = temp_root.path().join("new-project");
+        fs::create_dir_all(&workspace).expect("create new project");
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach new project");
+
+        let persisted: Vec<ProjectAttachmentRecord> = serde_json::from_slice(
+            &fs::read(temp_root.path().join(PROJECT_ATTACHMENTS_FILE)).expect("read records"),
+        )
+        .expect("parse records");
+        assert_eq!(persisted.len(), MAX_PERSISTED_PROJECT_ATTACHMENTS);
+        assert!(persisted.contains(&attached));
+        assert_eq!(
+            store
+                .get_or_error(&attached.workspace_path)
+                .await
+                .expect("retained project"),
+            attached
+        );
+    }
+
+    #[tokio::test]
+    async fn reattachment_and_run_resolution_preserve_send_time_after_origin_changes() {
+        for resolve_run in [false, true] {
+            let temp_root = tempfile::tempdir().expect("temp dir");
+            let workspace = temp_root.path().join("checkout");
+            let old_origin = "https://github.com/example/old.git";
+            let new_origin = "https://github.com/example/new.git";
+            init_repo_with_origin(&workspace, old_origin);
+            let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+            let attached = store
+                .attach(AttachProjectRequest {
+                    workspace_path: workspace.to_string_lossy().into_owned(),
+                    replace_workspace_path: None,
+                })
+                .await
+                .expect("attach project");
+            store
+                .record_message_sent(&attached.attachment_key, 200)
+                .await
+                .expect("record send");
+            let config_path = workspace.join(".git/config");
+            let config = fs::read_to_string(&config_path).expect("read config");
+            fs::write(&config_path, config.replace(old_origin, new_origin)).expect("change origin");
+
+            let refreshed = if resolve_run {
+                store
+                    .resolve_run_workspace(attached.workspace_path.clone())
+                    .await
+                    .expect("resolve run")
+            } else {
+                store
+                    .attach(AttachProjectRequest {
+                        workspace_path: attached.workspace_path.clone(),
+                        replace_workspace_path: None,
+                    })
+                    .await
+                    .expect("reattach project")
+            };
+            assert_eq!(refreshed.repository_key, "github.com/example/new");
+            assert_eq!(refreshed.last_message_sent_at, 200);
+            let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+                .list()
+                .await
+                .expect("reload projects");
+            assert_eq!(reloaded.len(), 1);
+            assert_eq!(reloaded[0].last_message_sent_at, 200);
+        }
     }
 
     #[cfg(unix)]
