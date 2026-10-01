@@ -27,4 +27,6 @@ The update includes scoped and generic alias resolution, shared scope and parame
 
 Run `bun run test:anti-slop`, `bun run check:anti-slop`, `bun run lint:oxlint`, and `prek run -a` through the repository's Nix environment. The CLI test verifies spacing rejection, exact autofixes, and repeated-fix stability. Run a second explicit Prettier check on the vendored directory, which the application formatter intentionally ignores.
 
+Verification passed for all 24 plugin test files, the full root test command, root typechecking with TypeScript 7, application Oxlint, the web production build, explicit vendored formatting, and all `prek run -a` hooks. The first full test run timed out in an untouched payments test during concurrent Rust compilation. Its targeted rerun and the second full run passed without code changes.
+
 The pre-update repository snapshot is retained outside the worktree at `/home/amronos/.sprocket/anti-slop-backup-85b5e6c`. Commit `85b5e6c` contains the previous files, configuration, and dependencies. The worktree was clean before this update. Keep this backup until the update is accepted.
