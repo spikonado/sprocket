@@ -159,12 +159,10 @@ it('completes browser sign-in and reports the refreshed status', async () => {
 		authorizeUrl: 'https://auth.openai.test/authorize?state=state-1'
 	}));
 
-	const fetchStatus = vi.fn(async () => connectedStatus);
-
 	const desktopApi = createChatGptApi({
 		startChatGptBrowserLogin: start,
 		fetchChatGptBrowserLoginResult: async () => ({ status: 'complete' }),
-		fetchChatGptStatus: fetchStatus
+		fetchChatGptStatus: async () => connectedStatus
 	});
 
 	const view = mount(client, { desktopApi });

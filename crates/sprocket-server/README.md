@@ -101,6 +101,13 @@ runs pin the selected session and stop using it after sign-out or account change
 Inference and the visible model list use the public OpenAI API, not Convex or
 ChatGPT's private backend.
 
+The UI checks ChatGPT status at startup, when opening provider settings, when
+the window regains focus or connectivity, and every minute while visible. Failed
+requests retain the last successful status until a later check succeeds. The model
+picker only offers exact OpenAI model IDs present in both the account's public
+catalog and the Spikonado gateway catalog. An empty intersection is reported in
+the composer rather than filled with aliases or assumed plan entitlements.
+
 Old cloud-held Codex grants cannot become SIWC grants. Convex retires those Vault
 objects and reports the old connection as disconnected. Users must sign in again
 locally. OpenAI documents this flow for open-source or locally hosted apps and

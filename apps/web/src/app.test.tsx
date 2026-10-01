@@ -248,6 +248,31 @@ it('populates projects from the desktop client resolved during boot', async () =
 	expect(listProjectAttachments).toHaveBeenCalled();
 });
 
+it('loads ChatGPT automatically and refreshes account status when the window returns', async () => {
+	const fetchChatGptStatus = vi.fn<DesktopApi['fetchChatGptStatus']>(async () => ({
+		accounts: [{ connectionId: 'account-a', label: 'Account A', connected: true }],
+		activeConnectionId: 'account-a',
+		models: [],
+		loginAvailable: true
+	}));
+
+	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi({ fetchChatGptStatus })));
+	await waitFor(() => expect(fetchChatGptStatus).toHaveBeenCalled());
+	fireEvent.click(screen.getAllByRole('button', { name: 'Settings' })[0]);
+	fireEvent.click(await screen.findByRole('button', { name: 'BYOK/BYOS' }));
+	expect(await screen.findByText('Connected as Account A')).toBeTruthy();
+	fetchChatGptStatus.mockResolvedValue({
+		accounts: [{ connectionId: 'account-a', label: 'Account A', connected: false }],
+		activeConnectionId: 'account-a',
+		models: [],
+		loginAvailable: true
+	});
+	await act(async () => {
+		window.dispatchEvent(new Event('focus'));
+	});
+	expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeTruthy();
+});
+
 it('surfaces a verification failure for the initially selected project', async () => {
 	const unavailable = projectAttachment(
 		'/work/alpha',

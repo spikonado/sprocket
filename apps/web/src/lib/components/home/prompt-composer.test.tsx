@@ -383,6 +383,40 @@ describe('PromptComposer skill menu', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it('explains an empty ChatGPT gateway intersection and adopts newly discovered exact matches', async () => {
+		const catalog: ModelCatalog = {
+			...modelCatalog,
+			models: modelCatalog.models.map((model) => ({ ...model, provider: 'openai' }))
+		};
+
+		const view = renderComposer({
+			modelCatalog: catalog,
+			selectedModel: 'model-one',
+			selectedCompletionProvider: 'chatgpt',
+			configuredProviders: ['spikonado', 'chatgpt'],
+			providersReady: true,
+			chatGptModelIds: ['account-only-model'],
+			onSelectedModelChange: vi.fn(),
+			prompt: 'Hello'
+		});
+
+		expect(document.querySelector('[role="status"]')?.textContent).toContain(
+			'no models supported by the Spikonado gateway catalog'
+		);
+		await pressKey(view.textarea, { key: 'Enter' });
+		view.rerender({
+			...view.props,
+			chatGptModelIds: ['account-only-model', 'model-two'],
+			chatGptModels: [{ id: 'model-two', name: 'Account Model Two' }]
+		});
+		expect(view.props.onSelectedModelChange).toHaveBeenCalledWith('model-two');
+		await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
+		expect(findButton('Account Model Two')).not.toBeNull();
+		await click(findButton('Account Model Two'));
+		await pressKey(view.textarea, { key: 'Enter' });
+		expect(view.props.onSubmit).toHaveBeenCalledOnce();
+	});
+
 	it('reports the selected model and resets reasoning effort', async () => {
 		const onSelectedModelChange = vi.fn();
 		const onSelectedReasoningEffortChange = vi.fn();

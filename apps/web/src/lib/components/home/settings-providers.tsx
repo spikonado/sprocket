@@ -228,31 +228,6 @@ export default function SettingsProviders({
 		}
 	}
 
-	async function refreshChatGptStatus() {
-		const api = desktopApi;
-
-		if (!api || chatGptPending) return;
-		const generation = ++generationRef.current;
-		setChatGptPending(true);
-		setChatGptError(null);
-
-		try {
-			const status = await api.fetchChatGptStatus({ userId });
-
-			if (generation === generationRef.current) onChatGptStatusChange(status);
-		} catch (error) {
-			if (generation === generationRef.current)
-				setChatGptError(
-					errorMessage(
-						z.instanceof(Error).catch(new Error()).parse(error),
-						'Could not refresh ChatGPT status.'
-					)
-				);
-		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
-		}
-	}
-
 	async function signOutAccount(connectionId: string) {
 		const api = desktopApi;
 
@@ -263,7 +238,7 @@ export default function SettingsProviders({
 		setChatGptPending(true);
 		setChatGptError(null);
 		const userIdAtStart = userId;
-		const generation = generationRef.current;
+		const generation = ++generationRef.current;
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
@@ -368,14 +343,6 @@ export default function SettingsProviders({
 								<p className="text-foreground text-[15px] font-medium">ChatGPT Subscription</p>
 								<p className="text-muted-foreground mt-0.5 text-[12px]">{chatGptStatusLine}</p>
 							</div>
-							<button
-								type="button"
-								className="text-primary text-[13px] disabled:opacity-50"
-								disabled={!desktopApi || chatGptPending || chatGptLoading}
-								onClick={() => void refreshChatGptStatus()}
-							>
-								Refresh
-							</button>
 						</div>
 
 						{browserLogin ? (

@@ -174,6 +174,13 @@ export function PromptComposerView({
 				}))
 			: providerModelOptions;
 
+	const chatGptCatalogMismatch =
+		selectedCompletionProvider === 'chatgpt' &&
+		configuredProviders.includes('chatgpt') &&
+		modelCatalog !== undefined &&
+		chatGptModelIds !== null &&
+		modelOptions.length === 0;
+
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
@@ -769,6 +776,13 @@ export function PromptComposerView({
 								</div>
 							) : null}
 							<div className="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
+								{chatGptCatalogMismatch && (
+									<p className="text-muted-foreground mb-3 text-[12px] leading-5" role="status">
+										OpenAI's model list for this ChatGPT account has no models supported by the
+										Spikonado gateway catalog. Sprocket checks again automatically. You can use
+										another provider meanwhile.
+									</p>
+								)}
 								{composerNotice ? (
 									<div
 										className="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-3"

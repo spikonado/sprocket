@@ -543,10 +543,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody)
 			});
 		},
-		fetchChatGptStatus: async (requestBody) =>
+		fetchChatGptStatus: async (requestBody, signal) =>
 			await request('/api/chatgpt/status', chatGptStatusSchema, {
 				method: 'POST',
-				body: JSON.stringify(requestBody)
+				body: JSON.stringify(requestBody),
+				signal
 			}),
 		startChatGptBrowserLogin: async (requestBody) =>
 			await request('/api/chatgpt/browser/start', chatGptBrowserLoginStartSchema, {

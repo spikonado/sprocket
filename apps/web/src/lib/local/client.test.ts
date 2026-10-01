@@ -644,15 +644,21 @@ describe('chatgpt local sign-in', () => {
 			if (error) status.error = error;
 			const fetch = vi.fn(async () => Response.json(status));
 			vi.stubGlobal('fetch', fetch);
+			const controller = new AbortController();
 
-			const result = await createLocalClient('http://127.0.0.1:7731').fetchChatGptStatus({
-				userId: 'user-1'
-			});
+			const result = await createLocalClient('http://127.0.0.1:7731').fetchChatGptStatus(
+				{ userId: 'user-1' },
+				controller.signal
+			);
 
 			expect(result).toEqual(status);
 			expect(fetch).toHaveBeenCalledWith(
 				'http://127.0.0.1:7731/api/chatgpt/status',
-				expect.objectContaining({ method: 'POST', body: JSON.stringify({ userId: 'user-1' }) })
+				expect.objectContaining({
+					method: 'POST',
+					body: JSON.stringify({ userId: 'user-1' }),
+					signal: controller.signal
+				})
 			);
 		}
 	);

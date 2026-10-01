@@ -335,7 +335,7 @@ export type DesktopApi = {
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;
 	endAccountSession: (request: LocalUserRequest) => Promise<void>;
-	fetchChatGptStatus: (request: LocalUserRequest) => Promise<ChatGptStatus>;
+	fetchChatGptStatus: (request: LocalUserRequest, signal?: AbortSignal) => Promise<ChatGptStatus>;
 	startChatGptBrowserLogin: (
 		request: LocalUserRequest & { connectionId?: string }
 	) => Promise<ChatGptBrowserLoginStart>;
