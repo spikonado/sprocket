@@ -4,6 +4,15 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Provider SDK backwards compatibility
 
+### ChatGPT account model discovery
+
+The local ChatGPT status response keeps its `models` list because released
+clients require it. OpenAI's SIWC list can lag behind working inference IDs.
+The current picker uses only OpenAI models, labels, and settings from the
+ai-gateway catalog, not the account list. Remove the account model lookup and
+the status `models` field only after clients that require them are outside the
+supported upgrade window. Credentials and stored model selections need no migration.
+
 ### Retired gateway model eligibility fields
 
 Sprocket ignores `tierAllowedModels`, `modelLockUpgradeMessage`,
@@ -30,6 +39,16 @@ response item relationships through streaming and replay, and the BYOK
 multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
+
+### Local project message recency
+
+Older `project-attachments.json` files omit `lastMessageSentAt`. The server
+defaults it to zero and rewrites missing fields on load. Historical send times
+cannot be recovered from attachment records, so projects without a recorded
+send use `lastUsedAt` as their ordering fallback. The UI also accepts the absent
+field. Remove these defaults and the missing-field rewrite after releases
+without this field are outside the supported direct-upgrade window and all
+supported stores have been rewritten.
 
 ### Forgotten SIWC accounts
 

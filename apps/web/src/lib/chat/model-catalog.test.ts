@@ -113,12 +113,16 @@ describe('gateway model catalog', () => {
 		expect(resolveModelForCompletionProvider(catalog, 'openai', 'other-free')).toBe('openai-paid');
 	});
 
-	it('offers only ChatGPT account models present in the gateway catalog', async () => {
+	it('offers ChatGPT models and settings only from the gateway catalog', async () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models = [
-			{ ...payload.sprocket.models[0], id: 'gpt-5.4', provider: 'openai' },
-			{ ...payload.sprocket.models[0], id: 'gpt-second', provider: 'openai' },
-			{ ...payload.sprocket.models[0], id: 'gpt-gateway-only', provider: 'openai' },
+			{
+				...payload.sprocket.models[0],
+				id: 'gpt-6.1-sol',
+				label: 'GPT-6.1 Sol',
+				provider: 'openai'
+			},
+			{ ...payload.sprocket.models[0], id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'openai' },
 			{ ...payload.sprocket.models[0], id: 'other', provider: 'other' }
 		];
 		vi.stubGlobal(
@@ -126,24 +130,13 @@ describe('gateway model catalog', () => {
 			vi.fn(async () => Response.json(payload))
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(
-			modelOptionsForCompletionProvider(catalog, 'chatgpt', ['gpt-second', 'gpt-5.4']).map(
-				(model) => model.id
-			)
-		).toEqual(['gpt-second', 'gpt-5.4']);
-		expect(
-			modelOptionsForCompletionProvider(catalog, 'chatgpt', ['gpt-5.4', 'gpt-account-only'])
-		).toEqual([expect.objectContaining({ id: 'gpt-5.4', provider: 'openai' })]);
-		expect(
-			resolveModelForCompletionProvider(catalog, 'chatgpt', 'gpt-account-only', ['gpt-5.4'])
-		).toBe('gpt-5.4');
-		expect(modelOptionsForCompletionProvider(catalog, 'chatgpt', ['gpt-account-only'])).toEqual([]);
-		expect(modelOptionsForCompletionProvider(catalog, 'openai')).toEqual([
-			expect.objectContaining({ id: 'gpt-5.4' }),
-			expect.objectContaining({ id: 'gpt-second' }),
-			expect.objectContaining({ id: 'gpt-gateway-only' })
+		expect(modelOptionsForCompletionProvider(catalog, 'chatgpt')).toEqual([
+			{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai' },
+			{ id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'openai' }
 		]);
-		expect(modelOptionsForCompletionProvider(catalog, 'chatgpt', null)).toEqual([]);
+		expect(resolveModelForCompletionProvider(catalog, 'chatgpt', 'unknown')).toBe('gpt-6.1-sol');
+		expect(resolveModelForCompletionProvider(catalog, 'chatgpt', 'other')).toBe('gpt-6.1-sol');
+		expect(resolveModelForCompletionProvider(catalog, 'chatgpt', 'gpt-6-luna')).toBe('gpt-6-luna');
 	});
 });
 

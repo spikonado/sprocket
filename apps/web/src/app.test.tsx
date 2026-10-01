@@ -1,6 +1,7 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
@@ -244,6 +245,97 @@ it('populates projects from the desktop client resolved during boot', async () =
 	expect(listProjectAttachments).toHaveBeenCalled();
 });
 
+it('shares local message recency across the project menus and recent directories', async () => {
+	const alpha = { ...projectAttachment('/work/alpha', 'repo-alpha', 'Alpha'), lastUsedAt: 500 };
+
+	const beta = {
+		...projectAttachment('/work/beta', 'repo-beta', 'Beta'),
+		lastMessageSentAt: 200
+	};
+
+	const gamma = {
+		...projectAttachment('/work/gamma', 'repo-gamma', 'Gamma'),
+		lastMessageSentAt: 100
+	};
+
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha, gamma, beta],
+				browseFilesystem: async () => ({ parentPath: '/home', entries: [] })
+			})
+		)
+	);
+	fireEvent.click(await projectTrigger('Beta'));
+	expect(
+		screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+	).toEqual(['Beta', 'Gamma', 'Alpha']);
+	fireEvent.click(await projectTrigger('Beta'));
+	expect(
+		Array.from(document.querySelectorAll('.inbox-project-option')).map((item) => item.textContent)
+	).toEqual(['All projects', 'Beta', 'Gamma', 'Alpha']);
+	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
+	const dialog = await screen.findByRole('dialog');
+
+	const recents = within(dialog)
+		.getAllByRole('button')
+		.filter((button) => ['alpha', 'beta', 'gamma'].includes(button.textContent ?? ''));
+
+	expect(recents.map((button) => button.textContent)).toEqual(['beta', 'gamma', 'alpha']);
+});
+
+it('refreshes message recency after a successful send even when another project is open', async () => {
+	const alpha = {
+		...projectAttachment('/work/alpha', 'repo-alpha', 'Alpha'),
+		lastMessageSentAt: 10
+	};
+
+	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	let sent = false;
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha, { ...beta, lastMessageSentAt: sent ? 20 : 0 }],
+				resolveWorkspacePath: async ({ workspacePath }) =>
+					workspacePath === beta.workspacePath ? beta : alpha,
+				runAgent
+			})
+		)
+	);
+	await openProjectFromHeading('Alpha', 'Beta');
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	fireEvent.click(await projectTrigger('Beta'));
+	expect(
+		screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+	).toEqual(['Alpha', 'Beta']);
+	fireEvent.click(await projectTrigger('Beta'));
+	await openProjectFromHeading('Beta', 'Alpha');
+	await act(async () => {
+		sent = true;
+		launch.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			runId: 'run-new' as Id<'runs'>,
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			threadId: 'thread-new' as Id<'threadRecords'>
+		});
+	});
+	fireEvent.click(await projectTrigger('Alpha'));
+	await waitFor(() =>
+		expect(
+			screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+		).toEqual(['Beta', 'Alpha'])
+	);
+}, 15_000);
+
 it('surfaces a verification failure for the initially selected project', async () => {
 	const unavailable = projectAttachment(
 		'/work/alpha',
@@ -480,6 +572,59 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
 });
 
+it.each([
+	{ models: [{ id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' }] },
+	{ models: [], error: 'Could not load ChatGPT models. Retry or reconnect in Settings.' }
+])('launches ChatGPT despite stale or unavailable models %j', async (status) => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+
+	const runtime = createRuntime(
+		createDesktopApi({
+			listProjectAttachments: async () => [alpha],
+			resolveWorkspacePath: async () => alpha,
+			fetchChatGptStatus: async () => ({
+				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
+				activeConnectionId: 'chatgpt-1',
+				loginAvailable: true,
+				...status
+			}),
+			runAgent
+		})
+	);
+
+	runtime.fetchGatewayModelCatalog = async () => ({
+		...modelCatalog,
+		models: [
+			...modelCatalog.models,
+			{ ...modelCatalog.models[0], id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai' }
+		]
+	});
+	await renderApp(createConvexFixtures(), runtime);
+	await projectTrigger('Alpha');
+	fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+	fireEvent.click(await screen.findByRole('button', { name: /ChatGPT Subscription/ }));
+	await waitFor(() =>
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toContain(
+			'GPT-6.1 Sol'
+		)
+	);
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				completionProvider: 'chatgpt',
+				selectedModel: 'gpt-6.1-sol',
+				prompt: 'Fix the robot'
+			})
+		)
+	);
+});
+
 it('launches the continuation prompt after an agent question is answered', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
@@ -542,6 +687,120 @@ it('launches the continuation prompt after an agent question is answered', async
 	await waitFor(() =>
 		expect(runAgent).toHaveBeenCalledWith(
 			expect.objectContaining({
+				prompt: 'Continue with the robot fix',
+				continuationOfRunId: continuationRunId
+			})
+		)
+	);
+});
+
+it('restores a ChatGPT continuation and launches after its connection is confirmed', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+
+	const thread = {
+		...threadRecord('thread-1', 'repo-alpha', 'Fix the robot'),
+		completionProvider: 'chatgpt' as const,
+		selectedModel: 'gpt-6.1-sol'
+	};
+
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+
+	const question: AgentQuestionSnapshot = {
+		threadId: thread._id,
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		questionId: 'question-1' as Id<'agentQuestions'>,
+		question: 'Which board should I target?',
+		options: [{ id: 'option-a', label: 'Option A' }],
+		status: 'pending',
+		sequence: 1,
+		createdAt: 1,
+		timeoutAt: 1_000_000
+	};
+
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const continuationRunId = 'run-1' as Id<'runs'>;
+
+	const answer = Promise.withResolvers<{
+		question: AgentQuestionSnapshot;
+		continuation: { runId: Id<'runs'>; prompt: string };
+	}>();
+
+	const status = Promise.withResolvers<Awaited<ReturnType<DesktopApi['fetchChatGptStatus']>>>();
+
+	const configuration =
+		Promise.withResolvers<FunctionReturnType<typeof api.providerCredentials.getMyConfiguration>>();
+
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const client = createConvexFixtures();
+	client.handleAction(api.providerCredentials.getMyConfiguration, () => configuration.promise);
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'waiting_for_input',
+		run: { runId: continuationRunId, startedAt: 1 }
+	});
+	client.registerQuery(api.agentQuestions.headPendingForThread, question);
+	client.registerMutation(api.agentQuestions.answer, answer.promise);
+
+	const runtime = createRuntime(
+		createDesktopApi({
+			listProjectAttachments: async () => [alpha],
+			fetchChatGptStatus: () => status.promise,
+			runAgent
+		})
+	);
+
+	runtime.fetchGatewayModelCatalog = async () => ({
+		...modelCatalog,
+		models: [
+			...modelCatalog.models,
+			{ ...modelCatalog.models[0], id: thread.selectedModel, provider: 'openai' }
+		]
+	});
+	await renderApp(client, runtime);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	fireEvent.click(await screen.findByRole('button', { name: 'Option A' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+	fireEvent.click(await screen.findByText('Other work'));
+	await act(async () => {
+		client.registerQuery(api.agentQuestions.headPendingForThread, null);
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'completed',
+			run: { runId: continuationRunId, startedAt: 1 }
+		});
+		answer.resolve({
+			question: { ...question, status: 'answered', answer: { optionId: 'option-a' } },
+			continuation: { runId: continuationRunId, prompt: 'Continue with the robot fix' }
+		});
+	});
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	await waitFor(() =>
+		expect(screen.getByRole('combobox')).toHaveProperty('value', 'Continue with the robot fix')
+	);
+	await flushPendingWork();
+	expect(runAgent).not.toHaveBeenCalled();
+	await act(async () => {
+		status.resolve({
+			accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
+			activeConnectionId: 'chatgpt-1',
+			models: [],
+			loginAvailable: true
+		});
+		configuration.resolve({ openai: false, chatgpt: false, chatgptModelIds: null });
+	});
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				completionProvider: 'chatgpt',
+				selectedModel: thread.selectedModel,
 				prompt: 'Continue with the robot fix',
 				continuationOfRunId: continuationRunId
 			})
