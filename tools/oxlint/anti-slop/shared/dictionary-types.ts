@@ -4,6 +4,7 @@ import {
 	createTypeAliasEnvironment,
 	hasVisibleTypeBinding,
 	visibleTypeAlias,
+	visibleTypeInterfaces,
 	type TypeAliasEnvironment as LexicalTypeAliasEnvironment
 } from './type-alias-resolution.ts';
 
@@ -39,33 +40,14 @@ export type WideningTarget = {
 };
 
 export type TypeEnvironment = {
-	readonly interfaces: ReadonlyMap<string, readonly ESTree.TSInterfaceDeclaration[]>;
 	readonly typeAliases: LexicalTypeAliasEnvironment;
 };
-
-function declaredStatement(statement: ESTree.Statement): ESTree.Node | null {
-	return statement.type === 'ExportNamedDeclaration' ||
-		statement.type === 'ExportDefaultDeclaration'
-		? (statement.declaration ?? null)
-		: statement;
-}
 
 export function createTypeEnvironment(
 	program: ESTree.Program,
 	visitorKeys: Readonly<Record<string, readonly string[]>>
 ): TypeEnvironment {
-	const interfaces = new Map<string, ESTree.TSInterfaceDeclaration[]>();
-
-	for (const statement of program.body) {
-		const declaration = declaredStatement(statement);
-		if (declaration?.type !== 'TSInterfaceDeclaration') continue;
-		const declarations = interfaces.get(declaration.id.name) ?? [];
-		declarations.push(declaration);
-		interfaces.set(declaration.id.name, declarations);
-	}
-
 	return {
-		interfaces,
 		typeAliases: createTypeAliasEnvironment(program, visitorKeys)
 	};
 }
@@ -205,8 +187,8 @@ function unsafeDirectValue(
 			? null
 			: unsafeDirectValue(substitution, environment, substitutions, resolvingAliases);
 	}
-	const interfaceDeclarations = environment.interfaces.get(name);
-	if (interfaceDeclarations !== undefined) {
+	const interfaceDeclarations = visibleTypeInterfaces(name, unwrapped, environment.typeAliases);
+	if (interfaceDeclarations.length > 0) {
 		return isEffectivelyEmptyInterface(interfaceDeclarations) ? 'empty-object' : null;
 	}
 	const alias = visibleTypeAlias(name, unwrapped, environment.typeAliases);

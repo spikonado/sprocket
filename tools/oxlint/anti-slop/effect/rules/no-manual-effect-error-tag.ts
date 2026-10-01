@@ -24,7 +24,7 @@ export const noManualEffectErrorTagRule = defineRule({
 		return {
 			BinaryExpression(node) {
 				const tagMember = tagMemberFromComparison(node);
-				if (tagMember === undefined || !isInsideBroadEffectHandler(node)) {
+				if (tagMember === undefined || !isInsideBroadEffectHandler(tagMember, context.sourceCode)) {
 					return;
 				}
 				context.report({
@@ -33,7 +33,10 @@ export const noManualEffectErrorTagRule = defineRule({
 				});
 			},
 			SwitchStatement(node) {
-				if (!isTagMember(node.discriminant) || !isInsideBroadEffectHandler(node)) {
+				if (
+					!isTagMember(node.discriminant) ||
+					!isInsideBroadEffectHandler(node.discriminant, context.sourceCode)
+				) {
 					return;
 				}
 				context.report({

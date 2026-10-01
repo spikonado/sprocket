@@ -7,6 +7,7 @@ type TypeScope = ESTree.Node;
 
 type TypeBinding = {
 	readonly alias: ESTree.TSTypeAliasDeclaration | null;
+	readonly declaration: ESTree.Node;
 	readonly name: string;
 	readonly scope: TypeScope;
 };
@@ -88,7 +89,11 @@ function collectTypeBindings(
 	const declared = declaredTypeBinding(node);
 	if (declared !== null) {
 		const bindings = bindingsByName.get(declared.name) ?? [];
-		bindings.push({ ...declared, scope: enclosingTypeScope(node) });
+		bindings.push({
+			...declared,
+			declaration: node,
+			scope: node.type === 'ClassExpression' ? node : enclosingTypeScope(node)
+		});
 		bindingsByName.set(declared.name, bindings);
 		if (declared.alias !== null) aliases.push(declared.alias);
 	}
@@ -180,6 +185,19 @@ export function hasVisibleTypeBinding(
 	);
 }
 
+export function visibleTypeInterfaces(
+	name: string,
+	use: ESTree.Node,
+	environment: TypeAliasEnvironment
+): readonly ESTree.TSInterfaceDeclaration[] {
+	if (lexicalTypeParameterNames(use, environment.visitorKeys).has(name)) return [];
+	const bindings = nearestTypeBindings(name, use, environment);
+	if (bindings.some((binding) => binding.declaration.type !== 'TSInterfaceDeclaration')) return [];
+	return bindings.flatMap((binding) =>
+		binding.declaration.type === 'TSInterfaceDeclaration' ? [binding.declaration] : []
+	);
+}
+
 function typeReferenceName(type: ESTree.TSTypeReference): string | null {
 	return type.typeName.type === 'Identifier' ? type.typeName.name : null;
 }
@@ -191,7 +209,7 @@ function aliasSubstitutions(
 ): Substitutions | null {
 	const parameters = alias.typeParameters?.params ?? [];
 	const arguments_ = reference.typeArguments?.params ?? [];
-	const next = new Map(base);
+	const next = new Map<string, Substitution>();
 	for (const [index, parameter] of parameters.entries()) {
 		const explicitArgument = arguments_[index];
 		const argument = explicitArgument ?? parameter.default;

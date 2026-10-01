@@ -23,6 +23,6 @@ The opinionated policy lives outside this directory in `../../rules/require-read
 
 ## Updating and verification
 
-Fetch an explicit upstream revision, compare the original rule and types against this revision, and port relevant fixes while retaining the adapters above. Update this record and preserve the license. Run `pnpm check` and `pnpm sync:skill-assets` as required by repository guidance.
+Fetch an explicit upstream revision, compare the original rule and types against this revision, and port relevant fixes while retaining the adapters above. Update this record and preserve the license. In the upstream anti-slop repository, run `pnpm check` and `pnpm sync:skill-assets`. In Sprocket, run `nix develop -c bun run test:anti-slop`, `nix develop -c bun run check:anti-slop`, and `nix develop -c prek run -a`. Sprocket has no skill-asset synchronization step.
 
 Focused Oxlint RuleTester cases live in `../../rules/require-readable-spacing.test.ts`; they test exact fixes, JSDoc/trailing comments, same-line statements, semicolon-free code, TypeScript exports/overloads, Effect-style generators, and upstream removal behavior. `../../rules/require-readable-spacing-cli.test.ts` verifies the exported plugin through the native Oxlint CLI on multiple files, including rejection, autofix, and repeated-fix stability. The complete upstream JS/TS test suites have not been ported; this is focused compatibility evidence, not a claim of full upstream conformance.

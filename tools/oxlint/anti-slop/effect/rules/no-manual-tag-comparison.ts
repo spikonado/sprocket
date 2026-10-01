@@ -22,13 +22,17 @@ export const noManualTagComparisonRule = defineRule({
 	createOnce(context) {
 		return {
 			BinaryExpression(node) {
-				if (tagMemberFromComparison(node) === undefined || isInsideBroadEffectHandler(node)) {
+				const tagMember = tagMemberFromComparison(node);
+				if (tagMember === undefined || isInsideBroadEffectHandler(tagMember, context.sourceCode)) {
 					return;
 				}
 				context.report({ node, messageId: 'manualComparison' });
 			},
 			SwitchStatement(node) {
-				if (!isTagMember(node.discriminant) || isInsideBroadEffectHandler(node)) {
+				if (
+					!isTagMember(node.discriminant) ||
+					isInsideBroadEffectHandler(node.discriminant, context.sourceCode)
+				) {
 					return;
 				}
 				context.report({ node, messageId: 'manualSwitch' });

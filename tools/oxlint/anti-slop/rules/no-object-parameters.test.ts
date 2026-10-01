@@ -24,6 +24,14 @@ tester.run('anti-slop/no-object-parameters', noObjectParametersRule, {
 		'function one() { type Payload = object; } function two() { function consume(value: Payload) {} }'
 	],
 	invalid: [
+		{
+			code: 'type Payload = object; const ctor = class Payload {}; function use(value: Payload) {}',
+			errors: [error]
+		},
+		{
+			code: 'type Json = object; type Wrap<T> = Json | T; type Outer<Json> = Wrap<Json>; function use(value: Outer<number>) {}',
+			errors: [error]
+		},
 		{ code: 'function f(value: object) {}', errors: [error] },
 		{ code: 'type Alias = object; function f(value: Alias) {}', errors: [error] },
 		{ code: 'type Alias = (object); function f(value: Alias) {}', errors: [error] },

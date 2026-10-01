@@ -8,6 +8,8 @@ const error = { messageId: 'unsafeDictionary' };
 
 tester.run('anti-slop/no-unsafe-dictionary-type', noUnsafeDictionaryTypeRule, {
 	valid: [
+		'interface Value {} function run() { type Value = { id: string }; type Entries = Record<string, Value>; }',
+		'interface Value {} function run() { interface Value { id: string } type Entries = Record<string, Value>; }',
 		'type Commands = Record<string, Command>;',
 		'type Metadata = Record<PropertyKey, JsonValue>;',
 		'type PermissionLevels = Record<Permission, number>;',
@@ -37,6 +39,10 @@ tester.run('anti-slop/no-unsafe-dictionary-type', noUnsafeDictionaryTypeRule, {
 		'type Deep<T extends Readonly<Record<string, unknown>>> = T;'
 	],
 	invalid: [
+		{
+			code: 'type Value = { id: string }; function run() { interface Value {} type Entries = Record<string, Value>; }',
+			errors: [error]
+		},
 		{ code: 'type A = Record<string, unknown>;', errors: [error] },
 		{ code: 'type A = { [key: string]: any };', errors: [error] },
 		{ code: 'type A = { [index: number]: Command; [key: string]: unknown | Command };', errors: 1 },

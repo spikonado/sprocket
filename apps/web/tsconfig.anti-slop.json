@@ -8,7 +8,7 @@
 		"skipLibCheck": true,
 		"verbatimModuleSyntax": true,
 		"allowImportingTsExtensions": true,
-		"typeRoots": ["../../../apps/web/node_modules/@types"]
+		"types": ["node"]
 	},
-	"include": ["**/*.ts"]
+	"include": ["../../tools/oxlint/anti-slop/**/*.ts"]
 }

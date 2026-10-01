@@ -4,6 +4,9 @@ import { noManualEffectErrorTagRule } from './no-manual-effect-error-tag.ts';
 
 new RuleTester().run('no-manual-effect-error-tag', noManualEffectErrorTagRule, {
 	valid: [
+		'Effect.catchAll(error => other._tag === "Ready" ? recover : fail);',
+		'Effect.catchAll(error => { { const error = other; if (error._tag === "Ready") recover(); } });',
+		'Effect.catchIf(error => error._tag === "NotFound", recover);',
 		'error._tag === "NotFound";',
 		'Effect.catchTag("NotFound", recover);',
 		'Effect.catchTag("Wrapper", (error) => error.reason._tag === "Timeout" ? retry : fail);'

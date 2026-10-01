@@ -11,6 +11,10 @@ new RuleTester().run('no-manual-tag-comparison', noManualTagComparisonRule, {
 	],
 	invalid: [
 		{
+			code: 'Effect.catchAll(error => other._tag === "Ready" ? recover : fail);',
+			errors: [{ messageId: 'manualComparison' }]
+		},
+		{
 			code: 'value._tag === "Ready";',
 			errors: [{ messageId: 'manualComparison' }]
 		},

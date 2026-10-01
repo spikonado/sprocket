@@ -20,8 +20,10 @@ The update includes scoped and generic alias resolution, shared scope and parame
 - TypeScript files use this repository's Prettier configuration. Compare formatted upstream files when recovering the base for a future update.
 - `LICENSE` retains anti-slop's MIT notice. The nested Stylistic license and provenance record are retained separately under `vendor/eslint-stylistic/`.
 - The spacing CLI test resolves the installed Oxlint binary and invokes it through Node instead of requiring pnpm.
-- Local `package.json` declares ESM without changing the monorepo's module mode and exposes `typecheck`, which runs the workspace's TypeScript against the local `tsconfig.json`. That config checks all plugin code and tests with the workspace's Node types.
+- Local `package.json` declares ESM without changing the monorepo's module mode. `apps/web/tsconfig.anti-slop.json` checks all plugin code and tests with the web workspace's declared TypeScript and Node types. The root script delegates to the workspace command without depending on a compiler installation path.
 - Root `test:anti-slop` runs all 24 upstream test files through Node's test runner and is included in `bun run test`. Root `check:anti-slop` typechecks the vendored code and is included in the pre-commit TypeScript check.
+- Review fixes keep class-expression names local to the class, isolate generic substitutions across aliases, resolve interfaces by lexical scope, and restrict Effect catch advice to the handler's actual error binding. Regression tests cover these differences from the incoming revision.
+- The nested Stylistic provenance record distinguishes upstream pnpm commands from Sprocket's Bun validation commands.
 
 ## Verification and recovery
 

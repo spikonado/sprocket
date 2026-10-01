@@ -1,4 +1,6 @@
-import type { ESTree } from '@oxlint/plugins';
+import type { ESTree, SourceCode } from '@oxlint/plugins';
+
+import { resolveVariable } from '../../shared/scope.ts';
 
 const equalityOperators = new Set(['==', '===', '!=', '!==']);
 const broadEffectCatchMethods = new Set(['catch', 'catchAll', 'catchIf']);
@@ -34,18 +36,39 @@ const isBroadEffectCatchCall = (
 	node.callee.property.type === 'Identifier' &&
 	broadEffectCatchMethods.has(node.callee.property.name);
 
-export const isInsideBroadEffectHandler = (node: ESTree.Node): boolean => {
+export const isInsideBroadEffectHandler = (
+	node: ESTree.MemberExpression,
+	sourceCode: SourceCode
+): boolean => {
+	const subject = isReasonTagMember(node) ? node.object.object : node.object;
+	if (subject.type !== 'Identifier') return false;
+	const variable = resolveVariable(sourceCode, subject);
 	let current: ESTree.Node | null | undefined = node.parent;
 	while (current !== null && current !== undefined) {
 		if (current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
-			return isBroadEffectCatchCall(current.parent) && current.parent.arguments.includes(current);
+			const handler = current;
+			return (
+				isBroadEffectCatchCall(current.parent) &&
+				current.parent.arguments.includes(current) &&
+				current.parent.arguments.indexOf(current) === current.parent.arguments.length - 1 &&
+				variable !== null &&
+				variable.defs.some(
+					(definition) =>
+						definition.type === 'Parameter' &&
+						definition.node === handler &&
+						handler.params[0]?.type === 'Identifier' &&
+						definition.name === handler.params[0]
+				)
+			);
 		}
 		current = current.parent;
 	}
 	return false;
 };
 
-export const isReasonTagMember = (node: ESTree.MemberExpression): boolean =>
+export const isReasonTagMember = (
+	node: ESTree.MemberExpression
+): node is ESTree.MemberExpression & { object: ESTree.MemberExpression } =>
 	node.object.type === 'MemberExpression' &&
 	((!node.object.computed &&
 		node.object.property.type === 'Identifier' &&
