@@ -20,6 +20,7 @@ export const selectedThreadLifecycle = query({
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
 			.order('desc')
 			.first();
+
 		if (!latestRun) {
 			return projectSelectedThreadLifecycle({
 				threadId: args.threadId,
@@ -34,8 +35,10 @@ export const selectedThreadLifecycle = query({
 				query.eq('threadId', args.threadId).eq('status', 'pending')
 			)
 			.first();
+
 		let executorFriendlyName: string | undefined;
 		const machineId = runMachineId(latestRun);
+
 		if (machineId) {
 			const machine = await getOwnedMachine(ctx, latestRun.userId, machineId);
 			executorFriendlyName = machine?.friendlyName;

@@ -17,6 +17,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			lastError: 'boom',
 			executionSecret: 'parent-secret'
 		});
+
 		const args = {
 			threadId,
 			submissionId: 'sub-continue',
@@ -27,6 +28,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			reasoningEffort: 'high' as const,
 			fastMode: true
 		};
+
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({ created: true, runId: expect.any(String) });
 		expect(created.promptPart).toBeUndefined();
@@ -55,6 +57,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			runId: created.runId,
 			executionSecret: 'continue-secret'
 		});
+
 		expect(context.prompt).toBe('');
 		expect(context.run.continuationOfRunId).toBe(parent.runId);
 	});
@@ -62,6 +65,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 	it('creates a linked continuation with a visible prompt from a completed run', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const parent = await createQueuedRun(
 			t,
 			asUser,
@@ -69,6 +73,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			'sub-answered-parent',
 			'parent-secret'
 		);
+
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: parent.runId,
 			text: '',
@@ -92,6 +97,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			prompt: 'Ship it: include the release notes',
 			continuationOfRunId: parent.runId
 		};
+
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({
 			created: true,
@@ -155,6 +161,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			lastError: 'boom',
 			executionSecret: 'failed-secret'
 		});
+
 		const first = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'sub-continue-first',
@@ -162,6 +169,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			prompt: '',
 			continuationOfRunId: failed.runId
 		});
+
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: first.runId,
 			text: '',
@@ -210,6 +218,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 	it('fails an abandoned claimed parent, then continues from it', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const abandoned = await createQueuedRun(
 			t,
 			asUser,
@@ -217,6 +226,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			'sub-abandoned-continue',
 			'abandoned-continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-abandoned-continue',
 			runId: abandoned.runId,
@@ -233,6 +243,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			prompt: '',
 			continuationOfRunId: abandoned.runId
 		});
+
 		expect(continuation.created).toBe(true);
 		expect(continuation.runId).not.toBe(abandoned.runId);
 		expect(await t.run(async (ctx) => ctx.db.get('runs', abandoned.runId))).toMatchObject({
@@ -248,6 +259,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 	it('reconciles a queued continuation after a failed start', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const parent = await createQueuedRun(
 			t,
 			asUser,
@@ -255,6 +267,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			'sub-cleanup-parent',
 			'cleanup-parent'
 		);
+
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: parent.runId,
 			text: '',
@@ -262,6 +275,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			lastError: 'boom',
 			executionSecret: 'cleanup-parent'
 		});
+
 		const args = {
 			submissionId: 'sub-cleanup-continue',
 			threadId,
@@ -270,11 +284,13 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
+
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'cleanup-continue',
 			continuationOfRunId: parent.runId
 		});
+
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,

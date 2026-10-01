@@ -13,7 +13,9 @@ const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof Us
 
 const navItemClass =
 	'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition';
+
 const navItemActiveClass = 'bg-hover-fill-strong text-foreground';
+
 const navItemIdleClass = 'text-muted-foreground hover:bg-hover-fill hover:text-foreground';
 
 export default function SettingsSidebar({

@@ -5,20 +5,26 @@ import { mergeArtifactSources, type ArtifactWatchState } from './artifacts';
 
 function clientFixture() {
 	let update: (revision: number) => void = () => {};
+
 	let fail: (error: Error) => void = () => {};
+
 	const unsubscribe = vi.fn();
 	const query = vi.fn<Parameters<typeof watchCloudArtifacts>[0]['query']>();
+
 	const onUpdate = vi.fn<Parameters<typeof watchCloudArtifacts>[0]['onUpdate']>(
 		(_query, _scope, onUpdate, onError) => {
 			update = onUpdate;
 			fail = onError;
+
 			return unsubscribe;
 		}
 	);
+
 	const client: Parameters<typeof watchCloudArtifacts>[0] = {
 		query,
 		onUpdate
 	};
+
 	return {
 		client,
 		query,
@@ -39,11 +45,13 @@ describe('cloud artifact subscriptions', () => {
 		fixture.query.mockResolvedValue({ page: [], isDone: true, continueCursor: '', revision: 1 });
 		// SAFETY: the mock records this ID without sending a Convex request.
 		const threadId = 'thread' as Id<'threadRecords'>;
+
 		const stop = watchCloudArtifacts(
 			fixture.client,
 			{ userId: 'alice', repositoryKey: 'repo', threadId },
 			vi.fn()
 		);
+
 		expect(fixture.onUpdate.mock.calls[0]?.[1]).toEqual({ repositoryKey: 'repo' });
 		fixture.update();
 		await Promise.resolve();
@@ -81,11 +89,13 @@ describe('cloud artifact subscriptions', () => {
 			revision: 1
 		});
 		const publish = vi.fn();
+
 		const stop = watchCloudArtifacts(
 			fixture.client,
 			{ userId: 'alice', repositoryKey: 'repo' },
 			publish
 		);
+
 		fixture.update();
 		await Promise.resolve();
 		expect(publish).toHaveBeenCalledWith({ artifacts: [], stale: false, error: null });
@@ -96,6 +106,7 @@ describe('cloud artifact subscriptions', () => {
 	it('discards a load that finishes after scope teardown', async () => {
 		const fixture = clientFixture();
 		let resolve: (page: Awaited<ReturnType<typeof fixture.query>>) => void = () => {};
+
 		fixture.query.mockImplementation(
 			() =>
 				new Promise((done) => {
@@ -103,11 +114,13 @@ describe('cloud artifact subscriptions', () => {
 				})
 		);
 		const publish = vi.fn();
+
 		const stop = watchCloudArtifacts(
 			fixture.client,
 			{ userId: 'alice', repositoryKey: 'repo' },
 			publish
 		);
+
 		fixture.update();
 		stop();
 		resolve({ page: [], isDone: true, continueCursor: '', revision: 1 });
@@ -133,11 +146,13 @@ describe('cloud artifact subscriptions', () => {
 		});
 		fixture.query.mockResolvedValue({ page: [], isDone: true, continueCursor: '', revision: 2 });
 		const publish = vi.fn();
+
 		const stop = watchCloudArtifacts(
 			fixture.client,
 			{ userId: 'alice', repositoryKey: 'repo' },
 			publish
 		);
+
 		fixture.update();
 		await vi.advanceTimersByTimeAsync(0);
 		expect(publish).toHaveBeenLastCalledWith({
@@ -171,10 +186,12 @@ describe('cloud artifact subscriptions', () => {
 			stale: false,
 			error: null
 		};
+
 		const local: ArtifactWatchState = {
 			...cloud,
 			artifacts: [{ ...cloud.artifacts[0]!, localPath: 'notes.md', content: 'unsynced' }]
 		};
+
 		expect(mergeArtifactSources(cloud, null)).toEqual(cloud);
 		expect(mergeArtifactSources(cloud, local).artifacts[0]?.content).toBe('unsynced');
 		expect(mergeArtifactSources(cloud, null).artifacts[0]?.content).toBe('cloud');

@@ -4,6 +4,7 @@ import ErrorBoundary from './error-boundary';
 
 it('offers recovery when a descendant fails to render', () => {
 	const onCaughtError = vi.fn();
+
 	function BrokenScreen(): never {
 		throw new Error('Failed to render');
 	}

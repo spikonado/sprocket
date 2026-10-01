@@ -7,11 +7,13 @@ const errorPayloadSchema = z.object({ error: z.string().optional() });
 
 function unexpectedResponseError(body: string, baseUrl: string): Error {
 	const preview = body.trim().slice(0, 120);
+
 	if (preview.startsWith('<!')) {
 		return new Error(
 			`The Sprocket API at ${baseUrl} returned a web page instead of JSON. Make sure the server is running correctly.`
 		);
 	}
+
 	return new Error(
 		preview.length > 0
 			? `Local API returned an unexpected response: ${preview}`
@@ -21,11 +23,13 @@ function unexpectedResponseError(body: string, baseUrl: string): Error {
 
 async function parseJson<T>(response: Response, schema: z.ZodType<T>, baseUrl: string): Promise<T> {
 	const body = await response.text();
+
 	if (!(response.headers.get('content-type') ?? '').includes('application/json')) {
 		throw unexpectedResponseError(body, baseUrl);
 	}
 
 	let json: unknown;
+
 	try {
 		json = JSON.parse(body);
 	} catch {
@@ -33,24 +37,30 @@ async function parseJson<T>(response: Response, schema: z.ZodType<T>, baseUrl: s
 	}
 
 	const parsed = schema.safeParse(json);
+
 	if (!parsed.success) {
 		throw new Error('Local API returned an unexpected response.');
 	}
+
 	return parsed.data;
 }
 
 async function failedResponseError(response: Response, baseUrl: string): Promise<Error> {
 	const body = await response.text();
 	let json: unknown;
+
 	try {
 		json = JSON.parse(body);
 	} catch {
 		return unexpectedResponseError(body, baseUrl);
 	}
+
 	const parsed = errorPayloadSchema.safeParse(json);
+
 	if (!parsed.success) {
 		return new Error('Local API returned an unexpected response.');
 	}
+
 	return new Error(
 		parsed.data.error ? parsed.data.error : `Local request failed (${response.status}).`
 	);
@@ -60,6 +70,7 @@ async function requireSuccessfulResponse(response: Response, baseUrl: string): P
 	if (!response.ok) {
 		throw await failedResponseError(response, baseUrl);
 	}
+
 	return response;
 }
 
@@ -69,6 +80,7 @@ function eventData(block: string): string | null {
 		.map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line))
 		.filter((line) => line === 'data' || line.startsWith('data:'))
 		.map((line) => (line === 'data' ? '' : line.slice(5).replace(/^ /, '')));
+
 	return data.length > 0 ? data.join('\n') : null;
 }
 
@@ -93,12 +105,15 @@ export async function readEventStream(
 			buffer += decoder.decode(value, { stream: !done });
 
 			let match = /\r?\n\r?\n/.exec(buffer);
+
 			while (match) {
 				const data = eventData(buffer.slice(0, match.index));
 				buffer = buffer.slice(match.index + match[0].length);
+
 				if (data !== null && !signal.aborted) {
 					onData(data);
 				}
+
 				match = /\r?\n\r?\n/.exec(buffer);
 			}
 
@@ -132,9 +147,11 @@ export function createLocalTransport(baseUrl: string) {
 	return {
 		async request<T>(pathname: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
 			const response = await requireSuccessfulResponse(await fetchLocal(pathname, init), baseUrl);
+
 			if (response.status === 204) {
 				throw new Error('Local API returned an empty response.');
 			}
+
 			return await parseJson(response, schema, baseUrl);
 		},
 
@@ -156,6 +173,7 @@ export function createLocalTransport(baseUrl: string) {
 				}),
 				baseUrl
 			);
+
 			await readEventStream(response, signal, onData);
 		}
 	};

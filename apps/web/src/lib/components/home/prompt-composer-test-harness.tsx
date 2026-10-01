@@ -8,13 +8,17 @@ export default function PromptComposerTestHarness({
 }) {
 	const [prompt, setPrompt] = useState(composerProps.prompt ?? '');
 	const [selectedModel, setSelectedModel] = useState(composerProps.selectedModel);
+
 	const [selectedCompletionProvider, setSelectedCompletionProvider] = useState(
 		composerProps.selectedCompletionProvider
 	);
+
 	const [selectedReasoningEffort, setSelectedReasoningEffort] = useState(
 		composerProps.selectedReasoningEffort
 	);
+
 	const [fastMode, setFastMode] = useState(composerProps.fastMode);
+
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState(
 		composerProps.selectedQuestionOptionId
 	);

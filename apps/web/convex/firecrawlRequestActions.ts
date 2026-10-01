@@ -11,12 +11,15 @@ export const execute = internalAction({
 	returns: v.null(),
 	handler: async (ctx, { id }) => {
 		const claimed = await ctx.runMutation(internal.firecrawlRequests.claim, { id });
+
 		if (!claimed) return null;
 		const { request } = claimed;
 		const result = await executeQueuedScrape(ctx, request);
+
 		const storageId = await ctx.storage.store(
 			new Blob([JSON.stringify(result)], { type: 'application/json' })
 		);
+
 		try {
 			await ctx.scheduler.runAfter(REQUEST_TTL_MS, internal.firecrawlRequests.removeResult, {
 				storageId
@@ -25,7 +28,9 @@ export const execute = internalAction({
 			await ctx.storage.delete(storageId);
 			throw error;
 		}
+
 		await ctx.runMutation(internal.firecrawlRequests.publish, { id, storageId });
+
 		return null;
 	}
 });

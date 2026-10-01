@@ -64,10 +64,12 @@ export default function SidePanel({
 	function onTabKeydown(event: KeyboardEvent) {
 		const current = TABS.findIndex((item) => item.id === tab);
 		let next = -1;
+
 		if (event.key === 'ArrowRight') next = (current + 1) % TABS.length;
 		else if (event.key === 'ArrowLeft') next = (current - 1 + TABS.length) % TABS.length;
 		else if (event.key === 'Home') next = 0;
 		else if (event.key === 'End') next = TABS.length - 1;
+
 		if (next === -1) return;
 		event.preventDefault();
 		onTabChange(TABS[next].id);
@@ -77,8 +79,10 @@ export default function SidePanel({
 
 	useEffect(() => {
 		if (!expanded) return;
+
 		const onKeyDown = (event: globalThis.KeyboardEvent) => {
 			if (event.key !== 'Escape') return;
+
 			// Artifact screen-fullscreen (browser FS or CSS fallback) owns Escape.
 			if (
 				document.fullscreenElement ||
@@ -86,10 +90,13 @@ export default function SidePanel({
 			) {
 				return;
 			}
+
 			event.preventDefault();
 			onToggleExpanded();
 		};
+
 		window.addEventListener('keydown', onKeyDown);
+
 		return () => window.removeEventListener('keydown', onKeyDown);
 	}, [expanded, onToggleExpanded]);
 
@@ -197,6 +204,7 @@ export default function SidePanel({
 								) : (
 									artifacts.map((artifact) => {
 										const TypeIcon = TYPE_ICONS[artifact.artifactType];
+
 										return (
 											<div
 												key={artifact.key}

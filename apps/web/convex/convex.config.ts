@@ -25,12 +25,19 @@ const app = defineApp({
 });
 
 app.use(firecrawl, { env: { FIRECRAWL_API_KEY: app.env.FIRECRAWL_API_KEY } });
+
 app.use(exa, { env: { EXA_API_KEY: app.env.EXA_API_KEY } });
+
 app.use(rateLimiter);
+
 app.use(migrations);
+
 app.use(aggregate);
+
 app.use(actionRetrier);
+
 app.use(workpool, { name: 'webSearchWorkpool' });
+
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
 
 export default app;

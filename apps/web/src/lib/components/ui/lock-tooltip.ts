@@ -30,6 +30,7 @@ export function useLockTooltip(): LockTooltipController {
 	const showLockTooltip = useCallback<LockTooltipController['showLockTooltip']>(
 		(event, label, sticky = false) => {
 			const target = event.currentTarget;
+
 			if (!(target instanceof HTMLElement)) return;
 			const rect = target.getBoundingClientRect();
 			clearStickyTimer();
@@ -39,6 +40,7 @@ export function useLockTooltip(): LockTooltipController {
 				left: rect.left + rect.width / 2,
 				label
 			});
+
 			if (sticky) {
 				stickyTimerRef.current = setTimeout(() => {
 					stickyRef.current = false;

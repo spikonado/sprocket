@@ -13,21 +13,26 @@ import { z } from 'zod';
 import { createLocalTransport } from './transport';
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
+
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
+
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
 	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
 	volumeList: z.boolean().optional()
 });
+
 const workspaceSkillsResultSchema = z.object({
 	skills: z.array(z.object({ name: z.string(), description: z.string() })),
 	warnings: z.array(z.string())
 });
+
 const workspacePathResolutionSchema = z.object({
 	workspacePath: z.string(),
 	displayName: z.string(),
 	repositoryKey: z.string()
 });
+
 const projectAttachmentSchema = z.object({
 	workspacePath: z.string(),
 	repositoryKey: z.string(),
@@ -38,10 +43,12 @@ const projectAttachmentSchema = z.object({
 	lastUsedAt: z.int(),
 	unavailableReason: z.string().optional()
 });
+
 const agentRunStartSchema = z.object({
 	runId: z.string(),
 	threadId: z.string()
 });
+
 const localTranscriptAttachmentSchema = z.object({
 	storageId: z.string(),
 	name: z.string(),
@@ -49,6 +56,7 @@ const localTranscriptAttachmentSchema = z.object({
 	size: z.int(),
 	url: z.url().optional()
 });
+
 const transcriptUploadSuccessSchema = z.object({
 	storageId: z.string(),
 	name: z.string(),
@@ -56,6 +64,7 @@ const transcriptUploadSuccessSchema = z.object({
 	size: z.number(),
 	url: z.string()
 });
+
 const transcriptUploadResultSchema = z.union([
 	transcriptUploadSuccessSchema,
 	z.object({ error: z.string() })
@@ -63,9 +72,11 @@ const transcriptUploadResultSchema = z.union([
 
 function transcriptUploadPath(args: { userId: string; name: string; threadId?: string }): string {
 	let query = `userId=${encodeURIComponent(args.userId)}&name=${encodeURIComponent(args.name)}`;
+
 	if (args.threadId) {
 		query += `&threadId=${encodeURIComponent(args.threadId)}`;
 	}
+
 	return `/api/transcript/upload?${query}`;
 }
 
@@ -127,11 +138,13 @@ const displayDetailsSchema = z.object({
 	revision: z.int().nonnegative(),
 	stale: z.boolean()
 });
+
 const transcriptWatchEventSchema = z.object({
 	eventType: z.string(),
 	totalParts: z.int().optional(),
 	stale: z.boolean()
 });
+
 const liveCompletionOverlaySchema = z.object({
 	threadId: z.string(),
 	runId: z.string(),
@@ -141,11 +154,14 @@ const liveCompletionOverlaySchema = z.object({
 	parts: z.array(z.unknown()),
 	runStartedAt: z.int()
 });
+
 const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('updated'), live: liveCompletionOverlaySchema }),
 	z.object({ eventType: z.literal('cleared') })
 ]);
+
 const artifactScopeSchema = z.enum(['thread', 'project']);
+
 const localArtifactSchema = z.object({
 	_id: z.string(),
 	userId: z.string(),
@@ -161,6 +177,7 @@ const localArtifactSchema = z.object({
 	updatedAt: z.number(),
 	localError: z.string().optional()
 });
+
 const artifactsWatchEventSchema = z.object({
 	artifacts: z.array(localArtifactSchema),
 	stale: z.boolean(),
@@ -176,11 +193,14 @@ const chatGptStatusSchema = z.object({
 	loginAvailable: z.boolean(),
 	error: z.string().optional()
 });
+
 const chatGptBrowserLoginStartSchema = z.object({ state: z.string(), authorizeUrl: z.string() });
+
 const chatGptBrowserLoginResultSchema = z.object({
 	status: z.enum(['pending', 'complete', 'error']),
 	error: z.string().optional()
 });
+
 const chatGptDisconnectSchema = z.object({ warning: z.string().nullable() });
 
 function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
@@ -217,14 +237,17 @@ function parseLiveCompletionWatchEvent(
 	if (event.eventType === 'updated') {
 		return { eventType: 'updated', live: parseLiveCompletionOverlay(event.live) };
 	}
+
 	return { eventType: 'cleared' };
 }
 
 function parseLocalArtifact(artifact: z.infer<typeof localArtifactSchema>): LocalArtifact {
 	const { threadId, ...rest } = artifact;
+
 	if (artifact.scope === 'thread' && threadId) {
 		return { ...rest, threadId };
 	}
+
 	return rest;
 }
 
@@ -240,6 +263,7 @@ function parseArtifactsWatchEvent(
 
 export function resolveLocalApiBaseUrl(): string | null {
 	const configured = import.meta.env.VITE_LOCAL_API_URL?.trim();
+
 	if (configured) {
 		return configured.replace(/\/$/, '');
 	}
@@ -307,6 +331,7 @@ export async function hasLocalSession(baseUrl: string): Promise<boolean> {
 	}
 
 	const session = sessionSchema.safeParse(await sessionResponse.json());
+
 	return session.success ? Boolean(session.data.authenticated) : false;
 }
 
@@ -314,11 +339,14 @@ const localSessionRequests = new Map<string, Promise<void>>();
 
 export async function ensureLocalSession(baseUrl: string) {
 	const pending = localSessionRequests.get(baseUrl);
+
 	if (pending) {
 		return await pending;
 	}
+
 	const request = establishLocalSession(baseUrl);
 	localSessionRequests.set(baseUrl, request);
+
 	try {
 		await request;
 	} finally {
@@ -343,6 +371,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }
 				: { partialPath: input.partialPath };
+
 			return request('/api/workspace/browse', filesystemBrowseResultSchema, {
 				method: 'POST',
 				body: JSON.stringify(body)
@@ -359,6 +388,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			const body = input.createIfMissing
 				? { workspacePath: input.workspacePath, createIfMissing: true }
 				: { workspacePath: input.workspacePath };
+
 			return request('/api/workspace/resolve', workspacePathResolutionSchema, {
 				method: 'POST',
 				body: JSON.stringify(body)
@@ -380,6 +410,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
+
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
 		fetchTranscriptDisplay: async (requestBody, signal) =>
@@ -394,6 +425,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody),
 				signal
 			});
+
 			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
@@ -404,6 +436,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				handlers.signal,
 				(data) => {
 					const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
+
 					if (parsed.success) {
 						handlers.onEvent(parsed.data);
 					}
@@ -413,6 +446,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 		watchLiveCompletion: async (requestBody, handlers) => {
 			await transport.postEventStream('/api/agent/live', requestBody, handlers.signal, (data) => {
 				const parsed = liveCompletionWatchEventSchema.safeParse(JSON.parse(data));
+
 				if (parsed.success) {
 					handlers.onEvent(parseLiveCompletionWatchEvent(parsed.data));
 				}
@@ -431,12 +465,15 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(requestBody)
 			});
+
 			if (response.status === 404) {
 				return null;
 			}
+
 			if (!response.ok) {
 				return null;
 			}
+
 			return await response.blob();
 		},
 		uploadTranscriptAttachment: async (requestBody) => {
@@ -455,9 +492,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					body: requestBody.file
 				}
 			);
+
 			if ('error' in result) {
 				return result;
 			}
+
 			return {
 				storageId: asConvexId<'_storage'>(result.storageId),
 				name: result.name,
@@ -536,6 +575,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
+
 			return warning;
 		}
 	};
@@ -543,10 +583,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 
 export async function resolveDesktopApi(): Promise<DesktopApi> {
 	const baseUrl = resolveLocalApiBaseUrl();
+
 	if (!baseUrl) {
 		throw new Error('Unable to resolve the Sprocket server URL.');
 	}
 
 	await ensureLocalSession(baseUrl);
+
 	return createLocalClient(baseUrl);
 }

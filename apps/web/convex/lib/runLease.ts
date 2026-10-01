@@ -1,5 +1,6 @@
 // A longer lease gives disconnected executors time to reconnect before takeover.
 export const RUN_CLAIM_LEASE_DURATION_MS = 120_000;
+
 export const RUN_QUEUED_STARTUP_DEADLINE_MS = 45_000;
 
 type ClaimableRun = {
@@ -20,12 +21,15 @@ export function isClaimedRunStatus(status: string): boolean {
 
 export function isRunClaimLeaseActive(run: ClaimableRun, now: number): boolean {
 	if (!isClaimedRunStatus(run.status)) return false;
+
 	return run.claimExpiresAt !== undefined && run.claimExpiresAt > now;
 }
 
 export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: number): boolean {
 	if (run.cancellationRequestedAt !== undefined) return false;
+
 	if (run.status === 'queued') return true;
+
 	return (
 		isClaimedRunStatus(run.status) && run.claimId === claimId && isRunClaimLeaseActive(run, now)
 	);

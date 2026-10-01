@@ -21,6 +21,7 @@ test('selects the native package for supported platforms', () => {
 test('restores execute bits on unix binaries', { skip: process.platform === 'win32' }, () => {
 	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-chmod-'));
 	const binary = path.join(directory, 'sprocket');
+
 	try {
 		writeFileSync(binary, '#!/bin/sh\n');
 		chmodSync(binary, 0o644);
@@ -50,6 +51,7 @@ test('overrides inherited update helper environment for the native child', async
 		ensureExecutable: () => {},
 		spawn(binary, args, options) {
 			invocation = { binary, args, options };
+
 			return { status: 0 };
 		}
 	});
@@ -68,14 +70,17 @@ test('update and upgrade help is delegated to the native CLI', async () => {
 		['upgrade', '-h']
 	]) {
 		let invocation;
+
 		const code = await launch(args, {
 			resolveBinary: () => '/tmp/sprocket',
 			ensureExecutable: () => {},
 			spawn(binary, childArgs) {
 				invocation = { binary, args: childArgs };
+
 				return { status: 0 };
 			}
 		});
+
 		assert.equal(code, 0);
 		assert.deepEqual(invocation, { binary: '/tmp/sprocket', args });
 	}

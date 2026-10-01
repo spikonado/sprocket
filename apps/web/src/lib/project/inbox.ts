@@ -10,7 +10,9 @@ import type { InboxState } from '@convex/lib/inboxState';
 const INBOX_PAGE_SIZE = 10;
 
 export type InboxQueryOptions = UsePaginatedQueryOptions<typeof api.inbox.list>;
+
 export type InboxQueryResult = UsePaginatedQueryObjectReturnType<typeof api.inbox.list>;
+
 export type InboxQueryHook = (options: InboxQueryOptions) => InboxQueryResult;
 
 export function normalizeRepositoryKeys(repositoryKeys: string[]): string[] {
@@ -33,6 +35,7 @@ function useInboxSection(input: InboxSectionInput, queryHook: InboxQueryHook): I
 				: 'skip',
 		initialNumItems: INBOX_PAGE_SIZE
 	});
+
 	return {
 		state: input.state,
 		rows: query.data ?? [],
@@ -57,10 +60,12 @@ export function useThreadInbox(
 		enabled: input.enabled,
 		repositoryKeys: normalizeRepositoryKeys(input.repositoryKeys)
 	};
+
 	const unsettled = useInboxSection(
 		{ state: 'unsettled', sectionOpen: true, ...sectionInput },
 		queryHook
 	);
+
 	const settled = useInboxSection(
 		{
 			state: 'settled',
@@ -69,6 +74,7 @@ export function useThreadInbox(
 		},
 		queryHook
 	);
+
 	return { sections: [unsettled, settled] };
 }
 

@@ -17,6 +17,7 @@ const SCRIPT = path.resolve(import.meta.dirname, '../scripts/merge-update-metada
 
 function macManifest(arch, extras = {}) {
 	const version = extras.version ?? '1.2.3';
+
 	return serializeUpdateInfoYaml({
 		version,
 		files: [
@@ -70,6 +71,7 @@ test('merges per-arch files and keeps extra update fields', () => {
 			)
 		}
 	]);
+
 	assert.equal(merged.version, '1.2.3');
 	assert.equal(merged.isAdminRightsRequired, false);
 	assert.equal(merged.stagingPercentage, 25);
@@ -88,6 +90,7 @@ test('refuses version, channel-field, and same-url checksum collisions', () => {
 	const arm64 = parseUpdateInfoYaml(
 		macManifest('arm64', { stagingPercentage: 10, releaseNotes: 'notes' })
 	);
+
 	assert.throws(
 		() =>
 			mergeUpdateInfo([
@@ -141,6 +144,7 @@ test('copies unique artifacts and merges colliding canary metadata', async () =>
 	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-desktop-meta-'));
 	const input = path.join(temporary, 'input');
 	const output = path.join(temporary, 'output');
+
 	try {
 		await mkdir(path.join(input, 'desktop-darwin-arm64'), { recursive: true });
 		await mkdir(path.join(input, 'desktop-darwin-x64'), { recursive: true });
@@ -195,6 +199,7 @@ test('copies unique artifacts and merges colliding canary metadata', async () =>
 
 test('fails instead of overwriting colliding installers', async () => {
 	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-desktop-collide-'));
+
 	try {
 		const input = path.join(temporary, 'input');
 		await mkdir(path.join(input, 'a'), { recursive: true });
@@ -212,6 +217,7 @@ test('fails instead of overwriting colliding installers', async () => {
 
 test('rejects a nonempty or overlapping output without deleting it', async () => {
 	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-desktop-output-'));
+
 	try {
 		const input = path.join(temporary, 'input');
 		const output = path.join(temporary, 'output');

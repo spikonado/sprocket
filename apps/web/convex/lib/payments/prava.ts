@@ -20,13 +20,17 @@ export type PravaMandate = {
 
 function pravaConfig(): PravaConfig {
 	const secretKey = env.PRAVA_SECRET_KEY?.trim();
+
 	if (!secretKey) {
 		throw new Error('PRAVA_SECRET_KEY is not configured.');
 	}
+
 	const baseUrl = env.PRAVA_BACKEND_URL?.trim().replace(/\/+$/, '');
+
 	if (!baseUrl) {
 		throw new Error('PRAVA_BACKEND_URL is not configured.');
 	}
+
 	return {
 		baseUrl,
 		secretKey
@@ -37,28 +41,36 @@ export async function pravaRequest<T>(path: string, init?: RequestInit): Promise
 	const { baseUrl, secretKey } = pravaConfig();
 	const headers = new Headers(init?.headers);
 	headers.set('Authorization', `Bearer ${secretKey}`);
+
 	if (init?.body) headers.set('Content-Type', 'application/json');
+
 	const response = await fetch(`${baseUrl}${path}`, {
 		...init,
 		headers
 	});
+
 	if (!response.ok) {
 		const details = await response.text();
 		let message = details;
+
 		try {
 			// SAFETY: Prava errors share one documented envelope
 			// ({error:{code,message,details}}); both fields are optional-checked
 			// before use and anything else keeps the raw body as the message.
 			const parsed = JSON.parse(details) as { error?: { code?: string; message?: string } };
+
 			if (parsed.error?.code || parsed.error?.message) {
 				message = [parsed.error.code, parsed.error.message].filter(Boolean).join(' - ');
 			}
 		} catch {
 			// Not JSON; surface the raw body.
 		}
+
 		throw new Error(`Prava request failed (${response.status})${message ? `: ${message}` : '.'}`);
 	}
+
 	const body = await response.text();
+
 	// SAFETY: unchecked decode of the trusted Prava API response into its documented contract T.
 	return (body ? JSON.parse(body) : undefined) as T;
 }
@@ -80,11 +92,13 @@ export async function listPravaMandates(
 		const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
 			`/v1/mandates?customer_id=${encodeURIComponent(userId)}${standingOnly ? '&standing_only=true' : ''}`
 		);
+
 		return list.mandates ?? [];
 	} catch (error) {
 		if (error instanceof Error && isPravaCustomerNotFound(error)) {
 			return [];
 		}
+
 		throw error;
 	}
 }

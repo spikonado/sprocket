@@ -20,6 +20,7 @@ import {
 import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './test.setup';
 
 const PAGE_URL = 'https://example.com/page';
+
 const SCREENSHOT_URL = 'https://storage.googleapis.com/firecrawl/shot.png?X-Goog-Signature=sig';
 
 type QueuedActionArgs = {
@@ -28,7 +29,9 @@ type QueuedActionArgs = {
 	jobId: Id<'executorJobs'>;
 	executionSecret: string;
 };
+
 type ScrapeTransport = Infer<typeof vScrapeUrlTransport>;
+
 type ScreenshotTransport = Infer<typeof vScreenshotUrlTransport>;
 
 function queuedAction(
@@ -51,6 +54,7 @@ async function queuedAction(
 			runId: args.runId,
 			executionSecret: args.executionSecret
 		});
+
 		return await executeQueuedScrape(ctx, { ...args, kind });
 	});
 }
@@ -115,6 +119,7 @@ async function storageBlobs(t: ConvexTestInstance) {
 }
 
 beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => vi.useRealTimers());
 
 describe('scrape HTTP failures', () => {
@@ -127,6 +132,7 @@ describe('scrape HTTP failures', () => {
 				message: 'Firecrawl /v2/scrape failed (403): forbidden'
 			})}\n    at scrape (lib.js:24:12)`
 		);
+
 		expect(scrapeHttpErrorStatus(error)).toBe(403);
 	});
 });
@@ -136,6 +142,7 @@ describe('Exa search failures', () => {
 		const cause = new Error(
 			`Uncaught Error: Exa /search failed (${status}): provider rejected the request`
 		);
+
 		const error = classifyExaSearchFailure(cause);
 
 		expect(isNonRetryableError(error)).toBe(true);
@@ -164,16 +171,19 @@ describe('Exa search failures', () => {
 describe('queued scrape auth', () => {
 	it('scrapes the authorized URL with Firecrawl cache reads and writes disabled', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'local-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = mockScrape({
 			markdown: '# Page',
 			summary: 'A page.',
 			images: ['https://example.com/a.png']
 		});
+
 		try {
 			expect(
 				await queuedAction(asUser, 'scrape', {
@@ -196,11 +206,13 @@ describe('queued scrape auth', () => {
 
 	it('rejects a wrong execution secret', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'scrape-auth-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		await expect(
 			queuedAction(asUser, 'scrape', {
 				runId,
@@ -213,11 +225,13 @@ describe('queued scrape auth', () => {
 
 	it('rejects cloud-enqueued scrape jobs', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'cloud-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/cloud' }
 		});
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'cloud-work' });
 		});
@@ -233,11 +247,13 @@ describe('queued scrape auth', () => {
 
 	it('rejects web_search jobs', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'search-scrape-secret',
 			kind: 'web_search',
 			payload: { query: 'sprocket' }
 		});
+
 		await expect(
 			queuedAction(asUser, 'scrape', {
 				runId,
@@ -250,12 +266,15 @@ describe('queued scrape auth', () => {
 
 	it('rejects screenshot_url jobs before calling Firecrawl', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'screenshot-as-scrape-secret',
 			kind: 'screenshot_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'scrape', {
@@ -273,11 +292,13 @@ describe('queued scrape auth', () => {
 
 	it('rejects an expired claim', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'expired-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		await t.run(async (ctx) => {
 			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
@@ -300,11 +321,13 @@ describe('queued scrape auth', () => {
 
 	it('rejects a settled local scrape job', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'settled-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		await asUser.mutation(api.executor.complete, {
 			runId,
 			claimId,
@@ -326,11 +349,13 @@ describe('queued scrape auth', () => {
 describe('stored scrape_url results', () => {
 	it('stores scrape results with summary and images', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'saved-path-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		await asUser.mutation(api.executor.complete, {
 			runId,
 			claimId,
@@ -357,11 +382,13 @@ describe('stored scrape_url results', () => {
 
 	it('stores scrape results with summary and image lists', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'stored-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		await asUser.mutation(api.executor.complete, {
 			runId,
 			claimId,
@@ -393,12 +420,15 @@ async function scrapeLocalPage(
 	url = PAGE_URL
 ) {
 	const t = initConvexTest();
+
 	const seeded = await seedStartedWebJob(t, {
 		executionSecret: `local-md-${Math.random()}`,
 		kind: 'scrape_url',
 		payload: { url }
 	});
+
 	const scrape = mockScrape(document, url);
+
 	try {
 		const result = await queuedAction(seeded.asUser, 'scrape', {
 			runId: seeded.runId,
@@ -406,6 +436,7 @@ async function scrapeLocalPage(
 			jobId: seeded.jobId,
 			executionSecret: seeded.executionSecret
 		});
+
 		return { t, result, scrapeCalls: scrape.mock.calls.map((call) => [...call]) };
 	} finally {
 		scrape.mockRestore();
@@ -420,6 +451,7 @@ describe('scrape size budget', () => {
 			summary: 's'.repeat(SCRAPE_INLINE_MAX_CHARS),
 			images: []
 		};
+
 		await expect(scrapeLocalPage(page)).rejects.toThrow('Scrape summary is too large.');
 	});
 });
@@ -427,12 +459,15 @@ describe('scrape size budget', () => {
 describe('queued scrape markdown transport', () => {
 	it('rejects oversized JSON archives without storing a blob', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'oversized-markdown-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
 		});
+
 		const scrape = mockScrape({ markdown: `${'é'.repeat(32 * 1024 * 1024)}x` });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'scrape', {
@@ -466,11 +501,13 @@ describe('queued scrape markdown transport', () => {
 
 	it('returns short markdown, summary, and images inline without truncated or storage', async () => {
 		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000);
+
 		const { t, result, scrapeCalls } = await scrapeLocalPage({
 			markdown,
 			summary: 'A long but inline page.',
 			images: ['https://example.com/a.png']
 		});
+
 		expect(result).toEqual({
 			url: PAGE_URL,
 			markdown,
@@ -496,18 +533,22 @@ describe('queued scrape markdown transport', () => {
 	it('stores the full scrape JSON including images and returns scrapeUrl', async () => {
 		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
 		const images = ['https://example.com/a.png', 'https://example.com/b.png'];
+
 		const archive = {
 			url: PAGE_URL,
 			markdown,
 			summary: 'Huge page.',
 			images
 		};
+
 		const expectedBytes = new TextEncoder().encode(JSON.stringify(archive));
+
 		const { t, result, scrapeCalls } = await scrapeLocalPage({
 			markdown,
 			summary: 'Huge page.',
 			images
 		});
+
 		expect(result).toEqual({
 			url: PAGE_URL,
 			summary: 'Huge page.',
@@ -516,36 +557,44 @@ describe('queued scrape markdown transport', () => {
 		expect(result).not.toHaveProperty('truncated');
 		expect(result).not.toHaveProperty('markdown');
 		expect(scrapeCalls[0]).toEqual([...expectedScrapeArgs()]);
+
 		if (!('scrapeUrl' in result)) throw new Error('expected scrapeUrl');
 		const blobs = await storageBlobs(t);
 		expect(blobs).toHaveLength(1);
 		expect(blobs[0]?.size).toBe(expectedBytes.byteLength);
+
 		const stored = await t.run(async (ctx) => {
 			if (!blobs[0]) return null;
 			const blob = await ctx.storage.get(blobs[0]._id);
+
 			return {
 				url: await ctx.storage.getUrl(blobs[0]._id),
 				text: blob ? await new Response(blob).text() : null
 			};
 		});
+
 		expect(stored?.url).toBe(result.scrapeUrl);
 		expect(stored?.text ? JSON.parse(stored.text) : null).toEqual(archive);
 	});
 
 	it('stores full image lists when media, not markdown, overflows the budget', async () => {
 		const images = [`https://cdn.example.com/${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}.png`];
+
 		const archive = {
 			url: PAGE_URL,
 			markdown: 'short',
 			summary: 'Images overflow.',
 			images
 		};
+
 		const expectedBytes = new TextEncoder().encode(JSON.stringify(archive));
+
 		const { t, result } = await scrapeLocalPage({
 			markdown: 'short',
 			summary: 'Images overflow.',
 			images
 		});
+
 		expect(result).toEqual({
 			url: PAGE_URL,
 			summary: 'Images overflow.',
@@ -573,17 +622,20 @@ describe('queued scrape markdown transport', () => {
 describe('scrape errors', () => {
 	it('rejects a missing Firecrawl API key without retrying', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'missing-key-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape').mockRejectedValue(
 			new ConvexError({
 				code: 'firecrawl_missing_api_key',
 				message: 'FIRECRAWL_API_KEY is not set for the Firecrawl component.'
 			})
 		);
+
 		try {
 			await expect(
 				queuedAction(asUser, 'scrape', {
@@ -600,14 +652,17 @@ describe('scrape errors', () => {
 
 	it('maps Firecrawl API 404 to a non-retryable scrape failure', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'api-404-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = vi
 			.spyOn(FirecrawlClient.prototype, 'scrape')
 			.mockRejectedValue(firecrawlApiError(404));
+
 		try {
 			await expect(
 				queuedAction(asUser, 'scrape', {
@@ -624,16 +679,19 @@ describe('scrape errors', () => {
 
 	it('maps page metadata.statusCode 404 separately from Firecrawl API errors', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'page-404-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = mockScrape({
 			markdown: 'missing',
 			summary: 'Not found.',
 			metadata: { sourceURL: PAGE_URL, statusCode: 404 }
 		});
+
 		try {
 			await expect(
 				queuedAction(asUser, 'scrape', {
@@ -650,15 +708,18 @@ describe('scrape errors', () => {
 
 	it('rejects invalid Firecrawl documents', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'invalid-doc-secret',
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape').mockResolvedValue(
 			// SAFETY: Deliberately malformed provider data exercises runtime validation.
 			{ images: [1, 2, 3] } as never
 		);
+
 		try {
 			await expect(
 				queuedAction(asUser, 'scrape', {
@@ -690,11 +751,13 @@ async function screenshotToolArgs(options: {
 	payload?: { url: string } | { query: string };
 }) {
 	const t = initConvexTest();
+
 	const seeded = await seedStartedWebJob(t, {
 		executionSecret: options.executionSecret,
 		kind: options.kind ?? 'screenshot_url',
 		payload: options.payload ?? { url: PAGE_URL }
 	});
+
 	return { t, ...seeded };
 }
 
@@ -703,10 +766,12 @@ describe('queued screenshot transport', () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'screenshot-format-secret'
 		});
+
 		const scrape = mockScrape({
 			screenshot: SCREENSHOT_URL,
 			metadata: { sourceURL: PAGE_URL, url: SCREENSHOT_URL, statusCode: 200 }
 		});
+
 		try {
 			expect(
 				await queuedAction(asUser, 'screenshot', {
@@ -730,10 +795,12 @@ describe('queued screenshot transport', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'screenshot-page-url-secret'
 		});
+
 		const scrape = mockScrape({
 			screenshot: SCREENSHOT_URL,
 			metadata: { url: SCREENSHOT_URL, statusCode: 200 }
 		});
+
 		try {
 			expect(
 				await queuedAction(asUser, 'screenshot', {
@@ -752,7 +819,9 @@ describe('queued screenshot transport', () => {
 		const { asUser, runId, claimId, jobId } = await screenshotToolArgs({
 			executionSecret: 'screenshot-auth-secret'
 		});
+
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -772,10 +841,12 @@ describe('queued screenshot transport', () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'expired-screenshot-secret'
 		});
+
 		await t.run(async (ctx) => {
 			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -802,10 +873,12 @@ describe('queued screenshot transport', () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'cancelled-screenshot-secret'
 		});
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() });
 		});
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -827,7 +900,9 @@ describe('queued screenshot transport', () => {
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -849,7 +924,9 @@ describe('queued screenshot transport', () => {
 			kind: 'web_search',
 			payload: { query: 'sprocket' }
 		});
+
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -870,7 +947,9 @@ describe('queued screenshot transport', () => {
 			executionSecret: 'ftp-screenshot-secret',
 			payload: { url: 'ftp://example.com' }
 		});
+
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -892,10 +971,12 @@ describe('queued screenshot transport', () => {
 			kind: 'scrape_url',
 			payload: { url: PAGE_URL }
 		});
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'cloud-work' });
 		});
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -915,10 +996,12 @@ describe('queued screenshot transport', () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'cloud-id-screenshot-secret'
 		});
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'work-screenshot' });
 		});
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -938,6 +1021,7 @@ describe('queued screenshot transport', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'settled-screenshot-secret'
 		});
+
 		await asUser.mutation(api.executor.complete, {
 			runId,
 			claimId,
@@ -946,6 +1030,7 @@ describe('queued screenshot transport', () => {
 			result: screenshotImageResult
 		});
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -967,7 +1052,9 @@ describe('queued screenshot transport', () => {
 			const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 				executionSecret: `missing-screenshot-${String(screenshot)}-secret`
 			});
+
 			const scrape = mockScrape(screenshot === undefined ? { markdown: '# Page' } : { screenshot });
+
 			try {
 				await expect(
 					queuedAction(asUser, 'screenshot', {
@@ -989,7 +1076,9 @@ describe('queued screenshot transport', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'invalid-screenshot-url-secret'
 		});
+
 		const scrape = mockScrape({ screenshot: 'data:image/png;base64,abc' });
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -1008,10 +1097,12 @@ describe('queued screenshot transport', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'screenshot-page-404-secret'
 		});
+
 		const scrape = mockScrape({
 			screenshot: SCREENSHOT_URL,
 			metadata: { sourceURL: PAGE_URL, statusCode: 404 }
 		});
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -1030,9 +1121,11 @@ describe('queued screenshot transport', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'screenshot-api-404-secret'
 		});
+
 		const scrape = vi
 			.spyOn(FirecrawlClient.prototype, 'scrape')
 			.mockRejectedValue(firecrawlApiError(404));
+
 		try {
 			await expect(
 				queuedAction(asUser, 'screenshot', {
@@ -1051,6 +1144,7 @@ describe('queued screenshot transport', () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'saved-screenshot-secret'
 		});
+
 		await asUser.mutation(api.executor.complete, {
 			runId,
 			claimId,

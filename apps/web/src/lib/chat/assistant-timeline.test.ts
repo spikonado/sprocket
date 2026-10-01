@@ -82,6 +82,28 @@ describe('assistant timeline', () => {
 		});
 	});
 
+	it('uses the latest result for a call without changing surrounding part order', () => {
+		const timeline = buildAssistantTimeline(
+			[
+				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'pwd' } },
+				{ type: 'tool-result', callId: 'call-1', output: 'first', completedAt: 1_000 },
+				{ type: 'text', id: 't1', text: 'Done' },
+				{ type: 'tool-result', callId: 'call-1', output: 'latest', completedAt: 2_000 }
+			],
+			[]
+		);
+
+		expect(timeline).toEqual([
+			expect.objectContaining({
+				type: 'tool',
+				callId: 'call-1',
+				output: 'latest',
+				completedAt: 2_000
+			}),
+			{ type: 'text', id: 't1', text: 'Done' }
+		]);
+	});
+
 	it('hides empty reasoning and keeps later tool then text in arrival order', () => {
 		const timeline = buildAssistantTimeline(
 			[
@@ -107,10 +129,12 @@ describe('assistant timeline', () => {
 	it('correlates reversed same-name jobs by payload and keeps remaining jobs visible', () => {
 		const first = executorJob('job-1', 1, { payload: { cmd: 'one' } });
 		const second = executorJob('job-2', 2, { payload: { cmd: 'two' } });
+
 		const remaining = executorJob('job-3', 3, {
 			kind: 'apply_patch',
 			payload: { patch: 'diff --git a/new.txt b/new.txt' }
 		});
+
 		const timeline = buildAssistantTimeline(
 			[
 				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'one' } },
@@ -128,6 +152,7 @@ describe('assistant timeline', () => {
 	it('keeps ambiguous same-name jobs separate from streamed calls', () => {
 		const first = executorJob('job-1', 1, { payload: { cmd: 'persisted-one' } });
 		const second = executorJob('job-2', 2, { payload: { cmd: 'persisted-two' } });
+
 		const timeline = buildAssistantTimeline(
 			[
 				{
@@ -178,9 +203,11 @@ describe('assistant timeline', () => {
 
 		expect(cancelled).toMatchObject({ type: 'tool' });
 		expect(failed).toMatchObject({ type: 'tool' });
+
 		if (cancelled?.type !== 'tool' || failed?.type !== 'tool') {
 			throw new Error('Expected tool timeline items.');
 		}
+
 		expect(assistantTimelineToolFailureKind(cancelled, true)).toBe('cancelled');
 		expect(assistantTimelineToolError(cancelled, true)).toBe('stopped by user');
 		expect(assistantTimelineToolFailureKind(failed, true)).toBe('failed');
@@ -228,6 +255,7 @@ describe('groupAssistantTimeline', () => {
 		const withJob = tool('c1', 'streamed_name', {
 			job: executorJob('job-1', 1, { kind: 'exec_command' })
 		});
+
 		const blocks = groupAssistantTimeline([
 			withJob,
 			tool('c3', 'streamed_name'),
@@ -291,11 +319,14 @@ describe('groupAssistantTimelineSections', () => {
 		const running = tool('c1', 'exec_command', {
 			job: executorJob('job-1', 1, { status: 'claimed', kind: 'exec_command' })
 		});
+
 		const done = tool('c2', 'exec_command', {
 			job: executorJob('job-2', 2, { status: 'completed', kind: 'exec_command' })
 		});
+
 		const sections = groupAssistantTimelineSections(groupAssistantTimeline([running, done]));
 		const work = sections[0];
+
 		if (work?.type !== 'work') throw new Error('Expected a work section.');
 
 		const { settledBlocks } = partitionWorkSectionTools(
@@ -315,6 +346,7 @@ describe('groupAssistantTimelineSections', () => {
 describe('partitionWorkSectionTools', () => {
 	function partition(blocks: AssistantTimelineWorkBlock[], isStreaming: boolean) {
 		const tools = blocks.flatMap((block) => (block.type === 'tool-group' ? block.tools : []));
+
 		return partitionWorkSectionTools(
 			blocks,
 			isStreaming,
@@ -443,6 +475,7 @@ describe('partitionWorkSectionTools', () => {
 			output: { sessionId: '7', running: true },
 			job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
 		});
+
 		const monitor = tool('monitor-1', 'write_stdin', {
 			input: { sessionId: '7' },
 			output: { running: false },
@@ -452,7 +485,9 @@ describe('partitionWorkSectionTools', () => {
 				payload: { sessionId: '7' }
 			})
 		});
+
 		const openSessions = buildOpenExecCommandSessions([exec, monitor], true);
+
 		const earlierSection: AssistantTimelineWorkBlock[] = [
 			{ type: 'tool-group', toolKey: 'exec_command', tools: [exec] }
 		];
@@ -477,15 +512,18 @@ describe('partitionWorkSectionTools', () => {
 		const claimedTool = tool('patch-1', 'apply_patch', {
 			job: executorJob('job-patch', 1, { status: 'claimed', kind: 'apply_patch' })
 		});
+
 		const claimedToolWithResult = tool('patch-2', 'apply_patch', {
 			output: { changedFiles: ['a.txt'] },
 			job: executorJob('job-patch-2', 2, { status: 'claimed', kind: 'apply_patch' })
 		});
+
 		const yieldedCommand = tool('exec-1', 'exec_command', {
 			input: { cmd: 'npm run dev' },
 			output: { sessionId: '7', running: true },
 			job: executorJob('job-exec', 3, { status: 'completed', kind: 'exec_command' })
 		});
+
 		const blocks: AssistantTimelineWorkBlock[] = [
 			{ type: 'tool-group', toolKey: 'apply_patch', tools: [claimedTool, claimedToolWithResult] },
 			{ type: 'tool-group', toolKey: 'exec_command', tools: [yieldedCommand] }
@@ -529,6 +567,7 @@ describe('workSectionTimingAnchor', () => {
 				{ type: 'reasoning' as const, id: 'r1', text: '', startedAt: null, completedAt: null }
 			]
 		};
+
 		expect(workSectionTimingAnchor(section, { inProgress: true })).toEqual({});
 		expect(workSectionTimingAnchor(section, { inProgress: false, endedAt: 9_000 })).toEqual({});
 	});
@@ -621,7 +660,9 @@ describe('workSectionTimingAnchor', () => {
 			],
 			[]
 		);
+
 		const [section] = groupAssistantTimelineSections(groupAssistantTimeline(parts));
+
 		if (section.type !== 'work') throw new Error('Expected work');
 		expect(workSectionTimingAnchor(section, { inProgress: false })).toEqual({
 			startedAtMs: 1_000,

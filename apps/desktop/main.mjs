@@ -14,20 +14,32 @@ const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
+
 const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
+
 const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
+
 // Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
 const serverHost = '127.0.0.1';
+
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
+
 const rendererUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
+
 const rendererOrigin = new URL(rendererUrl).origin;
+
 const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
+
 let serverBaseUrl = null;
+
 let mainWindowRef = null;
+
 let serverReadyPromise = null;
+
 let isQuitting = false;
+
 const updates = new DesktopUpdater(
 	process.platform === 'linux' && process.env.APPIMAGE
 		? createAppImageUpdater(electronUpdater.AppImageUpdater)
@@ -35,20 +47,27 @@ const updates = new DesktopUpdater(
 	app.getVersion(),
 	app.isPackaged && (process.platform !== 'linux' || Boolean(process.env.APPIMAGE))
 );
+
 let updateTimer = null;
+
 let updateConfirmationOpen = false;
+
 let shutdownPromise = null;
+
 updates.subscribe((state) => {
 	if (mainWindowRef && !mainWindowRef.isDestroyed()) {
 		mainWindowRef.webContents.send('sprocket:update-state', state);
 	}
 });
+
 const initialWorkspaceLaunch = app.commandLine.getSwitchValue('sprocket-workspace').trim() || null;
+
 const pendingWorkspaceLaunches = initialWorkspaceLaunch ? [initialWorkspaceLaunch] : [];
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock({
 	workspacePath: initialWorkspaceLaunch
 });
+
 if (!hasSingleInstanceLock) {
 	app.quit();
 }
@@ -62,10 +81,13 @@ function parseNonEmptyString(value) {
 	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {
 		return null;
 	}
+
 	if (value !== `${value}`) {
 		return null;
 	}
+
 	const trimmed = value.trim();
+
 	return trimmed.length > 0 ? trimmed : null;
 }
 
@@ -73,7 +95,9 @@ function parsePairingProof(value) {
 	if (!isPlainObject(value)) {
 		return null;
 	}
+
 	const httpBaseUrl = parseNonEmptyString(value.httpBaseUrl);
+
 	if (
 		httpBaseUrl === null ||
 		(value.webUiEnabled !== true && value.webUiEnabled !== false) ||
@@ -81,6 +105,7 @@ function parsePairingProof(value) {
 	) {
 		return null;
 	}
+
 	return {
 		httpBaseUrl,
 		webUiEnabled: value.webUiEnabled,
@@ -92,6 +117,7 @@ function parseDesktopBootstrap(value) {
 	if (!isPlainObject(value)) {
 		return null;
 	}
+
 	return {
 		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl)
 	};
@@ -100,6 +126,7 @@ function parseDesktopBootstrap(value) {
 function reportFatalError(title, error) {
 	const message = error instanceof Error ? error.message : String(error);
 	console.error(title, error);
+
 	if (app.isReady()) {
 		dialog.showErrorBox(title, message);
 	}
@@ -107,11 +134,13 @@ function reportFatalError(title, error) {
 
 function requireTrustedRenderer(event) {
 	let senderOrigin;
+
 	try {
 		senderOrigin = new URL(event.senderFrame.url).origin;
 	} catch {
 		throw new Error('Untrusted renderer request.');
 	}
+
 	if (senderOrigin !== rendererOrigin) {
 		throw new Error('Untrusted renderer request.');
 	}
@@ -123,16 +152,19 @@ function getServerBinaryPath() {
 	}
 
 	const executableName = process.platform === 'win32' ? 'sprocket.exe' : 'sprocket';
+
 	return path.join(process.resourcesPath, 'server', executableName);
 }
 
 function getDefaultDataDir() {
 	const home = process.env.HOME || process.env.USERPROFILE || '.';
+
 	return path.join(home, '.sprocket');
 }
 
 function getLocalDataDir() {
 	const configured = process.env.SPROCKET_DATA_DIR?.trim();
+
 	if (configured) {
 		return path.resolve(configured);
 	}
@@ -143,6 +175,7 @@ function getLocalDataDir() {
 async function attachToRunningServer(baseUrl, dataDir) {
 	const challenge = randomUUID();
 	let response;
+
 	try {
 		response = await fetch(`${baseUrl}/api/auth/pairing-proof`, {
 			method: 'POST',
@@ -154,6 +187,7 @@ async function attachToRunningServer(baseUrl, dataDir) {
 		if (error?.cause?.code === 'ECONNREFUSED') {
 			return false;
 		}
+
 		throw new Error(`Failed to check the service at ${baseUrl}.`, { cause: error });
 	}
 
@@ -162,14 +196,17 @@ async function attachToRunningServer(baseUrl, dataDir) {
 	}
 
 	const pairingProof = parsePairingProof(await response.json());
+
 	if (pairingProof === null || pairingProof.httpBaseUrl !== baseUrl) {
 		throw new Error(`The service at ${baseUrl} is not a compatible Sprocket server.`);
 	}
+
 	if (!isDevelopment && !pairingProof.webUiEnabled) {
 		throw new Error(`The Sprocket server at ${baseUrl} is running in API-only mode.`);
 	}
 
 	let pairingCredential;
+
 	try {
 		pairingCredential = fs.readFileSync(path.join(dataDir, 'pairing-credential'), 'utf8').trim();
 	} catch (error) {
@@ -178,6 +215,7 @@ async function attachToRunningServer(baseUrl, dataDir) {
 			{ cause: error }
 		);
 	}
+
 	if (!pairingCredential) {
 		throw new Error(`The pairing credential in ${dataDir} is empty.`);
 	}
@@ -185,6 +223,7 @@ async function attachToRunningServer(baseUrl, dataDir) {
 	const message = `${challenge}\n${pairingProof.httpBaseUrl}\nweb-ui=${pairingProof.webUiEnabled}`;
 	const expectedProof = createHmac('sha256', pairingCredential).update(message).digest();
 	const receivedProof = Buffer.from(pairingProof.proof);
+
 	if (
 		receivedProof.length !== expectedProof.length ||
 		!timingSafeEqual(receivedProof, expectedProof)
@@ -195,6 +234,7 @@ async function attachToRunningServer(baseUrl, dataDir) {
 	}
 
 	serverBaseUrl = pairingProof.httpBaseUrl;
+
 	return true;
 }
 
@@ -210,11 +250,13 @@ async function startLocalServer() {
 	// extraResources (not asar): the Rust server must read these from disk.
 	const staticDir = isDevelopment ? undefined : path.join(process.resourcesPath, 'web');
 	const fallbackBaseUrl = `http://${host}:${port}`;
+
 	if (await attachToRunningServer(fallbackBaseUrl, dataDir)) {
 		return serverBaseUrl;
 	}
 
 	const desktopBootstrapToken = randomUUID();
+
 	const args = [
 		'serve',
 		'--quiet',
@@ -235,9 +277,11 @@ async function startLocalServer() {
 		SPROCKET_DATA_DIR: dataDir,
 		SPROCKET_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken
 	};
+
 	delete serverEnv.SPROCKET_UPDATE_NODE;
 	delete serverEnv.SPROCKET_UPDATE_SCRIPT;
 	delete serverEnv.SPROCKET_UPDATE_MANAGED;
+
 	if (staticDir) {
 		serverEnv.SPROCKET_STATIC_DIR = staticDir;
 	}
@@ -257,6 +301,7 @@ async function startLocalServer() {
 		const text = chunk.toString();
 		process.stdout.write(text);
 		const match = text.match(/SPROCKET_LISTENING=(.+)/);
+
 		if (match?.[1]) {
 			serverBaseUrl = match[1].trim();
 		}
@@ -290,20 +335,25 @@ async function startLocalServer() {
 			'x-sprocket-desktop-bootstrap-token': desktopBootstrapToken
 		}
 	});
+
 	if (!bootstrapResponse.ok) {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
 
 	const bootstrap = parseDesktopBootstrap(await bootstrapResponse.json());
+
 	if (bootstrap === null) {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
+
 	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
+
 	return serverBaseUrl;
 }
 
 async function stopServerBeforeUpdate() {
 	const child = serverProcess;
+
 	if (!child) return;
 	await stopUpdateProcess(child);
 	serverProcess = null;
@@ -313,6 +363,7 @@ async function stopServerBeforeUpdate() {
 
 function queueWorkspaceLaunch(workspacePath) {
 	const parsed = parseNonEmptyString(workspacePath);
+
 	if (parsed === null) {
 		return;
 	}
@@ -327,6 +378,7 @@ function notifyWorkspaceLaunch() {
 	}
 
 	const mainWindow = mainWindowRef;
+
 	if (mainWindow && !mainWindow.isDestroyed()) {
 		mainWindow.webContents.send('sprocket:workspace-launch');
 	}
@@ -336,16 +388,21 @@ async function showDesktopApp() {
 	if (!serverReadyPromise) {
 		throw new Error('Local server startup is unavailable.');
 	}
+
 	await serverReadyPromise;
 
 	const mainWindow = mainWindowRef;
+
 	if (!mainWindow || mainWindow.isDestroyed()) {
 		createMainWindow();
+
 		return;
 	}
+
 	if (mainWindow.isMinimized()) {
 		mainWindow.restore();
 	}
+
 	mainWindow.show();
 	mainWindow.focus();
 }
@@ -356,6 +413,7 @@ async function loadRendererWhenReady(mainWindow, targetUrl, timeoutMs = 60_000) 
 	while (Date.now() - startedAt < timeoutMs) {
 		try {
 			await mainWindow.loadURL(targetUrl);
+
 			return;
 		} catch (error) {
 			if (Date.now() - startedAt > timeoutMs - 500) {
@@ -383,6 +441,7 @@ function createMainWindow() {
 			preload: preloadEntry
 		}
 	});
+
 	mainWindowRef = mainWindow;
 	mainWindow.on('closed', () => {
 		if (mainWindowRef === mainWindow) {
@@ -393,13 +452,16 @@ function createMainWindow() {
 		void openExternalHttpsUrl(url).catch((error) => {
 			console.error('Failed to open external URL', error);
 		});
+
 		return { action: 'deny' };
 	});
+
 	const preventUntrustedNavigation = (event, url) => {
 		if (new URL(url).origin !== rendererOrigin) {
 			event.preventDefault();
 		}
 	};
+
 	mainWindow.webContents.on('will-navigate', preventUntrustedNavigation);
 	mainWindow.webContents.on('will-redirect', preventUntrustedNavigation);
 	mainWindow.webContents.on(
@@ -425,6 +487,7 @@ function createMainWindow() {
 		reportFatalError('Failed to load Sprocket', error);
 		app.quit();
 	});
+
 	if (isDevelopment) {
 		mainWindow.webContents.openDevTools({ mode: 'detach' });
 	}
@@ -432,11 +495,13 @@ function createMainWindow() {
 
 ipcMain.handle('sprocket:take-workspace-launch', (event) => {
 	requireTrustedRenderer(event);
+
 	return pendingWorkspaceLaunches.shift() ?? null;
 });
 
 function requireUpdateRenderer(event) {
 	requireTrustedRenderer(event);
+
 	if (event.sender !== mainWindowRef?.webContents || event.senderFrame !== event.sender.mainFrame) {
 		throw new Error('Untrusted update request.');
 	}
@@ -444,21 +509,26 @@ function requireUpdateRenderer(event) {
 
 ipcMain.handle('sprocket:get-update-state', (event) => {
 	requireUpdateRenderer(event);
+
 	return updates.getState();
 });
 
 ipcMain.handle('sprocket:download-update', (event) => {
 	requireUpdateRenderer(event);
 	void updates.download();
+
 	return updates.getState();
 });
 
 ipcMain.handle('sprocket:install-update', async (event) => {
 	requireUpdateRenderer(event);
+
 	if (updateConfirmationOpen || updates.getState().status !== 'downloaded') {
 		return updates.getState();
 	}
+
 	updateConfirmationOpen = true;
+
 	try {
 		const { response } = await dialog.showMessageBox(mainWindowRef, {
 			type: 'question',
@@ -470,19 +540,25 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 				? 'This stops the local server and interrupts any agents it is running. Wait for active work to finish before restarting.'
 				: 'This restarts the desktop app. The local server was started separately and will keep running.'
 		});
+
 		if (response === 1 && !isQuitting) {
 			if (process.platform === 'darwin') {
 				// Squirrel validates the staged update asynchronously and may reject it without quitting.
 				updates.install();
+
 				return updates.getState();
 			}
+
 			isQuitting = true;
+
 			try {
 				await stopServerBeforeUpdate();
 				// AppImage can launch its replacement before the old Electron process exits.
 				app.releaseSingleInstanceLock();
+
 				if (!updates.install()) {
 					isQuitting = false;
+
 					if (!app.requestSingleInstanceLock()) {
 						app.quit();
 					} else {
@@ -495,6 +571,7 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 				reportFatalError('Failed to install Sprocket update', error);
 			}
 		}
+
 		return updates.getState();
 	} finally {
 		updateConfirmationOpen = false;
@@ -508,8 +585,10 @@ function openWithXdgOpen(url) {
 			'/usr/bin/xdg-open',
 			'/usr/local/bin/xdg-open'
 		];
+
 		const openerCommand = systemOpeners.find((candidate) => fs.existsSync(candidate)) ?? 'xdg-open';
 		const openerEnv = { ...process.env };
+
 		for (const key of [
 			'GIO_EXTRA_MODULES',
 			'GI_TYPELIB_PATH',
@@ -519,10 +598,12 @@ function openWithXdgOpen(url) {
 		]) {
 			delete openerEnv[key];
 		}
+
 		const opener = spawn(openerCommand, [url], {
 			env: openerEnv,
 			stdio: ['ignore', 'ignore', 'pipe']
 		});
+
 		let stderr = '';
 
 		opener.once('error', reject);
@@ -532,6 +613,7 @@ function openWithXdgOpen(url) {
 		opener.once('close', (code, signal) => {
 			if (code === 0) {
 				resolve();
+
 				return;
 			}
 
@@ -544,11 +626,13 @@ function openWithXdgOpen(url) {
 
 function parseExternalHttpsUrl(url) {
 	const raw = parseNonEmptyString(url);
+
 	if (raw === null) {
 		throw new Error('A URL is required.');
 	}
 
 	let parsed;
+
 	try {
 		parsed = new URL(raw);
 	} catch {
@@ -570,6 +654,7 @@ async function openExternalHttpsUrl(url) {
 async function openInSystemBrowser(url) {
 	if (process.platform === 'linux') {
 		await openWithXdgOpen(url);
+
 		return;
 	}
 
@@ -584,6 +669,7 @@ ipcMain.handle('sprocket:open-external', async (event, url) => {
 ipcMain.handle('sprocket:focus-window', (event) => {
 	requireTrustedRenderer(event);
 	const mainWindow = mainWindowRef;
+
 	if (!mainWindow || mainWindow.isDestroyed()) {
 		return false;
 	}
@@ -591,8 +677,10 @@ ipcMain.handle('sprocket:focus-window', (event) => {
 	if (mainWindow.isMinimized()) {
 		mainWindow.restore();
 	}
+
 	mainWindow.show();
 	mainWindow.focus();
+
 	return true;
 });
 
@@ -635,6 +723,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
 	isQuitting = true;
 	clearInterval(updateTimer);
+
 	if (!serverProcess) return;
 	event.preventDefault();
 	shutdownPromise ??= stopServerBeforeUpdate()

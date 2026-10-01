@@ -7,6 +7,7 @@ export function areStorageIdsEqual(
 ): boolean {
 	const leftIds = left ?? [];
 	const rightIds = right ?? [];
+
 	return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
 }
 
@@ -26,12 +27,15 @@ export async function getOwnedImageUploads(
 	imageUploadIds: Id<'imageUploads'>[]
 ): Promise<Doc<'imageUploads'>[]> {
 	assertUniqueAttachmentIds(imageUploadIds);
+
 	return await Promise.all(
 		imageUploadIds.map(async (imageUploadId) => {
 			const upload = await ctx.db.get('imageUploads', imageUploadId);
+
 			if (!upload || upload.userId !== userId) {
 				throw new Error('File attachment was not found.');
 			}
+
 			return upload;
 		})
 	);
@@ -43,12 +47,15 @@ export async function getOwnedImageUploadsByStorageIds(
 	storageIds: Id<'_storage'>[]
 ): Promise<Doc<'imageUploads'>[]> {
 	assertUniqueAttachmentIds(storageIds);
+
 	return await Promise.all(
 		storageIds.map(async (storageId) => {
 			const upload = await imageUploadByStorageId(ctx, storageId);
+
 			if (!upload || upload.userId !== userId) {
 				throw new Error('File attachment was not found.');
 			}
+
 			return upload;
 		})
 	);
@@ -59,11 +66,14 @@ export async function storageIdsForImageUploadIds(
 	imageUploadIds: Id<'imageUploads'>[]
 ): Promise<Id<'_storage'>[] | null> {
 	const storageIds: Id<'_storage'>[] = [];
+
 	for (const imageUploadId of imageUploadIds) {
 		const upload = await ctx.db.get('imageUploads', imageUploadId);
+
 		if (!upload) return null;
 		storageIds.push(upload.storageId);
 	}
+
 	return storageIds;
 }
 

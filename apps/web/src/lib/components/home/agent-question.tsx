@@ -20,6 +20,7 @@ export default function AgentQuestion({
 				{options.map((option) => {
 					const isAgentDecide = option.id === AGENT_DECIDE_OPTION_ID;
 					const isSelected = selectedOptionId === option.id;
+
 					return (
 						<li key={option.id}>
 							<button

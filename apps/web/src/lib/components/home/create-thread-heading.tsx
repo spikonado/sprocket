@@ -18,9 +18,11 @@ export default function CreateThreadHeading({
 }) {
 	const selectedProject = projects.find((project) => project.workspacePath === workspacePath);
 	const selectedProjectName = selectedProject?.displayName ?? 'Choose a project';
+
 	const selectedProjectIndex = projects.findIndex(
 		(project) => project.workspacePath === workspacePath
 	);
+
 	const [isOpen, setIsOpen] = useState(false);
 	const [activeIndex, setActiveIndex] = useState(0);
 	const rootElement = useRef<HTMLDivElement | null>(null);
@@ -60,6 +62,7 @@ export default function CreateThreadHeading({
 
 	const closeMenu = useCallback((restoreFocus: boolean) => {
 		setIsOpen(false);
+
 		if (restoreFocus) {
 			queueMicrotask(() => triggerElement.current?.focus());
 		}
@@ -67,6 +70,7 @@ export default function CreateThreadHeading({
 
 	function selectProject(project: Project) {
 		closeMenu(true);
+
 		if (project.workspacePath !== workspacePath) {
 			onProject(project.workspacePath);
 		}
@@ -79,8 +83,10 @@ export default function CreateThreadHeading({
 
 	function activateMenuItem(index: number) {
 		const project = projects[index];
+
 		if (project) {
 			selectProject(project);
+
 			return;
 		}
 

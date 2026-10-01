@@ -24,6 +24,7 @@ describe('mergeLiveOverlays', () => {
 			overlay('b', 'Second'),
 			overlay('a', 'Updated')
 		]);
+
 		expect(messages).toHaveLength(1);
 		expect(messages[0].parts).toEqual([
 			...overlay('a', 'Updated').parts,

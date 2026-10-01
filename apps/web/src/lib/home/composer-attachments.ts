@@ -43,6 +43,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 
 	subscribe = (listener: () => void) => {
 		this.#listeners.add(listener);
+
 		return () => {
 			this.#listeners.delete(listener);
 		};
@@ -72,9 +73,11 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 
 	remove(localId: string) {
 		const attachment = this.items.find((entry) => entry.localId === localId);
+
 		if (!attachment) return;
 		revokeAttachmentPreview(attachment.previewUrl);
 		this.#setItems(this.items.filter((entry) => entry.localId !== localId));
+
 		if (attachment.storageId) {
 			const { userId, threadId } = this.dependencies.getContext();
 			this.#discard({ storageId: attachment.storageId, userId, threadId });
@@ -85,12 +88,15 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		const context = this.dependencies.getContext();
 		const userId = options.userId === undefined ? context.userId : options.userId;
 		const threadId = options.threadId === undefined ? context.threadId : options.threadId;
+
 		for (const attachment of this.items) {
 			revokeAttachmentPreview(attachment.previewUrl);
+
 			if (options.discard && attachment.storageId) {
 				this.#discard({ userId, threadId, storageId: attachment.storageId });
 			}
 		}
+
 		this.#setItems([]);
 	}
 
@@ -104,6 +110,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 
 	#setItems(next: ComposerAttachment[]) {
 		this.items = next;
+
 		for (const listener of this.#listeners) listener();
 	}
 
@@ -112,6 +119,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 		this.#setItems(
 			this.items.map((entry) => (entry.localId === localId ? { ...entry, ...patch } : entry))
 		);
+
 		return true;
 	}
 
@@ -125,6 +133,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 			const context = this.dependencies.getContext();
 			const api = args.api ?? context.api;
 			const userId = args.userId ?? context.userId;
+
 			if (!api || !userId) return;
 			void api
 				.discardTranscriptAttachment({
@@ -140,18 +149,23 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 
 	async #upload(localId: string, file: File, name: string) {
 		const { api, userId, threadId } = this.dependencies.getContext();
+
 		try {
 			if (!api) throw new Error(this.dependencies.localServerRequiredMessage);
+
 			if (!userId) throw new Error('Sign in to attach files.');
+
 			const registered = await api.uploadTranscriptAttachment({
 				userId,
 				name,
 				file,
 				threadId: threadId ?? undefined
 			});
+
 			if ('error' in registered) throw new Error(registered.error);
 			const attachment = this.items.find((entry) => entry.localId === localId);
 			revokeAttachmentPreview(attachment?.previewUrl);
+
 			const stillAttached = this.#update(localId, {
 				status: 'ready',
 				storageId: registered.storageId,
@@ -160,6 +174,7 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 				size: registered.size,
 				previewUrl: isPreviewableImageMediaType(registered.mediaType) ? registered.url : undefined
 			});
+
 			if (!stillAttached) {
 				this.#discard({ api, userId, threadId, storageId: registered.storageId });
 			}
@@ -179,6 +194,7 @@ export function useComposerAttachments(
 	useLayoutEffect(() => {
 		dependenciesRef.current = dependencies;
 	}, [dependencies]);
+
 	const [attachments] = useState(
 		() =>
 			new ComposerAttachments({
@@ -187,6 +203,8 @@ export function useComposerAttachments(
 				localServerRequiredMessage: dependencies.localServerRequiredMessage
 			})
 	);
+
 	useStore(attachments);
+
 	return attachments;
 }

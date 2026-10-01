@@ -10,7 +10,9 @@ export async function setRunAndThreadStatus(
 	runPatch: Partial<Pick<Doc<'runs'>, 'completedAt' | 'lastError'>> = {}
 ): Promise<void> {
 	const current = await ctx.db.get('runs', run._id);
+
 	if (!current) throw new Error('Run not found.');
+
 	if (
 		current.status !== status ||
 		('completedAt' in runPatch && current.completedAt !== runPatch.completedAt) ||
@@ -18,6 +20,7 @@ export async function setRunAndThreadStatus(
 	) {
 		await ctx.db.patch('runs', run._id, { ...runPatch, status });
 	}
+
 	const [latestRun, thread] = await Promise.all([
 		ctx.db
 			.query('runs')
@@ -26,7 +29,9 @@ export async function setRunAndThreadStatus(
 			.first(),
 		ctx.db.get('threadRecords', run.threadId)
 	]);
+
 	if (!latestRun || !thread) return;
+
 	if (thread.status !== latestRun.status) {
 		await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
 	}

@@ -26,9 +26,11 @@ export function parseAssistantToolResultError(
 	if (!isJsonObject(output) || !isJsonString(output.error)) {
 		return undefined;
 	}
+
 	if (output.status !== 'cancelled' && output.status !== 'failed') {
 		return undefined;
 	}
+
 	return { error: output.error, status: output.status };
 }
 
@@ -48,6 +50,7 @@ export function joinAssistantTextParts(parts: AssistantPart[]): string {
 
 	for (const part of parts) {
 		if (part.type !== 'text' || part.text.length === 0) continue;
+
 		if (
 			sawText &&
 			previousTurnId !== undefined &&
@@ -56,7 +59,9 @@ export function joinAssistantTextParts(parts: AssistantPart[]): string {
 		) {
 			text += '\n\n';
 		}
+
 		text += part.text;
+
 		if (part.turnId !== undefined) previousTurnId = part.turnId;
 		sawText = true;
 	}
@@ -70,14 +75,18 @@ export function matchAssistantToolCallsToJobs(
 ): Map<string, string> {
 	const callIdByJobId = new Map<string, string>();
 	const usedCallIds = new Set<string>();
+
 	const unmatchedJobs = jobs.filter((job) => {
 		if (!job.callId) return true;
+
 		const call = calls.find(
 			(candidate) => candidate.callId === job.callId && !usedCallIds.has(candidate.callId)
 		);
+
 		if (!call) return false;
 		callIdByJobId.set(job.id, call.callId);
 		usedCallIds.add(call.callId);
+
 		return false;
 	});
 
@@ -85,17 +94,22 @@ export function matchAssistantToolCallsToJobs(
 		matches: (call: AssistantToolCallPart, job: MatchableExecutorToolJob) => boolean
 	): void => {
 		const availableCalls = calls.filter((call) => !usedCallIds.has(call.callId));
+
 		const candidatesByJob = new Map(
-			unmatchedJobs
-				.filter((job) => !callIdByJobId.has(job.id))
-				.map((job) => [job.id, availableCalls.filter((call) => matches(call, job))] as const)
+			unmatchedJobs.flatMap((job) =>
+				callIdByJobId.has(job.id)
+					? []
+					: [[job.id, availableCalls.filter((call) => matches(call, job))] as const]
+			)
 		);
 
 		for (const job of unmatchedJobs) {
 			if (callIdByJobId.has(job.id)) continue;
 			const candidates = candidatesByJob.get(job.id) ?? [];
+
 			if (candidates.length !== 1) continue;
 			const [call] = candidates;
+
 			const candidateJobs = unmatchedJobs.filter(
 				(candidate) =>
 					!callIdByJobId.has(candidate.id) &&
@@ -103,6 +117,7 @@ export function matchAssistantToolCallsToJobs(
 						(candidateCall) => candidateCall.callId === call.callId
 					)
 			);
+
 			if (candidateJobs.length !== 1) continue;
 			callIdByJobId.set(job.id, call.callId);
 			usedCallIds.add(call.callId);
@@ -119,6 +134,7 @@ export function matchAssistantToolCallsToJobs(
 
 function assistantToolPayloadsEqual(left: JsonValue, right: JsonValue): boolean {
 	if (Object.is(left, right)) return true;
+
 	if (Array.isArray(left) || Array.isArray(right)) {
 		return (
 			Array.isArray(left) &&
@@ -127,11 +143,14 @@ function assistantToolPayloadsEqual(left: JsonValue, right: JsonValue): boolean 
 			left.every((value, index) => assistantToolPayloadsEqual(value, right[index]))
 		);
 	}
+
 	if (!isJsonObject(left) || !isJsonObject(right)) {
 		return false;
 	}
+
 	const leftKeys = Object.keys(left);
 	const rightKeys = Object.keys(right);
+
 	return (
 		leftKeys.length === rightKeys.length &&
 		leftKeys.every(

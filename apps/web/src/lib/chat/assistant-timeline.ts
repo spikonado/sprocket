@@ -69,6 +69,7 @@ export function groupAssistantTimeline(items: AssistantTimelineItem[]): Assistan
 
 		const toolKey = assistantTimelineToolKey(item);
 		const last = blocks.at(-1);
+
 		if (last?.type === 'tool-group' && last.toolKey === toolKey) {
 			last.tools.push(item);
 			continue;
@@ -91,6 +92,7 @@ function assistantTimelineWorkSectionKey(block: AssistantTimelineWorkBlock): str
 	if (block.type === 'reasoning') {
 		return assistantTimelinePartKey(block);
 	}
+
 	return block.tools[0]?.callId ?? block.toolKey;
 }
 
@@ -110,6 +112,7 @@ export function groupAssistantTimelineSections(
 		}
 
 		const last = sections.at(-1);
+
 		if (last?.type === 'work') {
 			last.blocks.push(block);
 			continue;
@@ -139,19 +142,24 @@ export function workSectionTimingAnchor(
 ): WorkSectionTimingAnchor {
 	let startedAtMs: number | undefined;
 	let completedAtMs = options.endedAt;
+
 	for (const block of section.blocks) {
 		const items = block.type === 'tool-group' ? block.tools : [block];
+
 		for (const item of items) {
 			// Older transcripts did not record boundaries. A partial duration is misleading.
 			if (item.startedAt == null) return {};
 			startedAtMs = Math.min(startedAtMs ?? item.startedAt, item.startedAt);
+
 			if (!options.inProgress) {
 				const end = item.completedAt ?? options.endedAt;
+
 				if (end === undefined) return {};
 				completedAtMs = Math.max(completedAtMs ?? end, end);
 			}
 		}
 	}
+
 	return options.inProgress ? { startedAtMs } : { startedAtMs, completedAtMs };
 }
 
@@ -160,9 +168,11 @@ function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean
 	if (tool.output !== undefined) {
 		return false;
 	}
+
 	if (tool.job) {
 		return tool.job.status === 'pending' || tool.job.status === 'claimed';
 	}
+
 	return true;
 }
 
@@ -191,6 +201,7 @@ export function buildCommandSessionCommandMap(
 
 	for (const tool of tools) {
 		const sessionId = commandSessionIdFromTool(tool);
+
 		if (!sessionId) {
 			continue;
 		}
@@ -200,6 +211,7 @@ export function buildCommandSessionCommandMap(
 			(assistantTimelineToolKey(tool) === 'exec_command'
 				? (jsonObjectString(tool.input, 'cmd') ?? jsonObjectString(tool.job?.payload, 'cmd'))
 				: undefined);
+
 		if (cmd) {
 			sessionCommands.set(sessionId, cmd);
 		}
@@ -214,6 +226,7 @@ export function resolveCommandSessionLabel(
 	sessionCommands: ReadonlyMap<string, string>
 ): string | undefined {
 	const sessionId = commandSessionIdFromTool(tool);
+
 	return (
 		jsonObjectString(tool.output, 'command') ??
 		(sessionId ? sessionCommands.get(sessionId) : undefined)
@@ -239,13 +252,17 @@ export function buildOpenExecCommandSessions(
 
 	for (const tool of tools) {
 		const sessionId = commandSessionIdFromTool(tool);
+
 		if (!sessionId) {
 			continue;
 		}
+
 		if (assistantTimelineToolKey(tool) === 'exec_command') {
 			execSessions.add(sessionId);
 		}
+
 		const running = isJsonObject(tool.output) ? jsonBoolean(tool.output.running) : undefined;
+
 		if (running !== undefined) {
 			sessionRunning.set(sessionId, running);
 		}
@@ -282,6 +299,7 @@ export function partitionWorkSectionTools(
 		}
 
 		const settledTools: AssistantTimelineTool[] = [];
+
 		for (const tool of block.tools) {
 			const kind = assistantTimelineToolKey(tool);
 			const sessionId = commandSessionIdFromTool(tool);
@@ -299,8 +317,10 @@ export function partitionWorkSectionTools(
 					if (!sessionOpen) {
 						runningTools.push(tool);
 					}
+
 					continue;
 				}
+
 				settledTools.push(tool);
 				continue;
 			}
@@ -331,6 +351,7 @@ export function assistantTimelineToolFailureKind(
 	if (!isStreaming && isAssistantTimelineToolUnresolved(item)) {
 		return 'interrupted';
 	}
+
 	if (item.job?.status === 'cancelled' || item.job?.status === 'failed') {
 		return item.job.status;
 	}
@@ -345,17 +366,21 @@ export function assistantTimelineToolError(
 	if (!isStreaming && isAssistantTimelineToolUnresolved(item)) {
 		return 'The agent stopped before this tool call finished.';
 	}
+
 	const outputError = parseAssistantToolResultError(item.output)?.error;
 
 	if (item.job) {
 		if (item.job.status === 'cancelled') {
 			return item.job.error ?? outputError ?? 'Executor job cancelled before completion.';
 		}
+
 		if (item.job.status === 'failed') {
 			return item.job.error ?? outputError ?? 'Executor job failed.';
 		}
+
 		return undefined;
 	}
+
 	return outputError;
 }
 
@@ -363,16 +388,18 @@ export function buildAssistantTimeline(
 	parts: AssistantPart[],
 	jobs: ExecutorJob[]
 ): AssistantTimelineItem[] {
-	const resultsByCallId = new Map(
-		parts
-			.filter((part): part is Extract<AssistantPart, { type: 'tool-result' }> => {
-				return part.type === 'tool-result';
-			})
-			.map((part) => [part.callId, part] as const)
-	);
+	const resultsByCallId = new Map<string, Extract<AssistantPart, { type: 'tool-result' }>>();
+
+	parts.forEach((part) => {
+		if (part.type === 'tool-result') {
+			resultsByCallId.set(part.callId, part);
+		}
+	});
+
 	const toolCalls = parts.filter(
 		(part): part is AssistantToolCallPart => part.type === 'tool-call'
 	);
+
 	const matchedCallIds = matchAssistantToolCallsToJobs(
 		toolCalls,
 		jobs.map((job) => ({
@@ -382,16 +409,21 @@ export function buildAssistantTimeline(
 			payload: job.payload
 		}))
 	);
+
 	const jobsByCallId = new Map<string, ExecutorJob>();
+
 	for (const job of jobs) {
 		const callId = matchedCallIds.get(job._id);
+
 		if (callId) jobsByCallId.set(callId, job);
 	}
+
 	const timeline: AssistantTimelineItem[] = [];
 	const usedJobIds = new Set<ExecutorJob['_id']>();
 
 	for (const part of parts) {
 		if (part.type === 'tool-result') continue;
+
 		if (part.type === 'reasoning' || part.type === 'text') {
 			if (part.text.trim().length > 0) timeline.push(part);
 			continue;
@@ -399,7 +431,9 @@ export function buildAssistantTimeline(
 
 		const result = resultsByCallId.get(part.callId);
 		const job = jobsByCallId.get(part.callId);
+
 		if (job) usedJobIds.add(job._id);
+
 		const item: AssistantTimelineTool = {
 			type: 'tool',
 			callId: part.callId,
@@ -409,19 +443,23 @@ export function buildAssistantTimeline(
 			// The call's completedAt ends argument generation, not tool execution.
 			completedAt: result?.completedAt ?? job?.completedAt
 		};
+
 		if (result) {
 			item.output = result.output;
 		} else if (job?.result !== undefined) {
 			item.output = job.result;
 		}
+
 		if (job) {
 			item.job = job;
 		}
+
 		timeline.push(item);
 	}
 
 	for (const job of jobs) {
 		if (usedJobIds.has(job._id)) continue;
+
 		const item: AssistantTimelineTool = {
 			type: 'tool',
 			callId: job.callId ?? `executor-job:${job._id}`,
@@ -431,9 +469,11 @@ export function buildAssistantTimeline(
 			completedAt: job.completedAt,
 			job
 		};
+
 		if (job.result !== undefined) {
 			item.output = job.result;
 		}
+
 		timeline.push(item);
 	}
 

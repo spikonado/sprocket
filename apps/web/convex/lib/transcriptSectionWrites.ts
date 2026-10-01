@@ -38,7 +38,9 @@ async function persistedSectionDisplayOrder(
 	sectionOrdinal: number
 ): Promise<string> {
 	const run = await ctx.db.get('runs', runId);
+
 	if (!run) throw new Error('Section run not found.');
+
 	return sectionDisplayOrder(run.startedAt, run._id, sectionOrdinal);
 }
 
@@ -58,19 +60,23 @@ async function updateSummary(
 	}
 ) {
 	validateOrdinal(args.metadata.sectionOrdinal);
+
 	const displayOrder = await persistedSectionDisplayOrder(
 		ctx,
 		args.runId,
 		args.metadata.sectionOrdinal
 	);
+
 	const existing = await ctx.db
 		.query('threadTranscriptWorkSections')
 		.withIndex('by_threadId_and_key', (q) =>
 			q.eq('threadId', args.threadId).eq('key', args.metadata.sectionKey)
 		)
 		.unique();
+
 	const first = { part: args.partNumber, item: args.start };
 	const end = { part: args.partNumber, item: args.end };
+
 	if (!existing) {
 		await ctx.db.insert('threadTranscriptWorkSections', {
 			threadId: args.threadId,
@@ -87,8 +93,10 @@ async function updateSummary(
 			startedAt: args.startedAt,
 			completedAt: args.pendingDelta > 0 ? undefined : args.completedAt
 		});
+
 		return;
 	}
+
 	if (
 		existing.runId !== args.runId ||
 		(existing.displayOrder !== undefined && existing.displayOrder !== displayOrder) ||
@@ -97,6 +105,7 @@ async function updateSummary(
 	) {
 		throw new Error('Section identity conflicts with an existing section.');
 	}
+
 	const pendingTools = Math.max(0, existing.pendingTools + args.pendingDelta);
 	await ctx.db.patch('threadTranscriptWorkSections', existing._id, {
 		sectionOrdinal: args.metadata.sectionOrdinal,
@@ -129,12 +138,14 @@ async function insertEntry(
 	}
 ) {
 	const key = entryKey(args.partNumber, args.start, args.sectionKey, args.toolInvocationId);
+
 	const existing = await ctx.db
 		.query('threadTranscriptMemberships')
 		.withIndex('by_threadId_and_entryKey', (q) =>
 			q.eq('threadId', args.threadId).eq('entryKey', key)
 		)
 		.unique();
+
 	if (existing) {
 		if (
 			existing.runId !== args.runId ||
@@ -148,9 +159,12 @@ async function insertEntry(
 		) {
 			throw new Error('Conflicting transcript section retry.');
 		}
+
 		return false;
 	}
+
 	await ctx.db.insert('threadTranscriptMemberships', { ...args, entryKey: key });
+
 	return true;
 }
 
@@ -164,8 +178,10 @@ export async function writeCompletionSectionData(
 	}
 ) {
 	const metadata = new Map(args.sections.map((section) => [section.sectionKey, section]));
+
 	if (metadata.size !== args.sections.length) throw new Error('Duplicate section metadata.');
 	let previousEnd = 0;
+
 	for (const range of args.work.ranges) {
 		if (
 			!Number.isInteger(range.start) ||
@@ -176,9 +192,12 @@ export async function writeCompletionSectionData(
 		) {
 			throw new Error('Invalid completion work range.');
 		}
+
 		previousEnd = range.end;
 		const section = metadata.get(range.sectionKey);
+
 		if (!section) throw new Error('Completion work range has no section metadata.');
+
 		if (
 			await insertEntry(ctx, {
 				threadId: args.part.threadId,
@@ -196,6 +215,7 @@ export async function writeCompletionSectionData(
 					.slice(range.start, range.end)
 					.filter((item) => item.type === 'tool-call' && args.representedCallIds?.has(item.callId))
 					.length ?? 0;
+
 			await updateSummary(ctx, {
 				threadId: args.part.threadId,
 				runId: args.part.runId,
@@ -236,6 +256,7 @@ export async function writeToolSectionData(
 	) {
 		return;
 	}
+
 	await updateSummary(ctx, {
 		threadId: args.part.threadId,
 		runId: args.part.runId,

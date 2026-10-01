@@ -33,27 +33,34 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 
 	useEffect(() => {
 		const current = ownedUrl;
+
 		return () => revokeAttachmentPreview(current ?? undefined);
 	}, [ownedUrl]);
 
 	useEffect(() => {
 		const storageId = attachment.storageId;
 		const mediaType = attachment.mediaType;
+
 		if (!shouldEagerLoadAttachmentPreview({ mediaType, url: attachment.url })) {
 			return;
 		}
+
 		const loader = loadAttachmentRef.current;
+
 		if (!loader) {
 			return;
 		}
+
 		let cancelled = false;
 		setLoadFailed(false);
 		void loader(storageId)
 			.then((next) => {
 				if (cancelled) {
 					revokeAttachmentPreview(next ?? undefined);
+
 					return;
 				}
+
 				setOwnedUrl(next);
 				setLoadFailed(next == null);
 			})
@@ -62,6 +69,7 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 					setLoadFailed(true);
 				}
 			});
+
 		return () => {
 			cancelled = true;
 		};
@@ -77,35 +85,49 @@ export default function TranscriptAttachment({ attachment, loadAttachment, onOpe
 		if (downloadPending) {
 			return;
 		}
+
 		const existing = url;
+
 		if (existing?.startsWith('blob:')) {
 			triggerAttachmentDownload(existing, attachment.name);
+
 			return;
 		}
+
 		if (!loadAttachment && !existing) {
 			setLoadFailed(true);
+
 			return;
 		}
+
 		const generation = downloadGeneration.current;
 		setDownloadPending(true);
 		setLoadFailed(false);
+
 		try {
 			let next: string | null = null;
+
 			if (loadAttachment) {
 				next = await loadAttachment(attachment.storageId);
 			} else if (existing) {
 				const response = await fetch(existing);
+
 				if (!response.ok) throw new Error('Download failed');
 				next = URL.createObjectURL(await response.blob());
 			}
+
 			if (generation !== downloadGeneration.current) {
 				revokeAttachmentPreview(next ?? undefined);
+
 				return;
 			}
+
 			if (!next) {
 				setLoadFailed(true);
+
 				return;
 			}
+
 			setOwnedUrl(next);
 			triggerAttachmentDownload(next, attachment.name);
 		} catch {

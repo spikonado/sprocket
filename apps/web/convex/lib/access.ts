@@ -11,6 +11,7 @@ async function assertOwned<TableName extends OwnerScopedTable>(
 	if (!record || record.userId !== userId) {
 		throw new Error(errorMessage);
 	}
+
 	return record;
 }
 

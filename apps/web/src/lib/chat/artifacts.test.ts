@@ -30,12 +30,14 @@ describe('artifact watch snapshots', () => {
 			repositoryKey: 'repo-1',
 			workspacePath: '/ws'
 		});
+
 		const thread = artifactWatchScopeKey({
 			userId: 'user-1',
 			repositoryKey: 'repo-1',
 			workspacePath: '/ws',
 			threadId: 'thread-1'
 		});
+
 		const otherWorkspace = artifactWatchScopeKey({
 			userId: 'user-1',
 			repositoryKey: 'repo-1',
@@ -52,6 +54,7 @@ describe('artifact watch snapshots', () => {
 			repositoryKey: 'repo-1',
 			workspacePath: '/ws'
 		});
+
 		const threadScope = artifactWatchScopeKey({
 			userId: 'user-1',
 			repositoryKey: 'repo-1',

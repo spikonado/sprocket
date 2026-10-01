@@ -19,6 +19,7 @@ export function nativePackage(platform = process.platform, arch = process.arch) 
 
 export function resolveNativeBinary(platform = process.platform, arch = process.arch) {
 	const target = nativePackage(platform, arch);
+
 	if (!target) {
 		throw new Error(
 			`Sprocket does not provide a binary for ${platform}/${arch}. ` +
@@ -28,12 +29,14 @@ export function resolveNativeBinary(platform = process.platform, arch = process.
 
 	const [packageName, executable] = target;
 	let packageJson;
+
 	try {
 		packageJson = require.resolve(`${packageName}/package.json`);
 	} catch (error) {
 		if (error?.code !== 'MODULE_NOT_FOUND') {
 			throw error;
 		}
+
 		throw new Error(
 			`The native package ${packageName} is missing. Reinstall @spikonado/sprocket ` +
 				'without omitting optional dependencies.',
@@ -48,6 +51,7 @@ export function ensureExecutable(binary) {
 	if (process.platform === 'win32') {
 		return;
 	}
+
 	try {
 		accessSync(binary, constants.X_OK);
 	} catch {
@@ -68,10 +72,13 @@ export function run(binary, args, options = {}) {
 	if (result.error) {
 		throw result.error;
 	}
+
 	if (result.signal) {
 		process.kill(process.pid, result.signal);
+
 		return undefined;
 	}
+
 	return result.status ?? 1;
 }
 
@@ -82,7 +89,9 @@ export function nativeChildEnvironment(env, staticDir, updateNode, updateScript)
 		SPROCKET_UPDATE_NODE: updateNode,
 		SPROCKET_UPDATE_SCRIPT: updateScript
 	};
+
 	delete next.SPROCKET_UPDATE_MANAGED;
+
 	return next;
 }
 
@@ -90,9 +99,11 @@ export async function launch(args, options = {}) {
 	const env = { ...(options.env ?? process.env) };
 	delete env.SPROCKET_UPDATE_MANAGED;
 	const parsed = parseUpdateArgs(args);
+
 	if (parsed.kind !== 'none' && parsed.kind !== 'native') {
 		const code = await runUpdateCli(parsed, options.host ?? createHost({ env }));
 		process.exitCode = code;
+
 		return code;
 	}
 
@@ -110,10 +121,12 @@ export async function launch(args, options = {}) {
 			),
 			spawn: options.spawn
 		});
+
 		return process.exitCode;
 	} catch (error) {
 		console.error(`sprocket: ${error.message}`);
 		process.exitCode = 1;
+
 		return 1;
 	}
 }

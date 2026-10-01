@@ -28,6 +28,7 @@ async function transcriptStateResult(
 	const state = await getTranscriptState(ctx, threadId);
 	const thread = await ctx.db.get('threadRecords', threadId);
 	const historyFromNumber = await transcriptHistoryFromNumber(ctx, thread);
+
 	if (thread?.contextSummary) {
 		return {
 			threadId,
@@ -36,6 +37,7 @@ async function transcriptStateResult(
 			contextSummary: thread.contextSummary
 		};
 	}
+
 	return {
 		threadId,
 		totalParts: state?.totalParts ?? 0,
@@ -54,6 +56,7 @@ export const getState = query({
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
+
 		return await transcriptStateResult(ctx, args.threadId);
 	}
 });
@@ -66,10 +69,12 @@ export const getParts = query({
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
+
 		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
 		);
+
 		return { threadId: args.threadId, parts };
 	}
 });
@@ -82,6 +87,7 @@ export const getStateForRun = query({
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
 		return await transcriptStateResult(ctx, run.threadId);
 	}
 });
@@ -95,10 +101,12 @@ export const getPartsForRun = query({
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
 		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)
 		);
+
 		return { threadId: run.threadId, parts };
 	}
 });
@@ -111,13 +119,17 @@ export const attachmentDownloadByStorageId = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const upload = await imageUploadByStorageId(ctx, args.storageId);
+
 		if (!upload || upload.userId !== userId) {
 			return null;
 		}
+
 		const url = await ctx.storage.getUrl(upload.storageId);
+
 		if (!url) {
 			return null;
 		}
+
 		return {
 			storageId: upload.storageId,
 			name: upload.name,

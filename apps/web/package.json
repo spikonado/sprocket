@@ -10,6 +10,7 @@
 		"build:release": "bun run build",
 		"test": "vitest --run",
 		"check": "tsc --noEmit",
+		"check:anti-slop": "tsc -p tsconfig.anti-slop.json",
 		"lint": "eslint . && convex typecheck"
 	},
 	"dependencies": {

@@ -5,6 +5,7 @@ import { vMandateChargeStatus, vMandateReportOutcome } from '@convex/lib/validat
 import { formatMoneyMinor, parseMoneyMinor } from '@convex/lib/payments/money';
 
 export const REPORT_CLAIM_STALE_MS = 60_000;
+
 export const CHARGE_CLAIM_STALE_MS = 60_000;
 
 export const chargeDoc = v.object({
@@ -71,15 +72,19 @@ export function assertChargeable(
 	if (args.currency.trim().toUpperCase() !== mandate.currency.toUpperCase()) {
 		throw new Error(`Charge currency must match the mandate's ${mandate.currency}.`);
 	}
+
 	const amount = parseMoneyMinor(args.amount);
+
 	if (amount === undefined || amount <= 0) {
 		throw new Error('Charge amount must be a positive decimal string.');
 	}
+
 	if (amount > mandate.amountCap) {
 		throw new Error(
 			`Charge amount exceeds the mandate's ${formatMoneyMinor(mandate.amountCap)} cap.`
 		);
 	}
+
 	if (mandate.remaining !== undefined && amount > mandate.remaining) {
 		throw new Error(
 			`Charge amount exceeds the mandate's remaining ${formatMoneyMinor(mandate.remaining)}.`
@@ -93,9 +98,11 @@ export async function ownedCharge(
 	userId: string
 ): Promise<Doc<'mandateCharges'>> {
 	const charge = await ctx.db.get('mandateCharges', chargeId);
+
 	if (!charge || charge.userId !== userId) {
 		throw new Error('Charge not found.');
 	}
+
 	return charge;
 }
 

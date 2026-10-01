@@ -9,12 +9,15 @@ import { getThreadUsageValues } from '@convex/lib/threadUsage';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
+
 	if (trimmedTitle.length === 0) {
 		throw new Error('Thread title cannot be empty.');
 	}
+
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 	await ctx.db.patch('threadRecords', threadId, { title: trimmedTitle });
+
 	return { userId, record };
 }
 
@@ -27,6 +30,7 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	}
 
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+
 	return { userId, record };
 }
 
@@ -34,6 +38,7 @@ async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
+
 	return { userId, record };
 }
 
@@ -46,11 +51,13 @@ export const setSelectedModel = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
 		if (thread.selectedModel === args.selectedModel) {
 			return null;
 		}
 
 		await ctx.db.patch('threadRecords', thread._id, { selectedModel: args.selectedModel });
+
 		return null;
 	}
 });
@@ -65,16 +72,19 @@ export const setCompletionSettings = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
 		if (
 			thread.selectedModel === args.selectedModel &&
 			(thread.completionProvider ?? 'spikonado') === args.completionProvider
 		) {
 			return null;
 		}
+
 		await ctx.db.patch('threadRecords', thread._id, {
 			selectedModel: args.selectedModel,
 			completionProvider: args.completionProvider
 		});
+
 		return null;
 	}
 });
@@ -88,6 +98,7 @@ export const getByThreadId = query({
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const usage = await getThreadUsageValues(ctx, thread);
+
 		return { ...thread, ...usage };
 	}
 });
@@ -100,6 +111,7 @@ export const rename = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await renameOwnedThread(ctx, args.threadId, args.title);
+
 		return null;
 	}
 });
@@ -111,6 +123,7 @@ export const settle = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await settleOwnedThread(ctx, args.threadId);
+
 		return null;
 	}
 });
@@ -122,6 +135,7 @@ export const unsettle = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await unsettleOwnedThread(ctx, args.threadId);
+
 		return null;
 	}
 });

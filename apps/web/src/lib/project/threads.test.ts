@@ -30,14 +30,20 @@ function runId(value: string): RunId {
 }
 
 const threadA = threadId('thread-record-a');
+
 const threadB = threadId('thread-record-b');
+
 const runA1 = runId('run-a-1');
+
 const runA2 = runId('run-a-2');
+
 const runB1 = runId('run-b-1');
+
 const runB2 = runId('run-b-2');
 
 function makeProject(overrides: Partial<Project> = {}): Project {
 	const repositoryKey = overrides.repositoryKey ?? overrides.displayName ?? 'ws-1';
+
 	return {
 		repositoryKey,
 		displayName: 'Project',
@@ -90,6 +96,7 @@ describe('project thread helpers', () => {
 
 	it('opens a blank draft once startup projects load and keeps it when threads arrive', () => {
 		const project = makeProject();
+
 		const startup = {
 			hasResolvedInitialSelection: false,
 			initialProjectLaunchResolved: true,
@@ -125,6 +132,7 @@ describe('project thread helpers', () => {
 			threadId: threadId('thread-record-old'),
 			lastMessageAt: 20
 		});
+
 		const pendingThreadId = threadId('thread-record-new');
 
 		expect(
@@ -143,6 +151,7 @@ describe('project thread helpers', () => {
 			threadId: threadId('thread-record-newest'),
 			lastMessageAt: 30
 		});
+
 		const selected = threadId('thread-record-older');
 
 		expect(
@@ -176,10 +185,13 @@ describe('project thread helpers', () => {
 		const existing = makeThreadSummary({
 			threadId: threadId('thread-record-old')
 		});
+
 		const pendingThreadId = threadId('thread-record-new');
+
 		const created = makeThreadSummary({
 			threadId: pendingThreadId
 		});
+
 		const unrelated = makeThreadSummary({
 			threadId: threadId('thread-record-unrelated'),
 			lastMessageAt: 10
@@ -245,6 +257,7 @@ describe('project thread helpers', () => {
 			100,
 			runA2
 		);
+
 		expect(isAgentLaunchPending(visibleRun.pendingLaunches, threadA)).toBe(false);
 		expect(visibleRun.shouldRecover).toBe(false);
 	});
@@ -299,6 +312,7 @@ describe('project thread helpers', () => {
 
 	it('rejects stale thread-scoped query data', () => {
 		const thread = makeThreadSummary();
+
 		const activeThreadRecord = {
 			_id: thread.threadId,
 			title: thread.title

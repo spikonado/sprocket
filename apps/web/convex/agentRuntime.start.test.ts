@@ -48,6 +48,7 @@ describe('agentRuntime.start', () => {
 			runId,
 			executionSecret
 		});
+
 		expect(claimed.claimed).toBe(true);
 		expect(claimed.claimExpiresAt).toBeTypeOf('number');
 
@@ -63,6 +64,7 @@ describe('agentRuntime.start', () => {
 			runId,
 			executionSecret
 		});
+
 		expect(renewed.claimed).toBe(true);
 		expect(renewed.claimExpiresAt).toBeGreaterThanOrEqual(claimed.claimExpiresAt ?? 0);
 		expect(
@@ -90,6 +92,7 @@ describe('agentRuntime.start', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', older.runId, { startedAt: 1 });
 		});
+
 		const newerRunId = await t.run(async (ctx) => {
 			const runId = await ctx.db.insert('runs', {
 				threadId,
@@ -102,10 +105,13 @@ describe('agentRuntime.start', () => {
 				fastMode: false,
 				startedAt: 2
 			});
+
 			await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 			await ctx.db.patch('threadRecords', threadId, { status: 'queued' });
+
 			return runId;
 		});
+
 		expect(
 			await t.run(async (ctx) =>
 				ctx.db
@@ -167,6 +173,7 @@ describe('agentRuntime.start', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-expired-writes-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -174,6 +181,7 @@ describe('agentRuntime.start', () => {
 			'sub-expired-writes',
 			executionSecret
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-expired',
 			runId,

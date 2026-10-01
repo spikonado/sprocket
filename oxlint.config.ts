@@ -24,6 +24,9 @@ const config = {
 		}
 	],
 	rules: {
+		'oxc/no-accumulating-spread': 'error',
+		'anti-slop/no-array-filter-map': 'error',
+		'anti-slop/no-reduce-accumulator-copy': 'error',
 		'anti-slop/no-chained-type-assertions': 'error',
 		'anti-slop/no-conditional-empty-object-spread': 'error',
 		'anti-slop/no-known-value-widening': 'error',
@@ -38,6 +41,7 @@ const config = {
 		'anti-slop/no-unknown-type-aliases': 'error',
 		'anti-slop/no-unsafe-dictionary-type': 'error',
 		'anti-slop/no-widen-then-assert': 'error',
+		'anti-slop/require-readable-spacing': 'error',
 		'anti-slop/require-safety-comment-for-type-assertion': 'error'
 	}
 };

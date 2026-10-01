@@ -9,7 +9,10 @@
 		"dev:prod": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod",
 		"dev:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --desktop --data-dir=.sprocket-dev",
 		"dev:prod:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod --desktop",
-		"test": "turbo run test && node --test npm/sprocket/test/*.test.js",
+		"test": "bun run test:anti-slop && turbo run test && node --test npm/sprocket/test/*.test.js",
+		"test:anti-slop": "node --test tools/oxlint/anti-slop/rules/*.test.ts tools/oxlint/anti-slop/effect/rules/*.test.ts",
+		"check:anti-slop": "bun run --cwd apps/web check:anti-slop",
+		"check": "bun run check:anti-slop && bun turbo run check",
 		"lint:oxlint": "oxlint",
 		"lint:mermaid": "mermaid-lint --quiet"
 	},

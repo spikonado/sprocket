@@ -51,20 +51,25 @@ export function updateLabel(state: UpdateState): string | null {
 
 export async function requestPackageUpdate(install: boolean): Promise<UpdateState | null> {
 	const baseUrl = resolveLocalApiBaseUrl();
+
 	if (!baseUrl) return null;
+
 	const response = await fetch(`${baseUrl}/api/update${install ? '/install' : ''}`, {
 		method: install ? 'POST' : 'GET',
 		credentials: 'include',
 		headers: { 'content-type': 'application/json' },
 		signal: AbortSignal.timeout(30_000)
 	});
+
 	if (!response.ok) {
 		const error = z
 			.object({ error: z.string() })
 			.safeParse(await response.json().catch(() => null));
+
 		throw new Error(
 			error.success ? error.data.error : `Update request failed (${response.status}). Try again.`
 		);
 	}
+
 	return updateStateSchema.parse(await response.json());
 }

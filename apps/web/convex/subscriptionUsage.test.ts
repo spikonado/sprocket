@@ -27,6 +27,7 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 				monthly: 500 * UNITS_PER_DOLLAR
 			}
 		];
+
 		for (const tier of tiers) {
 			await ctx.db.insert('tiers', tier);
 		}
@@ -135,12 +136,14 @@ describe('subscription and usage backend', () => {
 
 		// Ensuring collapses the duplicates onto the newer cancellation.
 		await asUser.mutation(api.billing.ensureMySubscription, {});
+
 		const rows = await t.run(async (ctx) =>
 			ctx.db
 				.query('subscriptions')
 				.withIndex('by_userId', (query) => query.eq('userId', userId))
 				.collect()
 		);
+
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({ status: 'cancelled', eventAt: 2_000 });
 	});
@@ -150,6 +153,7 @@ describe('subscription and usage backend', () => {
 		await seedTiers(t);
 		const userId = 'user_ensure_free';
 		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
+
 		const readSubscription = () =>
 			t.run(async (ctx) =>
 				ctx.db
@@ -261,9 +265,11 @@ describe('subscription and usage backend', () => {
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
 		expect(usage.exhausted).toBe(false);
+
 		const weekly = usage.meters
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
+
 		expect(weekly).toMatchObject({ used: 6 * UNITS_PER_DOLLAR });
 	});
 
@@ -273,12 +279,14 @@ describe('subscription and usage backend', () => {
 		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		await asUser.mutation(api.billing.ensureMySubscription, {});
+
 		const rows = await t.run(async (ctx) =>
 			ctx.db
 				.query('users')
 				.withIndex('by_subject', (query) => query.eq('subject', userId))
 				.collect()
 		);
+
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({ subject: userId });
 	});

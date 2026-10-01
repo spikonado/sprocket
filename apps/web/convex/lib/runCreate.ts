@@ -68,22 +68,28 @@ export async function createQueuedRunRecord(
 	if ((args.threadId === undefined) === (args.repositoryKey === undefined)) {
 		throw new Error('Exactly one of thread ID or repository key is required.');
 	}
+
 	if (args.continuationOfRunId && !args.threadId) {
 		throw new Error('A continuation requires an existing thread.');
 	}
+
 	const secretHash = await executionSecretHash(args.executionSecret);
 	const completionProvider = args.completionProvider ?? 'spikonado';
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
+
 	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
 		throw new Error('Message cannot be empty.');
 	}
+
 	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
 	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || imageUploads.length > 0;
 	const machineId = args.machineId;
 	let machine = null;
+
 	if (machineId) {
 		machine = await getOwnedMachine(ctx, args.userId, machineId);
+
 		if (!machine || !isMachineActive(machine)) {
 			throw new Error('Machine is not active.');
 		}
@@ -95,17 +101,22 @@ export async function createQueuedRunRecord(
 			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
 		)
 		.unique();
+
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
+
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
 	let threadRecord: Doc<'threadRecords'>;
+
 	if (args.threadId) {
 		threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
 	} else {
 		const repositoryKey = args.repositoryKey?.trim();
+
 		if (!repositoryKey) throw new Error('Repository key is required for a new thread.');
 		const now = Date.now();
+
 		const threadId = await ctx.db.insert('threadRecords', {
 			userId: args.userId,
 			submissionId: args.submissionId,
@@ -118,15 +129,19 @@ export async function createQueuedRunRecord(
 			fastMode: args.fastMode,
 			lastMessageAt: now
 		});
+
 		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 	}
+
 	const latestRunRecord = await ctx.db
 		.query('runs')
 		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
 		.order('desc')
 		.first();
+
 	let latestRun = latestRunRecord ? await withRunExecution(ctx.db, latestRunRecord) : null;
+
 	if (
 		latestRun &&
 		isClaimedRunStatus(latestRun.status) &&
@@ -138,16 +153,20 @@ export async function createQueuedRunRecord(
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
 		const finalizedRun = await ctx.db.get('runs', latestRun._id);
+
 		if (finalizedRun) latestRun = await withRunExecution(ctx.db, finalizedRun);
+
 		if (machine) {
 			machine = (await ctx.db.get('machines', machine._id)) ?? machine;
 		}
 	} else {
 		assertThreadCanStartRun(latestRun?.status);
 	}
+
 	if (continuationOfRunId) {
 		assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
 	}
+
 	if (machine && machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs.');
 	}
@@ -155,9 +174,11 @@ export async function createQueuedRunRecord(
 	const gatewayFields: GatewayRunTelemetry = {
 		gatewayProtocolVersion: args.protocolVersion
 	};
+
 	if (args.agentVersion) {
 		gatewayFields.agentVersion = args.agentVersion;
 	}
+
 	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
 		threadId: threadRecord._id,
 		userId: args.userId,
@@ -171,19 +192,24 @@ export async function createQueuedRunRecord(
 		startedAt: Date.now(),
 		...gatewayFields
 	};
+
 	if (machineId) runRecord.machineId = machineId;
+
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);
 	}
+
 	const created: CreatedGatewayRun = {
 		created: true,
 		runId,
 		threadId: threadRecord._id,
 		userId: args.userId
 	};
+
 	if (recordsPrompt) {
 		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 		created.promptPart = await recordPromptTranscript(ctx, {
@@ -194,6 +220,7 @@ export async function createQueuedRunRecord(
 			imageUploadIds: args.imageUploadIds
 		});
 	}
+
 	const threadUpdates = {
 		status: 'queued' as const,
 		title: threadRecord.title ?? fallbackTitle,
@@ -204,8 +231,10 @@ export async function createQueuedRunRecord(
 		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt,
 		archivedAt: undefined
 	};
+
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	await startRunLifecycle(ctx, runId);
+
 	return created;
 }
 
@@ -219,9 +248,12 @@ async function reconcileExistingQueuedRun(
 	if (existingRun.executionSecretHash !== secretHash) {
 		throw new ConvexError('Submission belongs to a different executor.');
 	}
+
 	const continuationMatches =
 		(existingRun.continuationOfRunId ?? undefined) === (args.continuationOfRunId ?? undefined);
+
 	const existingThread = await ctx.db.get('threadRecords', existingRun.threadId);
+
 	if (
 		(args.threadId !== undefined && existingRun.threadId !== args.threadId) ||
 		!existingThread ||
@@ -243,8 +275,10 @@ async function reconcileExistingQueuedRun(
 
 	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);
 	const requestedStorageIds = await storageIdsForImageUploadIds(ctx, args.imageUploadIds);
+
 	const recordsPrompt =
 		!args.continuationOfRunId || Boolean(prompt) || args.imageUploadIds.length > 0;
+
 	if (recordsPrompt) {
 		if (
 			!existingPrompt?.prompt ||
@@ -260,12 +294,14 @@ async function reconcileExistingQueuedRun(
 	} else if (existingPrompt !== null || requestedStorageIds === null) {
 		throw new Error('Submission prompt does not match the existing run.');
 	}
+
 	const reconciled: CreatedGatewayRun = {
 		created: false,
 		runId: existingRun._id,
 		threadId: existingRun.threadId,
 		userId: args.userId
 	};
+
 	if (recordsPrompt) {
 		reconciled.promptPart = await recordPromptTranscript(ctx, {
 			threadId: existingRun.threadId,
@@ -275,6 +311,7 @@ async function reconcileExistingQueuedRun(
 			imageUploadIds: args.imageUploadIds
 		});
 	}
+
 	return reconciled;
 }
 
@@ -298,14 +335,17 @@ export async function finalizeFailedQueuedStart(
 	// execution secret is the capability. A secret match on a still-queued
 	// run means it is waiting on this executor, so terminalizing is safe.
 	const secretHash = await executionSecretHash(args.executionSecret);
+
 	const run = await ctx.db
 		.query('runs')
 		.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
 		.unique();
+
 	if (!run) {
 		// When the caller is still authenticated, distinguish a duplicate
 		// submission owned by another executor from an insert still in flight.
 		const identity = await ctx.auth.getUserIdentity();
+
 		if (identity !== null) {
 			const submittedRun = await ctx.db
 				.query('runs')
@@ -313,13 +353,17 @@ export async function finalizeFailedQueuedStart(
 					query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
 				)
 				.unique();
+
 			if (submittedRun) {
 				return 'standDown';
 			}
 		}
+
 		return 'pending';
 	}
+
 	const isContinuation = run.continuationOfRunId !== undefined;
+
 	if (
 		run.status !== 'queued' ||
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
@@ -330,9 +374,11 @@ export async function finalizeFailedQueuedStart(
 	) {
 		return 'standDown';
 	}
+
 	const prompt = args.prompt.trim();
 	const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 	const recordsPrompt = !isContinuation || Boolean(prompt) || args.storageIds.length > 0;
+
 	if (recordsPrompt) {
 		if (
 			!promptPart?.prompt ||
@@ -347,10 +393,12 @@ export async function finalizeFailedQueuedStart(
 	} else if (promptPart !== null) {
 		return 'standDown';
 	}
+
 	await finalizeRunRecord(ctx, await withRunExecution(ctx.db, run), {
 		text: args.text,
 		status: 'failed',
 		lastError: args.lastError
 	});
+
 	return 'finalized';
 }

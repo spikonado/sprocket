@@ -10,6 +10,7 @@ describe('executor finalization acknowledgments', () => {
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'output-cancel', executionSecret);
 		await asUser.mutation(api.agentRuntime.start, { runId, executionSecret, claimId: 'claim' });
 		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
 		const result = await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			executionSecret,
@@ -17,6 +18,7 @@ describe('executor finalization acknowledgments', () => {
 			status: 'failed',
 			text: ''
 		});
+
 		expect(result).toEqual({ accepted: true, outcome: { status: 'cancelled', error: null } });
 		expect(
 			await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -33,6 +35,7 @@ describe('executor finalization acknowledgments', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'output-secret-2';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -40,6 +43,7 @@ describe('executor finalization acknowledgments', () => {
 			'output-ownership',
 			executionSecret
 		);
+
 		await asUser.mutation(api.agentRuntime.start, { runId, executionSecret, claimId: 'owner' });
 		expect(
 			await asUser.mutation(api.agentRuntime.finalizeClaimFailure, {

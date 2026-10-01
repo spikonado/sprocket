@@ -30,14 +30,17 @@ export const checkQuota = mutation({
 	handler: async (ctx, args) => {
 		const payload = await userFromGatewayToken(args.token);
 		const status = await gatewayQuotaStatus(ctx, payload.userId);
+
 		const result: Infer<typeof vQuota> = {
 			userId: payload.userId,
 			tier: status.tier,
 			exhausted: status.exhausted
 		};
+
 		if (status.message) {
 			result.message = status.message;
 		}
+
 		return result;
 	}
 });
@@ -50,13 +53,17 @@ export const consumeQuota = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const payload = await userFromGatewayToken(args.token);
+
 		if (!Number.isFinite(args.units) || args.units < 0) {
 			throw new ConvexError('Invalid quota units.');
 		}
+
 		if (args.units > MAX_QUOTA_CHARGE_UNITS) {
 			throw new ConvexError('Quota charge exceeds the per-call limit.');
 		}
+
 		await applyGatewayUsageCharge(ctx, payload.userId, Math.ceil(args.units));
+
 		return null;
 	}
 });

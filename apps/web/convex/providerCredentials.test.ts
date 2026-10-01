@@ -22,6 +22,7 @@ function vaultEntry(name: string, value: string, id = 'secret_1'): VaultEntry {
 
 async function providerCredentialName(prefix: string, userId = 'user_alice'): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
+
 	return `${prefix}${Array.from(new Uint8Array(digest), (byte) =>
 		byte.toString(16).padStart(2, '0')
 	).join('')}`;
@@ -32,24 +33,32 @@ function stubProviderFetch(
 	providerResponse: (url: string, init?: RequestInit) => Response | Promise<Response>
 ) {
 	let nextId = entries.size + 1;
+
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input);
+
 		if (!url.startsWith('https://api.workos.com/')) return await providerResponse(url, init);
 
 		const parsedUrl = new URL(url);
 		const nameMarker = '/vault/v1/kv/name/';
+
 		if (parsedUrl.pathname.startsWith(nameMarker)) {
 			const entry = entries.get(decodeURIComponent(parsedUrl.pathname.slice(nameMarker.length)));
+
 			return entry ? Response.json(entry) : new Response(null, { status: 404 });
 		}
+
 		if (init?.method === 'POST') {
 			const body = z
 				.object({ name: z.string(), value: z.string() })
 				.parse(JSON.parse(String(init.body)));
+
 			const entry = vaultEntry(body.name, body.value, `secret_${nextId++}`);
 			entries.set(entry.name, entry);
+
 			return Response.json(entry);
 		}
+
 		if (parsedUrl.pathname === '/vault/v1/kv') {
 			const limit = Number(parsedUrl.searchParams.get('limit') ?? 10);
 			const after = parsedUrl.searchParams.get('after');
@@ -57,36 +66,50 @@ function stubProviderFetch(
 			const start = after ? all.findIndex((entry) => entry.id === after) + 1 : 0;
 			const page = all.slice(Math.max(start, 0), Math.max(start, 0) + limit);
 			const last = page.at(-1);
+
 			return Response.json({
 				data: page.map((entry) => ({ id: entry.id, name: entry.name })),
 				list_metadata: last && start + page.length < all.length ? { after: last.id } : {}
 			});
 		}
+
 		const id = decodeURIComponent(parsedUrl.pathname.split('/').at(-1) ?? '');
 		const entry = [...entries.values()].find((candidate) => candidate.id === id);
+
 		if (!entry) return new Response(null, { status: 404 });
+
 		if (init?.method === 'DELETE') {
 			if (parsedUrl.searchParams.get('version_check') !== entry.metadata.version_id) {
 				return new Response(null, { status: 409 });
 			}
+
 			entries.delete(entry.name);
+
 			return new Response(null, { status: 204 });
 		}
+
 		if (init?.method === 'PUT') {
 			const body = z
 				.object({ value: z.string(), version_check: z.string() })
 				.parse(JSON.parse(String(init.body)));
+
 			if (body.version_check !== entry.metadata.version_id) {
 				return new Response(null, { status: 409 });
 			}
+
 			entry.value = body.value;
 			entry.metadata.version_id = `${entry.metadata.version_id}-next`;
+
 			return Response.json(entry);
 		}
+
 		if (!init?.method || init.method === 'GET') return Response.json(entry);
+
 		return new Response(null, { status: 405 });
 	});
+
 	vi.stubGlobal('fetch', fetchMock);
+
 	return fetchMock;
 }
 
@@ -99,6 +122,7 @@ async function startedChatGptRun() {
 	const { asUser, threadId } = await seedOwnedThread(t);
 	const executionSecret = 'executor-secret';
 	const claimId = 'claim-chatgpt';
+
 	const created = await insertQueuedRun(t, asUser, {
 		threadId,
 		submissionId: `chatgpt-run-${crypto.randomUUID()}`,
@@ -106,11 +130,13 @@ async function startedChatGptRun() {
 		prompt: 'Use my subscription',
 		completionProvider: 'chatgpt'
 	});
+
 	await asUser.mutation(api.agentRuntime.start, {
 		runId: created.runId,
 		claimId,
 		executionSecret
 	});
+
 	return { t, asUser, runId: created.runId, claimId, executionSecret };
 }
 
@@ -134,8 +160,11 @@ describe('provider credentials', () => {
 		vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
 			const url = String(input);
 			requests.push({ url, init });
+
 			if (url === 'https://api.openai.com/v1/models') return new Response('{}');
+
 			if (url.includes('/vault/v1/kv/name/')) return new Response('', { status: 404 });
+
 			return Response.json({ id: 'secret_1' });
 		});
 
@@ -158,6 +187,7 @@ describe('provider credentials', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'executor-secret';
 		const claimId = 'claim-openai';
+
 		const created = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'provider-run',
@@ -165,15 +195,18 @@ describe('provider credentials', () => {
 			prompt: 'Use my key',
 			completionProvider: 'openai'
 		});
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: created.runId,
 			claimId,
 			executionSecret
 		});
 		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('user_alice'));
+
 		const name = `sprocket-openai-${Array.from(new Uint8Array(digest), (byte) =>
 			byte.toString(16).padStart(2, '0')
 		).join('')}`;
+
 		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
 		await expect(
 			t.action(api.providerCredentials.issueOpenAiCredential, {
@@ -278,6 +311,7 @@ describe('provider credentials', () => {
 	] as const)('rejects the retired %s cloud flow with local SIWC guidance', async (name) => {
 		const { t, runId, claimId, executionSecret } = await startedChatGptRun();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
+
 		const callArgs =
 			name === 'issueChatGptCredential'
 				? { runId, claimId, executionSecret }
@@ -290,6 +324,7 @@ describe('provider credentials', () => {
 						: name === 'completeChatGptBrowserLogin'
 							? { state: 'a'.repeat(64), code: 'browser-code' }
 							: { deviceAuthId: 'device-1', userCode: 'ABCD-EFGH' };
+
 		// SAFETY: callArgs matches the original validator for each endpoint in this table.
 		await expect(asUser.action(api.providerCredentials[name], callArgs as never)).rejects.toThrow(
 			'Cloud-held ChatGPT sign-in is retired.'
@@ -298,8 +333,10 @@ describe('provider credentials', () => {
 
 	it('reports no connection for historical chatgpt runs and guards the run secret', async () => {
 		const { t, runId, executionSecret } = await startedChatGptRun();
+
 		const connection = (secret: string) =>
 			t.query(api.providerCredentials.chatGptConnection, { runId, executionSecret: secret });
+
 		await expect(connection('wrong-secret')).rejects.toThrow('Run not found.');
 		await expect(connection(executionSecret)).resolves.toBeNull();
 
@@ -319,6 +356,7 @@ describe('provider credentials', () => {
 		const bobName = await providerCredentialName('sprocket-chatgpt-', 'user_bob');
 		const orphanName = 'sprocket-chatgpt-orphaned';
 		const openAiName = await providerCredentialName('sprocket-openai-', 'user_alice');
+
 		const credential = (refreshToken: string) =>
 			JSON.stringify({
 				version: 1,
@@ -328,12 +366,14 @@ describe('provider credentials', () => {
 				accountId: 'account-1',
 				expiresAt: Date.now() + 60 * 60 * 1_000
 			});
+
 		const entries = new Map<string, VaultEntry>([
 			[aliceName, vaultEntry(aliceName, credential('refresh-alice'), 'secret_alice')],
 			[bobName, vaultEntry(bobName, 'not json at all', 'secret_bob')],
 			[orphanName, vaultEntry(orphanName, credential('refresh-orphan'), 'secret_orphan')],
 			[openAiName, vaultEntry(openAiName, 'sk-user', 'secret_openai')]
 		]);
+
 		// Bob has a Vault object without a metadata row (metadata gap).
 		await t.run(async (ctx) => {
 			await ctx.db.insert('providerCredentialStates', {
@@ -345,8 +385,10 @@ describe('provider credentials', () => {
 		stubProviderFetch(entries, (url, init) => {
 			if (url.endsWith('/oauth/revoke')) {
 				revocations.push(new URLSearchParams(String(init?.body)).get('token') ?? '');
+
 				return new Response(null, { status: 400 });
 			}
+
 			throw new Error(`Unexpected provider request: ${url}`);
 		});
 
@@ -376,13 +418,16 @@ describe('provider credentials', () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
 		const entries = new Map<string, VaultEntry>();
+
 		for (let index = 0; index < 11; index += 1) {
 			const name = `sprocket-chatgpt-orphan-${index}`;
 			entries.set(name, vaultEntry(name, 'invalid legacy data', `secret_${index}`));
 		}
+
 		const fetch = stubProviderFetch(entries, (url) => {
 			throw new Error(`Unexpected provider request: ${url}`);
 		});
+
 		await t.action(internal.providerCredentials.retireChatGptCloudCredentials, {
 			cursor: null,
 			vaultAfter: null,
@@ -399,6 +444,7 @@ describe('provider credentials', () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
 		const name = await providerCredentialName('sprocket-chatgpt-');
+
 		const entries = new Map<string, VaultEntry>([
 			[
 				name,
@@ -415,6 +461,7 @@ describe('provider credentials', () => {
 				)
 			]
 		]);
+
 		await t.run(async (ctx) => {
 			await ctx.db.insert('providerCredentialStates', {
 				userId: 'user_alice',
@@ -423,15 +470,19 @@ describe('provider credentials', () => {
 		});
 		let vaultDeletes = 0;
 		let failing = true;
+
 		const vaultFetch = stubProviderFetch(entries, (url) => {
 			if (url.endsWith('/oauth/revoke')) return new Response(null, { status: 401 });
 			throw new Error(`Unexpected provider request: ${url}`);
 		});
+
 		vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
 			if (init?.method === 'DELETE' && failing) {
 				vaultDeletes += 1;
+
 				return new Response(null, { status: 500 });
 			}
+
 			return vaultFetch(input, init);
 		});
 
@@ -475,6 +526,7 @@ describe('provider credentials', () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
 		const name = await providerCredentialName('sprocket-chatgpt-');
+
 		const entries = new Map<string, VaultEntry>([
 			[
 				name,
@@ -491,6 +543,7 @@ describe('provider credentials', () => {
 				)
 			]
 		]);
+
 		await t.run(async (ctx) => {
 			await ctx.db.insert('providerCredentialStates', { userId: 'user_alice' });
 		});
@@ -498,8 +551,10 @@ describe('provider credentials', () => {
 		stubProviderFetch(entries, (url) => {
 			if (url.endsWith('/oauth/revoke')) {
 				revocationAttempts += 1;
+
 				return new Response(null, { status: 500 });
 			}
+
 			throw new Error(`Unexpected provider request: ${url}`);
 		});
 
@@ -508,6 +563,7 @@ describe('provider credentials', () => {
 			vaultAfter: null,
 			tableScanDone: false
 		});
+
 		await vi.waitFor(() => expect(revocationAttempts).toBe(1));
 		await vi.advanceTimersByTimeAsync(250);
 		await retirement;

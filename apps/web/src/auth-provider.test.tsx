@@ -4,7 +4,9 @@ import { authState, convexAuthRetryVersion, type AuthUser } from '$lib/auth';
 import { useSprocketAuth } from './auth-provider';
 
 const initialState = authState.getSnapshot();
+
 const initialRetryVersion = convexAuthRetryVersion.getSnapshot();
+
 const user: AuthUser = {
 	id: 'user-a',
 	email: 'a@example.com',

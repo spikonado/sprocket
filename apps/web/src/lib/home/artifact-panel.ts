@@ -19,8 +19,11 @@ import { useStore, type Store } from '$lib/store';
 import type { DesktopApi } from '$lib/types/sprocket';
 
 type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
+
 type ArtifactLocalApi = Pick<DesktopApi, 'watchArtifacts'>;
+
 type ArtifactRegistryQuery = typeof api.artifacts.listArtifacts;
+
 type ArtifactStateQuery = typeof api.artifacts.getArtifactState;
 
 export type ConvexArtifactClient = {
@@ -57,6 +60,7 @@ export class ArtifactPanel implements Store<number> {
 
 	subscribe = (listener: () => void) => {
 		this.#listeners.add(listener);
+
 		return () => {
 			this.#listeners.delete(listener);
 		};
@@ -72,7 +76,9 @@ export class ArtifactPanel implements Store<number> {
 
 	selectScope(scope: Scope | null) {
 		const scopeKey = scope ? artifactWatchScopeKey(scope) : null;
+
 		if (scopeKey === this.#panelScopeKey) return;
+
 		if (this.#panelScopeKey) this.#snapshots.set(this.#panelScopeKey, this.panel);
 		this.#panelScopeKey = scopeKey;
 		this.fullscreenKey = null;
@@ -91,8 +97,10 @@ export class ArtifactPanel implements Store<number> {
 		const generation = ++this.#watchGeneration;
 		this.watchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
 		this.#emit();
+
 		if (!args.scope) {
 			this.#watchScope = null;
+
 			return;
 		}
 
@@ -102,22 +110,27 @@ export class ArtifactPanel implements Store<number> {
 		const request = artifactsWatchRequest(args.scope);
 		let cloud: ArtifactWatchState = { artifacts: [], stale: true, error: null };
 		let local: ArtifactWatchState | null = null;
+
 		const publish = () => {
 			if (ac.signal.aborted || generation !== this.#watchGeneration) return;
 			this.watchState = mergeArtifactSources(cloud, local);
 			this.#emit();
 		};
+
 		const cloudScope: CloudArtifactScope = {
 			userId: args.scope.userId,
 			repositoryKey: args.scope.repositoryKey
 		};
+
 		if (args.scope.threadId) cloudScope.threadId = args.scope.threadId;
+
 		const stopCloud = args.cloudReady
 			? watchCloudArtifacts(args.artifactClient, cloudScope, (snapshot) => {
 					cloud = snapshot;
 					publish();
 				})
 			: () => {};
+
 		void this.#watchLocal(args.localApi, args.scope.workspacePath, request, {
 			ac,
 			generation,
@@ -127,6 +140,7 @@ export class ArtifactPanel implements Store<number> {
 				publish();
 			}
 		});
+
 		return () => {
 			ac.abort();
 			stopCloud();
@@ -155,6 +169,7 @@ export class ArtifactPanel implements Store<number> {
 
 	#emit() {
 		this.#version += 1;
+
 		for (const listener of this.#listeners) listener();
 	}
 
@@ -185,10 +200,12 @@ export class ArtifactPanel implements Store<number> {
 						) {
 							return;
 						}
+
 						state.setLocal(applyArtifactsWatchEvent(event));
 					}
 				})
 				.catch(() => undefined);
+
 			if (
 				!state.ac.signal.aborted &&
 				state.generation === this.#watchGeneration &&
@@ -196,6 +213,7 @@ export class ArtifactPanel implements Store<number> {
 			) {
 				state.setLocal(null);
 			}
+
 			if (!state.ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
 		}
 	}
@@ -204,6 +222,7 @@ export class ArtifactPanel implements Store<number> {
 export function useArtifactPanel() {
 	const [panel] = useState(() => new ArtifactPanel());
 	useStore(panel);
+
 	return panel;
 }
 
@@ -212,15 +231,19 @@ export function createConvexArtifactClient(client: ConvexArtifactClient): Artifa
 		query: (query, args) => client.query(query, args),
 		onUpdate: (query, args, onUpdate, onError) => {
 			const watch = client.watchQuery(query, args);
+
 			const report = () => {
 				try {
 					const revision = watch.localQueryResult();
+
 					if (revision !== undefined) onUpdate(revision);
 				} catch (error) {
 					onError(error instanceof Error ? error : new Error(String(error)));
 				}
 			};
+
 			report();
+
 			return watch.onUpdate(report);
 		}
 	};

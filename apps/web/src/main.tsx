@@ -10,20 +10,26 @@ import CalmCentered from '$lib/components/home/calm-centered';
 import './app.css';
 
 const container = document.getElementById('root');
+
 if (!container) throw new Error('Missing application root.');
+
 const root = createRoot(container);
 
 async function start() {
 	if (import.meta.env.DEV) {
 		const canonicalUrl = canonicalDevWebUrl(window.location.href);
+
 		if (canonicalUrl) {
 			window.location.replace(canonicalUrl);
+
 			return;
 		}
 	}
+
 	try {
 		const config = await loadRuntimeConfig();
 		const convexUrl = config.env.PUBLIC_CONVEX_URL;
+
 		if (!convexUrl) throw new Error('Sprocket is missing its Convex configuration.');
 		const client = new ConvexReactClient(convexUrl, { unsavedChangesWarning: false });
 		root.render(

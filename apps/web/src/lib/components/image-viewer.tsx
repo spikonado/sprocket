@@ -25,14 +25,19 @@ function extensionForMediaType(mediaType: string): string | undefined {
 function downloadFilename(current: ViewerImage) {
 	const name = current.name.trim() || 'image';
 	const extension = extensionForMediaType(current.mediaType);
+
 	if (!extension) {
 		return name;
 	}
+
 	const existingExtension = name.match(/\.([a-z0-9]{2,5})$/i);
+
 	if (!existingExtension) {
 		return `${name}.${extension}`;
 	}
+
 	const validExtensions = current.mediaType === 'image/jpeg' ? ['jpg', 'jpeg'] : [extension];
+
 	return validExtensions.includes(existingExtension[1].toLowerCase())
 		? name
 		: `${name.slice(0, -existingExtension[0].length)}.${extension}`;
@@ -40,9 +45,11 @@ function downloadFilename(current: ViewerImage) {
 
 async function fetchImageBlob(current: ViewerImage) {
 	const response = await fetch(current.url);
+
 	if (!response.ok) {
 		throw new Error(`Fetch failed with status ${response.status}`);
 	}
+
 	return response.blob();
 }
 
@@ -51,16 +58,21 @@ async function toPngBlob(blob: Blob) {
 	if (blob.type === 'image/png') {
 		return blob;
 	}
+
 	const bitmap = await createImageBitmap(blob);
+
 	try {
 		const canvas = document.createElement('canvas');
 		canvas.width = bitmap.width;
 		canvas.height = bitmap.height;
 		const context = canvas.getContext('2d');
+
 		if (!context) {
 			throw new Error('Canvas 2D context unavailable');
 		}
+
 		context.drawImage(bitmap, 0, 0);
+
 		return await new Promise<Blob>((resolve, reject) => {
 			canvas.toBlob(
 				(png) => (png ? resolve(png) : reject(new Error('PNG encoding failed'))),
@@ -97,9 +109,11 @@ export default function ImageViewer({
 
 	useEffect(() => {
 		generationRef.current += 1;
+
 		if (!image) {
 			return;
 		}
+
 		setCopied(false);
 		setCopying(false);
 		setDownloading(false);
@@ -108,6 +122,7 @@ export default function ImageViewer({
 
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
 		let disposed = false;
 		queueMicrotask(() => {
 			if (!disposed) {
@@ -123,10 +138,12 @@ export default function ImageViewer({
 				event.preventDefault();
 				event.stopPropagation();
 				onCloseRef.current();
+
 				return;
 			}
 
 			const dialogEl = dialogRef.current;
+
 			if (event.key !== 'Tab' || !dialogEl) {
 				return;
 			}
@@ -140,12 +157,14 @@ export default function ImageViewer({
 			if (focusable.length === 0) {
 				event.preventDefault();
 				dialogEl.focus();
+
 				return;
 			}
 
 			const first = focusable[0];
 			const last = focusable[focusable.length - 1];
 			const active = document.activeElement;
+
 			if (
 				event.shiftKey &&
 				(active === dialogEl || active === first || !dialogEl.contains(active))
@@ -162,14 +181,17 @@ export default function ImageViewer({
 		}
 
 		window.addEventListener('keydown', handleWindowKeydown, true);
+
 		return () => {
 			disposed = true;
 			window.removeEventListener('keydown', handleWindowKeydown, true);
 			document.body.style.overflow = previousBodyOverflow;
+
 			if (copiedTimeoutRef.current !== null) {
 				window.clearTimeout(copiedTimeoutRef.current);
 				copiedTimeoutRef.current = null;
 			}
+
 			if (previouslyFocused?.isConnected) {
 				previouslyFocused.focus();
 			}
@@ -180,23 +202,30 @@ export default function ImageViewer({
 		if (copying) {
 			return;
 		}
+
 		const generation = generationRef.current;
 		setCopying(true);
 		setCopyError(null);
 		setDownloadError(null);
+
 		try {
 			if (!globalThis.ClipboardItem) {
 				throw new Error('Clipboard images unsupported');
 			}
+
 			const png = fetchImageBlob(current).then(toPngBlob);
 			await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+
 			if (generation !== generationRef.current) {
 				return;
 			}
+
 			setCopied(true);
+
 			if (copiedTimeoutRef.current !== null) {
 				window.clearTimeout(copiedTimeoutRef.current);
 			}
+
 			copiedTimeoutRef.current = window.setTimeout(() => {
 				setCopied(false);
 				copiedTimeoutRef.current = null;
@@ -217,20 +246,25 @@ export default function ImageViewer({
 		if (downloading) {
 			return;
 		}
+
 		const generation = generationRef.current;
 		setDownloading(true);
 		setCopyError(null);
 		setDownloadError(null);
+
 		try {
 			const blob = await fetchImageBlob(current);
+
 			if (generation !== generationRef.current) {
 				return;
 			}
+
 			const objectUrl = URL.createObjectURL(blob);
 			const anchor = document.createElement('a');
 			anchor.href = objectUrl;
 			anchor.download = downloadFilename(current);
 			document.body.append(anchor);
+
 			try {
 				anchor.click();
 			} finally {

@@ -30,12 +30,16 @@ const initialState: AuthStatus = {
 };
 
 export const authState = createStore<AuthStatus>(initialState);
+
 export const convexAuthUserId = selectStore(authState, (state) => state.user?.id ?? null);
+
 export const convexAuthLoading = selectStore(
 	authState,
 	(state) => !state.isReady || state.isLoading
 );
+
 export const convexAuthRetryVersion = createStore(0);
+
 /** UI-only: stays true until Convex confirms or rejects the post-retry token. */
 export const convexAuthRetryPending = createStore(false);
 
@@ -43,17 +47,21 @@ type AuthClient = Pick<
 	Awaited<ReturnType<typeof createClient>>,
 	'getUser' | 'getAccessToken' | 'signIn' | 'signUp' | 'signOut' | 'getSignInUrl' | 'getSignUpUrl'
 >;
+
 type AuthBootstrapClient = {
 	query: (
 		query: typeof api.authBootstrap.getClientConfig,
 		args: Record<string, never>
 	) => Promise<{ workosClientId: string }>;
 };
+
 type AuthFlow = 'signIn' | 'signUp';
+
 type DesktopSignInAttempt = {
 	abort: AbortController;
 	loginId: string | null;
 };
+
 type NativeTokenOutcome =
 	| { kind: 'session'; accessToken: string; user: AuthUser }
 	| { kind: 'signedOut' }
@@ -64,9 +72,13 @@ type NativeTokenOutcome =
 	| { kind: 'stale' };
 
 const DESKTOP_LOGIN_POLL_INTERVAL_MS = 1_500;
+
 const DESKTOP_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
+
 const TRANSIENT_AUTH_ERROR = 'Native sign-in is temporarily unavailable. Try again.';
+
 let convexRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
 const ACCOUNT_BINDING_ERROR =
 	'This device is signed in with a different account. Sign out, then sign in with the same account.';
 
@@ -83,6 +95,7 @@ const productionAuthRuntime: AuthRuntime = {
 };
 
 let authRuntime: AuthRuntime = productionAuthRuntime;
+
 let machineAuthEnabled = false;
 
 export function setAuthRuntime(nextRuntime: AuthRuntime) {
@@ -94,13 +107,21 @@ function currentWindow() {
 }
 
 let authClientPromise: Promise<AuthClient | null> | null = null;
+
 let authConfigPromise: Promise<{ workosClientId: string }> | null = null;
+
 let bootstrapClient: AuthBootstrapClient | null = null;
+
 let isSigningOut = false;
+
 let desktopSignInAttempt: DesktopSignInAttempt | null = null;
+
 let desktopLoginStartQueue: Promise<void> = Promise.resolve();
+
 let authGeneration = 0;
+
 let nativeAuthEvents: EventSource | null = null;
+
 let nativeTokenInflight: {
 	generation: number;
 	forceRefreshToken: boolean;
@@ -128,7 +149,9 @@ export function resetAuthRuntime() {
 }
 
 const errorMessagePayloadSchema = z.object({ error: z.string().optional() });
+
 const desktopLoginStartSchema = z.object({ authorizationUrl: z.url(), loginId: z.string() });
+
 const nativeAuthUserSchema = z.object({
 	id: z.string(),
 	email: z.email(),
@@ -136,12 +159,14 @@ const nativeAuthUserSchema = z.object({
 	lastName: z.string().nullable().optional(),
 	profilePictureUrl: z.string().nullable().optional()
 });
+
 const nativeSessionTokenSchema = z
 	.object({
 		accessToken: z.string(),
 		user: nativeAuthUserSchema
 	})
 	.nullable();
+
 const desktopLoginResultSchema = z.discriminatedUnion('status', [
 	z.object({ status: z.literal('signedOut') }),
 	z.object({ status: z.literal('pending') }),
@@ -233,16 +258,19 @@ async function getAuthConfig() {
 
 async function getClientId() {
 	const config = await getAuthConfig();
+
 	return config.workosClientId?.trim() || undefined;
 }
 
 function getDesktopBridge() {
 	const appWindow = currentWindow();
+
 	if (!appWindow) {
 		return null;
 	}
 
 	const bridge = appWindow.sprocketDesktopBridge;
+
 	if (!bridge?.openExternal || !bridge.focusWindow) {
 		return null;
 	}
@@ -252,14 +280,17 @@ function getDesktopBridge() {
 
 function isLoopbackBrowserApp() {
 	const appWindow = currentWindow();
+
 	if (!appWindow) {
 		return false;
 	}
+
 	return usesLoopbackBrowserAuth(appWindow.location.hostname, false);
 }
 
 async function establishLocalSession() {
 	const baseUrl = authRuntime.resolveLocalApiBaseUrl();
+
 	if (!baseUrl) {
 		throw new Error('Unable to resolve the Sprocket server URL.');
 	}
@@ -278,8 +309,10 @@ async function getAuthClient() {
 
 	authClientPromise = (async () => {
 		const clientId = await getClientId();
+
 		if (!clientId) {
 			authState.set(signedOutState({ isConfigured: false }));
+
 			return null;
 		}
 
@@ -325,6 +358,7 @@ async function getAuthClient() {
 				nativeSession: authState.getSnapshot().nativeSession,
 				error: null
 			});
+
 			return client;
 		} catch (error) {
 			authClientPromise = null;
@@ -354,12 +388,16 @@ export async function initializeAuth(
 			if (isRemoteMachineApp() && currentWindow()?.location.protocol !== 'https:') {
 				throw new Error('Remote Sprocket access requires HTTPS.');
 			}
+
 			await establishLocalSession();
+
 			if (generation !== authGeneration) {
 				return;
 			}
+
 			await initializeInstalledAuth(generation);
 			watchNativeAuthentication();
+
 			return;
 		}
 
@@ -368,6 +406,7 @@ export async function initializeAuth(
 		if (generation !== authGeneration) {
 			return;
 		}
+
 		authState.update((current) => ({
 			...current,
 			isLoading: false,
@@ -419,6 +458,7 @@ async function initializeHostedAuth() {
 
 async function initializeInstalledAuth(generation: number) {
 	const outcome = await requestNativeSessionToken(false, generation);
+
 	if (generation !== authGeneration) return;
 	applyNativeInitializeOutcome(outcome);
 }
@@ -436,9 +476,11 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 				nativeSession: 'ready',
 				error: null
 			});
+
 			return;
 		case 'signedOut':
 			authState.set(signedOutState());
+
 			return;
 		case 'transient':
 			authState.update((current) => ({
@@ -448,6 +490,7 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 				nativeSession: current.nativeSession === 'loading' ? 'unavailable' : current.nativeSession,
 				error: current.nativeSession === 'loading' ? outcome.error : current.error
 			}));
+
 			return;
 		case 'unauthorized':
 			authState.update((current) => ({
@@ -457,6 +500,7 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 				nativeSession: 'unavailable',
 				error: outcome.error
 			}));
+
 			return;
 		case 'mismatch':
 			authState.update((current) => ({
@@ -466,6 +510,7 @@ function applyNativeInitializeOutcome(outcome: NativeTokenOutcome) {
 				nativeSession: 'mismatch',
 				error: outcome.error
 			}));
+
 			return;
 		case 'stale':
 			return;
@@ -485,6 +530,7 @@ async function clearNativeSession() {
 		method: 'DELETE',
 		credentials: 'include'
 	});
+
 	if (!response.ok) {
 		throw new Error(
 			await errorMessageFromFailedResponse(response, 'Failed to clear native session.')
@@ -497,6 +543,7 @@ async function clearBrowserSession() {
 		method: 'DELETE',
 		credentials: 'include'
 	});
+
 	if (!response.ok) {
 		throw new Error(
 			await errorMessageFromFailedResponse(response, 'Failed to clear browser session.')
@@ -508,8 +555,10 @@ export async function reconcileNativeAuthentication() {
 	if (!isMachineApp()) {
 		return;
 	}
+
 	const generation = authGeneration;
 	const outcome = await requestNativeSessionToken(false, generation);
+
 	if (generation !== authGeneration) return;
 	applyNativeInitializeOutcome(outcome);
 }
@@ -523,11 +572,14 @@ async function requestNativeSessionToken(
 	}
 
 	const inflight = nativeTokenInflight;
+
 	if (inflight && inflight.generation === generation) {
 		const shared = await inflight.promise;
+
 		if (generation !== authGeneration) {
 			return { kind: 'stale' };
 		}
+
 		if (!forceRefreshToken || inflight.forceRefreshToken) {
 			return shared;
 		}
@@ -535,11 +587,14 @@ async function requestNativeSessionToken(
 
 	const promise = fetchNativeSessionToken(forceRefreshToken);
 	nativeTokenInflight = { generation, forceRefreshToken, promise };
+
 	try {
 		const outcome = await promise;
+
 		if (generation !== authGeneration) {
 			return { kind: 'stale' };
 		}
+
 		return outcome;
 	} finally {
 		if (nativeTokenInflight?.promise === promise) {
@@ -550,6 +605,7 @@ async function requestNativeSessionToken(
 
 async function fetchNativeSessionToken(forceRefreshToken: boolean): Promise<NativeTokenOutcome> {
 	let response: Response;
+
 	try {
 		response = await fetch('/api/auth/native-session/token', {
 			method: 'POST',
@@ -574,18 +630,21 @@ async function fetchNativeSessionToken(forceRefreshToken: boolean): Promise<Nati
 			)
 		};
 	}
+
 	if (response.status === 409) {
 		return {
 			kind: 'mismatch',
 			error: await errorMessageFromFailedResponse(response, ACCOUNT_BINDING_ERROR)
 		};
 	}
+
 	if (isTransientHttpStatus(response.status)) {
 		return {
 			kind: 'transient',
 			error: await errorMessageFromFailedResponse(response, TRANSIENT_AUTH_ERROR)
 		};
 	}
+
 	if (!response.ok) {
 		return {
 			kind: 'error',
@@ -594,12 +653,15 @@ async function fetchNativeSessionToken(forceRefreshToken: boolean): Promise<Nati
 	}
 
 	const parsed = nativeSessionTokenSchema.safeParse(await response.json().catch(() => undefined));
+
 	if (!parsed.success) {
 		return { kind: 'error', error: 'Local server returned an invalid native session.' };
 	}
+
 	if (parsed.data === null) {
 		return { kind: 'signedOut' };
 	}
+
 	return {
 		kind: 'session',
 		accessToken: parsed.data.accessToken,
@@ -612,6 +674,7 @@ async function errorMessageFromFailedResponse(
 	fallback: string
 ): Promise<string> {
 	const parsed = errorMessagePayloadSchema.safeParse(await response.json().catch(() => null));
+
 	return parsed.success ? (parsed.data.error ?? fallback) : fallback;
 }
 
@@ -630,10 +693,13 @@ async function startDesktopLogin(
 			await errorMessageFromFailedResponse(response, 'Failed to start desktop sign-in.')
 		);
 	}
+
 	const payload = desktopLoginStartSchema.safeParse(await response.json());
+
 	if (!payload.success) {
 		throw new Error('Local server returned an invalid desktop sign-in URL.');
 	}
+
 	return payload.data;
 }
 
@@ -658,6 +724,7 @@ async function startDesktopLoginInOrder(
 	});
 
 	await previousStart;
+
 	try {
 		requireCurrentDesktopSignIn(attempt);
 
@@ -667,6 +734,7 @@ async function startDesktopLoginInOrder(
 		const { authorizationUrl, loginId } = await startDesktopLogin(flow);
 		attempt.loginId = loginId;
 		requireCurrentDesktopSignIn(attempt);
+
 		return authorizationUrl;
 	} finally {
 		releaseStart();
@@ -675,6 +743,7 @@ async function startDesktopLoginInOrder(
 
 async function fetchDesktopLoginResult(signal: AbortSignal) {
 	let response: Response;
+
 	try {
 		response = await fetch('/api/auth/desktop-login/result', {
 			method: 'POST',
@@ -683,14 +752,18 @@ async function fetchDesktopLoginResult(signal: AbortSignal) {
 		});
 	} catch (error) {
 		if (signal.aborted) throw error;
+
 		return null;
 	}
+
 	if (isTransientHttpStatus(response.status)) return null;
+
 	if (!response.ok) {
 		throw new Error(
 			await errorMessageFromFailedResponse(response, 'Failed to check desktop sign-in status.')
 		);
 	}
+
 	return desktopLoginResultSchema.parse(await response.json());
 }
 
@@ -732,15 +805,18 @@ async function pollDesktopLoginResult(signal: AbortSignal): Promise<{ id: string
 
 async function authenticateWithMachineBrowser(flow: AuthFlow) {
 	const bridge = getDesktopBridge();
+
 	if (!isMachineApp()) {
 		throw new Error('Machine browser sign-in is unavailable.');
 	}
+
 	stopDesktopSignInPolling();
 
 	const attempt: DesktopSignInAttempt = {
 		abort: new AbortController(),
 		loginId: null
 	};
+
 	desktopSignInAttempt = attempt;
 
 	authState.update((current) => ({
@@ -761,11 +837,13 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 			browserSignInUrl: authorizeUrl
 		}));
 		requireCurrentDesktopSignIn(attempt);
+
 		if (bridge) {
 			void bridge.openExternal(authorizeUrl).catch((error) => {
 				if (!isCurrentDesktopSignIn(attempt)) {
 					return;
 				}
+
 				const detail = error instanceof Error ? error.message.trim() : '';
 				authState.update((current) => ({
 					...current,
@@ -774,6 +852,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 			});
 		} else {
 			const opened = window.open(authorizeUrl, '_blank');
+
 			if (opened) {
 				try {
 					opened.opener = null;
@@ -787,8 +866,10 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 				}));
 			}
 		}
+
 		const nativeUser = await pollDesktopLoginResult(attempt.abort.signal);
 		requireCurrentDesktopSignIn(attempt);
+
 		if (bridge) {
 			try {
 				await bridge.focusWindow();
@@ -798,6 +879,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 				}
 			}
 		}
+
 		requireCurrentDesktopSignIn(attempt);
 		await completeInstalledSignIn(attempt, nativeUser);
 	} catch (error) {
@@ -812,6 +894,7 @@ async function authenticateWithMachineBrowser(flow: AuthFlow) {
 				browserSignInUrl: null,
 				error: null
 			}));
+
 			return;
 		}
 
@@ -836,9 +919,11 @@ async function completeInstalledSignIn(
 	const generation = authGeneration;
 	const outcome = await requestNativeSessionToken(false, generation);
 	requireCurrentDesktopSignIn(attempt);
+
 	if (outcome.kind === 'stale') {
 		return;
 	}
+
 	applyNativeLoginOutcome(outcome, toAuthUser(nativeUser));
 }
 
@@ -855,6 +940,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				nativeSession: 'ready',
 				error: null
 			});
+
 			return;
 		case 'transient':
 			authState.set({
@@ -867,6 +953,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				nativeSession: 'ready',
 				error: null
 			});
+
 			return;
 		case 'signedOut':
 			authState.set(
@@ -874,6 +961,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 					error: 'Native sign-in finished without a session. Try again.'
 				})
 			);
+
 			return;
 		case 'unauthorized':
 			authState.update((current) => ({
@@ -883,6 +971,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				nativeSession: 'unavailable',
 				error: outcome.error
 			}));
+
 			return;
 		case 'mismatch':
 			authState.update((current) => ({
@@ -892,6 +981,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				nativeSession: 'mismatch',
 				error: outcome.error
 			}));
+
 			return;
 		case 'error':
 			authState.update((current) => ({
@@ -901,6 +991,7 @@ function applyNativeLoginOutcome(outcome: NativeTokenOutcome, fallbackUser: Auth
 				nativeSession: 'unavailable',
 				error: outcome.error
 			}));
+
 			return;
 		case 'stale':
 			return;
@@ -922,14 +1013,17 @@ export function cancelDesktopSignIn() {
 		browserSignInUrl: null,
 		error: null
 	}));
+
 	if (!cancelledAttempt) {
 		return;
 	}
+
 	void pendingStarts
 		.then(async () => {
 			if (!cancelledAttempt.loginId) {
 				return;
 			}
+
 			await fetch('/api/auth/desktop-login/cancel', {
 				method: 'POST',
 				credentials: 'include',
@@ -948,6 +1042,7 @@ export function clearDesktopSignInOpenError() {
 		if (!current.isWaitingForBrowserSignIn || current.error === null) {
 			return current;
 		}
+
 		return {
 			...current,
 			error: null
@@ -958,21 +1053,25 @@ export function clearDesktopSignInOpenError() {
 async function authenticate(flow: AuthFlow) {
 	if (isMachineApp()) {
 		await authenticateWithMachineBrowser(flow);
+
 		return;
 	}
 
 	const client = await getAuthClient();
+
 	if (!client) {
 		return;
 	}
 
 	const clientId = await getClientId();
+
 	if (!clientId) {
 		return;
 	}
 
 	if (flow === 'signUp') {
 		await client.signUp();
+
 		return;
 	}
 
@@ -996,6 +1095,7 @@ export async function signOut() {
 	const errors: string[] = [];
 	let browserSignOutFailed = false;
 	let remainingBrowserUser: AuthUser | null = null;
+
 	try {
 		if (isMachineApp()) {
 			try {
@@ -1009,10 +1109,13 @@ export async function signOut() {
 			}
 		} else {
 			const client = await getAuthClient();
+
 			if (!client) {
 				authState.set(signedOutState());
+
 				return;
 			}
+
 			try {
 				await client.signOut({ navigate: false, returnTo: window.location.origin });
 			} catch (error) {
@@ -1022,6 +1125,7 @@ export async function signOut() {
 				errors.push(error instanceof Error ? error.message : 'Failed to clear browser session.');
 			}
 		}
+
 		convexAuthRetryPending.set(false);
 		authState.set(
 			signedOutState({
@@ -1047,9 +1151,11 @@ export async function getAccessToken({
 	if (isMachineApp()) {
 		const generation = authGeneration;
 		const outcome = await requestNativeSessionToken(forceRefreshToken, generation);
+
 		if (generation !== authGeneration || outcome.kind === 'stale') {
 			return null;
 		}
+
 		return applyNativeAccessTokenOutcome(outcome, generation);
 	}
 
@@ -1065,14 +1171,19 @@ function clearConvexRecovery() {
 
 export async function getConvexAccessToken(options: { forceRefreshToken: boolean }) {
 	const generation = authGeneration;
+
 	try {
 		if (isMachineApp() && authState.getSnapshot().nativeSession === 'unavailable') {
 			await establishLocalSession();
+
 			if (generation !== authGeneration) return null;
 		}
+
 		const token = await getAccessToken(options);
+
 		if (generation !== authGeneration) return null;
 		clearConvexRecovery();
+
 		return token;
 	} catch (error) {
 		if (generation !== authGeneration) return null;
@@ -1081,14 +1192,17 @@ export async function getConvexAccessToken(options: { forceRefreshToken: boolean
 			error: error instanceof Error ? error.message : 'Session refresh is temporarily unavailable.'
 		}));
 		const state = authState.getSnapshot();
+
 		if (state.user && state.nativeSession !== 'mismatch' && convexRecoveryTimer === null) {
 			convexRecoveryTimer = setTimeout(() => {
 				convexRecoveryTimer = null;
+
 				if (generation === authGeneration && authState.getSnapshot().user) {
 					convexAuthRetryVersion.update((version) => version + 1);
 				}
 			}, 5_000);
 		}
+
 		// Convex does not catch fetcher rejections, including while its socket is stopped.
 		return null;
 	}
@@ -1107,6 +1221,7 @@ function applyNativeAccessTokenOutcome(outcome: NativeTokenOutcome, generation: 
 				nativeSession: 'ready',
 				error: null
 			}));
+
 			return outcome.accessToken;
 		case 'signedOut':
 			authState.update((current) => ({
@@ -1115,6 +1230,7 @@ function applyNativeAccessTokenOutcome(outcome: NativeTokenOutcome, generation: 
 				nativeSession: 'notRequired',
 				error: null
 			}));
+
 			return null;
 		case 'transient':
 			throw new Error(outcome.error);
@@ -1141,6 +1257,7 @@ function applyNativeAccessTokenOutcome(outcome: NativeTokenOutcome, generation: 
 
 async function getAuthKitAccessToken({ forceRefreshToken }: { forceRefreshToken: boolean }) {
 	const client = await getAuthClient();
+
 	if (!client) {
 		return null;
 	}
@@ -1150,6 +1267,7 @@ async function getAuthKitAccessToken({ forceRefreshToken }: { forceRefreshToken:
 	} catch (error) {
 		if (error instanceof Error && error.name === 'LoginRequiredError') {
 			authState.update((current) => ({ ...current, user: null }));
+
 			return null;
 		}
 
@@ -1195,13 +1313,18 @@ export async function retryConvexAuthentication() {
 	try {
 		if (isMachineApp()) {
 			await establishLocalSession();
+
 			if (generation !== authGeneration) return;
 		}
+
 		const token = await getAccessToken({ forceRefreshToken: true });
+
 		if (generation !== authGeneration) return;
+
 		if (!token) {
 			throw new Error('Your session has expired. Sign in again.');
 		}
+
 		// Bump version so setupAuth reinstalls auth; clear isLoading so provider
 		// loading/auth can transition and Convex can confirm the fresh token.
 		convexAuthRetryVersion.update((version) => version + 1);

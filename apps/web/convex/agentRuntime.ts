@@ -83,8 +83,10 @@ function isExpectedSectionKey(
 ) {
 	const prefix = `agent:${runId}:${claimId}:`;
 	const suffix = `:section:${sectionOrdinal}`;
+
 	if (!sectionKey.startsWith(prefix) || !sectionKey.endsWith(suffix)) return false;
 	const sectionAttempt = Number(sectionKey.slice(prefix.length, -suffix.length));
+
 	return (
 		Number.isSafeInteger(sectionAttempt) && sectionAttempt >= 0 && sectionAttempt <= attemptSeq
 	);
@@ -148,11 +150,14 @@ export const createGatewayRun = action({
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
+
 		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
 			userId,
 			storageIds: args.storageIds
 		});
+
 		const gatewayUrl = modelGatewayUrl();
+
 		const request: QueuedRunRequest = {
 			userId,
 			submissionId: args.submissionId,
@@ -169,11 +174,14 @@ export const createGatewayRun = action({
 			agentVersion: args.agentVersion,
 			machineId: args.machineId
 		};
+
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+
 		if (created.promptPart) {
 			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
 		}
+
 		return {
 			...created,
 			gatewayUrl,
@@ -194,18 +202,23 @@ export const issueGatewayCredential = mutation({
 	}),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
+
 		if ((run.completionProvider ?? 'spikonado') !== 'spikonado') {
 			throw new Error('Run is not configured to use the Spikonado gateway.');
 		}
+
 		const expiresAt = gatewayTokenExpiresAt();
+
 		const token = await mintGatewayToken(modelGatewayTokenSecret(), {
 			v: 1,
 			userId: run.userId,
 			exp: expiresAt
 		});
+
 		return { token, expiresAt };
 	}
 });
@@ -223,6 +236,7 @@ export const start = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const now = Date.now();
+
 		if (!canStartRunWithClaim(run, args.claimId, now)) {
 			return { claimed: false };
 		}
@@ -235,6 +249,7 @@ export const start = mutation({
 			claimId: args.claimId,
 			claimExpiresAt: nextClaimExpiresAt
 		};
+
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
 		await patchRunExecution(ctx, run._id, claimPatch);
 		await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
@@ -255,6 +270,7 @@ export const renewClaim = mutation({
 	}),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		// Only active leases renew; expired workers must start/takeover again.
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			return { renewed: false };
@@ -262,6 +278,7 @@ export const renewClaim = mutation({
 
 		const nextClaimExpiresAt = claimExpiresAt(Date.now());
 		await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
+
 		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
@@ -285,9 +302,11 @@ function getContextResult(args: {
 		},
 		prompt: args.prompt
 	};
+
 	if (args.contextTokens !== undefined) {
 		result.contextTokens = args.contextTokens;
 	}
+
 	return result;
 }
 
@@ -301,16 +320,19 @@ export const getContext = query({
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
 				throw new Error('Run does not contain a user prompt.');
 			}
+
 			return getContextResult({
 				run,
 				prompt: '',
 				contextTokens
 			});
 		}
+
 		return getContextResult({
 			run,
 			prompt: promptPart.prompt.text,
@@ -327,6 +349,7 @@ export const isFinished = query({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
 		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
 	}
 });
@@ -340,13 +363,17 @@ export const completionActor = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
+
 		const actor: Infer<typeof vCompletionActor> = {
 			userId,
 			threadId: run.threadId,
 			status: run.status
 		};
+
 		if (run.claimId) actor.claimId = run.claimId;
+
 		if (run.claimExpiresAt) actor.claimExpiresAt = run.claimExpiresAt;
+
 		return actor;
 	}
 });
@@ -365,46 +392,60 @@ export const saveContextHandoff = mutation({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
 			return false;
 		}
+
 		if (!args.summary.trim()) {
 			throw new Error('Invalid context handoff.');
 		}
+
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
 		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
 			threadId: run.threadId,
 			runId: run._id,
 			beforePrompt: args.beforePrompt
 		});
+
 		const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
 		const existingCutoff = await existingThroughPartNumber(ctx, thread);
+
 		if (thread.contextSummaryHandoffKey === handoffKey) {
 			if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
 				throw new Error('Invalid context handoff cutoff.');
 			}
+
 			if (thread.contextSummary !== args.summary) {
 				throw new Error('Conflicting context handoff retry.');
 			}
+
 			return true;
 		}
+
 		if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
 			throw new Error('Invalid context handoff cutoff.');
 		}
+
 		await ctx.db.patch('threadRecords', thread._id, {
 			contextSummary: args.summary,
 			contextSummaryThroughPartNumber: throughPartNumber,
 			contextSummaryThroughRunId: undefined,
 			contextSummaryHandoffKey: handoffKey
 		});
+
 		if (args.processedTokens !== undefined) {
 			await recordThreadUsageEvent(ctx, thread, {
 				eventId: usageEventId('usage', run._id, args.claimId, args.completionAttemptSeq),
 				processedTokens: args.processedTokens
 			});
 		}
+
 		await clearThreadContextTokens(ctx, thread._id);
+
 		return true;
 	}
 });
@@ -420,6 +461,7 @@ export const recordContextUsage = mutation({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 		await recordThreadUsageEvent(ctx, thread, {
@@ -427,6 +469,7 @@ export const recordContextUsage = mutation({
 			contextTokens: args.contextTokens,
 			processedTokens: args.processedTokens
 		});
+
 		return true;
 	}
 });
@@ -443,12 +486,15 @@ export const registerCompletionAttempt = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run);
+
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
+
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
+
 		await patchRunExecution(ctx, run._id, { completionAttemptSeq: args.attemptSeq });
 	}
 });
@@ -481,15 +527,19 @@ export const finalizeCompletionCall = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run);
+
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
+
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			return null;
 		}
+
 		const sectionOrdinals = new Map(
 			args.sections.map((section) => [section.sectionKey, section.sectionOrdinal])
 		);
+
 		if (
 			args.sections.length > MAX_COMPLETION_ASSIGNMENTS ||
 			args.work.ranges.length > MAX_COMPLETION_ASSIGNMENTS ||
@@ -508,18 +558,23 @@ export const finalizeCompletionCall = mutation({
 		) {
 			throw new Error('Invalid section metadata.');
 		}
+
 		const invocationIds = new Set<string>();
+
 		for (const invocation of args.toolInvocations) {
 			if (invocationIds.has(invocation.toolInvocationId)) {
 				throw new Error('Duplicate tool invocation assignment.');
 			}
+
 			invocationIds.add(invocation.toolInvocationId);
+
 			const job = await ctx.db
 				.query('executorJobs')
 				.withIndex('by_runId_and_toolInvocationId', (q) =>
 					q.eq('runId', run._id).eq('toolInvocationId', invocation.toolInvocationId)
 				)
 				.unique();
+
 			if (
 				!job ||
 				job.callId !== invocation.callId ||
@@ -534,27 +589,35 @@ export const finalizeCompletionCall = mutation({
 				throw new Error('Invalid tool invocation assignment.');
 			}
 		}
+
 		const completionCallIds = args.items.flatMap((item) =>
 			item.type === 'tool-call' ? [item.callId] : []
 		);
+
 		if (
 			completionCallIds.length !== args.toolInvocations.length ||
 			completionCallIds.some((callId, index) => callId !== args.toolInvocations[index]?.callId)
 		) {
 			throw new Error('Incomplete tool invocation assignments.');
 		}
+
 		const invocationsByItem = new Map<number, (typeof args.toolInvocations)[number]>();
 		let invocationIndex = 0;
+
 		for (const [index, item] of args.items.entries()) {
 			if (item.type === 'tool-call') {
 				invocationsByItem.set(index, args.toolInvocations[invocationIndex++]);
 			}
 		}
+
 		const assignedItems = new Set<number>();
+
 		for (const range of args.work.ranges) {
 			if (!sectionOrdinals.has(range.sectionKey)) throw new Error('Unknown work section.');
+
 			for (let index = range.start; index < range.end; index++) {
 				const item = args.items[index];
+
 				if (
 					!item ||
 					item.type === 'text' ||
@@ -563,17 +626,22 @@ export const finalizeCompletionCall = mutation({
 				) {
 					throw new Error('Invalid work assignment.');
 				}
+
 				if (item.type === 'tool-call') {
 					const invocation = invocationsByItem.get(index);
+
 					if (invocation?.sectionKey !== range.sectionKey) {
 						throw new Error('Tool call assigned to a different section.');
 					}
 				}
+
 				assignedItems.add(index);
 			}
 		}
+
 		for (const [index, item] of args.items.entries()) {
 			const invocation = invocationsByItem.get(index);
+
 			// Empty reasoning carries only the encrypted envelope for replay and has
 			// no display text. The agent tracker and read path both skip it as work,
 			// so it must not carry a work range. Require work only for visible
@@ -581,12 +649,14 @@ export const finalizeCompletionCall = mutation({
 			const needsWork =
 				(item.type === 'reasoning' && item.text.trim() !== '') ||
 				invocation?.sectionKey !== undefined;
+
 			if (needsWork) {
 				if (!assignedItems.has(index)) throw new Error('Missing work assignment.');
 			} else if (assignedItems.has(index)) {
 				throw new Error('Non-work item has a work assignment.');
 			}
 		}
+
 		const part = await recordCompletionTranscript(ctx, {
 			threadId: run.threadId,
 			userId: run.userId,
@@ -597,6 +667,7 @@ export const finalizeCompletionCall = mutation({
 			toolInvocations: args.toolInvocations,
 			sections: args.sections
 		});
+
 		await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,
 			userId: run.userId,
@@ -604,6 +675,7 @@ export const finalizeCompletionCall = mutation({
 			items: args.items,
 			toolInvocations: args.toolInvocations
 		});
+
 		if (part && args.usage) {
 			const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 			await recordThreadUsageEvent(ctx, thread, {
@@ -612,6 +684,7 @@ export const finalizeCompletionCall = mutation({
 				processedTokens: args.usage.processedTokens
 			});
 		}
+
 		return part;
 	}
 });
@@ -622,6 +695,7 @@ export const requestCancellation = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const run = await getOwnedRun(ctx.db, userId, args.runId);
+
 		return await requestRunCancellation(ctx, run);
 	}
 });
@@ -639,8 +713,10 @@ export const finalizeExecutorRun = mutation({
 	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		const accepted =
 			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));
+
 		return executorFinalizationResult(ctx, run, accepted);
 	}
 });
@@ -680,6 +756,7 @@ export const finalizeClaimFailure = mutation({
 	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		const accepted =
 			canFinalizeAfterClaimFailure(run, args.claimId) &&
 			(await finalizeRunRecord(ctx, run, {
@@ -687,6 +764,7 @@ export const finalizeClaimFailure = mutation({
 				status: 'failed',
 				lastError: args.lastError
 			}));
+
 		return executorFinalizationResult(ctx, run, accepted);
 	}
 });
@@ -714,15 +792,19 @@ export const beginToolJob = mutation({
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 			assertRunAcceptsModelCompletion(run);
+
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}
+
 			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 			}
+
 			if (!args.sectionKey && args.hidden !== true) {
 				throw new Error('Tool job requires a section key.');
 			}
+
 			if (
 				args.sectionKey !== undefined &&
 				!isExpectedSectionKey(
@@ -735,6 +817,7 @@ export const beginToolJob = mutation({
 			) {
 				throw new Error('Invalid section identity.');
 			}
+
 			return await beginExecutorJob(ctx, {
 				run,
 				claimId: args.claimId,

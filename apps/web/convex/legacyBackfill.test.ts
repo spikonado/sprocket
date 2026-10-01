@@ -8,6 +8,7 @@ describe('legacy compat backfill migrations', () => {
 	it('unsets transcript state workThrough', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
+
 		const stateId = await t.run((ctx) =>
 			ctx.db.insert('threadTranscriptStates', {
 				threadId,
@@ -30,14 +31,18 @@ describe('legacy compat backfill migrations', () => {
 	it('drops userEmail from stored mandate setup payloads', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
+
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.unique();
+
 			if (!run) throw new Error('Missing test fixture.');
+
 			return run._id;
 		});
+
 		const jobId = await t.run((ctx) =>
 			ctx.db.insert('executorJobs', {
 				threadId,
@@ -74,14 +79,18 @@ describe('legacy compat backfill migrations', () => {
 	it('normalizes stored scrape results to the current shape', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
+
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.unique();
+
 			if (!run) throw new Error('Missing test fixture.');
+
 			return run._id;
 		});
+
 		const jobId = await t.run((ctx) =>
 			ctx.db.insert('executorJobs', {
 				threadId,
@@ -112,14 +121,18 @@ describe('legacy compat backfill migrations', () => {
 	it('backfills missing job invocation ids and migrates tool part jobIds', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
+
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.unique();
+
 			if (!run) throw new Error('Missing test fixture.');
+
 			return run._id;
 		});
+
 		const jobId = await t.run((ctx) =>
 			ctx.db.insert('executorJobs', {
 				threadId,
@@ -133,6 +146,7 @@ describe('legacy compat backfill migrations', () => {
 				sequence: 0
 			})
 		);
+
 		const partId = await t.run((ctx) =>
 			ctx.db.insert('threadTranscriptParts', {
 				threadId,
@@ -160,14 +174,18 @@ describe('legacy compat backfill migrations', () => {
 	it('normalizes missing completion timing to null', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
+
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.unique();
+
 			if (!run) throw new Error('Missing test fixture.');
+
 			return run._id;
 		});
+
 		const partId = await t.run((ctx) =>
 			ctx.db.insert('threadTranscriptParts', {
 				threadId,
@@ -197,8 +215,10 @@ describe('legacy compat backfill migrations', () => {
 	it('strips stored imageUploadId from prompt attachments', async () => {
 		const t = initConvexTest();
 		const { subject, threadId } = await seedOwnedThread(t);
+
 		const ids = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+
 			const uploadId = await ctx.db.insert('imageUploads', {
 				userId: subject,
 				storageId,
@@ -208,11 +228,14 @@ describe('legacy compat backfill migrations', () => {
 				attached: true,
 				threadId
 			});
+
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.first();
+
 			if (!run) throw new Error('Missing fixture run');
+
 			const partId = await ctx.db.insert('threadTranscriptParts', {
 				threadId,
 				userId: subject,
@@ -234,6 +257,7 @@ describe('legacy compat backfill migrations', () => {
 				},
 				work: { ranges: [] }
 			});
+
 			return { partId };
 		});
 
@@ -255,6 +279,7 @@ describe('legacy compat backfill migrations', () => {
 				contextSummaryThroughRunId: first.runId
 			});
 		});
+
 		const expected = await t.run(async (ctx) => {
 			const parts = await ctx.db
 				.query('threadTranscriptParts')
@@ -262,6 +287,7 @@ describe('legacy compat backfill migrations', () => {
 					query.eq('threadId', threadId).eq('runId', first.runId)
 				)
 				.collect();
+
 			return Math.max(...parts.map((part) => part.number));
 		});
 
@@ -279,14 +305,18 @@ describe('legacy compat backfill migrations', () => {
 	it('unsets section linkedParts', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
+
 		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.unique();
+
 			if (!run) throw new Error('Missing test fixture.');
+
 			return run._id;
 		});
+
 		const sectionId = await t.run((ctx) =>
 			ctx.db.insert('threadTranscriptWorkSections', {
 				threadId,
@@ -313,6 +343,7 @@ describe('legacy compat backfill migrations', () => {
 
 	it('unsets artifact registry rekey targets', async () => {
 		const t = initConvexTest();
+
 		const registryId = await t.run((ctx) =>
 			ctx.db.insert('artifactRegistries', {
 				userId: 'user_alice',
@@ -331,6 +362,7 @@ describe('legacy compat backfill migrations', () => {
 
 	it('records completion through the automatic schedule', async () => {
 		vi.useFakeTimers();
+
 		try {
 			const t = initConvexTest();
 			const { threadId } = await seedOwnedThread(t);
@@ -350,11 +382,14 @@ describe('legacy compat backfill migrations', () => {
 			const schedule = await t.run((ctx) =>
 				ctx.db.query('migrationSchedules').withIndex('by_name').unique()
 			);
+
 			expect(schedule).toMatchObject({ name: 'legacy-compat-backfill-2026-10' });
 			expect(schedule?.completedAt).toBeDefined();
+
 			const states = await t.run((ctx) =>
 				ctx.db.query('threadTranscriptStates').withIndex('by_threadId').collect()
 			);
+
 			expect(states.every((state) => state.workThrough === undefined)).toBe(true);
 		} finally {
 			vi.useRealTimers();

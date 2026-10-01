@@ -22,6 +22,7 @@ export default function ComposerAttachments({
 			{attachments.map((attachment) => {
 				const previewable =
 					isPreviewableImageMediaType(attachment.mediaType) && Boolean(attachment.previewUrl);
+
 				return (
 					<li
 						key={attachment.localId}

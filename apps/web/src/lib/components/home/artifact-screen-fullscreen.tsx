@@ -14,6 +14,7 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 		() => buildArtifactPreviewDocument(artifact.artifactType, artifact.content),
 		[artifact.artifactType, artifact.content]
 	);
+
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	/** Shown only when the Fullscreen API is unavailable or rejects (iframe Escape cannot reach us). */
 	const [showFallbackClose, setShowFallbackClose] = useState(false);
@@ -24,12 +25,14 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 
 	useEffect(() => {
 		const el = rootRef.current;
+
 		if (!el) return;
 
 		let active = true;
 		// Click handler requests FS on documentElement before this mounts; treat any
 		// current fullscreen session as ours so we don't re-request (and bounce) later.
 		let wasFullscreen = Boolean(document.fullscreenElement);
+
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
@@ -43,8 +46,10 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 			if (document.fullscreenElement) {
 				wasFullscreen = true;
 				setShowFallbackClose(false);
+
 				return;
 			}
+
 			if (wasFullscreen) {
 				close();
 			}
@@ -54,6 +59,7 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 			if (event.key !== 'Escape') return;
 			// Claim Escape so an expanded workspace panel underneath does not also collapse.
 			event.stopImmediatePropagation();
+
 			// Browser fullscreen already exits on Escape; fullscreenchange handles close.
 			if (document.fullscreenElement || wasFullscreen) return;
 			event.preventDefault();
@@ -80,9 +86,11 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 			window.clearTimeout(fallbackTimer);
 			document.removeEventListener('fullscreenchange', onFullscreenChange);
 			window.removeEventListener('keydown', onKeyDown, true);
+
 			if (document.fullscreenElement) {
 				void document.exitFullscreen?.().catch(() => {});
 			}
+
 			const focusTarget = previouslyFocused;
 			queueMicrotask(() => {
 				if (focusTarget?.isConnected) focusTarget.focus();

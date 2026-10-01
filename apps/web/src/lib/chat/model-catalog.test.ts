@@ -84,6 +84,7 @@ describe('gateway model catalog', () => {
 
 	it('rejects catalogs with empty permission maps', async () => {
 		const base = structuredClone(catalogPayload);
+
 		// SAFETY: test-only payload exercising the empty-maps rejection path.
 		const payload = {
 			sprocket: {
@@ -92,6 +93,7 @@ describe('gateway model catalog', () => {
 				tierAllowedServiceTiers: {} as Record<string, string[]>
 			}
 		};
+
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }))
@@ -184,6 +186,7 @@ describe('reasoning controls', () => {
 			defaultReasoningEffort: 'none',
 			supportsFastMode: false
 		};
+
 		expect(showsReasoningControl(model)).toBe(false);
 		expect(
 			showsReasoningControl({

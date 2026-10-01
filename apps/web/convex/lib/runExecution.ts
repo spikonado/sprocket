@@ -29,7 +29,9 @@ export async function withRunExecution(
 	run: Doc<'runs'>
 ): Promise<ExecutionRun> {
 	const state = await getRunExecutionState(db, run._id);
+
 	if (!state) throw new Error('Run execution state not found.');
+
 	return { ...run, ...executionFields(state) };
 }
 
@@ -38,6 +40,7 @@ export async function getRunWithExecution(
 	runId: Id<'runs'>
 ): Promise<ExecutionRun | null> {
 	const run = await db.get('runs', runId);
+
 	return run ? await withRunExecution(db, run) : null;
 }
 
@@ -47,7 +50,9 @@ export async function patchRunExecution(
 	patch: Partial<ExecutionFields>
 ): Promise<void> {
 	const state = await getRunExecutionState(ctx.db, runId);
+
 	if (!state) throw new Error('Run execution state not found.');
+
 	if (
 		('claimId' in patch && state.claimId !== patch.claimId) ||
 		('claimExpiresAt' in patch && state.claimExpiresAt !== patch.claimExpiresAt) ||

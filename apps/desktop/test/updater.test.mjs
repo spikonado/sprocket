@@ -65,10 +65,12 @@ test('concurrent clicks share a download and do not overwrite its state', async 
 	let finish;
 	native.downloadUpdate = () => {
 		native.downloads += 1;
+
 		return new Promise((resolve) => {
 			finish = resolve;
 		});
 	};
+
 	await updates.check();
 	const first = updates.download();
 	await updates.download();
@@ -90,6 +92,7 @@ test('download errors preserve the version and can be retried', async () => {
 	native.downloadUpdate = async () => {
 		throw new Error('Connection lost');
 	};
+
 	await updates.download();
 	assert.equal(updates.getState().error, 'Connection lost');
 	assert.equal(updates.getState().version, '1.1.0');
@@ -109,6 +112,7 @@ test('failed background checks retry and subscribers can unsubscribe', async () 
 	native.checkForUpdates = async () => {
 		throw new Error('Offline');
 	};
+
 	await updates.check();
 	assert.equal(updates.getState().status, 'error');
 	assert.equal(updates.getState().version, null);
@@ -150,8 +154,10 @@ test('owned server shutdown is bounded even with long-lived connections', async 
 	const signals = [];
 	child.kill = (signal) => {
 		signals.push(signal);
+
 		if (signal === 'SIGKILL') child.emit('exit', null, signal);
 	};
+
 	await stopUpdateProcess(child, 1, 100);
 	assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
 	assert.equal(child.listenerCount('exit'), 0);
@@ -167,6 +173,7 @@ test('a graceful server exit is not force-killed', async () => {
 		signals.push(signal);
 		child.emit('exit', 0, null);
 	};
+
 	await stopUpdateProcess(child, 1, 100);
 	assert.deepEqual(signals, ['SIGTERM']);
 });

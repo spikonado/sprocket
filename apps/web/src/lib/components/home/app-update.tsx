@@ -17,6 +17,7 @@ export default function AppUpdate() {
 	const busyRef = useRef(false);
 	const revisionRef = useRef(0);
 	const label = updateState ? updateLabel(updateState) : null;
+
 	const working =
 		busy || updateState?.status === 'downloading' || updateState?.status === 'installing';
 
@@ -27,6 +28,7 @@ export default function AppUpdate() {
 
 	const acceptUpdate = useCallback((next: UpdateState | null) => {
 		setUpdateState(next);
+
 		if (next && UPDATED_STATUSES.includes(next.status)) {
 			setRequestError(null);
 		}
@@ -38,16 +40,20 @@ export default function AppUpdate() {
 		let unsupported = false;
 		const bridge = window.sprocketDesktopBridge;
 		const updates = bridge?.updates;
+
 		const unsubscribe = updates?.onState((next) => {
 			revisionRef.current += 1;
 			acceptUpdate(next);
 		});
+
 		async function refresh() {
 			if (polling || disposed || busyRef.current || unsupported) return;
 			polling = true;
 			const startedRevision = revisionRef.current;
+
 			try {
 				const next = updates ? await updates.getState() : await requestPackageUpdate(false);
+
 				if (!disposed && revisionRef.current === startedRevision) {
 					acceptUpdate(next);
 					unsupported = next === null || next.status === 'unavailable';
@@ -58,8 +64,10 @@ export default function AppUpdate() {
 				polling = false;
 			}
 		}
+
 		void refresh();
 		const timer = setInterval(() => void refresh(), 5_000);
+
 		return () => {
 			disposed = true;
 			clearInterval(timer);
@@ -69,20 +77,26 @@ export default function AppUpdate() {
 
 	async function update() {
 		if (!updateState || working) return;
+
 		if (updateState.method === 'package' && !confirmInstall) {
 			setConfirmInstall(true);
+
 			return;
 		}
+
 		setConfirmInstall(false);
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
 		setRequestError(null);
+
 		try {
 			const updates = window.sprocketDesktopBridge?.updates;
+
 			if (updateState.method === 'desktop' && updates) {
 				const next = await (updateState.status === 'downloaded'
 					? updates.install()
 					: updates.download());
+
 				if (revisionRef.current === startedRevision) acceptUpdate(next);
 			} else if (updateState.method === 'package') {
 				acceptUpdate(await requestPackageUpdate(true));

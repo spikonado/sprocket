@@ -56,6 +56,7 @@ export default function SettingsProviders({
 	const [chatGptError, setChatGptError] = useState<string | null>(null);
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
 	const generationRef = useRef(0);
+
 	const activeAccount =
 		chatGptStatus?.accounts.find(
 			(account) => account.connectionId === chatGptStatus.activeConnectionId
@@ -82,6 +83,7 @@ export default function SettingsProviders({
 		browserLoginRef.current = null;
 		setBrowserLoginState(null);
 		setChatGptPending(false);
+
 		return pending;
 	}
 
@@ -91,10 +93,12 @@ export default function SettingsProviders({
 		setChatGptError(null);
 		setConfirmSignOut(null);
 		setSignOutWarning(null);
+
 		return () => {
 			generationRef.current += 1;
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
+
 			if (pending) {
 				desktopApi
 					?.cancelChatGptBrowserLogin({ userId: pending.userId, state: pending.login.state })
@@ -110,23 +114,32 @@ export default function SettingsProviders({
 	) {
 		for (;;) {
 			await new Promise((resolve) => setTimeout(resolve, 1_500));
+
 			if (generation !== generationRef.current) return;
+
 			try {
 				const result = await api.fetchChatGptBrowserLoginResult({
 					userId: pending.userId,
 					state: pending.login.state
 				});
+
 				if (generation !== generationRef.current) return;
+
 				if (result.status === 'pending') continue;
 				setBrowserLogin(pending.userId, null);
 				setChatGptPending(false);
+
 				if (result.status === 'error') {
 					setChatGptError(result.error ?? 'ChatGPT sign-in failed.');
+
 					return;
 				}
+
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
+
 				if (generation !== generationRef.current || api !== desktopApi) return;
 				onChatGptStatusChange(status);
+
 				return;
 			} catch (error) {
 				if (generation !== generationRef.current) return;
@@ -138,6 +151,7 @@ export default function SettingsProviders({
 						'Couldn’t complete ChatGPT sign-in. Check your connection status.'
 					)
 				);
+
 				return;
 			}
 		}
@@ -145,6 +159,7 @@ export default function SettingsProviders({
 
 	async function startBrowserLogin(connectionId?: string) {
 		const api = desktopApi;
+
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
 		setChatGptError(null);
@@ -152,14 +167,18 @@ export default function SettingsProviders({
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
+
 		try {
 			const login = await api.startChatGptBrowserLogin(
 				connectionId ? { userId: userIdAtStart, connectionId } : { userId: userIdAtStart }
 			);
+
 			if (generation !== generationRef.current) {
 				cancelLoginOnServer({ userId: userIdAtStart, login });
+
 				return;
 			}
+
 			setBrowserLogin(userIdAtStart, login);
 			void waitForBrowserLogin({ userId: userIdAtStart, login }, api, generation);
 		} catch (error) {
@@ -176,20 +195,24 @@ export default function SettingsProviders({
 
 	function stopBrowserLogin() {
 		const pending = cancelLogin();
+
 		if (pending) cancelLoginOnServer(pending);
 	}
 
 	async function selectAccount(connectionId: string) {
 		const api = desktopApi;
+
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
+
 		try {
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
+
 			if (generation !== generationRef.current || api !== desktopApi) return;
 			onChatGptStatusChange(status);
 		} catch (error) {
@@ -207,12 +230,15 @@ export default function SettingsProviders({
 
 	async function refreshChatGptStatus() {
 		const api = desktopApi;
+
 		if (!api || chatGptPending) return;
 		const generation = ++generationRef.current;
 		setChatGptPending(true);
 		setChatGptError(null);
+
 		try {
 			const status = await api.fetchChatGptStatus({ userId });
+
 			if (generation === generationRef.current) onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation === generationRef.current)
@@ -229,19 +255,24 @@ export default function SettingsProviders({
 
 	async function signOutAccount(connectionId: string) {
 		const api = desktopApi;
+
 		if (!api || chatGptPending) return;
 		const pendingLogin = cancelLogin();
+
 		if (pendingLogin) cancelLoginOnServer(pendingLogin);
 		setChatGptPending(true);
 		setChatGptError(null);
 		const userIdAtStart = userId;
 		const generation = generationRef.current;
+
 		try {
 			const warning = await api.disconnectChatGptAccount({
 				userId: userIdAtStart,
 				connectionId
 			});
+
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
+
 			if (generation !== generationRef.current || api !== desktopApi) return;
 			setConfirmSignOut(null);
 			setSignOutWarning(warning);
@@ -261,10 +292,12 @@ export default function SettingsProviders({
 
 	async function saveKey(event: FormEvent) {
 		event.preventDefault();
+
 		if (!apiKey.trim() || openAiPending) return;
 		setOpenAiPending(true);
 		setOpenAiError(null);
 		setOpenAiSaved(false);
+
 		try {
 			await saveOpenAiKey({ apiKey });
 			setApiKey('');
@@ -288,6 +321,7 @@ export default function SettingsProviders({
 		setOpenAiPending(true);
 		setOpenAiError(null);
 		setOpenAiSaved(false);
+
 		try {
 			await removeOpenAiKey({});
 			setConfirmOpenAiRemove(false);
@@ -372,6 +406,7 @@ export default function SettingsProviders({
 									<ul className="space-y-2">
 										{chatGptStatus.accounts.map((account) => {
 											const isActive = account.connectionId === chatGptStatus.activeConnectionId;
+
 											return (
 												<li
 													key={account.connectionId}

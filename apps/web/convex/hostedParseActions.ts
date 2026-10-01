@@ -37,18 +37,25 @@ export const executeHostedParse = internalAction({
 	returns: executeReturns,
 	handler: async (ctx, args) => {
 		const work = await ctx.runQuery(internal.hostedParse.getParseWork, args);
+
 		if (!work) {
 			return { skipped: true };
 		}
+
 		const apiKey = configuredFirecrawlApiKey();
+
 		if (!apiKey) {
 			throw new NonRetryableError('Hosted document parsing is not configured.');
 		}
+
 		const inputUrl = await ctx.storage.getUrl(work.inputStorageId);
+
 		if (!inputUrl) {
 			throw new NonRetryableError('Uploaded file is unavailable.');
 		}
+
 		let inputBytes: Uint8Array;
+
 		try {
 			inputBytes = await fetchStorageBytes(inputUrl);
 		} catch (error) {
@@ -56,7 +63,9 @@ export const executeHostedParse = internalAction({
 				error instanceof Error ? error.message : 'Failed to read the uploaded file.'
 			);
 		}
+
 		let providerResponse: Response;
+
 		try {
 			providerResponse = await fetch(FIRECRAWL_PARSE_URL, {
 				method: 'POST',
@@ -70,7 +79,9 @@ export const executeHostedParse = internalAction({
 				error instanceof Error ? shortHostedParseError(error.message) : 'Firecrawl parse failed.'
 			);
 		}
+
 		let responseBytes: Uint8Array;
+
 		try {
 			responseBytes = await readBoundedResponseBytes(
 				providerResponse,
@@ -81,19 +92,24 @@ export const executeHostedParse = internalAction({
 				error instanceof Error ? error.message : 'Firecrawl parse response is too large.'
 			);
 		}
+
 		if (!providerResponse.ok) {
 			throw new NonRetryableError(httpProviderError(providerResponse.status, responseBytes));
 		}
+
 		const parsed = parseFirecrawlParseResponse(
 			new TextDecoder().decode(responseBytes),
 			responseBytes.byteLength
 		);
+
 		if ('error' in parsed) {
 			throw new NonRetryableError(parsed.error);
 		}
+
 		const resultStorageId = await ctx.storage.store(
 			new Blob([parsed.markdown], { type: 'text/markdown; charset=utf-8' })
 		);
+
 		return { resultStorageId };
 	}
 });
@@ -106,6 +122,7 @@ function firecrawlParseForm(bytes: Uint8Array, filename: string): FormData {
 		'options',
 		new Blob([JSON.stringify(FIRECRAWL_PARSE_OPTIONS)], { type: 'application/json' })
 	);
+
 	return form;
 }
 
@@ -115,21 +132,26 @@ function mediaTypeForFilename(filename: string): string {
 
 async function fetchStorageBytes(url: string): Promise<Uint8Array> {
 	const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(60_000) });
+
 	if (!response.ok) {
 		throw new Error('Uploaded file is unavailable.');
 	}
+
 	return await readBoundedResponseBytes(response, HOSTED_PARSE_MAX_INPUT_BYTES);
 }
 
 function httpProviderError(status: number, responseBytes: Uint8Array): string {
 	if (status === 402) return 'Firecrawl parse failed.';
+
 	try {
 		const payload = z
 			.object({ error: z.string().trim().min(1) })
 			.safeParse(JSON.parse(new TextDecoder().decode(responseBytes)));
+
 		if (payload.success) return shortHostedParseError(payload.data.error);
 	} catch {
 		// Fall through to the status message.
 	}
+
 	return `Firecrawl parse failed (${status}).`;
 }

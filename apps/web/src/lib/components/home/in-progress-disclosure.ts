@@ -8,6 +8,7 @@ export function useInProgressDisclosure(inProgress: boolean) {
 	useEffect(() => {
 		if (inProgress === previousInProgress.current) return;
 		previousInProgress.current = inProgress;
+
 		if (inProgress) {
 			setManuallyCollapsed(false);
 		} else {

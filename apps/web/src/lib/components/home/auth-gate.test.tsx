@@ -5,6 +5,7 @@ import AuthGate from './auth-gate';
 it('keeps account recovery available while waiting for Convex confirmation', () => {
 	const onRetry = vi.fn();
 	const onSignOut = vi.fn();
+
 	const props = {
 		authState: {
 			isLoading: true,
@@ -18,6 +19,7 @@ it('keeps account recovery available while waiting for Convex confirmation', () 
 		onSignOut,
 		onRetry
 	};
+
 	const { rerender } = render(<AuthGate {...props} />);
 	expect(screen.getByRole('heading').textContent).toBe('Confirming your session');
 	expect(screen.getByRole('button', { name: 'Sign Out' })).toBeTruthy();
@@ -56,6 +58,7 @@ it('disables background interaction while the browser sign-in dialog is open', (
 			onSignOut={() => {}}
 		/>
 	);
+
 	expect(container.firstElementChild?.hasAttribute('inert')).toBe(true);
 	expect(container.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
 	expect(screen.queryByRole('alert')).toBeNull();

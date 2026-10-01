@@ -68,13 +68,17 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 		nextBefore: undefined,
 		onLoadOlder: vi.fn()
 	};
+
 	const rendered = render(<ThreadTranscript {...props} />);
 	const container = rendered.container;
 	const viewport = container.querySelector<HTMLDivElement>('[aria-label="Conversation history"]');
+
 	if (!viewport) throw new Error('Missing transcript viewport');
+
 	const messageElements = () => [
 		...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]')
 	];
+
 	let scrollTop = 0;
 	// jsdom has no layout. Model fixed-height rows while exercising the real DOM and effects.
 	Object.defineProperties(viewport, {
@@ -87,6 +91,7 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 			configurable: true,
 			get: () => {
 				scrollTop = Math.min(scrollTop, viewport.scrollHeight - viewport.clientHeight);
+
 				return scrollTop;
 			},
 			set: (top: number) => {
@@ -98,6 +103,7 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 		this: HTMLElement
 	) {
 		const index = messageElements().indexOf(this);
+
 		return new DOMRect(
 			0,
 			index < 0 ? 0 : index * 300 - viewport.scrollTop,
@@ -109,6 +115,7 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 	// array to make the first commit re-measure the mocked viewport.
 	rendered.rerender(<ThreadTranscript {...props} actions={[...props.actions]} />);
 	await settle();
+
 	return {
 		props,
 		viewport,
@@ -157,16 +164,19 @@ describe('transcript viewport paging', () => {
 
 	it('opens every transcript link in a new tab without granting opener access', async () => {
 		const prompt = { ...message(1), text: '[Prompt](https://example.com/prompt)' };
+
 		const response: TranscriptDisplayRow = {
 			...message(2),
 			id: 'text-2',
 			kind: 'text',
 			text: '[Response](https://example.com/response)'
 		};
+
 		const live: LiveTranscriptMessage = {
 			...liveMessage(),
 			text: '[Live](https://example.com/live)'
 		};
+
 		const { viewport } = await renderTranscript([prompt, response, live]);
 
 		const links = [...viewport.querySelectorAll<HTMLAnchorElement>('.chat-markdown a')];
@@ -203,6 +213,7 @@ describe('transcript viewport paging', () => {
 				},
 				{ type: 'tool-call', callId: 'interrupted', name: 'read_skill', input: { name: 'test' } }
 			];
+
 			const response: TranscriptMessage =
 				kind === 'live'
 					? { ...liveMessage(), parts }
@@ -212,6 +223,7 @@ describe('transcript viewport paging', () => {
 							id: 'work-3',
 							itemCount: 3
 						};
+
 			const { props, viewport, setProps } = await renderTranscript([response]);
 			setProps({
 				loadSectionDetails: vi
@@ -221,9 +233,11 @@ describe('transcript viewport paging', () => {
 			await settle();
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
+
 			const patch = [...viewport.querySelectorAll('button')].find((button) =>
 				button.textContent?.includes('Changed Files')
 			);
+
 			expect(patch?.getAttribute('aria-expanded')).toBe('false');
 			const failures = [...viewport.querySelectorAll('details summary')];
 			expect(failures.map((summary) => summary.textContent)).toEqual([
@@ -250,6 +264,7 @@ describe('transcript viewport paging', () => {
 					output: { sessionId: 'session', running: true }
 				}
 			];
+
 			const response: TranscriptMessage =
 				kind === 'live'
 					? { ...liveMessage(), runStatus: 'running', parts }
@@ -261,6 +276,7 @@ describe('transcript viewport paging', () => {
 							closed: false,
 							pendingTools: 1
 						};
+
 			const { viewport, setProps } = await renderTranscript([response]);
 			setProps({
 				activeRunId: response.runId,
@@ -269,17 +285,22 @@ describe('transcript viewport paging', () => {
 					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
 			});
 			await settle();
+
 			const work = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
 				button.textContent?.trim().startsWith('Working')
 			);
+
 			expect(work?.getAttribute('aria-expanded')).toBe('false');
+
 			if (kind === 'persisted') {
 				click(work);
 				await settle();
 			}
+
 			const running = [...viewport.querySelectorAll('button')].find((button) =>
 				button.textContent?.includes('Running')
 			);
+
 			expect(running?.getAttribute('aria-expanded')).toBe('true');
 			expect(running?.querySelector('.animate-spin')).not.toBeNull();
 			expect(viewport.querySelector('[title="sleep 10 (running)"]')).not.toBeNull();
@@ -295,6 +316,7 @@ describe('transcript viewport paging', () => {
 			startedAt: 1_000,
 			itemCount: 1
 		};
+
 		const live: LiveTranscriptMessage = {
 			...liveMessage(),
 			runStatus: 'running',
@@ -308,6 +330,7 @@ describe('transcript viewport paging', () => {
 				}
 			]
 		};
+
 		const { props, viewport, setProps } = await renderTranscript([work, live]);
 		setProps({
 			activeRunId: live.runId,
@@ -331,6 +354,7 @@ describe('transcript viewport paging', () => {
 		const workButtons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter(
 			(button) => button.textContent?.trim().startsWith('Working')
 		);
+
 		expect(workButtons).toHaveLength(1);
 		expect(workButtons[0].getAttribute('aria-expanded')).toBe('false');
 		expect(props.loadSectionDetails).not.toHaveBeenCalled();
@@ -338,9 +362,15 @@ describe('transcript viewport paging', () => {
 		click(workButtons[0]);
 		await settle();
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
-		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
-			.map((button) => button.textContent?.trim())
-			.filter((label) => label === 'Reasoned' || label === 'Reasoning');
+
+		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
+			(button) => {
+				const label = button.textContent?.trim();
+
+				return label === 'Reasoned' || label === 'Reasoning' ? [label] : [];
+			}
+		);
+
 		expect(reasoningLabels).toEqual(['Reasoned', 'Reasoning']);
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
@@ -354,6 +384,7 @@ describe('transcript viewport paging', () => {
 			startedAt: 1_000,
 			itemCount: 1
 		};
+
 		const live: LiveTranscriptMessage = {
 			...liveMessage(),
 			runStatus: 'running',
@@ -374,19 +405,27 @@ describe('transcript viewport paging', () => {
 				}
 			]
 		};
+
 		const { viewport, setProps } = await renderTranscript([work, live]);
 		setProps({ activeRunId: live.runId });
 		await settle();
 
-		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
-			.map((button) => button.textContent?.trim() ?? '')
-			.filter((label) => label.startsWith('Work'));
+		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
+			(button) => {
+				const label = button.textContent?.trim() ?? '';
+
+				return label.startsWith('Work') ? [label] : [];
+			}
+		);
+
 		expect(workLabels[0]).toBe('Worked for 2s');
 		expect(workLabels[1]).toMatch(/^Working/);
 		expect(workLabels).toHaveLength(2);
+
 		const workButtons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter(
 			(button) => button.textContent?.trim().startsWith('Work')
 		);
+
 		expect(workButtons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
 			'false',
 			'false'
@@ -404,10 +443,12 @@ describe('transcript viewport paging', () => {
 			startedAt: 1_000,
 			completedAt: 3_001_000
 		});
+
 		const first = summary(1);
 		const { viewport, setProps } = await renderTranscript([message(0), first, summary(2)]);
 		let edgeVisible = false;
 		const geometry = vi.mocked(HTMLElement.prototype.getBoundingClientRect).getMockImplementation();
+
 		if (!geometry) throw new Error('Missing viewport geometry');
 		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 			this: HTMLElement
@@ -416,6 +457,7 @@ describe('transcript viewport paging', () => {
 				? new DOMRect(0, edgeVisible ? 500 : 3_000, 800, 1)
 				: geometry.call(this);
 		});
+
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce({
@@ -426,13 +468,16 @@ describe('transcript viewport paging', () => {
 				indexing: false
 			})
 			.mockImplementation(() => new Promise(() => {}));
+
 		setProps({ loadSectionDetails: load });
 		await settle();
 		expect(load).not.toHaveBeenCalled();
 		expect(viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(3);
+
 		const buttons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
 			button.textContent?.includes('Worked for')
 		);
+
 		expect(buttons.map((button) => button.textContent?.trim())).toEqual([
 			'Worked for 50m 0s',
 			'Worked for 50m 0s'
@@ -464,23 +509,28 @@ describe('transcript viewport paging', () => {
 				itemCount: 10,
 				closed: false
 			};
+
 			const { viewport, scrollTo, setProps } = await renderTranscript([
 				message(0),
 				message(1),
 				work,
 				message(3)
 			]);
+
 			setProps({ nextBefore: undefined });
+
 			const rows = () =>
 				[...viewport.querySelectorAll<HTMLElement>('[data-work-detail]')].filter(
 					(element) => !element.querySelector('[data-work-detail]')
 				);
+
 			Object.defineProperty(viewport, 'scrollHeight', { get: () => 1200 + rows().length * 100 });
 			let olderVisible = false;
 			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 				this: HTMLElement
 			) {
 				if (this === viewport) return new DOMRect(0, 0, 800, 600);
+
 				if (this.hasAttribute('data-work-edge'))
 					return new DOMRect(
 						0,
@@ -490,9 +540,11 @@ describe('transcript viewport paging', () => {
 					);
 				const details = rows();
 				const detailIndex = details.indexOf(this);
+
 				if (detailIndex >= 0)
 					return new DOMRect(0, 650 + detailIndex * 100 - viewport.scrollTop, 800, 100);
 				const index = [...viewport.querySelectorAll('[data-transcript-anchor]')].indexOf(this);
+
 				return new DOMRect(
 					0,
 					index * 300 + (index === 3 ? details.length * 100 : 0) - viewport.scrollTop,
@@ -500,6 +552,7 @@ describe('transcript viewport paging', () => {
 					300
 				);
 			});
+
 			function page(ids: number[], previousBefore?: number): TranscriptDisplayDetails {
 				return {
 					parts: ids.flatMap((id) => [
@@ -517,7 +570,9 @@ describe('transcript viewport paging', () => {
 					stale: false
 				};
 			}
+
 			let resolve!: (value: TranscriptDisplayDetails) => void;
+
 			const load = vi
 				.fn()
 				.mockResolvedValueOnce(page([6, 7], 6))
@@ -527,11 +582,14 @@ describe('transcript viewport paging', () => {
 							resolve = done;
 						})
 				);
+
 			setProps({ loadSectionDetails: load, activeRunId: work.runId });
 			await settle();
+
 			const disclosure = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
 				(button) => button.textContent?.trim().startsWith('Working')
 			);
+
 			expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
 			click(disclosure);
 			await settle();
@@ -542,6 +600,7 @@ describe('transcript viewport paging', () => {
 			scrollTo(699);
 			await settle();
 			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
+
 			if (moveWhileLoading) scrollTo(660);
 			const offset = anchor.getBoundingClientRect().top;
 			await act(async () => {
@@ -597,6 +656,7 @@ describe('transcript viewport paging', () => {
 		const { props, viewport, scrollTo, setProps } = await renderTranscript(
 			[1, 2, 3, 4, 5].map(message)
 		);
+
 		act(() => resize());
 		scrollTo(500);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
@@ -610,6 +670,7 @@ describe('transcript viewport paging', () => {
 		const { props, viewport, scrollTo, setProps } = await renderTranscript(
 			[1, 2, 3, 4].map(message)
 		);
+
 		setProps({ messages: [...props.messages, message(5)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(900);
@@ -629,6 +690,7 @@ describe('transcript viewport paging', () => {
 			const { props, viewport, scrollTo, setProps } = await renderTranscript(
 				[1, 2, 3, 4, 5].map(message)
 			);
+
 			setProps({ nextBefore: undefined });
 			await settle();
 			act(() => {
@@ -669,6 +731,7 @@ describe('transcript viewport paging', () => {
 		const { props, viewport, scrollTo, setProps } = await renderTranscript(
 			[1, 2, 3, 4, 5].map(message)
 		);
+
 		scrollTo(890);
 		setProps({ messages: [...props.messages, message(6)] });
 		await settle();
@@ -700,6 +763,7 @@ describe('transcript viewport paging', () => {
 			const { props, viewport, scrollTo, setProps } = await renderTranscript(
 				[1, 2, 3, 4, 5].map(message)
 			);
+
 			if (!following) scrollTo(700);
 			setProps({ messages: props.messages.slice(0, 3) });
 			act(() => {
@@ -729,6 +793,7 @@ describe('transcript viewport paging', () => {
 		const { props, viewport, scrollTo, setProps } = await renderTranscript(
 			[1, 2, 3, 4, 5, 6, 7, 8, 9].map(message)
 		);
+
 		setProps({ nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
@@ -771,6 +836,7 @@ describe('transcript viewport paging', () => {
 
 	it('does not duplicate a pending cursor during repeated input', async () => {
 		const { props, viewport, setProps } = await renderTranscript([message(3)]);
+
 		const touch = (type: string, clientY: number) => {
 			act(() => {
 				const event = new Event(type, { bubbles: true });
@@ -778,6 +844,7 @@ describe('transcript viewport paging', () => {
 				viewport.dispatchEvent(event);
 			});
 		};
+
 		setProps({ nextBefore: 3 });
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
@@ -801,11 +868,14 @@ describe('transcript viewport paging', () => {
 				text: `Part ${number}`
 			}))
 		};
+
 		const { viewport, scrollTo, setProps } = await renderTranscript([response]);
 		scrollTo(150);
+
 		const anchor = viewport.querySelector<HTMLElement>(
 			'[data-transcript-anchor="response:run:text::text-3"]'
 		);
+
 		if (!anchor) throw new Error('Missing visible response section');
 		const offset = anchor.getBoundingClientRect().top;
 		setProps({
@@ -826,8 +896,10 @@ describe('transcript viewport paging', () => {
 		const { props, viewport, scrollTo, setProps } = await renderTranscript(
 			[3, 4, 5, 6].map(message)
 		);
+
 		scrollTo(150);
 		const anchor = viewport.querySelector<HTMLElement>('[data-message-id="prompt:3"]');
+
 		if (!anchor) throw new Error('Missing visible message');
 		const offset = anchor.getBoundingClientRect().top;
 		setProps({ messages: [message(1), message(2), ...props.messages] });
@@ -848,8 +920,10 @@ describe('transcript viewport paging', () => {
 				{ type: 'text', id: 't4', text: 'Answer' }
 			]
 		};
+
 		const { setProps, viewport } = await renderTranscript([response]);
 		const button = viewport.querySelector<HTMLButtonElement>('button[aria-expanded]');
+
 		if (!button) throw new Error('Missing work disclosure');
 		click(button);
 		await settle();
@@ -872,14 +946,18 @@ describe('transcript viewport paging', () => {
 		async (split) => {
 			const first = { type: 'reasoning' as const, id: 'r1', text: 'First work' };
 			const second = { type: 'reasoning' as const, id: 'r2', text: 'Second work' };
+
 			const response: LiveTranscriptMessage = {
 				...liveMessage(),
 				parts: split ? [first, second] : [first]
 			};
+
 			const { setProps, viewport } = await renderTranscript([response]);
+
 			const original = viewport.querySelector<HTMLButtonElement>(
 				'[data-transcript-anchor] > div > button'
 			);
+
 			if (!original) throw new Error('Missing original work disclosure');
 			click(original);
 			await settle();
@@ -889,9 +967,11 @@ describe('transcript viewport paging', () => {
 				]
 			});
 			await settle();
+
 			const buttons = viewport.querySelectorAll<HTMLButtonElement>(
 				'[data-transcript-anchor] > div > button'
 			);
+
 			expect(buttons).toHaveLength(2);
 			expect(buttons[0]).toBe(original);
 			expect(buttons[0]?.getAttribute('aria-expanded')).toBe('true');

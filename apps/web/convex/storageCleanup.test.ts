@@ -7,6 +7,7 @@ afterEach(() => vi.useRealTimers());
 it('collects lost uploads and callback results, preserving registered files and recent uploads', async () => {
 	vi.useFakeTimers();
 	const t = initConvexTest();
+
 	const old = await t.run(async (ctx) => {
 		const lostUpload = await ctx.storage.store(new Blob(['lost upload']));
 		const lostResult = await ctx.storage.store(new Blob(['lost result']));
@@ -19,8 +20,10 @@ it('collects lost uploads and callback results, preserving registered files and 
 			size: 8,
 			attached: true
 		});
+
 		return { lostUpload, lostResult, attachment };
 	});
+
 	vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1_000);
 	const recent = await t.run((ctx) => ctx.storage.store(new Blob(['recent'])));
 	expect(await t.mutation(internal.storageCleanup.cleanupUnregistered, {})).toBe(2);

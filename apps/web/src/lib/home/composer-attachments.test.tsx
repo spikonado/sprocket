@@ -41,10 +41,12 @@ function textFile(name = 'notes.txt') {
 
 it('uploads with the context committed when the file is added, not the first render', async () => {
 	const gate = Promise.withResolvers<TranscriptUploadResult>();
+
 	const api: ComposerAttachmentApi = {
 		uploadTranscriptAttachment: vi.fn(async () => gate.promise),
 		discardTranscriptAttachment: vi.fn(async () => true)
 	};
+
 	const { result, rerender } = renderAttachments({ api: null, userId: null, threadId: null });
 
 	rerender({ api, userId: 'user-a', threadId: null });
@@ -80,10 +82,12 @@ it('reports an unavailable server when the context is still the unconnected one'
 
 it('discards a late upload under the account that owned it, not the current one', async () => {
 	const gate = Promise.withResolvers<TranscriptUploadResult>();
+
 	const api: ComposerAttachmentApi = {
 		uploadTranscriptAttachment: vi.fn(async () => gate.promise),
 		discardTranscriptAttachment: vi.fn(async () => true)
 	};
+
 	const { result, rerender } = renderAttachments({ api, userId: 'user-a', threadId: null });
 
 	await act(async () => {
@@ -112,6 +116,7 @@ it('keeps one stable instance across renders and notifies subscribers on change'
 		uploadTranscriptAttachment: vi.fn(),
 		discardTranscriptAttachment: vi.fn(async () => true)
 	};
+
 	const { result, rerender } = renderAttachments({ api, userId: 'user-a', threadId: null });
 	const instance = result.current;
 	const listener = vi.fn();
@@ -133,17 +138,21 @@ it('keeps one stable instance across renders and notifies subscribers on change'
 
 it('reports a pending upload failure through the latest committed onError', async () => {
 	const gate = Promise.withResolvers<TranscriptUploadResult>();
+
 	const api: ComposerAttachmentApi = {
 		uploadTranscriptAttachment: vi.fn(async () => gate.promise),
 		discardTranscriptAttachment: vi.fn(async () => true)
 	};
+
 	const context = { api, userId: 'user-a', threadId: null };
 	const previousOnError = vi.fn();
+
 	const { result, rerender } = renderHook(
 		(onError) =>
 			useComposerAttachments({ context, onError, localServerRequiredMessage: 'Connect a server.' }),
 		{ initialProps: previousOnError }
 	);
+
 	await act(async () => {
 		result.current.add([textFile()]);
 	});

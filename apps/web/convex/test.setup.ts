@@ -67,6 +67,7 @@ export function initConvexTest(): ConvexTestInstance {
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
+
 	return t;
 }
 
@@ -82,6 +83,7 @@ export async function seedOwnedThread(
 	const asUser = t.withIdentity({ subject });
 	const repositoryKey = 'alpha';
 	const threadId = await seedThreadRecord(t, subject, repositoryKey);
+
 	return {
 		asUser,
 		subject,
@@ -97,6 +99,7 @@ export async function seedThreadRecord(
 ): Promise<Id<'threadRecords'>> {
 	return await t.run(async (ctx) => {
 		const submissionId = `thread-${userId}-${Date.now()}-${Math.random()}`;
+
 		const threadId = await ctx.db.insert('threadRecords', {
 			userId,
 			submissionId,
@@ -107,10 +110,12 @@ export async function seedThreadRecord(
 			fastMode: false,
 			lastMessageAt: Date.now()
 		});
+
 		await ctx.db.insert('threadUsage', {
 			threadId,
 			userId
 		});
+
 		const runId = await ctx.db.insert('runs', {
 			threadId,
 			userId,
@@ -123,7 +128,9 @@ export async function seedThreadRecord(
 			startedAt: Date.now(),
 			completedAt: Date.now()
 		});
+
 		await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+
 		return threadId;
 	});
 }
@@ -146,6 +153,7 @@ export async function insertQueuedRun(
 	}
 ) {
 	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
+
 	const request: FunctionArgs<typeof internal.agentRuntime.insertGatewayRun> = {
 		userId: thread.userId,
 		submissionId: args.submissionId,
@@ -160,7 +168,9 @@ export async function insertQueuedRun(
 		protocolVersion: 1,
 		machineId: args.machineId
 	};
+
 	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+
 	return await t.mutation(internal.agentRuntime.insertGatewayRun, request);
 }
 
@@ -192,6 +202,7 @@ export async function seedStartedWebJob(
 ) {
 	const { asUser, threadId } = await seedOwnedThread(t);
 	const claimId = options.claimId ?? 'claim-a';
+
 	const created = await createQueuedRun(
 		t,
 		asUser,
@@ -200,11 +211,13 @@ export async function seedStartedWebJob(
 		options.executionSecret,
 		options.prompt ?? 'Search'
 	);
+
 	await asUser.mutation(api.agentRuntime.start, {
 		runId: created.runId,
 		claimId,
 		executionSecret: options.executionSecret
 	});
+
 	const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
 		runId: created.runId,
 		claimId,
@@ -213,6 +226,7 @@ export async function seedStartedWebJob(
 		payload: options.payload,
 		executionSecret: options.executionSecret
 	});
+
 	return {
 		asUser,
 		runId: created.runId,

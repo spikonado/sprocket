@@ -63,6 +63,7 @@ export async function getThreadContextTokens(
 	threadId: Id<'threadRecords'>
 ): Promise<number | undefined> {
 	const usageRow = await getUsageRow(ctx.db, threadId);
+
 	return usageRow?.contextTokens;
 }
 
@@ -71,6 +72,7 @@ export async function clearThreadContextTokens(
 	threadId: Id<'threadRecords'>
 ): Promise<void> {
 	const usageRow = await getUsageRow(ctx.db, threadId);
+
 	if (!usageRow || usageRow.contextTokens === undefined) return;
 	await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: undefined });
 }
@@ -81,6 +83,7 @@ export async function getThreadUsageValues(
 	thread: Doc<'threadRecords'>
 ): Promise<ThreadUsageValues> {
 	const usageRow = await getUsageRow(ctx.db, thread._id);
+
 	return {
 		contextTokens: usageRow?.contextTokens,
 		totalTokensProcessed: await aggregatedProcessedTokens(ctx, thread._id)
@@ -96,20 +99,25 @@ export async function recordThreadUsageEvent(
 	if (args.contextTokens !== undefined) {
 		assertValidTokenCount(args.contextTokens);
 	}
+
 	assertValidTokenCount(args.processedTokens);
+
 	const existing = await ctx.db
 		.query('threadUsageEvents')
 		.withIndex('by_threadId_eventId', (query) =>
 			query.eq('threadId', thread._id).eq('eventId', args.eventId)
 		)
 		.unique();
+
 	if (existing) {
 		if (args.contextTokens !== undefined) {
 			const usageRow = await getUsageRow(ctx.db, thread._id);
+
 			if (usageRow) {
 				await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: args.contextTokens });
 			}
 		}
+
 		return false;
 	}
 
@@ -120,15 +128,19 @@ export async function recordThreadUsageEvent(
 		processedTokens: args.processedTokens,
 		createdAt: Date.now()
 	};
+
 	const eventId = await ctx.db.insert('threadUsageEvents', event);
 	const inserted = await ctx.db.get('threadUsageEvents', eventId);
+
 	if (!inserted) {
 		throw new Error('Failed to insert usage event.');
 	}
+
 	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
 
 	const usageRow = await getUsageRow(ctx.db, thread._id);
 	const nextContextTokens = args.contextTokens ?? usageRow?.contextTokens;
+
 	if (usageRow) {
 		if (nextContextTokens !== undefined) {
 			await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: nextContextTokens });
@@ -140,5 +152,6 @@ export async function recordThreadUsageEvent(
 			contextTokens: nextContextTokens
 		});
 	}
+
 	return true;
 }

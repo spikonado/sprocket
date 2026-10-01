@@ -11,6 +11,7 @@ export default function Callback() {
 	useEffect(() => {
 		if (isReady) window.location.replace('/');
 	}, [isReady]);
+
 	return (
 		<CalmCentered
 			title="Completing sign-in"

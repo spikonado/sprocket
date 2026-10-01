@@ -93,6 +93,7 @@ function emptyDisplayPage(replicaId: string): TranscriptDisplayPage {
 
 function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
+
 	return {
 		browseFilesystem: unused,
 		listWorkspaceSkills: async () => ({ skills: [], warnings: [] }),
@@ -150,6 +151,7 @@ function createConvexFixtures(): ConvexTestClient {
 		chatgptModelIds: null
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
+
 	return client;
 }
 
@@ -193,9 +195,11 @@ beforeEach(() => {
 		'fetch',
 		vi.fn<typeof fetch>(async (input, options) => {
 			const url = input instanceof Request ? input.url : String(input);
+
 			if (url !== 'https://sprocket.test/api/update' || options?.method !== 'GET') {
 				throw new Error(`Unexpected network request: ${url}`);
 			}
+
 			return Response.json({
 				method: 'package',
 				status: 'unavailable',
@@ -269,17 +273,24 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 	const canonicalAlpha = projectAttachment('/work/alpha-renamed', 'repo-alpha', 'Alpha (renamed)');
 	const verifyBeta = Promise.withResolvers<ProjectAttachment[]>();
 	const staleRefresh = Promise.withResolvers<ProjectAttachment[]>();
+
 	const resolveWorkspacePath = vi.fn(async () => ({
 		workspacePath: alpha.workspacePath,
 		displayName: alpha.displayName,
 		repositoryKey: alpha.repositoryKey
 	}));
+
 	let listCalls = 0;
+
 	const listProjectAttachments = async () => {
 		listCalls += 1;
+
 		if (listCalls <= 3) return [alpha, beta, gamma];
+
 		if (listCalls === 4) return verifyBeta.promise;
+
 		if (listCalls === 5) return staleRefresh.promise;
+
 		return new Promise<ProjectAttachment[]>(() => {});
 	};
 
@@ -317,6 +328,7 @@ it('keeps the project the user opens while an earlier attachment refresh is in f
 it('keeps a saved theme until the preference subscription advances', async () => {
 	const client = createConvexFixtures();
 	const save = Promise.withResolvers<null>();
+
 	const preferences: Doc<'uiPreferences'> = {
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		_id: 'preferences-a' as Id<'uiPreferences'>,
@@ -324,6 +336,7 @@ it('keeps a saved theme until the preference subscription advances', async () =>
 		userId: 'user-a',
 		theme: 'light'
 	};
+
 	client.registerQuery(api.uiPreferences.getMine, preferences);
 	client.registerMutation(api.uiPreferences.setTheme, save.promise);
 	await renderApp(client, createRuntime(createDesktopApi()));
@@ -347,6 +360,7 @@ it('keeps a saved theme until the preference subscription advances', async () =>
 it('applies a remote theme update received while a local theme save is pending', async () => {
 	const client = createConvexFixtures();
 	const save = Promise.withResolvers<null>();
+
 	const preferences: Doc<'uiPreferences'> = {
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		_id: 'preferences-a' as Id<'uiPreferences'>,
@@ -354,6 +368,7 @@ it('applies a remote theme update received while a local theme save is pending',
 		userId: 'user-a',
 		theme: 'light'
 	};
+
 	client.registerQuery(api.uiPreferences.getMine, preferences);
 	client.registerMutation(api.uiPreferences.setTheme, save.promise);
 	await renderApp(client, createRuntime(createDesktopApi()));
@@ -378,19 +393,26 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
 	const changedAlpha = projectAttachment('/work/alpha', 'repo-new-alpha', 'Alpha');
 	const staleRefresh = Promise.withResolvers<ProjectAttachment[]>();
+
 	const runAgent = vi.fn(async () => ({
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		runId: 'run-new' as Id<'runs'>,
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		threadId: 'thread-new' as Id<'threadRecords'>
 	}));
+
 	let listCalls = 0;
+
 	const listProjectAttachments = async () => {
 		listCalls += 1;
+
 		if (listCalls <= 3) return [alpha, beta];
+
 		if (listCalls === 4) return staleRefresh.promise;
+
 		return [changedAlpha, beta];
 	};
+
 	await renderApp(
 		createConvexFixtures(),
 		createRuntime(
@@ -469,6 +491,7 @@ it('launches the continuation prompt after an agent question is answered', async
 	const questionId = 'question-1' as Id<'agentQuestions'>;
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	const continuationRunId = 'run-1' as Id<'runs'>;
+
 	const question: AgentQuestionSnapshot = {
 		threadId: thread._id,
 		questionId,
@@ -479,11 +502,13 @@ it('launches the continuation prompt after an agent question is answered', async
 		createdAt: 1,
 		timeoutAt: 1_000_000
 	};
+
 	const runAgent = vi.fn(async () => ({
 		// SAFETY: fixture strings are only compared as opaque Convex document ids.
 		runId: 'run-2' as Id<'runs'>,
 		threadId: thread._id
 	}));
+
 	const client = createConvexFixtures();
 	client.registerPaginatedQuery(api.inbox.list, [thread]);
 	client.registerQuery(api.threads.getByThreadId, {

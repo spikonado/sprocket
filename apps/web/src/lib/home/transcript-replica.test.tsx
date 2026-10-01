@@ -42,6 +42,7 @@ function displayRow(sequence: number): TranscriptDisplayRow {
 function createFakeApi() {
 	const displayEvents: Array<(event: TranscriptWatchEvent) => void> = [];
 	const liveEvents: Array<(event: LiveCompletionWatchEvent) => void> = [];
+
 	const api: TranscriptReplicaApi = {
 		// Never resolves: the replica stays in its initial loading window.
 		fetchTranscriptDisplay: () => new Promise<TranscriptDisplayPage>(() => {}),
@@ -52,6 +53,7 @@ function createFakeApi() {
 			liveEvents.push(handlers.onEvent);
 		}
 	};
+
 	return { api, displayEvents, liveEvents };
 }
 
@@ -107,6 +109,7 @@ it('drops transcript events that arrive after the selected thread changed', asyn
 		threadId: selected,
 		isCurrent: () => selected === threadId('thread-a')
 	});
+
 	await waitFor(() => expect(displayEvents).toHaveLength(1));
 
 	replica.selectThread(threadId('thread-b'));
@@ -133,6 +136,7 @@ it('tracks and clears the live completion stream and notifies subscribers', asyn
 		threadId: tid,
 		isCurrent: () => true
 	});
+
 	await waitFor(() => expect(liveEvents).toHaveLength(1));
 	listener.mockClear();
 

@@ -12,13 +12,17 @@ export function mergeLiveOverlays(overlays: LiveCompletionOverlay[]): LiveTransc
 		string,
 		{ live: LiveCompletionOverlay; parts: Map<string, AssistantPart> }
 	>();
+
 	for (const live of overlays) {
 		const parts = runs.get(live.runId)?.parts ?? new Map<string, AssistantPart>();
+
 		for (const part of live.parts) parts.set(partKey(part), part);
 		runs.set(live.runId, { live, parts });
 	}
+
 	return [...runs.values()].map(({ live, parts: indexed }) => {
 		const parts = [...indexed.values()];
+
 		return {
 			kind: 'live',
 			id: `response:${live.runId}`,

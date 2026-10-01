@@ -17,6 +17,7 @@ export async function applyExecutorJobSuccess(
 	if (args.job.status === 'cancelled' || args.job.status === 'failed') {
 		return false;
 	}
+
 	if (args.job.status === 'completed') {
 		await recordToolTranscript(ctx, {
 			threadId: args.run.threadId,
@@ -24,33 +25,41 @@ export async function applyExecutorJobSuccess(
 			runId: args.run._id,
 			job: args.job
 		});
+
 		return true;
 	}
+
 	if (isRunFinalStatus(args.run.status) || args.run.cancellationRequestedAt !== undefined) {
 		return false;
 	}
+
 	if (!ownsActiveRunClaim(args.run, args.claimId, Date.now())) {
 		return false;
 	}
+
 	const settledJob = {
 		...args.job,
 		status: 'completed' as const,
 		result: args.result
 	};
+
 	await ctx.db.patch('executorJobs', args.job._id, {
 		status: settledJob.status,
 		result: args.result,
 		completedAt: Date.now()
 	});
+
 	if (args.run.activeJobId === args.job._id) {
 		await patchRunExecution(ctx, args.run._id, { activeJobId: undefined });
 	}
+
 	await recordToolTranscript(ctx, {
 		threadId: args.run.threadId,
 		userId: args.run.userId,
 		runId: args.run._id,
 		job: settledJob
 	});
+
 	return true;
 }
 
@@ -70,20 +79,25 @@ export async function applyExecutorJobFailure(
 	) {
 		return false;
 	}
+
 	if (!ownsActiveRunClaim(args.run, args.claimId, Date.now())) {
 		return false;
 	}
+
 	const completedAt = Date.now();
+
 	const settledJob = {
 		...args.job,
 		status: 'failed' as const,
 		error: args.error
 	};
+
 	await ctx.db.patch('executorJobs', args.job._id, {
 		status: settledJob.status,
 		error: args.error,
 		completedAt
 	});
+
 	if (
 		args.run.cancellationRequestedAt === undefined &&
 		!isRunFinalStatus(args.run.status) &&
@@ -91,11 +105,13 @@ export async function applyExecutorJobFailure(
 	) {
 		await patchRunExecution(ctx, args.run._id, { activeJobId: undefined });
 	}
+
 	await recordToolTranscript(ctx, {
 		threadId: args.run.threadId,
 		userId: args.run.userId,
 		runId: args.run._id,
 		job: settledJob
 	});
+
 	return true;
 }

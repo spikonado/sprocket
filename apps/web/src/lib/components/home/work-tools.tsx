@@ -43,8 +43,10 @@ export default function WorkTools({
 			}
 			toolRow={(tool) => {
 				const summary = toolItemSummary(tool, commands);
+
 				if (running) {
 					const ToolIcon = toolLogIcon(tool);
+
 					return (
 						<p className="flex min-w-0 items-start gap-1.5" title={`${summary} (running)`}>
 							<ToolIcon
@@ -55,11 +57,14 @@ export default function WorkTools({
 						</p>
 					);
 				}
+
 				const error = assistantTimelineToolError(tool, inProgress);
 				const failure = assistantTimelineToolFailureKind(tool, inProgress);
+
 				if (error && failure) {
 					const errorClass =
 						failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
+
 					return (
 						<details className="min-w-0">
 							<summary
@@ -78,6 +83,7 @@ export default function WorkTools({
 						</details>
 					);
 				}
+
 				return (
 					<p
 						className={`min-w-0 ${toolSummaryClass(tool)}`}

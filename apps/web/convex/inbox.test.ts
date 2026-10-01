@@ -19,6 +19,7 @@ describe('thread inbox', () => {
 			repositoryKeys: ['alpha', 'beta'],
 			paginationOpts: { numItems: 10, cursor: null }
 		});
+
 		const settled = await asUser.query(api.inbox.list, {
 			state: 'settled',
 			repositoryKeys: ['alpha', 'beta'],
@@ -116,7 +117,9 @@ describe('thread inbox', () => {
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.first();
+
 			if (!run) throw new Error('Missing fixture run.');
+
 			const jobId = await ctx.db.insert('executorJobs', {
 				threadId,
 				runId: run._id,
@@ -128,6 +131,7 @@ describe('thread inbox', () => {
 				enqueuedAt: 1,
 				sequence: 1
 			});
+
 			await ctx.db.insert('agentQuestions', {
 				threadId,
 				runId: run._id,

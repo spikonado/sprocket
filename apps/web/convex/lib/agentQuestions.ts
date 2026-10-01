@@ -1,11 +1,17 @@
 export const AGENT_DECIDE_OPTION_ID = 'agent_decide';
+
 export const AGENT_DECIDE_OPTION_LABEL = 'Let me (the agent) decide';
 
 export const MAX_QUESTION_CHARS = 2000;
+
 export const MAX_OPTION_ID_CHARS = 20;
+
 export const MAX_OPTION_LABEL_CHARS = 200;
+
 export const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 const MIN_AGENT_OPTIONS = 1;
+
 const MAX_AGENT_OPTIONS = 4;
 
 export type AgentQuestionOption = {
@@ -33,12 +39,15 @@ function agentDecideOption(): AgentQuestionOption {
 
 export function validateQuestionText(question: string): string {
 	const trimmed = question.trim();
+
 	if (!trimmed) {
 		throw new Error('Question cannot be empty.');
 	}
+
 	if (trimmed.length > MAX_QUESTION_CHARS) {
 		throw new Error(`Question cannot exceed ${MAX_QUESTION_CHARS} characters.`);
 	}
+
 	return trimmed;
 }
 
@@ -51,30 +60,39 @@ function validateAgentOptions(options: AgentQuestionOption[]): AgentQuestionOpti
 
 	const seen = new Set<string>();
 	const normalized: AgentQuestionOption[] = [];
+
 	for (const option of options) {
 		const id = option.id.trim();
 		const label = option.label.trim();
+
 		if (!id) {
 			throw new Error('Option id cannot be empty.');
 		}
+
 		if (!label) {
 			throw new Error('Option label cannot be empty.');
 		}
+
 		if (id.length > MAX_OPTION_ID_CHARS) {
 			throw new Error(`Option id cannot exceed ${MAX_OPTION_ID_CHARS} characters.`);
 		}
+
 		if (label.length > MAX_OPTION_LABEL_CHARS) {
 			throw new Error(`Option label cannot exceed ${MAX_OPTION_LABEL_CHARS} characters.`);
 		}
+
 		if (id === AGENT_DECIDE_OPTION_ID) {
 			throw new Error(`Option id '${AGENT_DECIDE_OPTION_ID}' is reserved.`);
 		}
+
 		if (seen.has(id)) {
 			throw new Error(`Duplicate option id '${id}'.`);
 		}
+
 		seen.add(id);
 		normalized.push({ id, label });
 	}
+
 	return normalized;
 }
 
@@ -99,6 +117,7 @@ export function normalizeQuestionAnswer(args: {
 	}
 
 	const option = args.options.find((entry) => entry.id === optionId);
+
 	if (!option) {
 		throw new Error(`Unknown option id '${optionId}'.`);
 	}
@@ -107,7 +126,9 @@ export function normalizeQuestionAnswer(args: {
 		optionId: option.id,
 		optionLabel: option.label
 	};
+
 	if (text) answer.text = text;
+
 	return answer;
 }
 
@@ -125,8 +146,10 @@ export function formatQuestionContinuationPrompt(questions: AnsweredAgentQuestio
 	const entries = questions.map((question, index) => {
 		const questionText = question.question.replaceAll('\n', '\n   ');
 		const answerText = formatAnswer(question.answer).replaceAll('\n', '\n   ');
+
 		return `${index + 1}. ${questionText}\n   ${answerText}`;
 	});
+
 	return `Answers to your questions:\n\n${entries.join('\n\n')}`;
 }
 

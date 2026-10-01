@@ -8,6 +8,7 @@ describe('agentRuntime completion actor', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'stream-state-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,

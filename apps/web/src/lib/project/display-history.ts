@@ -6,6 +6,7 @@ import type {
 } from '$lib/types/sprocket';
 
 type Stream = TranscriptDisplayPage['persistedStreams'][number];
+
 type PageRequest = {
 	before?: number;
 	limit: number;
@@ -22,6 +23,7 @@ export function visibleDisplayMessages(
 	overlays: LiveCompletionOverlay[]
 ) {
 	const liveRuns = new Set(overlays.map((overlay) => overlay.runId));
+
 	return messages.filter((message) => !message.provisional || !liveRuns.has(message.runId));
 }
 
@@ -83,39 +85,52 @@ export class DisplayHistory {
 		const previous = new Set(this.overlays.map(streamKey));
 		this.overlays = overlays;
 		const retained = new Set(overlays.map(streamKey));
+
 		for (const key of this.checkedStreams) if (!retained.has(key)) this.checkedStreams.delete(key);
+
 		if (overlays.some((overlay) => !previous.has(streamKey(overlay)))) void this.refresh();
 	}
 
 	private streamRequest() {
 		const unique = new Map<string, Stream>();
+
 		for (const overlay of this.unpersisted(this.overlays)) {
 			unique.set(streamKey(overlay), { runId: overlay.runId, streamId: overlay.streamId });
+
 			if (unique.size === 64) break;
 		}
+
 		const streams = [...unique.values()];
+
 		return streams.length ? { streams } : {};
 	}
 
 	async refresh() {
 		if (this.stopped) return;
+
 		if (this.refreshing) {
 			this.refreshPending = true;
+
 			return;
 		}
+
 		this.refreshing = true;
 		let canLoadOlder = false;
 		clearTimeout(this.retry);
+
 		try {
 			do {
 				this.refreshPending = false;
 				const streamRequest = this.streamRequest();
+
 				const page = await this.fetchPage({
 					limit: 12,
 					changesAfter: this.changesCursor,
 					...streamRequest
 				});
+
 				if (this.stopped) return;
+
 				if (this.replicaId !== page.replicaId) {
 					if (this.replicaId !== undefined) this.windowVersion += 1;
 					this.rows.clear();
@@ -129,30 +144,37 @@ export class DisplayHistory {
 					this.loading = true;
 					this.changed();
 				}
+
 				if (page.indexing) {
 					this.stale = page.stale;
 					this.changed();
 					this.retryRefresh(500);
 					break;
 				}
+
 				if (page.stale) this.retryRefresh(2_000);
 				else {
 					clearTimeout(this.retry);
 					this.retry = undefined;
 				}
+
 				if (page.revision < this.revision) {
 					this.stale = page.stale;
 					this.retryRefresh(500);
 					this.changed();
 					break;
 				}
+
 				const lower = page.nextBefore ?? 0;
 				const newest = this.messages.at(-1)?.sequence;
+
 				if (newest !== undefined && newest < lower) {
 					this.rows.clear();
 					this.windowVersion += 1;
 				}
+
 				const firstLoaded = this.messages[0]?.sequence;
+
 				const hasNewRowsBeforeWindow =
 					firstLoaded !== undefined &&
 					page.changes.some(
@@ -161,12 +183,15 @@ export class DisplayHistory {
 							change.row.sequence < firstLoaded &&
 							!this.messages.some((message) => message.id === change.id)
 					);
+
 				if (!this.rows.size || lower === 0 || lower <= (firstLoaded ?? 0))
 					this.nextBefore = page.nextBefore;
 				else if (this.nextBefore === undefined && hasNewRowsBeforeWindow)
 					this.nextBefore = firstLoaded;
+
 				for (const number of this.rows.keys()) if (number >= lower) this.rows.delete(number);
 				this.commit(page);
+
 				for (const stream of streamRequest.streams ?? [])
 					this.checkedStreams.add(streamKey(stream));
 				this.changesCursor = page.changesCursor;
@@ -191,6 +216,7 @@ export class DisplayHistory {
 			}
 		} finally {
 			this.refreshing = false;
+
 			if (canLoadOlder && this.olderPending && !this.stopped) {
 				this.olderPending = false;
 				void this.loadOlder();
@@ -200,43 +226,61 @@ export class DisplayHistory {
 
 	async loadOlder() {
 		if (this.stopped || this.loadingOlder) return;
+
 		if (this.refreshing) {
 			this.olderPending = true;
+
 			return;
 		}
+
 		if (this.nextBefore === undefined) return;
 		const before = this.nextBefore;
 		const version = this.windowVersion;
 		this.loadingOlder = true;
 		this.changed();
+
 		try {
 			const page = await this.fetchPage({ before, limit: 40, ...this.streamRequest() });
+
 			if (this.stopped || version !== this.windowVersion) return;
+
 			if (this.replicaId !== page.replicaId) {
 				void this.refresh();
+
 				return;
 			}
+
 			if (page.indexing) {
 				this.retryOlder(500);
+
 				return;
 			}
+
 			if (page.revision < this.revision) {
 				this.retryOlder(500);
+
 				return;
 			}
+
 			if (page.persistedStreams.some((stream) => !this.persistedStreams.has(streamKey(stream)))) {
 				this.olderPending = true;
 				void this.refresh();
+
 				return;
 			}
+
 			if (page.nextBefore !== undefined && page.nextBefore >= before)
 				throw new Error('History cursor did not advance.');
+
 			if (this.nextBefore !== before) {
 				if (this.nextBefore !== undefined) this.retryOlder(500);
+
 				return;
 			}
+
 			this.commit(page);
 			this.nextBefore = page.nextBefore;
+
 			if (page.stale) this.retryRefresh(2_000);
 		} catch {
 			if (!this.stopped && version === this.windowVersion) {
@@ -245,6 +289,7 @@ export class DisplayHistory {
 			}
 		} finally {
 			this.loadingOlder = false;
+
 			if (!this.stopped) this.changed();
 		}
 	}
@@ -252,24 +297,30 @@ export class DisplayHistory {
 	private commit(page: TranscriptDisplayPage) {
 		const previous = new Map(this.messages.map((message) => [message.id, message]));
 		const firstLoaded = this.rows.size ? this.messages[0]?.sequence : undefined;
+
 		for (const change of page.changes) {
 			const existing = previous.get(change.id);
+
 			if (!existing) {
 				if (change.row && firstLoaded !== undefined && change.row.sequence >= firstLoaded)
 					this.rows.set(change.row.sequence, change.row);
 				continue;
 			}
+
 			if (!change.row) this.rows.delete(existing.sequence);
 			else if (change.row.revision > existing.revision)
 				this.rows.set(change.row.sequence, change.row);
 		}
+
 		for (const row of page.rows) {
 			const existing = this.rows.get(row.sequence) ?? previous.get(row.id);
 			this.rows.set(row.sequence, existing && existing.revision >= row.revision ? existing : row);
 		}
+
 		const messages = [...this.rows.entries()]
 			.sort(([left], [right]) => left - right)
 			.map(([, message]) => message);
+
 		if (
 			messages.length !== this.messages.length ||
 			messages.some((message, index) => message !== this.messages[index])
@@ -277,10 +328,13 @@ export class DisplayHistory {
 			this.messages = messages;
 		this.stale = page.stale;
 		this.revision = Math.max(this.revision, page.revision);
+
 		for (const stream of page.persistedStreams)
 			this.persistedStreams.add(`${stream.runId}:${stream.streamId}`);
+
 		while (this.persistedStreams.size > 256) {
 			const oldest = this.persistedStreams.values().next().value;
+
 			if (oldest === undefined) break;
 			this.persistedStreams.delete(oldest);
 		}

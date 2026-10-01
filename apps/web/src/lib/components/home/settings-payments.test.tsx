@@ -8,6 +8,7 @@ import SettingsPayments from './settings-payments';
 
 // SAFETY: this opaque id is used only by the in-memory action client.
 const mandateId = 'mandate-test' as Id<'mandates'>;
+
 const approval = {
 	mandateId,
 	approvalUrl: 'https://approval.test/mandate',
@@ -23,6 +24,7 @@ async function mount(client: ConvexTestClient) {
 			</ConvexTestProvider>
 		);
 	});
+
 	return view;
 }
 
@@ -59,9 +61,11 @@ it('submits any-merchant mandates as one-time and presents the passkey approval 
 it('keeps a failed setup editable and retries with the entered values', async () => {
 	const client = new ConvexTestClient();
 	client.handleAction(api.payments.listMyMandates, async () => ({ mandates: [] }));
+
 	const setup = vi
 		.fn(async () => approval)
 		.mockRejectedValueOnce(new Error('Approval service unavailable'));
+
 	client.handleAction(api.payments.setupMyMandate, setup);
 	await mount(client);
 	fillSetup();
@@ -78,6 +82,7 @@ it('keeps a failed setup editable and retries with the entered values', async ()
 it('refreshes approved mandates on focus and removes the listener on unmount', async () => {
 	const client = new ConvexTestClient();
 	let approved = false;
+
 	const list = vi.fn(async () => ({
 		mandates: approved
 			? [
@@ -92,6 +97,7 @@ it('refreshes approved mandates on focus and removes the listener on unmount', a
 				]
 			: []
 	}));
+
 	client.handleAction(api.payments.listMyMandates, list);
 	client.handleAction(api.payments.setupMyMandate, async () => approval);
 	const view = await mount(client);
@@ -128,9 +134,11 @@ it('pauses, resumes, and cancels the selected mandate and refreshes its status',
 			}
 		]
 	}));
+
 	const lifecycle = vi.fn(
 		async ({ action }: { action: 'pause' | 'resume' | 'cancel'; mandateId: Id<'mandates'> }) => {
 			status = action === 'pause' ? 'paused' : action === 'resume' ? 'active' : 'cancelled';
+
 			return {
 				mandateId,
 				status,
@@ -141,6 +149,7 @@ it('pauses, resumes, and cancels the selected mandate and refreshes its status',
 			} satisfies FunctionReturnType<typeof api.payments.setMyMandateLifecycle>;
 		}
 	);
+
 	client.handleAction(api.payments.setMyMandateLifecycle, lifecycle);
 	await mount(client);
 	fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));

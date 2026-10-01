@@ -10,4 +10,5 @@ export const usageMeters = [
 export type UsageMeterId = (typeof usageMeters)[number]['id'];
 
 export const usagePeriods = ['weekly', 'monthly'] as const;
+
 export type UsagePeriod = (typeof usagePeriods)[number];

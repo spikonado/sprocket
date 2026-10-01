@@ -4,12 +4,14 @@ import type { LocalArtifact } from '$lib/types/sprocket';
 import type { ArtifactWatchState } from './artifacts';
 
 type ArtifactPage = FunctionReturnType<typeof api.artifacts.listArtifacts>;
+
 export type CloudArtifactScope = Pick<
 	FunctionArgs<typeof api.artifacts.listArtifacts>,
 	'repositoryKey' | 'threadId'
 > & {
 	userId: string;
 };
+
 type CloudArtifactClient = {
 	query: (
 		query: typeof api.artifacts.listArtifacts,
@@ -33,26 +35,33 @@ export function watchCloudArtifacts(
 	let generation = 0;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let latest: LocalArtifact[] = [];
+
 	async function refresh(version: number) {
 		try {
 			const artifacts: LocalArtifact[] = [];
 			let cursor: string | null = null;
 			let revision: number | undefined;
+
 			for (;;) {
 				const page: ArtifactPage = await client.query(api.artifacts.listArtifacts, {
 					...queryScope,
 					cursor
 				});
+
 				if (stopped || generation !== version) return;
+
 				if (revision !== undefined && revision !== page.revision)
 					throw new Error('Artifact registry changed during loading; retrying.');
 				revision = page.revision;
 				artifacts.push(...page.page.filter((artifact) => artifact.userId === userId));
+
 				if (page.isDone) break;
+
 				if (cursor === page.continueCursor)
 					throw new Error('Artifact page cursor did not advance.');
 				cursor = page.continueCursor;
 			}
+
 			latest = artifacts;
 			onSnapshot({ artifacts, stale: false, error: null });
 		} catch (error) {
@@ -67,6 +76,7 @@ export function watchCloudArtifacts(
 			}, 2_000);
 		}
 	}
+
 	const unsubscribe = client.onUpdate(
 		api.artifacts.getArtifactState,
 		{ repositoryKey: scope.repositoryKey },
@@ -81,6 +91,7 @@ export function watchCloudArtifacts(
 			onSnapshot({ artifacts: [], stale: true, error: error.message });
 		}
 	);
+
 	return () => {
 		stopped = true;
 		clearTimeout(retry);

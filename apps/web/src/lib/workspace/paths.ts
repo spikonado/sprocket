@@ -30,6 +30,7 @@ function getBrowseDirectoryPath(currentPath: string): string {
 
 export function getBrowseLeafPathSegment(currentPath: string): string {
 	const directoryPath = getBrowseDirectoryPath(currentPath);
+
 	return currentPath.slice(directoryPath.length);
 }
 
@@ -44,6 +45,7 @@ export function withTrailingPathSeparator(path: string): string {
 /** True while the Windows drive list should keep filtering locally instead of browsing. */
 export function isWindowsVolumeListQuery(value: string): boolean {
 	const trimmed = value.trim();
+
 	return (
 		trimmed === '/' ||
 		trimmed === '\\' ||
@@ -88,12 +90,14 @@ function matchBrowseLeafPath(input: {
 	const exactEntry = input.browseEntries.find(
 		(entry) => entry.name !== '..' && entry.name === input.leaf
 	);
+
 	if (exactEntry) {
 		return exactEntry.fullPath;
 	}
 
 	if (input.browseParentPath) {
 		const parentName = input.browseParentPath.split(/[/\\]/).filter(Boolean).at(-1);
+
 		if (parentName && parentName.toLowerCase() === input.leaf.toLowerCase()) {
 			return input.browseParentPath;
 		}
@@ -104,6 +108,7 @@ function matchBrowseLeafPath(input: {
 
 export function resolveWorkspacePathFromBrowse(input: BrowsePathInput): string {
 	const trimmed = input.query.trim();
+
 	if (!trimmed) {
 		return '';
 	}
@@ -123,11 +128,13 @@ export function resolveWorkspacePathFromBrowse(input: BrowsePathInput): string {
 
 export function workspacePathRequiresCreation(input: BrowsePathInput): boolean {
 	const trimmed = input.query.trim();
+
 	if (!trimmed || hasTrailingPathSeparator(trimmed)) {
 		return false;
 	}
 
 	const leaf = getBrowseLeafPathSegment(trimmed);
+
 	if (!leaf) {
 		return false;
 	}

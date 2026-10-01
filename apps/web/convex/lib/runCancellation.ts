@@ -72,12 +72,15 @@ export function resolveRequestedFinalizeStatus(
 	if (isRunFinalStatus(run.status)) {
 		return run.status;
 	}
+
 	if (requested === 'completed') {
 		return 'completed';
 	}
+
 	if (isRunCancellationOpen(run)) {
 		return 'cancelled';
 	}
+
 	return requested;
 }
 
@@ -89,21 +92,27 @@ export function selectedThreadLifecyclePhase(args: {
 	waitingForInput: boolean;
 }): SelectedThreadLifecyclePhase {
 	const run = args.run;
+
 	if (!run) {
 		return 'idle';
 	}
+
 	if (isRunCancellationOpen(run)) {
 		return 'cancellation_requested';
 	}
+
 	if (run.status === 'queued') {
 		return 'queued';
 	}
+
 	if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
 		return run.status;
 	}
+
 	if (args.waitingForInput) {
 		return 'waiting_for_input';
 	}
+
 	return 'running';
 }
 
@@ -124,21 +133,27 @@ export function projectSelectedThreadLifecycle(args: {
 		run: args.run,
 		waitingForInput: args.waitingForInput
 	});
+
 	if (!args.run) {
 		return { threadId: args.threadId, phase, run: null };
 	}
+
 	const projected: Infer<typeof vSelectedThreadLifecycleRun> = {
 		runId: args.run._id,
 		startedAt: args.run.startedAt
 	};
+
 	if (args.run.completedAt !== undefined) {
 		projected.completedAt = args.run.completedAt;
 	}
+
 	if (args.run.lastError !== undefined) {
 		projected.lastError = args.run.lastError;
 	}
+
 	if (args.executorFriendlyName) {
 		projected.executorFriendlyName = args.executorFriendlyName;
 	}
+
 	return { threadId: args.threadId, phase, run: projected };
 }

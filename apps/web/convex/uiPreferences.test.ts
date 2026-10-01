@@ -17,6 +17,7 @@ describe('theme preferences', () => {
 		const updated = await otherAliceSession.mutation(api.uiPreferences.setTheme, {
 			theme: 'light'
 		});
+
 		expect(updated?._id).toBe(saved?._id);
 		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({ theme: 'light' });
 		await expect(t.query(api.uiPreferences.getMine, {})).rejects.toThrow('Authentication required');

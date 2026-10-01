@@ -10,6 +10,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
 
 	render() {
 		if (!this.state.failed) return this.props.children;
+
 		return (
 			<CalmCentered
 				title="Unable to display Sprocket"

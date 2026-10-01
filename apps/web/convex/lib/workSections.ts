@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 
 export const workPosition = v.object({ part: v.number(), item: v.number() });
+
 export const workSectionFields = {
 	key: v.string(),
 	runId: v.id('runs'),
@@ -13,12 +14,15 @@ export const workSectionFields = {
 	startedAt: v.optional(v.number()),
 	completedAt: v.optional(v.number())
 };
+
 export const workSection = v.object(workSectionFields);
+
 export const workRange = v.object({
 	start: v.number(),
 	end: v.number(),
 	sectionKey: v.string()
 });
+
 export const workMembership = v.object({
 	ranges: v.array(workRange),
 	sectionKey: v.optional(v.string()),
@@ -30,7 +34,9 @@ export const sectionOrder = v.object({
 	sectionOrdinal: v.number(),
 	closed: v.boolean()
 });
+
 export const workAssignment = workMembership.extend({ number: v.number() });
+
 export const workBatch = v.object({
 	finishedRunId: v.optional(v.id('runs')),
 	expected: workPosition,

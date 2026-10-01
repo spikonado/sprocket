@@ -28,9 +28,11 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 		const created = await createQueuedRun(t, asUser, threadId, 'cancel-run', executionSecret);
 		await t.run(async (ctx) => {
 			const run = await ctx.db.get('runs', created.runId);
+
 			if (!run) {
 				throw new Error('queued run missing');
 			}
+
 			await ctx.db.insert('machines', {
 				userId: run.userId,
 				machineId: 'install-lifecycle',

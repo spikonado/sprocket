@@ -60,8 +60,10 @@ export const createUpload = mutation({
 			if (!configuredFirecrawlApiKey()) {
 				throw new ConvexError('Hosted document parsing is not configured.');
 			}
+
 			const { run, job } = await requireActiveParseJob(ctx, args);
 			const existing = await requestForJob(ctx, job._id);
+
 			if (existing) {
 				if (
 					existing.runId !== run._id ||
@@ -70,9 +72,12 @@ export const createUpload = mutation({
 				) {
 					throw new ConvexError('Hosted parse request not found.');
 				}
+
 				return createUploadResponse(existing);
 			}
+
 			const uploadUrl = await ctx.storage.generateUploadUrl();
+
 			const requestId = await ctx.db.insert('hostedParseRequests', {
 				jobId: job._id,
 				runId: run._id,
@@ -82,9 +87,11 @@ export const createUpload = mutation({
 				uploadUrl,
 				expiresAt: Date.now() + HOSTED_PARSE_TTL_MS
 			});
+
 			await ctx.scheduler.runAfter(HOSTED_PARSE_TTL_MS, internal.hostedParse.cleanupExpiredOne, {
 				requestId
 			});
+
 			return { requestId, uploadUrl };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -107,25 +114,32 @@ export const start = mutation({
 			if (!configuredFirecrawlApiKey()) {
 				throw new ConvexError('Hosted document parsing is not configured.');
 			}
+
 			const request = await ctx.db.get('hostedParseRequests', args.requestId);
+
 			if (!request || request.runId !== args.runId) {
 				throw new ConvexError('Hosted parse request not found.');
 			}
+
 			const { run, job } = await requireActiveParseJob(ctx, {
 				runId: args.runId,
 				claimId: args.claimId,
 				executionSecret: args.executionSecret,
 				jobId: request.jobId
 			});
+
 			if (request.claimId !== args.claimId || request.expiresAt <= Date.now()) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}
+
 			if (request.status !== 'awaiting_upload') {
 				return null;
 			}
+
 			await requireUnregisteredStorage(ctx, args.storageId);
 			const filenameError = registeredFileUploadError(args.filename);
 			const filename = hostedParseUploadFilename(args.filename);
+
 			if (filenameError || !filename) {
 				await ctx.storage.delete(args.storageId);
 				await ctx.db.patch('hostedParseRequests', request._id, {
@@ -133,17 +147,22 @@ export const start = mutation({
 					error: 'Filename must be between 1 and 255 characters.',
 					uploadUrl: undefined
 				});
+
 				return null;
 			}
+
 			const metadata = await ctx.db.system.get('_storage', args.storageId);
+
 			if (!metadata) {
 				await ctx.db.patch('hostedParseRequests', request._id, {
 					status: 'failed',
 					error: 'Uploaded file was not found.',
 					uploadUrl: undefined
 				});
+
 				return null;
 			}
+
 			if (metadata.size > HOSTED_PARSE_MAX_INPUT_BYTES) {
 				await ctx.storage.delete(args.storageId);
 				await ctx.db.patch('hostedParseRequests', request._id, {
@@ -151,8 +170,10 @@ export const start = mutation({
 					error: 'File exceeds the 50 MB hosted parse limit.',
 					uploadUrl: undefined
 				});
+
 				return null;
 			}
+
 			await ctx.db.patch('hostedParseRequests', request._id, {
 				status: 'pending',
 				claimId: args.claimId,
@@ -160,6 +181,7 @@ export const start = mutation({
 				filename,
 				uploadUrl: undefined
 			});
+
 			const workId = await firecrawlScrapePool.enqueueAction(
 				ctx,
 				internal.hostedParseActions.executeHostedParse,
@@ -180,7 +202,9 @@ export const start = mutation({
 					}
 				}
 			);
+
 			await ctx.db.patch('executorJobs', job._id, { cloudWorkId: workId });
+
 			return null;
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -202,10 +226,13 @@ export const getResult = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const request = await ctx.db.get('hostedParseRequests', args.requestId);
+
 		if (!request || request.runId !== run._id) {
 			throw new ConvexError('Hosted parse request not found.');
 		}
+
 		const job = await ctx.db.get('executorJobs', request.jobId);
+
 		if (
 			!job ||
 			job.runId !== run._id ||
@@ -217,19 +244,25 @@ export const getResult = query({
 		) {
 			return { status: 'failed' as const, error: 'Parse was cancelled.' };
 		}
+
 		if (request.status === 'failed') {
 			return { status: 'failed' as const, error: request.error ?? 'Firecrawl parse failed.' };
 		}
+
 		if (request.status === 'completed') {
 			if (!request.resultStorageId) {
 				return { status: 'failed' as const, error: 'Parsed document is no longer available.' };
 			}
+
 			const url = await ctx.storage.getUrl(request.resultStorageId);
+
 			if (!url) {
 				return { status: 'failed' as const, error: 'Parsed document is no longer available.' };
 			}
+
 			return { status: 'completed' as const, url };
 		}
+
 		return { status: 'pending' as const };
 	}
 });
@@ -250,6 +283,7 @@ export const getParseWork = internalQuery({
 	),
 	handler: async (ctx, args) => {
 		const request = await ctx.db.get('hostedParseRequests', args.requestId);
+
 		if (
 			!request ||
 			request.jobId !== args.jobId ||
@@ -261,14 +295,19 @@ export const getParseWork = internalQuery({
 		) {
 			return null;
 		}
+
 		const job = await ctx.db.get('executorJobs', args.jobId);
+
 		if (!job || job.runId !== args.runId || job.kind !== 'parse_file') {
 			return null;
 		}
+
 		if (isSettledExecutorJobStatus(job.status)) {
 			return null;
 		}
+
 		const run = await getRunWithExecution(ctx.db, args.runId);
+
 		if (
 			!run ||
 			isRunFinalStatus(run.status) ||
@@ -278,6 +317,7 @@ export const getParseWork = internalQuery({
 		) {
 			return null;
 		}
+
 		return { inputStorageId: request.inputStorageId, filename: request.filename };
 	}
 });
@@ -287,16 +327,22 @@ export const completeHostedParse = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const request = await ctx.db.get('hostedParseRequests', args.context.requestId);
+
 		if (!request || request.jobId !== args.context.jobId || request.runId !== args.context.runId) {
 			await deleteReturnedResult(ctx, args.result);
+
 			return null;
 		}
+
 		if (request.status !== 'pending') {
 			await deleteReturnedResult(ctx, args.result);
+
 			return null;
 		}
+
 		const job = await ctx.db.get('executorJobs', args.context.jobId);
 		const run = await getRunWithExecution(ctx.db, args.context.runId);
+
 		const cancelled =
 			!job ||
 			job.runId !== args.context.runId ||
@@ -306,11 +352,15 @@ export const completeHostedParse = internalMutation({
 			run.cancellationRequestedAt !== undefined ||
 			!ownsActiveRunClaim(run, args.context.claimId, Date.now()) ||
 			request.expiresAt <= Date.now();
+
 		const claimMismatch = request.claimId !== args.context.claimId;
+
 		if (claimMismatch) {
 			await deleteReturnedResult(ctx, args.result);
+
 			return null;
 		}
+
 		if (cancelled || args.result.kind === 'canceled') {
 			await deleteReturnedResult(ctx, args.result);
 			await deleteTemporaryStorage(ctx, request.inputStorageId);
@@ -320,9 +370,12 @@ export const completeHostedParse = internalMutation({
 				inputStorageId: undefined,
 				uploadUrl: undefined
 			});
+
 			return null;
 		}
+
 		await deleteTemporaryStorage(ctx, request.inputStorageId);
+
 		if (args.result.kind === 'success' && args.result.returnValue.resultStorageId) {
 			const resultStorageId = args.result.returnValue.resultStorageId;
 			await requireUnregisteredStorage(ctx, resultStorageId);
@@ -333,8 +386,10 @@ export const completeHostedParse = internalMutation({
 				uploadUrl: undefined,
 				error: undefined
 			});
+
 			return null;
 		}
+
 		await ctx.db.patch('hostedParseRequests', request._id, {
 			status: 'failed',
 			error: shortHostedParseError(
@@ -343,6 +398,7 @@ export const completeHostedParse = internalMutation({
 			inputStorageId: undefined,
 			uploadUrl: undefined
 		});
+
 		return null;
 	}
 });
@@ -352,10 +408,13 @@ export const cleanupExpiredOne = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const request = await ctx.db.get('hostedParseRequests', args.requestId);
+
 		if (!request || request.expiresAt > Date.now()) {
 			return null;
 		}
+
 		await deleteHostedParseRequest(ctx, request);
+
 		return null;
 	}
 });
@@ -365,16 +424,20 @@ export const cleanupExpired = internalMutation({
 	returns: v.number(),
 	handler: async (ctx): Promise<number> => {
 		const now = Date.now();
+
 		const requests = await ctx.db
 			.query('hostedParseRequests')
 			.withIndex('by_expiresAt', (query) => query.gt('expiresAt', 0).lte('expiresAt', now))
 			.take(CLEANUP_BATCH_SIZE);
+
 		for (const request of requests) {
 			await deleteHostedParseRequest(ctx, request);
 		}
+
 		if (requests.length === CLEANUP_BATCH_SIZE) {
 			await ctx.scheduler.runAfter(0, internal.hostedParse.cleanupExpired, {});
 		}
+
 		return requests.length;
 	}
 });
@@ -386,6 +449,7 @@ export const deleteUnregisteredStorage = internalMutation({
 		if (!(await registeredParseStorage(ctx, args.storageId))) {
 			await deleteTemporaryStorage(ctx, args.storageId);
 		}
+
 		return null;
 	}
 });
@@ -394,6 +458,7 @@ function createUploadResponse(request: Doc<'hostedParseRequests'>) {
 	if (request.status === 'awaiting_upload' && request.uploadUrl) {
 		return { requestId: request._id, uploadUrl: request.uploadUrl };
 	}
+
 	return { requestId: request._id };
 }
 
@@ -407,19 +472,25 @@ async function requireActiveParseJob(
 	}
 ) {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 	if (run.cancellationRequestedAt !== undefined) {
 		throw new ConvexError(RUN_CANCELLED_BY_USER);
 	}
+
 	if (isRunFinalStatus(run.status) || !ownsActiveRunClaim(run, args.claimId, Date.now())) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
+
 	const job = await ctx.db.get('executorJobs', args.jobId);
+
 	if (!job || job.runId !== run._id || job.kind !== 'parse_file') {
 		throw new ConvexError('Executor job not found.');
 	}
+
 	if (isSettledExecutorJobStatus(job.status)) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
+
 	return { run, job };
 }
 
@@ -447,6 +518,7 @@ async function deleteReturnedResult(
 	}
 ): Promise<void> {
 	if (result.kind !== 'success' || !result.returnValue?.resultStorageId) return;
+
 	if (await registeredParseStorage(ctx, result.returnValue.resultStorageId)) return;
 	await deleteTemporaryStorage(ctx, result.returnValue.resultStorageId);
 }
@@ -456,11 +528,14 @@ async function deleteTemporaryStorage(
 	storageId: Id<'_storage'> | undefined
 ): Promise<void> {
 	if (!storageId) return;
+
 	const attached = await ctx.db
 		.query('imageUploads')
 		.withIndex('by_storageId', (query) => query.eq('storageId', storageId))
 		.unique();
+
 	if (attached) return;
+
 	if (await ctx.db.system.get('_storage', storageId)) {
 		await ctx.storage.delete(storageId);
 	}
@@ -474,6 +549,7 @@ async function requireUnregisteredStorage(
 		.query('imageUploads')
 		.withIndex('by_storageId', (q) => q.eq('storageId', storageId))
 		.first();
+
 	if (attachment || (await registeredParseStorage(ctx, storageId))) {
 		throw new ConvexError('Hosted parsing requires a dedicated temporary upload.');
 	}

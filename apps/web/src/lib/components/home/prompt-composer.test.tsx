@@ -65,9 +65,12 @@ function renderComposer(overrides: Partial<PromptComposerViewProps> = {}) {
 	const props = composerProps(overrides);
 	const view = render(<PromptComposerTestHarness composerProps={props} />);
 	const composer = document.querySelector<HTMLElement>('[aria-label="Message composer"]');
+
 	if (!composer) throw new Error('Message composer was not rendered');
 	const textarea = composer.querySelector<HTMLTextAreaElement>('textarea');
+
 	if (!textarea) throw new Error('Composer textarea was not rendered');
+
 	return {
 		props,
 		composer,
@@ -96,9 +99,11 @@ async function pressKey(
 			bubbles: true,
 			cancelable: true
 		});
+
 		if (init.isComposing) {
 			Object.defineProperty(event, 'isComposing', { value: true });
 		}
+
 		target.dispatchEvent(event);
 		await Promise.resolve();
 	});
@@ -118,7 +123,9 @@ function findButton(text: string) {
 	const button = Array.from(document.querySelectorAll('button')).find((candidate) =>
 		candidate.textContent?.includes(text)
 	);
+
 	if (!button) throw new Error(`Button containing "${text}" was not rendered`);
+
 	return button;
 }
 
@@ -143,6 +150,7 @@ function dispatchDrag(
 	act(() => {
 		target.dispatchEvent(event);
 	});
+
 	return event;
 }
 
@@ -358,6 +366,7 @@ describe('PromptComposer skill menu', () => {
 
 	it('retries a failed skill load', async () => {
 		const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(skills);
+
 		const { textarea } = renderComposer({
 			projectSkills: { workspacePath: '/demo', load }
 		});
@@ -397,6 +406,7 @@ describe('PromptComposer model selection', () => {
 describe('PromptComposer agent questions', () => {
 	it('drops the answer draft and toggles question options', async () => {
 		const onSelectedQuestionOptionIdChange = vi.fn();
+
 		const { textarea } = renderComposer({
 			prompt: 'draft answer',
 			pendingQuestion: {

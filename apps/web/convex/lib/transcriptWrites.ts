@@ -53,6 +53,7 @@ export async function recordPromptTranscript(
 		},
 		work: { ranges: [] }
 	});
+
 	return result.part;
 }
 
@@ -72,14 +73,20 @@ export async function recordCompletionTranscript(
 	if (args.items.length === 0) {
 		return null;
 	}
+
 	let invocationIndex = 0;
+
 	const toolInvocations = args.items.flatMap((item, index) => {
 		if (item.type !== 'tool-call') return [];
 		const invocation = args.toolInvocations[invocationIndex++];
+
 		if (!invocation) throw new Error('Missing tool invocation assignment.');
+
 		return [{ item: index, toolInvocationId: invocation.toolInvocationId }];
 	});
+
 	const work = { ...args.work, toolInvocations };
+
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -89,12 +96,14 @@ export async function recordCompletionTranscript(
 		completion: { streamId: args.streamId, items: args.items },
 		work
 	});
+
 	await writeCompletionSectionData(ctx, {
 		part: result.part,
 		work,
 		sections: args.sections,
 		representedCallIds: new Set(args.toolInvocations.map((invocation) => invocation.callId))
 	});
+
 	return result.part;
 }
 
@@ -108,6 +117,7 @@ export async function recordStartedToolTranscript(
 	}
 ): Promise<void> {
 	const toolInvocationId = toolInvocationIdForJob(args.job);
+
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -117,6 +127,7 @@ export async function recordStartedToolTranscript(
 		tool: progressToolBody(args.job, { status: 'started' }),
 		work: args.job.sectionKey ? { ranges: [], sectionKey: args.job.sectionKey } : { ranges: [] }
 	});
+
 	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;
 	await writeToolSectionData(ctx, {
 		part: result.part,
@@ -140,7 +151,9 @@ export async function recordToolTranscript(
 	if (!isSettledExecutorJobStatus(args.job.status)) {
 		return;
 	}
+
 	const toolInvocationId = toolInvocationIdForJob(args.job);
+
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -150,6 +163,7 @@ export async function recordToolTranscript(
 		tool: settledToolBody(args.job),
 		work: args.job.sectionKey ? { ranges: [], sectionKey: args.job.sectionKey } : { ranges: [] }
 	});
+
 	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;
 	await writeToolSectionData(ctx, {
 		part: result.part,
@@ -172,8 +186,10 @@ export async function recordSettledToolTranscripts(
 	}
 ): Promise<void> {
 	const callIds = args.items.flatMap((item) => (item.type === 'tool-call' ? [item.callId] : []));
+
 	for (const [index, callId] of callIds.entries()) {
 		const invocation = args.toolInvocations?.[index];
+
 		const job = invocation
 			? await ctx.db
 					.query('executorJobs')
@@ -188,6 +204,7 @@ export async function recordSettledToolTranscripts(
 					)
 					.order('desc')
 					.first();
+
 		if (job) {
 			await recordToolTranscript(ctx, {
 				threadId: args.threadId,
@@ -209,9 +226,11 @@ function progressToolBody(
 		name: job.kind,
 		status: args.status
 	};
+
 	if (args.output !== undefined) {
 		body.output = args.output;
 	}
+
 	return body;
 }
 
@@ -219,7 +238,9 @@ function settledToolBody(job: TranscriptToolJob): TranscriptToolBody {
 	if (!isSettledExecutorJobStatus(job.status)) {
 		throw new Error('settledToolBody requires a settled executor job.');
 	}
+
 	const status: TranscriptToolBody['status'] = job.status;
+
 	const output =
 		job.status === 'completed' && job.result !== undefined
 			? job.result
@@ -231,5 +252,6 @@ function settledToolBody(job: TranscriptToolJob): TranscriptToolBody {
 							: 'Executor job failed.'),
 					status
 				};
+
 	return progressToolBody(job, { status, output });
 }

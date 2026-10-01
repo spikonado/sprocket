@@ -12,6 +12,7 @@ function matchActiveSkillToken(
 
 	const before = text.slice(0, caret);
 	const match = before.match(ACTIVE_SKILL_TOKEN);
+
 	if (!match || match.index === undefined) {
 		return null;
 	}
@@ -33,6 +34,7 @@ export function filterSkills(skills: SkillSummary[], query: string): SkillSummar
 
 	for (const skill of skills) {
 		const name = skill.name.toLowerCase();
+
 		if (name.startsWith(normalized)) {
 			prefix.push(skill);
 		} else if (normalized.length > 0 && name.includes(normalized)) {
@@ -42,6 +44,7 @@ export function filterSkills(skills: SkillSummary[], query: string): SkillSummar
 
 	prefix.sort((left, right) => left.name.localeCompare(right.name));
 	substring.sort((left, right) => left.name.localeCompare(right.name));
+
 	return [...prefix, ...substring];
 }
 
@@ -51,14 +54,17 @@ export function applySkillSelection(
 	name: string
 ): { text: string; caret: number } | null {
 	const match = matchActiveSkillToken(text, caret);
+
 	if (!match) {
 		return null;
 	}
 
 	let tokenEnd = caret;
+
 	while (tokenEnd < text.length && /[a-z0-9-]/i.test(text[tokenEnd] ?? '')) {
 		tokenEnd += 1;
 	}
+
 	// Replacement includes a trailing space; consume an existing one so we don't double it.
 	if (text[tokenEnd] === ' ') {
 		tokenEnd += 1;
@@ -66,6 +72,7 @@ export function applySkillSelection(
 
 	const replacement = `$${name} `;
 	const nextText = `${text.slice(0, match.tokenStart)}${replacement}${text.slice(tokenEnd)}`;
+
 	return {
 		text: nextText,
 		caret: match.tokenStart + replacement.length

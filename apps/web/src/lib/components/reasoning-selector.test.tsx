@@ -29,6 +29,7 @@ function renderSelector(overrides: Partial<SelectorProps> = {}) {
 
 function openSelector() {
 	const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]');
+
 	if (!trigger) throw new Error('Reasoning selector trigger was not rendered');
 	act(() => {
 		trigger.click();

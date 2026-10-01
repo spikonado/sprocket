@@ -33,6 +33,7 @@ export default function ArtifactDisplay({
 		() => buildArtifactPreviewDocument(artifactType, content),
 		[artifactType, content]
 	);
+
 	const [showSource, setShowSource] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,9 +42,11 @@ export default function ArtifactDisplay({
 		try {
 			await navigator.clipboard.writeText(content);
 			setCopied(true);
+
 			if (copyTimeoutRef.current !== null) {
 				clearTimeout(copyTimeoutRef.current);
 			}
+
 			copyTimeoutRef.current = setTimeout(() => {
 				setCopied(false);
 				copyTimeoutRef.current = null;

@@ -28,9 +28,11 @@ export async function activeActor(
 		runId: args.runId,
 		executionSecret: args.executionSecret
 	});
+
 	if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
 		throw new Error('Run is no longer active.');
 	}
+
 	return actor;
 }
 
@@ -127,23 +129,32 @@ export function mandateStatusResult(mandate: Doc<'mandates'>): Infer<typeof vMan
  * linking local rows after the owner approves in a new tab. */
 function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandate): boolean {
 	if (!prava.id) return false;
+
 	if (!LIVE_MANDATE_STATUSES.has(prava.status ?? '')) return false;
+
 	// A different scope or cadence is a different authorization even when the
 	// merchant name and cap coincide.
 	if (prava.merchantScope !== undefined && prava.merchantScope !== mandate.scope) return false;
+
 	if (prava.recurringFrequency !== undefined && prava.recurringFrequency !== mandate.frequency) {
 		return false;
 	}
+
 	// A mandate approved in another currency is a different authorization;
 	// never resolve (and later charge) it for this setup.
 	if ((prava.currency ?? '').toUpperCase() !== mandate.currency.toUpperCase()) return false;
 	const approvedMinor = prava.approvedAmount ? parseMoneyMinor(prava.approvedAmount) : undefined;
+
 	if (approvedMinor === undefined || approvedMinor !== mandate.amountCap) return false;
+
 	if (mandate.scope === 'listed') {
 		const localName = mandate.merchantName?.trim();
+
 		if (!localName) return false;
+
 		return (prava.merchantName ?? '').toLowerCase() === localName.toLowerCase();
 	}
+
 	return true;
 }
 
@@ -152,12 +163,17 @@ function matchingLivePravaMandates(
 	list: PravaMandate[],
 	claimedIds?: ReadonlySet<string>
 ): Array<PravaMandate & { id: string }> {
-	return list
-		.filter((m) => {
-			if (!m.id || claimedIds?.has(m.id)) return false;
-			return isMatchingLivePravaMandate(mandate, m);
-		})
-		.map((m) => ({ ...m, id: m.id! }));
+	const matches: Array<PravaMandate & { id: string }> = [];
+
+	list.forEach((candidate) => {
+		if (!candidate.id || claimedIds?.has(candidate.id)) return;
+
+		if (!isMatchingLivePravaMandate(mandate, candidate)) return;
+
+		matches.push({ ...candidate, id: candidate.id });
+	});
+
+	return matches;
 }
 
 function isUnresolvedLocal(mandate: Doc<'mandates'>): boolean {
@@ -176,22 +192,27 @@ function uniquelyAttributablePravaMandate(
 	| { kind: 'none' }
 	| { kind: 'ambiguous' } {
 	const claimed = new Set(
-		allLocal
-			.filter((row) => row.pravaMandateId && row._id !== mandate._id)
-			.map((row) => row.pravaMandateId)
-			.filter((id): id is string => id !== undefined)
+		allLocal.flatMap((row) =>
+			row.pravaMandateId && row._id !== mandate._id ? [row.pravaMandateId] : []
+		)
 	);
+
 	const matches = matchingLivePravaMandates(mandate, list, claimed);
+
 	if (matches.length === 0) return { kind: 'none' };
+
 	if (matches.length > 1) return { kind: 'ambiguous' };
 	const candidate = matches[0];
+
 	const contested = allLocal.some(
 		(peer) =>
 			peer._id !== mandate._id &&
 			isUnresolvedLocal(peer) &&
 			isMatchingLivePravaMandate(peer, candidate)
 	);
+
 	if (contested) return { kind: 'ambiguous' };
+
 	return { kind: 'matched', mandate: candidate };
 }
 
@@ -207,11 +228,14 @@ export async function resolvePravaMandate(
 		const found = await pravaRequest<PravaMandate>(
 			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}`
 		);
+
 		return { ...found, id: mandate.pravaMandateId };
 	}
+
 	const list = await listPravaMandates(userId, false);
 	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
 	const match = uniquelyAttributablePravaMandate(mandate, list, local);
+
 	// Require a unique live match. Charging an arbitrary same-merchant+amount
 	// approval could settle against the wrong authorization. Prava mandates
 	// don't carry their setup session id, so there is no stronger link to
@@ -219,16 +243,19 @@ export async function resolvePravaMandate(
 	if (match.kind === 'none') {
 		throw new Error('Mandate is not yet approved.');
 	}
+
 	if (match.kind === 'ambiguous') {
 		throw new Error(
 			'Cannot uniquely match this setup to an approved mandate; resolve the ambiguity before charging.'
 		);
 	}
+
 	const resolved = match.mandate;
 	await ctx.runMutation(
 		internal.payments.syncMandate,
 		mandateSyncArgs(mandate._id, userId, resolved)
 	);
+
 	return resolved;
 }
 
@@ -245,13 +272,18 @@ async function linkLocalMandates(
 }> {
 	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
 	const localById = new Map(local.map((m) => [m._id, m]));
-	const localByPravaId = new Map(
-		local
-			.filter((m): m is typeof m & { pravaMandateId: string } => m.pravaMandateId !== undefined)
-			.map((m) => [m.pravaMandateId, m._id])
-	);
+
+	const localByPravaId = new Map<string, Id<'mandates'>>();
+
+	local.forEach((row) => {
+		if (row.pravaMandateId !== undefined) {
+			localByPravaId.set(row.pravaMandateId, row._id);
+		}
+	});
+
 	for (const mandate of local.filter(isUnresolvedLocal)) {
 		const match = uniquelyAttributablePravaMandate(mandate, list, local);
+
 		if (match.kind !== 'matched') continue;
 		const sync = mandateSyncArgs(mandate._id, userId, match.mandate);
 		await ctx.runMutation(internal.payments.syncMandate, sync);
@@ -261,6 +293,7 @@ async function linkLocalMandates(
 		// Keep later uniqueness checks aware of the link we just persisted.
 		local[local.indexOf(mandate)] = linked;
 	}
+
 	return { localByPravaId, localById };
 }
 
@@ -275,11 +308,14 @@ export async function listLinkedMandates(
 	const list = (await listPravaMandates(userId, false)).filter((m) =>
 		LIVE_MANDATE_STATUSES.has(m.status ?? '')
 	);
+
 	const { localByPravaId, localById } = await linkLocalMandates(ctx, userId, list);
+
 	return {
 		mandates: list.map((m) => {
 			const mandateId = m.id ? localByPravaId.get(m.id) : undefined;
 			const local = mandateId ? localById.get(mandateId) : undefined;
+
 			return {
 				mandateId,
 				pravaMandateId: m.id ?? '',

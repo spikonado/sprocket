@@ -19,7 +19,9 @@ import {
 } from 'convex/server';
 
 type QueryReference = FunctionReference<'query'> | FunctionReference_future<'query'>;
+
 type MutationReference = FunctionReference<'mutation'> | FunctionReference_future<'mutation'>;
+
 type ActionReference = FunctionReference<'action'> | FunctionReference_future<'action'>;
 
 type FixtureReader = {
@@ -31,6 +33,7 @@ function fixtureReader<Value>(value: Value): FixtureReader {
 		// SAFETY: registration and lookup use the same function name and return type.
 		return value as Value & Result;
 	};
+
 	return { read };
 }
 
@@ -110,14 +113,18 @@ export class ConvexTestClient extends ConvexReactClient {
 	): Watch<FunctionReturnType<Query>> {
 		void argsAndOptions;
 		const name = getFunctionName(query);
+
 		return {
 			onUpdate: (callback) => {
 				let listeners = this.#queryListeners.get(name);
+
 				if (!listeners) {
 					listeners = new Set();
 					this.#queryListeners.set(name, listeners);
 				}
+
 				listeners.add(callback);
+
 				return () => {
 					listeners.delete(callback);
 				};
@@ -136,6 +143,7 @@ export class ConvexTestClient extends ConvexReactClient {
 		void options;
 		const reader = this.#paginatedFixtures.get(getFunctionName(query));
 		const page = reader?.read<FunctionReturnType<Query>['page']>();
+
 		return {
 			onUpdate: () => () => {},
 			localQueryResult: () =>
@@ -150,7 +158,9 @@ export class ConvexTestClient extends ConvexReactClient {
 		void args;
 		const name = getFunctionName(query);
 		const reader = this.#queryFixtures.get(name);
+
 		if (!reader) throw new Error(`No query fixture registered for ${name}`);
+
 		return Promise.resolve(reader.read<FunctionReturnType<Query>>());
 	}
 
@@ -161,7 +171,9 @@ export class ConvexTestClient extends ConvexReactClient {
 		void argsAndOptions;
 		const name = getFunctionName(mutation);
 		const reader = this.#mutationFixtures.get(name);
+
 		if (!reader) throw new Error(`No mutation fixture registered for ${name}`);
+
 		return Promise.resolve(reader.read<FunctionReturnType<Mutation>>());
 	}
 
@@ -171,7 +183,9 @@ export class ConvexTestClient extends ConvexReactClient {
 	): Promise<FunctionReturnType<Action>> {
 		const name = getFunctionName(action);
 		const handler = this.#actionHandlers.get(name);
+
 		if (!handler) throw new Error(`No action fixture registered for ${name}`);
+
 		return handler<Action>(args[0] ?? {});
 	}
 

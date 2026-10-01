@@ -16,9 +16,11 @@ export const list = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const repositoryKeys = [...new Set(args.repositoryKeys)];
+
 		if (repositoryKeys.length === 0) {
 			throw new Error('Choose at least one project.');
 		}
+
 		if (repositoryKeys.length > MAX_INBOX_REPOSITORIES) {
 			throw new Error(`Choose at most ${MAX_INBOX_REPOSITORIES} projects.`);
 		}
@@ -28,11 +30,13 @@ export const list = query({
 				.query('threadRecords')
 				.withIndex('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', (range) => {
 					const project = range.eq('userId', userId).eq('repositoryKey', repositoryKey);
+
 					return args.state === 'unsettled'
 						? project.eq('archivedAt', undefined)
 						: project.gt('archivedAt', 0);
 				})
 				.order('desc');
+
 			return rows;
 		});
 

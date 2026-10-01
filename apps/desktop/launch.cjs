@@ -1,5 +1,7 @@
 const fs = require('node:fs');
+
 const path = require('node:path');
+
 const { spawn } = require('node:child_process');
 
 function resolveWaylandDisplay(env) {
@@ -16,6 +18,7 @@ function resolveWaylandDisplay(env) {
 	}
 
 	const runtimeDir = env.XDG_RUNTIME_DIR;
+
 	if (!runtimeDir) {
 		return null;
 	}
@@ -44,6 +47,7 @@ async function main() {
 		'.bin',
 		process.platform === 'win32' ? 'electron.cmd' : 'electron'
 	);
+
 	const child = spawn(electronBinary, ['.', ...process.argv.slice(2)], {
 		cwd: __dirname,
 		env,
@@ -53,6 +57,7 @@ async function main() {
 	child.on('exit', (code, signal) => {
 		if (signal) {
 			process.kill(process.pid, signal);
+
 			return;
 		}
 

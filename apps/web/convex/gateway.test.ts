@@ -4,6 +4,7 @@ import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 import type { ConvexTestInstance } from './test.setup';
 
 const gatewayUrl = 'https://preview.gateway.example';
+
 const tokenSecret = 'test-gateway-token-secret';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
@@ -31,6 +32,7 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 				monthly: 500 * UNITS_PER_DOLLAR
 			}
 		];
+
 		for (const tier of tiers) {
 			await ctx.db.insert('tiers', tier);
 		}
@@ -53,6 +55,7 @@ describe('gateway quota', () => {
 		await seedTiers(t);
 		const { asUser, threadId, subject } = await seedOwnedThread(t);
 		const executionSecret = 'gateway-secret';
+
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
 			submissionId: 'gateway-run',
 			threadId,
@@ -64,6 +67,7 @@ describe('gateway quota', () => {
 			executionSecret,
 			agentVersion: '0.3.2'
 		});
+
 		expect(created.gatewayUrl).toBe(gatewayUrl);
 		expect(created.protocolVersion).toBe(1);
 
@@ -72,11 +76,13 @@ describe('gateway quota', () => {
 			claimId: 'claim-gateway',
 			executionSecret
 		});
+
 		const credential = await t.mutation(api.agentRuntime.issueGatewayCredential, {
 			runId: created.runId,
 			claimId: 'claim-gateway',
 			executionSecret
 		});
+
 		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
 		expect(quota).toMatchObject({ userId: subject, tier: 'free', exhausted: false });
 		await expect(
@@ -92,6 +98,7 @@ describe('gateway quota', () => {
 		await seedTiers(t);
 		const { asUser, threadId, subject } = await seedOwnedThread(t);
 		const executionSecret = 'gateway-secret';
+
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
 			submissionId: 'gateway-run-invalid-units',
 			threadId,
@@ -103,11 +110,13 @@ describe('gateway quota', () => {
 			executionSecret,
 			agentVersion: '0.3.2'
 		});
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: created.runId,
 			claimId: 'claim-gateway-invalid-units',
 			executionSecret
 		});
+
 		const credential = await t.mutation(api.agentRuntime.issueGatewayCredential, {
 			runId: created.runId,
 			claimId: 'claim-gateway-invalid-units',
@@ -115,9 +124,11 @@ describe('gateway quota', () => {
 		});
 
 		const before = await asUser.query(api.usage.getMyUsage, {});
+
 		const beforeWeekly = before.meters
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly')?.used;
+
 		expect(beforeWeekly).toBe(0);
 
 		for (const units of [Number.NaN, Number.POSITIVE_INFINITY, -5, 2_000_000_000_000]) {
@@ -125,12 +136,15 @@ describe('gateway quota', () => {
 				t.mutation(api.gateway.consumeQuota, { token: credential.token, units })
 			).rejects.toThrow();
 		}
+
 		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
 		expect(quota).toMatchObject({ userId: subject, exhausted: false });
 		const after = await asUser.query(api.usage.getMyUsage, {});
+
 		const afterWeekly = after.meters
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly')?.used;
+
 		expect(afterWeekly).toBe(beforeWeekly);
 	}, 15_000);
 
@@ -148,6 +162,7 @@ describe('gateway quota', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'direct-openai-secret';
 		const claimId = 'direct-openai-claim';
+
 		const created = await createQueuedRun(
 			t,
 			asUser,
@@ -155,6 +170,7 @@ describe('gateway quota', () => {
 			'direct-openai-run',
 			executionSecret
 		);
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', created.runId, { completionProvider: 'openai' });
 		});

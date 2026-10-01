@@ -4,31 +4,38 @@ import path from 'node:path';
 import process from 'node:process';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
+
 const SOURCE_PACKAGE = path.join(ROOT, 'npm/sprocket');
 
 const TARGETS = JSON.parse(readFileSync(path.join(SOURCE_PACKAGE, 'targets.json'), 'utf8'));
 
 function argumentsFrom(argv) {
 	const values = new Map();
+
 	for (let index = 0; index < argv.length; index += 2) {
 		const key = argv[index];
 		const value = argv[index + 1];
+
 		if (!key?.startsWith('--') || !value) {
 			throw new Error(
 				'usage: build-npm-packages.mjs --version VERSION --artifacts DIR --web DIR --output DIR'
 			);
 		}
+
 		values.set(key.slice(2), value);
 	}
+
 	return values;
 }
 
 async function copyRootPackage(output, web, version) {
 	const destination = path.join(output, 'sprocket');
 	await mkdir(destination, { recursive: true });
+
 	for (const entry of ['bin', 'lib', 'README.md', 'targets.json']) {
 		await cp(path.join(SOURCE_PACKAGE, entry), path.join(destination, entry), { recursive: true });
 	}
+
 	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);
 	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
 	await cp(
@@ -50,9 +57,11 @@ async function copyPlatformPackage(output, artifacts, version, target) {
 	const binaryDestination = path.join(destination, 'bin', target.executable);
 	await mkdir(path.dirname(binaryDestination), { recursive: true });
 	await cp(path.join(artifacts, target.id, target.executable), binaryDestination);
+
 	if (target.os !== 'win32') {
 		await chmod(binaryDestination, 0o755);
 	}
+
 	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
 	await cp(path.join(ROOT, 'README.md'), path.join(destination, 'README.md'));
 	await cp(
@@ -74,9 +83,11 @@ async function copyPlatformPackage(output, artifacts, version, target) {
 		},
 		publishConfig: { access: 'public' }
 	};
+
 	if (target.libc) {
 		manifest.libc = [target.libc];
 	}
+
 	await writeJson(path.join(destination, 'package.json'), manifest);
 }
 
@@ -90,6 +101,7 @@ async function main() {
 	const artifacts = args.get('artifacts');
 	const output = args.get('output');
 	const web = args.get('web');
+
 	if (!version || !artifacts || !output || !web) {
 		throw new Error('version, artifacts, output, and web are required');
 	}

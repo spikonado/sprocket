@@ -12,6 +12,7 @@ describe('gateway token', () => {
 			userId: 'user_alice',
 			exp: Date.now() + 60_000
 		};
+
 		const token = await mintGatewayToken(secret, payload);
 		const verified = await verifyGatewayToken(secret, token);
 		expect(verified).toEqual(payload);

@@ -21,6 +21,7 @@ export default function WorkDisclosure({
 	const now = useTickingNow(inProgress);
 
 	const duration = elapsedSeconds(startedAtMs, inProgress ? now : completedAtMs);
+
 	const label = `${inProgress ? 'Working' : 'Worked'}${
 		duration === undefined ? '' : ` for ${formatElapsedDuration(duration)}`
 	}`;

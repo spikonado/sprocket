@@ -5,6 +5,7 @@ const artifactTypeSchema = z.enum(['markdown', 'html', 'react']);
 
 export function parseArtifactType(value: string): ArtifactType {
 	const parsed = artifactTypeSchema.safeParse(value);
+
 	return parsed.success ? parsed.data : 'markdown';
 }
 
@@ -29,6 +30,7 @@ ${body}
 /** Build a full HTML document that mounts agent-authored React/JSX as `App`. */
 export function buildReactPreviewDocument(source: string): string {
 	const body = escapeInlineScript(source.trim());
+
 	return previewDocumentShell(
 		`<style>
   html, body, #root { margin: 0; min-height: 100%; }
@@ -79,9 +81,11 @@ if (!__App) {
 /** Normalize HTML artifact content into a document suitable for iframe srcdoc. */
 export function buildHtmlPreviewDocument(source: string): string {
 	const trimmed = source.trim();
+
 	if (/^<!DOCTYPE html>/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
 		return trimmed;
 	}
+
 	return previewDocumentShell('', trimmed);
 }
 
@@ -93,8 +97,10 @@ export function buildArtifactPreviewDocument(
 	if (artifactType === 'react') {
 		return buildReactPreviewDocument(content);
 	}
+
 	if (artifactType === 'html') {
 		return buildHtmlPreviewDocument(content);
 	}
+
 	return null;
 }

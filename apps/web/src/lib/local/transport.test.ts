@@ -4,12 +4,14 @@ import { createLocalTransport, readEventStream } from './transport';
 
 function streamResponse(chunks: string[]): Response {
 	const encoder = new TextEncoder();
+
 	return new Response(
 		new ReadableStream({
 			start(controller) {
 				for (const chunk of chunks) {
 					controller.enqueue(encoder.encode(chunk));
 				}
+
 				controller.close();
 			}
 		})

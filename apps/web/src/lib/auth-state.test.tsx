@@ -5,6 +5,7 @@ import { authState, convexAuthLoading, convexAuthUserId, type AuthUser } from '.
 import { useStore } from './store';
 
 const initialState = authState.getSnapshot();
+
 const user: AuthUser = {
 	id: 'user-a',
 	email: 'a@example.com',
@@ -31,9 +32,11 @@ it('keeps the Convex identity stable through token refreshes and observes accoun
 			loadingStates.push(loading);
 		}, [loading]);
 	});
+
 	for (let refresh = 0; refresh < 5; refresh += 1) {
 		act(() => authState.update((state) => ({ ...state, user: { ...user }, error: null })));
 	}
+
 	act(() => authState.update((state) => ({ ...state, nativeSession: 'ready', error: 'UI error' })));
 	expect(identities).toEqual(['user-a']);
 	expect(loadingStates).toEqual([false]);

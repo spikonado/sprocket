@@ -57,11 +57,13 @@ export class DesktopUpdater {
 
 	subscribe(listener) {
 		this.#listeners.add(listener);
+
 		return () => this.#listeners.delete(listener);
 	}
 
 	#setState(change) {
 		this.#state = { ...this.#state, ...change };
+
 		for (const listener of this.#listeners) listener(this.getState());
 	}
 
@@ -77,6 +79,7 @@ export class DesktopUpdater {
 	async #run(status, operation) {
 		this.#setState({ status, error: null, progress: null });
 		this.#operation = Promise.resolve().then(operation);
+
 		try {
 			await this.#operation;
 		} catch (error) {
@@ -84,6 +87,7 @@ export class DesktopUpdater {
 		} finally {
 			this.#operation = null;
 		}
+
 		return this.getState();
 	}
 
@@ -96,6 +100,7 @@ export class DesktopUpdater {
 		) {
 			return this.getState();
 		}
+
 		return this.#run('checking', () => this.#updater.checkForUpdates());
 	}
 
@@ -108,17 +113,21 @@ export class DesktopUpdater {
 		) {
 			return this.getState();
 		}
+
 		return this.#run('downloading', () => this.#updater.downloadUpdate());
 	}
 
 	install() {
 		if (this.#state.status !== 'downloaded' || this.#operation) return false;
 		this.#setState({ status: 'installing', error: null });
+
 		try {
 			this.#updater.quitAndInstall(false);
+
 			return this.#state.status === 'installing';
 		} catch (error) {
 			this.#fail(error);
+
 			return false;
 		}
 	}
@@ -126,26 +135,32 @@ export class DesktopUpdater {
 
 export function stopUpdateProcess(child, graceMs = 5_000, killWaitMs = 5_000) {
 	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+
 	return new Promise((resolve, reject) => {
 		let timer;
+
 		const finish = (error) => {
 			clearTimeout(timer);
 			child.removeListener('exit', onExit);
 			child.removeListener('error', finish);
+
 			if (error) reject(error);
 			else resolve();
 		};
+
 		const onExit = () => finish();
 		child.once('exit', onExit);
 		child.once('error', finish);
 		timer = setTimeout(() => {
 			timer = setTimeout(() => finish(new Error('The local server did not stop.')), killWaitMs);
+
 			try {
 				child.kill('SIGKILL');
 			} catch (error) {
 				finish(error);
 			}
 		}, graceMs);
+
 		try {
 			child.kill('SIGTERM');
 		} catch (error) {

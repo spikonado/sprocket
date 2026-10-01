@@ -44,16 +44,19 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	const lockTooltipState = useLockTooltip();
 
 	const matched = options.find((option) => option.id === value);
+
 	const selectedOption =
 		matched && !matched.locked
 			? matched
 			: (options.find((option) => !option.locked) ?? matched ?? options[0] ?? null);
+
 	const filteredOptions =
 		searchable && searchQuery.trim()
 			? options.filter((option) =>
 					option.label.toLocaleLowerCase().includes(searchQuery.trim().toLocaleLowerCase())
 				)
 			: options;
+
 	const selectableFilteredOptions = filteredOptions.filter((option) => !option.locked);
 
 	function toggleMenu() {
@@ -63,21 +66,27 @@ export default function OptionSelector<TOption extends SelectorOption>({
 
 		const nextOpen = !isOpen;
 		setIsOpen(nextOpen);
+
 		if (nextOpen && searchable) queueMicrotask(() => searchRef.current?.focus());
 		else setSearchQuery('');
 	}
 
 	function selectOption(optionId: TOption['id'], event?: React.MouseEvent) {
 		const option = options.find((entry) => entry.id === optionId);
+
 		if (!option) return;
+
 		if (option.locked) {
 			if (event && option.lockTooltip)
 				lockTooltipState.showLockTooltip(event, option.lockTooltip, true);
+
 			return;
 		}
+
 		if (optionId !== value) {
 			onValueChange?.(optionId);
 		}
+
 		setIsOpen(false);
 		setSearchQuery('');
 		lockTooltipState.hideLockTooltip(true);
@@ -95,6 +104,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 		if (!isOpen) {
 			setSearchQuery('');
 			hideLockTooltip();
+
 			return;
 		}
 
@@ -172,6 +182,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 					<div className={cn('space-y-0.5', searchable && 'pt-1.5')}>
 						{filteredOptions.map((option) => {
 							const locked = Boolean(option.locked);
+
 							return (
 								<button
 									key={option.id}

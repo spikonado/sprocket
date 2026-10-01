@@ -48,6 +48,7 @@ export async function enqueueWebSearchJob(
 			context: { jobId: args.jobId, runId: args.runId, claimId: args.claimId }
 		}
 	);
+
 	await ctx.db.patch('executorJobs', args.jobId, { cloudWorkId: workId });
 }
 
@@ -56,9 +57,11 @@ export const getWebSearchJob = internalMutation({
 	returns: vWebSearchJobSnapshot,
 	handler: async (ctx, args) => {
 		const active = await claimedJobForActiveRun(ctx, args);
+
 		if (!active || !isCloudWebSearchKind(active.job.kind)) {
 			return null;
 		}
+
 		return { kind: active.job.kind, payload: active.job.payload };
 	}
 });
@@ -68,13 +71,17 @@ export const completeWebSearch = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const active = await claimedJobForActiveRun(ctx, args.context);
+
 		if (!active) {
 			return null;
 		}
+
 		if (args.result.kind === 'canceled') {
 			return null;
 		}
+
 		const { job, run } = active;
+
 		if (args.result.kind === 'success') {
 			await applyExecutorJobSuccess(ctx, {
 				job,
@@ -82,14 +89,17 @@ export const completeWebSearch = internalMutation({
 				result: args.result.returnValue,
 				claimId: args.context.claimId
 			});
+
 			return null;
 		}
+
 		await applyExecutorJobFailure(ctx, {
 			job,
 			run,
 			error: args.result.error,
 			claimId: args.context.claimId
 		});
+
 		return null;
 	}
 });

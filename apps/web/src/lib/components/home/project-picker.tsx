@@ -22,6 +22,7 @@ type RecentProjectPath = {
 	workspacePath: string;
 	displayName: string;
 };
+
 type ProjectPickerDesktopApi = Pick<DesktopApi, 'browseFilesystem' | 'resolveWorkspacePath'>;
 
 export type ProjectSelection = {
@@ -69,6 +70,7 @@ export default function ProjectPicker({
 		queryRef.current = next;
 		setQueryState(next);
 	}, []);
+
 	const setVolumeListState = useCallback((next: boolean) => {
 		volumeListRef.current = next;
 		setVolumeList(next);
@@ -118,6 +120,7 @@ export default function ProjectPicker({
 	const browseStateIsCurrent = query === browseQuery;
 	const currentBrowseParentPath = browseStateIsCurrent ? browseParentPath : '';
 	const currentBrowseEntries = browseStateIsCurrent ? browseEntries : [];
+
 	const filteredEntries = useMemo(() => {
 		if (!browseStateIsCurrent) {
 			return [];
@@ -128,6 +131,7 @@ export default function ProjectPicker({
 				.trim()
 				.replace(/^[\\/]+/, '')
 				.toLowerCase();
+
 			return browseEntries.filter(
 				(entry) =>
 					entry.name.toLowerCase().startsWith(needle) ||
@@ -136,6 +140,7 @@ export default function ProjectPicker({
 		}
 
 		const showHidden = browseFilterQuery.startsWith('.');
+
 		return browseEntries.filter(
 			(entry) =>
 				entry.name !== '..' &&
@@ -143,43 +148,53 @@ export default function ProjectPicker({
 				(showHidden || !entry.name.startsWith('.'))
 		);
 	}, [browseStateIsCurrent, volumeList, query, browseEntries, browseFilterQuery]);
+
 	const selectedPath = query.trim();
+
 	const resolvedWorkspacePath = resolveWorkspacePathFromBrowse({
 		query,
 		browseParentPath: currentBrowseParentPath,
 		browseEntries: currentBrowseEntries
 	});
+
 	const willCreateDirectory = workspacePathRequiresCreation({
 		query,
 		browseParentPath: currentBrowseParentPath,
 		browseEntries: currentBrowseEntries
 	});
+
 	const canSubmit =
 		browseStateIsCurrent &&
 		!volumeList &&
 		!errorMessage &&
 		resolvedWorkspacePath.length > 0 &&
 		(isFilesystemBrowseQuery(selectedPath) || currentBrowseParentPath.length > 0);
+
 	const submitLabel =
 		mode === 'reconnect' ? 'Reconnect' : willCreateDirectory ? 'Create & add' : 'Add';
+
 	const parentEntry = currentBrowseEntries.find((entry) => entry.name === '..');
+
 	const displayedEntries = useMemo(() => {
 		if (filteredEntries.length > 0) {
 			return filteredEntries;
 		}
 
 		const leaf = getBrowseLeafPathSegment(query).replace(/[\\/]+$/, '');
+
 		if (!leaf || browseFilterQuery.length === 0) {
 			return filteredEntries;
 		}
 
 		const parentName = currentBrowseParentPath.split(/[/\\]/).filter(Boolean).at(-1);
+
 		if (parentName && parentName.toLowerCase() === leaf.toLowerCase()) {
 			return [{ name: parentName, fullPath: currentBrowseParentPath }];
 		}
 
 		return filteredEntries;
 	}, [filteredEntries, query, browseFilterQuery, currentBrowseParentPath]);
+
 	const emptyListMessage =
 		isLoadingBrowse || !browseStateIsCurrent
 			? 'Loading directories…'
@@ -194,15 +209,18 @@ export default function ProjectPicker({
 							? 'Press Ctrl+Enter to create and reconnect this directory.'
 							: 'Press Ctrl+Enter to create and add this directory.'
 						: 'No matching directories in this path.';
+
 	const highlightedEntryIndex = displayedEntries.findIndex(
 		(entry) => entry.fullPath === highlightedPath
 	);
+
 	const highlightedEntry =
 		highlightedEntryIndex < 0 ? undefined : displayedEntries[highlightedEntryIndex];
 
 	useEffect(() => {
 		if (!open) {
 			setOpened(false);
+
 			return;
 		}
 
@@ -231,6 +249,7 @@ export default function ProjectPicker({
 		}
 
 		const nextQuery = query;
+
 		if (nextQuery === lastBrowseQueryRef.current) {
 			return;
 		}
@@ -288,8 +307,10 @@ export default function ProjectPicker({
 		}
 
 		const workspacePath = resolvedWorkspacePath;
+
 		if (!workspacePath) {
 			setErrorMessage('Enter a project directory path.');
+
 			return;
 		}
 
@@ -324,6 +345,7 @@ export default function ProjectPicker({
 
 		const currentIndex =
 			highlightedEntryIndex < 0 ? (offset === 1 ? -1 : 0) : highlightedEntryIndex;
+
 		const nextIndex = (currentIndex + offset + displayedEntries.length) % displayedEntries.length;
 		scrollHighlightRef.current = true;
 		setHighlightedPath(displayedEntries[nextIndex]?.fullPath ?? null);
@@ -353,12 +375,14 @@ export default function ProjectPicker({
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			onClose();
+
 			return;
 		}
 
 		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSubmit && !isSubmitting) {
 			event.preventDefault();
 			void confirmSelection();
+
 			return;
 		}
 
@@ -373,6 +397,7 @@ export default function ProjectPicker({
 		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 			event.preventDefault();
 			moveHighlight(event.key === 'ArrowDown' ? 1 : -1);
+
 			return;
 		}
 
@@ -383,6 +408,7 @@ export default function ProjectPicker({
 
 			event.preventDefault();
 			selectEntry(highlightedEntry);
+
 			return;
 		}
 
