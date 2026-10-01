@@ -1,6 +1,7 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { ChatGptStatus, DesktopApi } from '$lib/types/sprocket';
@@ -68,20 +69,31 @@ function mount(
 	const onConfigurationChange = vi.fn();
 	const onChatGptStatusChange = vi.fn();
 
-	const view = render(
-		<ConvexTestProvider client={client}>
+	function Harness() {
+		const [status, setStatus] = useState(chatGptStatus);
+
+		return (
 			<SettingsProviders
 				userId="user-a"
 				desktopApi={desktopApi}
 				openAiConfigured={openAiConfigured}
-				chatGptStatus={chatGptStatus}
+				chatGptStatus={status}
 				chatGptLoading={false}
 				chatGptStatusError={null}
 				loading={false}
 				loadError={null}
-				onChatGptStatusChange={onChatGptStatusChange}
+				onChatGptStatusChange={(next) => {
+					setStatus(next);
+					onChatGptStatusChange(next);
+				}}
 				onConfigurationChange={onConfigurationChange}
 			/>
+		);
+	}
+
+	const view = render(
+		<ConvexTestProvider client={client}>
+			<Harness />
 		</ConvexTestProvider>
 	);
 
@@ -353,7 +365,7 @@ it('signs an account out after confirmation and shows the server warning', async
 	});
 
 	const signedOutStatus = statusFixture();
-	const disconnect = vi.fn(async () => 'In-flight runs keep using the previous account.');
+	const disconnect = vi.fn(async () => 'Remote revocation could not be confirmed.');
 
 	const desktopApi = createChatGptApi({
 		disconnectChatGptAccount: disconnect,
@@ -365,7 +377,39 @@ it('signs an account out after confirmation and shows the server warning', async
 	fireEvent.click(screen.getByRole('button', { name: 'Confirm sign out' }));
 	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(signedOutStatus));
 	expect(disconnect).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-1' });
-	expect(screen.getByText('In-flight runs keep using the previous account.')).toBeTruthy();
+	expect(screen.getByText('Remote revocation could not be confirmed.')).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
+});
+
+it('forgets a signed-out account before a follow-up status check settles', async () => {
+	const pending = Promise.withResolvers<ChatGptStatus>();
+
+	const status = statusFixture({
+		accounts: [{ connectionId: 'conn-1', label: 'Account A', connected: true }],
+		activeConnectionId: 'conn-1',
+		models: [{ id: 'model-a', name: 'Model A' }]
+	});
+
+	const view = mount(new ConvexTestClient(), {
+		chatGptStatus: status,
+		desktopApi: createChatGptApi({
+			disconnectChatGptAccount: async () => null,
+			fetchChatGptStatus: () => pending.promise
+		})
+	});
+
+	fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Confirm sign out' }));
+	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(statusFixture()));
+	expect(screen.getByText('Not connected')).toBeTruthy();
+	await act(async () => {
+		pending.reject(new Error('Could not load remaining account status.'));
+	});
+	expect(await screen.findByRole('alert')).toHaveProperty(
+		'textContent',
+		'Could not load remaining account status.'
+	);
+	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
 });
 
 it('reconnects a signed-out account through the browser flow', async () => {

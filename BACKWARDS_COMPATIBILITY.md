@@ -21,15 +21,28 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### Forgotten SIWC accounts
+
+Older servers kept tokenless ChatGPT account records after sign-out. Loading
+`chatgpt-siwc.json` now removes tokenless records, clears active selections that
+refer to removed records, and removes empty user entries before saving the
+store. Interrupted-refresh records also lose their credentials during recovery
+and follow the same cleanup. Records left by terminal refresh failures follow
+the same rule on restart. Cleanup drops any retained revocation tokens without
+network calls. The host ID stays unchanged. Remove this load-time cleanup
+only after releases that retained signed-out records are outside the
+supported direct-upgrade window and supported stores have been rewritten.
+
 ### Replaced SIWC sessions
 
 Local SIWC accounts accept an absent `retiredRefreshTokens` list in older files.
 Reconnects record replaced refresh tokens there before trying revocation, then
 remove confirmed revocations. Sign-out attempts every retained revocation before
-clearing the tokens. Remove the default only after a migration writes this field
-into every supported older store and direct upgrades from unmigrated stores no
-longer need support. An unreadable credential file disables only ChatGPT, leaves
-the file untouched, and reports repair guidance in settings.
+deleting the local account record. Remove the default only after a migration
+writes this field into every supported older store and direct upgrades from
+unmigrated stores no longer need support. An unreadable credential file
+disables only ChatGPT, leaves the file untouched, and reports repair guidance
+in settings.
 
 ### CLI bootstrap error guidance
 

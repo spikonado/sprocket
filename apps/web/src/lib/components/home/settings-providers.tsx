@@ -263,7 +263,7 @@ export default function SettingsProviders({
 		setChatGptPending(true);
 		setChatGptError(null);
 		const userIdAtStart = userId;
-		const generation = generationRef.current;
+		const generation = ++generationRef.current;
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
@@ -271,11 +271,29 @@ export default function SettingsProviders({
 				connectionId
 			});
 
-			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
-
 			if (generation !== generationRef.current || api !== desktopApi) return;
 			setConfirmSignOut(null);
 			setSignOutWarning(warning);
+
+			if (chatGptStatus) {
+				const activeConnectionId =
+					chatGptStatus.activeConnectionId === connectionId
+						? null
+						: chatGptStatus.activeConnectionId;
+
+				onChatGptStatusChange({
+					accounts: chatGptStatus.accounts.filter(
+						(account) => account.connectionId !== connectionId
+					),
+					activeConnectionId,
+					models: activeConnectionId ? chatGptStatus.models : [],
+					loginAvailable: chatGptStatus.loginAvailable
+				});
+			}
+
+			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
+
+			if (generation !== generationRef.current || api !== desktopApi) return;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -442,6 +460,10 @@ export default function SettingsProviders({
 													)}
 													{confirmSignOut === account.connectionId ? (
 														<>
+															<p className="text-muted-foreground text-[12px]">
+																Sign out and remove this account's saved login data from this
+																computer?
+															</p>
 															<button
 																type="button"
 																className="text-destructive text-[13px] disabled:opacity-50"
