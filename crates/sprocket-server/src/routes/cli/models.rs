@@ -119,7 +119,7 @@ fn select(
 ) -> anyhow::Result<Settings> {
     validate(&catalog)?;
     let model_overridden = request.model.is_some();
-    let model = request
+    let mut model = request
         .model
         .clone()
         .or_else(|| {
@@ -129,9 +129,19 @@ fn select(
                 .map(|thread| thread.selected_model.clone())
         })
         .unwrap_or_else(|| catalog.default_model_id.clone());
+    let model_fallback = !model_overridden && !catalog.models.iter().any(|entry| entry.id == model);
+    if model_fallback {
+        model = catalog.default_model_id.clone();
+    }
     let fast = request
         .fast
-        .or_else(|| context.thread.as_ref().map(|thread| thread.fast_mode))
+        .or_else(|| {
+            context
+                .thread
+                .as_ref()
+                .filter(|_| !model_fallback)
+                .map(|thread| thread.fast_mode)
+        })
         .unwrap_or(false);
     let entry = catalog
         .models
@@ -142,7 +152,7 @@ fn select(
         .reasoning
         .clone()
         .or_else(|| {
-            if model_overridden {
+            if model_overridden || model_fallback {
                 None
             } else {
                 context
@@ -152,7 +162,7 @@ fn select(
             }
         })
         .unwrap_or_else(|| {
-            if model_overridden {
+            if model_overridden || model_fallback {
                 entry.default_reasoning_effort.clone()
             } else {
                 catalog.default_reasoning_effort.clone()
@@ -287,6 +297,37 @@ mod tests {
         assert_eq!(settings.model, "pro");
         assert_eq!(settings.reasoning, "max");
         assert!(!settings.fast);
+    }
+
+    #[test]
+    fn stale_saved_models_resume_with_fresh_default_settings() {
+        let mut catalog = catalog();
+        catalog.models[0].default_reasoning_effort = "medium".into();
+        catalog.models[0].service_tiers = vec!["standard".into()];
+        let settings = select(
+            catalog,
+            &thread_context("removed", "max", true),
+            &run_request(),
+        )
+        .unwrap();
+        assert_eq!(settings.model, "default");
+        assert_eq!(settings.reasoning, "medium");
+        assert!(!settings.fast);
+    }
+
+    #[test]
+    fn stale_model_fallback_preserves_explicit_options() {
+        let context = thread_context("removed", "max", true);
+        let mut request = run_request();
+        request.reasoning = Some("medium".into());
+        request.fast = Some(true);
+        let settings = select(catalog(), &context, &request).unwrap();
+        assert_eq!(settings.model, "default");
+        assert_eq!(settings.reasoning, "medium");
+        assert!(settings.fast);
+
+        request.model = Some("removed".into());
+        assert!(select(catalog(), &context, &request).is_err());
     }
 
     #[test]
