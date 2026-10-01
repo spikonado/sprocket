@@ -38,10 +38,6 @@ async function copyRootPackage(output, web, version) {
 
 	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);
 	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
-	await cp(
-		path.join(ROOT, 'THIRD_PARTY_NOTICES.md'),
-		path.join(destination, 'THIRD_PARTY_NOTICES.md')
-	);
 	await cp(web, path.join(destination, 'web'), { recursive: true });
 
 	const manifest = JSON.parse(await readFile(path.join(SOURCE_PACKAGE, 'package.json'), 'utf8'));
@@ -64,10 +60,6 @@ async function copyPlatformPackage(output, artifacts, version, target) {
 
 	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
 	await cp(path.join(ROOT, 'README.md'), path.join(destination, 'README.md'));
-	await cp(
-		path.join(ROOT, 'THIRD_PARTY_NOTICES.md'),
-		path.join(destination, 'THIRD_PARTY_NOTICES.md')
-	);
 
 	const manifest = {
 		name: target.packageName,
@@ -76,7 +68,7 @@ async function copyPlatformPackage(output, artifacts, version, target) {
 		license: 'FSL-1.1-ALv2',
 		os: [target.os],
 		cpu: [target.cpu],
-		files: ['bin/', 'THIRD_PARTY_NOTICES.md'],
+		files: ['bin/'],
 		repository: {
 			type: 'git',
 			url: 'git+https://github.com/spikonado/sprocket.git'
