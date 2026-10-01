@@ -1,15 +1,32 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { ChatGptStatus, DesktopApi } from '$lib/types/sprocket';
 import SettingsProviders from './settings-providers';
 
+const loginWindow = {
+	opener: null,
+	close: vi.fn(),
+	location: { replace: vi.fn() }
+};
+
+const openLoginWindow = vi.fn<() => typeof loginWindow | null>(() => loginWindow);
+
+beforeEach(() => {
+	openLoginWindow.mockReset().mockReturnValue(loginWindow);
+	loginWindow.close.mockReset();
+	loginWindow.location.replace.mockReset();
+	vi.stubGlobal('open', openLoginWindow);
+	vi.stubGlobal('sprocketDesktopBridge', undefined);
+});
+
 afterEach(() => {
 	cleanup();
 	vi.useRealTimers();
+	vi.unstubAllGlobals();
 });
 
 function statusFixture(overrides: Partial<ChatGptStatus> = {}): ChatGptStatus {
@@ -156,7 +173,7 @@ it('explains that local sign-in is unavailable when the server cannot log in', (
 	expect(screen.queryByRole('button', { name: 'Continue with ChatGPT' })).toBeNull();
 });
 
-it('completes browser sign-in and reports the refreshed status', async () => {
+it('opens browser sign-in on the first click and reports the refreshed status', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();
 
@@ -184,11 +201,113 @@ it('completes browser sign-in and reports the refreshed status', async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
 	expect(start).toHaveBeenCalledWith({ userId: 'user-a' });
-	expect(screen.getByText('Waiting for approval…')).toBeTruthy();
+	expect(openLoginWindow).toHaveBeenCalledWith('about:blank', '_blank');
+	expect(loginWindow.location.replace).toHaveBeenCalledWith(
+		'https://auth.openai.test/authorize?state=state-1'
+	);
+	expect(screen.getByText('Signing in…')).toBeTruthy();
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(1_500);
 	});
 	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(connectedStatus);
+});
+
+it('opens desktop sign-in without creating a browser popup', async () => {
+	vi.useFakeTimers();
+	const openExternal = vi.fn(async () => {});
+	vi.stubGlobal('sprocketDesktopBridge', { openExternal });
+
+	const desktopApi = createChatGptApi({
+		startChatGptBrowserLogin: async () => ({
+			state: 'state-1',
+			authorizeUrl: 'https://auth.openai.test/authorize'
+		}),
+		fetchChatGptBrowserLoginResult: () => new Promise(() => {})
+	});
+
+	mount(new ConvexTestClient(), { desktopApi });
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	expect(openExternal).toHaveBeenCalledWith('https://auth.openai.test/authorize');
+	expect(openLoginWindow).toHaveBeenCalledTimes(0);
+	expect(screen.getByText('Signing in…')).toBeTruthy();
+});
+
+it('reports a blocked browser popup before starting a server login', async () => {
+	openLoginWindow.mockReturnValue(null);
+	const start = vi.fn();
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({ startChatGptBrowserLogin: start })
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	expect(await screen.findByRole('alert')).toHaveProperty(
+		'textContent',
+		'Your browser blocked the sign-in window. Allow popups and try again.'
+	);
+	expect(start).toHaveBeenCalledTimes(0);
+});
+
+it('cancels a server login when the desktop browser cannot open', async () => {
+	const openExternal = vi.fn(async () => {
+		throw new Error('Could not open the browser.');
+	});
+
+	vi.stubGlobal('sprocketDesktopBridge', { openExternal });
+
+	const cancel = vi.fn(async () => {});
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	expect(await screen.findByRole('alert')).toHaveProperty(
+		'textContent',
+		'Could not open the browser.'
+	);
+	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+});
+
+it('closes the reserved popup when starting sign-in fails', async () => {
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => {
+				throw new Error('Could not start sign-in.');
+			}
+		})
+	});
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	expect(await screen.findByRole('alert')).toHaveProperty(
+		'textContent',
+		'Could not start sign-in.'
+	);
+	expect(loginWindow.close).toHaveBeenCalledOnce();
+});
+
+it('reserves the popup before waiting for sign-in and closes a stale start', async () => {
+	const started = Promise.withResolvers<{ state: string; authorizeUrl: string }>();
+	const cancel = vi.fn(async () => {});
+
+	const view = mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: () => started.promise,
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	expect(openLoginWindow).toHaveBeenCalledOnce();
+	view.unmount();
+	await act(async () => {
+		started.resolve({ state: 'state-1', authorizeUrl: 'https://auth.openai.test/authorize' });
+	});
+	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(loginWindow.close).toHaveBeenCalledOnce();
 });
 
 it('surfaces server-side login errors from the result poll', async () => {
@@ -281,10 +400,9 @@ it('starts a fresh login after the signed-in user changes', async () => {
 
 	const view = render(renderUser('user-a'));
 	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
-	await screen.findByRole('link', { name: 'Open ChatGPT' });
+	await screen.findByText('Signing in…');
 	view.rerender(renderUser('user-b'));
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-user-a' });
-	expect(screen.queryByRole('link', { name: 'Open ChatGPT' })).toBeNull();
 	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	await waitFor(() => expect(start).toHaveBeenLastCalledWith({ userId: 'user-b' }));
 });
@@ -326,7 +444,7 @@ it('ignores a stale login completion after the user cancels and starts again', a
 		firstResult.resolve({ status: 'complete' });
 	});
 	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
-	expect(screen.getByText('Waiting for approval…')).toBeTruthy();
+	expect(screen.getByText('Signing in…')).toBeTruthy();
 });
 
 it('switches the active account and reports the refreshed status', async () => {
@@ -355,7 +473,7 @@ it('switches the active account and reports the refreshed status', async () => {
 	expect(select).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-2' });
 });
 
-it('signs an account out after confirmation and shows the server warning', async () => {
+it('signs an account out on the first click and shows the server warning', async () => {
 	const client = new ConvexTestClient();
 
 	const status = statusFixture({
@@ -374,7 +492,6 @@ it('signs an account out after confirmation and shows the server warning', async
 
 	const view = mount(client, { chatGptStatus: status, desktopApi });
 	fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
-	fireEvent.click(screen.getByRole('button', { name: 'Confirm sign out' }));
 	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(signedOutStatus));
 	expect(disconnect).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-1' });
 	expect(screen.getByText('Remote revocation could not be confirmed.')).toBeTruthy();
@@ -399,7 +516,6 @@ it('forgets a signed-out account before a follow-up status check settles', async
 	});
 
 	fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
-	fireEvent.click(screen.getByRole('button', { name: 'Confirm sign out' }));
 	await waitFor(() => expect(view.onChatGptStatusChange).toHaveBeenCalledWith(statusFixture()));
 	expect(screen.getByText('Not connected')).toBeTruthy();
 	await act(async () => {
@@ -436,5 +552,6 @@ it('reconnects a signed-out account through the browser flow', async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
 	});
 	expect(start).toHaveBeenCalledWith({ userId: 'user-a', connectionId: 'conn-1' });
-	expect(screen.getByText('Waiting for approval…')).toBeTruthy();
+	expect(loginWindow.location.replace).toHaveBeenCalledWith('https://auth.openai.test/authorize');
+	expect(screen.getByText('Signing in…')).toBeTruthy();
 });
