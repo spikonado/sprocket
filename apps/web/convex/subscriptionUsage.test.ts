@@ -86,9 +86,11 @@ describe('subscription and usage backend', () => {
 		await seedTiers(t);
 		const userId = 'user_legacy_usage';
 		const today = new Date();
+
 		const monday =
 			Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) -
 			((today.getUTCDay() + 6) % 7) * 86_400_000;
+
 		await t.mutation(components.rateLimiter.lib.rateLimit, {
 			name: 'modelUsageWeekly',
 			key: userId,
@@ -102,8 +104,10 @@ describe('subscription and usage backend', () => {
 			reserve: true
 		});
 		const asUser = t.withIdentity({ subject: userId });
+
 		const used = async () =>
 			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows[0]?.used;
+
 		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
@@ -309,6 +313,7 @@ describe('subscription and usage backend', () => {
 		await seedTiers(t);
 		const userId = 'user_upgrade';
 		const now = Date.now();
+
 		const subscription = {
 			userId,
 			tier: 'pro',
@@ -322,14 +327,17 @@ describe('subscription and usage backend', () => {
 			billingPeriodEnd: now + 30 * 86_400_000,
 			cancelAtNextBillingDate: false
 		};
+
 		await t.mutation(internal.billing.upsertDodoSubscription, subscription);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
 			count: 8 * UNITS_PER_DOLLAR
 		});
 		const asUser = t.withIdentity({ subject: userId });
+
 		const weeklyUsed = async () =>
 			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows[0]?.used;
+
 		expect(await weeklyUsed()).toBe(8 * UNITS_PER_DOLLAR);
 
 		await t.mutation(internal.billing.upsertDodoSubscription, {

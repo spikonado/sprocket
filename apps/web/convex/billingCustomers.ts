@@ -24,9 +24,11 @@ export const getManageable = internalQuery({
 	args: { userId: v.string() },
 	handler: async (ctx, { userId }) => {
 		const subscription = await getSubscriptionDoc(ctx, userId);
+
 		if (subscription?.status !== 'active' || !subscription.dodoSubscriptionId) {
 			return null;
 		}
+
 		return await ctx.db
 			.query('billingCustomers')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))

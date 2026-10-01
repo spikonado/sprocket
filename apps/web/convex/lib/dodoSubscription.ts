@@ -16,7 +16,10 @@ export function resolveSubscriptionTier({
 	if (checkoutTier && metadataTier && checkoutTier !== metadataTier) {
 		throw new Error('Dodo subscription tier metadata does not match its checkout reservation.');
 	}
+
 	if (checkoutTier) return checkoutTier;
+
 	if (preferConfiguredTier) return configuredTier ?? undefined;
+
 	return existingTier ?? metadataTier ?? configuredTier ?? undefined;
 }

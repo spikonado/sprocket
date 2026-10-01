@@ -4,11 +4,13 @@ import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { initConvexTest } from './test.setup';
 
 const ENV_KEYS = ['DODO_PAYMENTS_API_KEY', 'DODO_PAYMENTS_ENVIRONMENT'] as const;
+
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
 	for (const key of ENV_KEYS) {
 		const value = originalEnv[key];
+
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
 	}
@@ -17,6 +19,7 @@ afterEach(() => {
 describe('public pricing catalog', () => {
 	it('caches Dodo prices until their expiration', async () => {
 		const t = initConvexTest();
+
 		const tierPrices = [
 			{
 				tierId: 'team',
@@ -43,6 +46,7 @@ describe('public pricing catalog', () => {
 				}
 			}
 		];
+
 		await t.mutation(internal.pricingData.cacheTierPrices, {
 			cacheKey: 'test:monthly:annual',
 			tierPrices,
@@ -145,6 +149,7 @@ describe('public pricing catalog', () => {
 				annualProductId: 'prod_team_annual'
 			});
 		});
+
 		const tierPrices = [
 			{
 				tierId: 'team',
@@ -171,6 +176,7 @@ describe('public pricing catalog', () => {
 				}
 			}
 		];
+
 		await t.mutation(internal.pricingData.cacheTierPrices, {
 			cacheKey: 'test_mode:team:annual:prod_team_annual|team:monthly:prod_team_monthly',
 			tierPrices,

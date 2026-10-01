@@ -54,6 +54,7 @@ function publicPlanFromConfig(
 }
 
 const vOptionalDodoPrice = v.union(v.null(), vDodoPublicPrice);
+
 const vPublicPricingCatalog = v.object({
 	plans: v.array(
 		v.object({
@@ -83,9 +84,11 @@ async function retrieveRecurringPrice(
 	interval: BillingInterval
 ) {
 	const product = await client.products.retrieve(productId);
+
 	if (product.price.type !== 'recurring_price') {
 		throw new Error(`Dodo product ${productId} is not a recurring subscription.`);
 	}
+
 	if (
 		!matchesBillingInterval(
 			interval,
@@ -95,8 +98,10 @@ async function retrieveRecurringPrice(
 	) {
 		throw new Error(`Dodo product ${productId} does not match the ${interval} billing interval.`);
 	}
+
 	if (product.price.price <= 0)
 		throw new Error(`Dodo product ${productId} does not have a paid price.`);
+
 	return {
 		productId: product.product_id,
 		name: product.name ?? null,
@@ -125,6 +130,7 @@ export const createCheckoutSession = internalAction({
 	handler: async (_ctx, args) => {
 		const client = createDodoClient();
 		await retrieveRecurringPrice(client, args.productId, args.interval);
+
 		const session = await client.checkoutSessions.create(
 			{
 				product_cart: [{ product_id: args.productId, quantity: 1 }],
@@ -140,7 +146,9 @@ export const createCheckoutSession = internalAction({
 			},
 			{ headers: { 'Idempotency-Key': args.attemptId } }
 		);
+
 		if (!session.checkout_url) throw new Error('Checkout session did not return a URL.');
+
 		return { checkoutUrl: session.checkout_url };
 	}
 });
@@ -153,25 +161,33 @@ export const getPublicCatalog = action({
 			internal.pricingData.getPublicPlans,
 			{}
 		);
+
 		const emptyPlans = tierConfigs.map((plan) =>
 			publicPlanFromConfig(plan, { monthly: null, annual: null })
 		);
+
 		const configuredProducts = tierConfigs.flatMap((plan) =>
 			(['monthly', 'annual'] as const).flatMap((interval) => {
 				const productId = interval === 'monthly' ? plan.monthlyProductId : plan.annualProductId;
+
 				return productId ? [{ tierId: plan.id, interval, productId }] : [];
 			})
 		);
+
 		const productOwners = new Map<string, { tierId: string; interval: BillingInterval }>();
+
 		for (const product of configuredProducts) {
 			const owner = productOwners.get(product.productId);
+
 			if (owner) {
 				throw new Error(
 					`Dodo product "${product.productId}" is assigned to both ${owner.tierId} ${owner.interval} and ${product.tierId} ${product.interval}.`
 				);
 			}
+
 			productOwners.set(product.productId, product);
 		}
+
 		if (configuredProducts.length === 0 || !process.env.DODO_PAYMENTS_API_KEY?.trim()) {
 			return { plans: emptyPlans };
 		}
@@ -181,7 +197,9 @@ export const getPublicCatalog = action({
 				.map(({ tierId, interval, productId }) => `${tierId}:${interval}:${productId}`)
 				.sort()
 				.join('|')}`;
+
 			const now = Date.now();
+
 			let tierPrices: Array<{
 				tierId: string;
 				interval: BillingInterval;
@@ -190,8 +208,10 @@ export const getPublicCatalog = action({
 				cacheKey,
 				now
 			});
+
 			if (!tierPrices) {
 				const client = createDodoClient();
+
 				const retrieved = await Promise.all(
 					configuredProducts.map(async ({ tierId, interval, productId }) => ({
 						tierId,
@@ -199,12 +219,15 @@ export const getPublicCatalog = action({
 						price: await retrieveRecurringPrice(client, productId, interval)
 					}))
 				);
+
 				for (const plan of tierConfigs) {
 					const prices = retrieved.filter((entry) => entry.tierId === plan.id);
+
 					if (prices.length === 2 && prices[0].price.currency !== prices[1].price.currency) {
 						throw new Error(`Dodo products for tier "${plan.id}" use different currencies.`);
 					}
 				}
+
 				tierPrices = retrieved;
 				await ctx.runMutation(internal.pricingData.cacheTierPrices, {
 					cacheKey,
@@ -212,6 +235,7 @@ export const getPublicCatalog = action({
 					expiresAt: now + DODO_PRICE_CACHE_TTL_MS
 				});
 			}
+
 			const plans = tierConfigs.map((plan) =>
 				publicPlanFromConfig(plan, {
 					monthly:
@@ -222,9 +246,11 @@ export const getPublicCatalog = action({
 							?.price ?? null
 				})
 			);
+
 			return { plans };
 		} catch (error) {
 			console.error('Could not load Dodo product prices.', error);
+
 			return { plans: emptyPlans };
 		}
 	}
