@@ -404,15 +404,18 @@ impl ChatGptService {
                     .as_ref()
                     .is_some_and(|tokens| tokens.refresh_in_flight)
                 {
-                    account.tokens = None;
+                    if let Some(tokens) = account.tokens.take() {
+                        account.retired_refresh_tokens.push(tokens.refresh_token);
+                    }
                     account.session_id = Uuid::new_v4().to_string();
                 }
             }
-            accounts.accounts.retain(|account| account.tokens.is_some());
-            let active_survived = accounts
-                .accounts
-                .iter()
-                .any(|account| Some(&account.connection_id) == accounts.active.as_ref());
+            accounts.accounts.retain(|account| {
+                account.tokens.is_some() || !account.retired_refresh_tokens.is_empty()
+            });
+            let active_survived = accounts.accounts.iter().any(|account| {
+                account.tokens.is_some() && Some(&account.connection_id) == accounts.active.as_ref()
+            });
             if !active_survived {
                 accounts.active = None;
             }
@@ -835,6 +838,15 @@ impl ChatGptService {
         user: &str,
         connection: &str,
     ) -> anyhow::Result<Option<String>> {
+        self.forget(user, connection, false).await
+    }
+
+    async fn forget(
+        &self,
+        user: &str,
+        connection: &str,
+        only_if_tokenless: bool,
+    ) -> anyhow::Result<Option<String>> {
         let service = self.clone();
         let user = user.to_owned();
         let connection = connection.to_owned();
@@ -842,8 +854,11 @@ impl ChatGptService {
             let mut state = service.state.lock().await;
             let mut candidate = state.clone();
             let account = candidate.users.get_mut(&user)
-                .and_then(|accounts| accounts.accounts.iter_mut().find(|account| account.connection_id == connection))
-                .context("Saved ChatGPT account was not found.")?;
+                .and_then(|accounts| accounts.accounts.iter_mut().find(|account| account.connection_id == connection));
+            if only_if_tokenless && account.as_ref().is_none_or(|account| account.tokens.is_some()) {
+                return Ok(None);
+            }
+            let account = account.context("Saved ChatGPT account was not found.")?;
             if let Some(tokens) = &mut account.tokens {
                 tokens.refresh_in_flight = true;
             }
@@ -1037,6 +1052,30 @@ impl ChatGptService {
         let user = user.to_owned();
         tokio::spawn(async move {
             let mut error = service.storage_error.clone();
+            if error.is_none() {
+                let forgotten = {
+                    let state = service.state.lock().await;
+                    state
+                        .users
+                        .get(&user)
+                        .map(|accounts| {
+                            accounts
+                                .accounts
+                                .iter()
+                                .filter(|account| account.tokens.is_none())
+                                .map(|account| account.connection_id.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                };
+                for connection in forgotten {
+                    match service.forget(&user, &connection, true).await {
+                        Ok(Some(warning)) => error = Some(warning),
+                        Ok(None) => {}
+                        Err(failure) => error = Some(failure.to_string()),
+                    }
+                }
+            }
             let connected = {
                 let state = service.state.lock().await;
                 if service.persistence_pending.load(Ordering::Acquire) {
@@ -1582,9 +1621,12 @@ mod tests {
         let reloaded = ChatGptService::load(directory.path()).unwrap();
         let state = reloaded.state.lock().await;
         let accounts = &state.users["user-a"];
-        assert_eq!(accounts.accounts.len(), 1);
+        assert_eq!(accounts.accounts.len(), 2);
         assert_eq!(accounts.active, None);
-        let healthy = &accounts.accounts[0];
+        let recovered = &accounts.accounts[0];
+        assert!(recovered.tokens.is_none());
+        assert_eq!(recovered.retired_refresh_tokens, vec!["refresh"]);
+        let healthy = &accounts.accounts[1];
         assert_eq!(healthy.connection_id, "connection-2");
         assert!(healthy.tokens.is_some());
         assert_eq!(healthy.session_id, "healthy-session");
@@ -2151,6 +2193,37 @@ mod tests {
             serde_json::to_value(&disk.users["user-b"]).unwrap(),
             serde_json::to_value(&before.users["user-b"]).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn status_revokes_retained_tokens_before_forgetting_legacy_accounts() {
+        for revoke_status in [200, 500] {
+            let fixture = fixture().await;
+            fixture.provider.set_revoke_status(revoke_status);
+            let mut signed_out = account("signed-out", "client-old", "subject-old", None);
+            signed_out.retired_refresh_tokens = vec!["refresh-retired".into()];
+            insert(&fixture.service, "user-a", signed_out).await;
+
+            let reloaded =
+                ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+            assert_eq!(
+                stored_account(&reloaded, "user-a", "signed-out")
+                    .await
+                    .retired_refresh_tokens,
+                vec!["refresh-retired"]
+            );
+            let status = reloaded.status("user-a").await.unwrap();
+            assert!(status.accounts.is_empty());
+            assert!(status.models.is_empty());
+            assert_eq!(status.active_connection_id, None);
+            assert_eq!(status.error.is_some(), revoke_status != 200);
+            let posts = fixture.provider.posts("/revoke");
+            assert!(posts[0].contains("token=refresh-retired"));
+            assert!(posts[0].contains("client_id=client-old"));
+            let restarted =
+                ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+            assert!(restarted.state.lock().await.users.is_empty());
+        }
     }
 
     #[tokio::test]

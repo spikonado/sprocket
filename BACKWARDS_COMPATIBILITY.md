@@ -24,12 +24,14 @@ multi-turn regression passes with native item IDs.
 ### Forgotten SIWC accounts
 
 Older servers kept tokenless ChatGPT account records after sign-out. Loading
-`chatgpt-siwc.json` now removes tokenless records, clears active selections that
-refer to removed records, and removes empty user entries before saving the
-store. Interrupted-refresh records also lose their credentials during recovery
-and follow the same cleanup. Records left by terminal refresh failures follow
-the same rule on restart. Cleanup drops any retained revocation tokens without
-network calls. The host ID stays unchanged. Remove this load-time cleanup
+`chatgpt-siwc.json` now removes tokenless records with no outstanding revocations,
+clears tokenless active selections, and removes empty user entries before saving
+the store. Records with retained refresh tokens stay until a status check
+attempts their revocation through the normal sign-out path, then deletes them.
+Interrupted-refresh recovery moves the refresh token into that retained list.
+An unconfirmed revocation produces a status warning with ChatGPT settings
+guidance. Records left by terminal refresh failures follow the same rule.
+The host ID stays unchanged. Remove this cleanup
 only after releases that retained signed-out records are outside the
 supported direct-upgrade window and supported stores have been rewritten.
 
