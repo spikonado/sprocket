@@ -77,7 +77,7 @@ repos:
       - id: typescript-check
         name: typescript-check
         language: system
-        entry: bun turbo run check
+        entry: bun run check
         pass_filenames: false
 
       - id: prettier

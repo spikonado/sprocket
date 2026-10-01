@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"typecheck": "bun ../../../apps/web/node_modules/typescript/bin/tsc -p tsconfig.json"
+	}
+}
