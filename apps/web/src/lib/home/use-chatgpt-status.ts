@@ -55,6 +55,7 @@ export function useChatGptStatus(api: StatusApi | null, userId: string | null) {
 		let generation = 0;
 		let stopped = false;
 		let inFlight = false;
+		let refreshQueued = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let controller: AbortController | undefined;
 
@@ -90,12 +91,24 @@ export function useChatGptStatus(api: StatusApi | null, userId: string | null) {
 				inFlight = false;
 
 				if (!stopped) {
-					timer = setTimeout(() => void refresh(), 60_000);
+					timer = setTimeout(() => void refresh(), refreshQueued ? 0 : 60_000);
+					refreshQueued = false;
 				}
 			}
 		}
 
-		const refreshOnReturn = () => void refresh();
+		const refreshOnReturn = () => {
+			if (stopped || document.visibilityState === 'hidden') return;
+
+			if (inFlight) {
+				refreshQueued = true;
+
+				return;
+			}
+
+			void refresh();
+		};
+
 		subscriptionRef.current = {
 			api: client,
 			userId: user,

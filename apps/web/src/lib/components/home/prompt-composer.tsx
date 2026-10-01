@@ -48,6 +48,7 @@ export type PromptComposerProps = {
 	configuredProviders?: CompletionProvider[];
 	chatGptModelIds?: readonly string[] | null;
 	chatGptModels?: readonly { id: string; name: string }[];
+	chatGptStatusError?: string | null;
 	providersReady?: boolean;
 	selectedCompletionProvider?: CompletionProvider;
 	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
@@ -110,6 +111,7 @@ export function PromptComposerView({
 	configuredProviders = ['spikonado'],
 	chatGptModelIds = null,
 	chatGptModels = [],
+	chatGptStatusError = null,
 	providersReady = true,
 	selectedCompletionProvider = 'spikonado',
 	onSelectedCompletionProviderChange,
@@ -179,6 +181,7 @@ export function PromptComposerView({
 		configuredProviders.includes('chatgpt') &&
 		modelCatalog !== undefined &&
 		chatGptModelIds !== null &&
+		!chatGptStatusError &&
 		modelOptions.length === 0;
 
 	const selectedCatalogModel = modelCatalog
@@ -776,6 +779,11 @@ export function PromptComposerView({
 								</div>
 							) : null}
 							<div className="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
+								{selectedCompletionProvider === 'chatgpt' && chatGptStatusError && (
+									<p className="text-destructive mb-3 text-[12px] leading-5" role="alert">
+										{chatGptStatusError}
+									</p>
+								)}
 								{chatGptCatalogMismatch && (
 									<p className="text-muted-foreground mb-3 text-[12px] leading-5" role="status">
 										OpenAI's model list for this ChatGPT account has no models supported by the

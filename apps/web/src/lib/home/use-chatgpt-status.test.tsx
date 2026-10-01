@@ -92,6 +92,22 @@ it('coalesces refresh events and pauses polling while the window is hidden', asy
 	expect(fetchStatus).toHaveBeenCalledTimes(2);
 });
 
+it('checks again immediately when connectivity returns during a failed request', async () => {
+	const pending = Promise.withResolvers<ChatGptStatus>();
+	const fetchStatus = vi.fn(async () => connected).mockReturnValueOnce(pending.promise);
+	const { result } = mount(fetchStatus);
+	await act(async () => {
+		window.dispatchEvent(new Event('online'));
+		window.dispatchEvent(new Event('focus'));
+		pending.reject(new Error('offline'));
+	});
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(0);
+	});
+	expect(fetchStatus).toHaveBeenCalledTimes(2);
+	expect(result.current).toMatchObject({ status: connected, error: null });
+});
+
 it('keeps a published account change newer than an in-flight background status', async () => {
 	const pending = Promise.withResolvers<ChatGptStatus>();
 	const fetchStatus = vi.fn(() => pending.promise);

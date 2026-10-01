@@ -403,6 +403,14 @@ describe('PromptComposer model selection', () => {
 		expect(document.querySelector('[role="status"]')?.textContent).toContain(
 			'no models supported by the Spikonado gateway catalog'
 		);
+		view.rerender({
+			...view.props,
+			chatGptModelIds: [],
+			chatGptStatusError: 'OpenAI model lookup failed. Retrying.'
+		});
+		expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+			'OpenAI model lookup failed. Retrying.'
+		);
 		await pressKey(view.textarea, { key: 'Enter' });
 		view.rerender({
 			...view.props,
