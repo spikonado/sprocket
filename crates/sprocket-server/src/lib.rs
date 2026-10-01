@@ -32,13 +32,15 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use axum::Json;
 use axum::Router;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
+use axum_extra::extract::CookieJar;
 use sprocket_agent::{LiveCompletionHub, TranscriptStore};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 
 use crate::artifact_watch::ArtifactWatchers;
+use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchers;
 
 pub(crate) fn now_ms() -> u64 {
@@ -104,6 +106,35 @@ pub struct AppState {
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
     pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
     pub package_updates: Arc<package_update::PackageUpdateManager>,
+}
+
+impl AppState {
+    pub(crate) async fn require_session_user(
+        &self,
+        headers: &HeaderMap,
+        jar: &CookieJar,
+        user_id: &str,
+    ) -> Result<(), routes::api_error::ApiError> {
+        crate::auth::require_session_user(&self.auth, headers, jar, user_id)
+            .await
+            .map_err(routes::api_error::ApiError::unauthorized)?;
+        self.native_auth
+            .require_user(user_id)
+            .await
+            .map_err(routes::api_error::ApiError::unauthorized)
+    }
+
+    pub(crate) async fn convex_client_for(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<UserConvexClient> {
+        UserConvexClient::connect_with_fetcher(
+            &self.convex_deployment_url,
+            self.native_auth
+                .auth_token_fetcher_for_user(user_id.to_string()),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]

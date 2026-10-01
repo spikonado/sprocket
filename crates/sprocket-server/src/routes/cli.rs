@@ -370,13 +370,7 @@ struct Subscription {
 
 async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserConvexClient> {
     state.native_auth.require_user(user_id).await?;
-    UserConvexClient::connect_with_fetcher(
-        &state.convex_deployment_url,
-        state
-            .native_auth
-            .auth_token_fetcher_for_user(user_id.to_owned()),
-    )
-    .await
+    state.convex_client_for(user_id).await
 }
 
 async fn run_context(

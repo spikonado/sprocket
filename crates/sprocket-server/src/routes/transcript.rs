@@ -17,7 +17,6 @@ use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
@@ -137,7 +136,9 @@ async fn display_handler(
     jar: CookieJar,
     Json(payload): Json<DisplayRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     let limit = payload.limit.unwrap_or(12);
     if !(1..=40).contains(&limit)
         || payload.streams.len() > 64
@@ -184,7 +185,9 @@ async fn display_details_handler(
     jar: CookieJar,
     Json(payload): Json<DisplayDetailsRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     let limit = payload.limit.unwrap_or(5);
     if !(1..=5).contains(&limit)
         || [payload.after, payload.before]
@@ -221,33 +224,15 @@ async fn display_details_handler(
         .map_err(ApiError::internal)
 }
 
-async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
-    state
-        .native_auth
-        .require_user(user_id)
-        .await
-        .map_err(ApiError::unauthorized)
-}
-
-async fn require_session_user(
-    state: &AppState,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    user_id: &str,
-) -> Result<(), ApiError> {
-    crate::auth::require_session_user(&state.auth, headers, jar, user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(state, user_id).await
-}
-
 async fn watch_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<TranscriptScope>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     let session = state
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
@@ -283,7 +268,9 @@ async fn clear_handler(
     jar: CookieJar,
     Json(payload): Json<TranscriptScope>,
 ) -> Result<StatusCode, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     state
         .transcript_watchers
         .abort_thread(&payload.user_id, &payload.thread_id)
@@ -302,7 +289,9 @@ async fn attachment_handler(
     jar: CookieJar,
     Json(payload): Json<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     if let Some(response) = serve_cached_attachment(
         &state,
         &payload.user_id,
@@ -314,14 +303,10 @@ async fn attachment_handler(
         return Ok(response);
     }
 
-    let client = UserConvexClient::connect_with_fetcher(
-        &state.convex_deployment_url,
-        state
-            .native_auth
-            .auth_token_fetcher_for_user(payload.user_id.clone()),
-    )
-    .await
-    .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
+    let client = state
+        .convex_client_for(&payload.user_id)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
     let Some(remote) = client
         .attachment_download_by_storage_id(&payload.storage_id)
         .await

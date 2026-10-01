@@ -13,9 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
 use crate::AppState;
-use crate::auth::require_session_user;
 use crate::routes::api_error::ApiError;
-use crate::transcript_client::UserConvexClient;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -51,14 +49,9 @@ pub(super) async fn upload_handler(
     jar: CookieJar,
     request: Request,
 ) -> Result<Json<UploadedAttachment>, ApiError> {
-    require_session_user(&state.auth, &headers, &jar, &query.user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
     state
-        .native_auth
-        .require_user(&query.user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
+        .require_session_user(&headers, &jar, &query.user_id)
+        .await?;
     let media_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -76,13 +69,7 @@ async fn upload(
     media_type: String,
     request: Request,
 ) -> anyhow::Result<UploadedAttachment> {
-    let client = UserConvexClient::connect_with_fetcher(
-        &state.convex_deployment_url,
-        state
-            .native_auth
-            .auth_token_fetcher_for_user(query.user_id.clone()),
-    )
-    .await?;
+    let client = state.convex_client_for(&query.user_id).await?;
     let pending = state
         .transcript
         .pending_attachment_path(&query.user_id, "upload");
@@ -167,14 +154,9 @@ pub(super) async fn discard_handler(
     jar: CookieJar,
     Json(payload): Json<DiscardRequest>,
 ) -> Result<Json<bool>, ApiError> {
-    require_session_user(&state.auth, &headers, &jar, &payload.user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
     state
-        .native_auth
-        .require_user(&payload.user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
     discard(
         &state,
         &payload.user_id,
@@ -192,13 +174,7 @@ async fn discard(
     thread_id: Option<&str>,
     storage_id: &str,
 ) -> anyhow::Result<bool> {
-    let client = UserConvexClient::connect_with_fetcher(
-        &state.convex_deployment_url,
-        state
-            .native_auth
-            .auth_token_fetcher_for_user(user_id.to_string()),
-    )
-    .await?;
+    let client = state.convex_client_for(user_id).await?;
     let deleted: bool = client
         .mutate(
             "imageUploads:discardFile",
