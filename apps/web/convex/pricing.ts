@@ -112,6 +112,28 @@ async function retrieveRecurringPrice(
 	};
 }
 
+export const ensureCustomer = internalAction({
+	args: { userId: v.string(), email: v.optional(v.string()), name: v.string() },
+	returns: v.string(),
+	handler: async (ctx, { userId, email, name }): Promise<string> => {
+		const existing = await ctx.runQuery(internal.billingCustomers.get, { userId });
+
+		if (existing) return existing.dodoCustomerId;
+
+		if (!email?.trim()) throw new Error('Your account does not have a billing email.');
+
+		const customer = await createDodoClient().customers.create(
+			{ email: email.trim(), name, metadata: { userId } },
+			{ headers: { 'Idempotency-Key': `sprocket-customer:${userId}` } }
+		);
+
+		return await ctx.runMutation(internal.billingCustomers.remember, {
+			userId,
+			dodoCustomerId: customer.customer_id
+		});
+	}
+});
+
 export const createCheckoutSession = internalAction({
 	args: {
 		attemptId: v.string(),
@@ -121,10 +143,7 @@ export const createCheckoutSession = internalAction({
 		interval: vBillingInterval,
 		returnUrl: v.string(),
 		cancelUrl: v.string(),
-		customer: v.union(
-			v.object({ customer_id: v.string() }),
-			v.object({ email: v.string(), name: v.string() })
-		)
+		dodoCustomerId: v.string()
 	},
 	returns: v.object({ checkoutUrl: v.string() }),
 	handler: async (_ctx, args) => {
@@ -141,8 +160,12 @@ export const createCheckoutSession = internalAction({
 				},
 				return_url: args.returnUrl,
 				cancel_url: args.cancelUrl,
-				feature_flags: { allow_discount_code: true },
-				customer: args.customer
+				feature_flags: {
+					allow_discount_code: true,
+					allow_customer_editing_email: false,
+					always_create_new_customer: false
+				},
+				customer: { customer_id: args.dodoCustomerId }
 			},
 			{ headers: { 'Idempotency-Key': args.attemptId } }
 		);

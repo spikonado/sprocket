@@ -25,7 +25,7 @@ import { vBillingInterval, vSubscriptionStatus, vSubscriptionTier } from '@conve
 const dodo = new DodoPayments(components.dodopayments, {
 	identify: async (ctx): Promise<{ dodoCustomerId: string } | null> => {
 		const userId = await getUserId(ctx);
-		const customer = await ctx.runQuery(internal.billingCustomers.getManageable, { userId });
+		const customer = await ctx.runQuery(internal.billingCustomers.get, { userId });
 
 		return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
 	},
@@ -78,20 +78,15 @@ export const getMySubscription = query({
 		const subscription = await getSubscriptionDoc(ctx, userId);
 		const tier = subscriptionIsActive(subscription) ? subscription!.tier : 'free';
 
-		const customer = subscription?.dodoSubscriptionId
-			? await ctx.db
-					.query('billingCustomers')
-					.withIndex('by_userId', (query) => query.eq('userId', userId))
-					.unique()
-			: null;
+		const customer = await ctx.db
+			.query('billingCustomers')
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.unique();
 
 		return {
 			tier,
 			tierLabel: await getTierLabel(ctx, tier),
-			billingManaged:
-				subscriptionIsActive(subscription) &&
-				Boolean(subscription?.dodoSubscriptionId) &&
-				customer !== null
+			billingManaged: customer !== null
 		};
 	}
 });
@@ -128,14 +123,6 @@ export const checkout = action({
 
 		assertPaymentsConfigured();
 
-		const billingCustomer = await ctx.runQuery(internal.billingCustomers.get, {
-			userId: identity.subject
-		});
-
-		const email = identity.email?.trim();
-
-		if (!billingCustomer && !email) throw new Error('Your account does not have a billing email.');
-
 		const reserved = await ctx.runMutation(internal.billing.reserveCheckoutSession, {
 			userId: identity.subject,
 			attemptId: crypto.randomUUID(),
@@ -147,6 +134,12 @@ export const checkout = action({
 
 		if (reserved.kind === 'existing') return { checkout_url: reserved.checkoutUrl };
 
+		const dodoCustomerId: string = await ctx.runAction(internal.pricing.ensureCustomer, {
+			userId: identity.subject,
+			email: identity.email,
+			name: identity.name ?? identity.nickname ?? identity.email ?? identity.subject
+		});
+
 		const { return_url, cancel_url } = resolveMarketingPricingUrls(env, tier);
 
 		const session = await ctx.runAction(internal.pricing.createCheckoutSession, {
@@ -157,12 +150,7 @@ export const checkout = action({
 			interval: reserved.interval,
 			returnUrl: return_url,
 			cancelUrl: cancel_url,
-			customer: billingCustomer
-				? { customer_id: billingCustomer.dodoCustomerId }
-				: {
-						email: email!,
-						name: identity.name ?? identity.nickname ?? email!
-					}
+			dodoCustomerId
 		});
 
 		await ctx.runMutation(internal.billing.attachCheckoutSession, {
@@ -205,17 +193,13 @@ export const reserveCheckoutSession = internalMutation({
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
 
-		if (existing && existing.expiresAt > args.now) {
-			if (
-				existing.tierId !== args.tierId ||
-				existing.interval !== args.interval ||
-				existing.productId !== args.productId
-			) {
-				throw new Error(
-					`A ${existing.interval} checkout is still active. Try that plan again or change plans after it expires.`
-				);
-			}
-
+		if (
+			existing &&
+			existing.expiresAt > args.now &&
+			existing.tierId === args.tierId &&
+			existing.interval === args.interval &&
+			existing.productId === args.productId
+		) {
 			return existing.checkoutUrl
 				? { kind: 'existing' as const, checkoutUrl: existing.checkoutUrl }
 				: {
@@ -335,9 +319,11 @@ export const upsertDodoSubscription = internalMutation({
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
 
-		if (customer)
-			await ctx.db.patch('billingCustomers', customer._id, { dodoCustomerId: args.dodoCustomerId });
-		else {
+		if (customer && customer.dodoCustomerId !== args.dodoCustomerId) {
+			throw new Error('Dodo subscription customer does not match this account.');
+		}
+
+		if (!customer) {
 			await ctx.db.insert('billingCustomers', {
 				userId: args.userId,
 				dodoCustomerId: args.dodoCustomerId

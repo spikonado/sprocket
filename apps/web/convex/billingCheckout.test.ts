@@ -136,7 +136,7 @@ describe('marketing checkout URLs', () => {
 });
 
 describe('Dodo subscription persistence', () => {
-	it('reuses a matching checkout reservation and rejects plan changes until expiry', async () => {
+	it('reuses a matching checkout reservation and replaces it when the selection changes', async () => {
 		const t = initConvexTest();
 
 		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
@@ -172,27 +172,6 @@ describe('Dodo subscription persistence', () => {
 				productId: 'prod_monthly'
 			})
 		).resolves.toBe('pro');
-		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'user_checkout',
-				attemptId: 'attempt_team',
-				tierId: 'team',
-				interval: 'monthly',
-				productId: 'prod_monthly',
-				now: 2_000
-			})
-		).rejects.toThrow('A monthly checkout is still active.');
-		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				userId: 'user_checkout',
-				attemptId: 'attempt_3',
-				tierId: 'pro',
-				interval: 'annual',
-				productId: 'prod_annual',
-				now: 2_000
-			})
-		).rejects.toThrow('A monthly checkout is still active.');
-
 		await t.mutation(internal.billing.attachCheckoutSession, {
 			userId: 'user_checkout',
 			attemptId: 'attempt_1',
@@ -207,20 +186,46 @@ describe('Dodo subscription persistence', () => {
 				productId: 'prod_annual',
 				now: 3_000
 			})
-		).rejects.toThrow('A monthly checkout is still active.');
+		).resolves.toEqual({
+			kind: 'create',
+			attemptId: 'attempt_4',
+			interval: 'annual',
+			productId: 'prod_annual'
+		});
+
+		await t.mutation(internal.billing.attachCheckoutSession, {
+			userId: 'user_checkout',
+			attemptId: 'attempt_4',
+			checkoutUrl: 'https://checkout.example/session_annual'
+		});
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'user_checkout',
+				attemptId: 'attempt_retry',
+				tierId: 'pro',
+				interval: 'annual',
+				productId: 'prod_annual',
+				now: 3_500
+			})
+		).resolves.toEqual({
+			kind: 'existing',
+			checkoutUrl: 'https://checkout.example/session_annual'
+		});
 
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				userId: 'user_checkout',
 				attemptId: 'attempt_5',
-				tierId: 'pro',
+				tierId: 'team',
 				interval: 'monthly',
-				productId: 'prod_monthly',
+				productId: 'prod_team',
 				now: 4_000
 			})
 		).resolves.toEqual({
-			kind: 'existing',
-			checkoutUrl: 'https://checkout.example/session_1'
+			kind: 'create',
+			attemptId: 'attempt_5',
+			interval: 'monthly',
+			productId: 'prod_team'
 		});
 	});
 
@@ -353,7 +358,7 @@ describe('Dodo subscription persistence', () => {
 			})
 		).resolves.toBe('team');
 		await expect(
-			t.query(internal.billingCustomers.getManageable, { userId: args.userId })
+			t.query(internal.billingCustomers.get, { userId: args.userId })
 		).resolves.toMatchObject({ dodoCustomerId: 'cus_1' });
 	});
 

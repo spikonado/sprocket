@@ -1,6 +1,5 @@
 import { v } from 'convex/values';
-import { internalQuery } from '@convex/_generated/server';
-import { getSubscriptionDoc } from '@convex/lib/tiers';
+import { internalMutation, internalQuery } from '@convex/_generated/server';
 
 export const get = internalQuery({
 	args: { userId: v.string() },
@@ -20,18 +19,19 @@ export const getByDodoId = internalQuery({
 			.unique()
 });
 
-export const getManageable = internalQuery({
-	args: { userId: v.string() },
-	handler: async (ctx, { userId }) => {
-		const subscription = await getSubscriptionDoc(ctx, userId);
-
-		if (subscription?.status !== 'active' || !subscription.dodoSubscriptionId) {
-			return null;
-		}
-
-		return await ctx.db
+export const remember = internalMutation({
+	args: { userId: v.string(), dodoCustomerId: v.string() },
+	returns: v.string(),
+	handler: async (ctx, { userId, dodoCustomerId }) => {
+		const existing = await ctx.db
 			.query('billingCustomers')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
+
+		if (existing) return existing.dodoCustomerId;
+
+		await ctx.db.insert('billingCustomers', { userId, dodoCustomerId });
+
+		return dodoCustomerId;
 	}
 });
