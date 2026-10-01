@@ -18,7 +18,7 @@ impl CompletionClient for OpenAiReplayClient {
 
 pub(crate) struct OpenAiReplayModel(openai::responses_api::ResponsesCompletionModel);
 
-fn replay_contents(mut request: CompletionRequest) -> CompletionRequest {
+pub(crate) fn replay_contents(mut request: CompletionRequest) -> CompletionRequest {
     // Rig can omit empty reasoning items and regroup a turn's output. Replay
     // our reconstructed contents, not references to OpenAI's original items.
     request.chat_history.retain_mut(|message| {

@@ -32,3 +32,4 @@ pub use transcript::{
 };
 pub use types::CompletionProvider;
 pub use types::RunAgentRequest;
+pub use types::{ChatGptAccess, ChatGptCredentials};

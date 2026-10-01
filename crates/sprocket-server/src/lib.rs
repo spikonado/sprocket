@@ -1,5 +1,6 @@
 mod artifact_watch;
 mod auth;
+mod chatgpt_credentials;
 mod chatgpt_oauth;
 pub mod cli_protocol;
 mod cli_sessions;
@@ -88,6 +89,7 @@ pub struct AppState {
     pub(crate) lifetime: Arc<cli_sessions::ServerLifetime>,
     pub auth: Arc<auth::AuthState>,
     pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
+    pub(crate) chatgpt_credentials: Arc<chatgpt_credentials::ChatGptService>,
     pub(crate) chatgpt_oauth: Arc<chatgpt_oauth::PendingLogins>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
@@ -128,11 +130,16 @@ impl AppState {
         );
         let machine_identity =
             Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
+        let chatgpt_credentials = chatgpt_credentials::ChatGptService::load(&data_dir)
+            .expect("ChatGPT credential service");
+        let chatgpt_oauth =
+            chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
         Self {
             lifetime: cli_sessions::ServerLifetime::new(false),
             auth,
             native_auth: Arc::clone(&native_auth),
-            chatgpt_oauth: Arc::new(chatgpt_oauth::PendingLogins::default()),
+            chatgpt_credentials,
+            chatgpt_oauth,
             project_attachments,
             transcript,
             transcript_watchers,
@@ -218,12 +225,15 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
-    let pending_chatgpt_oauth = Arc::new(chatgpt_oauth::PendingLogins::default());
+    let chatgpt_credentials = chatgpt_credentials::ChatGptService::load(&data_dir)?;
+    let pending_chatgpt_oauth =
+        chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
 
     let state = AppState {
         lifetime: Arc::clone(&lifetime),
         auth,
         native_auth: Arc::clone(&native_auth),
+        chatgpt_credentials,
         chatgpt_oauth: Arc::clone(&pending_chatgpt_oauth),
         project_attachments,
         transcript,

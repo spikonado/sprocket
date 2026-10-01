@@ -22,7 +22,7 @@ full process topology.
 
 ## Boundaries
 
-The server does not store conversations or model credentials. Durable user,
+The server does not store durable conversations. Durable user,
 thread, run, and transcript state belongs to Convex. The server keeps local
 session data, an internal process-pairing credential, and this machine’s folder list (`workspacePath` plus
 `repositoryKey`). Convex threads store `repositoryKey`; the web app groups
@@ -86,12 +86,35 @@ session or caller-supplied user ID as proof of cloud ownership.
 The server binds locally by default. Static serving and API-only operation are
 two configurations of the same router rather than separate applications.
 
+## Local ChatGPT sign-in
+
+Rust owns sign in with ChatGPT, including dynamic client registration, PKCE,
+ID-token verification, token exchange, and rotating refresh tokens. The browser
+receives an authorization URL and polls a status endpoint. The callback listener
+binds an available IPv4 loopback port before sign-in starts. Remote browsers cannot
+start this flow and there is no device-login fallback.
+
+The server saves credentials in an owner-only private file in its data directory.
+Records belong to a Sprocket user and a verified OpenAI subject/client registration.
+Sign-out clears tokens but retains registration metadata for reconnecting. Agent
+runs pin the selected session and stop using it after sign-out or account changes.
+Inference and the visible model list use the public OpenAI API, not Convex or
+ChatGPT's private backend.
+
+Old cloud-held Codex grants cannot become SIWC grants. Convex retires those Vault
+objects and reports the old connection as disconnected. Users must sign in again
+locally. OpenAI documents this flow for open-source or locally hosted apps and
+directs paid or remotely hosted apps to its interest form. This implementation
+does not establish eligibility for Sprocket-managed cloud execution. Copying the
+credential file to another host is not a supported import mechanism.
+
 ## Main areas
 
 - `auth.rs`: local pairing and HTTP-only browser sessions.
 - `native_auth.rs`: native WorkOS login, credential persistence, and token
   refresh.
 - `routes/auth.rs`: local session endpoints and the native loopback callback.
+- `chatgpt_credentials.rs` and `chatgpt_oauth.rs`: local SIWC credentials and callback.
 - `project_attachments.rs`: local folder list (`workspacePath` + `repositoryKey`).
 - `routes/`: HTTP boundaries for configuration, workspaces, auth, and agents.
 - `static_dir.rs` and `static_files.rs`: web-build discovery and serving.

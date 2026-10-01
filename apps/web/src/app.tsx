@@ -103,6 +103,7 @@ import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sp
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveDesktopApi } from '$lib/local/client';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
+	ChatGptStatus,
 	DesktopApi,
 	ExecutorJob,
 	ThreadSummary,
@@ -213,7 +214,6 @@ export default function App({
 	}, [retryPending, convexAuth.isAuthenticated, convexAuth.isLoading, sawAuthLoadingDuringRetry]);
 
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
-	const refreshMyChatGptModels = useAction(api.providerCredentials.refreshChatGptModels);
 	const renameThreadRecord = useMutation(api.threads.rename);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
@@ -227,6 +227,9 @@ export default function App({
 	const [openAiConfigured, setOpenAiConfigured] = useState(false);
 	const [chatGptConfigured, setChatGptConfigured] = useState(false);
 	const [chatGptModelIds, setChatGptModelIds] = useState<string[] | null>(null);
+	const [chatGptStatus, setChatGptStatus] = useState<ChatGptStatus | null>(null);
+	const [chatGptStatusLoading, setChatGptStatusLoading] = useState(false);
+	const [chatGptStatusError, setChatGptStatusError] = useState<string | null>(null);
 	const [providerConfigurationLoading, setProviderConfigurationLoading] = useState(false);
 	const [providerConfigurationReady, setProviderConfigurationReady] = useState(false);
 	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(null);
@@ -258,45 +261,34 @@ export default function App({
 	const providerConfigurationGeneration = useRef(0);
 
 	async function loadProviderConfiguration(userId: string) {
+		const generation = providerConfigurationGeneration.current;
 		setProviderConfigurationLoading(true);
 		setProviderConfigurationReady(false);
 		setProviderConfigurationError(null);
 		try {
 			const configuration = await getMyProviderConfiguration({});
-			if (signedInUserIdRef.current !== userId) return;
+			if (
+				signedInUserIdRef.current !== userId ||
+				generation !== providerConfigurationGeneration.current
+			)
+				return;
 			setOpenAiConfigured(configuration.openai);
-			setChatGptConfigured(configuration.chatgpt);
-			setChatGptModelIds(configuration.chatgptModelIds);
 			setProviderConfigurationReady(true);
-			if (configuration.chatgpt) {
-				const generation = providerConfigurationGeneration.current;
-				try {
-					const modelIds = await refreshMyChatGptModels({});
-					if (
-						signedInUserIdRef.current === userId &&
-						generation === providerConfigurationGeneration.current
-					) {
-						setChatGptModelIds(modelIds);
-					}
-				} catch {
-					if (
-						signedInUserIdRef.current === userId &&
-						generation === providerConfigurationGeneration.current
-					) {
-						setProviderConfigurationError(
-							'Couldn’t refresh ChatGPT models. Reload the page to try again.'
-						);
-					}
-				}
-			}
 		} catch (error) {
-			if (signedInUserIdRef.current !== userId) return;
+			if (
+				signedInUserIdRef.current !== userId ||
+				generation !== providerConfigurationGeneration.current
+			)
+				return;
 			setProviderConfigurationError(
 				(error instanceof Error && convexClientErrorMessage(error)) ||
 					'Couldn’t load provider settings.'
 			);
 		} finally {
-			if (signedInUserIdRef.current === userId) {
+			if (
+				signedInUserIdRef.current === userId &&
+				generation === providerConfigurationGeneration.current
+			) {
 				setProviderConfigurationLoading(false);
 			}
 		}
@@ -328,6 +320,74 @@ export default function App({
 	const [desktopApi, setDesktopApi] = useState<DesktopApi | null>(null);
 	const desktopApiRef = useRef(desktopApi);
 	const [desktopApiResolved, setDesktopApiResolved] = useState(false);
+
+	const chatGptStatusLoadedFor = useRef<{ userId: string; api: DesktopApi } | null>(null);
+	const chatGptStatusGeneration = useRef(0);
+	const chatGptStatusChangeEvent = useEffectEvent((status: ChatGptStatus) => {
+		handleChatGptStatusChange(status);
+	});
+	useEffect(() => {
+		const userId = signedInUserId;
+		if (!authReady || !userId || !desktopApi) {
+			chatGptStatusLoadedFor.current = null;
+			setChatGptStatus(null);
+			setChatGptConfigured(false);
+			setChatGptModelIds(null);
+			setChatGptStatusLoading(false);
+			return;
+		}
+		if (
+			chatGptStatusLoadedFor.current?.userId === userId &&
+			chatGptStatusLoadedFor.current.api === desktopApi
+		)
+			return;
+		chatGptStatusLoadedFor.current = { userId, api: desktopApi };
+		const generation = ++chatGptStatusGeneration.current;
+		setChatGptStatus(null);
+		setChatGptConfigured(false);
+		setChatGptModelIds(null);
+		setChatGptStatusLoading(true);
+		setChatGptStatusError(null);
+		desktopApi
+			.fetchChatGptStatus({ userId })
+			.then((status) => {
+				if (
+					generation !== chatGptStatusGeneration.current ||
+					signedInUserIdRef.current !== userId
+				) {
+					return;
+				}
+				chatGptStatusChangeEvent(status);
+			})
+			.catch((error: Error) => {
+				if (
+					generation !== chatGptStatusGeneration.current ||
+					signedInUserIdRef.current !== userId
+				) {
+					return;
+				}
+				setChatGptStatus(null);
+				setChatGptConfigured(false);
+				setChatGptModelIds(null);
+				setChatGptStatusError(
+					(error instanceof Error && convexClientErrorMessage(error)) ||
+						'Couldn’t load ChatGPT connection status.'
+				);
+			})
+			.finally(() => {
+				if (
+					generation === chatGptStatusGeneration.current &&
+					signedInUserIdRef.current === userId
+				) {
+					setChatGptStatusLoading(false);
+				}
+			});
+		return () => {
+			chatGptStatusGeneration.current += 1;
+			chatGptStatusLoadedFor.current = null;
+		};
+	}, [authReady, signedInUserId, desktopApi]);
+
 	const [currentWorkspacePath, setCurrentWorkspacePath] = useState<string | null>(null);
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
 	const [currentThreadId, setCurrentThreadId] = useState<Id<'threadRecords'> | null>(null);
@@ -1029,20 +1089,28 @@ export default function App({
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	function handleProviderConfigurationChange(change: {
-		provider: 'openai' | 'chatgpt';
-		configured: boolean;
-		chatGptModelIds?: string[] | null;
-	}) {
+	function handleProviderConfigurationChange(change: { provider: 'openai'; configured: boolean }) {
 		providerConfigurationGeneration.current += 1;
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
-		if (change.provider === 'chatgpt') {
-			setChatGptConfigured(change.configured);
-			setChatGptModelIds(change.configured ? (change.chatGptModelIds ?? null) : null);
-		}
 		setProviderConfigurationReady(true);
 		setProviderConfigurationError(null);
 		if (!change.configured && selectedCompletionProvider === change.provider) {
+			setSelectedCompletionProvider('spikonado');
+		}
+	}
+
+	function handleChatGptStatusChange(status: ChatGptStatus) {
+		chatGptStatusGeneration.current += 1;
+		setChatGptStatusLoading(false);
+		setChatGptStatus(status);
+		setChatGptStatusError(null);
+		const active = status.accounts.find(
+			(account) => account.connectionId === status.activeConnectionId
+		);
+		const configured = active?.connected === true;
+		setChatGptConfigured(configured);
+		setChatGptModelIds(configured ? status.models.map((model) => model.id) : null);
+		if (!configured && selectedCompletionProvider === 'chatgpt') {
 			setSelectedCompletionProvider('spikonado');
 		}
 	}
@@ -1660,6 +1728,10 @@ export default function App({
 		setOpenAiConfigured(false);
 		setChatGptConfigured(false);
 		setChatGptModelIds(null);
+		setChatGptStatus(null);
+		setChatGptStatusLoading(false);
+		setChatGptStatusError(null);
+		chatGptStatusLoadedFor.current = null;
 		setProviderConfigurationReady(false);
 		setProviderConfigurationError(null);
 		lastSyncedComposerThreadId.current = null;
@@ -2187,13 +2259,17 @@ export default function App({
 					{settingsOpen ? (
 						settingsPage === 'usage' ? (
 							<SettingsUsage />
-						) : settingsPage === 'providers' ? (
+						) : settingsPage === 'providers' && signedInUserId ? (
 							<SettingsProviders
+								userId={signedInUserId}
+								desktopApi={desktopApi}
 								openAiConfigured={openAiConfigured}
-								chatGptConfigured={chatGptConfigured}
-								chatGptModelIds={chatGptModelIds}
+								chatGptStatus={chatGptStatus}
+								chatGptLoading={chatGptStatusLoading}
+								chatGptStatusError={chatGptStatusError}
 								loading={providerConfigurationLoading}
 								loadError={providerConfigurationError}
+								onChatGptStatusChange={handleChatGptStatusChange}
 								onConfigurationChange={handleProviderConfigurationChange}
 							/>
 						) : settingsPage === 'payments' ? (
@@ -2308,6 +2384,7 @@ export default function App({
 										onSelectedModelChange={setSelectedModel}
 										configuredProviders={configuredProviders}
 										chatGptModelIds={chatGptModelIds}
+										chatGptModels={chatGptStatus?.models}
 										providersReady={providerConfigurationReady}
 										selectedCompletionProvider={selectedCompletionProvider}
 										onSelectedCompletionProviderChange={setSelectedCompletionProvider}

@@ -596,3 +596,136 @@ describe('transcript attachment fetch', () => {
 		);
 	});
 });
+
+describe('chatgpt local sign-in', () => {
+	it('fetches status with accounts, models, and login availability', async () => {
+		const status = {
+			accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+			activeConnectionId: 'conn-1',
+			models: [{ id: 'gpt-5.4', name: 'GPT-5.4' }],
+			loginAvailable: true
+		};
+		const fetch = vi.fn(async () => Response.json(status));
+		vi.stubGlobal('fetch', fetch);
+
+		const result = await createLocalClient('http://127.0.0.1:7731').fetchChatGptStatus({
+			userId: 'user-1'
+		});
+
+		expect(result).toEqual(status);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/chatgpt/status',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify({ userId: 'user-1' }) })
+		);
+	});
+
+	it('starts a browser login without exposing codes or tokens to the browser', async () => {
+		const fetch = vi.fn(async () =>
+			Response.json({ state: 'state-1', authorizeUrl: 'https://auth.openai.test/authorize' })
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		const result = await createLocalClient('http://127.0.0.1:7731').startChatGptBrowserLogin({
+			userId: 'user-1',
+			connectionId: 'conn-1'
+		});
+
+		expect(result).toEqual({
+			state: 'state-1',
+			authorizeUrl: 'https://auth.openai.test/authorize'
+		});
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/chatgpt/browser/start',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ userId: 'user-1', connectionId: 'conn-1' })
+			})
+		);
+	});
+
+	it('never exposes an authorization code from the start payload', async () => {
+		const fetch = vi.fn(async () =>
+			Response.json({ state: 'state-1', authorizeUrl: 'https://x.test', code: 'leaked' })
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		const result = await createLocalClient('http://127.0.0.1:7731').startChatGptBrowserLogin({
+			userId: 'user-1'
+		});
+		expect(result).toEqual({ state: 'state-1', authorizeUrl: 'https://x.test' });
+	});
+
+	it('polls the login result by state', async () => {
+		const fetch = vi.fn(async () => Response.json({ status: 'pending' }));
+		vi.stubGlobal('fetch', fetch);
+
+		const result = await createLocalClient('http://127.0.0.1:7731').fetchChatGptBrowserLoginResult({
+			userId: 'user-1',
+			state: 'state-1'
+		});
+
+		expect(result).toEqual({ status: 'pending' });
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/chatgpt/browser/result',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ userId: 'user-1', state: 'state-1' })
+			})
+		);
+	});
+
+	it('cancels a login by state', async () => {
+		const fetch = vi.fn(async () => Response.json(null));
+		vi.stubGlobal('fetch', fetch);
+
+		await createLocalClient('http://127.0.0.1:7731').cancelChatGptBrowserLogin({
+			userId: 'user-1',
+			state: 'state-1'
+		});
+
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/chatgpt/browser/cancel',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ userId: 'user-1', state: 'state-1' })
+			})
+		);
+	});
+
+	it('selects the active connection', async () => {
+		const fetch = vi.fn(async () => Response.json(null));
+		vi.stubGlobal('fetch', fetch);
+
+		await createLocalClient('http://127.0.0.1:7731').selectChatGptAccount({
+			userId: 'user-1',
+			connectionId: 'conn-2'
+		});
+
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/chatgpt/select',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ userId: 'user-1', connectionId: 'conn-2' })
+			})
+		);
+	});
+
+	it('disconnects a connection and returns the server warning', async () => {
+		const fetch = vi.fn(async () => Response.json({ warning: 'In-flight runs keep going.' }));
+		vi.stubGlobal('fetch', fetch);
+
+		const warning = await createLocalClient('http://127.0.0.1:7731').disconnectChatGptAccount({
+			userId: 'user-1',
+			connectionId: 'conn-1'
+		});
+
+		expect(warning).toBe('In-flight runs keep going.');
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/chatgpt/disconnect',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ userId: 'user-1', connectionId: 'conn-1' })
+			})
+		);
+	});
+});

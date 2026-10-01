@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use futures::StreamExt;
 use rig::completion::Message;
 use rig::message::UserContent;
@@ -50,6 +50,7 @@ fn submission_owned_by_another_executor(error: &str) -> bool {
 
 pub struct AgentRun {
     request: RunAgentRequest,
+    chatgpt_client: Option<crate::chatgpt::ChatGptClient>,
     runtime: RuntimeClient,
     run_id: String,
     user_id: String,
@@ -578,6 +579,17 @@ where
 
 pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRun> {
     eprintln!("sprocket-agent: starting thread {}", request.thread_id);
+    let chatgpt_client = if request.completion_provider == crate::types::CompletionProvider::Chatgpt
+    {
+        Some(crate::chatgpt::ChatGptClient::new(
+            request
+                .chatgpt_credentials
+                .clone()
+                .context("ChatGPT runs require the local ChatGPT credential service.")?,
+        )?)
+    } else {
+        None
+    };
     let claim_id = Uuid::new_v4().to_string();
     let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
@@ -612,6 +624,7 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     let run_id = created_run.run_id;
     Ok(AgentRun {
         request,
+        chatgpt_client,
         runtime,
         run_id,
         user_id: created_run.user_id,
@@ -783,6 +796,7 @@ pub async fn run_agent(
 ) -> anyhow::Result<()> {
     let AgentRun {
         request,
+        chatgpt_client,
         runtime,
         run_id,
         claim_id,
@@ -796,6 +810,11 @@ pub async fn run_agent(
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
+
+    let provider = match AgentProvider::default_for_run(&context, &gateway_url, chatgpt_client) {
+        Ok(provider) => provider,
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    };
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let fast_mode = context.run.fast_mode;
@@ -868,8 +887,6 @@ pub async fn run_agent(
         let prompt = Message::User {
             content: prompt_contents,
         };
-        let provider =
-            AgentProvider::default_for_run(&context, &gateway_url, &request.deployment_url);
         let prompt_context = build_workspace_prompt_context(
             &request.workspace_path,
             &workspace_instructions,

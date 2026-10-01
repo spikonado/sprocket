@@ -47,6 +47,7 @@ export type PromptComposerProps = {
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
 	configuredProviders?: CompletionProvider[];
 	chatGptModelIds?: readonly string[] | null;
+	chatGptModels?: readonly { id: string; name: string }[];
 	providersReady?: boolean;
 	selectedCompletionProvider?: CompletionProvider;
 	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
@@ -103,6 +104,7 @@ export function PromptComposerView({
 	onSelectedModelChange,
 	configuredProviders = ['spikonado'],
 	chatGptModelIds = null,
+	chatGptModels = [],
 	providersReady = true,
 	selectedCompletionProvider = 'spikonado',
 	onSelectedCompletionProviderChange,
@@ -148,7 +150,7 @@ export function PromptComposerView({
 					? 'ChatGPT Subscription'
 					: 'OpenAI API'
 	}));
-	const modelOptions = modelCatalog
+	const providerModelOptions = modelCatalog
 		? modelOptionsForCompletionProvider(
 				modelCatalog,
 				subscriptionTier ?? 'free',
@@ -156,6 +158,13 @@ export function PromptComposerView({
 				chatGptModelIds
 			)
 		: [];
+	const modelOptions =
+		selectedCompletionProvider === 'chatgpt'
+			? providerModelOptions.map((option) => ({
+					...option,
+					label: chatGptModels.find((model) => model.id === option.id)?.name ?? option.label
+				}))
+			: providerModelOptions;
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;

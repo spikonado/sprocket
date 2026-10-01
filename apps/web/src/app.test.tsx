@@ -112,6 +112,17 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		requestRunCancellation: async () => {},
 		startAccountSession: async () => {},
 		endAccountSession: async () => {},
+		fetchChatGptStatus: async () => ({
+			accounts: [],
+			activeConnectionId: null,
+			models: [],
+			loginAvailable: false
+		}),
+		startChatGptBrowserLogin: unused,
+		fetchChatGptBrowserLoginResult: unused,
+		cancelChatGptBrowserLogin: async () => {},
+		selectChatGptAccount: unused,
+		disconnectChatGptAccount: unused,
 		...overrides
 	};
 }

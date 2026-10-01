@@ -167,6 +167,21 @@ const artifactsWatchEventSchema = z.object({
 	error: z.string().optional()
 });
 
+const chatGptStatusSchema = z.object({
+	accounts: z.array(
+		z.object({ connectionId: z.string(), label: z.string(), connected: z.boolean() })
+	),
+	activeConnectionId: z.string().nullable(),
+	models: z.array(z.object({ id: z.string(), name: z.string() })),
+	loginAvailable: z.boolean()
+});
+const chatGptBrowserLoginStartSchema = z.object({ state: z.string(), authorizeUrl: z.string() });
+const chatGptBrowserLoginResultSchema = z.object({
+	status: z.enum(['pending', 'complete', 'error']),
+	error: z.string().optional()
+});
+const chatGptDisconnectSchema = z.object({ warning: z.string().nullable() });
+
 function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
 	value: string
 ): Id<TableName> {
@@ -487,6 +502,40 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
+		},
+		fetchChatGptStatus: async (requestBody) =>
+			await request('/api/chatgpt/status', chatGptStatusSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		startChatGptBrowserLogin: async (requestBody) =>
+			await request('/api/chatgpt/browser/start', chatGptBrowserLoginStartSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		fetchChatGptBrowserLoginResult: async (requestBody) =>
+			await request('/api/chatgpt/browser/result', chatGptBrowserLoginResultSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		cancelChatGptBrowserLogin: async (requestBody) => {
+			await request('/api/chatgpt/browser/cancel', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		selectChatGptAccount: async (requestBody) => {
+			await request('/api/chatgpt/select', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		disconnectChatGptAccount: async (requestBody) => {
+			const { warning } = await request('/api/chatgpt/disconnect', chatGptDisconnectSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+			return warning;
 		}
 	};
 }

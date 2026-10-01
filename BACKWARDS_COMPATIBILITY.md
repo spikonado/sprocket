@@ -43,6 +43,35 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Retired cloud-held ChatGPT sign-in
+
+Cloud-held ChatGPT/Codex OAuth is retired in favor of local sign in with
+ChatGPT (SIWC). Released clients still call
+`providerCredentials.beginChatGptBrowserLogin`,
+`completeChatGptBrowserLogin`, `cancelChatGptBrowserLogin`,
+`beginChatGptDeviceLogin`, `pollChatGptDeviceLogin`,
+`cancelChatGptDeviceLogin`, `refreshChatGptModels`,
+`removeChatGptCredential`, and `issueChatGptCredential`. Each keeps its
+original argument validator and always rejects with guidance to connect
+locally with SIWC; no cloud sign-in, exchange, refresh, or credential
+issuance remains. `getMyConfiguration` keeps its shape but always reports
+`chatgpt: false` and `chatgptModelIds: null`, and `chatGptConnection`
+returns `null` for historical chatgpt runs after validating the run secret.
+Stored `completionProvider: 'chatgpt'` rows on threads and runs keep their
+validator and stay readable; `completionProviderIds` retains `chatgpt`.
+
+The hourly `retireChatGptCloudCredentials` action deletes every
+`sprocket-chatgpt-` credential object from WorkOS Vault with bounded
+best-effort refresh-token revocation, deletes each
+`providerCredentialStates` row only after its Vault object deletion is
+confirmed (Vault failures abort the run, which the next cron retries), and
+then enumerates Vault for prefix-named objects without metadata rows. The
+`providerCredentialStates` table stays in the schema until the cleanup has
+emptied it and released clients have aged out; then drop the table, the
+retired ChatGPT stubs, `chatGptConnection`, and the retirement cron and
+helpers. Keep `chatgpt` in `completionProviderIds` and the run and thread
+validators. Local SIWC runs use the same provider ID as historical Codex runs.
+
 ### Retired repository rekey calls
 
 Released local servers may still call `threads.rekeyRepository`, and deployments

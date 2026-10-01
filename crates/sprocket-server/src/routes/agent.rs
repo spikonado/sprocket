@@ -148,6 +148,7 @@ pub(crate) async fn launch_agent(
         fast: payload.fast_mode,
     };
     let request = RunAgentRequest {
+        chatgpt_credentials: Some(state.chatgpt_credentials.for_user(payload.user_id.clone())),
         allow_interaction,
         cancellation,
         deployment_url: state.convex_deployment_url.clone(),
