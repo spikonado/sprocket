@@ -736,9 +736,11 @@ export async function runUpdateCli(parsed, host = createHost()) {
 }
 
 export function registryUrl(env = {}) {
-	const values = [env.npm_config_registry, env.NPM_CONFIG_REGISTRY]
-		.map((value) => asText(value).trim())
-		.filter(Boolean);
+	const values = [env.npm_config_registry, env.NPM_CONFIG_REGISTRY].flatMap((value) => {
+		const text = asText(value).trim();
+
+		return text ? [text] : [];
+	});
 
 	for (const value of values) {
 		let url;

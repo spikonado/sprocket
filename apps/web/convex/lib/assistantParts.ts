@@ -96,9 +96,11 @@ export function matchAssistantToolCallsToJobs(
 		const availableCalls = calls.filter((call) => !usedCallIds.has(call.callId));
 
 		const candidatesByJob = new Map(
-			unmatchedJobs
-				.filter((job) => !callIdByJobId.has(job.id))
-				.map((job) => [job.id, availableCalls.filter((call) => matches(call, job))] as const)
+			unmatchedJobs.flatMap((job) =>
+				callIdByJobId.has(job.id)
+					? []
+					: [[job.id, availableCalls.filter((call) => matches(call, job))] as const]
+			)
 		);
 
 		for (const job of unmatchedJobs) {

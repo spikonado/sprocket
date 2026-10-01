@@ -937,6 +937,20 @@ test('accepts HTTPS registry URLs and rejects insecure or malformed overrides', 
 		registryUrl({ NPM_CONFIG_REGISTRY: 'https://example.invalid/npm/' }),
 		'https://example.invalid/npm'
 	);
+	assert.equal(
+		registryUrl({
+			npm_config_registry: '  ',
+			NPM_CONFIG_REGISTRY: ' https://example.invalid/npm/ '
+		}),
+		'https://example.invalid/npm'
+	);
+	assert.equal(
+		registryUrl({
+			npm_config_registry: ' https://first.invalid/ ',
+			NPM_CONFIG_REGISTRY: 'https://second.invalid/'
+		}),
+		'https://first.invalid'
+	);
 
 	for (const value of ['http://example.invalid', 'file:///tmp', 'not a URL', 'https://host/?q=1']) {
 		assert.throws(() => registryUrl({ npm_config_registry: value }), /HTTPS/);

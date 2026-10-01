@@ -82,6 +82,28 @@ describe('assistant timeline', () => {
 		});
 	});
 
+	it('uses the latest result for a call without changing surrounding part order', () => {
+		const timeline = buildAssistantTimeline(
+			[
+				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'pwd' } },
+				{ type: 'tool-result', callId: 'call-1', output: 'first', completedAt: 1_000 },
+				{ type: 'text', id: 't1', text: 'Done' },
+				{ type: 'tool-result', callId: 'call-1', output: 'latest', completedAt: 2_000 }
+			],
+			[]
+		);
+
+		expect(timeline).toEqual([
+			expect.objectContaining({
+				type: 'tool',
+				callId: 'call-1',
+				output: 'latest',
+				completedAt: 2_000
+			}),
+			{ type: 'text', id: 't1', text: 'Done' }
+		]);
+	});
+
 	it('hides empty reasoning and keeps later tool then text in arrival order', () => {
 		const timeline = buildAssistantTimeline(
 			[

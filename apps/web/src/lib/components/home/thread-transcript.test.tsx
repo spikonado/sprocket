@@ -363,9 +363,13 @@ describe('transcript viewport paging', () => {
 		await settle();
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 
-		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
-			.map((button) => button.textContent?.trim())
-			.filter((label) => label === 'Reasoned' || label === 'Reasoning');
+		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
+			(button) => {
+				const label = button.textContent?.trim();
+
+				return label === 'Reasoned' || label === 'Reasoning' ? [label] : [];
+			}
+		);
 
 		expect(reasoningLabels).toEqual(['Reasoned', 'Reasoning']);
 		expect(viewport.textContent).toContain('Current reasoning');
@@ -406,9 +410,13 @@ describe('transcript viewport paging', () => {
 		setProps({ activeRunId: live.runId });
 		await settle();
 
-		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
-			.map((button) => button.textContent?.trim() ?? '')
-			.filter((label) => label.startsWith('Work'));
+		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
+			(button) => {
+				const label = button.textContent?.trim() ?? '';
+
+				return label.startsWith('Work') ? [label] : [];
+			}
+		);
 
 		expect(workLabels[0]).toBe('Worked for 2s');
 		expect(workLabels[1]).toMatch(/^Working/);

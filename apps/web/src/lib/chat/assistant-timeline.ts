@@ -388,13 +388,13 @@ export function buildAssistantTimeline(
 	parts: AssistantPart[],
 	jobs: ExecutorJob[]
 ): AssistantTimelineItem[] {
-	const resultsByCallId = new Map(
-		parts
-			.filter((part): part is Extract<AssistantPart, { type: 'tool-result' }> => {
-				return part.type === 'tool-result';
-			})
-			.map((part) => [part.callId, part] as const)
-	);
+	const resultsByCallId = new Map<string, Extract<AssistantPart, { type: 'tool-result' }>>();
+
+	parts.forEach((part) => {
+		if (part.type === 'tool-result') {
+			resultsByCallId.set(part.callId, part);
+		}
+	});
 
 	const toolCalls = parts.filter(
 		(part): part is AssistantToolCallPart => part.type === 'tool-call'

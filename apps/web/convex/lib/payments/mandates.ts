@@ -163,13 +163,17 @@ function matchingLivePravaMandates(
 	list: PravaMandate[],
 	claimedIds?: ReadonlySet<string>
 ): Array<PravaMandate & { id: string }> {
-	return list
-		.filter((m) => {
-			if (!m.id || claimedIds?.has(m.id)) return false;
+	const matches: Array<PravaMandate & { id: string }> = [];
 
-			return isMatchingLivePravaMandate(mandate, m);
-		})
-		.map((m) => ({ ...m, id: m.id! }));
+	list.forEach((candidate) => {
+		if (!candidate.id || claimedIds?.has(candidate.id)) return;
+
+		if (!isMatchingLivePravaMandate(mandate, candidate)) return;
+
+		matches.push({ ...candidate, id: candidate.id });
+	});
+
+	return matches;
 }
 
 function isUnresolvedLocal(mandate: Doc<'mandates'>): boolean {
@@ -188,10 +192,9 @@ function uniquelyAttributablePravaMandate(
 	| { kind: 'none' }
 	| { kind: 'ambiguous' } {
 	const claimed = new Set(
-		allLocal
-			.filter((row) => row.pravaMandateId && row._id !== mandate._id)
-			.map((row) => row.pravaMandateId)
-			.filter((id): id is string => id !== undefined)
+		allLocal.flatMap((row) =>
+			row.pravaMandateId && row._id !== mandate._id ? [row.pravaMandateId] : []
+		)
 	);
 
 	const matches = matchingLivePravaMandates(mandate, list, claimed);
@@ -270,11 +273,13 @@ async function linkLocalMandates(
 	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
 	const localById = new Map(local.map((m) => [m._id, m]));
 
-	const localByPravaId = new Map(
-		local
-			.filter((m): m is typeof m & { pravaMandateId: string } => m.pravaMandateId !== undefined)
-			.map((m) => [m.pravaMandateId, m._id])
-	);
+	const localByPravaId = new Map<string, Id<'mandates'>>();
+
+	local.forEach((row) => {
+		if (row.pravaMandateId !== undefined) {
+			localByPravaId.set(row.pravaMandateId, row._id);
+		}
+	});
 
 	for (const mandate of local.filter(isUnresolvedLocal)) {
 		const match = uniquelyAttributablePravaMandate(mandate, list, local);

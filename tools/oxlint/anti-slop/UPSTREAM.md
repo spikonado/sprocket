@@ -10,10 +10,12 @@ The previous installation matches `src/` at commit `6d538555cb151d4121ed51a27db8
 
 - Generic entry point: `tools/oxlint/anti-slop/index.ts`.
 - Optional Effect entry point: `tools/oxlint/anti-slop/effect/index.ts`. It remains unregistered because no workspace manifest directly depends on Effect.
-- Existing enabled rules, error severities, and ignores remain unchanged. New implementations are exported but are not enabled without a policy decision.
+- All 18 generic rules are enabled at error severity, including readable spacing and both array performance rules. Native `oxc/no-accumulating-spread` is also enabled at error severity. Existing ignores remain unchanged.
 - Oxlint and `@oxlint/plugins` remain pinned to matching version `1.85.0`. The incoming source requires no dependency upgrade.
 
 The update includes scoped and generic alias resolution, shared scope and parameter helpers, known-value call checks, safety-marker options and export-comment attachment, predicate-subject handling, undefined existence probes, and borrowed-member-name handling. All incoming rules and helpers are present, including array performance rules, readable spacing, and optional Effect rules. No incoming source changes remain deferred.
+
+The enforcement migration fixes 4,366 readable-spacing findings in a separate whitespace-only commit. Single-pass array transformations replace the flagged filter/map chains without requiring iterator helpers in browser or npm-launcher runtimes. The cleanup preserves array order and sparse-array behavior, mandate ID validation, and last-result-wins Map entries. No rule suppressions or severity reductions were added.
 
 ## Intentional deviations
 
