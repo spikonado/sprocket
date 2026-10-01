@@ -32,6 +32,8 @@ pub(crate) struct ChatGptService {
     watches: Arc<StdMutex<HashMap<String, watch::Sender<Option<String>>>>>,
     persistence_pending: Arc<AtomicBool>,
     storage_error: Option<String>,
+    #[cfg(test)]
+    persist_failure_after: Arc<StdMutex<Option<usize>>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -456,12 +458,25 @@ impl ChatGptService {
             watches: Arc::new(StdMutex::new(watches)),
             persistence_pending: Arc::new(AtomicBool::new(false)),
             storage_error,
+            #[cfg(test)]
+            persist_failure_after: Arc::new(StdMutex::new(None)),
         }))
     }
 
     async fn persist(&self, state: &Store) -> anyhow::Result<()> {
         self.require_storage()?;
         self.persistence_pending.store(true, Ordering::Release);
+        #[cfg(test)]
+        {
+            let mut failure_after = self.persist_failure_after.lock().unwrap();
+            if let Some(remaining) = failure_after.as_mut() {
+                if *remaining == 0 {
+                    *failure_after = None;
+                    bail!("Could not save local ChatGPT credentials.");
+                }
+                *remaining -= 1;
+            }
+        }
         let bytes = serde_json::to_vec(state)?;
         let path = Arc::clone(&self.path);
         tokio::task::spawn_blocking(move || crate::profile::write_private_file(&path, &bytes))
@@ -883,13 +898,20 @@ impl ChatGptService {
             if accounts.accounts.is_empty() {
                 state.users.remove(&user);
             }
-            service.persist(&state).await?;
+            let saved = service.persist(&state).await;
             drop(state);
             let mut confirmed = true;
             for token in retired {
                 confirmed &= service.revoke(&client_id, &token).await;
             }
-            Ok((!confirmed).then(|| "Signed out locally. OpenAI revocation could not be confirmed. Remove the agent in ChatGPT settings if needed.".to_owned()))
+            let warning = (!confirmed).then(|| "Signed out locally. OpenAI revocation could not be confirmed. Remove the agent in ChatGPT settings if needed.".to_owned());
+            if let Err(error) = saved {
+                return Err(match warning {
+                    Some(warning) => anyhow::anyhow!("{error} {warning}"),
+                    None => error,
+                });
+            }
+            Ok(warning)
         }).await.context("ChatGPT sign-out task stopped.")?
     }
 
@@ -1152,7 +1174,10 @@ impl ChatGptService {
                     .collect(),
                 active_connection_id: accounts.active,
                 models,
-                error: error.or(cleanup_warning),
+                error: match (error, cleanup_warning) {
+                    (Some(error), Some(warning)) => Some(format!("{error} {warning}")),
+                    (error, warning) => error.or(warning),
+                },
             })
         })
         .await
@@ -2266,6 +2291,88 @@ mod tests {
         assert_eq!(status.models.len(), 1);
         assert_eq!(status.models[0].id, "gpt-visible");
         assert!(status.error.unwrap().contains("could not be confirmed"));
+    }
+
+    #[tokio::test]
+    async fn sign_out_revokes_when_account_removal_cannot_be_saved() {
+        for revoke_status in [200, 500] {
+            let fixture = fixture().await;
+            fixture.provider.set_revoke_status(revoke_status);
+            insert(
+                &fixture.service,
+                "user-a",
+                account(
+                    "connection-1",
+                    "client-1",
+                    "subject-1",
+                    Some(tokens(
+                        &fixture,
+                        "client-1",
+                        "subject-1",
+                        "access-1",
+                        "refresh-1",
+                        now() + 3600,
+                    )),
+                ),
+            )
+            .await;
+            let watch = fixture.service.for_user("user-a".into()).connection();
+            *fixture.service.persist_failure_after.lock().unwrap() = Some(1);
+            let error = fixture
+                .service
+                .disconnect("user-a", "connection-1")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("Could not save local ChatGPT credentials"));
+            assert_eq!(
+                error.contains("could not be confirmed"),
+                revoke_status != 200
+            );
+            assert_eq!(*watch.borrow(), None);
+            let revocations = fixture.provider.posts("/revoke");
+            assert!(revocations[0].contains("token=refresh-1"));
+            let status = fixture.service.status("user-a").await.unwrap();
+            assert!(status.accounts.is_empty());
+            let reloaded =
+                ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+            assert!(reloaded.state.lock().await.users.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn model_lookup_failure_preserves_legacy_revocation_guidance() {
+        let fixture = fixture().await;
+        fixture.provider.set_revoke_status(500);
+        fixture.provider.shared.lock().unwrap().models = (500, String::new());
+        insert(
+            &fixture.service,
+            "user-a",
+            account(
+                "healthy",
+                "client-current",
+                "subject-current",
+                Some(tokens(
+                    &fixture,
+                    "client-current",
+                    "subject-current",
+                    "access-current",
+                    "refresh-current",
+                    now() + 3600,
+                )),
+            ),
+        )
+        .await;
+        let mut signed_out = account("signed-out", "client-old", "subject-old", None);
+        signed_out.retired_refresh_tokens = vec!["refresh-retired".into()];
+        insert(&fixture.service, "user-a", signed_out).await;
+        let status = fixture.service.status("user-a").await.unwrap();
+        assert_eq!(status.accounts.len(), 1);
+        assert!(status.accounts[0].connected);
+        let error = status.error.unwrap();
+        assert!(error.contains("Could not load ChatGPT models"));
+        assert!(error.contains("OpenAI revocation could not be confirmed"));
+        assert!(error.contains("Remove the agent in ChatGPT settings"));
     }
 
     #[tokio::test]
