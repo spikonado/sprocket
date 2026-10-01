@@ -107,6 +107,8 @@ export default defineSchema({
 		billingInterval: v.optional(vBillingInterval),
 		billingPeriodStart: v.optional(v.number()),
 		billingPeriodEnd: v.optional(v.number()),
+		billingPeriodEnded: v.optional(v.boolean()),
+		billingPeriodCheckId: v.optional(v.id('_scheduled_functions')),
 		cancelAtNextBillingDate: v.optional(v.boolean()),
 		quotaResetAt: v.optional(v.number()),
 		dodoSubscriptionId: v.optional(v.string()),

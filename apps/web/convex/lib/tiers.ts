@@ -140,8 +140,9 @@ export function subscriptionIsActive(subscription: Doc<'subscriptions'> | null):
 	return (
 		subscription?.status === 'active' &&
 		(!subscription.dodoSubscriptionId ||
-			subscription.billingPeriodEnd === undefined ||
-			Date.now() < subscription.billingPeriodEnd)
+			(subscription.billingPeriodEnded !== true &&
+				(subscription.billingPeriodEnd === undefined ||
+					Date.now() < subscription.billingPeriodEnd)))
 	);
 }
 

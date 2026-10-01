@@ -4,6 +4,13 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
+	'backfill subscription expiry checks',
+	{ hours: 1 },
+	internal.migrations.runSubscriptionExpiryBackfill,
+	{}
+);
+
+crons.interval(
 	'backfill legacy stored fields',
 	{ hours: 1 },
 	internal.migrations.runLegacyCompatBackfillAutomatically,

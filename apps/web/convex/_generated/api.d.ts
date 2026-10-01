@@ -88,6 +88,7 @@ import type * as runCleanup from "../runCleanup.js";
 import type * as runLifecycle from "../runLifecycle.js";
 import type * as storageCleanup from "../storageCleanup.js";
 import type * as subagents from "../subagents.js";
+import type * as subscriptionExpiry from "../subscriptionExpiry.js";
 import type * as threads from "../threads.js";
 import type * as transcript from "../transcript.js";
 import type * as uiPreferences from "../uiPreferences.js";
@@ -182,6 +183,7 @@ declare const fullApi: ApiFromModules<{
   runLifecycle: typeof runLifecycle;
   storageCleanup: typeof storageCleanup;
   subagents: typeof subagents;
+  subscriptionExpiry: typeof subscriptionExpiry;
   threads: typeof threads;
   transcript: typeof transcript;
   uiPreferences: typeof uiPreferences;

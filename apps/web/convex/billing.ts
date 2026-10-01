@@ -17,10 +17,10 @@ import {
 	getSubscriptionDoc,
 	getSubscriptionDocExclusive,
 	getTierLabel,
-	resolveTierLimits,
 	subscriptionIsActive
 } from '@convex/lib/tiers';
 import { vBillingInterval, vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
+import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 const dodo = new DodoPayments(components.dodopayments, {
 	identify: async (ctx): Promise<{ dodoCustomerId: string } | null> => {
@@ -341,20 +341,7 @@ export const upsertDodoSubscription = internalMutation({
 			effectiveStatus === 'active' &&
 			(!existing || existing.dodoSubscriptionId !== args.dodoSubscriptionId);
 
-		const oldLimits =
-			args.status === 'active' && existing && existing.tier !== args.tier
-				? await resolveTierLimits(ctx, existing.tier)
-				: null;
-
-		const newLimits = oldLimits ? await resolveTierLimits(ctx, args.tier) : null;
-
-		const isUpgrade =
-			oldLimits !== null &&
-			newLimits !== null &&
-			newLimits.modelUsage.weekly >= oldLimits.modelUsage.weekly &&
-			newLimits.modelUsage.monthly >= oldLimits.modelUsage.monthly &&
-			(newLimits.modelUsage.weekly > oldLimits.modelUsage.weekly ||
-				newLimits.modelUsage.monthly > oldLimits.modelUsage.monthly);
+		const isPlanChange = args.status === 'active' && existing && existing.tier !== args.tier;
 
 		const subscription = {
 			userId: args.userId,
@@ -364,17 +351,22 @@ export const upsertDodoSubscription = internalMutation({
 			billingInterval: args.billingInterval,
 			billingPeriodStart: args.billingPeriodStart,
 			billingPeriodEnd: args.billingPeriodEnd,
+			billingPeriodEnded: existing?.billingPeriodEnded,
+			billingPeriodCheckId: existing?.billingPeriodCheckId,
 			cancelAtNextBillingDate: args.cancelAtNextBillingDate,
 			quotaResetAt:
-				isNewPaidTerm || isUpgrade
+				isNewPaidTerm || isPlanChange
 					? Math.max(args.eventAt, (existing?.quotaResetAt ?? -Infinity) + 1)
 					: existing?.quotaResetAt,
 			dodoSubscriptionId: args.dodoSubscriptionId,
 			dodoProductId: args.dodoProductId
 		};
 
-		if (existing) await ctx.db.replace('subscriptions', existing._id, subscription);
-		else await ctx.db.insert('subscriptions', subscription);
+		const subscriptionId = existing?._id ?? (await ctx.db.insert('subscriptions', subscription));
+
+		if (existing) await ctx.db.replace('subscriptions', subscriptionId, subscription);
+
+		await scheduleSubscriptionExpiry(ctx, { _id: subscriptionId, ...subscription });
 
 		if (args.status === 'active') {
 			const checkoutSession = await ctx.db

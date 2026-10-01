@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, components, internal } from '@convex/_generated/api';
+import { gatewayQuotaStatus } from '@convex/lib/rateLimits';
 import { initConvexTest, type ConvexTestInstance } from './test.setup';
 
 const UNITS_PER_DOLLAR = 1_000_000_000;
@@ -34,7 +35,90 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 	});
 }
 
+async function seedActiveSubscription(
+	t: ConvexTestInstance,
+	userId: string,
+	now: number,
+	billingPeriodEnd: number
+) {
+	const subscription = {
+		userId,
+		tier: 'pro',
+		dodoSubscriptionId: `sub_${userId}`,
+		dodoProductId: 'prod_pro',
+		dodoCustomerId: `cus_${userId}`,
+		status: 'active' as const,
+		eventAt: now,
+		billingInterval: 'monthly' as const,
+		billingPeriodStart: now - 60_000,
+		billingPeriodEnd,
+		cancelAtNextBillingDate: false
+	};
+
+	await t.mutation(internal.billing.upsertDodoSubscription, subscription);
+	await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+		userId,
+		count: 8 * UNITS_PER_DOLLAR
+	});
+	const asUser = t.withIdentity({ subject: userId });
+
+	return {
+		subscription,
+		windowUsage: async () =>
+			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows.map((window) => window.used)
+	};
+}
+
 describe('subscription and usage backend', () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it.each(['weekly', 'monthly'] as const)(
+		'blocks zero %s allowance at zero usage and permits a positive allowance',
+		async (period) => {
+			const t = initConvexTest();
+			await seedTiers(t);
+			const userId = `user_zero_${period}`;
+
+			const tierId = await t.run(async (ctx) => {
+				const tier = await ctx.db
+					.query('tiers')
+					.withIndex('by_tierId', (q) => q.eq('tierId', 'free'))
+					.unique();
+
+				if (!tier) throw new Error('Missing Free tier.');
+
+				return tier._id;
+			});
+
+			const setAllowance = (value: number) =>
+				t.run((ctx) => ctx.db.patch('tiers', tierId, { [period]: value }));
+
+			await setAllowance(0);
+			const asUser = t.withIdentity({ subject: userId });
+			const usage = await asUser.query(api.usage.getMyUsage, {});
+
+			expect(usage).toMatchObject({ exhausted: true });
+			expect(usage.meters[0]?.windows.find((window) => window.period === period)).toMatchObject({
+				limit: 0,
+				used: 0
+			});
+			await expect(
+				t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId })
+			).rejects.toThrow(/model usage limit reached/);
+			expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
+				exhausted: true
+			});
+
+			await setAllowance(UNITS_PER_DOLLAR);
+			await t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId });
+			expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
+				exhausted: false
+			});
+			expect(await asUser.query(api.usage.getMyUsage, {})).toMatchObject({ exhausted: false });
+		}
+	);
+
 	it('gives Max $170 of weekly usage and $500 of monthly usage', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
@@ -308,37 +392,19 @@ describe('subscription and usage backend', () => {
 		expect(weekly).toMatchObject({ used: 6 * UNITS_PER_DOLLAR });
 	});
 
-	it('resets both windows on a paid upgrade, but not on a downgrade or duplicate webhook', async () => {
+	it('resets both windows on confirmed plan changes, but preserves usage on duplicate events and cancellation', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
-		const userId = 'user_upgrade';
 		const now = Date.now();
 
-		const subscription = {
-			userId,
-			tier: 'pro',
-			dodoSubscriptionId: 'sub_upgrade',
-			dodoProductId: 'prod_pro',
-			dodoCustomerId: 'cus_upgrade',
-			status: 'active' as const,
-			eventAt: now,
-			billingInterval: 'monthly' as const,
-			billingPeriodStart: now - 60_000,
-			billingPeriodEnd: now + 30 * 86_400_000,
-			cancelAtNextBillingDate: false
-		};
+		const { subscription, windowUsage } = await seedActiveSubscription(
+			t,
+			'user_upgrade',
+			now,
+			now + 30 * 86_400_000
+		);
 
-		await t.mutation(internal.billing.upsertDodoSubscription, subscription);
-		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
-			userId,
-			count: 8 * UNITS_PER_DOLLAR
-		});
-		const asUser = t.withIdentity({ subject: userId });
-
-		const weeklyUsed = async () =>
-			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows[0]?.used;
-
-		expect(await weeklyUsed()).toBe(8 * UNITS_PER_DOLLAR);
+		expect(await windowUsage()).toEqual([8 * UNITS_PER_DOLLAR, 8 * UNITS_PER_DOLLAR]);
 
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
@@ -346,9 +412,9 @@ describe('subscription and usage backend', () => {
 			dodoProductId: 'prod_max',
 			eventAt: now + 1
 		});
-		expect(await weeklyUsed()).toBe(0);
+		expect(await windowUsage()).toEqual([0, 0]);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
-			userId,
+			userId: subscription.userId,
 			count: 30 * UNITS_PER_DOLLAR
 		});
 		await t.mutation(internal.billing.upsertDodoSubscription, {
@@ -357,15 +423,66 @@ describe('subscription and usage backend', () => {
 			dodoProductId: 'prod_max',
 			eventAt: now + 2
 		});
-		expect(await weeklyUsed()).toBe(30 * UNITS_PER_DOLLAR);
+		expect(await windowUsage()).toEqual([30 * UNITS_PER_DOLLAR, 30 * UNITS_PER_DOLLAR]);
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
+			tier: 'max',
+			dodoProductId: 'prod_max',
+			status: 'cancelled',
+			cancelAtNextBillingDate: true,
 			eventAt: now + 3
 		});
-		expect(await weeklyUsed()).toBe(30 * UNITS_PER_DOLLAR);
-		await expect(t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId })).rejects.toThrow(
-			/Weekly model usage limit reached/
+		expect(await windowUsage()).toEqual([30 * UNITS_PER_DOLLAR, 30 * UNITS_PER_DOLLAR]);
+
+		await vi.advanceTimersByTimeAsync(subscription.billingPeriodEnd - Date.now());
+		await t.finishInProgressScheduledFunctions();
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			eventAt: Date.now(),
+			billingPeriodStart: subscription.billingPeriodEnd,
+			billingPeriodEnd: subscription.billingPeriodEnd + 30 * 86_400_000
+		});
+		expect(await windowUsage()).toEqual([0, 0]);
+		await t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId: subscription.userId });
+	});
+
+	it('resets both windows when a confirmed plan change has identical allowances', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const now = Date.now();
+		await t.run((ctx) =>
+			ctx.db.insert('tiers', {
+				tierId: 'team',
+				label: 'Team',
+				weekly: 25 * UNITS_PER_DOLLAR,
+				monthly: 75 * UNITS_PER_DOLLAR
+			})
 		);
+
+		const { subscription, windowUsage } = await seedActiveSubscription(
+			t,
+			'user_equal_allowances',
+			now,
+			now + 60_000
+		);
+
+		expect(await windowUsage()).toEqual([8 * UNITS_PER_DOLLAR, 8 * UNITS_PER_DOLLAR]);
+
+		const planChange = {
+			...subscription,
+			tier: 'team',
+			dodoProductId: 'prod_team',
+			eventAt: subscription.eventAt + 1
+		};
+
+		await t.mutation(internal.billing.upsertDodoSubscription, planChange);
+		expect(await windowUsage()).toEqual([0, 0]);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subscription.userId,
+			count: UNITS_PER_DOLLAR
+		});
+		await t.mutation(internal.billing.upsertDodoSubscription, planChange);
+		expect(await windowUsage()).toEqual([UNITS_PER_DOLLAR, UNITS_PER_DOLLAR]);
 	});
 
 	it('materializes exactly one users row per subject across repeated page loads', async () => {

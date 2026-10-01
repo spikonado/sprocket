@@ -11,6 +11,7 @@ import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { isCommandToolKind } from '@convex/lib/commandToolKinds';
+import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -62,6 +63,25 @@ const threadHierarchyStatusMigrations: FunctionReference<'mutation', 'internal'>
 ];
 
 export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyStatusMigrations);
+
+export const backfillSubscriptionExpiry = migrations.define({
+	table: 'subscriptions',
+	migrateOne: async (ctx, subscription) => {
+		if (!subscription.dodoSubscriptionId) return;
+
+		await scheduleSubscriptionExpiry(ctx, subscription);
+	}
+});
+
+export const runSubscriptionExpiryBackfill = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		await migrations.runOne(ctx, internal.migrations.backfillSubscriptionExpiry);
+
+		return null;
+	}
+});
 
 export const removeTranscriptStateWorkThrough = migrations.define({
 	table: 'threadTranscriptStates',

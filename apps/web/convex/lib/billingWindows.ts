@@ -35,6 +35,7 @@ export function billingWindow(
 
 	const paid =
 		subscription?.status === 'active' &&
+		subscription.billingPeriodEnded !== true &&
 		(subscription.billingPeriodEnd === undefined || now < subscription.billingPeriodEnd);
 
 	if (paid && subscription.billingInterval === 'monthly') {

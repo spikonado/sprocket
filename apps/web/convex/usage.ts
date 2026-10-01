@@ -31,7 +31,7 @@ export const getMyUsage = query({
 		// window that unlocks last so clients can count down to full access.
 		const blockedWindow = meters
 			.flatMap((meter) => meter.windows.map((window) => ({ ...window, meterId: meter.id })))
-			.filter((window) => window.limit > 0 && window.used >= window.limit)
+			.filter((window) => window.used >= window.limit)
 			.sort((a, b) => (b.resetsAt ?? Infinity) - (a.resetsAt ?? Infinity))[0];
 
 		return {
