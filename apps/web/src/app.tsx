@@ -1103,7 +1103,7 @@ export default function App({
 		chatGptStatusGeneration.current += 1;
 		setChatGptStatusLoading(false);
 		setChatGptStatus(status);
-		setChatGptStatusError(null);
+		setChatGptStatusError(status.error ?? null);
 		const active = status.accounts.find(
 			(account) => account.connectionId === status.activeConnectionId
 		);

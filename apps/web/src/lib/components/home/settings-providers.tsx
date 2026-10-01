@@ -86,6 +86,11 @@ export default function SettingsProviders({
 	}
 
 	useEffect(() => {
+		setBrowserLoginState(null);
+		setChatGptPending(false);
+		setChatGptError(null);
+		setConfirmSignOut(null);
+		setSignOutWarning(null);
 		return () => {
 			generationRef.current += 1;
 			const pending = browserLoginRef.current;

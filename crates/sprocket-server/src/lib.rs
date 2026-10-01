@@ -130,8 +130,9 @@ impl AppState {
         );
         let machine_identity =
             Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
-        let chatgpt_credentials = chatgpt_credentials::ChatGptService::load(&data_dir)
-            .expect("ChatGPT credential service");
+        let chatgpt_credentials =
+            chatgpt_credentials::ChatGptService::load_or_unavailable(&data_dir)
+                .expect("ChatGPT credential service");
         let chatgpt_oauth =
             chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
         Self {
@@ -225,7 +226,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
-    let chatgpt_credentials = chatgpt_credentials::ChatGptService::load(&data_dir)?;
+    let chatgpt_credentials = chatgpt_credentials::ChatGptService::load_or_unavailable(&data_dir)?;
     let pending_chatgpt_oauth =
         chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
 

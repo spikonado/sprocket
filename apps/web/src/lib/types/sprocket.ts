@@ -264,6 +264,7 @@ export type ChatGptStatus = {
 	activeConnectionId: string | null;
 	models: ChatGptModel[];
 	loginAvailable: boolean;
+	error?: string;
 };
 
 export type ChatGptBrowserLoginStart = {

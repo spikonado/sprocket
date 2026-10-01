@@ -222,6 +222,44 @@ it('cancels the pending browser login on unmount while its poll is in flight', a
 	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
 });
 
+it('starts a fresh login after the signed-in user changes', async () => {
+	const client = new ConvexTestClient();
+	const start = vi.fn(async ({ userId }: { userId: string }) => ({
+		state: `state-${userId}`,
+		authorizeUrl: `https://auth.openai.com/authorize?state=${userId}`
+	}));
+	const cancel = vi.fn(async () => {});
+	const desktopApi = createChatGptApi({
+		startChatGptBrowserLogin: start,
+		cancelChatGptBrowserLogin: cancel,
+		fetchChatGptBrowserLoginResult: async () => ({ status: 'pending' })
+	});
+	const renderUser = (userId: string) => (
+		<ConvexTestProvider client={client}>
+			<SettingsProviders
+				userId={userId}
+				desktopApi={desktopApi}
+				openAiConfigured={false}
+				chatGptStatus={statusFixture()}
+				chatGptLoading={false}
+				chatGptStatusError={null}
+				loading={false}
+				loadError={null}
+				onChatGptStatusChange={() => {}}
+				onConfigurationChange={() => {}}
+			/>
+		</ConvexTestProvider>
+	);
+	const view = render(renderUser('user-a'));
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	await screen.findByRole('link', { name: 'Open ChatGPT' });
+	view.rerender(renderUser('user-b'));
+	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-user-a' });
+	expect(screen.queryByRole('link', { name: 'Open ChatGPT' })).toBeNull();
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	await waitFor(() => expect(start).toHaveBeenLastCalledWith({ userId: 'user-b' }));
+});
+
 it('ignores a stale login completion after the user cancels and starts again', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();

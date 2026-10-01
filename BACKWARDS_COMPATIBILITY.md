@@ -21,6 +21,16 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### Replaced SIWC sessions
+
+Local SIWC accounts accept an absent `retiredRefreshTokens` list in older files.
+Reconnects record replaced refresh tokens there before trying revocation, then
+remove confirmed revocations. Sign-out attempts every retained revocation before
+clearing the tokens. Remove the default only after a migration writes this field
+into every supported older store and direct upgrades from unmigrated stores no
+longer need support. An unreadable credential file disables only ChatGPT, leaves
+the file untouched, and reports repair guidance in settings.
+
 ### CLI bootstrap error guidance
 
 Older servers return HTTP 401 for CLI version and Convex deployment mismatches.

@@ -362,7 +362,8 @@ async fn status(
     Json(request): Json<UserRequest>,
 ) -> Result<Json<ProviderStatus>, ApiError> {
     let session = session_user(&state, &headers, &jar, &request.user_id).await?;
-    let login_available = state.loopback_desktop_login_supported
+    let login_available = state.chatgpt_credentials.available()
+        && state.loopback_desktop_login_supported
         && browser_connection(&headers, peer) == Some(BrowserConnection::Loopback)
         && state.auth.session_is_local_browser(&session).await;
     Ok(Json(ProviderStatus {
