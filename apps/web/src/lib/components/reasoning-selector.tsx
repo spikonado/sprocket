@@ -1,23 +1,19 @@
-import { Check, ChevronDown, Lock, Zap } from 'lucide-react';
+import { Check, ChevronDown, Zap } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { defaultReasoningEffort } from '@convex/lib/models';
 import {
 	type CatalogModel,
-	type FastModeAccess,
 	reasoningEffortLabel,
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
-import { useLockTooltip } from '$lib/components/ui/lock-tooltip';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
-import Tooltip from '$lib/components/ui/tooltip';
 import { cn } from '$lib/utils';
 
 export default function ReasoningSelector({
 	model,
 	reasoningEffort = defaultReasoningEffort,
 	fastMode = false,
-	fastModeAccess,
-	fastModeLockTooltip,
+	fastModeAvailable = false,
 	disabled = false,
 	className = '',
 	onReasoningEffortChange,
@@ -26,8 +22,7 @@ export default function ReasoningSelector({
 	model: CatalogModel;
 	reasoningEffort?: string;
 	fastMode?: boolean;
-	fastModeAccess?: FastModeAccess;
-	fastModeLockTooltip?: string;
+	fastModeAvailable?: boolean;
 	disabled?: boolean;
 	className?: string;
 	onReasoningEffortChange?: (effort: string) => void;
@@ -36,10 +31,9 @@ export default function ReasoningSelector({
 	const [isOpen, setIsOpen] = useState(false);
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
-	const lockTooltipState = useLockTooltip();
 
 	const showsReasoning = showsReasoningControl(model);
-	const showsFastModeControl = fastModeAccess === 'available' || fastModeAccess === 'locked';
+	const showsFastModeControl = fastModeAvailable;
 
 	const triggerText = showsReasoning
 		? `${reasoningEffortLabel(reasoningEffort)}${fastMode && model.supportsFastMode ? ' · Fast' : ''}`
@@ -66,30 +60,28 @@ export default function ReasoningSelector({
 			onReasoningEffortChange?.(model.defaultReasoningEffort);
 		}
 
-		if ((fastModeAccess === 'unsupported' || fastModeAccess === 'locked') && fastMode) {
+		if (!fastModeAvailable && fastMode) {
 			onFastModeChange?.(false);
 		}
-	}, [model, reasoningEffort, fastMode, fastModeAccess, onReasoningEffortChange, onFastModeChange]);
+	}, [
+		model,
+		reasoningEffort,
+		fastMode,
+		fastModeAvailable,
+		onReasoningEffortChange,
+		onFastModeChange
+	]);
 
 	function selectReasoning(next: string) {
 		onReasoningEffortChange?.(next);
 	}
 
-	function toggleFastMode(event: React.MouseEvent) {
-		if (fastModeAccess === 'locked') {
-			if (fastModeLockTooltip) lockTooltipState.showLockTooltip(event, fastModeLockTooltip, true);
-
-			return;
-		}
-
-		if (fastModeAccess === 'available') onFastModeChange?.(!fastMode);
+	function toggleFastMode() {
+		if (fastModeAvailable) onFastModeChange?.(!fastMode);
 	}
 
-	const { hideLockTooltip } = lockTooltipState;
 	useEffect(() => {
 		if (!isOpen) {
-			hideLockTooltip();
-
 			return;
 		}
 
@@ -103,7 +95,7 @@ export default function ReasoningSelector({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen, hideLockTooltip]);
+	}, [isOpen]);
 
 	useEffect(() => {
 		if (disabled || (!showsReasoning && !showsFastModeControl)) setIsOpen(false);
@@ -178,57 +170,23 @@ export default function ReasoningSelector({
 								<button
 									type="button"
 									role="switch"
-									className={cn(
-										'focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2',
-										fastModeAccess === 'locked'
-											? 'cursor-not-allowed opacity-45'
-											: 'text-foreground hover:bg-hover-fill'
-									)}
-									aria-checked={fastModeAccess !== 'locked' && fastMode}
-									aria-disabled={fastModeAccess === 'locked'}
-									aria-label={
-										fastModeAccess === 'locked' && fastModeLockTooltip
-											? `Fast mode. ${fastModeLockTooltip}`
-											: undefined
-									}
-									onMouseEnter={(event) => {
-										if (fastModeAccess === 'locked' && fastModeLockTooltip)
-											lockTooltipState.showLockTooltip(event, fastModeLockTooltip);
-									}}
-									onMouseLeave={() => lockTooltipState.hideLockTooltip()}
-									onFocus={(event) => {
-										if (fastModeAccess === 'locked' && fastModeLockTooltip)
-											lockTooltipState.showLockTooltip(event, fastModeLockTooltip);
-									}}
-									onBlur={() => lockTooltipState.hideLockTooltip()}
+									className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+									aria-checked={fastMode}
 									onClick={toggleFastMode}
 								>
-									{fastModeAccess === 'locked' ? (
-										<span className="text-muted-foreground shrink-0" aria-hidden="true">
-											<Lock className="size-3.5" />
-										</span>
-									) : (
-										<span className="size-3.5 shrink-0" aria-hidden="true"></span>
-									)}
 									<Zap className="size-3.5 shrink-0 text-amber-400" />
-									<span className={cn(fastModeAccess === 'locked' && 'text-muted-foreground')}>
-										Fast
-									</span>
+									<span>Fast</span>
 									<span
 										className={cn(
 											'relative ml-auto inline-flex h-5 w-9 shrink-0 items-center rounded-full transition',
-											fastMode && fastModeAccess !== 'locked'
-												? 'bg-foreground'
-												: 'bg-hover-fill-strong'
+											fastMode ? 'bg-foreground' : 'bg-hover-fill-strong'
 										)}
 										aria-hidden="true"
 									>
 										<span
 											className={cn(
 												'bg-background inline-block size-3.5 rounded-full transition',
-												fastMode && fastModeAccess !== 'locked'
-													? 'translate-x-[18px]'
-													: 'translate-x-[3px]'
+												fastMode ? 'translate-x-[18px]' : 'translate-x-[3px]'
 											)}
 										></span>
 									</span>
@@ -238,8 +196,6 @@ export default function ReasoningSelector({
 					) : null}
 				</div>
 			) : null}
-
-			<Tooltip tooltip={lockTooltipState.lockTooltip} />
 		</div>
 	);
 }
