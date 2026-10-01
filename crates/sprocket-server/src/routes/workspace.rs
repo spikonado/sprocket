@@ -1,16 +1,14 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::routing::{get, post};
-use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::auth::require_session;
 use crate::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
 use crate::routes::api_error::ApiError;
+use crate::routes::session::MachineSession;
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
     load_workspace_skills,
@@ -64,12 +62,8 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn list_projects(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    MachineSession: MachineSession,
 ) -> Result<Json<Vec<ProjectAttachmentRecord>>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let projects = state
         .project_attachments
         .list()
@@ -80,13 +74,9 @@ async fn list_projects(
 
 async fn attach_project(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    MachineSession: MachineSession,
     Json(payload): Json<AttachProjectRequest>,
 ) -> Result<Json<ProjectAttachmentRecord>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let project = state
         .project_attachments
         .attach(payload)
@@ -96,42 +86,27 @@ async fn attach_project(
 }
 
 async fn resolve_path(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    MachineSession: MachineSession,
     Json(payload): Json<WorkspacePathResolutionRequest>,
 ) -> Result<Json<WorkspacePathResolution>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let resolution = resolve_workspace_path(&payload.workspace_path, payload.create_if_missing)
         .map_err(ApiError::bad_request)?;
     Ok(Json(resolution))
 }
 
 async fn browse_path(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    MachineSession: MachineSession,
     Json(payload): Json<FilesystemBrowseRequest>,
 ) -> Result<Json<FilesystemBrowseResult>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let result = browse_filesystem(&payload.partial_path, payload.cwd.as_deref())
         .map_err(ApiError::bad_request)?;
     Ok(Json(result))
 }
 
 async fn list_skills(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    MachineSession: MachineSession,
     Json(payload): Json<WorkspaceSkillsRequest>,
 ) -> Result<Json<WorkspaceSkillsResponse>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let resolution =
         resolve_workspace_path(&payload.workspace_path, false).map_err(ApiError::bad_request)?;
     let loaded = load_workspace_skills(

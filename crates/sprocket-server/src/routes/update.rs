@@ -1,16 +1,16 @@
 use std::net::SocketAddr;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, State};
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::extract::{ConnectInfo, FromRequestParts, State};
+use axum::http::{HeaderMap, StatusCode, request::Parts};
+use axum::response::Response;
 use axum::routing::{get, post};
-use axum_extra::extract::CookieJar;
 
 use crate::AppState;
-use crate::auth::{cookie_request_is_loopback_csrf_safe, require_session};
+use crate::auth::cookie_request_is_loopback_csrf_safe;
 use crate::package_update::PackageUpdateSnapshot;
-use crate::routes::api_error::ApiError;
+use crate::routes::api_error::{ApiError, no_store};
+use crate::routes::session::MachineSession;
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
@@ -20,61 +20,51 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn status(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    MachineSession: MachineSession,
 ) -> Result<Response, ApiError> {
-    require_update_read(&state, &headers, &jar).await?;
     Ok(update_response(state.package_updates.status().await))
 }
 
 async fn install(
     State(state): State<AppState>,
-    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
-    headers: HeaderMap,
-    jar: CookieJar,
+    LoopbackSession: LoopbackSession,
 ) -> Result<Response, ApiError> {
-    let peer = peer.ok().map(|ConnectInfo(peer)| peer);
-    require_update_install(&state, peer, &headers, &jar).await?;
     Ok(update_response(state.package_updates.install().await))
 }
 
-async fn require_update_read(
-    state: &AppState,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-) -> Result<(), ApiError> {
-    require_session(&state.auth, headers, jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
-    Ok(())
-}
+/// [`MachineSession`] plus a loopback peer and loopback CSRF-safe request,
+/// for mutations that must originate from this machine.
+struct LoopbackSession;
 
-async fn require_update_install(
-    state: &AppState,
-    peer: Option<SocketAddr>,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-) -> Result<(), ApiError> {
-    require_session(&state.auth, headers, jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
-    if !peer.is_some_and(|peer| peer.ip().is_loopback())
-        || !cookie_request_is_loopback_csrf_safe(headers)
-    {
-        return Err(ApiError::with_status(
-            StatusCode::FORBIDDEN,
-            anyhow::anyhow!("package updates can only be installed from this machine"),
-        ));
+impl FromRequestParts<AppState> for LoopbackSession {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        MachineSession::from_request_parts(parts, state).await?;
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(peer)| *peer);
+        let headers = HeaderMap::from_request_parts(parts, state)
+            .await
+            .map_err(|_| ApiError::authentication_required())?;
+        if !peer.is_some_and(|peer| peer.ip().is_loopback())
+            || !cookie_request_is_loopback_csrf_safe(&headers)
+        {
+            return Err(ApiError::with_status(
+                StatusCode::FORBIDDEN,
+                anyhow::anyhow!("package updates can only be installed from this machine"),
+            ));
+        }
+        Ok(Self)
     }
-    Ok(())
 }
 
 fn update_response(snapshot: PackageUpdateSnapshot) -> Response {
-    let mut response = Json(snapshot).into_response();
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-    response
+    no_store(Json(snapshot))
 }
 
 #[cfg(test)]
