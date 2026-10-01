@@ -23,6 +23,7 @@ export default function ChatMarkdown({
 		() => new Map(artifacts.map((artifact) => [artifact.key, artifact])),
 		[artifacts]
 	);
+
 	const blocks = useMemo(
 		() =>
 			renderMarkdownBlocks(
@@ -38,6 +39,7 @@ export default function ChatMarkdown({
 			{blocks.map((block, index) => {
 				if (block.type === 'artifact') {
 					const artifact = artifactById.get(block.artifactId);
+
 					if (artifact && onOpenArtifact) {
 						return (
 							<ArtifactReference
@@ -47,8 +49,10 @@ export default function ChatMarkdown({
 							/>
 						);
 					}
+
 					return null;
 				}
+
 				return (
 					<div
 						key={`${block.type}-${index}`}

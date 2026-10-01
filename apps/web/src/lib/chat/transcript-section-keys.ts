@@ -16,6 +16,7 @@ export class TranscriptSectionKeys {
 
 	retain(messageIds: string[]) {
 		const retained = new Set(messageIds);
+
 		for (const id of this.messages.keys()) {
 			if (!retained.has(id)) this.messages.delete(id);
 		}
@@ -30,6 +31,7 @@ export class TranscriptSectionKeys {
 					: section.blocks.flatMap(blockMembers)
 			)
 		);
+
 		return sections.map((section, index) => ({
 			...section,
 			renderKey: section.type === 'text' ? assistantTimelinePartKey(section) : keys[index]
@@ -38,6 +40,7 @@ export class TranscriptSectionKeys {
 
 	reconcileBlocks(messageId: string, blocks: AssistantTimelineWorkBlock[]) {
 		const keys = this.reconcileMembers(messageId, blocks.map(blockMembers));
+
 		return blocks.map((block, index) => ({ block, renderKey: keys[index] }));
 	}
 
@@ -45,17 +48,23 @@ export class TranscriptSectionKeys {
 		const previous = this.messages.get(messageId);
 		const next = new Map<string, string>();
 		const claimed = new Set<string>();
+
 		const keyed = groups.map((members) => {
 			// Parts can arrive at either end; a split must not reuse one key for both sections.
 			const existing = members
 				.map((member) => previous?.get(member))
 				.find((key) => key !== undefined && !claimed.has(key));
+
 			const renderKey = existing ?? `work:${this.nextId++}`;
 			claimed.add(renderKey);
+
 			for (const member of members) next.set(member, renderKey);
+
 			return renderKey;
 		});
+
 		this.messages.set(messageId, next);
+
 		return keyed;
 	}
 }

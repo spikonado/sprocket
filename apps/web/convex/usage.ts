@@ -11,6 +11,7 @@ export const getMyUsage = query({
 		const userId = await getUserId(ctx);
 		const tier = await getSubscriptionTier(ctx, userId);
 		const { limits, label: tierLabel } = await resolveTierInfo(ctx, tier);
+
 		const meters = await Promise.all(
 			usageMeters.map(async (meter) => ({
 				id: meter.id,
@@ -24,12 +25,14 @@ export const getMyUsage = query({
 				)
 			}))
 		);
+
 		// Sending is blocked while any metered window is over its limit; report the
 		// window that unlocks last so clients can count down to full access.
 		const blockedWindow = meters
 			.flatMap((meter) => meter.windows.map((window) => ({ ...window, meterId: meter.id })))
 			.filter((window) => window.limit > 0 && window.used >= window.limit)
 			.sort((a, b) => (b.resetsAt ?? Infinity) - (a.resetsAt ?? Infinity))[0];
+
 		return {
 			tier,
 			tierLabel,

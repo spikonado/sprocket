@@ -10,6 +10,7 @@ export const getMySubscription = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const tier = await getSubscriptionTier(ctx, userId);
+
 		return { tier, tierLabel: await getTierLabel(ctx, tier) };
 	}
 });

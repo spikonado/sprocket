@@ -23,6 +23,7 @@ async function seedRunWithJob(
 	const executionSecret = options.executionSecret;
 	const claimId = options.claimId ?? `claim-${Math.random()}`;
 	const { asUser, threadId, subject } = await seedOwnedThread(t);
+
 	const created = await createQueuedRun(
 		t,
 		asUser,
@@ -34,6 +35,7 @@ async function seedRunWithJob(
 
 	const jobId = await t.run(async (ctx) => {
 		const section = toolTranscriptAssignment(created.runId, claimId);
+
 		const jobId = await ctx.db.insert('executorJobs', {
 			threadId,
 			runId: created.runId,
@@ -46,6 +48,7 @@ async function seedRunWithJob(
 			sequence: 0,
 			...section
 		});
+
 		const otherJobId = await ctx.db.insert('executorJobs', {
 			threadId,
 			runId: created.runId,
@@ -57,6 +60,7 @@ async function seedRunWithJob(
 			sequence: 1,
 			...toolTranscriptAssignment(created.runId, claimId, 2)
 		});
+
 		await ctx.db.patch('runs', created.runId, {
 			status: options.runStatus ?? 'running'
 		});
@@ -65,6 +69,7 @@ async function seedRunWithJob(
 			claimExpiresAt: options.claimExpiresAt ?? Date.now() + 60_000,
 			activeJobId: options.activeJobMatches === false ? otherJobId : jobId
 		});
+
 		return jobId;
 	});
 
@@ -89,6 +94,7 @@ describe('executor', () => {
 			const { asUser, threadId } = await seedOwnedThread(t);
 			const executionSecret = `parse-${mode}`;
 			const claimId = `claim-${mode}`;
+
 			const { runId } = await createQueuedRun(
 				t,
 				asUser,
@@ -97,7 +103,9 @@ describe('executor', () => {
 				executionSecret,
 				'Parse this file'
 			);
+
 			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
 			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				runId,
 				claimId,
@@ -107,6 +115,7 @@ describe('executor', () => {
 				callId: `call-${mode}`,
 				payload: { path: '/cache/attachments/source' }
 			});
+
 			await expect(
 				asUser.mutation(api.executor.complete, {
 					runId,
@@ -151,6 +160,7 @@ describe('executor', () => {
 			const { asUser, threadId } = await seedOwnedThread(t);
 			const executionSecret = 'web-image-secret';
 			const claimId = 'claim-image';
+
 			const result = {
 				outputType: 'image' as const,
 				url: 'https://example.com/image',
@@ -160,6 +170,7 @@ describe('executor', () => {
 				width: 1280,
 				height: 720
 			};
+
 			const { runId } = await createQueuedRun(
 				t,
 				asUser,
@@ -168,7 +179,9 @@ describe('executor', () => {
 				executionSecret,
 				'Read this image'
 			);
+
 			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
 			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				runId,
 				claimId,
@@ -177,6 +190,7 @@ describe('executor', () => {
 				kind,
 				payload: { url: result.url }
 			});
+
 			await expect(
 				asUser.mutation(api.executor.complete, {
 					runId,
@@ -197,6 +211,7 @@ describe('executor', () => {
 
 	it('completes the active job without changing the running status', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
 			executionSecret: 'executor-complete-secret'
 		});
@@ -215,6 +230,7 @@ describe('executor', () => {
 			job: await ctx.db.get('executorJobs', jobId),
 			run: await getRunWithExecution(ctx.db, runId)
 		}));
+
 		expect(state.job).toMatchObject({
 			status: 'completed',
 			result: {
@@ -234,6 +250,7 @@ describe('executor', () => {
 
 	it('accepts browser tool result shapes', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
 			executionSecret: 'executor-browser-result-secret'
 		});
@@ -255,9 +272,11 @@ describe('executor', () => {
 			byteLength: 123,
 			truncated: false
 		};
+
 		const second = await seedRunWithJob(t, {
 			executionSecret: 'executor-browser-screenshot-secret'
 		});
+
 		await expect(
 			second.asUser.mutation(api.executor.complete, {
 				jobId: second.jobId,
@@ -271,11 +290,13 @@ describe('executor', () => {
 
 	it('is idempotent for an already completed job and ignores terminal runs', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
 			jobStatus: 'completed',
 			runStatus: 'running',
 			executionSecret: 'executor-idempotent-secret'
 		});
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('executorJobs', jobId, { result: commandResult, completedAt: 1 });
 		});
@@ -300,6 +321,7 @@ describe('executor', () => {
 			runStatus: 'completed',
 			executionSecret: 'executor-terminal-secret'
 		});
+
 		await expect(
 			asUser2.mutation(api.executor.complete, {
 				jobId: terminalJobId,
@@ -317,10 +339,12 @@ describe('executor', () => {
 
 	it('fails a job and clears activeJobId only when it matches', async () => {
 		const t = initConvexTest();
+
 		const matching = await seedRunWithJob(t, {
 			activeJobMatches: true,
 			executionSecret: 'executor-fail-match-secret'
 		});
+
 		await expect(
 			matching.asUser.mutation(api.executor.fail, {
 				jobId: matching.jobId,
@@ -349,6 +373,7 @@ describe('executor', () => {
 			activeJobMatches: false,
 			executionSecret: 'executor-fail-mismatch-secret'
 		});
+
 		const before = await t.run(async (ctx) => getRunWithExecution(ctx.db, mismatched.runId));
 		await expect(
 			mismatched.asUser.mutation(api.executor.fail, {
@@ -369,10 +394,12 @@ describe('executor', () => {
 
 	it('rejects tool completion and failure after the claim lease expires', async () => {
 		const t = initConvexTest();
+
 		const completeCase = await seedRunWithJob(t, {
 			executionSecret: 'executor-expired-complete-secret',
 			claimExpiresAt: Date.now() - 1
 		});
+
 		await expect(
 			completeCase.asUser.mutation(api.executor.complete, {
 				jobId: completeCase.jobId,
@@ -393,6 +420,7 @@ describe('executor', () => {
 			executionSecret: 'executor-expired-fail-secret',
 			claimExpiresAt: Date.now() - 1
 		});
+
 		await expect(
 			failCase.asUser.mutation(api.executor.fail, {
 				jobId: failCase.jobId,

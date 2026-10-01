@@ -28,14 +28,17 @@ async function cancelExecutorJobsPage(
 			query.eq('runId', args.runId).gt('sequence', args.afterSequence)
 		)
 		.take(TERMINAL_CLEANUP_PAGE_SIZE);
+
 	const finalizedJobs = cancelExecutorJobsForTerminalRun({
 		jobs,
 		runStatus: args.runStatus,
 		lastError: args.lastError,
 		completedAt: args.completedAt
 	});
+
 	for (const [index, job] of jobs.entries()) {
 		const finalizedJob = finalizedJobs[index];
+
 		if (finalizedJob === job) continue;
 		await ctx.db.patch('executorJobs', job._id, {
 			status: finalizedJob.status,
@@ -43,7 +46,9 @@ async function cancelExecutorJobsPage(
 			completedAt: finalizedJob.completedAt
 		});
 	}
+
 	const last = jobs.at(-1);
+
 	return {
 		done: jobs.length < TERMINAL_CLEANUP_PAGE_SIZE,
 		nextSequence: last?.sequence ?? args.afterSequence
@@ -65,8 +70,10 @@ async function finalizePendingQuestionsPage(
 			query.eq('runId', args.runId).gt('sequence', args.afterSequence)
 		)
 		.take(TERMINAL_CLEANUP_PAGE_SIZE);
+
 	for (const question of questions) {
 		if (question.status !== 'pending') continue;
+
 		if (args.runStatus === 'cancelled') {
 			await ctx.db.patch('agentQuestions', question._id, {
 				status: 'cancelled',
@@ -78,7 +85,9 @@ async function finalizePendingQuestionsPage(
 			});
 		}
 	}
+
 	const last = questions.at(-1);
+
 	return {
 		done: questions.length < TERMINAL_CLEANUP_PAGE_SIZE,
 		nextSequence: last?.sequence ?? args.afterSequence
@@ -95,12 +104,14 @@ async function recordToolTranscriptsPage(
 	if (!isRunFinalStatus(args.run.status)) {
 		return { done: true, nextSequence: args.afterSequence };
 	}
+
 	const jobs = await ctx.db
 		.query('executorJobs')
 		.withIndex('by_runId_sequence', (query) =>
 			query.eq('runId', args.run._id).gt('sequence', args.afterSequence)
 		)
 		.take(TERMINAL_CLEANUP_PAGE_SIZE);
+
 	for (const job of jobs) {
 		await recordToolTranscript(ctx, {
 			threadId: args.run.threadId,
@@ -109,7 +120,9 @@ async function recordToolTranscriptsPage(
 			job
 		});
 	}
+
 	const last = jobs.at(-1);
+
 	return {
 		done: jobs.length < TERMINAL_CLEANUP_PAGE_SIZE,
 		nextSequence: last?.sequence ?? args.afterSequence
@@ -139,6 +152,7 @@ export async function advanceTerminalCleanup(
 		completedAt: args.completedAt,
 		afterSequence: args.jobCursor
 	});
+
 	if (!jobs.done) {
 		return {
 			done: false,
@@ -147,12 +161,14 @@ export async function advanceTerminalCleanup(
 			transcriptCursor: args.transcriptCursor
 		};
 	}
+
 	const questions = await finalizePendingQuestionsPage(ctx, {
 		runId: args.run._id,
 		runStatus: args.run.status,
 		completedAt: args.completedAt,
 		afterSequence: args.questionCursor
 	});
+
 	if (!questions.done) {
 		return {
 			done: false,
@@ -161,7 +177,9 @@ export async function advanceTerminalCleanup(
 			transcriptCursor: args.transcriptCursor
 		};
 	}
+
 	const latest = await ctx.db.get('runs', args.run._id);
+
 	if (!latest || !isRunFinalStatus(latest.status)) {
 		return {
 			done: true,
@@ -170,10 +188,12 @@ export async function advanceTerminalCleanup(
 			transcriptCursor: args.transcriptCursor
 		};
 	}
+
 	const transcripts = await recordToolTranscriptsPage(ctx, {
 		run: latest,
 		afterSequence: args.transcriptCursor
 	});
+
 	return {
 		done: transcripts.done,
 		jobCursor: jobs.nextSequence,
@@ -190,6 +210,7 @@ export async function reconcileTerminalRunPages(
 	let jobCursor = -1;
 	let questionCursor = -1;
 	let transcriptCursor = -1;
+
 	for (;;) {
 		const page = await advanceTerminalCleanup(ctx, {
 			run,
@@ -199,9 +220,11 @@ export async function reconcileTerminalRunPages(
 			questionCursor,
 			transcriptCursor
 		});
+
 		if (page.done) {
 			return;
 		}
+
 		jobCursor = page.jobCursor;
 		questionCursor = page.questionCursor;
 		transcriptCursor = page.transcriptCursor;

@@ -20,6 +20,7 @@ it('uses browser callbacks locally and device codes on remote URLs', () => {
 	for (const hostname of ['localhost', '127.0.0.1', '[::1]']) {
 		expect(usesLoopbackBrowserAuth(hostname, false)).toBe(true);
 	}
+
 	expect(usesLoopbackBrowserAuth('sprocket.tailnet.ts.net', false)).toBe(false);
 	expect(usesLoopbackBrowserAuth('sprocket.tailnet.ts.net', true)).toBe(true);
 });

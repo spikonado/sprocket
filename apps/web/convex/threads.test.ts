@@ -23,6 +23,7 @@ describe('thread mutations', () => {
 	it('leaves repository history untouched for retired rekey calls', async () => {
 		const t = initConvexTest();
 		const { asUser, repositoryKey, subject, threadId } = await seedOwnedThread(t);
+
 		const artifactId = await t.run((ctx) =>
 			ctx.db.insert('artifacts', {
 				userId: subject,

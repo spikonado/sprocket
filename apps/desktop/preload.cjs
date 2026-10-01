@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('sprocketDesktopBridge', {
 		onState: (callback) => {
 			const listener = (_event, state) => callback(state);
 			ipcRenderer.on('sprocket:update-state', listener);
+
 			return () => ipcRenderer.removeListener('sprocket:update-state', listener);
 		}
 	},
@@ -15,6 +16,7 @@ contextBridge.exposeInMainWorld('sprocketDesktopBridge', {
 	onWorkspaceLaunch: (callback) => {
 		const listener = () => callback();
 		ipcRenderer.on('sprocket:workspace-launch', listener);
+
 		return () => ipcRenderer.removeListener('sprocket:workspace-launch', listener);
 	},
 	openExternal: (url) => ipcRenderer.invoke('sprocket:open-external', url),

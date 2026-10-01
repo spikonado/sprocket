@@ -13,6 +13,7 @@ async function seedActiveRun(subject = 'user_alice', t = initConvexTest()) {
 	const { asUser, threadId, repositoryKey } = await seedOwnedThread(t, subject);
 	const executionSecret = crypto.randomUUID();
 	const claimId = crypto.randomUUID();
+
 	const { runId } = await createQueuedRun(
 		t,
 		asUser,
@@ -21,8 +22,10 @@ async function seedActiveRun(subject = 'user_alice', t = initConvexTest()) {
 		executionSecret,
 		'Create an artifact'
 	);
+
 	const auth = { runId, claimId, executionSecret };
 	await asUser.mutation(api.agentRuntime.start, auth);
+
 	return { t, asUser, threadId, repositoryKey, auth };
 }
 
@@ -38,16 +41,20 @@ describe('cloud artifacts', () => {
 	it('stores no local path, deduplicates retry identities, and returns cloud content without a workspace', async () => {
 		const { asUser, repositoryKey, auth } = await seedActiveRun();
 		const created = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+
 		const retry = await asUser.mutation(api.artifacts.addArtifact, {
 			...auth,
 			...fields,
 			content: 'retry must not overwrite'
 		});
+
 		expect(retry).toEqual(created);
+
 		const artifact = await asUser.query(api.artifacts.getArtifact, {
 			artifactId: created.artifactId,
 			repositoryKey
 		});
+
 		expect(artifact.content).toBe('initial');
 		expect(artifact).not.toHaveProperty('localPath');
 		expect(created).not.toHaveProperty('localPath');
@@ -61,16 +68,19 @@ describe('cloud artifacts', () => {
 	it('uses revision CAS for explicit edits and automatic sync', async () => {
 		const { asUser, repositoryKey, auth } = await seedActiveRun();
 		const created = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+
 		const sync = {
 			artifactId: created.artifactId,
 			repositoryKey,
 			expectedRevision: 1,
 			content: 'synced'
 		};
+
 		expect(await asUser.mutation(api.artifacts.syncArtifact, sync)).toBe(true);
 		expect(await asUser.mutation(api.artifacts.syncArtifact, { ...sync, content: 'stale' })).toBe(
 			false
 		);
+
 		const edit = {
 			...auth,
 			artifactId: created.artifactId,
@@ -79,11 +89,14 @@ describe('cloud artifacts', () => {
 			contentType: 'html' as const,
 			content: '<p>edited</p>'
 		};
+
 		await expect(asUser.mutation(api.artifacts.editArtifact, edit)).rejects.toThrow(/changed/i);
+
 		const updated = await asUser.mutation(api.artifacts.editArtifact, {
 			...edit,
 			expectedRevision: 2
 		});
+
 		expect(updated.revision).toBe(3);
 		const state = await asUser.query(api.artifacts.getArtifactState, { repositoryKey });
 		expect(state).toBe(3);
@@ -100,12 +113,14 @@ describe('cloud artifacts', () => {
 	it('enforces thread, project and account boundaries for reads and writes', async () => {
 		const { t, asUser, threadId, repositoryKey, auth } = await seedActiveRun();
 		const project = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+
 		const privateArtifact = await asUser.mutation(api.artifacts.addArtifact, {
 			...auth,
 			...fields,
 			registrationId: 'private',
 			scope: 'thread'
 		});
+
 		const otherThread = await seedThreadRecord(t, 'user_alice', repositoryKey);
 		const anotherRepo = await seedThreadRecord(t, 'user_alice', 'other');
 		const list = await asUser.query(api.artifacts.listArtifacts, { repositoryKey, threadId });
@@ -115,6 +130,7 @@ describe('cloud artifacts', () => {
 				(artifact) => artifact._id
 			)
 		).toEqual([project.artifactId]);
+
 		for (const scope of [
 			{ repositoryKey },
 			{ repositoryKey, threadId: otherThread },
@@ -135,6 +151,7 @@ describe('cloud artifacts', () => {
 				})
 			).rejects.toThrow(/not found/i);
 		}
+
 		const bob = t.withIdentity({ subject: 'user_bob' });
 		await expect(
 			bob.query(api.artifacts.getArtifact, { repositoryKey, artifactId: project.artifactId })
@@ -157,11 +174,13 @@ describe('cloud artifacts', () => {
 
 	it('requires an active execution claim and validates content bytes and opaque registration IDs', async () => {
 		const { asUser, auth } = await seedActiveRun();
+
 		for (const registrationId of ['', 'x'.repeat(129)]) {
 			await expect(
 				asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields, registrationId })
 			).rejects.toThrow(/registration/i);
 		}
+
 		await expect(
 			asUser.mutation(api.artifacts.addArtifact, {
 				...auth,
@@ -188,6 +207,7 @@ describe('cloud artifacts', () => {
 	it('persists path-free add, edit, save and list tool jobs', async () => {
 		const { t, asUser, auth } = await seedActiveRun();
 		const artifact = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+
 		for (const [index, kind] of (
 			['add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
 		).entries()) {
@@ -197,22 +217,27 @@ describe('cloud artifacts', () => {
 					: kind === 'list_artifacts'
 						? {}
 						: { artifactId: artifact.artifactId };
+
 			const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, index + 1),
 				kind,
 				payload
 			});
+
 			const result =
 				kind === 'list_artifacts'
 					? { artifacts: (await asUser.query(api.artifacts.listArtifactsForRun, auth)).page }
 					: artifact;
+
 			expect(
 				await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })
 			).toBe(true);
 		}
+
 		const jobs = await t.run(async (ctx) => ctx.db.query('executorJobs').collect());
 		expect(jobs).toHaveLength(4);
+
 		for (const job of jobs) {
 			expect(job.status).toBe('completed');
 			expect(job.payload).not.toHaveProperty('path');
@@ -222,6 +247,7 @@ describe('cloud artifacts', () => {
 
 	it('pages more than 16 MB of content', async () => {
 		const { t, asUser, repositoryKey } = await seedActiveRun();
+
 		for (let i = 0; i < 36; i++) {
 			await t.run(async (ctx) => {
 				await ctx.db.insert('artifacts', {
@@ -238,18 +264,23 @@ describe('cloud artifacts', () => {
 				});
 			});
 		}
+
 		let cursor: string | null = null;
 		let count = 0;
 		let pages = 0;
+
 		for (;;) {
 			const result: { page: Doc<'artifacts'>[]; isDone: boolean; continueCursor: string } =
 				await asUser.query(api.artifacts.listArtifacts, { repositoryKey, cursor });
+
 			count += result.page.length;
 			pages++;
+
 			if (result.isDone) break;
 			expect(result.continueCursor).not.toBe(cursor);
 			cursor = result.continueCursor;
 		}
+
 		expect(count).toBe(36);
 		expect(pages).toBeGreaterThan(4);
 	}, 15_000);

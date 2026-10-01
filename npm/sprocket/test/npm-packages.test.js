@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
+
 const TARGETS = JSON.parse(
 	readFileSync(path.join(import.meta.dirname, '../targets.json'), 'utf8')
 ).map((target) => [target.id, target.executable]);
@@ -43,11 +44,13 @@ test('assembles version-matched root and native packages', async () => {
 			],
 			{ encoding: 'utf8' }
 		);
+
 		assert.equal(result.status, 0, result.stderr);
 
 		const rootManifest = JSON.parse(
 			await readFile(path.join(output, 'sprocket/package.json'), 'utf8')
 		);
+
 		assert.equal(rootManifest.version, '1.2.3');
 		assert.equal(rootManifest.optionalDependencies['@spikonado/sprocket-linux-x64-gnu'], '1.2.3');
 		assert(rootManifest.files.includes('THIRD_PARTY_NOTICES.md'));
@@ -69,6 +72,7 @@ test('assembles version-matched root and native packages', async () => {
 		const nativeManifest = JSON.parse(
 			await readFile(path.join(output, 'linux-x64-gnu/package.json'), 'utf8')
 		);
+
 		assert.equal(nativeManifest.name, '@spikonado/sprocket-linux-x64-gnu');
 		assert.equal(nativeManifest.version, '1.2.3');
 		assert(nativeManifest.files.includes('THIRD_PARTY_NOTICES.md'));
@@ -88,6 +92,7 @@ test('assembles version-matched root and native packages', async () => {
 		const sourceManifest = JSON.parse(
 			await readFile(path.join(ROOT, 'npm/sprocket/package.json'), 'utf8')
 		);
+
 		assert.equal(rootManifest.engines.node, sourceManifest.engines.node);
 		await access(path.join(output, 'sprocket/bin/sprocket.js'), constants.X_OK);
 		await access(path.join(output, 'sprocket/lib/update-api.js'));

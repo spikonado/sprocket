@@ -14,6 +14,7 @@ const WEEK = 7 * 24 * 60 * 60 * 1_000;
 async function attachment(t: ConvexTestInstance, threadId?: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
 		const storageId = await ctx.storage.store(new Blob(['file']));
+
 		const imageUploadId = await ctx.db.insert('imageUploads', {
 			userId: 'user_alice',
 			storageId,
@@ -23,11 +24,13 @@ async function attachment(t: ConvexTestInstance, threadId?: Id<'threadRecords'>)
 			attached: threadId !== undefined,
 			threadId
 		});
+
 		return { storageId, imageUploadId };
 	});
 }
 
 beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => {
 	vi.clearAllTimers();
 	vi.useRealTimers();
@@ -39,6 +42,7 @@ describe('attachment retention', () => {
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 		const otherThreadId = await seedThreadRecord(t, subject, 'other');
 		const file = await attachment(t);
+
 		for (const owner of [threadId, otherThreadId]) {
 			await insertQueuedRun(t, asUser, {
 				submissionId: `attach-${owner}`,
@@ -48,6 +52,7 @@ describe('attachment retention', () => {
 				executionSecret: `secret-${owner}`
 			});
 		}
+
 		expect(await t.run((ctx) => ctx.db.get('imageUploads', file.imageUploadId))).toMatchObject({
 			attached: true,
 			threadId
@@ -57,12 +62,14 @@ describe('attachment retention', () => {
 		});
 		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', file.storageId))).toBeNull();
+
 		const parts = await t.run((ctx) =>
 			ctx.db
 				.query('threadTranscriptParts')
 				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId))
 				.take(8)
 		);
+
 		expect(parts[0].prompt?.imageUploads[0].storageId).toBe(file.storageId);
 	});
 
@@ -93,6 +100,7 @@ describe('attachment retention', () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
 		const files: Awaited<ReturnType<typeof attachment>>[] = [];
+
 		for (let i = 0; i < 20; i++) files.push(await attachment(t, threadId));
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, { lastMessageAt: Date.now() - WEEK - 1 });
@@ -102,16 +110,20 @@ describe('attachment retention', () => {
 			await ctx.db.patch('threadRecords', threadId, { lastMessageAt: Date.now() });
 		});
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		const remaining = await t.run(async (ctx) => {
 			const blobs = await Promise.all(
 				files.map((file) => ctx.db.system.get('_storage', file.storageId))
 			);
+
 			return blobs.filter(Boolean).length;
 		});
+
 		expect(remaining).toBe(12);
 		vi.setSystemTime(Date.now() + WEEK + 1);
 		await t.mutation(internal.imageUploads.cleanupExpired, {});
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		for (const file of files)
 			expect(await t.run((ctx) => ctx.db.system.get('_storage', file.storageId))).toBeNull();
 	});

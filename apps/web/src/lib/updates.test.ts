@@ -27,9 +27,11 @@ describe('package update requests', () => {
 
 	it('uses a credentialed POST for installation and validates its response', async () => {
 		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
+
 		const fetcher = vi
 			.fn()
 			.mockResolvedValue(Response.json({ ...state('installed'), method: 'package' }));
+
 		vi.stubGlobal('fetch', fetcher);
 		expect((await requestPackageUpdate(true))?.status).toBe('installed');
 		expect(fetcher).toHaveBeenCalledWith(

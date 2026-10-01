@@ -6,10 +6,15 @@ import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+
 const args = process.argv.slice(2);
+
 let dataDir = null;
+
 let envFile = null;
+
 let mode = null;
+
 const unexpectedArguments = [];
 
 for (const arg of args) {
@@ -32,6 +37,7 @@ if (unexpectedArguments.length > 0) {
 }
 
 const childEnv = { ...process.env };
+
 if (envFile) {
 	const filePath = path.resolve(repositoryRoot, envFile);
 	Object.assign(childEnv, parseEnv(readFileSync(filePath, 'utf8')));
@@ -46,8 +52,11 @@ if (dataDir) {
 }
 
 const desktop = mode === '--desktop';
+
 const names = desktop ? 'web,electron' : 'api,web';
+
 const colors = desktop ? 'green,magenta' : 'blue,green';
+
 const commands = desktop
 	? [
 			'node scripts/wait-for-api.mjs && bun run --cwd apps/web dev',
@@ -76,6 +85,7 @@ child.on('error', (error) => {
 child.on('exit', (code, signal) => {
 	if (signal) {
 		process.kill(process.pid, signal);
+
 		return;
 	}
 

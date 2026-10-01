@@ -13,6 +13,7 @@ describe('numbered transcript parts', () => {
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const first = await createQueuedRun(
 			t,
 			asUser,
@@ -21,6 +22,7 @@ describe('numbered transcript parts', () => {
 			'transcript-prompt-secret',
 			'Hello'
 		);
+
 		const retry = await createQueuedRun(
 			t,
 			asUser,
@@ -29,6 +31,7 @@ describe('numbered transcript parts', () => {
 			'transcript-prompt-secret',
 			'Hello'
 		);
+
 		expect(retry.runId).toBe(first.runId);
 
 		const state = await asUser.query(api.transcript.getState, { threadId });
@@ -46,6 +49,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-complete-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -54,6 +58,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Write code'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-complete',
 			runId,
@@ -65,6 +70,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			executionSecret
 		});
+
 		const items = [
 			{
 				type: 'reasoning' as const,
@@ -83,12 +89,15 @@ describe('numbered transcript parts', () => {
 				completedAt: 3_000
 			}
 		];
+
 		const sectionKey = `agent:${runId}:claim-complete:1:section:1`;
+
 		const assignments = {
 			work: { ranges: [{ start: 0, end: 1, sectionKey }] },
 			toolInvocations: [],
 			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
 		};
+
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-complete',
@@ -98,7 +107,9 @@ describe('numbered transcript parts', () => {
 			...assignments,
 			executionSecret
 		});
+
 		expect(number?.number).toBe(1);
+
 		const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-complete',
@@ -108,6 +119,7 @@ describe('numbered transcript parts', () => {
 			...assignments,
 			executionSecret
 		});
+
 		expect(again?._id).toBe(number?._id);
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(2);
@@ -120,6 +132,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-empty-reasoning-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -128,6 +141,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Write code'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-empty-reasoning',
 			runId,
@@ -139,6 +153,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			executionSecret
 		});
+
 		// Encrypted-only reasoning has no display text. The agent tracker skips it
 		// as work while still persisting the envelope for replay.
 		const items = [
@@ -158,7 +173,9 @@ describe('numbered transcript parts', () => {
 				turnId: 'stream-1'
 			}
 		];
+
 		const sectionKey = `agent:${runId}:claim-empty-reasoning:1:section:1`;
+
 		const part = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-empty-reasoning',
@@ -170,6 +187,7 @@ describe('numbered transcript parts', () => {
 			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }],
 			executionSecret
 		});
+
 		expect(part?.completion?.items).toHaveLength(2);
 
 		// Empty reasoning must not carry work; visible reasoning must.
@@ -192,6 +210,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-no-begin-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -200,6 +219,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Hello'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-no-begin',
 			runId,
@@ -211,6 +231,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			executionSecret
 		});
+
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-no-begin',
@@ -220,22 +241,28 @@ describe('numbered transcript parts', () => {
 			...emptyCompletionAssignments,
 			executionSecret
 		});
+
 		expect(number?.number).toBe(1);
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
+
 		const stored = await t.run(
 			async (ctx) => await ctx.db.get('threadTranscriptParts', parts.parts[1]!._id)
 		);
+
 		const expectedItems = [
 			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1', startedAt: null, completedAt: null }
 		];
+
 		expect(stored?.completion?.items).toEqual(expectedItems);
 		expect(parts.parts[1]?.completion?.items).toEqual(expectedItems);
+
 		const agentParts = await t.query(api.transcript.getPartsForRun, {
 			runId,
 			executionSecret,
 			numbers: [1]
 		});
+
 		expect(agentParts.parts[0]?.completion?.items).toEqual(parts.parts[1]?.completion?.items);
 	});
 
@@ -243,6 +270,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-tool-order-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -251,6 +279,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Use a tool'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-tool-order',
 			runId,
@@ -262,6 +291,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			executionSecret
 		});
+
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			claimId: 'claim-tool-order',
 			runId,
@@ -271,6 +301,7 @@ describe('numbered transcript parts', () => {
 			payload: { cmd: 'echo hi' },
 			executionSecret
 		});
+
 		const afterStart = await asUser.query(api.transcript.getState, { threadId });
 		expect(afterStart.totalParts).toBe(2);
 		const startedParts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
@@ -377,6 +408,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-tool-cancel-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -385,11 +417,13 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Use a tool'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-tool-cancel',
 			runId,
 			executionSecret
 		});
+
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			claimId: 'claim-tool-cancel',
 			runId,
@@ -399,6 +433,7 @@ describe('numbered transcript parts', () => {
 			payload: { cmd: 'sleep 10' },
 			executionSecret
 		});
+
 		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [1] });
 		const invocationId = started.parts[0]?.tool?.toolInvocationId;
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -446,6 +481,7 @@ describe('numbered transcript parts', () => {
 			const t = initConvexTest();
 			const { asUser, threadId } = await seedOwnedThread(t);
 			const executionSecret = 'transcript-artifact-secret';
+
 			const { runId } = await createQueuedRun(
 				t,
 				asUser,
@@ -454,12 +490,14 @@ describe('numbered transcript parts', () => {
 				executionSecret,
 				'List artifacts'
 			);
+
 			await asUser.mutation(api.agentRuntime.start, {
 				claimId: 'claim-artifact',
 				runId,
 				executionSecret
 			});
 			const assignment = toolTranscriptAssignment(runId, 'claim-artifact');
+
 			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				claimId: 'claim-artifact',
 				runId,
@@ -470,6 +508,7 @@ describe('numbered transcript parts', () => {
 				hidden,
 				executionSecret
 			});
+
 			expect(
 				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
 			).toMatchObject({ key: assignment.sectionKey, itemCount: 1, pendingTools: 1 });
@@ -503,11 +542,13 @@ describe('numbered transcript parts', () => {
 					}
 				]
 			});
+
 			const parts = await asUser.query(api.transcript.getPartsForRun, {
 				runId,
 				executionSecret,
 				numbers: [0, 1, 2, 3, 4]
 			});
+
 			expect(parts.parts.map((part) => part.kind)).toEqual([
 				'prompt',
 				'tool',
@@ -533,6 +574,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'legacy-artifact-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -541,8 +583,10 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'List artifacts'
 		);
+
 		const auth = { runId, claimId: 'legacy-artifact', executionSecret };
 		await asUser.mutation(api.agentRuntime.start, auth);
+
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(runId, auth.claimId),
@@ -552,13 +596,16 @@ describe('numbered transcript parts', () => {
 			payload: {},
 			hidden: true
 		});
+
 		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });
 		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });
+
 		const parts = await asUser.query(api.transcript.getPartsForRun, {
 			runId,
 			executionSecret,
 			numbers: [1, 2]
 		});
+
 		expect(parts.parts.map((part) => part.tool?.status)).toEqual(['started', 'completed']);
 		expect(parts.parts[1]?.tool?.output).toEqual({ artifacts: [] });
 	});
@@ -567,6 +614,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-exact-tool-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -575,6 +623,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Use one tool'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-exact-tool',
 			runId,
@@ -629,6 +678,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-fail-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -637,6 +687,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Fail please'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-fail',
 			runId,
@@ -659,6 +710,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-continue-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -667,6 +719,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Keep going'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-continue',
 			runId,
@@ -701,6 +754,7 @@ describe('numbered transcript parts', () => {
 			lastError: 'boom',
 			executionSecret
 		});
+
 		const continuation = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'sub-continue-child',
@@ -708,6 +762,7 @@ describe('numbered transcript parts', () => {
 			prompt: '',
 			continuationOfRunId: runId
 		});
+
 		expect(continuation.runId).not.toBe(runId);
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
@@ -725,10 +780,12 @@ describe('numbered transcript parts', () => {
 			executionSecret: 'secret-a'
 		});
 		await createQueuedRun(t, asUser, threadId, 'sub-b', 'secret-b', 'B');
+
 		const parts = await asUser.query(api.transcript.getParts, {
 			threadId,
 			numbers: [1, 0, 9]
 		});
+
 		expect(parts.parts.map((part) => [part.number, part.prompt?.text])).toEqual([
 			[1, 'B'],
 			[0, 'A']
@@ -758,6 +815,7 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-keep-history-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -766,6 +824,7 @@ describe('numbered transcript parts', () => {
 			executionSecret,
 			'Keep this prompt visible'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-keep-history',
 			runId,
@@ -818,8 +877,10 @@ describe('transcript attachment identity', () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'storage-only-parts-secret';
+
 		const file = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+
 			const imageUploadId = await ctx.db.insert('imageUploads', {
 				userId: subject,
 				storageId,
@@ -828,8 +889,10 @@ describe('transcript attachment identity', () => {
 				size: 4,
 				attached: false
 			});
+
 			return { storageId, imageUploadId };
 		});
+
 		const created = await insertQueuedRun(t, asUser, {
 			submissionId: 'storage-only-parts',
 			threadId,
@@ -842,6 +905,7 @@ describe('transcript attachment identity', () => {
 			threadId,
 			numbers: [0]
 		});
+
 		expect(parts.parts[0]?.prompt?.imageUploads[0]).toEqual({
 			name: 'file.txt',
 			mediaType: 'text/plain',
@@ -856,6 +920,7 @@ describe('transcript attachment identity', () => {
 			executionSecret,
 			numbers: [0]
 		});
+
 		expect(runParts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 	});
 
@@ -863,6 +928,7 @@ describe('transcript attachment identity', () => {
 		const t = initConvexTest();
 		const { asUser, subject } = await seedOwnedThread(t);
 		const bob = t.withIdentity({ subject: 'bob' });
+
 		const file = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
 			await ctx.db.insert('imageUploads', {
@@ -873,8 +939,10 @@ describe('transcript attachment identity', () => {
 				size: 4,
 				attached: false
 			});
+
 			return storageId;
 		});
+
 		expect(
 			await asUser.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })
 		).toMatchObject({

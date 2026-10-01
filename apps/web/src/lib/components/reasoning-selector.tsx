@@ -40,17 +40,20 @@ export default function ReasoningSelector({
 
 	const showsReasoning = showsReasoningControl(model);
 	const showsFastModeControl = fastModeAccess === 'available' || fastModeAccess === 'locked';
+
 	const triggerText = showsReasoning
 		? `${reasoningEffortLabel(reasoningEffort)}${fastMode && model.supportsFastMode ? ' · Fast' : ''}`
 		: fastMode
 			? 'Fast'
 			: 'Speed';
+
 	const triggerLabel =
 		showsReasoning && showsFastModeControl
 			? 'Select reasoning effort and Fast mode'
 			: showsReasoning
 				? 'Select reasoning effort'
 				: 'Select Fast mode';
+
 	const dialogLabel =
 		showsReasoning && showsFastModeControl
 			? 'Reasoning and Fast mode'
@@ -62,6 +65,7 @@ export default function ReasoningSelector({
 		if (!model.reasoningEfforts.includes(reasoningEffort)) {
 			onReasoningEffortChange?.(model.defaultReasoningEffort);
 		}
+
 		if ((fastModeAccess === 'unsupported' || fastModeAccess === 'locked') && fastMode) {
 			onFastModeChange?.(false);
 		}
@@ -74,8 +78,10 @@ export default function ReasoningSelector({
 	function toggleFastMode(event: React.MouseEvent) {
 		if (fastModeAccess === 'locked') {
 			if (fastModeLockTooltip) lockTooltipState.showLockTooltip(event, fastModeLockTooltip, true);
+
 			return;
 		}
+
 		if (fastModeAccess === 'available') onFastModeChange?.(!fastMode);
 	}
 
@@ -83,6 +89,7 @@ export default function ReasoningSelector({
 	useEffect(() => {
 		if (!isOpen) {
 			hideLockTooltip();
+
 			return;
 		}
 

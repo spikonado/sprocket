@@ -16,7 +16,9 @@ import {
 async function readThreadUsage(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
 		const thread = await ctx.db.get('threadRecords', threadId);
+
 		if (!thread) return null;
+
 		return await getThreadUsageValues(ctx, thread);
 	});
 }
@@ -24,6 +26,7 @@ async function readThreadUsage(t: ConvexTestInstance, threadId: Id<'threadRecord
 async function readThreadCutoff(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 	return await t.run(async (ctx) => {
 		const thread = await ctx.db.get('threadRecords', threadId);
+
 		return {
 			contextSummary: thread?.contextSummary,
 			contextSummaryThroughPartNumber: thread?.contextSummaryThroughPartNumber
@@ -49,6 +52,7 @@ async function finalizeTextCompletion(
 		attemptSeq: args.attemptSeq,
 		executionSecret: args.executionSecret
 	});
+
 	return await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 		runId: args.runId,
 		claimId: args.claimId,
@@ -112,6 +116,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'finalized-context-usage-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -120,6 +125,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-finalized-usage',
@@ -163,6 +169,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'empty-context-usage-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -171,6 +178,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-empty-usage',
@@ -204,6 +212,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'invalid-finalized-usage-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -212,6 +221,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-invalid-finalized-usage',
@@ -238,6 +248,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'context-run-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -246,6 +257,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue the long task'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-a',
@@ -294,6 +306,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'idempotent-usage-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -302,11 +315,13 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-a',
 			executionSecret
 		});
+
 		const args = {
 			runId,
 			claimId: 'claim-a',
@@ -314,6 +329,7 @@ describe('agentRuntime context accounting', () => {
 			contextTokens: 8_000,
 			processedTokens: 9_000
 		};
+
 		await asUser.mutation(api.agentRuntime.recordContextUsage, args);
 		await asUser.mutation(api.agentRuntime.recordContextUsage, args);
 		expect(await readThreadUsage(t, threadId)).toMatchObject({
@@ -326,6 +342,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'invalid-context-usage-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -334,6 +351,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-a',
@@ -356,6 +374,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'merged-shape-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -364,6 +383,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-a',
@@ -389,6 +409,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'context-opaque-model-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -397,6 +418,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-opaque-model',
@@ -408,10 +430,12 @@ describe('agentRuntime context accounting', () => {
 				fastMode: true
 			});
 		});
+
 		const context = await asUser.query(api.agentRuntime.getContext, {
 			runId,
 			executionSecret
 		});
+
 		expect(context.run.selectedModel).toBe('gateway-only-model');
 		expect(context.run.fastMode).toBe(true);
 	});
@@ -420,6 +444,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'context-tokens-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -428,6 +453,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-tokens',
@@ -462,6 +488,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-mid-run-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -470,11 +497,13 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Do the long task'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-handoff',
 			executionSecret
 		});
+
 		const completionNumber = await finalizeTextCompletion(asUser, {
 			runId,
 			claimId: 'claim-handoff',
@@ -484,6 +513,7 @@ describe('agentRuntime context accounting', () => {
 			text: 'Finished the first step',
 			usage: { contextTokens: 4_000, processedTokens: 5_000 }
 		});
+
 		expect(completionNumber?.number).toBe(1);
 		await appendFinishedToolPart(t, {
 			threadId,
@@ -527,6 +557,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-clear-tokens-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -535,6 +566,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Do the long task'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-clear',
@@ -574,6 +606,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-stable-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -582,6 +615,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Do the long task'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-stable',
@@ -648,6 +682,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-backwards-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -656,6 +691,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Do the long task'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-backwards',
@@ -705,6 +741,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const firstSecret = 'handoff-first-secret';
+
 		const first = await createQueuedRun(
 			t,
 			asUser,
@@ -713,6 +750,7 @@ describe('agentRuntime context accounting', () => {
 			firstSecret,
 			'Old prompt that should be covered'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: first.runId,
 			claimId: 'claim-1',
@@ -736,6 +774,7 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		const secondSecret = 'handoff-second-secret';
+
 		const second = await createQueuedRun(
 			t,
 			asUser,
@@ -744,15 +783,18 @@ describe('agentRuntime context accounting', () => {
 			secondSecret,
 			'New prompt'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: second.runId,
 			claimId: 'claim-2',
 			executionSecret: secondSecret
 		});
+
 		const promptParts = await asUser.query(api.transcript.getParts, {
 			threadId,
 			numbers: [0, 1, 2]
 		});
+
 		expect(promptParts.parts.map((part) => [part.number, part.kind, part.runId])).toEqual([
 			[0, 'prompt', first.runId],
 			[1, 'completion', first.runId],
@@ -779,10 +821,12 @@ describe('agentRuntime context accounting', () => {
 			contextSummary: 'The old work is complete.',
 			contextSummaryThroughPartNumber: 1
 		});
+
 		const state = await asUser.query(api.transcript.getStateForRun, {
 			runId: second.runId,
 			executionSecret: secondSecret
 		});
+
 		expect(state.historyFromNumber).toBe(2);
 		const retained = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
 		expect(retained.parts[0]?.prompt?.text).toBe('New prompt');
@@ -792,6 +836,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-first-prompt-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -800,6 +845,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Only prompt so far'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-first',
@@ -834,6 +880,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const parentSecret = 'handoff-continue-parent-secret';
+
 		const parent = await createQueuedRun(
 			t,
 			asUser,
@@ -842,6 +889,7 @@ describe('agentRuntime context accounting', () => {
 			parentSecret,
 			'Parent prompt'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: parent.runId,
 			claimId: 'claim-parent',
@@ -866,6 +914,7 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		const continueSecret = 'handoff-continue-secret';
+
 		const continued = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'handoff-continue',
@@ -873,6 +922,7 @@ describe('agentRuntime context accounting', () => {
 			prompt: '',
 			continuationOfRunId: parent.runId
 		});
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: continued.runId,
 			claimId: 'claim-continue',
@@ -907,6 +957,7 @@ describe('agentRuntime context accounting', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'handoff-stale-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -915,6 +966,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret,
 			'Continue'
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
 			claimId: 'claim-a',

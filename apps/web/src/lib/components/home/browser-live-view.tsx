@@ -12,9 +12,11 @@ type Props = {
 // No browser backend is wired up yet; these stubs keep the component in
 // place for the future local browser implementation.
 const BROWSER_UNAVAILABLE = 'Browser sessions are not available yet.';
+
 const setHumanControl = async () => {
 	throw new Error(BROWSER_UNAVAILABLE);
 };
+
 const stopSession = async () => {
 	throw new Error(BROWSER_UNAVAILABLE);
 };
@@ -53,17 +55,23 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 	const canTakeover = threadId != null;
 	const controlDisabled = pending !== null || ended || (interactiveUrl == null && !humanControl);
 	const expiryLabel = liveView == null ? null : formatExpiry(liveView.expiresAt);
+
 	const metaLabel = (() => {
 		const parts: string[] = [];
+
 		if (expiryLabel) parts.push(expiryLabel);
+
 		if (humanControl && !iframeInteractive) parts.push('Waiting for the interactive view');
+
 		return parts.join(' · ') || null;
 	})();
+
 	const statusLabel = humanControl
 		? 'You have control'
 		: active
 			? 'The agent is browsing'
 			: 'Browser session';
+
 	// Failures are tagged with the session they started on, so a rotation while
 	// the request is in flight cannot surface them for the new session.
 	const visibleActionError =
@@ -81,6 +89,7 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 		if (threadId == null || controlDisabled) return;
 		setPending('control');
 		setActionError(null);
+
 		try {
 			await setHumanControl();
 		} catch (error) {
@@ -101,6 +110,7 @@ export default function BrowserLiveView({ liveView, active }: Props) {
 		if (sessionRecordId == null || ended || pending !== null) return;
 		setPending('stop');
 		setActionError(null);
+
 		try {
 			await stopSession();
 		} catch (error) {

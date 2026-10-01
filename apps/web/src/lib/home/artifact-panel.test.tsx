@@ -11,9 +11,11 @@ import {
 function createFakeClient(readRevision: () => number | undefined) {
 	const listeners = new Set<() => void>();
 	const disposed = vi.fn<() => void>();
+
 	const watch: ReturnType<ConvexArtifactClient['watchQuery']> = {
 		onUpdate: (callback) => {
 			listeners.add(callback);
+
 			return () => {
 				listeners.delete(callback);
 				disposed();
@@ -21,11 +23,14 @@ function createFakeClient(readRevision: () => number | undefined) {
 		},
 		localQueryResult: readRevision
 	};
+
 	const watchQuery = vi.fn<ConvexArtifactClient['watchQuery']>(() => watch);
+
 	const client: ConvexArtifactClient = {
 		query: async () => ({ page: [], isDone: true, continueCursor: '', revision: 0 }),
 		watchQuery
 	};
+
 	return {
 		client,
 		disposed,
@@ -74,6 +79,7 @@ it('surfaces registry failures without throwing at the caller', () => {
 	const fake = createFakeClient(() => {
 		throw new Error('Artifact registry unavailable.');
 	});
+
 	const onUpdate = vi.fn<(revision: number) => void>();
 	const onError = vi.fn<(error: Error) => void>();
 

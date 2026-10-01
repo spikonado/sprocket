@@ -10,7 +10,9 @@ import Button from '$lib/components/ui/button/button';
 import { convexClientErrorMessage } from '$lib/convex-error';
 
 type MandateFrequency = Infer<typeof vMandateFrequency>;
+
 type MandateScope = Infer<typeof vMandateScope>;
+
 type LifecycleAction = 'pause' | 'resume' | 'cancel';
 
 type MandateRow = {
@@ -36,9 +38,12 @@ function catchMessage<T>(error: T, fallback: string): string {
 
 const fieldClass =
 	'border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full rounded-lg border px-3 text-[13px] outline-none';
+
 const labelClass = 'text-muted-foreground text-[12px]';
+
 const actionLinkClass =
 	'text-muted-foreground hover:text-foreground text-[12px] transition disabled:pointer-events-none disabled:opacity-40';
+
 const lifecycleLabels = {
 	pause: { idle: 'Pause', busy: 'Pausing…' },
 	resume: { idle: 'Resume', busy: 'Resuming…' },
@@ -103,10 +108,12 @@ export default function SettingsPayments() {
 	const refreshMandates = useCallback(async () => {
 		setMandatesLoading(true);
 		setMandatesError(null);
+
 		try {
 			const result = await listMyMandates({});
 			setMandates(result.mandates);
 			const pendingId = pendingApprovalRef.current?.mandateId;
+
 			if (
 				pendingId &&
 				result.mandates.some(
@@ -129,6 +136,7 @@ export default function SettingsPayments() {
 		if (!convexAuth.isAuthenticated || convexAuth.isLoading) {
 			return;
 		}
+
 		void refreshMandates();
 	}, [convexAuth.isAuthenticated, convexAuth.isLoading, refreshMandates]);
 
@@ -138,14 +146,18 @@ export default function SettingsPayments() {
 		if (!pendingApproval || !convexAuth.isAuthenticated) {
 			return;
 		}
+
 		const onReturn = () => {
 			if (document.visibilityState && document.visibilityState !== 'visible') {
 				return;
 			}
+
 			void refreshMandates();
 		};
+
 		window.addEventListener('focus', onReturn);
 		document.addEventListener('visibilitychange', onReturn);
+
 		return () => {
 			window.removeEventListener('focus', onReturn);
 			document.removeEventListener('visibilitychange', onReturn);
@@ -160,6 +172,7 @@ export default function SettingsPayments() {
 		// Merchant fields are disabled (and ignored by Prava) for any-merchant
 		// mandates; don't submit leftover values that would mislabel the mandate.
 		const listed = scope === 'listed';
+
 		try {
 			const result = await setupMyMandate({
 				merchantName: listed ? merchantName.trim() || undefined : undefined,
@@ -171,6 +184,7 @@ export default function SettingsPayments() {
 				scope,
 				description: description.trim()
 			});
+
 			setPendingApproval({
 				mandateId: result.mandateId,
 				approvalUrl: result.approvalUrl,
@@ -189,6 +203,7 @@ export default function SettingsPayments() {
 		setLifecycleBusyId(mandate.pravaMandateId);
 		setLifecycleBusyAction(action);
 		setMandatesError(null);
+
 		try {
 			await setMyMandateLifecycle({
 				mandateId: mandate.mandateId,
@@ -282,6 +297,7 @@ export default function SettingsPayments() {
 												mandateFrequencyOptions,
 												event.currentTarget.value
 											);
+
 											if (next) setFrequency(next);
 										}}
 										disabled={setupSubmitting || scope === 'any'}
@@ -300,6 +316,7 @@ export default function SettingsPayments() {
 										value={scope}
 										onChange={(event) => {
 											const next = parseSelectValue(mandateScopeOptions, event.currentTarget.value);
+
 											if (next) setScope(next);
 										}}
 										disabled={setupSubmitting}
@@ -358,10 +375,12 @@ export default function SettingsPayments() {
 									const busyAction = busy ? lifecycleBusyAction : null;
 									const canPause = Boolean(mandate.mandateId) && mandate.status === 'active';
 									const canResume = Boolean(mandate.mandateId) && mandate.status === 'paused';
+
 									const rowActions: readonly LifecycleAction[] = [
 										canPause ? 'pause' : 'resume',
 										'cancel'
 									];
+
 									return (
 										<li key={mandate.pravaMandateId} className="py-2">
 											<div className="flex items-baseline justify-between gap-3">

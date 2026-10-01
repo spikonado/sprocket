@@ -9,6 +9,7 @@ type SidebarProps = Omit<
 	ComponentProps<typeof InboxSidebar>,
 	'settledOpen' | 'onSettledOpenChange'
 >;
+
 type Thread = Doc<'threadRecords'>;
 
 beforeEach(() => {
@@ -36,7 +37,9 @@ function thread(settled = false, status: Thread['status'] = 'completed') {
 		lastMessageAt: Date.now(),
 		status
 	};
+
 	if (settled) record.archivedAt = Date.now();
+
 	return record;
 }
 
@@ -72,6 +75,7 @@ function props(records: Thread[]) {
 
 function Harness(input: SidebarProps) {
 	const [settledOpen, setSettledOpen] = useState(false);
+
 	return <InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />;
 }
 
@@ -79,6 +83,7 @@ async function render(records: Thread[]) {
 	const input = props(records);
 	renderView(<Harness {...input} />);
 	await act(async () => {});
+
 	return input;
 }
 
@@ -103,6 +108,7 @@ it('settles an idle thread without offering snooze actions', async () => {
 
 it('renders simple navigation and a collapsible settled section', async () => {
 	const input = await render([thread(), thread(true)]);
+
 	const newThread = [...document.querySelectorAll<HTMLButtonElement>('.inbox-menu-item')].find(
 		(button) => button.textContent?.includes('New thread')
 	);
@@ -115,9 +121,11 @@ it('renders simple navigation and a collapsible settled section', async () => {
 	expect(input.onNew).toHaveBeenCalledOnce();
 	expect(document.querySelector('.inbox-jumps')).toBeNull();
 	expect(document.querySelector('#inbox-unsettled .inbox-section-heading')).toBeNull();
+
 	const settledHeading = document.querySelector<HTMLButtonElement>(
 		'#inbox-settled .inbox-section-heading'
 	)!;
+
 	expect(settledHeading.textContent?.trim()).toBe('Settled Threads');
 	expect(settledHeading.getAttribute('aria-expanded')).toBe('false');
 	expect(document.querySelector('#inbox-settled .inbox-row')).toBeNull();
@@ -165,6 +173,7 @@ it('loads more threads only after the user clicks Show more', async () => {
 	const showMore = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
 		(button) => button.textContent?.trim() === 'Show more'
 	)!;
+
 	expect(showMore).toBeTruthy();
 	expect(unsettled.loadMore).not.toHaveBeenCalled();
 	act(() => {
@@ -289,6 +298,7 @@ it('renames a thread inline', async () => {
 			.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 }));
 	});
 	await flush();
+
 	const renameAction = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
 		(action) => action.textContent?.trim() === 'Rename'
 	)!;
@@ -325,9 +335,11 @@ it('does not allow a running thread to settle', async () => {
 it('unsettles a settled thread', async () => {
 	localStorage.setItem('sprocket.inbox.settled-open', 'true');
 	const input = await render([thread(true)]);
+
 	const unsettleButton = document.querySelector<HTMLButtonElement>(
 		'[aria-label="Unsettle Thread"]'
 	)!;
+
 	expect(unsettleButton.querySelector('.lucide-rotate-ccw')).toBeTruthy();
 	act(() => {
 		unsettleButton.click();
@@ -340,6 +352,7 @@ it('unsettles a settled thread', async () => {
 	);
 	expect(document.querySelector('.inbox-notice')).toBeNull();
 });
+
 it('shows a failed settle', async () => {
 	const input = await render([thread()]);
 	input.onChange.mockRejectedValue(new Error('Changed elsewhere'));

@@ -41,6 +41,7 @@ function callHandler<Ref extends FunctionReference<'query' | 'mutation'>>(
 	const { _handler } = registered as typeof registered & {
 		_handler: (ctx: MutationCtx, args: FunctionArgs<Ref>) => Promise<FunctionReturnType<Ref>>;
 	};
+
 	return _handler(ctx, args);
 }
 
@@ -51,6 +52,7 @@ async function startedRun() {
 	const { runId } = await createQueuedRun(t, asUser, threadId, 'execution-state', executionSecret);
 	const auth = { runId, executionSecret, claimId: 'execution-claim' };
 	await asUser.mutation(api.agentRuntime.start, auth);
+
 	return { t, asUser, threadId, auth };
 }
 
@@ -63,6 +65,7 @@ describe('run execution state', () => {
 	])('records $kind results with running=$running', async ({ kind, running }) => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		const callId = 'command-call';
+
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
@@ -70,6 +73,7 @@ describe('run execution state', () => {
 			callId,
 			payload: kind === 'exec_command' ? { cmd: 'echo ok' } : { sessionId: '1' }
 		});
+
 		const output: Infer<typeof vCommandExecResult> = {
 			output: 'ok\n',
 			success: !running,
@@ -78,10 +82,14 @@ describe('run execution state', () => {
 			completeLogPath: '/transcripts/command/output.log',
 			eventsPath: '/transcripts/command/events.jsonl'
 		};
+
 		if (!running) output.exitCode = 0;
+
 		if (kind === 'exec_command' && running) output.sessionId = '1';
+
 		const result =
 			kind === 'write_stdin' ? { ...output, command: 'echo ok', workdir: '/' } : output;
+
 		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
 		expect(
 			await asUser.query(api.executor.getJob, {
@@ -97,10 +105,12 @@ describe('run execution state', () => {
 		await t.run(async (ctx) => {
 			expect((await getRunWithExecution(ctx.db, auth.runId))?.activeJobId).toBeUndefined();
 		});
+
 		const { parts } = await asUser.query(api.transcript.getParts, {
 			threadId,
 			numbers: [0, 1, 2]
 		});
+
 		expect(parts.filter((part) => part.kind === 'tool').map((part) => part.tool)).toEqual([
 			expect.objectContaining({ callId, name: kind, status: 'started' }),
 			expect.objectContaining({ callId, name: kind, status: 'completed', output: result })
@@ -109,12 +119,14 @@ describe('run execution state', () => {
 
 	it('accepts command results from executors', async () => {
 		const { asUser, auth } = await startedRun();
+
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind: 'exec_command',
 			payload: { cmd: 'echo ok' }
 		});
+
 		const result = {
 			output: 'ok\n',
 			exitCode: 0,
@@ -124,6 +136,7 @@ describe('run execution state', () => {
 			completeLogPath: '/transcripts/command/output.log',
 			eventsPath: '/transcripts/command/events.jsonl'
 		};
+
 		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
 		expect(
 			await asUser.query(api.executor.getJob, {
@@ -146,18 +159,21 @@ describe('run execution state', () => {
 				ctx,
 				{ ...auth, attemptSeq: 1 }
 			);
+
 			const first = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, 1, 1),
 				kind: 'exec_command',
 				payload: { cmd: 'true' }
 			});
+
 			const second = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, 2, 1),
 				kind: 'exec_command',
 				payload: { cmd: 'false' }
 			});
+
 			expect(
 				await callHandler(api.executor.complete, complete, ctx, {
 					...auth,
@@ -212,12 +228,14 @@ describe('run execution state', () => {
 
 	it('keeps cancellation, lifecycle, and job subscriptions off execution state', async () => {
 		const { asUser, threadId, auth } = await startedRun();
+
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind: 'exec_command',
 			payload: { cmd: 'true' }
 		});
+
 		await asUser.run(async (ctx) => {
 			const query = vi.spyOn(ctx.db, 'query');
 			const get = vi.spyOn(ctx.db, 'get');
@@ -257,6 +275,7 @@ describe('run execution state', () => {
 				.query('runExecutionStates')
 				.withIndex('by_runId', (query) => query.eq('runId', auth.runId))
 				.unique();
+
 			if (!state) throw new Error('Missing execution state fixture.');
 			await ctx.db.delete('runExecutionStates', state._id);
 

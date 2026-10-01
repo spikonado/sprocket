@@ -13,6 +13,7 @@ import schema from '@convex/schema';
 import { isRunFinalStatus } from '@convex/lib/validators';
 
 export const REQUEST_TTL_MS = 8 * 60_000;
+
 export const vRequestArgs = schema
 	.doc('firecrawlRequests')
 	.pick('runId', 'claimId', 'jobId', 'kind');
@@ -21,9 +22,12 @@ export const scrapeJob = internalMutation({
 	args: { runId: v.id('runs'), claimId: v.string(), jobId: v.id('executorJobs') },
 	handler: async (ctx, args) => {
 		const active = await claimedJobForActiveRun(ctx, args);
+
 		if (!active || active.job.status !== 'claimed' || active.job.cloudWorkId !== undefined)
 			return null;
+
 		if (active.job.kind !== 'scrape_url' && active.job.kind !== 'screenshot_url') return null;
+
 		return { kind: active.job.kind, payload: active.job.payload };
 	}
 });
@@ -33,6 +37,7 @@ async function activeRun(
 	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind'>
 ) {
 	const run = await getRunWithExecution(ctx.db, request.runId);
+
 	if (
 		!run ||
 		run.cancellationRequestedAt !== undefined ||
@@ -41,8 +46,10 @@ async function activeRun(
 	) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
+
 	if (!request.jobId) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	const active = await claimedJobForActiveRun(ctx, { ...request, jobId: request.jobId });
+
 	if (
 		!active ||
 		active.job.kind !== `${request.kind}_url` ||
@@ -51,6 +58,7 @@ async function activeRun(
 	) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
+
 	return run;
 }
 
@@ -60,11 +68,13 @@ export const enqueue = internalMutation({
 	handler: async (ctx, { executionSecret, ...args }) => {
 		await getExecutionRun(ctx, args.runId, executionSecret);
 		await activeRun(ctx, args);
+
 		const id = await ctx.db.insert('firecrawlRequests', {
 			...args,
 			status: 'queued',
 			expiresAt: Date.now() + REQUEST_TTL_MS
 		});
+
 		const workId = await firecrawlScrapePool.enqueueAction(
 			ctx,
 			internal.firecrawlRequestActions.execute,
@@ -75,8 +85,10 @@ export const enqueue = internalMutation({
 				context: { id }
 			}
 		);
+
 		await ctx.db.patch('firecrawlRequests', id, { workId });
 		await ctx.scheduler.runAfter(REQUEST_TTL_MS, internal.firecrawlRequests.cleanup, { id });
+
 		return id;
 	}
 });
@@ -98,6 +110,7 @@ export const getResult = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const request = await ctx.db.get('firecrawlRequests', args.id);
+
 		if (
 			!request ||
 			request.runId !== run._id ||
@@ -110,13 +123,18 @@ export const getResult = query({
 				error: 'Firecrawl request ended. Check its outcome before repeating the request.'
 			};
 		}
+
 		if (request.status === 'failed')
 			return { status: 'failed' as const, error: request.error ?? 'Firecrawl request failed.' };
+
 		if (request.status === 'completed' && request.resultStorageId) {
 			const url = await ctx.storage.getUrl(request.resultStorageId);
+
 			if (url) return { status: 'completed' as const, url };
+
 			return { status: 'failed' as const, error: 'Firecrawl result is no longer available.' };
 		}
+
 		return { status: 'pending' as const };
 	}
 });
@@ -127,7 +145,9 @@ export const dispose = mutation({
 	handler: async (ctx, args) => {
 		await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const request = await ctx.db.get('firecrawlRequests', args.id);
+
 		if (request?.runId === args.runId) await remove(ctx, request);
+
 		return null;
 	}
 });
@@ -144,9 +164,11 @@ export const claim = internalMutation({
 	),
 	handler: async (ctx, { id }) => {
 		const request = await ctx.db.get('firecrawlRequests', id);
+
 		if (!request || request.status !== 'queued' || request.expiresAt <= Date.now()) return null;
 		const run = await activeRun(ctx, request);
 		await ctx.db.patch('firecrawlRequests', id, { status: 'running' });
+
 		return { request, userId: run.userId, threadId: run.threadId };
 	}
 });
@@ -156,10 +178,13 @@ export const publish = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { id, storageId }) => {
 		const request = await ctx.db.get('firecrawlRequests', id);
+
 		if (!request || request.status !== 'running' || request.expiresAt <= Date.now()) {
 			await ctx.storage.delete(storageId);
+
 			return null;
 		}
+
 		try {
 			await activeRun(ctx, request);
 		} catch {
@@ -168,12 +193,15 @@ export const publish = internalMutation({
 				status: 'failed',
 				error: RUN_NO_LONGER_ACTIVE
 			});
+
 			return null;
 		}
+
 		await ctx.db.patch('firecrawlRequests', id, {
 			status: 'completed',
 			resultStorageId: storageId
 		});
+
 		return null;
 	}
 });
@@ -183,15 +211,19 @@ export const complete = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { context, result }) => {
 		const request = await ctx.db.get('firecrawlRequests', context.id);
+
 		if (!request || request.status === 'completed' || request.status === 'failed') return null;
+
 		const error =
 			result.kind === 'failed'
 				? toAgentToolConvexError(new Error(result.error)).message
 				: 'Firecrawl request did not return a result.';
+
 		await ctx.db.patch('firecrawlRequests', request._id, {
 			status: 'failed',
 			error: error.slice(0, 16_000)
 		});
+
 		return null;
 	}
 });
@@ -205,13 +237,16 @@ export const poll = internalMutation({
 	}),
 	handler: async (ctx, { id }) => {
 		const request = await ctx.db.get('firecrawlRequests', id);
+
 		if (!request || request.expiresAt <= Date.now()) {
 			return {
 				status: 'failed',
 				error: 'Firecrawl request timed out. Check its outcome before repeating the request.'
 			};
 		}
+
 		await activeRun(ctx, request);
+
 		return { status: request.status, storageId: request.resultStorageId, error: request.error };
 	}
 });
@@ -221,6 +256,7 @@ async function remove(ctx: MutationCtx, request: Doc<'firecrawlRequests'>) {
 		// SAFETY: Stored directly from this pool's enqueueAction result.
 		await firecrawlScrapePool.cancel(ctx, request.workId as WorkId);
 	}
+
 	if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);
 	await ctx.db.delete('firecrawlRequests', request._id);
 }
@@ -230,7 +266,9 @@ export const cleanup = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { id }) => {
 		const request = await ctx.db.get('firecrawlRequests', id);
+
 		if (request) await remove(ctx, request);
+
 		return null;
 	}
 });
@@ -240,6 +278,7 @@ export const removeResult = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { storageId }) => {
 		await ctx.storage.delete(storageId);
+
 		return null;
 	}
 });
@@ -249,7 +288,9 @@ export async function cancelFirecrawlRequests(ctx: MutationCtx, runId: Id<'runs'
 		.query('firecrawlRequests')
 		.withIndex('by_runId', (q) => q.eq('runId', runId))
 		.take(32);
+
 	for (const request of requests) await remove(ctx, request);
+
 	if (requests.length === 32)
 		await ctx.scheduler.runAfter(0, internal.firecrawlRequests.cancelRun, { runId });
 }
@@ -259,6 +300,7 @@ export const cancelRun = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { runId }) => {
 		await cancelFirecrawlRequests(ctx, runId);
+
 		return null;
 	}
 });

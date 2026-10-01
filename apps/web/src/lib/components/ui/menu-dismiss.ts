@@ -6,6 +6,7 @@ export function listenOpenMenuDismiss(options: {
 }): () => void {
 	function handlePointerDown(event: PointerEvent) {
 		const target = event.target;
+
 		if (!(target instanceof Node)) {
 			return;
 		}

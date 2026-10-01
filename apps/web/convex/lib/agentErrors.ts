@@ -22,6 +22,7 @@ export function assertRunAcceptsModelCompletion(run: {
 	if (run.cancellationRequestedAt !== undefined || run.status === 'cancelled') {
 		throw new ConvexError(RUN_CANCELLED_BY_USER);
 	}
+
 	if (isRunFinalStatus(run.status)) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
@@ -29,8 +30,10 @@ export function assertRunAcceptsModelCompletion(run: {
 
 function stripUncaughtPrefix(message: string): string {
 	const stripped = message.replace(/^(?:Uncaught (?:Convex)?Error: )+/, '');
+
 	if (stripped === message) return message;
 	const newline = stripped.indexOf('\n');
+
 	return newline === -1 ? stripped : stripped.slice(0, newline);
 }
 
@@ -42,10 +45,14 @@ function stripUncaughtPrefix(message: string): string {
 export function toAgentToolConvexError(error: Error): Error {
 	if (error instanceof ConvexError) {
 		const data = z.string().safeParse(error.data);
+
 		if (!data.success) return error;
 		const message = stripUncaughtPrefix(data.data);
+
 		return message === data.data ? error : new ConvexError(message);
 	}
+
 	const message = stripUncaughtPrefix(error.message) || error.name;
+
 	return new ConvexError(message);
 }

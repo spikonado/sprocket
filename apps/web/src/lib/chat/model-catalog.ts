@@ -8,8 +8,11 @@ import {
 import { z } from 'zod';
 
 export type { CatalogModel, ModelCatalog };
+
 export type CatalogModelId = CatalogModel['id'];
+
 export type FastModeAccess = 'unsupported' | 'locked' | 'available';
+
 export { CATALOG_UNAVAILABLE_MESSAGE };
 
 export type ModelSelectorOption = {
@@ -44,6 +47,7 @@ export function resolveModelForTier(
 	modelId: CatalogModelId
 ): CatalogModelId {
 	if (isModelAllowedForTier(catalog, tier, modelId)) return modelId;
+
 	return catalog.tierAllowedModels[tier]?.[0] ?? catalog.defaultModelId;
 }
 
@@ -53,6 +57,7 @@ export function fastModeAccessForModelAndTier(
 	model: CatalogModel
 ): FastModeAccess {
 	if (!model.supportsFastMode) return 'unsupported';
+
 	// Tiers missing from the catalog allow fast mode.
 	return (catalog.tierAllowsFastMode[tier] ?? true) ? 'available' : 'locked';
 }
@@ -64,8 +69,10 @@ export function showsReasoningControl(model: CatalogModel): boolean {
 export function modelOptionsForTier(catalog: ModelCatalog, tier: string): ModelSelectorOption[] {
 	const unlocked: ModelSelectorOption[] = [];
 	const locked: ModelSelectorOption[] = [];
+
 	for (const model of catalog.models) {
 		const option = { id: model.id, label: model.label, provider: model.provider };
+
 		if (isModelAllowedForTier(catalog, tier, model.id)) {
 			unlocked.push(option);
 		} else {
@@ -76,6 +83,7 @@ export function modelOptionsForTier(catalog: ModelCatalog, tier: string): ModelS
 			});
 		}
 	}
+
 	return [...unlocked, ...locked];
 }
 
@@ -86,12 +94,15 @@ export function modelOptionsForCompletionProvider(
 	chatGptModelIds: readonly string[] | null = null
 ): ModelSelectorOption[] {
 	if (provider === 'spikonado') return modelOptionsForTier(catalog, tier);
+
 	if (provider === 'chatgpt') {
 		return (chatGptModelIds ?? []).flatMap((id) => {
 			const model = catalog.models.find((model) => model.id === id && model.provider === 'openai');
+
 			return model ? [{ id, label: model.label, provider: model.provider }] : [];
 		});
 	}
+
 	return catalog.models
 		.filter((model) => model.provider === 'openai')
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
@@ -105,7 +116,9 @@ export function resolveModelForCompletionProvider(
 	chatGptModelIds: readonly string[] | null = null
 ): CatalogModelId | undefined {
 	const options = modelOptionsForCompletionProvider(catalog, tier, provider, chatGptModelIds);
+
 	if (options.some((option) => option.id === modelId && !option.locked)) return modelId;
+
 	return options.find((option) => !option.locked)?.id;
 }
 
@@ -169,11 +182,13 @@ function catalogFromGatewayPayload(
 	payload: z.infer<typeof gatewayModelsResponseSchema>
 ): ModelCatalog {
 	const sprocket = payload.sprocket;
+
 	if (sprocket.protocolVersion !== GATEWAY_PROTOCOL_VERSION) {
 		throw new Error(
 			`${CATALOG_UNAVAILABLE_MESSAGE} Unsupported protocol version ${sprocket.protocolVersion}.`
 		);
 	}
+
 	return {
 		protocolVersion: sprocket.protocolVersion,
 		catalogVersion: sprocket.catalogVersion,
@@ -206,18 +221,24 @@ function catalogFromGatewayPayload(
 /** Live catalog from `GET {origin}/api/v1/models`. */
 export async function fetchGatewayModelCatalog(gatewayOrigin: string): Promise<ModelCatalog> {
 	const origin = gatewayOrigin.replace(/\/+$/, '');
+
 	if (!origin) {
 		throw new Error(CATALOG_UNAVAILABLE_MESSAGE);
 	}
+
 	const response = await fetch(`${origin}${GATEWAY_API_PREFIX}/v1/models`, {
 		headers: { accept: 'application/json' }
 	});
+
 	if (!response.ok) {
 		throw new Error(CATALOG_UNAVAILABLE_MESSAGE);
 	}
+
 	const parsed = gatewayModelsResponseSchema.safeParse(await response.json());
+
 	if (!parsed.success) {
 		throw new Error(CATALOG_UNAVAILABLE_MESSAGE);
 	}
+
 	return catalogFromGatewayPayload(parsed.data);
 }

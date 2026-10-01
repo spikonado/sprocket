@@ -26,6 +26,7 @@ export const removeTranscriptStateWorkThrough = migrations.define({
 	table: 'threadTranscriptStates',
 	migrateOne: async (_ctx, state) => {
 		if (state.workThrough === undefined) return;
+
 		return { workThrough: undefined };
 	}
 });
@@ -37,9 +38,11 @@ export const removeMandateSetupUserEmail = migrations.define({
 	migrateOne: async (_ctx, job) => {
 		if (job.kind !== 'mandate_setup') return;
 		const parsed = mandateSetupPayloadSchema.safeParse(job.payload);
+
 		if (!parsed.success || parsed.data.userEmail === undefined) return;
 		const rest = { ...parsed.data };
 		delete rest.userEmail;
+
 		return { payload: rest };
 	}
 });
@@ -61,9 +64,12 @@ export const normalizeScrapeUrlResults = migrations.define({
 	migrateOne: async (_ctx, job) => {
 		if (job.kind !== 'scrape_url') return;
 		const parsed = scrapeUrlResultSchema.safeParse(job.result);
+
 		if (!parsed.success) return;
 		const { url, markdown, summary, images, truncated } = parsed.data;
+
 		if (truncated === undefined && summary !== undefined && images !== undefined) return;
+
 		return {
 			result: {
 				url,
@@ -79,6 +85,7 @@ export const backfillExecutorJobToolInvocationId = migrations.define({
 	table: 'executorJobs',
 	migrateOne: async (_ctx, job) => {
 		if (job.toolInvocationId !== undefined) return;
+
 		return { toolInvocationId: job._id };
 	}
 });
@@ -88,10 +95,12 @@ export const migrateToolPartJobIds = migrations.define({
 	migrateOne: async (ctx, part) => {
 		if (part.kind !== 'tool' || !part.tool?.jobId) return;
 		const job = await ctx.db.get(part.tool.jobId);
+
 		if (!job) return;
 		const tool = { ...part.tool };
 		tool.toolInvocationId = job.toolInvocationId ?? job._id;
 		delete tool.jobId;
+
 		return { tool };
 	}
 });
@@ -100,6 +109,7 @@ export const normalizeTranscriptCompletionTiming = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: async (_ctx, part) => {
 		if (part.kind !== 'completion' || !part.completion) return;
+
 		if (
 			part.completion.items.every(
 				(item) => item.startedAt !== undefined && item.completedAt !== undefined
@@ -107,6 +117,7 @@ export const normalizeTranscriptCompletionTiming = migrations.define({
 		) {
 			return;
 		}
+
 		return {
 			completion: {
 				...part.completion,
@@ -124,13 +135,16 @@ export const stripStoredAttachmentImageUploadIds = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: async (_ctx, part) => {
 		if (!part.prompt || part.prompt.imageUploads.length === 0) return;
+
 		if (part.prompt.imageUploads.every((upload) => upload.imageUploadId === undefined)) return;
+
 		return {
 			prompt: {
 				...part.prompt,
 				imageUploads: part.prompt.imageUploads.map((upload) => {
 					const current = { ...upload };
 					delete current.imageUploadId;
+
 					return current;
 				})
 			}
@@ -142,10 +156,13 @@ export const convertContextHandoffCutoffs = migrations.define({
 	table: 'threadRecords',
 	migrateOne: async (ctx, thread) => {
 		const throughRunId = thread.contextSummaryThroughRunId;
+
 		if (throughRunId === undefined) return;
+
 		if (thread.contextSummaryThroughPartNumber !== undefined) {
 			return { contextSummaryThroughRunId: undefined };
 		}
+
 		const lastCovered = await ctx.db
 			.query('threadTranscriptParts')
 			.withIndex('by_threadId_and_runId_and_number', (query) =>
@@ -153,6 +170,7 @@ export const convertContextHandoffCutoffs = migrations.define({
 			)
 			.order('desc')
 			.first();
+
 		return {
 			contextSummaryThroughPartNumber:
 				lastCovered?.number ?? EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER,
@@ -165,6 +183,7 @@ export const removeSectionLinkedParts = migrations.define({
 	table: 'threadTranscriptWorkSections',
 	migrateOne: async (_ctx, section) => {
 		if (section.linkedParts === undefined) return;
+
 		return { linkedParts: undefined };
 	}
 });
@@ -173,6 +192,7 @@ export const removeArtifactRegistryRekeyTargets = migrations.define({
 	table: 'artifactRegistries',
 	migrateOne: async (_ctx, registry) => {
 		if (registry.rekeyTo === undefined) return;
+
 		return { rekeyTo: undefined };
 	}
 });
@@ -202,8 +222,10 @@ export const runLegacyCompatBackfillAutomatically = internalMutation({
 			.query('migrationSchedules')
 			.withIndex('by_name', (q) => q.eq('name', LEGACY_COMPAT_BACKFILL))
 			.unique();
+
 		if (schedule?.completedAt !== undefined) return null;
 		let scheduleId = schedule?._id;
+
 		if (!schedule) {
 			scheduleId = await ctx.db.insert('migrationSchedules', {
 				name: LEGACY_COMPAT_BACKFILL,
@@ -213,14 +235,19 @@ export const runLegacyCompatBackfillAutomatically = internalMutation({
 		} else if (schedule.startedAt === undefined) {
 			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
 		}
+
 		const statuses = await migrations.getStatus(ctx, {
 			migrations: legacyCompatBackfillMigrations
 		});
+
 		if (statuses.every((status) => status.isDone)) {
 			await ctx.db.patch('migrationSchedules', scheduleId!, { completedAt: Date.now() });
+
 			return null;
 		}
+
 		await migrations.runSerially(ctx, legacyCompatBackfillMigrations);
+
 		return null;
 	}
 });

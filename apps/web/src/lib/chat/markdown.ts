@@ -11,6 +11,7 @@ function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
 		ADD_ATTR: ['target', 'rel'],
 		FORBID_ATTR: openLinksInNewTab ? ['target', 'rel'] : []
 	});
+
 	if (!openLinksInNewTab) return sanitized;
 
 	return sanitized.replace(/<a(?=[\s>])/gi, '<a target="_blank" rel="noopener noreferrer"');
@@ -36,6 +37,7 @@ export function renderMarkdownBlocks(
 	const flushMarkdown = () => {
 		if (markdownTokens.length === 0) return;
 		const html = sanitizeMarkdown(marked.parser(markdownTokens), openLinksInNewTab);
+
 		if (html) blocks.push({ type: 'html', html });
 		markdownTokens = [];
 	};
@@ -43,6 +45,7 @@ export function renderMarkdownBlocks(
 	for (const token of marked.lexer(value)) {
 		const match = token.type === 'paragraph' ? ARTIFACT_REFERENCE.exec(token.raw) : null;
 		const artifactId = match?.[1];
+
 		if (!artifactId || !availableArtifactIds.has(artifactId)) {
 			markdownTokens.push(token);
 			continue;
@@ -53,5 +56,6 @@ export function renderMarkdownBlocks(
 	}
 
 	flushMarkdown();
+
 	return blocks;
 }

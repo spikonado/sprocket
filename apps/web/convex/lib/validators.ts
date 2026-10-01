@@ -12,7 +12,9 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
 export const completionProviderIds = ['spikonado', 'openai', 'chatgpt'] as const;
+
 export type CompletionProvider = (typeof completionProviderIds)[number];
+
 export const vCompletionProvider = v.union(...literals(completionProviderIds));
 
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
@@ -113,6 +115,7 @@ const vBrowserInteractPayload = v.object({
 });
 
 const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
+
 export const vMandateFrequency = v.union(...literals(mandateFrequencies));
 
 export const vMandateScope = v.union(v.literal('listed'), v.literal('any'));
@@ -125,6 +128,7 @@ const mandateStatuses = [
 	'cancelled',
 	'expired'
 ] as const;
+
 export const vMandateStatus = v.union(...literals(mandateStatuses));
 
 export function isMandateStatus(
@@ -588,9 +592,11 @@ export const MAX_FILE_NAME_LENGTH = 255;
 
 export function registeredFileUploadError(name: string): string | null {
 	const trimmed = name.trim();
+
 	if (!trimmed || trimmed.length > MAX_FILE_NAME_LENGTH) {
 		return 'Filename must be between 1 and 255 characters.';
 	}
+
 	return null;
 }
 
@@ -656,9 +662,13 @@ export const vAssistantMessagePart = v.union(
 );
 
 export type AssistantTextPart = Infer<typeof vAssistantTextPart>;
+
 export type AssistantReasoningPart = Infer<typeof vAssistantReasoningPart>;
+
 export type AssistantToolCallPart = Infer<typeof vAssistantToolCallPart>;
+
 export type AssistantToolResultPart = Infer<typeof vAssistantToolResultPart>;
+
 export type AssistantMessagePart = Infer<typeof vAssistantMessagePart>;
 
 export const vTranscriptPartKind = v.union(
@@ -713,8 +723,11 @@ export const vTranscriptToolBody = v.object({
 });
 
 export type TranscriptCompletionItem = Infer<typeof vTranscriptCompletionItem>;
+
 export type TranscriptPromptBody = Infer<typeof vTranscriptPromptBody>;
+
 export type TranscriptCompletionBody = Infer<typeof vTranscriptCompletionBody>;
+
 export type TranscriptToolBody = Infer<typeof vTranscriptToolBody>;
 
 export const vAgentHistoryRole = v.union(
@@ -787,9 +800,15 @@ export const vAgentHistoryMessage = v.object({
 export type AgentHistoryMessage = Infer<typeof vAgentHistoryMessage>;
 
 export type ExecutorJobPayload = Infer<typeof vExecutorJobPayload>;
+
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
+
 export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultErrorStatus>;
+
 export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
+
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
+
 export type ArtifactType = Infer<typeof vArtifactType>;
+
 export type ArtifactScope = Infer<typeof vArtifactScope>;

@@ -31,6 +31,7 @@ import {
 export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 
 const MONTH = 30 * DAY;
+
 export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
 const periodDurations = { weekly: WEEK, monthly: MONTH } as const satisfies Record<
@@ -52,13 +53,16 @@ function meterLimitConfig(
 
 function meterLimitLabel(meterId: UsageMeterId, period: UsagePeriod): string {
 	const meter = usageMeters.find((candidate) => candidate.id === meterId);
+
 	if (!meter) throw new Error(`Unknown usage meter: ${meterId}`);
+
 	return `${period === 'weekly' ? 'Weekly' : 'Monthly'} ${meter.noun} limit`;
 }
 
 function formatRetryAfter(milliseconds: number): string {
 	let remaining = Math.max(SECOND, Math.ceil(milliseconds / SECOND) * SECOND);
 	const parts: string[] = [];
+
 	for (const [suffix, size] of [
 		['d', DAY],
 		['h', HOUR],
@@ -66,10 +70,14 @@ function formatRetryAfter(milliseconds: number): string {
 	] as const) {
 		const value = Math.floor(remaining / size);
 		remaining %= size;
+
 		if (value > 0) parts.push(`${value}${suffix}`);
 	}
+
 	const seconds = remaining / SECOND;
+
 	if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+
 	return parts.join(' ');
 }
 
@@ -88,12 +96,15 @@ async function blockedMeterLimit(
 			})
 		}))
 	);
+
 	const blocked = statuses
 		.filter(({ status }) => !status.ok)
 		.sort((a, b) => (b.status.retryAfter ?? 0) - (a.status.retryAfter ?? 0))[0];
+
 	if (blocked && !blocked.status.ok) {
 		return { period: blocked.period, retryAfter: blocked.status.retryAfter ?? 0 };
 	}
+
 	return undefined;
 }
 
@@ -104,6 +115,7 @@ async function checkMeterLimits(
 	limits: TierLimits
 ): Promise<void> {
 	const blocked = await blockedMeterLimit(ctx, meterId, key, limits);
+
 	if (!blocked) return;
 	// A ConvexError keeps its message through production error masking, and
 	// the executor only retries masked server failures.
@@ -119,7 +131,9 @@ export async function gatewayQuotaStatus(
 	const tier = await ensureSubscription(ctx, userId);
 	const limits = await resolveTierLimits(ctx, tier);
 	const blocked = await blockedMeterLimit(ctx, 'modelUsage', userId, limits);
+
 	if (!blocked) return { tier, exhausted: false };
+
 	return {
 		tier,
 		exhausted: true,
@@ -153,13 +167,16 @@ export async function getMeterWindow(
 	now: number = Date.now()
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
 	const config = meterLimitConfig(meterId, period, limits);
+
 	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
 		key: userId,
 		config
 	});
+
 	// A fixed window starts on first use; ts === 0 means it never has.
 	if (stored.ts === 0) return { used: 0, limit: config.rate, resetsAt: null };
 	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, config, now);
+
 	return {
 		used: Math.max(0, config.rate - current.value),
 		limit: config.rate,
@@ -183,6 +200,7 @@ export const checkUsageLimits = internalMutation({
 	handler: async (ctx, { userId }) => {
 		const tier = await ensureSubscription(ctx, userId);
 		await checkMeterLimits(ctx, 'modelUsage', userId, await resolveTierLimits(ctx, tier));
+
 		return null;
 	}
 });
@@ -195,6 +213,7 @@ export const chargeUsageUnits = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await applyGatewayUsageCharge(ctx, args.userId, args.count);
+
 		return null;
 	}
 });

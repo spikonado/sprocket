@@ -37,6 +37,7 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 	if (!isRunFinalStatus(args.runStatus)) {
 		return [...args.jobs];
 	}
+
 	const error =
 		args.lastError ??
 		(args.runStatus === 'cancelled'
@@ -44,10 +45,12 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 			: args.runStatus === 'failed'
 				? 'Run failed before executor job completed.'
 				: 'Run completed before executor job completed.');
+
 	return args.jobs.map((job) => {
 		if (isSettledExecutorJobStatus(job.status)) {
 			return job;
 		}
+
 		return {
 			...job,
 			status: 'cancelled',

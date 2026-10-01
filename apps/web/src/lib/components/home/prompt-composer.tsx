@@ -85,11 +85,16 @@ export type PromptComposerViewProps = PromptComposerProps & {
 };
 
 const COMPOSER_MIN_HEIGHT_PX = 68;
+
 const COMPOSER_MAX_HEIGHT_PX = 160;
+
 const SUPPORTS_FIELD_SIZING = Boolean(globalThis.CSS?.supports('field-sizing', 'content'));
+
 const ATTACH_TOOLTIP_LABEL = 'Attach files';
+
 const COMPOSER_SHELL_CLASS =
 	'composer-shell mx-auto w-full max-w-[48rem] rounded-[28px] p-px transition-colors duration-200';
+
 const COMPOSER_INNER_CLASS =
 	'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
 
@@ -135,6 +140,7 @@ export function PromptComposerView({
 		const interval = setInterval(() => {
 			setNow(Date.now());
 		}, 1_000);
+
 		return () => {
 			clearInterval(interval);
 		};
@@ -150,6 +156,7 @@ export function PromptComposerView({
 					? 'ChatGPT Subscription'
 					: 'OpenAI API'
 	}));
+
 	const providerModelOptions = modelCatalog
 		? modelOptionsForCompletionProvider(
 				modelCatalog,
@@ -158,6 +165,7 @@ export function PromptComposerView({
 				chatGptModelIds
 			)
 		: [];
+
 	const modelOptions =
 		selectedCompletionProvider === 'chatgpt'
 			? providerModelOptions.map((option) => ({
@@ -165,16 +173,23 @@ export function PromptComposerView({
 					label: chatGptModels.find((model) => model.id === option.id)?.name ?? option.label
 				}))
 			: providerModelOptions;
+
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
+
 	const selectedFastModeAccess: FastModeAccess | undefined = (() => {
 		if (!modelCatalog || !selectedCatalogModel) return undefined;
+
 		if (selectedCompletionProvider !== 'spikonado') return 'unsupported';
+
 		if (!selectedCatalogModel.supportsFastMode) return 'unsupported';
+
 		if (!subscriptionTier) return undefined;
+
 		return fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, selectedCatalogModel);
 	})();
+
 	// Block send until a catalog model is selected. If the usage query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel =
@@ -194,9 +209,11 @@ export function PromptComposerView({
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
 	const [attachTooltip, setAttachTooltip] = useState<{ top: number; left: number } | null>(null);
 	const [skills, setSkills] = useState<SkillSummary[]>([]);
+
 	const [skillsLoadState, setSkillsLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
 		'idle'
 	);
+
 	const [skillsDismissed, setSkillsDismissed] = useState(false);
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	const [caretPosition, setCaretPosition] = useState(0);
@@ -210,6 +227,7 @@ export function PromptComposerView({
 
 	// Unknown policies count as metered, matching backend enforcement.
 	const selectedModelUnmetered = selectedCatalogModel?.usagePolicy === 'unlimited';
+
 	// The cached result can outlive its own reset time because the query only
 	// re-runs when the limiter document changes, so expire it on the local clock.
 	const usageBlocked =
@@ -217,38 +235,50 @@ export function PromptComposerView({
 		(usage.resetsAt === null || usage.resetsAt > now) &&
 		!selectedModelUnmetered &&
 		selectedCompletionProvider === 'spikonado';
+
 	const unlimitedAlternativeLabel = (() => {
 		if (!modelCatalog) return null;
+
 		const option = modelOptions.find(
 			(candidate) =>
 				!candidate.locked &&
 				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
 		);
+
 		return option?.label ?? null;
 	})();
+
 	const composerNotice = (() => {
 		if (!usageBlocked || usage === undefined) return null;
+
 		const keepGoing =
 			unlimitedAlternativeLabel !== null
 				? `Switch to ${unlimitedAlternativeLabel} or upgrade your subscription to keep going.`
 				: 'Upgrade your subscription to keep going.';
+
 		if (usage.resetsAt === null) return keepGoing;
+
 		return `Your limit resets in ${formatCountdownDuration(usage.resetsAt - now)}. ${keepGoing}`;
 	})();
+
 	const hasMessageContent = Boolean(prompt.trim()) || attachments.length > 0;
+
 	const canAnswerQuestion = canSubmitQuestionAnswer({
 		selectedOptionId: selectedQuestionOptionId,
 		text: prompt
 	});
+
 	const canSubmitContent = answeringQuestion ? canAnswerQuestion : hasMessageContent;
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
 	const canAttachMore = !composerLocked && !answeringQuestion;
 	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
 	const skillsPopupOpen = dollarQuery !== null && !skillsDismissed && !answeringQuestion;
+
 	const filteredSkills = useMemo(
 		() => (dollarQuery === null ? [] : filterSkills(skills, dollarQuery)),
 		[dollarQuery, skills]
 	);
+
 	const activeOptionId =
 		skillsPopupOpen && filteredSkills.length > 0
 			? `composer-skill-option-${highlightedIndex}`
@@ -261,14 +291,18 @@ export function PromptComposerView({
 	/** Fallback only when field-sizing is unavailable; CSS handles modern browsers. */
 	const syncComposerHeight = useCallback(() => {
 		const textarea = composerTextarea.current;
+
 		if (!textarea || SUPPORTS_FIELD_SIZING) {
 			return;
 		}
+
 		textarea.style.height = `${COMPOSER_MIN_HEIGHT_PX}px`;
+
 		const nextHeight = Math.min(
 			Math.max(textarea.scrollHeight, COMPOSER_MIN_HEIGHT_PX),
 			COMPOSER_MAX_HEIGHT_PX
 		);
+
 		textarea.style.height = `${nextHeight}px`;
 		textarea.style.overflowY = textarea.scrollHeight > nextHeight ? 'auto' : 'hidden';
 	}, []);
@@ -293,22 +327,27 @@ export function PromptComposerView({
 			if (!projectSkills?.load) {
 				setSkills([]);
 				setSkillsLoadState('ready');
+
 				return;
 			}
 
 			const requestId = ++skillsRequestId.current;
 			setSkillsLoadState('loading');
+
 			try {
 				const nextSkills = await projectSkills.load();
+
 				if (requestId !== skillsRequestId.current) {
 					return;
 				}
+
 				setSkills(nextSkills);
 				setSkillsLoadState('ready');
 			} catch {
 				if (requestId !== skillsRequestId.current) {
 					return;
 				}
+
 				setSkills([]);
 				setSkillsLoadState('error');
 			}
@@ -318,17 +357,21 @@ export function PromptComposerView({
 
 	function selectSkill(skill: SkillSummary) {
 		const selection = applySkillSelection(prompt, caretPosition, skill.name);
+
 		if (!selection) {
 			return;
 		}
+
 		onPromptChange?.(selection.text);
 		setCaretPosition(selection.caret);
 		setSkillsDismissed(true);
 		queueMicrotask(() => {
 			const textarea = composerTextarea.current;
+
 			if (!textarea) {
 				return;
 			}
+
 			textarea.focus();
 			textarea.setSelectionRange(selection.caret, selection.caret);
 			syncComposerHeight();
@@ -339,6 +382,7 @@ export function PromptComposerView({
 		const input = event.currentTarget;
 		const files = Array.from(input.files ?? []);
 		input.value = '';
+
 		if (files.length > 0) {
 			onAttachFiles(files);
 		}
@@ -346,18 +390,22 @@ export function PromptComposerView({
 
 	function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
 		const files = Array.from(event.clipboardData.files);
+
 		if (files.length === 0 || !canAttachMore) {
 			return;
 		}
+
 		if (!event.clipboardData.getData('text/plain')) {
 			event.preventDefault();
 		}
+
 		onAttachFiles(files);
 	}
 
 	function handleFileDragEnter(event: React.DragEvent<HTMLDivElement>) {
 		if (!containsDraggedFiles(event.dataTransfer)) return;
 		event.preventDefault();
+
 		if (canAttachMore) setDraggingFiles(true);
 	}
 
@@ -370,9 +418,11 @@ export function PromptComposerView({
 	function handleFileDragLeave(event: React.DragEvent<HTMLDivElement>) {
 		const composer = event.currentTarget;
 		const related = event.relatedTarget;
+
 		if (related instanceof Node && composer.contains(related)) {
 			return;
 		}
+
 		setDraggingFiles(false);
 	}
 
@@ -380,8 +430,10 @@ export function PromptComposerView({
 		if (!containsDraggedFiles(event.dataTransfer)) return;
 		event.preventDefault();
 		setDraggingFiles(false);
+
 		if (!canAttachMore) return;
 		const files = Array.from(event.dataTransfer.files);
+
 		if (files.length > 0) {
 			onAttachFiles(files);
 		}
@@ -391,9 +443,11 @@ export function PromptComposerView({
 		event: React.MouseEvent<HTMLButtonElement> | React.FocusEvent<HTMLButtonElement>
 	) {
 		const target = event.currentTarget;
+
 		if (target.disabled) {
 			return;
 		}
+
 		const rect = target.getBoundingClientRect();
 		setAttachTooltip({
 			top: rect.top - 8,
@@ -409,26 +463,34 @@ export function PromptComposerView({
 		if (skillsPopupOpen) {
 			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 				event.preventDefault();
+
 				if (filteredSkills.length === 0) {
 					return;
 				}
+
 				const delta = event.key === 'ArrowDown' ? 1 : -1;
 				setHighlightedIndex(
 					(current) => (current + delta + filteredSkills.length) % filteredSkills.length
 				);
+
 				return;
 			}
+
 			if (event.key === 'Escape') {
 				event.preventDefault();
 				setSkillsDismissed(true);
+
 				return;
 			}
+
 			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
 				event.preventDefault();
 				const skill = filteredSkills[highlightedIndex];
+
 				if (skill) {
 					selectSkill(skill);
 				}
+
 				return;
 			}
 		}
@@ -467,12 +529,14 @@ export function PromptComposerView({
 		if (!modelCatalog) return;
 		onSelectedModelChange?.(modelId);
 		const model = getCatalogModel(modelCatalog, modelId);
+
 		if (model) onSelectedReasoningEffortChange?.(model.defaultReasoningEffort);
 	}
 
 	function handleProviderChange(provider: CompletionProvider) {
 		if (!modelCatalog) return;
 		onSelectedCompletionProviderChange?.(provider);
+
 		const modelId = resolveModelForCompletionProvider(
 			modelCatalog,
 			subscriptionTier ?? 'free',
@@ -480,6 +544,7 @@ export function PromptComposerView({
 			selectedModel,
 			chatGptModelIds
 		);
+
 		if (!modelId) return;
 		onSelectedModelChange?.(modelId);
 		onSelectedReasoningEffortChange?.(
@@ -491,13 +556,16 @@ export function PromptComposerView({
 
 	useEffect(() => {
 		if (!modelCatalog) return;
+
 		const nextProvider =
 			providersReady && !configuredProviders.includes(selectedCompletionProvider)
 				? 'spikonado'
 				: selectedCompletionProvider;
+
 		if (nextProvider !== selectedCompletionProvider) {
 			onSelectedCompletionProviderChange?.(nextProvider);
 		}
+
 		const resolvedModel =
 			nextProvider !== 'spikonado'
 				? resolveModelForCompletionProvider(
@@ -510,6 +578,7 @@ export function PromptComposerView({
 				: getCatalogModel(modelCatalog, selectedModel)
 					? selectedModel
 					: modelCatalog.defaultModelId;
+
 		if (resolvedModel && resolvedModel !== selectedModel) {
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
@@ -542,6 +611,7 @@ export function PromptComposerView({
 		// Only coerce after a successful tier + catalog load so paid users are not snapped to
 		// free defaults during loading or transient query failures.
 		if (!modelCatalog || !subscriptionTier) return;
+
 		const allowedModel = resolveModelForCompletionProvider(
 			modelCatalog,
 			subscriptionTier,
@@ -549,7 +619,9 @@ export function PromptComposerView({
 			selectedModel,
 			chatGptModelIds
 		);
+
 		if (!allowedModel) return;
+
 		if (allowedModel !== selectedModel) {
 			onSelectedModelChange?.(allowedModel);
 			onSelectedReasoningEffortChange?.(
@@ -557,8 +629,11 @@ export function PromptComposerView({
 					modelCatalog.defaultReasoningEffort
 			);
 		}
+
 		const catalogModel = getCatalogModel(modelCatalog, allowedModel);
+
 		if (!catalogModel) return;
+
 		if (
 			fastMode &&
 			fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, catalogModel) !== 'available'
@@ -587,11 +662,14 @@ export function PromptComposerView({
 
 	useEffect(() => {
 		const nextId = pendingQuestion?.questionId ?? null;
+
 		if (nextId === trackedPendingQuestionId) return;
 		setTrackedPendingQuestionId(nextId);
+
 		if (selectedQuestionOptionId !== null) {
 			onSelectedQuestionOptionIdChange?.(null);
 		}
+
 		// Drop answer draft when the pending question changes or clears so it
 		// cannot leak into the next question or a later normal send.
 		if (prompt.trim()) {
@@ -608,6 +686,7 @@ export function PromptComposerView({
 
 	useEffect(() => {
 		const path = projectSkills?.workspacePath ?? null;
+
 		if (skillsCacheKey.current !== path) {
 			skillsCacheKey.current = path;
 			invalidateSkillsCache();
@@ -615,11 +694,14 @@ export function PromptComposerView({
 
 		if (dollarQuery === null) {
 			setSkillsDismissed(false);
+
 			return;
 		}
+
 		if (skillsDismissed) {
 			return;
 		}
+
 		void ensureSkillsLoaded();
 	}, [projectSkills, dollarQuery, skillsDismissed, ensureSkillsLoaded, invalidateSkillsCache]);
 
@@ -900,10 +982,12 @@ export function PromptComposerView({
 
 export default function PromptComposer(props: PromptComposerProps) {
 	const convexAuth = useConvexAuth();
+
 	const usageQuery = useQuery_experimental({
 		query: api.usage.getMyUsage,
 		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	});
+
 	return (
 		<PromptComposerView
 			{...props}

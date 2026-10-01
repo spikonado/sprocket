@@ -16,15 +16,25 @@ import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 
 const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
+
 const OPENAI_API_ORIGIN = 'https://api.openai.com';
+
 const CHATGPT_AUTH_ORIGIN = 'https://auth.openai.com';
+
 const CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
+
 const CHATGPT_CREDENTIAL_NAME_PREFIX = 'sprocket-chatgpt-';
+
 const PROVIDER_FETCH_TIMEOUT_MS = 20_000;
+
 const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
+
 const CLEANUP_BATCH_SIZE = 4;
+
 const CLEANUP_REVOCATION_ATTEMPTS = 2;
+
 const CLEANUP_FETCH_TIMEOUT_MS = 5_000;
 
 const CLOUD_CHATGPT_RETIRED_MESSAGE =
@@ -36,12 +46,14 @@ const vaultObjectSchema = z.object({
 	value: z.string(),
 	metadata: z.object({ version_id: z.string().min(1) })
 });
+
 type VaultObject = z.infer<typeof vaultObjectSchema>;
 
 const vaultObjectDigestSchema = z.object({
 	id: z.string(),
 	name: z.string()
 });
+
 const vaultObjectListSchema = z.object({
 	data: z.array(vaultObjectDigestSchema),
 	list_metadata: z.looseObject({ after: z.string().optional() })
@@ -65,23 +77,29 @@ const chatGptCredentialSchema = z.object({
 
 function workosApiKey(): string {
 	const key = env.WORKOS_API_KEY?.trim();
+
 	if (!key) throw new Error('Provider settings are not configured on this Sprocket deployment.');
+
 	return key;
 }
 
 function workosClientId(): string {
 	const clientId = env.WORKOS_CLIENT_ID?.trim();
+
 	if (!clientId) {
 		throw new Error('Provider settings are not configured on this Sprocket deployment.');
 	}
+
 	return clientId;
 }
 
 async function credentialName(prefix: string, userId: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
+
 	const suffix = Array.from(new Uint8Array(digest), (byte) =>
 		byte.toString(16).padStart(2, '0')
 	).join('');
+
 	return `${prefix}${suffix}`;
 }
 
@@ -106,35 +124,47 @@ async function responseJson<T>(
 	invalidMessage = `${service} returned an invalid response.`
 ): Promise<T> {
 	const contentLength = Number(response.headers.get('content-length'));
+
 	if (Number.isFinite(contentLength) && contentLength > MAX_PROVIDER_RESPONSE_BYTES) {
 		throw new Error(`${service} returned an oversized response.`);
 	}
+
 	const reader = response.body?.getReader();
+
 	if (!reader) throw new Error(`${service} returned an invalid response.`);
 	const chunks: Uint8Array[] = [];
 	let byteLength = 0;
+
 	while (true) {
 		const { done, value } = await reader.read();
+
 		if (done) break;
 		byteLength += value.byteLength;
+
 		if (byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
 			await reader.cancel();
 			throw new Error(`${service} returned an oversized response.`);
 		}
+
 		chunks.push(value);
 	}
+
 	const bytes = new Uint8Array(byteLength);
 	let offset = 0;
+
 	for (const chunk of chunks) {
 		bytes.set(chunk, offset);
 		offset += chunk.byteLength;
 	}
+
 	let data: T;
+
 	try {
 		data = schema.parse(JSON.parse(new TextDecoder().decode(bytes)));
 	} catch {
 		throw new Error(invalidMessage);
 	}
+
 	return data;
 }
 
@@ -143,17 +173,22 @@ async function readVaultObject(name: string): Promise<VaultObject | null> {
 		`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/name/${encodeURIComponent(name)}`,
 		{ headers: workosHeaders() }
 	);
+
 	if (response.status === 404) return null;
+
 	if (!response.ok) throw new Error('Couldn’t read the provider credential from WorkOS Vault.');
+
 	const object = await responseJson(
 		response,
 		'WorkOS Vault',
 		vaultObjectSchema,
 		'WorkOS Vault returned an invalid provider credential.'
 	);
+
 	if (object.name !== name) {
 		throw new Error('WorkOS Vault returned an invalid provider credential.');
 	}
+
 	return object;
 }
 
@@ -163,6 +198,7 @@ async function storeVaultObject(
 	existingObject?: VaultObject | null
 ): Promise<void> {
 	const existing = existingObject === undefined ? await readVaultObject(name) : existingObject;
+
 	const response = existing
 		? await providerFetch(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(existing.id)}`, {
 				method: 'PUT',
@@ -178,15 +214,18 @@ async function storeVaultObject(
 					value
 				})
 			});
+
 	if (!response.ok) throw new Error('Couldn’t save the provider credential in WorkOS Vault.');
 }
 
 async function deleteVaultObject(name: string): Promise<void> {
 	const object = await readVaultObject(name);
+
 	if (!object) return;
 	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(object.id)}`);
 	url.searchParams.set('version_check', object.metadata.version_id);
 	const response = await providerFetch(url, { method: 'DELETE', headers: workosHeaders() });
+
 	if (!response.ok && response.status !== 404) {
 		throw new Error('Couldn’t remove the provider credential from WorkOS Vault.');
 	}
@@ -197,10 +236,13 @@ async function listVaultObjects(
 ): Promise<{ objects: { id: string; name: string }[]; after: string | null }> {
 	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv`);
 	url.searchParams.set('limit', String(CLEANUP_BATCH_SIZE));
+
 	if (after) url.searchParams.set('after', after);
 	const response = await providerFetch(url, { headers: workosHeaders() });
+
 	if (!response.ok) throw new Error('Couldn’t list provider credentials in WorkOS Vault.');
 	const page = await responseJson(response, 'WorkOS Vault', vaultObjectListSchema);
+
 	return { objects: page.data, after: page.list_metadata.after ?? null };
 }
 
@@ -208,9 +250,11 @@ async function validateOpenAiKey(apiKey: string): Promise<void> {
 	const response = await providerFetch(`${OPENAI_API_ORIGIN}/v1/models`, {
 		headers: { authorization: `Bearer ${apiKey}` }
 	});
+
 	if (response.status === 401 || response.status === 403) {
 		throw new Error('OpenAI rejected this API key.');
 	}
+
 	if (!response.ok) {
 		throw new Error('OpenAI could not validate this API key. Try again in a moment.');
 	}
@@ -227,10 +271,13 @@ export const getMyConfiguration = action({
 		ctx: ActionCtx
 	): Promise<{ openai: boolean; chatgpt: boolean; chatgptModelIds: string[] | null }> => {
 		const identity = await ctx.auth.getUserIdentity();
+
 		if (!identity) throw new Error('Authentication required.');
+
 		const openAiObject: VaultObject | null = await readVaultObject(
 			await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject)
 		);
+
 		// Cloud-held ChatGPT is retired; released clients read these fields to
 		// render the connection state and must see it as disconnected.
 		return { openai: openAiObject !== null, chatgpt: false, chatgptModelIds: null };
@@ -242,14 +289,17 @@ export const saveOpenAiKey = action({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const identity = await ctx.auth.getUserIdentity();
+
 		if (!identity) throw new Error('Authentication required.');
 		const apiKey = args.apiKey.trim();
+
 		if (!apiKey || apiKey.length > 512) throw new Error('Enter a valid OpenAI API key.');
 		await validateOpenAiKey(apiKey);
 		await storeVaultObject(
 			await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject),
 			apiKey
 		);
+
 		return null;
 	}
 });
@@ -259,8 +309,10 @@ export const removeOpenAiKey = action({
 	returns: v.null(),
 	handler: async (ctx) => {
 		const identity = await ctx.auth.getUserIdentity();
+
 		if (!identity) throw new Error('Authentication required.');
 		await deleteVaultObject(await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, identity.subject));
+
 		return null;
 	}
 });
@@ -357,15 +409,18 @@ export const authorizeOpenAiCredential = internalQuery({
 	returns: v.string(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 		if (
 			run.cancellationRequestedAt !== undefined ||
 			!ownsActiveRunClaim(run, args.claimId, Date.now())
 		) {
 			throw new Error(RUN_NO_LONGER_ACTIVE);
 		}
+
 		if ((run.completionProvider ?? 'spikonado') !== 'openai') {
 			throw new Error('Run is not configured to use OpenAI directly.');
 		}
+
 		return run.userId;
 	}
 });
@@ -382,11 +437,14 @@ export const issueOpenAiCredential = action({
 			internal.providerCredentials.authorizeOpenAiCredential,
 			args
 		);
+
 		const object = await readVaultObject(
 			await credentialName(OPENAI_CREDENTIAL_NAME_PREFIX, userId)
 		);
+
 		if (!object) throw new Error('OpenAI is no longer configured. Add an API key in Settings.');
 		await ctx.runQuery(internal.providerCredentials.authorizeOpenAiCredential, args);
+
 		return { apiKey: object.value };
 	}
 });
@@ -396,9 +454,11 @@ export const chatGptConnection = query({
 	returns: v.union(v.string(), v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
 		if (run.completionProvider !== 'chatgpt') {
 			throw new Error('Run is not configured to use ChatGPT.');
 		}
+
 		// Historical chatgpt runs keep their rows, but the cloud-held connection
 		// is retired, so there is never a live connection id to report.
 		return null;
@@ -424,9 +484,11 @@ async function revokeChatGptRefreshToken(refreshToken: string): Promise<void> {
 		signal: AbortSignal.timeout(CLEANUP_FETCH_TIMEOUT_MS),
 		redirect: 'error'
 	});
+
 	if (response.status === 400 || response.status === 401 || response.status === 403) {
 		return;
 	}
+
 	if (!response.ok) throw new Error('ChatGPT could not revoke a retired credential.');
 }
 
@@ -441,6 +503,7 @@ async function deleteRetiredChatGptCredential(object: VaultObject): Promise<void
 			}
 		})()
 	);
+
 	if (parsed.success) {
 		for (let attempt = 0; attempt < CLEANUP_REVOCATION_ATTEMPTS; attempt += 1) {
 			try {
@@ -453,9 +516,11 @@ async function deleteRetiredChatGptCredential(object: VaultObject): Promise<void
 			}
 		}
 	}
+
 	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(object.id)}`);
 	url.searchParams.set('version_check', object.metadata.version_id);
 	const response = await providerFetch(url, { method: 'DELETE', headers: workosHeaders() });
+
 	if (!response.ok && response.status !== 404) {
 		throw new Error('Couldn’t remove the provider credential from WorkOS Vault.');
 	}
@@ -472,6 +537,7 @@ export const listChatGptCredentialStates = internalQuery({
 		const page = await ctx.db
 			.query('providerCredentialStates')
 			.paginate({ numItems: args.batchSize, cursor: args.cursor });
+
 		return {
 			userIds: page.page.map((state) => state.userId),
 			continueCursor: page.continueCursor,
@@ -485,7 +551,9 @@ export const deleteChatGptCredentialState = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
+
 		if (state) await ctx.db.delete(state._id);
+
 		return null;
 	}
 });
@@ -504,48 +572,61 @@ export const retireChatGptCloudCredentials = internalAction({
 					cursor: args.cursor,
 					batchSize: CLEANUP_BATCH_SIZE
 				});
+
 			const done = batch.isDone;
+
 			if (batch.userIds.length > 0) {
 				for (const userId of batch.userIds) {
 					const name = await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, userId);
 					const object = await readVaultObject(name);
+
 					if (object) await deleteRetiredChatGptCredential(object);
 					await ctx.runMutation(internal.providerCredentials.deleteChatGptCredentialState, {
 						userId
 					});
 				}
 			}
+
 			await ctx.scheduler.runAfter(0, internal.providerCredentials.retireChatGptCloudCredentials, {
 				cursor: done ? null : batch.continueCursor,
 				vaultAfter: args.vaultAfter,
 				tableScanDone: done
 			});
+
 			return null;
 		}
 
 		const page = await listVaultObjects(args.vaultAfter);
+
 		if (args.vaultAfter) {
 			const response = await providerFetch(
 				`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(args.vaultAfter)}`,
 				{ headers: workosHeaders() }
 			);
+
 			if (response.status !== 404) {
 				if (!response.ok) throw new Error('Could not read the retirement cursor in WorkOS Vault.');
 				const object = await responseJson(response, 'WorkOS Vault', vaultObjectSchema);
+
 				if (object.id !== args.vaultAfter)
 					throw new Error('WorkOS Vault returned an invalid cursor object.');
+
 				if (object.name.startsWith(CHATGPT_CREDENTIAL_NAME_PREFIX)) {
 					await deleteRetiredChatGptCredential(object);
 				}
 			}
 		}
+
 		for (const digest of page.objects) {
 			if (!digest.name.startsWith(CHATGPT_CREDENTIAL_NAME_PREFIX)) continue;
+
 			// Keep the next cursor object until its page has been fetched.
 			if (digest.id === page.after) continue;
 			const object = await readVaultObject(digest.name);
+
 			if (object) await deleteRetiredChatGptCredential(object);
 		}
+
 		if (page.after !== null) {
 			await ctx.scheduler.runAfter(0, internal.providerCredentials.retireChatGptCloudCredentials, {
 				cursor: args.cursor,
@@ -553,6 +634,7 @@ export const retireChatGptCloudCredentials = internalAction({
 				tableScanDone: true
 			});
 		}
+
 		return null;
 	}
 });

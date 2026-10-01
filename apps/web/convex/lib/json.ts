@@ -31,14 +31,18 @@ export function isJsonValue<T>(value: T): value is T & JsonValue {
 	if (value === null || isJsonString(value) || isJsonNumber(value) || isJsonBoolean(value)) {
 		return true;
 	}
+
 	if (Array.isArray(value)) {
 		return value.every(isJsonValue);
 	}
+
 	if (value === undefined || Array.isArray(value) || Object(value) !== value) {
 		return false;
 	}
+
 	// SAFETY: Object(value) === value with null/array excluded is a non-null object.
 	const candidate = value as object;
+
 	return Object.values(candidate).every(isJsonValue);
 }
 
@@ -57,6 +61,7 @@ function jsonValidator(depth: number): Validator<JsonValue, 'required', string> 
 		// SAFETY: the depth-0 validator only accepts JSON primitives, which are JsonValue members.
 		return vJsonPrimitive as Validator<JsonValue, 'required', string>;
 	}
+
 	// SAFETY: mirrors JsonValue up to JSON_VALIDATOR_DEPTH; deeper payloads are rejected by design.
 	return v.union(
 		vJsonPrimitive,

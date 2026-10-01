@@ -31,11 +31,13 @@ export default function BrowserSignInOverlay({
 		if (!open) {
 			setCopied(false);
 			setCopyError(null);
+
 			return;
 		}
 
 		const previouslyFocused =
 			document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
 		dialogRef.current?.focus();
 
 		function handleWindowKeydown(event: KeyboardEvent) {
@@ -43,10 +45,12 @@ export default function BrowserSignInOverlay({
 				event.preventDefault();
 				event.stopPropagation();
 				onCancelRef.current();
+
 				return;
 			}
 
 			const dialogEl = dialogRef.current;
+
 			if (event.key !== 'Tab' || !dialogEl) {
 				return;
 			}
@@ -60,12 +64,14 @@ export default function BrowserSignInOverlay({
 			if (focusable.length === 0) {
 				event.preventDefault();
 				dialogEl.focus();
+
 				return;
 			}
 
 			const first = focusable[0];
 			const last = focusable[focusable.length - 1];
 			const active = document.activeElement;
+
 			if (
 				event.shiftKey &&
 				(active === dialogEl || active === first || !dialogEl.contains(active))
@@ -82,12 +88,15 @@ export default function BrowserSignInOverlay({
 		}
 
 		window.addEventListener('keydown', handleWindowKeydown, true);
+
 		return () => {
 			window.removeEventListener('keydown', handleWindowKeydown, true);
+
 			if (copiedTimeoutRef.current !== null) {
 				window.clearTimeout(copiedTimeoutRef.current);
 				copiedTimeoutRef.current = null;
 			}
+
 			if (previouslyFocused?.isConnected) {
 				previouslyFocused.focus();
 			}
@@ -103,9 +112,11 @@ export default function BrowserSignInOverlay({
 			await navigator.clipboard.writeText(signInUrl);
 			setCopied(true);
 			setCopyError(null);
+
 			if (copiedTimeoutRef.current !== null) {
 				window.clearTimeout(copiedTimeoutRef.current);
 			}
+
 			copiedTimeoutRef.current = window.setTimeout(() => {
 				setCopied(false);
 				copiedTimeoutRef.current = null;
@@ -123,14 +134,17 @@ export default function BrowserSignInOverlay({
 
 		// Don't pass noopener in features; browsers then return null even on success.
 		const opened = window.open(signInUrl, '_blank');
+
 		if (!opened) {
 			return;
 		}
+
 		try {
 			opened.opener = null;
 		} catch {
 			// Best-effort isolation if the browser rejects opener writes.
 		}
+
 		onClearOpenErrorRef.current?.();
 	}
 

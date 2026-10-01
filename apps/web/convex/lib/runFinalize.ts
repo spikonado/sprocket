@@ -34,6 +34,7 @@ export async function executorFinalizationResult(
 	accepted: boolean
 ) {
 	const finalized = accepted ? await ctx.db.get('runs', run._id) : run;
+
 	return {
 		accepted,
 		outcome:
@@ -59,12 +60,14 @@ export function matchesFinalizeExpectations(
 	) {
 		return false;
 	}
+
 	if (
 		args.expectedClaimId &&
 		(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
 	) {
 		return false;
 	}
+
 	return true;
 }
 
@@ -90,9 +93,11 @@ export async function finalizeRunRecord(
 				completedAt
 			}
 		);
+
 		if (run.activeJobId) {
 			await patchRunExecution(ctx, run._id, { activeJobId: undefined });
 		}
+
 		return true;
 	}
 
@@ -105,12 +110,15 @@ export async function finalizeRunRecord(
 		completedAt
 	});
 	const latest = await getRunWithExecution(ctx.db, run._id);
+
 	if (!latest) {
 		return true;
 	}
+
 	await reconcileTerminalRunPages(ctx, latest, {
 		lastError: args.lastError,
 		completedAt
 	});
+
 	return true;
 }

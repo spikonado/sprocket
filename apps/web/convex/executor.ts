@@ -26,8 +26,10 @@ export const complete = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const job = await ctx.db.get('executorJobs', args.jobId);
+
 			if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 			return await applyExecutorJobSuccess(ctx, {
 				job,
 				run,
@@ -52,8 +54,10 @@ export const fail = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const job = await ctx.db.get('executorJobs', args.jobId);
+
 			if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
 			return await applyExecutorJobFailure(ctx, {
 				job,
 				run,
@@ -84,15 +88,20 @@ export const getJob = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const job = await ctx.db.get('executorJobs', args.jobId);
+
 		if (!job || job.runId !== run._id) {
 			return null;
 		}
+
 		const snapshot: ExecutorJobSnapshot = {
 			jobId: job._id,
 			status: job.status
 		};
+
 		if (job.result !== undefined) snapshot.result = job.result;
+
 		if (job.error !== undefined) snapshot.error = job.error;
+
 		return snapshot;
 	}
 });

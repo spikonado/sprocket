@@ -42,6 +42,7 @@ describe('WorkDetails', () => {
 			.mockResolvedValueOnce(page([4, 5], 4, 5))
 			.mockResolvedValueOnce(page([6, 7], 6, 7))
 			.mockResolvedValueOnce(page([8, 9], 8));
+
 		const details = history(load);
 		await details.refresh();
 		await details.more('newer');
@@ -68,6 +69,7 @@ describe('WorkDetails', () => {
 			.mockResolvedValueOnce(page([1, 2], undefined, 2))
 			.mockResolvedValueOnce(page([3, 4], 3, 4))
 			.mockResolvedValueOnce(page([6], 6));
+
 		const details = history(load);
 		await details.refresh();
 		await details.more('newer');
@@ -82,6 +84,7 @@ describe('WorkDetails', () => {
 			.mockResolvedValueOnce(page([1], undefined, 1))
 			.mockRejectedValueOnce(new Error('offline'))
 			.mockResolvedValueOnce(page([2], 2));
+
 		const details = history(load);
 		await details.refresh();
 		await details.more('newer');
@@ -96,6 +99,7 @@ describe('WorkDetails', () => {
 
 	it('coalesces revision changes behind a pending page instead of cancelling it', async () => {
 		let resolve!: (page: TranscriptDisplayDetails) => void;
+
 		const load = vi
 			.fn()
 			.mockImplementationOnce(
@@ -105,6 +109,7 @@ describe('WorkDetails', () => {
 					})
 			)
 			.mockResolvedValueOnce(page([1, 2]));
+
 		const details = history(load);
 		const pending = details.refresh();
 		void details.refresh();
@@ -127,12 +132,14 @@ describe('WorkDetails', () => {
 		expect(load.mock.calls[0][1].aborted).toBe(true);
 
 		let resolve!: (page: TranscriptDisplayDetails) => void;
+
 		const pending = history(
 			() =>
 				new Promise((done) => {
 					resolve = done;
 				})
 		);
+
 		const request = pending.refresh();
 		pending.stop();
 		resolve(page([1]));
@@ -152,6 +159,7 @@ describe('WorkDetails', () => {
 
 	it('retains loaded work if a later page comes from an older replica revision', async () => {
 		vi.useFakeTimers();
+
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce(page([1], undefined, 1))
@@ -159,6 +167,7 @@ describe('WorkDetails', () => {
 			.mockResolvedValueOnce({ ...page([1], undefined, 1), revision: 2 })
 			.mockResolvedValueOnce(page([3], 3))
 			.mockResolvedValue({ ...page([1, 3]), revision: 2 });
+
 		const details = history(load);
 		await details.refresh();
 		await details.more('newer');
@@ -176,6 +185,7 @@ describe('WorkDetails', () => {
 			.mockResolvedValueOnce(page([2], 2))
 			.mockResolvedValueOnce({ ...page([1], undefined, 1), revision: 2 })
 			.mockResolvedValueOnce({ ...page([2, 3], 2), revision: 3 });
+
 		const details = history(load);
 		await details.refresh();
 		await details.more('newer');
@@ -187,12 +197,14 @@ describe('WorkDetails', () => {
 
 	it('does not discard work on an empty stale response or lock an empty latest page to the start', async () => {
 		vi.useFakeTimers();
+
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce({ ...page([]), stale: true })
 			.mockResolvedValueOnce(page([9], 9))
 			.mockResolvedValueOnce({ ...page([]), stale: true })
 			.mockResolvedValueOnce(page([9], 9));
+
 		const details = history(load);
 		await details.refresh();
 		await vi.advanceTimersByTimeAsync(500);
@@ -206,13 +218,16 @@ describe('WorkDetails', () => {
 
 	it('bounds a refresh when its old tail disappears, retaining the screen on failure', async () => {
 		let id = 1;
+
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce(page([1]))
 			.mockImplementation(async () => {
 				id += 1;
+
 				return page([id], id, id);
 			});
+
 		const details = history(load);
 		await details.refresh();
 		await details.refresh();

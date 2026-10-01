@@ -5,6 +5,7 @@ import { api, internal } from '@convex/_generated/api';
 import { initConvexTest, seedStartedWebJob } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => vi.useRealTimers());
 
 describe('web search workpool fencing', () => {
@@ -13,11 +14,13 @@ describe('web search workpool fencing', () => {
 		{ timeout: 15_000 },
 		async () => {
 			const t = initConvexTest();
+
 			const { runId, claimId, jobId } = await seedStartedWebJob(t, {
 				executionSecret: 'webpool-secret',
 				kind: 'web_search',
 				payload: { query: 'sprocket' }
 			});
+
 			const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 			expect(stored?.cloudWorkId).toEqual(expect.any(String));
 
@@ -37,11 +40,13 @@ describe('web search workpool fencing', () => {
 
 	it('writes the tool result when the claim still owns the job', async () => {
 		const t = initConvexTest();
+
 		const { runId, claimId, jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'webpool-ok-secret',
 			kind: 'web_search',
 			payload: { query: 'sprocket' }
 		});
+
 		await t.mutation(internal.webSearchPool.completeWebSearch, {
 			// SAFETY: completeWebSearch ignores workId and fences on job/claim state.
 			workId: 'work-ok' as WorkId,
@@ -57,11 +62,13 @@ describe('web search workpool fencing', () => {
 describe('local scrape_url dispatch', () => {
 	it('dispatches scrape_url locally without an execution-mode flag', async () => {
 		const t = initConvexTest();
+
 		const { jobId, runId, claimId } = await seedStartedWebJob(t, {
 			executionSecret: 'local-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
 		});
+
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
@@ -71,6 +78,7 @@ describe('local scrape_url dispatch', () => {
 			claimId,
 			jobId
 		});
+
 		expect(local).toEqual({
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
@@ -79,11 +87,13 @@ describe('local scrape_url dispatch', () => {
 
 	it('dispatches web_search through the cloud workpool', async () => {
 		const t = initConvexTest();
+
 		const { jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'local-search-secret',
 			kind: 'web_search',
 			payload: { query: 'sprocket' }
 		});
+
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toEqual(expect.any(String));
 	});
@@ -92,11 +102,13 @@ describe('local scrape_url dispatch', () => {
 describe('local screenshot_url dispatch', () => {
 	it('dispatches screenshot_url locally before the agent requests Firecrawl work', async () => {
 		const t = initConvexTest();
+
 		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'screenshot-dispatch-secret',
 			kind: 'screenshot_url',
 			payload: { url: 'https://example.com/page' }
 		});
+
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
@@ -132,11 +144,13 @@ describe('local screenshot_url dispatch', () => {
 
 	it('does not allow screenshot requests for scrape jobs', async () => {
 		const t = initConvexTest();
+
 		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'scrape-not-screenshot-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
 		});
+
 		await expect(
 			t.mutation(api.firecrawlRequests.start, {
 				runId,
@@ -174,6 +188,7 @@ describe('temporary scrape storage', () => {
 
 	it('leaves registered attachments in place', async () => {
 		const t = initConvexTest();
+
 		const storageId = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['attached']));
 			await ctx.db.insert('imageUploads', {
@@ -184,8 +199,10 @@ describe('temporary scrape storage', () => {
 				size: 8,
 				attached: true
 			});
+
 			return storageId;
 		});
+
 		expect(
 			await t.mutation(internal.hostedParse.deleteUnregisteredStorage, { storageId })
 		).toBeNull();

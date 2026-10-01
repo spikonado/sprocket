@@ -8,6 +8,7 @@ import WorkSectionDetails from './work-section-details';
 type Props = React.ComponentProps<typeof WorkSectionDetails>;
 
 let intersection: () => void;
+
 let disconnect: ReturnType<typeof vi.fn>;
 
 function page(
@@ -56,9 +57,11 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 	) {
 		if (this === viewport) return new DOMRect(0, 0, 800, 600);
 		const edge = this.dataset.workEdge;
+
 		return new DOMRect(0, edge === 'older' ? edges.older : edges.newer, 800, 1);
 	});
 	const restore = vi.fn();
+
 	const props: Props = {
 		row: {
 			id: 'work',
@@ -79,8 +82,10 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 		viewport,
 		beforeChange: vi.fn(() => restore)
 	};
+
 	const rendered = renderView(<WorkSectionDetails {...props} />, { container: viewport });
 	await settle();
+
 	return {
 		viewport,
 		props,
@@ -121,6 +126,7 @@ describe('scrolling work details', () => {
 			.fn()
 			.mockResolvedValueOnce(page([1], undefined, 1))
 			.mockResolvedValueOnce(page([2], 2));
+
 		const { viewport, edges, props, restore } = await render(load);
 		expect(load.mock.calls[0][1]).toEqual({});
 		const reasoning = viewport.querySelector<HTMLButtonElement>('button');
@@ -148,6 +154,7 @@ describe('scrolling work details', () => {
 			.mockResolvedValueOnce({ ...tools([2, 3]), nextAfter: 3 })
 			.mockResolvedValueOnce({ ...tools([4, 5], 4), nextAfter: 5 })
 			.mockResolvedValueOnce(tools([6, 7], 6));
+
 		const { viewport, edges, props, setProps } = await render(load, true);
 		expect(load.mock.calls[0][1]).toEqual({});
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
@@ -183,6 +190,7 @@ describe('scrolling work details', () => {
 			.fn()
 			.mockResolvedValueOnce(page([1], undefined, 1))
 			.mockResolvedValueOnce(page([2], 2));
+
 		const { viewport, edges } = await render(load);
 		edges.newer = 2_000;
 		act(() => intersection());
@@ -193,10 +201,13 @@ describe('scrolling work details', () => {
 
 	it('bounds lookahead when collapsed details do not make the section taller', async () => {
 		let id = 0;
+
 		const load = vi.fn().mockImplementation(async () => {
 			id += 1;
+
 			return page([id], id === 1 ? undefined : id, id);
 		});
+
 		const { viewport, unmount } = await render(load, false, true);
 		expect(load).toHaveBeenCalledTimes(3);
 		act(() => intersection());
@@ -221,6 +232,7 @@ describe('scrolling work details', () => {
 	it('continues loading live additions at the visible end without disabling bottom-following', async () => {
 		const load = vi.fn().mockResolvedValueOnce(page([1]));
 		const { props, viewport, setProps } = await render(load, true, true);
+
 		for (let revision = 2; revision <= 5; revision += 1) {
 			load
 				.mockResolvedValueOnce(
@@ -244,6 +256,7 @@ describe('scrolling work details', () => {
 			.mockResolvedValueOnce(page([1], undefined, 1))
 			.mockRejectedValueOnce(new Error('offline'))
 			.mockResolvedValueOnce(page([2], 2));
+
 		const { viewport, edges } = await render(load);
 		edges.newer = 1_500;
 		act(() => intersection());

@@ -288,6 +288,7 @@ describe('local project attachments', () => {
 			'/worktrees/main': projectAttachment('/worktrees/main', 'github.com/acme/robot', 2),
 			'/projects/other': projectAttachment('/projects/other', 'github.com/acme/other', 1)
 		};
+
 		const feature = projectAttachment('/worktrees/feature', 'github.com/acme/robot', 3);
 
 		expect(upsertDesktopProjectAttachment(current, feature)).toEqual({

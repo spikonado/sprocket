@@ -5,6 +5,7 @@ import type { ViewerImage } from '$lib/components/image-viewer';
 import type { MessageAttachment, TranscriptDisplayRow } from '$lib/types/sprocket';
 
 type PromptMessage = Pick<TranscriptDisplayRow, 'id' | 'text' | 'attachments'>;
+
 type Props = {
 	message: PromptMessage;
 	copied: boolean;

@@ -97,9 +97,11 @@ export default function InboxSidebar({
 	}, []);
 
 	const rows = sections.flatMap((section) => section.rows);
+
 	const filteredProjects = projects.filter((project) =>
 		project.displayName.toLocaleLowerCase().includes(projectSearch.trim().toLocaleLowerCase())
 	);
+
 	const visibleSections = sections.filter(
 		(section) =>
 			section.rows.length ||
@@ -108,6 +110,7 @@ export default function InboxSidebar({
 			section.canLoadMore ||
 			(section.state === 'settled' && !settledOpen)
 	);
+
 	const projectFilterLabel =
 		selectedProjects.length === 0
 			? 'All projects'
@@ -115,6 +118,7 @@ export default function InboxSidebar({
 				? (projects.find((project) => project.repositoryKey === selectedProjects[0])?.displayName ??
 					'All projects')
 				: `${selectedProjects.length} projects`;
+
 	const menuThread = menu?.thread ?? null;
 
 	useEffect(() => {
@@ -124,15 +128,18 @@ export default function InboxSidebar({
 	useEffect(() => {
 		try {
 			const savedSettledOpen = localStorage.getItem(SETTLED_INBOX_OPEN_KEY);
+
 			if (savedSettledOpen !== null) {
 				onSettledOpenChangeRef.current(savedSettledOpen === 'true');
 			}
 		} catch {
 			// Browsers can deny storage access while still allowing the app to run.
 		}
+
 		const timer = setInterval(() => {
 			setNow(Date.now());
 		}, 30_000);
+
 		return () => clearInterval(timer);
 	}, []);
 
@@ -162,6 +169,7 @@ export default function InboxSidebar({
 		if (projectMenuRef.current) {
 			projectMenuRef.current.open = false;
 		}
+
 		setProjectSearch('');
 	}
 
@@ -178,6 +186,7 @@ export default function InboxSidebar({
 	function toggleSettled() {
 		const next = !settledOpen;
 		onSettledOpenChange(next);
+
 		try {
 			localStorage.setItem(SETTLED_INBOX_OPEN_KEY, String(next));
 		} catch {
@@ -187,15 +196,21 @@ export default function InboxSidebar({
 
 	function age(at: number) {
 		const minutes = Math.max(0, Math.floor((now - at) / 60_000));
+
 		if (minutes < 1) return 'now';
+
 		if (minutes < 60) return `${minutes}m`;
+
 		if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
+
 		return `${Math.floor(minutes / 1440)}d`;
 	}
 
 	function runStatus(thread: Thread) {
 		if (thread.status === 'queued') return 'Starting';
+
 		if (thread.status === 'running') return 'Working';
+
 		return thread.status === 'failed' ? 'Failed' : null;
 	}
 
@@ -218,11 +233,15 @@ export default function InboxSidebar({
 		if (!renameThread) return;
 		const thread = renameThread;
 		const title = renameTitle.trim();
+
 		if (!title || title === (thread.title ?? '')) {
 			cancelRename();
+
 			return;
 		}
+
 		cancelRename();
+
 		try {
 			await onRename(thread, title);
 		} catch (error) {
@@ -240,11 +259,14 @@ export default function InboxSidebar({
 		busyRef.current = true;
 		setBusy(true);
 		setNotice(null);
+
 		if (!canChange(thread, state)) {
 			busyRef.current = false;
 			setBusy(false);
+
 			return;
 		}
+
 		try {
 			await onChange(thread, state);
 		} catch (error) {
@@ -261,6 +283,7 @@ export default function InboxSidebar({
 
 	function dropThreads(event: ReactDragEvent, state: InboxState) {
 		event.preventDefault();
+
 		if (dragging && canDrop(state)) void change(dragging, state);
 		setDragging(null);
 	}
@@ -283,42 +306,54 @@ export default function InboxSidebar({
 		if (event.key === 'Tab' || event.key === 'Escape') {
 			event.preventDefault();
 			closeMenu();
+
 			return;
 		}
+
 		if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
 		event.preventDefault();
+
 		const buttons = [
 			...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
 		];
+
 		const index = buttons.findIndex((button) => button === document.activeElement);
+
 		const next =
 			event.key === 'Home'
 				? 0
 				: event.key === 'End'
 					? buttons.length - 1
 					: (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+
 		buttons[next]?.focus();
 	}
 
 	const handleWindowKeydown = useCallback(
 		(event: KeyboardEvent) => {
 			if (event.defaultPrevented) return;
+
 			if (event.key === 'Escape') {
 				if (menu) closeMenu();
+
 				return;
 			}
+
 			if (event.altKey && event.key.toLowerCase() === 'n') {
 				event.preventDefault();
 				onNew();
 			}
+
 			if (
 				event.target instanceof Element &&
 				event.target.closest('input, textarea, [contenteditable="true"], dialog')
 			)
 				return;
+
 			if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
 				const index = rows.findIndex((thread) => thread._id === currentThreadId);
 				const row = rows[index + (event.key === 'ArrowDown' ? 1 : -1)];
+
 				if (row) {
 					event.preventDefault();
 					onSelect(row);
@@ -330,6 +365,7 @@ export default function InboxSidebar({
 
 	useEffect(() => {
 		window.addEventListener('keydown', handleWindowKeydown);
+
 		return () => window.removeEventListener('keydown', handleWindowKeydown);
 	}, [handleWindowKeydown]);
 
@@ -373,6 +409,7 @@ export default function InboxSidebar({
 								{filteredProjects.map((project) => {
 									const selected =
 										selectedProjects.length === 1 && selectedProjects[0] === project.repositoryKey;
+
 									return (
 										<button
 											key={project.repositoryKey}
@@ -432,6 +469,7 @@ export default function InboxSidebar({
 										const stateLabel = runStatus(thread);
 										const model = threadModel(thread);
 										const isRenaming = renameThread?._id === thread._id;
+
 										return (
 											<div
 												key={thread._id}

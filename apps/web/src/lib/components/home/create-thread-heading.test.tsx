@@ -12,7 +12,9 @@ function renderHeading(overrides: Partial<ComponentProps<typeof CreateThreadHead
 		onAddProject: vi.fn(),
 		...overrides
 	};
+
 	render(<CreateThreadHeading {...props} />);
+
 	return props;
 }
 
@@ -50,6 +52,7 @@ describe('CreateThreadHeading', () => {
 			],
 			workspacePath: '/sprocket'
 		});
+
 		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]');
 
 		expect(document.querySelector('select')).toBeNull();
@@ -75,6 +78,7 @@ describe('CreateThreadHeading', () => {
 			{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' },
 			{ repositoryKey: 'second', displayName: 'Second', workspacePath: '/second' }
 		];
+
 		const props = renderHeading({ projects, workspacePath: '/first' });
 		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
 

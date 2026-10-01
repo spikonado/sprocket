@@ -4,6 +4,7 @@ import { waitForServerReady } from '../local-server.mjs';
 
 test('server readiness times out when a health request never responds', async () => {
 	let requestAborted = false;
+
 	const hangingFetch = (_url, { signal }) =>
 		new Promise((_resolve, reject) => {
 			signal.addEventListener(

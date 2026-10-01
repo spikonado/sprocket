@@ -14,10 +14,12 @@ export default function SettingsAccount({
 }) {
 	const [emailRevealed, setEmailRevealed] = useState(false);
 	const convexAuth = useConvexAuth();
+
 	const subscriptionQuery = useConvexQueryResult({
 		query: api.billing.getMySubscription,
 		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	});
+
 	const subscription = subscriptionQuery.status === 'success' ? subscriptionQuery.data : null;
 	const subscriptionError = subscriptionQuery.status === 'error';
 	const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || null;

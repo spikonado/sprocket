@@ -10,6 +10,7 @@ export const getMine = query({
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
+
 		return await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -24,6 +25,7 @@ export const setTheme = mutation({
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
+
 		const existing = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -33,6 +35,7 @@ export const setTheme = mutation({
 			await ctx.db.patch('uiPreferences', existing._id, {
 				theme: args.theme
 			});
+
 			return await ctx.db.get('uiPreferences', existing._id);
 		}
 
@@ -40,6 +43,7 @@ export const setTheme = mutation({
 			userId,
 			theme: args.theme
 		});
+
 		return await ctx.db.get('uiPreferences', id);
 	}
 });

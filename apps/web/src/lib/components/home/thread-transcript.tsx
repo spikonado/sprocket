@@ -68,7 +68,9 @@ type Props = {
 };
 
 const SCROLL_EPSILON_PX = 28;
+
 const HISTORY_PREFETCH_VIEWPORTS = 3;
+
 const HISTORY_PREFETCH_PAGES = 3;
 
 type ScrollAnchor = {
@@ -95,13 +97,17 @@ function isVisibleWorkBlock(block: AssistantTimelineWorkBlock) {
 
 function earlierTimestamp(left: number | undefined, right: number | undefined) {
 	if (left === undefined) return right;
+
 	if (right === undefined) return left;
+
 	return Math.min(left, right);
 }
 
 function laterTimestamp(left: number | undefined, right: number | undefined) {
 	if (left === undefined) return right;
+
 	if (right === undefined) return left;
+
 	return Math.max(left, right);
 }
 
@@ -137,11 +143,14 @@ export default function ThreadTranscript({
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
+
 	if (!sectionKeysRef.current) sectionKeysRef.current = new TranscriptSectionKeys();
 	const sectionKeys = sectionKeysRef.current;
 
 	type LiveRenderState = ReturnType<typeof liveRenderState>;
+
 	type LiveSection = ReturnType<TranscriptSectionKeys['reconcile']>[number];
+
 	type LiveWorkState = ReturnType<typeof liveWorkState>;
 
 	function liveRenderState(message: LiveTranscriptMessage) {
@@ -150,13 +159,17 @@ export default function ThreadTranscript({
 				job.runId === message.runId &&
 				message.parts.some((part) => part.type === 'tool-call' && part.callId === job.callId)
 		);
+
 		const timeline = buildAssistantTimeline(message.parts, messageActions);
 		const tools = timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool');
+
 		const sections = sectionKeys.reconcile(
 			message.id,
 			groupAssistantTimelineSections(groupAssistantTimeline(timeline))
 		);
+
 		const isStreaming = isAssistantResponseStreaming(message, activeRunId);
+
 		return {
 			timeline,
 			sections,
@@ -176,10 +189,14 @@ export default function ThreadTranscript({
 			state.isStreaming,
 			state.openSessions
 		);
+
 		const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock);
+
 		const workInProgress =
 			state.isStreaming && (sectionIndex === state.sections.length - 1 || runningTools.length > 0);
+
 		const nextSection = state.sections[sectionIndex + 1];
+
 		return {
 			visibleBlocks,
 			runningTools,
@@ -197,19 +214,24 @@ export default function ThreadTranscript({
 	function followingLiveState(messageIndex: number, runId: TranscriptDisplayRow['runId']) {
 		for (const message of messages.slice(messageIndex + 1)) {
 			if (message.kind === 'approval' && message.runId === runId) continue;
+
 			return message.kind === 'live' && message.runId === runId
 				? liveRenderState(message)
 				: undefined;
 		}
+
 		return undefined;
 	}
 
 	function followsOpenPersistedWork(messageIndex: number, runId: LiveTranscriptMessage['runId']) {
 		for (let index = messageIndex - 1; index >= 0; index -= 1) {
 			const message = messages[index];
+
 			if (message.kind === 'approval' && message.runId === runId) continue;
+
 			return message.kind === 'work' && message.runId === runId && !message.closed;
 		}
+
 		return false;
 	}
 
@@ -217,14 +239,18 @@ export default function ThreadTranscript({
 		const elements = [
 			...root.querySelectorAll<HTMLElement>('[data-transcript-anchor], [data-work-detail]')
 		].filter((element) => !element.querySelector('[data-work-detail]'));
+
 		const top = root.getBoundingClientRect().top;
 		let low = 0;
 		let high = elements.length;
+
 		while (low < high) {
 			const mid = Math.floor((low + high) / 2);
+
 			if (elements[mid].getBoundingClientRect().bottom <= top) low = mid + 1;
 			else high = mid;
 		}
+
 		return elements[low];
 	}
 
@@ -235,20 +261,26 @@ export default function ThreadTranscript({
 
 	function scrollToBottom() {
 		const root = viewportRef.current;
+
 		if (!root || !stickToBottomRef.current) {
 			return;
 		}
+
 		const bottom = Math.max(0, root.scrollHeight - root.clientHeight);
+
 		// A scrollbar drag can reach layout before its scroll event. Shrinking content also clamps scrollTop.
 		if (root.scrollTop + 1 < Math.min(lastScrollTopRef.current, bottom)) {
 			stickToBottomRef.current = false;
+
 			return;
 		}
+
 		setScrollTop(root, bottom);
 	}
 
 	function prefetchOlderHistory() {
 		const root = viewportRef.current;
+
 		if (
 			root &&
 			nextBefore !== undefined &&
@@ -273,23 +305,32 @@ export default function ThreadTranscript({
 
 	function updateStickToBottom() {
 		const root = viewportRef.current;
+
 		if (!root) return;
+
 		if (root.scrollTop === lastScrollTopRef.current) {
 			prefetchOlderHistory();
+
 			return;
 		}
+
 		const bottom = Math.max(0, root.scrollHeight - root.clientHeight);
 		const movingUp = root.scrollTop < lastScrollTopRef.current;
+
 		const clampedToBottom =
 			lastScrollTopRef.current > bottom && Math.abs(root.scrollTop - bottom) < 1;
+
 		lastScrollTopRef.current = root.scrollTop;
 		historyPrefetchPagesRef.current = HISTORY_PREFETCH_PAGES;
+
 		// A shorter scroll range must preserve the reader's existing follow state.
 		if (!clampedToBottom) {
 			const distanceToBottom = bottom - root.scrollTop;
 			stickToBottomRef.current = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
+
 			if (movingUp) stopFollowing();
 		}
+
 		prefetchOlderHistory();
 	}
 
@@ -300,6 +341,7 @@ export default function ThreadTranscript({
 		) {
 			return;
 		}
+
 		if (
 			event.key === 'ArrowUp' ||
 			event.key === 'PageUp' ||
@@ -316,8 +358,10 @@ export default function ThreadTranscript({
 		const anchor = root && !stickToBottomRef.current ? firstVisibleAnchor(root) : undefined;
 		const offset = anchor?.getBoundingClientRect().top;
 		const top = root?.scrollTop;
+
 		return () => {
 			if (!root || root !== viewportRef.current) return;
+
 			if (stickToBottomRef.current) scrollToBottom();
 			else if (anchor?.isConnected && offset !== undefined && root.scrollTop === top) {
 				setScrollTop(root, root.scrollTop + anchor.getBoundingClientRect().top - offset);
@@ -339,6 +383,7 @@ export default function ThreadTranscript({
 	useLayoutEffect(() => {
 		const root = viewport;
 		const content = contentRef.current;
+
 		if (!root || !content || !globalThis.ResizeObserver) {
 			return;
 		}
@@ -347,8 +392,10 @@ export default function ThreadTranscript({
 			scrollToBottomRef.current();
 			prefetchOlderHistoryRef.current();
 		});
+
 		observer.observe(root);
 		observer.observe(content);
+
 		return () => {
 			observer.disconnect();
 		};
@@ -358,6 +405,7 @@ export default function ThreadTranscript({
 	const renderedMessagesRef = useRef(messages);
 	const renderedActionsRef = useRef(actions);
 	const anchorRef = useRef<ScrollAnchor | null>(null);
+
 	if (renderedMessagesRef.current !== messages || renderedActionsRef.current !== actions) {
 		renderedMessagesRef.current = messages;
 		renderedActionsRef.current = actions;
@@ -376,15 +424,21 @@ export default function ThreadTranscript({
 
 	useLayoutEffect(() => {
 		const root = viewportRef.current;
+
 		if (!root) return;
+
 		if (stickToBottomRef.current) {
 			scrollToBottomRef.current();
+
 			return;
 		}
+
 		const snapshot = anchorRef.current;
 		anchorRef.current = null;
+
 		if (!snapshot) return;
 		const { anchor, offset, scrollTop, scrollHeight } = snapshot;
+
 		if (anchor.isConnected && root.scrollTop === scrollTop) {
 			setScrollTop(root, scrollTop + anchor.getBoundingClientRect().top - offset);
 		} else if (!anchor.isConnected && root.scrollTop === scrollTop) {
@@ -396,6 +450,7 @@ export default function ThreadTranscript({
 		try {
 			await navigator.clipboard.writeText(text);
 			setCopiedMessageId(messageId);
+
 			if (copiedTimeoutRef.current !== null) clearTimeout(copiedTimeoutRef.current);
 			copiedTimeoutRef.current = setTimeout(() => {
 				setCopiedMessageId((current) => (current === messageId ? null : current));
@@ -428,15 +483,18 @@ export default function ThreadTranscript({
 			const renderKey = `${block.type}-${
 				block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id
 			}-${blockIndex}`;
+
 			if (block.type === 'reasoning') {
 				const reasoningInProgress =
 					work.workInProgress &&
 					work.runningTools.length === 0 &&
 					blockIndex === work.visibleBlocks.length - 1;
+
 				return (
 					<ReasoningDisclosure key={renderKey} text={block.text} inProgress={reasoningInProgress} />
 				);
 			}
+
 			return (
 				<WorkTools
 					key={renderKey}
@@ -467,16 +525,20 @@ export default function ThreadTranscript({
 			const row = message;
 			const followingLive = !row.closed ? followingLiveState(messageIndex, row.runId) : undefined;
 			const firstLiveSection = followingLive?.sections[0];
+
 			const continuation =
 				followingLive && firstLiveSection?.type === 'work'
 					? liveWorkState(followingLive, firstLiveSection, 0)
 					: undefined;
+
 			const inProgress = continuation
 				? continuation.workInProgress
 				: firstLiveSection?.type === 'text'
 					? false
 					: row.runId === activeRunId && (!row.closed || row.pendingTools > 0);
+
 			const startedAt = earlierTimestamp(row.startedAt, continuation?.timing.startedAtMs);
+
 			const completedAt = laterTimestamp(
 				row.completedAt,
 				continuation?.timing.completedAtMs ??
@@ -484,6 +546,7 @@ export default function ThreadTranscript({
 						? (firstLiveSection.startedAt ?? undefined)
 						: undefined)
 			);
+
 			return (
 				<div
 					key={message.id}
@@ -513,6 +576,7 @@ export default function ThreadTranscript({
 
 		if (message.kind === 'approval') {
 			if (!message.mandateId || !message.approvalUrl) return null;
+
 			return (
 				<div key={message.id} data-transcript-anchor={message.id}>
 					<MandateApprovalForm
@@ -545,9 +609,11 @@ export default function ThreadTranscript({
 
 		const live = liveRenderState(message);
 		const continuesPreviousWork = followsOpenPersistedWork(messageIndex, message.runId);
+
 		const hasPersistedAssistantContent = live.timeline.some(
 			(part) => part.type === 'text' || part.type === 'reasoning'
 		);
+
 		return (
 			<div
 				key={message.id}
@@ -586,7 +652,9 @@ export default function ThreadTranscript({
 								</div>
 							);
 						}
+
 						const work = liveWorkState(live, section, sectionIndex);
+
 						if (
 							work.visibleBlocks.length === 0 &&
 							!work.workInProgress &&
@@ -594,6 +662,7 @@ export default function ThreadTranscript({
 						) {
 							return null;
 						}
+
 						return (
 							<div
 								key={section.renderKey}
@@ -653,9 +722,11 @@ export default function ThreadTranscript({
 				}}
 				onTouchMove={(event) => {
 					const nextY = event.touches[0]?.clientY;
+
 					if (nextY !== undefined && touchYRef.current !== undefined && nextY > touchYRef.current) {
 						stopFollowing();
 					}
+
 					touchYRef.current = nextY;
 				}}
 			>

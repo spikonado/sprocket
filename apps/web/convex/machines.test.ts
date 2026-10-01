@@ -26,6 +26,7 @@ describe('machines', () => {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
+
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'busy-run',
@@ -33,6 +34,7 @@ describe('machines', () => {
 			prompt: 'Run locally',
 			machineId: machine.machineId
 		});
+
 		const original = await t.run((ctx) => ctx.db.query('machines').unique());
 		const args = { ...machine, credentialHash: await executionSecretHash('credential-b') };
 
@@ -76,6 +78,7 @@ describe('machines', () => {
 				})
 			).rejects.toThrow('Machine is not active.');
 		}
+
 		await expect(
 			t.mutation(api.machines.heartbeat, {
 				userId: 'user_alice',
@@ -90,6 +93,7 @@ describe('machines', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const args = { ...machine, credentialHash: await executionSecretHash('credential-a') };
 		const registered = await asUser.mutation(api.machines.tryRegister, args);
+
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'retry-run',
@@ -129,6 +133,7 @@ describe('machines', () => {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
+
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'stale-run',
@@ -136,6 +141,7 @@ describe('machines', () => {
 			prompt: 'Run locally',
 			machineId: machine.machineId
 		});
+
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: run.runId,
 			executionSecret: 'run-secret',
@@ -191,6 +197,7 @@ describe('machines', () => {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
+
 		const run = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'end-run',

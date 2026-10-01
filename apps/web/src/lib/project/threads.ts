@@ -51,6 +51,7 @@ export function findProjectByRepositoryKey<T extends Pick<Project, 'repositoryKe
 	if (!repositoryKey) {
 		return null;
 	}
+
 	return projects.find((project) => project.repositoryKey === repositoryKey) ?? null;
 }
 
@@ -61,6 +62,7 @@ export function findProjectByWorkspacePath<T extends Pick<Project, 'workspacePat
 	if (!workspacePath) {
 		return null;
 	}
+
 	return projects.find((project) => project.workspacePath === workspacePath) ?? null;
 }
 
@@ -117,6 +119,7 @@ export function resolvePendingCreatedThreadId(args: {
 	threads: ThreadSummary[];
 }): Id<'threadRecords'> | null {
 	const { pendingCreatedThreadId, threads } = args;
+
 	if (!pendingCreatedThreadId || findThreadById(threads, pendingCreatedThreadId)) {
 		return null;
 	}
@@ -163,12 +166,14 @@ export function clearPendingAgentLaunch(
 	launchId?: number
 ) {
 	const pendingLaunch = pendingLaunches[threadId];
+
 	if (!pendingLaunch || (launchId !== undefined && pendingLaunch.launchId !== launchId)) {
 		return pendingLaunches;
 	}
 
 	const nextPendingLaunches = { ...pendingLaunches };
 	delete nextPendingLaunches[threadId];
+
 	return nextPendingLaunches satisfies PendingAgentLaunches;
 }
 
@@ -195,6 +200,7 @@ export function resolvePendingAgentLaunch(
 	observedStartedAt?: number
 ): PendingAgentLaunches {
 	const pendingLaunch = pendingLaunches[threadId];
+
 	if (
 		!pendingLaunch ||
 		!hasAgentLaunchProgressed(
@@ -225,6 +231,7 @@ export function resolveExpiredAgentLaunch(
 	latestStartedAt?: number
 ): ExpiredAgentLaunchResolution {
 	const pendingLaunch = pendingLaunches[threadId];
+
 	if (!pendingLaunch || pendingLaunch.launchId !== launchId || pendingLaunch.expiresAt > now) {
 		return { pendingLaunches, shouldRecover: false };
 	}

@@ -18,13 +18,16 @@ async function fixture(t: ConvexTestInstance, scrape = false) {
 	const { runId } = await createQueuedRun(t, asUser, threadId, secret, secret);
 	const auth = { runId, claimId: secret, executionSecret: secret };
 	await t.mutation(api.agentRuntime.start, auth);
+
 	if (!scrape) return { ...auth, jobId: undefined };
+
 	const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
 		...auth,
 		...toolTranscriptAssignment(runId, secret),
 		kind: 'scrape_url',
 		payload: { url: 'https://example.com' }
 	});
+
 	return { ...auth, jobId };
 }
 
@@ -45,6 +48,7 @@ async function settled(
 		},
 		{ timeout: 3_000, interval: 10 }
 	);
+
 	return t.query(api.firecrawlRequests.getResult, resultArgs(auth, id));
 }
 
@@ -64,9 +68,11 @@ describe('Firecrawl request queue', () => {
 	it('uses storage for results, claims only once, and disposes both the row and blob', async () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, true);
+
 		const scrape = vi
 			.spyOn(FirecrawlClient.prototype, 'scrape')
 			.mockResolvedValue({ markdown: '# Page' });
+
 		const id = await t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'scrape' });
 		expect(await t.query(api.firecrawlRequests.getResult, resultArgs(auth, id))).toEqual({
 			status: 'pending'
@@ -114,20 +120,26 @@ describe('Firecrawl request queue', () => {
 		const t = initConvexTest();
 		const auth = await fixture(t, true);
 		const gate = Promise.withResolvers<{ markdown: string }>();
+
 		const scrape = vi
 			.spyOn(FirecrawlClient.prototype, 'scrape')
 			.mockImplementation(() => gate.promise);
+
 		const ids = [];
+
 		for (let i = 0; i < 3; i++)
 			ids.push(await t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'scrape' }));
+
 		try {
 			await vi.waitFor(() => expect(scrape).toHaveBeenCalledTimes(2));
 			await vi.advanceTimersByTimeAsync(1_000);
 			expect(scrape).toHaveBeenCalledTimes(2);
 		} finally {
 			gate.resolve({ markdown: 'Done' });
+
 			for (const id of ids) await settled(t, auth, id);
 		}
+
 		expect(scrape).toHaveBeenCalledTimes(3);
 	});
 
@@ -165,11 +177,14 @@ describe('Firecrawl request queue', () => {
 			const t = initConvexTest();
 			const auth = await fixture(t, true);
 			const gate = Promise.withResolvers<{ markdown: string }>();
+
 			const scrape = vi
 				.spyOn(FirecrawlClient.prototype, 'scrape')
 				.mockImplementation(() => gate.promise);
+
 			const id = await t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'scrape' });
 			await vi.waitFor(() => expect(scrape).toHaveBeenCalledTimes(1));
+
 			if (change === 'expire') await vi.advanceTimersByTimeAsync(REQUEST_TTL_MS);
 			else
 				await t.run((ctx) =>

@@ -25,6 +25,7 @@ export default function ToolCallsDisclosure({
 }: Props) {
 	const [manual, setManual] = useState<boolean | null>(null);
 	const [initiallyExpanded] = useState(() => defaultExpanded ?? tools.length <= 2);
+
 	const expanded =
 		manual ?? (preserveExpansion ? initiallyExpanded : (defaultExpanded ?? tools.length <= 2));
 

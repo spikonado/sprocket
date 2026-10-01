@@ -16,10 +16,15 @@ import {
 } from './auth';
 
 const createAuthKitClient = vi.fn<AuthRuntime['createAuthKitClient']>();
+
 const ensureLocalSession = vi.fn<AuthRuntime['ensureLocalSession']>();
+
 const resolveLocalApiBaseUrl = vi.fn<AuthRuntime['resolveLocalApiBaseUrl']>();
+
 const nativeTokenRequestSchema = z.object({ forceRefreshToken: z.boolean() });
+
 type NativeSessionTokenRequest = z.infer<typeof nativeTokenRequestSchema>;
+
 type TestJsonPayload =
 	| NativeSessionTokenRequest
 	| {
@@ -43,6 +48,7 @@ type TestJsonPayload =
 	| null;
 
 const initialState = get(authState);
+
 const user: User = {
 	object: 'user',
 	id: 'user-a',
@@ -56,6 +62,7 @@ const user: User = {
 	createdAt: '',
 	updatedAt: ''
 };
+
 const nativeUser = {
 	id: 'user-a',
 	email: 'a@example.com',
@@ -101,6 +108,7 @@ describe('installed and hosted auth', () => {
 	it('observes login and logout from another local client without creating a browser session', async () => {
 		stubInstalledWindow();
 		const connections: FakeEvents[] = [];
+
 		class FakeEvents {
 			onmessage: (() => void) | null = null;
 			close = vi.fn();
@@ -108,6 +116,7 @@ describe('installed and hosted auth', () => {
 				connections.push(this);
 			}
 		}
+
 		vi.stubGlobal('EventSource', FakeEvents);
 		let signedIn = false;
 		stubFetch({
@@ -116,6 +125,7 @@ describe('installed and hosted auth', () => {
 		});
 		await initializeAuth(convexClient);
 		const events = connections[0];
+
 		if (!events) throw new Error('missing auth subscription');
 		signedIn = true;
 		events.onmessage?.();
@@ -130,6 +140,7 @@ describe('installed and hosted auth', () => {
 
 	it('resumes an installed native session without AuthKit JS', async () => {
 		stubInstalledWindow();
+
 		const fetch = stubFetch({
 			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
 		});
@@ -190,6 +201,7 @@ describe('installed and hosted auth', () => {
 		stubFetch({
 			token: () => {
 				order.push('token');
+
 				return jsonResponse(200, null);
 			}
 		});
@@ -203,9 +215,11 @@ describe('installed and hosted auth', () => {
 
 	it('keeps the current native user when a later token refresh is transient', async () => {
 		stubInstalledWindow();
+
 		const fetch = stubFetch({
 			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
 		});
+
 		await initializeAuth(convexClient);
 		fetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
 			if (requestUrl(input).includes('/api/auth/native-session/token')) {
@@ -213,6 +227,7 @@ describe('installed and hosted auth', () => {
 					error: 'Native sign-in is temporarily unavailable. Try again.'
 				});
 			}
+
 			return unhandled(input, init);
 		});
 
@@ -271,6 +286,7 @@ describe('installed and hosted auth', () => {
 
 	it('signs in through PKCE then the native session without a second AuthKit redirect', async () => {
 		const { location } = stubInstalledWindow();
+
 		const fetch = stubFetch({
 			desktopStart: () =>
 				jsonResponse(200, {
@@ -301,6 +317,7 @@ describe('installed and hosted auth', () => {
 	it('revokes only the browser session and can sign in again remotely', async () => {
 		stubRemoteWindow('https:');
 		resolveLocalApiBaseUrl.mockReturnValue('https://machine.tailnet.ts.net');
+
 		const fetch = stubFetch({
 			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser }),
 			browserSessionDelete: () => jsonResponse(200, { ok: true }),
@@ -315,6 +332,7 @@ describe('installed and hosted auth', () => {
 					user: { id: nativeUser.id, email: nativeUser.email }
 				})
 		});
+
 		await initializeAuth(convexClient, { machine: true });
 
 		await signOut();
@@ -331,9 +349,11 @@ describe('installed and hosted auth', () => {
 
 	it('maps forceRefreshToken through the native session endpoint and does not persist the token', async () => {
 		const { localStorage } = stubInstalledWindow();
+
 		const fetch = stubFetch({
 			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
 		});
+
 		await initializeAuth(convexClient);
 
 		const token = await getAccessToken({ forceRefreshToken: true });
@@ -348,6 +368,7 @@ describe('installed and hosted auth', () => {
 		vi.useFakeTimers();
 		stubInstalledWindow();
 		let polls = 0;
+
 		const fetch = stubFetch({
 			desktopStart: () =>
 				jsonResponse(200, {
@@ -356,12 +377,16 @@ describe('installed and hosted auth', () => {
 				}),
 			desktopResult: () => {
 				polls += 1;
+
 				if (polls === 1) return jsonResponse(503, { error: 'Unavailable' });
+
 				if (polls === 2) return jsonResponse(200, { status: 'unavailable', error: 'Retry' });
+
 				return jsonResponse(200, { status: 'authenticated', user: nativeUser });
 			},
 			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
 		});
+
 		const login = signIn();
 		await vi.advanceTimersByTimeAsync(3_100);
 		await login;
@@ -375,6 +400,7 @@ describe('installed and hosted auth', () => {
 	it('shares inflight native token requests', async () => {
 		stubInstalledWindow();
 		const pending = deferred<Response>();
+
 		const fetch = stubFetch({
 			token: () => pending.promise
 		});
@@ -405,9 +431,11 @@ describe('installed and hosted auth', () => {
 				}),
 			token: () => {
 				tokenCalls += 1;
+
 				if (tokenCalls === 1) {
 					return pending.promise;
 				}
+
 				return jsonResponse(200, {
 					accessToken: 'b-token',
 					user: {
@@ -489,6 +517,7 @@ describe('installed and hosted auth', () => {
 		let onRefreshFailure: (() => void) | undefined;
 		createAuthKitClient.mockImplementation(async (_clientId, options) => {
 			onRefreshFailure = () => options?.onRefreshFailure?.({ signIn: client.signIn });
+
 			return client;
 		});
 
@@ -518,26 +547,33 @@ function requestUrl(input: RequestInfo | URL): string {
 	if (input instanceof URL) {
 		return input.href;
 	}
+
 	if (input instanceof Request) {
 		return input.url;
 	}
+
 	return input;
 }
 
 function tokenBodies(fetch: ReturnType<typeof stubFetch>) {
 	const bodies: NativeSessionTokenRequest[] = [];
+
 	for (const [input, init] of fetch.mock.calls) {
 		if (!requestUrl(input).includes('/api/auth/native-session/token')) {
 			continue;
 		}
+
 		if ((init?.method ?? 'GET').toUpperCase() !== 'POST') {
 			continue;
 		}
+
 		const parsed = nativeTokenRequestSchema.safeParse(JSON.parse(String(init?.body ?? '{}')));
+
 		if (parsed.success) {
 			bodies.push(parsed.data);
 		}
 	}
+
 	return bodies;
 }
 
@@ -564,31 +600,42 @@ function stubFetch(handlers: {
 	const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = requestUrl(input);
 		const method = (init?.method ?? 'GET').toUpperCase();
+
 		if (url.includes('/api/auth/native-session/token') && method === 'POST') {
 			const parsed = nativeTokenRequestSchema.safeParse(JSON.parse(String(init?.body ?? '{}')));
+
 			if (!parsed.success) {
 				return jsonResponse(400, { error: 'invalid token request' });
 			}
+
 			return handlers.token?.(parsed.data) ?? unhandled(input, init);
 		}
+
 		if (url.endsWith('/api/auth/native-session') && method === 'DELETE') {
 			return handlers.nativeSessionDelete?.() ?? unhandled(input, init);
 		}
+
 		if (url.endsWith('/api/auth/session') && method === 'DELETE') {
 			return handlers.browserSessionDelete?.() ?? unhandled(input, init);
 		}
+
 		if (url.includes('/api/auth/desktop-login/start') && method === 'POST') {
 			return handlers.desktopStart?.() ?? unhandled(input, init);
 		}
+
 		if (url.includes('/api/auth/desktop-login/result') && method === 'POST') {
 			return handlers.desktopResult?.() ?? unhandled(input, init);
 		}
+
 		if (url.includes('/api/auth/desktop-login/cancel') && method === 'POST') {
 			return handlers.desktopCancel?.() ?? jsonResponse(200, { ok: true });
 		}
+
 		return unhandled(input, init);
 	});
+
 	vi.stubGlobal('fetch', fetch);
+
 	return fetch;
 }
 
@@ -610,9 +657,12 @@ function stubWindow(hostname: string, requestedProtocol?: 'http:' | 'https:') {
 		setItem: vi.fn(),
 		removeItem: vi.fn()
 	};
+
 	const protocol = requestedProtocol ?? (hostname === 'localhost' ? 'http:' : 'https:');
+
 	const origin =
 		hostname === 'localhost' ? `${protocol}//localhost:17731` : `${protocol}//${hostname}`;
+
 	const location = {
 		hostname,
 		protocol,
@@ -620,12 +670,14 @@ function stubWindow(hostname: string, requestedProtocol?: 'http:' | 'https:') {
 		href: `${origin}/`,
 		replace: vi.fn()
 	};
+
 	vi.stubGlobal('window', {
 		location,
 		localStorage,
 		open: vi.fn(() => ({ opener: {} })),
 		sprocketDesktopBridge: undefined
 	});
+
 	return { location, localStorage };
 }
 
@@ -643,8 +695,10 @@ function mockAuthKitClient(currentUser: User | null) {
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
+
 	const promise = new Promise<T>((res) => {
 		resolve = res;
 	});
+
 	return { promise, resolve };
 }

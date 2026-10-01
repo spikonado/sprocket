@@ -29,6 +29,7 @@ function inboxQuery(
 	} = {}
 ): InboxQueryResult {
 	const loadMore = overrides.loadMore ?? (() => {});
+
 	if (overrides.error) {
 		return {
 			data: overrides.data ?? [],
@@ -39,6 +40,7 @@ function inboxQuery(
 			loadMore
 		};
 	}
+
 	return {
 		data: overrides.data ?? [],
 		status: 'success',
@@ -70,6 +72,7 @@ it('requests both sections with normalized repositories when enabled', () => {
 
 it('requests the settled section when it is opened', () => {
 	const query = vi.fn<InboxQueryHook>(() => inboxQuery());
+
 	const { rerender } = renderHook(
 		(settledOpen) =>
 			useThreadInbox({ enabled: true, repositoryKeys: ['alpha'], settledOpen }, query),
@@ -100,6 +103,7 @@ it.each([
 it('maps query state into sections, preserving errors and pagination', () => {
 	const loadMore = vi.fn<(numItems: number) => void>();
 	const rows = [threadRecord()];
+
 	const query = vi.fn<InboxQueryHook>((options) =>
 		options.args !== 'skip' && options.args.state === 'unsettled'
 			? inboxQuery({

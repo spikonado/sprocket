@@ -45,9 +45,11 @@ export function artifactsWatchRequest(scope: ArtifactWatchScope): ArtifactsWatch
 		repositoryKey: scope.repositoryKey,
 		workspacePath: scope.workspacePath
 	};
+
 	if (scope.threadId) {
 		request.threadId = scope.threadId;
 	}
+
 	return request;
 }
 
@@ -90,9 +92,11 @@ export function mergeArtifactSources(
 	local: ArtifactWatchState | null
 ): ArtifactWatchState {
 	const artifacts = new Map(cloud.artifacts.map((artifact) => [artifact._id, artifact]));
+
 	for (const artifact of local?.artifacts ?? []) {
 		if (artifact.localPath || !artifacts.has(artifact._id)) artifacts.set(artifact._id, artifact);
 	}
+
 	return {
 		artifacts: [...artifacts.values()],
 		stale: cloud.stale && (!local || local.stale),

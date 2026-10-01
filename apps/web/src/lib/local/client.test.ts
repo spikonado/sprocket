@@ -30,13 +30,17 @@ afterEach(() => {
 describe('local session bootstrap', () => {
 	it("shares startup bootstrap so auth and the local API do not replace each other's cookie", async () => {
 		vi.stubGlobal('window', { location: { hash: '' } });
+
 		const fetch = vi.fn(async (url: string, init?: RequestInit) => {
 			if (url.endsWith('/api/auth/session')) {
 				return Response.json({ authenticated: false });
 			}
+
 			expect(init).toEqual({ method: 'POST', credentials: 'include' });
+
 			return Response.json({ authenticated: true });
 		});
+
 		vi.stubGlobal('fetch', fetch);
 		await Promise.all([
 			ensureLocalSession('http://localhost:17731'),
@@ -72,12 +76,15 @@ describe('display transcript pages', () => {
 					init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
 				})
 		);
+
 		vi.stubGlobal('fetch', fetch);
 		const controller = new AbortController();
+
 		const pending = createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(
 			{ userId: 'user-1', threadId: threadRecordId('thread-1'), limit: 12 },
 			controller.signal
 		);
+
 		controller.abort();
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 		expect(fetch).toHaveBeenCalledWith(
@@ -100,6 +107,7 @@ describe('display transcript pages', () => {
 			closed: true,
 			revision: 500
 		};
+
 		const response = {
 			rows: [row],
 			indexing: false,
@@ -116,8 +124,10 @@ describe('display transcript pages', () => {
 			replicaId: 'replica',
 			moreChanges: false
 		};
+
 		const fetch = vi.fn(async () => Response.json(response));
 		vi.stubGlobal('fetch', fetch);
+
 		const request = {
 			userId: 'user-1',
 			threadId: threadRecordId('thread-1'),
@@ -126,6 +136,7 @@ describe('display transcript pages', () => {
 			streams: [{ runId: runId('run-1'), streamId: 'stream-499' }],
 			changesAfter: { revision: 490, sequence: 12 }
 		};
+
 		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(request);
 		expect(page).toEqual(response);
 		expect(fetch).toHaveBeenCalledWith(
@@ -172,6 +183,7 @@ describe('display transcript pages', () => {
 				]
 			})
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay({
@@ -199,9 +211,11 @@ describe('display transcript pages', () => {
 			revision: 500,
 			stale: true
 		};
+
 		const fetch = vi.fn(async () => Response.json(response));
 		vi.stubGlobal('fetch', fetch);
 		const controller = new AbortController();
+
 		const request = {
 			userId: 'user-1',
 			threadId: threadRecordId('thread-1'),
@@ -209,10 +223,12 @@ describe('display transcript pages', () => {
 			after: 5,
 			limit: 5
 		};
+
 		const details = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplayDetails(
 			request,
 			controller.signal
 		);
+
 		expect(details).toEqual(response);
 		expect(fetch).toHaveBeenCalledWith(
 			'http://127.0.0.1:7731/api/transcript/display-details',
@@ -236,7 +252,9 @@ describe('watchLiveCompletion', () => {
 			parts: [{ type: 'text' as const, id: 't', text: 'Hello', turnId: 'stream-1' }],
 			runStartedAt: 1
 		};
+
 		const encoder = new TextEncoder();
+
 		const body = new ReadableStream({
 			start(controller) {
 				for (const streamId of [undefined, '']) {
@@ -246,6 +264,7 @@ describe('watchLiveCompletion', () => {
 						)
 					);
 				}
+
 				controller.enqueue(
 					encoder.encode(`data: ${JSON.stringify({ eventType: 'updated', live: overlay })}\n\n`)
 				);
@@ -253,6 +272,7 @@ describe('watchLiveCompletion', () => {
 				controller.close();
 			}
 		});
+
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => new Response(body, { status: 200 }))
@@ -290,11 +310,13 @@ describe('watchArtifacts', () => {
 
 	function sseResponse(events: unknown[]) {
 		const encoder = new TextEncoder();
+
 		return new ReadableStream({
 			start(controller) {
 				for (const event of events) {
 					controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 				}
+
 				controller.close();
 			}
 		});
@@ -305,14 +327,17 @@ describe('watchArtifacts', () => {
 			async () =>
 				new Response(sseResponse([{ artifacts: [artifact], stale: false }]), { status: 200 })
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		const events: unknown[] = [];
+
 		const request = {
 			userId: 'user-1',
 			repositoryKey: 'repo-1',
 			workspacePath: '/ws'
 		};
+
 		await createLocalClient('http://127.0.0.1:7731').watchArtifacts(request, {
 			signal: new AbortController().signal,
 			onEvent: (event) => {
@@ -358,6 +383,7 @@ describe('watchArtifacts', () => {
 			threadId: 'thread-1',
 			localPath: 'notes.md'
 		};
+
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(
@@ -449,6 +475,7 @@ describe('account session local API', () => {
 describe('transcript file upload', () => {
 	it('posts the raw file through the authenticated helper', async () => {
 		const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+
 		const fetch = vi.fn(async () =>
 			Response.json({
 				storageId: 'storage-1',
@@ -458,6 +485,7 @@ describe('transcript file upload', () => {
 				url: 'http://127.0.0.1:7731/files/notes.txt'
 			})
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		const result = await createLocalClient('http://127.0.0.1:7731').uploadTranscriptAttachment({
@@ -487,11 +515,13 @@ describe('transcript file upload', () => {
 
 	it('uses octet-stream when the file has no MIME type', async () => {
 		const file = new File(['blob'], 'blob.bin', { type: '' });
+
 		const fetch = vi.fn(async () =>
 			Response.json({
 				error: 'staged'
 			})
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		await expect(
@@ -520,6 +550,7 @@ describe('transcript attachment discard', () => {
 					headers: { 'content-type': 'application/json' }
 				})
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		await expect(
@@ -553,6 +584,7 @@ describe('transcript attachment discard', () => {
 					headers: { 'content-type': 'application/json' }
 				})
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		await expect(
@@ -608,6 +640,7 @@ describe('chatgpt local sign-in', () => {
 				models: [{ id: 'gpt-5.4', name: 'GPT-5.4' }],
 				loginAvailable: true
 			};
+
 			if (error) status.error = error;
 			const fetch = vi.fn(async () => Response.json(status));
 			vi.stubGlobal('fetch', fetch);
@@ -628,6 +661,7 @@ describe('chatgpt local sign-in', () => {
 		const fetch = vi.fn(async () =>
 			Response.json({ state: 'state-1', authorizeUrl: 'https://auth.openai.test/authorize' })
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		const result = await createLocalClient('http://127.0.0.1:7731').startChatGptBrowserLogin({
@@ -652,11 +686,13 @@ describe('chatgpt local sign-in', () => {
 		const fetch = vi.fn(async () =>
 			Response.json({ state: 'state-1', authorizeUrl: 'https://x.test', code: 'leaked' })
 		);
+
 		vi.stubGlobal('fetch', fetch);
 
 		const result = await createLocalClient('http://127.0.0.1:7731').startChatGptBrowserLogin({
 			userId: 'user-1'
 		});
+
 		expect(result).toEqual({ state: 'state-1', authorizeUrl: 'https://x.test' });
 	});
 

@@ -7,6 +7,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 	it('atomically creates a new thread with its first queued run', async () => {
 		const t = initConvexTest();
 		const userId = 'user_alice';
+
 		const created = await t.mutation(internal.agentRuntime.insertGatewayRun, {
 			userId,
 			submissionId: 'new-thread-submission',
@@ -26,6 +27,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				ctx.db.get('runs', created.runId)
 			])
 		);
+
 		expect(thread).toMatchObject({
 			userId,
 			repositoryKey: 'alpha',
@@ -49,6 +51,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const initialThread = await asUser.query(api.threads.getByThreadId, { threadId });
 		expect(initialThread.selectedModel).toBe('gpt-5.6-sol');
 		expect(initialThread.completionProvider).toBeUndefined();
+
 		const created = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'direct-openai',
@@ -64,6 +67,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				ctx.db.get('runs', created.runId)
 			])
 		);
+
 		expect(thread).toMatchObject({
 			selectedModel: 'openai-model',
 			completionProvider: 'openai'
@@ -99,8 +103,10 @@ describe('agentRuntime.insertGatewayRun', () => {
 	it('creates a queued run and is idempotent for the same submission', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
+
 		const imageUploadId = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+
 			return await ctx.db.insert('imageUploads', {
 				userId: subject,
 				storageId,
@@ -110,6 +116,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				attached: false
 			});
 		});
+
 		const args = {
 			submissionId: 'sub-1',
 			threadId,
@@ -167,6 +174,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'executor-secret';
+
 		const created = await insertQueuedRun(t, asUser, {
 			submissionId: 'sub-capability',
 			threadId,
@@ -200,8 +208,10 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const expiredAt = await t.run(async (ctx) => {
 			const claimExpiresAt = Date.now() - 1;
 			await patchRunExecution(ctx, created.runId, { claimExpiresAt });
+
 			return claimExpiresAt;
 		});
+
 		await expect(
 			t.mutation(api.agentRuntime.renewClaim, {
 				runId: created.runId,
@@ -217,6 +227,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 	it('never rebinds a queued submission to a different executor', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const args = {
 			submissionId: 'sub-rebind',
 			threadId,
@@ -226,6 +237,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
+
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'lost-secret'
@@ -250,6 +262,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'cleanup-secret';
+
 		const args = {
 			submissionId: 'sub-capability-cleanup',
 			threadId,
@@ -258,6 +271,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
+
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret
@@ -300,6 +314,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 	it('finalizes with the original capability when a duplicate launch is rejected', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const args = {
 			submissionId: 'sub-rebound-anonymous',
 			threadId,
@@ -308,6 +323,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
+
 		await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'loser-secret'
@@ -329,6 +345,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 	it('tells the losing launch of a racing submission to stand down', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+
 		const args = {
 			submissionId: 'sub-raced',
 			threadId,
@@ -337,10 +354,12 @@ describe('agentRuntime.insertGatewayRun', () => {
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
+
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'loser-secret'
 		});
+
 		await expect(
 			insertQueuedRun(t, asUser, { ...args, executionSecret: 'winner-secret' })
 		).rejects.toThrow('Submission belongs to a different executor.');
@@ -363,6 +382,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'claimed-secret';
+
 		const args = {
 			submissionId: 'sub-claimed',
 			threadId,
@@ -371,10 +391,12 @@ describe('agentRuntime.insertGatewayRun', () => {
 			reasoningEffort: 'medium' as const,
 			fastMode: false
 		};
+
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret
 		});
+
 		await t.mutation(api.agentRuntime.start, {
 			runId: created.runId,
 			claimId: 'claim-claimed',
@@ -474,6 +496,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			fastMode: false,
 			executionSecret: 'after-abandoned-secret'
 		});
+
 		expect(next.created).toBe(true);
 		expect(next.runId).not.toBe(abandoned.runId);
 
@@ -490,6 +513,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'active-claim-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -497,6 +521,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			'sub-active-claim',
 			executionSecret
 		);
+
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-active',
 			runId,
@@ -531,6 +556,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			fastMode: false,
 			executionSecret: 'completed-first-secret'
 		});
+
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', first.runId, { status: 'completed', completedAt: Date.now() });
 		});
@@ -545,6 +571,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			fastMode: false,
 			executionSecret: 'completed-second-secret'
 		});
+
 		expect(second.created).toBe(true);
 		expect(second.runId).not.toBe(first.runId);
 	});
@@ -591,6 +618,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 	it('resolves storageIds and stores storage-only prompt metadata', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
+
 		const storageId = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
 			await ctx.db.insert('imageUploads', {
@@ -601,6 +629,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 				size: 5,
 				attached: false
 			});
+
 			return storageId;
 		});
 
@@ -614,6 +643,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			fastMode: false,
 			executionSecret: 'storage-ids-secret'
 		});
+
 		expect(created.promptPart?.prompt?.imageUploads).toEqual([
 			{
 				name: 'robot.png',
@@ -622,10 +652,13 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 				storageId
 			}
 		]);
+
 		const stored = await t.run(async (ctx) => {
 			if (!created.promptPart) throw new Error('missing prompt part');
+
 			return await ctx.db.get('threadTranscriptParts', created.promptPart._id);
 		});
+
 		expect(stored?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {

@@ -32,10 +32,15 @@ import {
 } from '../lib/update.js';
 
 const DEV_SHA = '0123456789abcdef0123456789abcdef01234567';
+
 const DEV_SHA_HIGH = 'f'.repeat(40);
+
 const DEV_SHA_LOW = '0'.repeat(40);
+
 const NPM_CLI = '/usr/bin/node_modules/npm/bin/npm-cli.js';
+
 const NPM_ROOT = '/usr/local/lib/node_modules';
+
 const NPM_PACKAGE = `${NPM_ROOT}/@spikonado/sprocket`;
 
 function jsonResponse(body, status = 200) {
@@ -56,21 +61,25 @@ function managerOf(command, args) {
 	if (args.some((arg) => /npm-cli\.js$/i.test(arg)) || /(?:^|[/\\])npm(?:\.cmd)?$/i.test(command)) {
 		return 'npm';
 	}
+
 	if (
 		args.some((arg) => /pnpm\.cjs$/i.test(arg)) ||
 		/(?:^|[/\\])pnpm(?:\.cmd|\.exe)?$/i.test(command)
 	) {
 		return 'pnpm';
 	}
+
 	if (
 		args.some((arg) => /yarn\.js$/i.test(arg)) ||
 		/(?:^|[/\\])yarn(?:\.cmd|\.exe)?$/i.test(command)
 	) {
 		return 'yarn';
 	}
+
 	if (/(?:^|[/\\])bun(?:\.exe)?$/i.test(command) || args.includes('pm')) {
 		return 'bun';
 	}
+
 	return 'unknown';
 }
 
@@ -86,11 +95,13 @@ async function waitForFile(file) {
 	for (let attempt = 0; attempt < 100; attempt += 1) {
 		try {
 			readFileSync(file);
+
 			return;
 		} catch {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		}
 	}
+
 	throw new Error(`missing ${file}`);
 }
 
@@ -98,8 +109,10 @@ async function waitForProcessToStop(pid) {
 	for (let attempt = 0; attempt < 100; attempt += 1) {
 		try {
 			process.kill(pid, 0);
+
 			if (process.platform === 'linux') {
 				const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+
 				// A killed orphan may still have a PID until the runner's init reaps it.
 				if (['Z', 'X'].includes(stat[stat.lastIndexOf(')') + 2])) {
 					return;
@@ -109,8 +122,10 @@ async function waitForProcessToStop(pid) {
 			if (error.code === 'ESRCH' || error.code === 'ENOENT') return;
 			throw error;
 		}
+
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
+
 	assert.fail(`process ${pid} is still running`);
 }
 
@@ -119,6 +134,7 @@ function testHost(options = {}) {
 	const fetched = [];
 	const lockFiles = options.lockFiles ?? new Map();
 	let releaseInstall;
+
 	const installHold = options.holdInstall
 		? new Promise((resolve) => {
 				releaseInstall = resolve;
@@ -141,36 +157,45 @@ function testHost(options = {}) {
 			options.fetch ??
 			(async (url) => {
 				fetched.push(String(url));
+
 				return jsonResponse(options.manifest ?? versionDoc('0.3.5'));
 			}),
 		runCommand: async (command, args, spawnOptions) => {
 			commands.push({ command, args, options: spawnOptions });
+
 			if (options.runCommand) {
 				return options.runCommand(command, args, spawnOptions);
 			}
+
 			if (args.includes('pm') && args.includes('bin')) {
 				return options.bunBin
 					? { status: 0, stdout: options.bunBin, stderr: '' }
 					: { status: 1, stdout: '', stderr: 'not bun' };
 			}
+
 			if (args.includes('global') && args.includes('dir') && !args.includes('add')) {
 				return options.yarnDir
 					? { status: 0, stdout: options.yarnDir, stderr: '' }
 					: { status: 1, stdout: '', stderr: 'not yarn' };
 			}
+
 			if (args.includes('root') && args.includes('-g')) {
 				const manager = managerOf(command, args);
 				const stdout = manager === 'pnpm' ? options.pnpmRoot : (options.npmRoot ?? NPM_ROOT);
+
 				return stdout
 					? { status: 0, stdout, stderr: '' }
 					: { status: 1, stdout: '', stderr: 'no root' };
 			}
+
 			if (isInstallArgs(args)) {
 				if (installHold) {
 					await installHold;
 				}
+
 				return options.install ?? { status: 0, stdout: '', stderr: '' };
 			}
+
 			return { status: 1, stdout: '', stderr: 'unexpected command' };
 		},
 		open:
@@ -181,7 +206,9 @@ function testHost(options = {}) {
 					error.code = 'EEXIST';
 					throw error;
 				}
+
 				lockFiles.set(file, '');
+
 				return {
 					writeFile: async (contents) => {
 						lockFiles.set(file, String(contents));
@@ -200,6 +227,7 @@ function testHost(options = {}) {
 				if (lockFiles.has(file)) {
 					return lockFiles.get(file);
 				}
+
 				const error = new Error('ENOENT');
 				error.code = 'ENOENT';
 				throw error;
@@ -256,6 +284,7 @@ test('does not treat a nested global dependency as this install', async () => {
 	const { host, commands } = testHost({
 		packageRoot: `${NPM_ROOT}/other-tool/node_modules/@spikonado/sprocket`
 	});
+
 	const install = await detectInstall(host);
 	assert.equal(install.supported, false);
 	assert.equal(
@@ -275,6 +304,7 @@ test('does not treat a local or npx copy as updatable just because npm is on PAT
 			isFile: () => false,
 			npmRoot: NPM_ROOT
 		});
+
 		const install = await detectInstall(host);
 		assert.equal(install.supported, false, packageRoot);
 		assert.equal(
@@ -293,12 +323,15 @@ test('detects global bun, pnpm, and yarn installs from their own prefix queries'
 			isFile: () => false
 		}).host
 	);
+
 	assert.equal(bun.supported, true);
 	assert.equal(bun.manager, 'bun');
 
 	const physical =
 		'/home/user/.local/share/pnpm/global/5/node_modules/.pnpm/@spikonado+sprocket@0.3.4/node_modules/@spikonado/sprocket';
+
 	const logical = '/home/user/.local/share/pnpm/global/5/node_modules/@spikonado/sprocket';
+
 	const pnpm = await detectInstall(
 		testHost({
 			packageRoot: physical,
@@ -308,6 +341,7 @@ test('detects global bun, pnpm, and yarn installs from their own prefix queries'
 			realpath: (file) => (file === logical ? physical : file)
 		}).host
 	);
+
 	assert.equal(pnpm.supported, true);
 	assert.equal(pnpm.manager, 'pnpm');
 
@@ -319,6 +353,7 @@ test('detects global bun, pnpm, and yarn installs from their own prefix queries'
 			isFile: () => false
 		}).host
 	);
+
 	assert.equal(yarn.supported, true);
 	assert.equal(yarn.manager, 'yarn');
 });
@@ -328,6 +363,7 @@ test('does not install with bun just because bun is on PATH for an npm global', 
 		executables: { bun: '/usr/bin/bun' },
 		bunBin: '/home/user/.bun/bin'
 	});
+
 	const payload = await installUpdate(host);
 	assert.equal(payload.status, 'installed');
 	const install = commands.find((command) => isInstallArgs(command.args));
@@ -344,6 +380,7 @@ test('check reports unavailable, idle, and available without installing', async 
 			isFile: () => false
 		}).host
 	);
+
 	assert.equal(unavailable.status, 'unavailable');
 	assert.equal(unavailable.method, 'package');
 	assert.equal(unavailable.version, null);
@@ -355,6 +392,7 @@ test('check reports unavailable, idle, and available without installing', async 
 			manifest: versionDoc('0.3.4')
 		}).host
 	);
+
 	assert.equal(idle.status, 'idle');
 	assert.equal(idle.version, null);
 
@@ -377,6 +415,7 @@ test('does not offer a stable or canary downgrade when the installed version is 
 			manifest: versionDoc('0.3.5')
 		}).host
 	);
+
 	assert.equal(stable.status, 'idle');
 
 	const canary = await checkForUpdate(
@@ -385,6 +424,7 @@ test('does not offer a stable or canary downgrade when the installed version is 
 			manifest: versionDoc('0.3.4-canary.2')
 		}).host
 	);
+
 	assert.equal(canary.status, 'idle');
 });
 
@@ -392,6 +432,7 @@ test('install re-checks and stays idle when the channel is already current', asy
 	const { host, commands } = testHost({
 		manifest: versionDoc('0.3.4')
 	});
+
 	const payload = await installUpdate(host);
 	assert.equal(payload.status, 'idle');
 	assert.equal(
@@ -412,21 +453,25 @@ test('install returns installed with a relaunch message and keeps the running ve
 
 test('follows canary and dev dist-tags for those installs', async () => {
 	const canaryVersion = '0.3.5-canary.9';
+
 	const canary = await checkForUpdate(
 		testHost({
 			currentVersion: '0.3.4-canary.1',
 			manifest: versionDoc(canaryVersion)
 		}).host
 	);
+
 	assert.equal(canary.version, canaryVersion);
 
 	const tagged = `0.3.4-dev.${DEV_SHA_LOW}`;
+
 	const dev = await checkForUpdate(
 		testHost({
 			currentVersion: `0.3.5-dev.${DEV_SHA_HIGH}`,
 			manifest: versionDoc(tagged)
 		}).host
 	);
+
 	assert.equal(dev.status, 'available');
 	assert.equal(dev.version, tagged);
 });
@@ -438,6 +483,7 @@ test('rejects a channel manifest that is missing or malformed', async () => {
 			manifest: versionDoc('0.3.5;touch /tmp/pwned')
 		}).host
 	);
+
 	assert.equal(malformed.exitCode, 1);
 	assert.equal(malformed.payload.status, 'error');
 
@@ -447,6 +493,7 @@ test('rejects a channel manifest that is missing or malformed', async () => {
 			fetch: async () => jsonResponse({}, 404)
 		}).host
 	);
+
 	assert.equal(missing.payload.status, 'error');
 	assert.match(missing.payload.error, /HTTP 404/);
 });
@@ -456,6 +503,7 @@ test('explains a Windows lock on the running native executable', async () => {
 		isWindowsBusyExecutable('EBUSY unlink sprocket.exe resource busy or locked', 'win32'),
 		true
 	);
+
 	const payload = await installUpdate(
 		testHost({
 			platform: 'win32',
@@ -466,14 +514,17 @@ test('explains a Windows lock on the running native executable', async () => {
 			}
 		}).host
 	);
+
 	assert.equal(payload.status, 'error');
 	assert.match(payload.error, /Windows cannot replace Sprocket while it is running/);
 });
 
 test('package manager commands never use a shell and detach on unix', async () => {
 	let spawnOptions;
+
 	const runCommand = createRunCommand((command, args, options) => {
 		spawnOptions = options;
+
 		return {
 			stdout: { setEncoding() {}, on() {}, destroy() {} },
 			stderr: { setEncoding() {}, on() {}, destroy() {} },
@@ -484,6 +535,7 @@ test('package manager commands never use a shell and detach on unix', async () =
 			}
 		};
 	});
+
 	await runCommand('/usr/bin/npm', ['install', '--global', `${PACKAGE_NAME}@0.3.5`], {
 		cwd: '/home/user',
 		platform: 'linux'
@@ -497,9 +549,11 @@ test('package manager commands never use a shell and detach on unix', async () =
 test('managed unix children stay in the helper process group', async () => {
 	let spawnOptions;
 	const selfKills = [];
+
 	const runCommand = createRunCommand(
 		(command, args, options) => {
 			spawnOptions = options;
+
 			return {
 				pid: 99,
 				stdout: { setEncoding() {}, on() {}, destroy() {} },
@@ -512,6 +566,7 @@ test('managed unix children stay in the helper process group', async () => {
 			selfKills.push(pid);
 		}
 	);
+
 	const result = await runCommand(
 		'/usr/bin/npm',
 		['install', '--global', `${PACKAGE_NAME}@0.3.5`],
@@ -522,6 +577,7 @@ test('managed unix children stay in the helper process group', async () => {
 			killWaitMs: 20
 		}
 	);
+
 	assert.equal(spawnOptions.detached, false);
 	assert.equal(result.timedOut, true);
 	assert.deepEqual(selfKills, [-process.pid]);
@@ -529,6 +585,7 @@ test('managed unix children stay in the helper process group', async () => {
 
 test('command timeout kills the process tree and closes pipes', async () => {
 	const killed = [];
+
 	const stdout = {
 		setEncoding() {},
 		on() {},
@@ -536,6 +593,7 @@ test('command timeout kills the process tree and closes pipes', async () => {
 			this.destroyed = true;
 		}
 	};
+
 	const stderr = {
 		setEncoding() {},
 		on() {},
@@ -543,23 +601,27 @@ test('command timeout kills the process tree and closes pipes', async () => {
 			this.destroyed = true;
 		}
 	};
+
 	const child = {
 		pid: 4321,
 		stdout,
 		stderr,
 		on() {}
 	};
+
 	const runCommand = createRunCommand(
 		() => child,
 		(target, platform) => {
 			killed.push({ pid: target.pid, platform });
 		}
 	);
+
 	const result = await runCommand('npm', ['install', '--global', `${PACKAGE_NAME}@0.3.5`], {
 		platform: 'linux',
 		timeout: 20,
 		killWaitMs: 20
 	});
+
 	assert.equal(result.timedOut, true);
 	assert.deepEqual(killed, [{ pid: 4321, platform: 'linux' }]);
 	assert.equal(stdout.destroyed, true);
@@ -587,11 +649,13 @@ test('JSON helper returns exactly the documented payload shape', async () => {
 
 test('upgrade --check is the same as update --check', async () => {
 	let stdout = '';
+
 	const host = testHost({
 		writeStdout(text) {
 			stdout += text;
 		}
 	}).host;
+
 	const code = await runUpdateCli(parseUpdateArgs(['upgrade', '--check']), host);
 	assert.equal(code, 0);
 	assert.match(stdout, /0\.3\.5 is available/);
@@ -605,6 +669,7 @@ test('refuses to install when the lock cannot be created', async () => {
 			throw error;
 		}
 	});
+
 	const payload = await installUpdate(host);
 	assert.equal(payload.status, 'error');
 	assert.match(payload.error, /Cannot write the update lock/);
@@ -629,6 +694,7 @@ test('does not steal an existing lock even if its pid looks dead', async () => {
 
 test('serializes concurrent installs with a lock outside the replaced package tree', async () => {
 	const scratch = mkdtempSync(path.join(tmpdir(), 'sprocket-lock-'));
+
 	try {
 		const shared = {
 			tmpdir: () => scratch,
@@ -636,6 +702,7 @@ test('serializes concurrent installs with a lock outside the replaced package tr
 			unlink: (file) => fsPromises.unlink(file),
 			readFile: (file, encoding) => readFileSync(file, encoding)
 		};
+
 		const first = testHost({ ...shared, pid: 7001, holdInstall: true });
 		const second = testHost({ ...shared, pid: 7002 }).host;
 		const firstResultPromise = installUpdate(first.host);
@@ -655,12 +722,15 @@ test('serializes concurrent installs with a lock outside the replaced package tr
 
 test('lock identity follows the logical global package dir across pnpm versions', () => {
 	const globalRoot = '/home/user/.local/share/pnpm/global/5/node_modules';
+
 	const host = testHost({
 		packageRoot: `${globalRoot}/.pnpm/@spikonado+sprocket@0.3.4/node_modules/@spikonado/sprocket`
 	}).host;
+
 	const later = testHost({
 		packageRoot: `${globalRoot}/.pnpm/@spikonado+sprocket@0.3.5/node_modules/@spikonado/sprocket`
 	}).host;
+
 	assert.equal(globalPackageDir(globalRoot), path.join(globalRoot, '@spikonado', 'sprocket'));
 	assert.equal(updateLockPath(host, globalRoot), updateLockPath(later, globalRoot));
 	assert.notEqual(updateLockPath(host, globalRoot), updateLockPath(host, NPM_ROOT));
@@ -670,6 +740,7 @@ test('retains the update lock after a timed-out install', async () => {
 	const { host, lockFiles } = testHost({
 		install: { status: 1, timedOut: true, stdout: '', stderr: 'Timed out.' }
 	});
+
 	const lockPath = updateLockPath(host, NPM_ROOT);
 	const payload = await installUpdate(host);
 	assert.equal(payload.status, 'error');
@@ -681,6 +752,7 @@ test('windows killer uses System32 taskkill.exe, waits, and does not unref', asy
 	const calls = [];
 	let closeKiller;
 	let closeChild;
+
 	const killer = {
 		unref() {
 			calls.push('unref');
@@ -694,6 +766,7 @@ test('windows killer uses System32 taskkill.exe, waits, and does not unref', asy
 			}
 		}
 	};
+
 	const child = {
 		pid: 42,
 		once(event, handler) {
@@ -702,6 +775,7 @@ test('windows killer uses System32 taskkill.exe, waits, and does not unref', asy
 			}
 		}
 	};
+
 	const pending = killProcessTree(child, 'win32', {
 		env: { SystemRoot: 'C:\\Windows' },
 		deadlineMs: 1000,
@@ -711,9 +785,11 @@ test('windows killer uses System32 taskkill.exe, waits, and does not unref', asy
 				closeKiller();
 				closeChild();
 			});
+
 			return killer;
 		}
 	});
+
 	await pending;
 	assert.equal(calls[0].command, taskkillPath({ SystemRoot: 'C:\\Windows' }));
 	assert.deepEqual(calls[0].args, ['/PID', '42', '/T', '/F']);
@@ -725,13 +801,17 @@ test('a child closing during timeout does not release the update before its kill
 	const child = new EventEmitter();
 	child.pid = 42;
 	let releaseKiller;
+
 	const killerFinished = new Promise((resolve) => {
 		releaseKiller = resolve;
 	});
+
 	let notifyStarted;
+
 	const killerStarted = new Promise((resolve) => {
 		notifyStarted = resolve;
 	});
+
 	const runCommand = createRunCommand(
 		() => child,
 		async () => {
@@ -741,11 +821,15 @@ test('a child closing during timeout does not release the update before its kill
 			await killerFinished;
 		}
 	);
+
 	let settled = false;
+
 	const pending = runCommand('npm', [], { platform: 'win32', timeout: 1 }).then((result) => {
 		settled = true;
+
 		return result;
 	});
+
 	await killerStarted;
 	assert.equal(settled, false);
 	releaseKiller();
@@ -762,6 +846,7 @@ test('a missing Windows taskkill reports failure without an unhandled error', as
 			env: { SystemRoot: 'C:\\Windows' },
 			spawn() {
 				queueMicrotask(() => killer.emit('error', new Error('taskkill missing')));
+
 				return killer;
 			}
 		}),
@@ -775,12 +860,14 @@ test(
 	async () => {
 		const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-managed-'));
 		const pidFile = path.join(directory, 'grandchild.pid');
+
 		try {
 			const helper = spawn(
 				process.execPath,
 				[path.resolve(import.meta.dirname, 'managed-group-helper.mjs'), pidFile],
 				{ detached: true, stdio: 'ignore' }
 			);
+
 			await new Promise((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error('helper did not exit')), 5000);
 				helper.once('close', () => {
@@ -804,7 +891,9 @@ test('ignores relative PATH entries and relative npm_execpath', async () => {
 		'node_modules/npm/bin/npm-cli.js',
 		'/usr/bin/npm'
 	]);
+
 	const commands = [];
+
 	const host = createHost({
 		platform: 'linux',
 		execPath: '/usr/bin/node',
@@ -820,15 +909,19 @@ test('ignores relative PATH entries and relative npm_execpath', async () => {
 		realpath: (file) => file,
 		runCommand: async (command, args) => {
 			commands.push({ command, args });
+
 			if (args.includes('root') && args.includes('-g')) {
 				assert.equal(command, '/usr/bin/npm');
+
 				return { status: 0, stdout: NPM_ROOT, stderr: '' };
 			}
+
 			return { status: 1, stdout: '', stderr: '' };
 		},
 		writeStdout() {},
 		writeStderr() {}
 	});
+
 	const install = await detectInstall(host);
 	assert.equal(install.supported, true);
 	assert.equal(install.command, '/usr/bin/npm');
@@ -844,10 +937,12 @@ test('accepts HTTPS registry URLs and rejects insecure or malformed overrides', 
 		registryUrl({ NPM_CONFIG_REGISTRY: 'https://example.invalid/npm/' }),
 		'https://example.invalid/npm'
 	);
+
 	for (const value of ['http://example.invalid', 'file:///tmp', 'not a URL', 'https://host/?q=1']) {
 		assert.throws(() => registryUrl({ npm_config_registry: value }), /HTTPS/);
 		assert.throws(() => registryUrl({ NPM_CONFIG_REGISTRY: value }), /HTTPS/);
 	}
+
 	assert.throws(
 		() =>
 			registryUrl({
@@ -871,6 +966,7 @@ test('insecure registry overrides cannot fetch a version or run an install', asy
 		env: { PATH: '/usr/bin', npm_config_registry: 'http://example.invalid' },
 		executables: { npm: '/usr/bin/npm' }
 	});
+
 	const result = await installUpdate(host);
 	assert.equal(result.status, 'error');
 	assert.match(result.error, /HTTPS/);
@@ -886,9 +982,11 @@ test('registry checks disallow redirects rather than risk an HTTP downgrade', as
 		executables: { npm: '/usr/bin/npm' },
 		fetch: async (_url, options) => {
 			assert.equal(options.redirect, 'error');
+
 			return jsonResponse(versionDoc('0.3.5'));
 		}
 	});
+
 	assert.equal((await checkForUpdate(host)).status, 'available');
 });
 
@@ -898,6 +996,7 @@ test('update-api.js prints only JSON and rejects unknown commands', () => {
 		[path.resolve(import.meta.dirname, '../lib/update-api.js'), 'nope'],
 		{ encoding: 'utf8' }
 	);
+
 	assert.equal(result.status, 1);
 	const payload = JSON.parse(result.stdout);
 	assert.equal(payload.status, 'error');

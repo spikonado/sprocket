@@ -116,12 +116,16 @@ type ConvexQuery = FunctionReference<'query'>;
 // Query failures belong in the page's inline error UI, not the startup boundary.
 function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArgs<Query> | 'skip') {
 	const result = useConvexQueryResult({ query, args });
+
 	if (result.status === 'error') return { data: undefined, error: result.error };
+
 	if (result.status === 'pending') return { data: undefined, error: null };
+
 	return { data: result.data, error: null };
 }
 
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
+
 const agentLaunchTimeoutMs = 30_000;
 
 export type AppRuntime = {
@@ -175,12 +179,15 @@ export default function App({
 	// render that started it.
 	const signedInUserIdRef = useRef(signedInUserId);
 	const nativeAuthLoading = auth.nativeSession === 'loading';
+
 	const nativeAuthBlocked =
 		auth.nativeSession === 'missing' ||
 		auth.nativeSession === 'mismatch' ||
 		auth.nativeSession === 'unavailable';
+
 	const nativeSignInRequired =
 		auth.nativeSession === 'missing' || auth.nativeSession === 'mismatch';
+
 	const authReady =
 		auth.isReady &&
 		!auth.isLoading &&
@@ -188,6 +195,7 @@ export default function App({
 		(auth.nativeSession === 'notRequired' || auth.nativeSession === 'ready') &&
 		!convexAuth.isLoading &&
 		convexAuth.isAuthenticated;
+
 	const authConnectionFailed =
 		isSignedIn &&
 		auth.isReady &&
@@ -195,6 +203,7 @@ export default function App({
 		!retryPending &&
 		!convexAuth.isLoading &&
 		!convexAuth.isAuthenticated;
+
 	const authGateBlocked = authConnectionFailed || nativeAuthBlocked;
 
 	const [sawAuthLoadingDuringRetry, setSawAuthLoadingDuringRetry] = useState(false);
@@ -205,9 +214,11 @@ export default function App({
 			isLoading: convexAuth.isLoading,
 			sawLoadingDuringRetry: sawAuthLoadingDuringRetry
 		});
+
 		if (sawAuthLoadingDuringRetry !== next.sawLoadingDuringRetry) {
 			setSawAuthLoadingDuringRetry(next.sawLoadingDuringRetry);
 		}
+
 		if (next.clearPending) {
 			convexAuthRetryPending.set(false);
 		}
@@ -233,6 +244,7 @@ export default function App({
 	const [providerConfigurationLoading, setProviderConfigurationLoading] = useState(false);
 	const [providerConfigurationReady, setProviderConfigurationReady] = useState(false);
 	const [providerConfigurationError, setProviderConfigurationError] = useState<string | null>(null);
+
 	const configuredProviders = useMemo<CompletionProvider[]>(
 		() => [
 			'spikonado',
@@ -244,6 +256,7 @@ export default function App({
 
 	async function loadModelCatalog() {
 		setCatalogLoading(true);
+
 		try {
 			const origin = configRef.current.env.PUBLIC_MODEL_GATEWAY_URL?.trim() ?? '';
 			setModelCatalog(await runtimeRef.current.fetchGatewayModelCatalog(origin));
@@ -265,8 +278,10 @@ export default function App({
 		setProviderConfigurationLoading(true);
 		setProviderConfigurationReady(false);
 		setProviderConfigurationError(null);
+
 		try {
 			const configuration = await getMyProviderConfiguration({});
+
 			if (
 				signedInUserIdRef.current !== userId ||
 				generation !== providerConfigurationGeneration.current
@@ -301,6 +316,7 @@ export default function App({
 	useEffect(() => {
 		if (!authReady) return;
 		const userId = signedInUserIdRef.current;
+
 		if (!userId || ensureSubscriptionAttemptedFor.current === userId) return;
 		// Attempt once per signed-in user. Best-effort bootstrap; the backend
 		// also ensures a row on first metered usage, so a failure is safe to
@@ -312,6 +328,7 @@ export default function App({
 	useEffect(() => {
 		if (!authReady) return;
 		const userId = signedInUserIdRef.current;
+
 		if (!userId || providerConfigurationLoadedFor.current === userId) return;
 		providerConfigurationLoadedFor.current = userId;
 		loadProviderConfigurationEvent(userId);
@@ -323,19 +340,24 @@ export default function App({
 
 	const chatGptStatusLoadedFor = useRef<{ userId: string; api: DesktopApi } | null>(null);
 	const chatGptStatusGeneration = useRef(0);
+
 	const chatGptStatusChangeEvent = useEffectEvent((status: ChatGptStatus) => {
 		handleChatGptStatusChange(status);
 	});
+
 	useEffect(() => {
 		const userId = signedInUserId;
+
 		if (!authReady || !userId || !desktopApi) {
 			chatGptStatusLoadedFor.current = null;
 			setChatGptStatus(null);
 			setChatGptConfigured(false);
 			setChatGptModelIds(null);
 			setChatGptStatusLoading(false);
+
 			return;
 		}
+
 		if (
 			chatGptStatusLoadedFor.current?.userId === userId &&
 			chatGptStatusLoadedFor.current.api === desktopApi
@@ -357,6 +379,7 @@ export default function App({
 				) {
 					return;
 				}
+
 				chatGptStatusChangeEvent(status);
 			})
 			.catch((error: Error) => {
@@ -366,6 +389,7 @@ export default function App({
 				) {
 					return;
 				}
+
 				setChatGptStatus(null);
 				setChatGptConfigured(false);
 				setChatGptModelIds(null);
@@ -382,6 +406,7 @@ export default function App({
 					setChatGptStatusLoading(false);
 				}
 			});
+
 		return () => {
 			chatGptStatusGeneration.current += 1;
 			chatGptStatusLoadedFor.current = null;
@@ -394,41 +419,54 @@ export default function App({
 	const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | null>(null);
 	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
 	const [selectedModel, setSelectedModel] = useState<CatalogModelId>(defaultModelId);
+
 	const [selectedCompletionProvider, setSelectedCompletionProvider] =
 		useState<CompletionProvider>('spikonado');
+
 	const [selectedReasoningEffort, setSelectedReasoningEffort] =
 		useState<string>(defaultReasoningEffort);
+
 	const [fastMode, setFastMode] = useState(false);
 	const [prompt, setPrompt] = useState('');
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
 	const [answeringAgentQuestion, setAnsweringAgentQuestion] = useState(false);
+
 	const [composerContinuationOfRunId, setComposerContinuationOfRunId] = useState<Id<'runs'> | null>(
 		null
 	);
+
 	const [autoSubmitComposerContinuation, setAutoSubmitComposerContinuation] = useState(false);
 	const [currentError, setCurrentError] = useState<string | null>(null);
 
 	const [pendingAgentLaunches, setPendingAgentLaunches] = useState<PendingAgentLaunches>({});
 	const [hasResolvedInitialSelection, setHasResolvedInitialSelection] = useState(false);
 	const projectSelectionGeneration = useRef(0);
+
 	const [pendingCreatedThreadId, setPendingCreatedThreadId] = useState<Id<'threadRecords'> | null>(
 		null
 	);
+
 	const [desktopProjectAttachmentsByPath, setDesktopProjectAttachmentsByPath] = useState<
 		Record<string, ProjectAttachment>
 	>({});
+
 	const desktopProjectAttachmentsRef = useRef(desktopProjectAttachmentsByPath);
+
 	const [hasLoadedDesktopProjectAttachments, setHasLoadedDesktopProjectAttachments] =
 		useState(false);
+
 	const [selectionUserId, setSelectionUserId] = useState<string | null>(null);
 	const [projectPickerOpen, setProjectPickerOpen] = useState(false);
 	const [projectPickerMode, setProjectPickerMode] = useState<'add' | 'reconnect'>('add');
+
 	const [projectPickerExpectedDisplayName, setProjectPickerExpectedDisplayName] = useState<
 		string | undefined
 	>(undefined);
+
 	const [projectPickerReconnectWorkspacePath, setProjectPickerReconnectWorkspacePath] = useState<
 		string | null
 	>(null);
+
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [settingsPage, setSettingsPage] = useState<SettingsPage>('account');
 	const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -438,6 +476,7 @@ export default function App({
 	const [settledInboxOpen, setSettledInboxOpen] = useState(false);
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
 	const [initialProjectLaunchResolved, setInitialProjectLaunchResolved] = useState(false);
+
 	const [createThreadComposerElement, setCreateThreadComposerElement] =
 		useState<HTMLElement | null>(null);
 
@@ -446,6 +485,7 @@ export default function App({
 	// submissionTrackingVersion, bumped by every mutation.
 	const submittingPromptScopes = useRef(new Map<string, number>()).current;
 	const composerRecoveries = useRef(new Map<string, ComposerRecovery>()).current;
+
 	const recoveredSubmissionIds = useRef(
 		new Map<
 			string,
@@ -461,6 +501,7 @@ export default function App({
 			}
 		>()
 	).current;
+
 	const latestSubmissionSequencesByRecoveryScope = useRef(new Map<string, number>()).current;
 	const nextAgentLaunchId = useRef(0);
 	const nextSubmissionSequence = useRef(0);
@@ -472,6 +513,7 @@ export default function App({
 	const themeSaveGeneration = useRef(0);
 
 	const [submissionTrackingVersion, setSubmissionTrackingVersion] = useState(0);
+
 	const bumpSubmissionTracking = useCallback(
 		() => setSubmissionTrackingVersion((version) => version + 1),
 		[]
@@ -523,17 +565,23 @@ export default function App({
 	// account id alone surfaces a spurious auth error during sign-in.
 	const authenticatedQueryArgs =
 		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
+
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
+
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
+
 	const activeThreadQuery = usePageQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
+
 	const lifecycleQuery = usePageQuery(
 		api.chat.selectedThreadLifecycle,
 		authenticatedThreadQueryArgs
 	);
+
 	// No browser backend is wired up; the live view stays empty until the local
 	// browser implementation provides session state.
 	const browserLiveView = { data: null, error: null };
+
 	const pendingAgentQuestionQuery = usePageQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -554,13 +602,18 @@ export default function App({
 			lastAppliedThemePreferences.current = undefined;
 			setPendingTheme(null);
 			themeSaveGeneration.current += 1;
+
 			return;
 		}
+
 		const preferences = uiPreferencesQuery.data;
+
 		// Wait for Convex before applying a workspace theme (boot script stays light for entry).
 		if (preferences === undefined) return;
+
 		// Ignore preference snapshots while a theme save is in flight.
 		if (pendingTheme !== null) return;
+
 		if (preferences === lastAppliedThemePreferences.current) return;
 		lastAppliedThemePreferences.current = preferences;
 		const nextTheme = resolveTheme(preferences?.theme);
@@ -574,6 +627,7 @@ export default function App({
 		setPendingTheme(theme);
 		setWorkspaceTheme(theme);
 		applyTheme(theme);
+
 		try {
 			await setThemePreference({ theme });
 		} catch (error) {
@@ -593,10 +647,12 @@ export default function App({
 				.map(projectFromAttachment),
 		[desktopProjectAttachmentsByPath]
 	);
+
 	const inboxProjects = useMemo(
 		() => [...new Map(projects.map((project) => [project.repositoryKey, project])).values()],
 		[projects]
 	);
+
 	const inboxProjectKeys = useMemo(
 		() =>
 			projectFilter.length > 0
@@ -604,9 +660,11 @@ export default function App({
 				: inboxProjects.map((project) => project.repositoryKey),
 		[projectFilter, inboxProjects]
 	);
+
 	useEffect(() => {
 		const attachedKeys = new Set(inboxProjects.map((project) => project.repositoryKey));
 		const attachedFilter = projectFilter.filter((key) => attachedKeys.has(key));
+
 		if (attachedFilter.length !== projectFilter.length) setProjectFilter(attachedFilter);
 	}, [inboxProjects, projectFilter]);
 
@@ -617,34 +675,42 @@ export default function App({
 	});
 
 	const currentActiveThread = dataForThread(activeThreadQuery.data, currentThreadId);
+
 	const threads = useMemo<ThreadSummary[]>(() => {
 		const summaries =
 			inbox.sections
 				.find((section) => section.state === 'unsettled')
 				?.rows.map(threadRecordToSummary) ?? [];
+
 		if (
 			!currentActiveThread ||
 			summaries.some((thread) => thread.threadId === currentActiveThread._id)
 		) {
 			return summaries;
 		}
+
 		return [threadRecordToSummary(currentActiveThread), ...summaries];
 	}, [inbox.sections, currentActiveThread]);
+
 	const currentLifecycle = dataForThread(lifecycleQuery.data, currentThreadId);
 	const runState = currentLifecycle?.run ?? null;
 	const pendingAgentQuestion = dataForThread(pendingAgentQuestionQuery.data, currentThreadId);
 
 	useEffect(() => {
 		const threadId = currentThreadId;
+
 		if (transcript.threadId !== threadId) transcript.selectThread(threadId);
 	}, [currentThreadId, transcript]);
 
 	useEffect(() => {
 		const threadId = currentThreadId;
 		const api = desktopApi;
+
 		if (!threadId || !api || !isSignedIn) return;
 		const userId = signedInUserIdRef.current;
+
 		if (!userId) return;
+
 		return transcript.watchDisplay({
 			api,
 			userId,
@@ -656,9 +722,12 @@ export default function App({
 	useEffect(() => {
 		const threadId = currentThreadId;
 		const api = desktopApi;
+
 		if (!threadId || !api || !isSignedIn) return;
 		const userId = signedInUserIdRef.current;
+
 		if (!userId) return;
+
 		return transcript.watchLiveCompletion({
 			api,
 			userId,
@@ -686,22 +755,28 @@ export default function App({
 		if (currentWorkspacePath) {
 			return findProjectByWorkspacePath(projects, currentWorkspacePath);
 		}
+
 		if (!currentRepositoryKey) return null;
+
 		return findProjectByRepositoryKey(projects, currentRepositoryKey);
 	}, [projects, currentWorkspacePath, currentRepositoryKey]);
 
 	const currentProjectPath = currentProject?.workspacePath ?? currentWorkspacePath;
+
 	const composerProjectSkills = useMemo(() => {
 		const workspacePath = currentProject?.workspacePath ?? null;
 		const api = desktopApi;
+
 		return {
 			workspacePath,
 			load: async () => {
 				if (!api || !workspacePath) return [];
 				const result = await api.listWorkspaceSkills({ workspacePath });
+
 				for (const warning of result.warnings) {
 					console.warn(`sprocket skills: ${warning}`);
 				}
+
 				return result.skills;
 			}
 		};
@@ -709,6 +784,7 @@ export default function App({
 
 	const currentProjectThreads = useMemo<ThreadSummary[]>(() => {
 		if (!currentProject?.repositoryKey) return [];
+
 		return threads
 			.filter(
 				(thread) => thread.repositoryKey === currentProject.repositoryKey && isActiveThread(thread)
@@ -728,6 +804,7 @@ export default function App({
 						threadId: currentThreadId
 					}
 				: null;
+
 		artifactPanel.selectScope(scope);
 	}, [artifactPanel, signedInUserId, currentRepositoryKey, currentWorkspacePath, currentThreadId]);
 
@@ -741,6 +818,7 @@ export default function App({
 						threadId: currentThreadId
 					}
 				: null;
+
 		return artifactPanel.watch({
 			localApi: desktopApi,
 			artifactClient,
@@ -760,31 +838,41 @@ export default function App({
 	]);
 
 	const currentComposerScope = getComposerScope(currentThreadId, currentProjectPath);
+
 	const currentRecoveredSubmission = (() => {
 		const userId = signedInUserIdRef.current;
+
 		if (!userId || !currentComposerScope) return undefined;
+
 		return recoveredSubmissionIds.get(getComposerRecoveryKey(userId, currentComposerScope));
 	})();
+
 	const isRetryableQueuedRun =
 		currentLifecycle?.phase === 'queued' && currentRecoveredSubmission != null;
+
 	const isRunInProgress =
 		currentLifecycle != null &&
 		isLifecycleInProgress(currentLifecycle.phase) &&
 		!isRetryableQueuedRun;
+
 	const isRunning = isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested';
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
+
 	const latestRunResumeKind =
 		hasPendingAgentLaunch || isRunInProgress
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.lastError);
+
 	const isLatestRunReady = isLatestRunReadyForThread({
 		threadId: currentThreadId,
 		pendingCreatedThreadId,
 		hasLatestRunData: Boolean(currentLifecycle)
 	});
+
 	const isSubmittingPrompt = Boolean(
 		currentComposerScope && submittingPromptScopes.has(currentComposerScope)
 	);
+
 	const canSend = Boolean(
 		currentProjectPath &&
 		(pendingAgentQuestion ||
@@ -796,18 +884,24 @@ export default function App({
 		!hasPendingAgentLaunch &&
 		((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
 	);
+
 	const recentProjectDirectories = useMemo(() => {
 		const seen = new Set<string>();
 		const recents: Array<{ workspacePath: string; displayName: string }> = [];
+
 		for (const attachment of Object.values(desktopProjectAttachmentsByPath)) {
 			if (attachment.availability !== 'available' || seen.has(attachment.workspacePath)) {
 				continue;
 			}
+
 			seen.add(attachment.workspacePath);
+
 			const displayName =
 				attachment.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? attachment.workspacePath;
+
 			recents.push({ workspacePath: attachment.workspacePath, displayName });
 		}
+
 		return recents.sort((left, right) => right.displayName.localeCompare(left.displayName));
 	}, [desktopProjectAttachmentsByPath]);
 
@@ -824,60 +918,73 @@ export default function App({
 		const selectedWorkspacePath = currentWorkspacePathRef.current;
 		const selectionGeneration = projectSelectionGeneration.current;
 		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(client);
+
 		if (refreshGeneration !== desktopProjectAttachmentsGeneration.current) {
 			return desktopProjectAttachmentsRef.current;
 		}
 
 		publishDesktopProjectAttachments(nextAttachments);
+
 		if (!selectedWorkspacePath || selectionGeneration !== projectSelectionGeneration.current) {
 			return nextAttachments;
 		}
 
 		let selectedAttachment: ProjectAttachment | undefined = nextAttachments[selectedWorkspacePath];
+
 		if (!selectedAttachment && client) {
 			const resolution = await client.resolveWorkspacePath({
 				workspacePath: selectedWorkspacePath
 			});
+
 			if (
 				refreshGeneration !== desktopProjectAttachmentsGeneration.current ||
 				selectionGeneration !== projectSelectionGeneration.current
 			) {
 				return desktopProjectAttachmentsRef.current;
 			}
+
 			selectedAttachment = findCanonicalProjectAttachment(nextAttachments, resolution);
 		}
+
 		if (!selectedAttachment) return nextAttachments;
 
 		const repositoryChanged = selectedAttachment.repositoryKey !== currentRepositoryKeyRef.current;
+
 		if (selectedAttachment.workspacePath !== selectedWorkspacePath || repositoryChanged) {
 			const draft = draftWorkspacePathRef.current === selectedWorkspacePath;
 			bumpProjectSelectionGeneration();
 			setCurrentWorkspacePath(selectedAttachment.workspacePath);
 			setCurrentRepositoryKey(selectedAttachment.repositoryKey);
 			setDraftWorkspacePath(draft ? selectedAttachment.workspacePath : null);
+
 			if (repositoryChanged) {
 				setCurrentThreadId(null);
 				setPendingCreatedThreadId(null);
 			}
 		}
+
 		return nextAttachments;
 	}
 
 	function localThreadCommandContext() {
 		const api = desktopApi;
 		const userId = signedInUserIdRef.current;
+
 		if (!api || !userId) {
 			throw new Error('The local Sprocket service is not ready.');
 		}
+
 		return { api, userId };
 	}
 
 	async function signOut() {
 		const api = desktopApi;
 		const userId = signedInUserIdRef.current;
+
 		if (api && userId) {
 			await api.endAccountSession({ userId }).catch(() => {});
 		}
+
 		await authSignOut();
 	}
 
@@ -908,6 +1015,7 @@ export default function App({
 		setCurrentRepositoryKey(nextRepositoryKey);
 		setCurrentThreadId(threadId);
 		setDraftWorkspacePath(draft ? workspacePath : null);
+
 		if (threadId !== pendingCreatedThreadId) {
 			setPendingCreatedThreadId(null);
 		}
@@ -925,8 +1033,10 @@ export default function App({
 		repositoryKey?: string
 	) {
 		const generation = bumpProjectSelectionGeneration();
+
 		if (!preserveError) setCurrentError(null);
 		applyProjectSelection(workspacePath, threadId, draft, repositoryKey);
+
 		return generation;
 	}
 
@@ -938,11 +1048,13 @@ export default function App({
 		if (!client) {
 			throw new Error(localServerRequiredMessage);
 		}
+
 		const attachment = await attachLocalProjectForPath({
 			desktopApi: client,
 			workspacePath,
 			replaceWorkspacePath
 		});
+
 		desktopProjectAttachmentsGeneration.current += 1;
 		publishDesktopProjectAttachments(
 			upsertDesktopProjectAttachment(
@@ -951,6 +1063,7 @@ export default function App({
 				replaceWorkspacePath
 			)
 		);
+
 		return attachment;
 	}
 
@@ -959,15 +1072,19 @@ export default function App({
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
 		const project = findProjectByWorkspacePath(projects, workspacePath);
+
 		if (!project) {
 			setCurrentError('Choose a project first.');
+
 			return;
 		}
+
 		const selectionGeneration = setProjectSelection(
 			workspacePath,
 			selection.threadId,
 			selection.draft
 		);
+
 		void verifyProject(project.workspacePath).catch((error) => {
 			if (selectionGeneration === projectSelectionGeneration.current) {
 				setCurrentError(error instanceof Error ? error.message : 'Failed to attach project.');
@@ -981,14 +1098,18 @@ export default function App({
 	) {
 		if (!desktopApi) {
 			setCurrentError(localServerRequiredMessage);
+
 			return;
 		}
+
 		setProjectPickerMode(mode);
 		setProjectPickerReconnectWorkspacePath(workspacePath);
+
 		const reconnectProject =
 			mode === 'reconnect' && workspacePath
 				? findProjectByWorkspacePath(projects, workspacePath)
 				: undefined;
+
 		setProjectPickerExpectedDisplayName(reconnectProject?.displayName);
 		setProjectPickerOpen(true);
 		setCurrentError(null);
@@ -997,13 +1118,18 @@ export default function App({
 	async function handleProjectSelected(selection: ProjectSelection) {
 		if (!desktopApi) {
 			setCurrentError(localServerRequiredMessage);
+
 			return;
 		}
+
 		const pickerUserId = signedInUserIdRef.current;
+
 		if (!pickerUserId) {
 			setCurrentError('User session is not ready.');
+
 			return;
 		}
+
 		try {
 			if (projectPickerMode === 'reconnect' && projectPickerReconnectWorkspacePath) {
 				await reconnectProjectSelection(
@@ -1011,8 +1137,10 @@ export default function App({
 					projectPickerReconnectWorkspacePath,
 					pickerUserId
 				);
+
 				return;
 			}
+
 			await addProjectSelection(selection, pickerUserId);
 		} catch (error) {
 			if (signedInUserIdRef.current !== pickerUserId) return;
@@ -1027,6 +1155,7 @@ export default function App({
 		client?: DesktopApi
 	) {
 		await attachLocalProject(selection.workspacePath, undefined, client);
+
 		if (signedInUserIdRef.current !== expectedUserId) return;
 		setProjectSelection(selection.workspacePath, null, true, false, selection.repositoryKey);
 		setCurrentError(null);
@@ -1044,26 +1173,33 @@ export default function App({
 			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath,
 			client
 		);
+
 		if (signedInUserIdRef.current !== expectedUserId) return;
+
 		const keepThread =
 			previousProject?.repositoryKey === selection.repositoryKey
 				? currentThreadIdRef.current
 				: null;
+
 		setProjectSelection(selection.workspacePath, keepThread, false, false, selection.repositoryKey);
 		setCurrentError(null);
 	}
 
 	function queueProjectLaunch(workspacePath: string | null | undefined) {
 		const normalizedPath = workspacePath?.trim();
+
 		if (!normalizedPath) return;
 		setPendingProjectLaunches((launches) => [...launches, normalizedPath]);
 	}
 
 	async function takeDesktopProjectLaunches() {
 		const bridge = window.sprocketDesktopBridge;
+
 		if (!bridge?.takeWorkspaceLaunch) return;
+
 		for (;;) {
 			const workspacePath = await bridge.takeWorkspaceLaunch();
+
 			if (!workspacePath) return;
 			queueProjectLaunch(workspacePath);
 		}
@@ -1071,6 +1207,7 @@ export default function App({
 
 	async function openLaunchedProject(workspacePath: string, client: DesktopApi, userId: string) {
 		const selection = await client.resolveWorkspacePath({ workspacePath });
+
 		if (signedInUserIdRef.current !== userId) return;
 		await addProjectSelection(selection, userId, client);
 	}
@@ -1091,9 +1228,11 @@ export default function App({
 
 	function handleProviderConfigurationChange(change: { provider: 'openai'; configured: boolean }) {
 		providerConfigurationGeneration.current += 1;
+
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
 		setProviderConfigurationReady(true);
 		setProviderConfigurationError(null);
+
 		if (!change.configured && selectedCompletionProvider === change.provider) {
 			setSelectedCompletionProvider('spikonado');
 		}
@@ -1104,12 +1243,15 @@ export default function App({
 		setChatGptStatusLoading(false);
 		setChatGptStatus(status);
 		setChatGptStatusError(status.error ?? null);
+
 		const active = status.accounts.find(
 			(account) => account.connectionId === status.activeConnectionId
 		);
+
 		const configured = active?.connected === true;
 		setChatGptConfigured(configured);
 		setChatGptModelIds(configured ? status.models.map((model) => model.id) : null);
+
 		if (!configured && selectedCompletionProvider === 'chatgpt') {
 			setSelectedCompletionProvider('spikonado');
 		}
@@ -1122,15 +1264,20 @@ export default function App({
 
 	function startThreadDraft() {
 		const current = findProjectByWorkspacePath(projects, currentWorkspacePath);
+
 		const project =
 			(current?.localAttachmentAvailability === 'available' ? current : null) ??
 			projects.find((candidate) => candidate.localAttachmentAvailability === 'available') ??
 			projects[0];
+
 		if (!project) {
 			openProjectPicker('add');
+
 			return;
 		}
+
 		startThreadDraftForProject(project.workspacePath);
+
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
 	}
 
@@ -1145,8 +1292,10 @@ export default function App({
 
 	function selectInboxThread(thread: Doc<'threadRecords'>) {
 		const project = findProjectByRepositoryKey(projects, thread.repositoryKey);
+
 		if (!project) return;
 		selectThread(threadRecordToSummary(thread), project.workspacePath);
+
 		if (matchMedia('(max-width: 767px)').matches) setSidebarOpen(false);
 	}
 
@@ -1167,8 +1316,10 @@ export default function App({
 		const api = desktopApi;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
+
 		if (!api || !threadId || !userId) return null;
 		const blob = await api.fetchTranscriptAttachment({ userId, threadId, storageId });
+
 		return blob ? URL.createObjectURL(blob) : null;
 	}
 
@@ -1180,9 +1331,11 @@ export default function App({
 		const api = desktopApi;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
+
 		if (!api || !threadId || !userId || row.threadId !== threadId) {
 			throw new Error('Thread is no longer selected.');
 		}
+
 		return await api.fetchTranscriptDisplayDetails(
 			{ userId, threadId, rowId: row.id, ...cursor },
 			signal
@@ -1191,16 +1344,20 @@ export default function App({
 
 	async function changeInboxState(thread: Doc<'threadRecords'>, state: InboxState) {
 		const expectedUserId = signedInUserIdRef.current;
+
 		try {
 			const request = { threadId: thread._id };
+
 			if (state === 'settled') await settleThreadRecord(request);
 			else await unsettleThreadRecord(request);
+
 			if (signedInUserIdRef.current === expectedUserId) {
 				if (state === 'settled' && currentThreadIdRef.current === thread._id) {
 					setCurrentThreadId(null);
 					setDraftWorkspacePath(currentWorkspacePathRef.current);
 					bumpProjectSelectionGeneration();
 				}
+
 				setCurrentError(null);
 			}
 		} catch (error) {
@@ -1214,7 +1371,9 @@ export default function App({
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
+
 		if (!question || !threadId || !userId || answeringAgentQuestion) return;
+
 		if (!selectedQuestionOptionId && !prompt.trim()) return;
 
 		setAnsweringAgentQuestion(true);
@@ -1223,9 +1382,11 @@ export default function App({
 		const submittedOptionId = selectedQuestionOptionId;
 		const answerText = submittedPrompt.trim();
 		const submittedAttachments = composerAttachments.snapshot();
+
 		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
 			attachment.storageId ? [attachment.storageId] : []
 		);
+
 		const submittedModel = selectedModel;
 		const submittedCompletionProvider = selectedCompletionProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
@@ -1234,6 +1395,7 @@ export default function App({
 		let continuationOfRunId: Id<'runs'> | undefined;
 		setPrompt('');
 		setSelectedQuestionOptionId(null);
+
 		try {
 			const answer = {
 				threadId,
@@ -1241,7 +1403,9 @@ export default function App({
 				optionId: submittedOptionId ?? undefined,
 				text: answerText || undefined
 			};
+
 			const result = await answerAgentQuestion(answer);
+
 			if (result.continuation) {
 				continuationPrompt = result.continuation.prompt;
 				continuationOfRunId = result.continuation.runId;
@@ -1259,7 +1423,9 @@ export default function App({
 		} finally {
 			if (signedInUserIdRef.current === userId) setAnsweringAgentQuestion(false);
 		}
+
 		if (signedInUserIdRef.current !== userId) return;
+
 		if (continuationPrompt !== null && currentThreadIdRef.current !== threadId) {
 			storeComposerRecovery(userId, `thread:${threadId}`, {
 				message: 'Continuing from your answer when you return to this thread.',
@@ -1273,8 +1439,10 @@ export default function App({
 				continuationOfRunId,
 				autoSubmit: true
 			});
+
 			return;
 		}
+
 		if (continuationPrompt !== null) {
 			setComposerContinuationOfRunId(continuationOfRunId ?? null);
 			setPrompt(continuationPrompt);
@@ -1295,41 +1463,56 @@ export default function App({
 		promptOverride?: string
 	) {
 		const currentQuestion = pendingAgentQuestionRef.current;
+
 		if (currentQuestion) {
 			if (
 				options?.answeredQuestionId &&
 				currentQuestion.questionId !== options.answeredQuestionId
 			) {
 				setCurrentError('Answer the new agent question before continuing.');
+
 				return;
 			}
+
 			if (!options?.answeredQuestionId) {
 				await submitAgentQuestionAnswer();
+
 				return;
 			}
 		}
 
 		const promptText = promptOverride ?? prompt;
+
 		if (isSubmittingPrompt) return;
+
 		if (!promptText.trim() && composerAttachments.items.length === 0) return;
+
 		if (composerAttachments.items.some((attachment) => attachment.status !== 'ready')) {
 			setCurrentError('Wait for file uploads to finish, or remove failed files before sending.');
+
 			return;
 		}
 
 		let workspacePath = currentProjectPath;
+
 		if (!workspacePath) {
 			setCurrentError('Choose a project first.');
+
 			return;
 		}
+
 		if (!desktopApi) {
 			setCurrentError(localServerRequiredMessage);
+
 			return;
 		}
+
 		if (currentThreadId && !isLatestRunReady) {
 			setCurrentError('Loading thread state before sending.');
+
 			return;
 		}
+
 		if (!canSend) {
 			setCurrentError(
 				isRunInProgress || hasPendingAgentLaunch || isSubmittingPrompt
@@ -1338,44 +1521,60 @@ export default function App({
 						? 'You need an active project before sending.'
 						: 'This project needs to be attached before sending.'
 			);
+
 			return;
 		}
 
 		const selectedThreadId = currentThreadId;
 		let submittedRepositoryKey = currentRepositoryKey;
+
 		if (!submittedRepositoryKey) {
 			setCurrentError('Choose a project first.');
+
 			return;
 		}
+
 		const submittedUserId = signedInUserIdRef.current;
+
 		if (!submittedUserId) {
 			setCurrentError('User session is not ready.');
+
 			return;
 		}
+
 		const isSubmittedUserCurrent = () => signedInUserIdRef.current === submittedUserId;
 		const submittedPrompt = promptText.trim();
 		const submittedAttachments = composerAttachments.snapshot();
+
 		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
 			attachment.storageId ? [attachment.storageId] : []
 		);
+
 		const submittedModel = selectedModel;
 		const submittedCompletionProvider = selectedCompletionProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
+
 		const submittedContinuationOfRunId =
 			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
+
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
+
 		let submissionScope = selectedThreadId
 			? `thread:${selectedThreadId}`
 			: `draft:${workspacePath}`;
+
 		const originatingRecoveryScope = submissionScope;
 		let recoveryScope = originatingRecoveryScope;
+
 		const originatingRecoveryKey = getComposerRecoveryKey(
 			submittedUserId,
 			originatingRecoveryScope
 		);
+
 		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
 		const freshSubmissionId = crypto.randomUUID();
+
 		const threadSubmissionId = resolveSubmissionId({
 			latestRun:
 				!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
@@ -1397,6 +1596,7 @@ export default function App({
 				: undefined,
 			selectedModel: submittedModel
 		});
+
 		const runSubmissionId = threadSubmissionId;
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
@@ -1404,12 +1604,16 @@ export default function App({
 		const submissionSequence = ++nextSubmissionSequence.current;
 		let submissionTrackingKey = getComposerRecoveryKey(submittedUserId, originatingRecoveryScope);
 		latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
+
 		const isSubmissionCurrent = () =>
 			latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence;
+
 		const sessionChangedMessage =
 			'Your session changed before the agent started. Return to this account and send the prompt again.';
+
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
+
 		const recoverSubmission = (message: string) => {
 			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
@@ -1428,22 +1632,27 @@ export default function App({
 						: runSubmissionId
 			});
 		};
+
 		const clearSubmissionDelay = () => {
 			clearComposerRecovery(submittedUserId, recoveryScope);
+
 			if (isSubmittedUserCurrent()) {
 				setCurrentError((error) => (error === submissionDelayMessage ? null : error));
 			}
 		};
+
 		const submissionTimeoutId = window.setTimeout(() => {
 			if (
 				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) !== submissionSequence
 			) {
 				return;
 			}
+
 			recoverSubmission(submissionDelayMessage);
 			clearSubmittingPrompt(submissionScope, submissionSequence);
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, agentLaunchTimeoutMs);
+
 		setPrompt('');
 		setCurrentError(null);
 		submittingPromptScopes.set(submissionScope, submissionSequence);
@@ -1452,19 +1661,25 @@ export default function App({
 		try {
 			if (!selectedThreadId) {
 				const resolution = await desktopApi.resolveWorkspacePath({ workspacePath });
+
 				if (!isSubmissionCurrent()) return;
+
 				if (resolution.repositoryKey !== submittedRepositoryKey) {
 					const nextAttachments = await refreshDesktopProjectAttachments();
+
 					if (!isSubmissionCurrent()) return;
 					const canonicalAttachment = findCanonicalProjectAttachment(nextAttachments, resolution);
+
 					if (!canonicalAttachment) {
 						throw new Error('The repository changed and its project attachment is unavailable.');
 					}
+
 					workspacePath = canonicalAttachment.workspacePath;
 					submittedRepositoryKey = canonicalAttachment.repositoryKey;
 					setProjectSelection(workspacePath, null, true, true, submittedRepositoryKey);
 
 					const nextSubmissionScope = `draft:${workspacePath}`;
+
 					if (nextSubmissionScope !== submissionScope) {
 						clearSubmittingPrompt(submissionScope, submissionSequence);
 						latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
@@ -1479,33 +1694,44 @@ export default function App({
 			}
 
 			const threadId = selectedThreadId;
+
 			if (!isSubmissionCurrent()) return;
+
 			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
+
 				return;
 			}
+
 			launchedThreadId = threadId;
 			clearSubmissionDelay();
 			const launchId = ++nextAgentLaunchId.current;
 			agentLaunchId = launchId;
+
 			const launch: PendingAgentLaunch = {
 				expiresAt: Date.now() + agentLaunchTimeoutMs,
 				launchId,
 				previousRunId
 			};
+
 			if (runState?.startedAt) launch.previousStartedAt = runState.startedAt;
+
 			if (threadId) {
 				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
 			}
+
 			if (threadId) {
 				window.setTimeout(() => {
 					const selectedRunId =
 						currentThreadIdRef.current === threadId ? (runStateRef.current?.runId ?? null) : null;
+
 					const latestRunId = selectedRunId;
+
 					const latestStartedAt =
 						currentThreadIdRef.current === threadId && runStateRef.current?.runId === latestRunId
 							? runStateRef.current?.startedAt
 							: undefined;
+
 					const recovery = resolveExpiredAgentLaunch(
 						pendingAgentLaunchesRef.current,
 						threadId,
@@ -1515,28 +1741,34 @@ export default function App({
 						undefined,
 						latestStartedAt
 					);
+
 					if (recovery.pendingLaunches === pendingAgentLaunchesRef.current) return;
 					setPendingAgentLaunches(recovery.pendingLaunches);
+
 					if (recovery.shouldRecover) {
 						recoverSubmission('The local agent did not start. Please try again.');
 					}
 				}, agentLaunchTimeoutMs);
 			}
+
 			await launchAgentRun({
 				userId: submittedUserId,
 				desktopApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+
 					if (threadId) {
 						const nextPendingAgentLaunches = clearPendingAgentLaunch(
 							pendingAgentLaunchesRef.current,
 							threadId,
 							launchId
 						);
+
 						if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
 							setPendingAgentLaunches(nextPendingAgentLaunches);
 						}
 					}
+
 					recoverSubmission(
 						error instanceof Error ? error.message : 'Failed to start the local agent run.'
 					);
@@ -1544,18 +1776,22 @@ export default function App({
 				onStarted: (_runId, createdThreadId) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					launchedThreadId = createdThreadId;
+
 					if (
 						currentThreadIdRef.current !== selectedThreadId ||
 						currentWorkspacePathRef.current !== workspacePath
 					)
 						return;
+
 					if (!selectedThreadId) {
 						setPendingCreatedThreadId(createdThreadId);
 						bumpProjectSelectionGeneration();
 						setCurrentThreadId(createdThreadId);
 						setDraftWorkspacePath(null);
 					}
+
 					composerAttachments.clear({ discard: false });
+
 					if (composerContinuationOfRunIdRef.current === submittedContinuationOfRunId) {
 						setComposerContinuationOfRunId(null);
 						setAutoSubmitComposerContinuation(false);
@@ -1579,16 +1815,21 @@ export default function App({
 					clearPendingAgentLaunch(pendingAgentLaunchesRef.current, launchedThreadId, agentLaunchId)
 				);
 			}
+
 			if (!isSubmissionCurrent()) return;
+
 			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
+
 				return;
 			}
+
 			recoverSubmission(error instanceof Error ? error.message : 'Failed to send prompt.');
 			void refreshDesktopProjectAttachments().catch(() => {});
 		} finally {
 			window.clearTimeout(submissionTimeoutId);
 			clearSubmittingPrompt(submissionScope, submissionSequence);
+
 			if (
 				agentLaunchId === null &&
 				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence
@@ -1634,6 +1875,7 @@ export default function App({
 		const expectedUserId = signedInUserIdRef.current;
 		const expectedThreadId = currentThreadId;
 		const expectedRunId = runState.runId;
+
 		try {
 			const { api, userId } = localThreadCommandContext();
 			await api.requestRunCancellation({ userId, runId: expectedRunId });
@@ -1659,28 +1901,36 @@ export default function App({
 		) {
 			return;
 		}
+
 		if (!desktopApi) {
 			setCurrentError(localServerRequiredMessage);
+
 			return;
 		}
+
 		const threadId = currentThreadId;
 		const workspacePath = currentProjectPath;
 		const userId = signedInUserIdRef.current;
+
 		if (!workspacePath || !userId) return;
 		const previousRunId = runState.runId;
 		const previousStartedAt = runState.startedAt;
 		const launchId = ++nextAgentLaunchId.current;
+
 		const launch: PendingAgentLaunch = {
 			expiresAt: Date.now() + agentLaunchTimeoutMs,
 			launchId,
 			previousRunId,
 			previousStartedAt
 		};
+
 		setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
+
 		try {
 			if (signedInUserIdRef.current !== userId) {
 				throw new Error('User session is not ready.');
 			}
+
 			await launchAgentRun({
 				userId,
 				desktopApi,
@@ -1688,6 +1938,7 @@ export default function App({
 					setPendingAgentLaunches((launches) =>
 						clearPendingAgentLaunch(launches, threadId, launchId)
 					);
+
 					if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId)
 						return;
 					setCurrentError(error.message);
@@ -1706,6 +1957,7 @@ export default function App({
 			});
 		} catch (error) {
 			setPendingAgentLaunches((launches) => clearPendingAgentLaunch(launches, threadId, launchId));
+
 			if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId) return;
 			setCurrentError(error instanceof Error ? error.message : 'Failed to continue the run.');
 		}
@@ -1764,10 +2016,12 @@ export default function App({
 
 	useEffect(() => {
 		if (!pendingCreatedThreadId) return;
+
 		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
 			pendingCreatedThreadId,
 			threads
 		});
+
 		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
 			setPendingCreatedThreadId(nextPendingCreatedThreadId);
 		}
@@ -1798,6 +2052,7 @@ export default function App({
 
 	useEffect(() => {
 		const workspacePath = pendingProjectLaunches[0];
+
 		if (
 			!workspacePath ||
 			projectLaunchInFlight ||
@@ -1808,6 +2063,7 @@ export default function App({
 		) {
 			return;
 		}
+
 		startPendingProjectLaunch(workspacePath, desktopApi, signedInUserId);
 	}, [
 		pendingProjectLaunches,
@@ -1821,10 +2077,12 @@ export default function App({
 	useEffect(() => {
 		const thread = currentActiveThread;
 		const threadId = thread?._id ?? null;
+
 		if (threadId === lastSyncedComposerThreadId.current) return;
 		lastSyncedComposerThreadId.current = threadId;
 		setComposerContinuationOfRunId(null);
 		setAutoSubmitComposerContinuation(false);
+
 		if (!thread) return;
 		setSelectedModel(thread.selectedModel);
 		setSelectedCompletionProvider(thread.completionProvider ?? 'spikonado');
@@ -1835,15 +2093,20 @@ export default function App({
 	useEffect(() => {
 		const userId = signedInUserId;
 		const recoveryScope = getComposerScope(currentThreadId, currentProjectPath);
+
 		if (!userId || !recoveryScope) return;
 		const recoveryKey = getComposerRecoveryKey(userId, recoveryScope);
 		const recovery = composerRecoveries.get(recoveryKey);
+
 		if (!recovery) return;
+
 		if (recovery.autoSubmit && prompt !== '' && prompt !== recovery.prompt) return;
 
 		composerRecoveries.delete(recoveryKey);
 		const canRestorePrompt = prompt === '';
+
 		if (canRestorePrompt) setPrompt(recovery.prompt);
+
 		if (
 			composerAttachments.items.length === 0 &&
 			recovery.attachments?.length &&
@@ -1851,11 +2114,13 @@ export default function App({
 		) {
 			composerAttachments.replace(recovery.attachments);
 		}
+
 		if (prompt === recovery.prompt || canRestorePrompt) {
 			setComposerContinuationOfRunId(recovery.continuationOfRunId ?? null);
 			setAutoSubmitComposerContinuation(
 				recovery.autoSubmit === true && recovery.continuationOfRunId !== undefined
 			);
+
 			if (
 				recovery.submissionId &&
 				(recovery.prompt || recovery.storageIds?.length) &&
@@ -1875,6 +2140,7 @@ export default function App({
 				});
 			}
 		}
+
 		setCurrentError(recovery.message);
 		bumpSubmissionTracking();
 	}, [
@@ -1907,6 +2173,7 @@ export default function App({
 		) {
 			return;
 		}
+
 		setAutoSubmitComposerContinuation(false);
 		submitRestoredContinuation();
 	}, [
@@ -1921,6 +2188,7 @@ export default function App({
 
 	const adoptInitialDraftSelection = useEffectEvent((workspacePath: string | null) => {
 		setHasResolvedInitialSelection(true);
+
 		if (!workspacePath) return;
 		const selectionGeneration = setProjectSelection(workspacePath, null, true, true);
 		void verifyProject(workspacePath).catch((error) => {
@@ -1941,6 +2209,7 @@ export default function App({
 			signedInUserId,
 			projects
 		});
+
 		if (!selection) return;
 		adoptInitialDraftSelection(selection.workspacePath);
 	}, [
@@ -1963,10 +2232,12 @@ export default function App({
 
 	useEffect(() => {
 		const activeThreadSummary = currentThreadId ? findThreadById(threads, currentThreadId) : null;
+
 		const threadProject =
 			currentProject?.repositoryKey === activeThreadSummary?.repositoryKey
 				? currentProject
 				: findProjectByRepositoryKey(projects, activeThreadSummary?.repositoryKey);
+
 		if (threadProject && threadProject.workspacePath !== currentWorkspacePath) {
 			syncWorkspaceToThread(threadProject);
 		}
@@ -1987,13 +2258,16 @@ export default function App({
 
 	useEffect(() => {
 		const currentThreads = currentProjectThreads;
+
 		if (!hasResolvedInitialSelection || !currentWorkspacePath) return;
+
 		const nextThreadId = resolveProjectThreadSelection({
 			threads: currentThreads,
 			currentThreadId,
 			currentWorkspacePath,
 			draftWorkspacePath
 		});
+
 		if (nextThreadId === currentThreadId) return;
 		selectProjectThread(currentWorkspacePath, nextThreadId);
 	}, [
@@ -2006,6 +2280,7 @@ export default function App({
 
 	useEffect(() => {
 		let nextPendingAgentLaunches = pendingAgentLaunches;
+
 		if (currentThreadId && runState?.runId) {
 			nextPendingAgentLaunches = resolvePendingAgentLaunch(
 				nextPendingAgentLaunches,
@@ -2015,6 +2290,7 @@ export default function App({
 				runState.startedAt
 			);
 		}
+
 		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
 			setPendingAgentLaunches(nextPendingAgentLaunches);
 		}
@@ -2024,21 +2300,26 @@ export default function App({
 	// launches, and the local server connection. Runs exactly once per mount.
 	const boot = useEffectEvent(() => {
 		const bridge = window.sprocketDesktopBridge;
+
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
 			? bridge.onWorkspaceLaunch(() => {
 					void takeDesktopProjectLaunches();
 				})
 			: undefined;
+
 		const workspacePath = readWorkspaceLaunchFromHash();
+
 		if (workspacePath) {
 			queueProjectLaunch(workspacePath);
 			clearLaunchHash();
 		}
+
 		if (bridge?.takeWorkspaceLaunch) {
 			void takeDesktopProjectLaunches().finally(() => setInitialProjectLaunchResolved(true));
 		} else {
 			setInitialProjectLaunchResolved(true);
 		}
+
 		void runtime
 			.resolveDesktopApi()
 			.then(async (client) => {
@@ -2057,6 +2338,7 @@ export default function App({
 				);
 				setDesktopApiResolved(true);
 			});
+
 		return unsubscribeWorkspaceLaunch;
 	});
 
@@ -2090,6 +2372,7 @@ export default function App({
 	async function openSettingsFromRail() {
 		setSettingsPage('account');
 		setSettingsOpen(true);
+
 		if (viewportWidth < 768) setSidebarOpen(true);
 		await Promise.resolve();
 		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
@@ -2115,6 +2398,7 @@ export default function App({
 			/>
 		);
 	}
+
 	if (!desktopApi) {
 		return (
 			<CalmCentered
@@ -2123,6 +2407,7 @@ export default function App({
 			/>
 		);
 	}
+
 	if (!authReady) {
 		return (
 			<div className="bg-background h-screen overflow-hidden">
@@ -2192,6 +2477,7 @@ export default function App({
 							onBack={() => void leaveSettings()}
 							onNavigate={(nextPage) => {
 								setSettingsPage(nextPage);
+
 								if (matchMedia('(max-width: 767px)').matches) void closeSidebar();
 							}}
 						/>
@@ -2438,6 +2724,7 @@ export default function App({
 						onTabChange={(tab) => artifactPanel.update({ tab })}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
+
 							// Request in the click gesture so Firefox keeps true browser
 							// fullscreen; the overlay only observes/exits the session.
 							if (!document.fullscreenElement) {

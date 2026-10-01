@@ -26,11 +26,13 @@ export function isPreviewableImageMediaType(mediaType: string) {
 
 export function attachmentMediaType(type: string) {
 	const mediaType = type.trim();
+
 	return mediaType.length > 0 ? mediaType : 'application/octet-stream';
 }
 
 export function fallbackAttachmentName(file: Pick<File, 'name'>) {
 	const name = file.name.trim();
+
 	return name.length > 0 ? name : 'Attached file';
 }
 
@@ -38,9 +40,11 @@ export function formatAttachmentSize(bytes: number) {
 	if (bytes < 1024) {
 		return `${bytes} B`;
 	}
+
 	if (bytes < 1024 * 1024) {
 		return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
 	}
+
 	return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, '')} MiB`;
 }
 

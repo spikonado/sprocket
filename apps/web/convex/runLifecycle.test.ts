@@ -6,6 +6,7 @@ import { getRunExecutionState, patchRunExecution } from '@convex/lib/runExecutio
 import { startRunLifecycle } from './runLifecycle';
 
 beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => vi.useRealTimers());
 
 describe('native run lifecycle', () => {
@@ -14,6 +15,7 @@ describe('native run lifecycle', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'native-queued', 'native-secret');
 		const state = await t.run((ctx) => getRunExecutionState(ctx.db, runId));
+
 		if (!state?.lifecycleCheckId) throw new Error('Missing lifecycle check.');
 		const scheduledId = state.lifecycleCheckId;
 		expect(
@@ -46,6 +48,7 @@ describe('native run lifecycle', () => {
 		await vi.advanceTimersByTimeAsync(RUN_QUEUED_STARTUP_DEADLINE_MS);
 		await t.finishInProgressScheduledFunctions();
 		const state = await t.run((ctx) => getRunExecutionState(ctx.db, runId));
+
 		if (!state?.lifecycleCheckId || !state.claimExpiresAt) throw new Error('Missing lease check.');
 		const scheduledId = state.lifecycleCheckId;
 		expect(
@@ -60,6 +63,7 @@ describe('native run lifecycle', () => {
 		await vi.advanceTimersByTimeAsync(state.claimExpiresAt - Date.now());
 		await t.finishInProgressScheduledFunctions();
 		const renewed = await t.run((ctx) => getRunExecutionState(ctx.db, runId));
+
 		if (!renewed?.lifecycleCheckId) throw new Error('Missing renewed check.');
 		const renewedId = renewed.lifecycleCheckId;
 		expect(
@@ -77,6 +81,7 @@ describe('native run lifecycle', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'native-complete-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -84,8 +89,10 @@ describe('native run lifecycle', () => {
 			'native-complete',
 			executionSecret
 		);
+
 		await asUser.mutation(api.agentRuntime.start, { runId, executionSecret, claimId: 'live' });
 		const state = await t.run((ctx) => getRunExecutionState(ctx.db, runId));
+
 		if (!state?.lifecycleCheckId) throw new Error('Missing lifecycle check.');
 		const scheduledId = state.lifecycleCheckId;
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -116,6 +123,7 @@ describe('native run lifecycle', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'native-repair', 'repair-secret');
 		const state = await t.run((ctx) => getRunExecutionState(ctx.db, runId));
+
 		if (!state?.lifecycleCheckId) throw new Error('Missing lifecycle check.');
 		const scheduledId = state.lifecycleCheckId;
 		await t.run((ctx) => ctx.scheduler.cancel(scheduledId));

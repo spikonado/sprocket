@@ -15,32 +15,43 @@ function mandateApprovalFromTool(
 	tool: AssistantTimelineTool
 ): Pick<MandateApproval, 'mandateId' | 'approvalUrl'> | undefined {
 	const kind = tool.job?.kind ?? tool.name;
+
 	if (kind !== 'mandate_setup') {
 		return undefined;
 	}
+
 	const output = tool.output;
+
 	if (!isJsonObject(output)) {
 		return undefined;
 	}
+
 	const mandateId = jsonString(output.mandateId);
 	const approvalUrl = jsonString(output.approvalUrl);
+
 	if (!mandateId || !approvalUrl) {
 		return undefined;
 	}
+
 	return { mandateId, approvalUrl };
 }
 
 function mandateSetupLabel(tool: AssistantTimelineTool): string | undefined {
 	const input: JsonValue | undefined = tool.job?.payload ?? tool.input;
+
 	if (!isJsonObject(input)) return undefined;
 	const description = jsonString(input.description)?.trim();
+
 	if (description) {
 		return description;
 	}
+
 	const merchantName = jsonString(input.merchantName)?.trim();
+
 	if (merchantName) {
 		return merchantName;
 	}
+
 	return undefined;
 }
 
@@ -49,6 +60,7 @@ function mandateSetupLabel(tool: AssistantTimelineTool): string | undefined {
 export function mandateApprovals(tools: AssistantTimelineTool[]): MandateApproval[] {
 	return tools.flatMap((tool) => {
 		const approval = mandateApprovalFromTool(tool);
+
 		return approval ? [{ ...approval, label: mandateSetupLabel(tool) }] : [];
 	});
 }

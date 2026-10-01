@@ -35,6 +35,7 @@ function createDesktopApi() {
 			]
 		};
 	});
+
 	const resolveWorkspacePath = vi.fn(async () => ({
 		workspacePath: '/home/me',
 		displayName: 'me',
@@ -50,6 +51,7 @@ function createDesktopApi() {
 
 function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> = {}) {
 	const api = createDesktopApi();
+
 	const props: ComponentProps<typeof ProjectPicker> = {
 		open: true,
 		desktopApi: api.desktopApi,
@@ -57,7 +59,9 @@ function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> =
 		onSelect: vi.fn(),
 		...overrides
 	};
+
 	render(<ProjectPicker {...props} />);
+
 	return { ...api, props };
 }
 
@@ -78,9 +82,11 @@ describe('ProjectPicker', () => {
 	it('navigates the directory list with arrow keys and selects with Enter', async () => {
 		const { resolveWorkspacePath } = renderPicker();
 		await waitForDirectories();
+
 		const input = document.querySelector<HTMLInputElement>(
 			'[aria-label="Project directory path"]'
 		)!;
+
 		const options = () => document.querySelectorAll<HTMLElement>('[role="option"]');
 
 		expect(document.activeElement).toBe(input);
@@ -100,6 +106,7 @@ describe('ProjectPicker', () => {
 	it('goes to the parent directory with Backspace and closes with Escape', async () => {
 		const { props } = renderPicker();
 		await waitForDirectories();
+
 		const input = document.querySelector<HTMLInputElement>(
 			'[aria-label="Project directory path"]'
 		)!;
@@ -114,6 +121,7 @@ describe('ProjectPicker', () => {
 	it('stops exposing entries as soon as the path changes', async () => {
 		const { resolveWorkspacePath } = renderPicker();
 		await waitForDirectories();
+
 		const input = document.querySelector<HTMLInputElement>(
 			'[aria-label="Project directory path"]'
 		)!;
@@ -130,6 +138,7 @@ describe('ProjectPicker', () => {
 	it('adds the current directory with Ctrl+Enter', async () => {
 		const { props, resolveWorkspacePath } = renderPicker();
 		await waitForDirectories();
+
 		const input = document.querySelector<HTMLInputElement>(
 			'[aria-label="Project directory path"]'
 		)!;

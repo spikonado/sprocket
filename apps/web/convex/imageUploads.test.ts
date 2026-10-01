@@ -16,12 +16,15 @@ async function storeUpload(
 			args.type === undefined
 				? new Blob([args.bytes])
 				: new Blob([args.bytes], { type: args.type });
+
 		const storageId = await ctx.storage.store(blob);
+
 		// convex-test's storeBlob syscall omits the Content-Type metadata.
 		if (args.type) {
 			const db: GenericDatabaseWriter<GenericDataModel> = ctx.db;
 			await db.patch(storageId, { contentType: args.type });
 		}
+
 		return storageId;
 	});
 }
@@ -44,10 +47,12 @@ describe('imageUploads.registerFile', () => {
 	it('accepts unknown MIME types and missing content types', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
+
 		const pdfStorageId = await storeUpload(t, {
 			bytes: 'pdf-bytes',
 			type: 'application/pdf'
 		});
+
 		const blobStorageId = await storeUpload(t, {
 			bytes: 'raw'
 		});
@@ -56,6 +61,7 @@ describe('imageUploads.registerFile', () => {
 			storageId: pdfStorageId,
 			name: '  spec.pdf  '
 		});
+
 		expect(pdf).toMatchObject({
 			storageId: pdfStorageId,
 			name: 'spec.pdf',
@@ -69,6 +75,7 @@ describe('imageUploads.registerFile', () => {
 			storageId: blobStorageId,
 			name: 'blob.bin'
 		});
+
 		expect(blob).toMatchObject({
 			name: 'blob.bin',
 			mediaType: 'application/octet-stream',
@@ -79,6 +86,7 @@ describe('imageUploads.registerFile', () => {
 	it('rejects empty filenames and deletes the stored blob', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
+
 		const storageId = await storeUpload(t, {
 			bytes: 'x',
 			type: 'text/plain'
@@ -97,12 +105,14 @@ describe('imageUploads.registerFile', () => {
 		const t = initConvexTest();
 		const size = 11 * 1024 * 1024;
 		const storageId = await storeUpload(t, { bytes: 'x'.repeat(size), type: 'application/zip' });
+
 		const result = await t
 			.withIdentity({ subject: 'alice' })
 			.mutation(api.imageUploads.registerFile, {
 				storageId,
 				name: 'archive.zip'
 			});
+
 		expect(result).toMatchObject({ name: 'archive.zip', size, mediaType: 'application/zip' });
 	});
 
@@ -110,10 +120,12 @@ describe('imageUploads.registerFile', () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_alice' });
 		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
+
 		const result = await asUser.mutation(api.imageUploads.registerFile, {
 			storageId,
 			name: 'notes.txt'
 		});
+
 		expect(result).toMatchObject({
 			storageId,
 			name: 'notes.txt',
@@ -140,8 +152,10 @@ describe('owned file attachments', () => {
 	it('allows more than four mixed files and rejects duplicate ids', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
+
 		const imageUploadIds = await t.run(async (ctx) => {
 			const ids: Id<'imageUploads'>[] = [];
+
 			for (const [index, type] of [
 				'application/pdf',
 				'text/plain',
@@ -152,6 +166,7 @@ describe('owned file attachments', () => {
 				const storageId = await ctx.storage.store(
 					type ? new Blob([`file-${index}`], { type }) : new Blob([`file-${index}`])
 				);
+
 				ids.push(
 					await ctx.db.insert('imageUploads', {
 						userId: subject,
@@ -163,6 +178,7 @@ describe('owned file attachments', () => {
 					})
 				);
 			}
+
 			return ids;
 		});
 
@@ -173,6 +189,7 @@ describe('owned file attachments', () => {
 			imageUploadIds,
 			executionSecret: 'five-files-secret'
 		});
+
 		expect(created.created).toBe(true);
 		expect(created.promptPart?.prompt?.imageUploads).toHaveLength(5);
 		expect(created.promptPart?.prompt?.imageUploads.map((upload) => upload.mediaType)).toEqual([
@@ -194,13 +211,16 @@ describe('owned file attachments', () => {
 		).rejects.toThrow('The same file cannot be attached more than once.');
 		await t.run(async (ctx) => {
 			const upload = await ctx.db.get('imageUploads', imageUploadIds[0]);
+
 			if (!upload) throw new Error('Missing test upload');
 			await ctx.storage.delete(upload.storageId);
 		});
+
 		const context = await asUser.query(api.agentRuntime.getContext, {
 			runId: created.runId,
 			executionSecret: 'five-files-secret'
 		});
+
 		expect(context.prompt).toBe('Read these');
 	});
 });
@@ -210,6 +230,7 @@ describe('imageUploads.discardFile', () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 		const bob = t.withIdentity({ subject: 'bob' });
+
 		const file = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['draft'], { type: 'text/plain' }));
 			await ctx.db.insert('imageUploads', {
@@ -220,8 +241,10 @@ describe('imageUploads.discardFile', () => {
 				size: 5,
 				attached: false
 			});
+
 			return storageId;
 		});
+
 		await expect(bob.mutation(api.imageUploads.discardFile, { storageId: file })).resolves.toBe(
 			false
 		);
@@ -239,8 +262,10 @@ describe('imageUploads.discardFile', () => {
 				attached: true,
 				threadId
 			});
+
 			return storageId;
 		});
+
 		expect(await asUser.mutation(api.imageUploads.discardFile, { storageId: attached })).toBe(
 			false
 		);
@@ -252,8 +277,10 @@ describe('imageUploads.ownedIdsForStorageIds', () => {
 	it('resolves owned storage ids and rejects duplicates or foreign files', async () => {
 		const t = initConvexTest();
 		const { subject } = await seedOwnedThread(t);
+
 		const file = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+
 			const imageUploadId = await ctx.db.insert('imageUploads', {
 				userId: subject,
 				storageId,
@@ -262,8 +289,10 @@ describe('imageUploads.ownedIdsForStorageIds', () => {
 				size: 4,
 				attached: false
 			});
+
 			return { storageId, imageUploadId };
 		});
+
 		expect(
 			await t.query(internal.imageUploads.ownedIdsForStorageIds, {
 				userId: subject,

@@ -16,12 +16,14 @@ describe('browser screenshot results', () => {
 			byteLength: 600_001,
 			truncated: true
 		};
+
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'screenshot-secret';
 		const claimId = 'screenshot-claim';
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'screenshot', executionSecret);
 		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
 		const jobId = await t.run((ctx) =>
 			ctx.db.insert('executorJobs', {
 				threadId,
@@ -35,6 +37,7 @@ describe('browser screenshot results', () => {
 				sequence: 0
 			})
 		);
+
 		expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
 			status: 'completed',
 			result
@@ -82,6 +85,7 @@ describe('retired browser clients', () => {
 					sequence: 0
 				})
 			);
+
 			expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
 				kind,
 				result: { text: 'Pay' }

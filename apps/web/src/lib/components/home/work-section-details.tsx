@@ -30,6 +30,7 @@ type Props = {
 };
 
 const PREFETCH_VIEWPORTS = 3;
+
 const MAX_STALLED_PREFETCH_PAGES = 2;
 
 export default function WorkSectionDetails({
@@ -62,37 +63,47 @@ export default function WorkSectionDetails({
 
 	function distanceFromViewport(edge: HTMLDivElement | null) {
 		const root = viewportRef.current;
+
 		if (!root || !edge) return Number.POSITIVE_INFINITY;
 		const bounds = root.getBoundingClientRect();
 		const target = edge.getBoundingClientRect();
+
 		if (target.bottom < bounds.top) return bounds.top - target.bottom;
+
 		if (target.top > bounds.bottom) return target.top - bounds.bottom;
+
 		return 0;
 	}
 
 	const historyRef = useRef<WorkDetails | null>(null);
+
 	if (!historyRef.current) {
 		historyRef.current = new WorkDetails(
 			(cursor, signal) => loadRef.current(rowRef.current, cursor, signal),
 			() => setVersion((value) => value + 1),
 			async (update, edge) => {
 				const stalledPages = stalledPagesRef.current;
+
 				const previousDistance = edge
 					? distanceFromViewport(edge === 'older' ? topRef.current : bottomRef.current)
 					: undefined;
+
 				const restore = beforeChangeRef.current(inProgressRef.current && edge !== 'older');
 				flushSync(update);
 				restore();
 				lastTopRef.current = viewportRef.current?.scrollTop ?? 0;
+
 				if (edge && previousDistance !== undefined) {
 					const nextDistance = distanceFromViewport(
 						edge === 'older' ? topRef.current : bottomRef.current
 					);
+
 					stalledPages[edge] = nextDistance <= previousDistance + 1 ? stalledPages[edge] + 1 : 0;
 				}
 			}
 		);
 	}
+
 	const history = historyRef.current;
 
 	const details = {
@@ -104,21 +115,26 @@ export default function WorkSectionDetails({
 		previousBefore: history.previousBefore,
 		nextAfter: history.nextAfter
 	};
+
 	const timeline = buildAssistantTimeline(details.parts, []);
 	const tools = timeline.filter((item) => item.type === 'tool');
 	const grouped = groupAssistantTimeline(timeline).filter((block) => block.type !== 'text');
+
 	const partitioned = partitionWorkSectionTools(
 		grouped,
 		inProgress,
 		buildOpenExecCommandSessions(tools, inProgress)
 	);
+
 	const commands = buildCommandSessionCommandMap(tools);
 	const blockKeysRef = useRef<TranscriptSectionKeys | null>(null);
+
 	if (!blockKeysRef.current) blockKeysRef.current = new TranscriptSectionKeys();
 	const settled = blockKeysRef.current.reconcileBlocks(row.id, partitioned.settledBlocks);
 
 	function prefetchNearbyDetails() {
 		const stalledPages = stalledPagesRef.current;
+
 		if (
 			!viewport ||
 			viewport.clientHeight <= 0 ||
@@ -128,14 +144,19 @@ export default function WorkSectionDetails({
 		)
 			return;
 		const direction = directionRef.current;
+
 		const directions: Array<'older' | 'newer'> =
 			direction === 'older' ? ['older', 'newer'] : ['newer', 'older'];
+
 		for (const next of directions) {
 			const cursor = next === 'older' ? history.previousBefore : history.nextAfter;
+
 			if (cursor === undefined || stalledPages[next] >= MAX_STALLED_PREFETCH_PAGES) continue;
 			const edge = next === 'older' ? topRef.current : bottomRef.current;
+
 			if (distanceFromViewport(edge) > viewport.clientHeight * PREFETCH_VIEWPORTS) continue;
 			void history.more(next);
+
 			return;
 		}
 	}
@@ -162,9 +183,11 @@ export default function WorkSectionDetails({
 		const root = viewport;
 		const top = topRef.current;
 		const bottom = bottomRef.current;
+
 		if (!root || !top || !bottom) return;
 		const stalledPages = stalledPagesRef.current;
 		lastTopRef.current = root.scrollTop;
+
 		function scroll() {
 			if (!root || root.scrollTop === lastTopRef.current) return;
 			const next = root.scrollTop < lastTopRef.current ? 'older' : 'newer';
@@ -173,12 +196,14 @@ export default function WorkSectionDetails({
 			stalledPages[next] = 0;
 			prefetchRef.current();
 		}
+
 		const observer = globalThis.IntersectionObserver
 			? new IntersectionObserver(() => prefetchRef.current(), {
 					root,
 					rootMargin: `${root.clientHeight * PREFETCH_VIEWPORTS}px 0px`
 				})
 			: undefined;
+
 		const resizeObserver = globalThis.ResizeObserver
 			? new ResizeObserver(() => {
 					stalledPages.older = 0;
@@ -186,11 +211,14 @@ export default function WorkSectionDetails({
 					prefetchRef.current();
 				})
 			: undefined;
+
 		observer?.observe(top);
 		observer?.observe(bottom);
+
 		if (containerRef.current) resizeObserver?.observe(containerRef.current);
 		resizeObserver?.observe(root);
 		root.addEventListener('scroll', scroll);
+
 		return () => {
 			observer?.disconnect();
 			resizeObserver?.disconnect();

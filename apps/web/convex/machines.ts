@@ -31,10 +31,12 @@ export const listMine = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const now = Date.now();
+
 		const machines = await ctx.db
 			.query('machines')
 			.withIndex('by_userId_and_machineId', (query) => query.eq('userId', userId))
 			.collect();
+
 		return machines.map((machine) => ({
 			machineId: machine.machineId,
 			friendlyName: machine.friendlyName,
@@ -53,8 +55,10 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 	if (machine.runIds.length > MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs to stop safely.');
 	}
+
 	for (const runId of machine.runIds) {
 		const run = await getRunWithExecution(ctx.db, runId);
+
 		if (run) {
 			await finalizeRunRecord(ctx, run, {
 				text: MACHINE_ENDED,
@@ -63,6 +67,7 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 			});
 		}
 	}
+
 	await ctx.db.patch('machines', machine._id, { runIds: [] });
 }
 
@@ -74,6 +79,7 @@ async function requireMachine(
 ): Promise<Doc<'machines'>> {
 	const machine = await getOwnedMachine(ctx, userId, machineId);
 	const candidateHash = await executionSecretHash(credential);
+
 	if (
 		!machine ||
 		machine.lastSeenAt === undefined ||
@@ -81,6 +87,7 @@ async function requireMachine(
 	) {
 		throw new Error('Machine is not active.');
 	}
+
 	return machine;
 }
 
@@ -106,6 +113,7 @@ async function registerMachine(
 ): Promise<Infer<typeof vRegistrationResult>> {
 	const userId = await getUserId(ctx);
 	const now = Date.now();
+
 	for (const value of [
 		args.machineId,
 		args.friendlyName,
@@ -115,10 +123,13 @@ async function registerMachine(
 	]) {
 		if (!value.trim()) throw new Error('Machine registration fields cannot be empty.');
 	}
+
 	if (!/^[0-9a-f]{64}$/.test(args.credentialHash)) {
 		throw new Error('Machine credential digest is invalid.');
 	}
+
 	const existing = await getOwnedMachine(ctx, userId, args.machineId);
+
 	const metadata = {
 		friendlyName: args.friendlyName,
 		platform: args.platform,
@@ -130,17 +141,21 @@ async function registerMachine(
 		lastSeenAt: now,
 		updatedAt: now
 	};
+
 	if (existing) {
 		const sameProcess = constantTimeEqual(existing.credentialHash, args.credentialHash);
+
 		if (!sameProcess && existing.lastSeenAt !== undefined && isMachineActive(existing, now)) {
 			return {
 				status: 'busy',
 				retryAfterMs: existing.lastSeenAt + MACHINE_ONLINE_THRESHOLD_MS + 1 - now
 			};
 		}
+
 		if (!sameProcess) {
 			await failMachineRuns(ctx, existing);
 		}
+
 		await ctx.db.patch('machines', existing._id, metadata);
 	} else {
 		await ctx.db.insert('machines', {
@@ -151,6 +166,7 @@ async function registerMachine(
 			...metadata
 		});
 	}
+
 	return { status: 'registered', machineId: args.machineId, userId };
 }
 
@@ -166,6 +182,7 @@ export const heartbeat = mutation({
 	handler: async (ctx, args) => {
 		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
 		await ctx.db.patch('machines', machine._id, { lastSeenAt: Date.now(), updatedAt: Date.now() });
+
 		return null;
 	}
 });
@@ -180,6 +197,7 @@ export const end = mutation({
 			lastSeenAt: undefined,
 			updatedAt: Date.now()
 		});
+
 		return null;
 	}
 });

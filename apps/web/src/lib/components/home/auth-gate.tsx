@@ -29,7 +29,9 @@ export default function AuthGate({
 }) {
 	const showConfirming =
 		authState.isAuthenticated && (authState.isLoading || !authState.connectionFailed);
+
 	const showPreparing = !authState.isAuthenticated && authState.isLoading;
+
 	const headline = !authState.isConfigured
 		? 'Sign-in unavailable'
 		: showConfirming
@@ -39,6 +41,7 @@ export default function AuthGate({
 				: showPreparing
 					? 'Preparing sign-in'
 					: 'Sign in to continue';
+
 	const description = !authState.isConfigured
 		? 'Account sign-in is not configured on this deployment, so account actions are disabled.'
 		: showConfirming
@@ -48,6 +51,7 @@ export default function AuthGate({
 				: showPreparing
 					? 'Getting account sign-in ready. This usually takes a moment.'
 					: 'Sign in to sync your coding threads, streaming responses, and projects.';
+
 	return (
 		<div inert={overlayOpen} aria-hidden={overlayOpen || undefined}>
 			<CalmCentered

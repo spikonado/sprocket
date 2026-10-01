@@ -54,12 +54,14 @@ export function resolveSubmissionId(args: {
 }) {
 	const recoveredSubmission = args.recoveredSubmission;
 	const latestRun = args.latestRun;
+
 	const canReuseRecoveredSubmission =
 		latestRun === null ||
 		(latestRun.runId !== undefined &&
 			latestRun.runId === recoveredSubmission?.continuationOfRunId) ||
 		(latestRun.submissionId === recoveredSubmission?.submissionId &&
 			!isRunFinalStatus(latestRun.status));
+
 	return canReuseRecoveredSubmission &&
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
@@ -80,9 +82,11 @@ export function lifecycleResumeKind(
 	lastError?: string
 ): RunResumeKind | null {
 	if (phase === 'cancelled') return 'cancelled';
+
 	if (phase === 'failed') {
 		return lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
 	}
+
 	return null;
 }
 
@@ -113,12 +117,17 @@ export function launchAgentRun(args: {
 		submissionId: args.submissionId,
 		workspacePath: args.workspacePath
 	};
+
 	if (args.completionProvider) request.completionProvider = args.completionProvider;
+
 	if (args.threadId) request.threadId = args.threadId;
+
 	if (args.repositoryKey) request.repositoryKey = args.repositoryKey;
+
 	if (args.continuationOfRunId) {
 		request.continuationOfRunId = args.continuationOfRunId;
 	}
+
 	return args.desktopApi
 		.runAgent(request)
 		.then(({ runId, threadId }) => {
@@ -135,9 +144,11 @@ function attachmentIsPreferred(candidate: ProjectAttachment, current: ProjectAtt
 	if (candidate.availability !== current.availability) {
 		return candidate.availability === 'available';
 	}
+
 	if (candidate.lastUsedAt !== current.lastUsedAt) {
 		return candidate.lastUsedAt < current.lastUsedAt;
 	}
+
 	return candidate.workspacePath < current.workspacePath;
 }
 
@@ -145,13 +156,16 @@ export function buildDesktopProjectAttachmentsByPath(
 	desktopProjectAttachments: ProjectAttachment[]
 ): Record<string, ProjectAttachment> {
 	const attachmentsByRepository = new Map<string, ProjectAttachment>();
+
 	for (const attachment of desktopProjectAttachments) {
 		const attachmentKey = attachment.attachmentKey;
 		const current = attachmentsByRepository.get(attachmentKey);
+
 		if (!current || attachmentIsPreferred(attachment, current)) {
 			attachmentsByRepository.set(attachmentKey, attachment);
 		}
 	}
+
 	return Object.fromEntries(
 		[...attachmentsByRepository.values()].map((attachment) => [
 			attachment.workspacePath,
@@ -165,12 +179,14 @@ export function findCanonicalProjectAttachment(
 	workspace: { workspacePath: string; repositoryKey: string }
 ): ProjectAttachment | undefined {
 	const attachmentAtPath = attachmentsByPath[workspace.workspacePath];
+
 	if (
 		attachmentAtPath?.availability === 'available' &&
 		attachmentAtPath.repositoryKey === workspace.repositoryKey
 	) {
 		return attachmentAtPath;
 	}
+
 	return Object.values(attachmentsByPath).find(
 		(attachment) =>
 			attachment.availability === 'available' &&
@@ -191,7 +207,9 @@ export function upsertDesktopProjectAttachment(
 				existing.attachmentKey !== attachment.attachmentKey
 		)
 	);
+
 	nextAttachments[attachment.workspacePath] = attachment;
+
 	return nextAttachments;
 }
 
@@ -211,9 +229,11 @@ export async function attachLocalProject(args: {
 	const request: ProjectAttachmentRequest = {
 		workspacePath: args.workspacePath
 	};
+
 	if (args.replaceWorkspacePath) {
 		request.replaceWorkspacePath = args.replaceWorkspacePath;
 	}
+
 	return await args.desktopApi.attachProject(request);
 }
 
@@ -230,9 +250,11 @@ export async function verifyProjectAttachment(args: {
 		const attachment = (await args.desktopApi.listProjectAttachments()).find(
 			(candidate) => candidate.workspacePath === args.workspacePath
 		);
+
 		if (!attachment || attachment.availability !== 'available') {
 			throw new Error(attachment?.unavailableReason ?? 'Workspace path is unavailable.');
 		}
+
 		await args.refreshDesktopProjectAttachments();
 	} catch (error) {
 		await args.refreshDesktopProjectAttachments();

@@ -161,6 +161,7 @@ export type TranscriptScopeRequest = {
 };
 
 export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
+
 export type TranscriptDisplayPage = {
 	replicaId: string;
 	rows: TranscriptDisplayRow[];
@@ -174,14 +175,18 @@ export type TranscriptDisplayPage = {
 	changesCursor: TranscriptChangeCursor;
 	moreChanges: boolean;
 };
+
 export type TranscriptChangeCursor = { revision: number; sequence: number };
+
 export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
+
 export type TranscriptDisplayRequest = TranscriptScopeRequest & {
 	before?: number;
 	limit?: number;
 	streams?: TranscriptDisplayStream[];
 	changesAfter?: TranscriptChangeCursor;
 };
+
 export type TranscriptDisplayDetails = {
 	parts: AssistantPart[];
 	indexing: boolean;
@@ -190,7 +195,9 @@ export type TranscriptDisplayDetails = {
 	revision: number;
 	stale: boolean;
 };
+
 export type TranscriptDetailCursor = { after?: number; before?: number; latest?: boolean };
+
 export type TranscriptDisplayDetailsRequest = TranscriptScopeRequest &
 	TranscriptDetailCursor & { rowId: TranscriptDisplayRow['id']; limit?: number };
 

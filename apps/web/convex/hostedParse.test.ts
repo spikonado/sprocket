@@ -29,6 +29,7 @@ async function seedParseJob(
 ) {
 	const claimId = options.claimId ?? `claim-${Math.random()}`;
 	const { asUser, threadId, subject } = await seedOwnedThread(t);
+
 	const created = await createQueuedRun(
 		t,
 		asUser,
@@ -37,11 +38,13 @@ async function seedParseJob(
 		options.executionSecret,
 		'Parse a file'
 	);
+
 	await asUser.mutation(api.agentRuntime.start, {
 		runId: created.runId,
 		claimId,
 		executionSecret: options.executionSecret
 	});
+
 	const jobId = await t.run(async (ctx) => {
 		const jobId = await ctx.db.insert('executorJobs', {
 			threadId,
@@ -55,11 +58,14 @@ async function seedParseJob(
 			claimedAt: Date.now(),
 			sequence: 0
 		});
+
 		await patchRunExecution(ctx, created.runId, {
 			activeJobId: jobId
 		});
+
 		return jobId;
 	});
+
 	return {
 		asUser,
 		subject,
@@ -79,14 +85,19 @@ async function storeBlob(
 			args.type === undefined
 				? new Blob([args.bytes])
 				: new Blob([args.bytes], { type: args.type });
+
 		const storageId = await ctx.storage.store(blob);
+
 		if (args.type || args.size !== undefined) {
 			const db: GenericDatabaseWriter<GenericDataModel> = ctx.db;
 			const metadata: Partial<SystemDataModel['_storage']['document']> = {};
+
 			if (args.type) metadata.contentType = args.type;
+
 			if (args.size !== undefined) metadata.size = args.size;
 			await db.patch(storageId, metadata);
 		}
+
 		return storageId;
 	});
 }
@@ -97,6 +108,7 @@ function auth(run: Awaited<ReturnType<typeof seedParseJob>>) {
 
 function workId(job: Doc<'executorJobs'> | null): WorkId {
 	if (!job?.cloudWorkId) throw new Error('Expected an enqueued parse job');
+
 	// SAFETY: start stores the ID returned by Workpool.enqueueAction without changing it.
 	return job.cloudWorkId as WorkId;
 }
@@ -197,10 +209,12 @@ describe('hostedParse', () => {
 
 	it('rejects createUpload for non parse_file jobs', async () => {
 		const t = initConvexTest();
+
 		const run = await seedParseJob(t, {
 			executionSecret: 'hosted-kind-secret',
 			kind: 'web_search'
 		});
+
 		await expect(
 			run.asUser.mutation(api.hostedParse.createUpload, { ...auth(run), jobId: run.jobId })
 		).rejects.toThrow('Executor job not found.');
@@ -209,14 +223,17 @@ describe('hostedParse', () => {
 	it('reuses the same upload URL while awaiting upload and omits it after start', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-idempotent-secret' });
+
 		const first = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const second = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		expect(second.requestId).toBe(first.requestId);
 		expect(second.uploadUrl).toBe(first.uploadUrl);
 		expect(first.uploadUrl).toEqual(expect.any(String));
@@ -228,27 +245,33 @@ describe('hostedParse', () => {
 			storageId,
 			filename: 'spec.pdf'
 		});
+
 		const afterStart = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		expect(afterStart.requestId).toBe(first.requestId);
 		expect(afterStart.uploadUrl).toBeUndefined();
+
 		const pending = await run.asUser.query(api.hostedParse.getResult, {
 			runId: run.runId,
 			executionSecret: run.executionSecret,
 			requestId: first.requestId
 		});
+
 		expect(pending).toEqual({ status: 'pending' });
 	});
 
 	it('does not enqueue a second provider job when start is retried', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-start-once-secret' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const firstStorage = await storeBlob(t, { bytes: 'doc-one', type: 'application/pdf' });
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
@@ -267,9 +290,11 @@ describe('hostedParse', () => {
 		const secondJob = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 		expect(secondJob?.cloudWorkId).toBe(firstJob?.cloudWorkId);
 		expect(secondJob?.cloudWorkId).toEqual(expect.any(String));
+
 		const request = await t.run(async (ctx) =>
 			ctx.db.get('hostedParseRequests', created.requestId)
 		);
+
 		expect(request?.inputStorageId).toBe(firstStorage);
 		expect(request?.filename).toBe('one.pdf');
 	});
@@ -277,10 +302,12 @@ describe('hostedParse', () => {
 	it('cancels queued parsing in the scrape pool rather than the Exa pool', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-pool-cancel' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const storageId = await storeBlob(t, { bytes: 'pdf', type: 'application/pdf' });
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
@@ -299,15 +326,18 @@ describe('hostedParse', () => {
 	it('rejects uploads over 50 MB and deletes the temporary blob', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-size-secret' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const storageId = await storeBlob(t, {
 			bytes: 'x',
 			type: 'application/pdf',
 			size: 50_000_001
 		});
+
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
 			requestId: created.requestId,
@@ -332,10 +362,12 @@ describe('hostedParse', () => {
 	it('requires the owning execution secret for getResult', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-result-auth-secret' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		await expect(
 			run.asUser.query(api.hostedParse.getResult, {
 				runId: run.runId,
@@ -348,13 +380,16 @@ describe('hostedParse', () => {
 	it('stores a result URL and never writes billing or usage rows', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-success-secret' });
+
 		const usageBefore = await t.run(async (ctx) => {
 			return await ctx.db.query('threadUsageEvents').take(32);
 		});
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const inputId = await storeBlob(t, { bytes: '%PDF-1.4', type: 'application/pdf' });
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
@@ -362,32 +397,40 @@ describe('hostedParse', () => {
 			storageId: inputId,
 			filename: 'report.pdf'
 		});
+
 		const providerFetch = vi.fn(async (url: string, options?: RequestInit) => {
 			if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
 			expect(options?.method).toBe('POST');
 			expect(options?.headers).toEqual({ Authorization: 'Bearer fc-test-key' });
 			const form = options?.body;
+
 			if (!(form instanceof FormData)) throw new Error('Expected multipart form');
 			const file = form.get('file');
+
 			if (!(file instanceof File)) throw new Error('Expected uploaded file');
 			expect(file.name).toBe('report.pdf');
 			expect(await file.text()).toBe('%PDF-1.4');
 			const parseOptions = form.get('options');
+
 			if (!(parseOptions instanceof Blob)) throw new Error('Expected JSON options');
 			expect(JSON.parse(await parseOptions.text())).toEqual({
 				formats: ['markdown'],
 				parsers: [{ type: 'pdf', mode: 'auto' }],
 				timeout: 300_000
 			});
+
 			return Response.json({ success: true, data: { markdown: '# Report' } });
 		});
+
 		vi.stubGlobal('fetch', providerFetch);
+
 		const result = await t.action(internal.hostedParseActions.executeHostedParse, {
 			requestId: created.requestId,
 			jobId: run.jobId,
 			runId: run.runId,
 			claimId: run.claimId
 		});
+
 		const resultId = result.resultStorageId!;
 		expect(resultId).toBeDefined();
 		expect(providerFetch.mock.calls.filter(([url]) => url === FIRECRAWL_PARSE_URL)).toHaveLength(1);
@@ -402,11 +445,13 @@ describe('hostedParse', () => {
 			},
 			result: { kind: 'success', returnValue: { resultStorageId: resultId } }
 		});
+
 		const completed = await run.asUser.query(api.hostedParse.getResult, {
 			runId: run.runId,
 			executionSecret: run.executionSecret,
 			requestId: created.requestId
 		});
+
 		expect(completed.status).toBe('completed');
 		expect(completed.url).toEqual(expect.any(String));
 		await t.mutation(internal.hostedParse.completeHostedParse, {
@@ -430,10 +475,12 @@ describe('hostedParse', () => {
 	it('rejects registered attachments and another parse input without deleting them', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'storage-owner' });
+
 		const created = await t.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const attachmentId = await storeBlob(t, { bytes: 'keep' });
 		await t.run(async (ctx) => {
 			await ctx.db.insert('imageUploads', {
@@ -455,10 +502,12 @@ describe('hostedParse', () => {
 		).rejects.toThrow('dedicated temporary upload');
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', attachmentId))).not.toBeNull();
 		const other = await seedParseJob(t, { executionSecret: 'other-storage-owner' });
+
 		const otherRequest = await t.mutation(api.hostedParse.createUpload, {
 			...auth(other),
 			jobId: other.jobId
 		});
+
 		const inputId = await storeBlob(t, { bytes: 'input' });
 		await t.mutation(api.hostedParse.start, {
 			...auth(other),
@@ -485,10 +534,12 @@ describe('hostedParse', () => {
 		async (mode) => {
 			const t = initConvexTest();
 			const run = await seedParseJob(t, { executionSecret: `stale-${mode}` });
+
 			const created = await t.mutation(api.hostedParse.createUpload, {
 				...auth(run),
 				jobId: run.jobId
 			});
+
 			const inputId = await storeBlob(t, { bytes: 'input' });
 			await t.mutation(api.hostedParse.start, {
 				...auth(run),
@@ -496,11 +547,14 @@ describe('hostedParse', () => {
 				storageId: inputId,
 				filename: 'input.pdf'
 			});
+
 			const resultId =
 				mode === 'skipped-result' ? undefined : await storeBlob(t, { bytes: 'late' });
+
 			await t.run(async (ctx) => {
 				if (mode === 'new-claim')
 					await patchRunExecution(ctx, run.runId, { claimId: 'replacement' });
+
 				if (mode === 'settled-job')
 					await ctx.db.patch('executorJobs', run.jobId, { status: 'failed' });
 			});
@@ -521,6 +575,7 @@ describe('hostedParse', () => {
 			const request = await t.run((ctx) => ctx.db.get('hostedParseRequests', created.requestId));
 			expect(request?.status).toBe('failed');
 			expect(await t.run((ctx) => ctx.db.system.get('_storage', inputId))).toBeNull();
+
 			if (resultId)
 				expect(await t.run((ctx) => ctx.db.system.get('_storage', resultId))).toBeNull();
 		}
@@ -529,10 +584,12 @@ describe('hostedParse', () => {
 	it('records provider failures without retrying or billing', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-provider-error-secret' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const inputId = await storeBlob(t, { bytes: '%PDF', type: 'application/pdf' });
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
@@ -570,10 +627,12 @@ describe('hostedParse', () => {
 	it('deletes late results from cancelled callbacks and does not complete the job', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-cancel-secret' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const inputId = await storeBlob(t, { bytes: '%PDF', type: 'application/pdf' });
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
@@ -614,10 +673,12 @@ describe('hostedParse', () => {
 	it('expires temporary parse blobs without deleting user attachments', async () => {
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-ttl-secret' });
+
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
 			...auth(run),
 			jobId: run.jobId
 		});
+
 		const inputId = await storeBlob(t, { bytes: '%PDF', type: 'application/pdf' });
 		await run.asUser.mutation(api.hostedParse.start, {
 			...auth(run),
@@ -626,6 +687,7 @@ describe('hostedParse', () => {
 			filename: 'ttl.pdf'
 		});
 		const resultId = await storeBlob(t, { bytes: '# Kept attachment', type: 'text/markdown' });
+
 		const attachmentId = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['user-bytes']));
 			await ctx.db.insert('imageUploads', {
@@ -636,8 +698,10 @@ describe('hostedParse', () => {
 				size: 10,
 				attached: true
 			});
+
 			return storageId;
 		});
+
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 		await t.mutation(internal.hostedParse.completeHostedParse, {
 			workId: workId(stored),

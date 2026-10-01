@@ -11,6 +11,7 @@ export function resolveTheme(preference: SprocketTheme | null | undefined): Spro
 }
 
 let entryThemeDepth = 0;
+
 let themeBeforeEntry: SprocketTheme | null = null;
 
 function writeTheme(theme: SprocketTheme): void {
@@ -26,6 +27,7 @@ export function applyTheme(theme: SprocketTheme): void {
 	if (entryThemeDepth > 0) {
 		// Keep entry shells light; remember the preferred theme for restore.
 		themeBeforeEntry = theme;
+
 		return;
 	}
 
@@ -44,10 +46,12 @@ export function forceEntryTheme(): () => void {
 			: resolveTheme(null);
 		writeTheme('light');
 	}
+
 	entryThemeDepth += 1;
 
 	return () => {
 		entryThemeDepth = Math.max(0, entryThemeDepth - 1);
+
 		if (entryThemeDepth === 0) {
 			const restore = themeBeforeEntry ?? resolveTheme(null);
 			themeBeforeEntry = null;

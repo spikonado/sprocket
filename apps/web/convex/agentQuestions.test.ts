@@ -13,6 +13,7 @@ import {
 async function startRun(t: ReturnType<typeof initConvexTest>, threadId: Id<'threadRecords'>) {
 	const asUser = t.withIdentity({ subject: 'user_alice' });
 	const executionSecret = 'question-secret';
+
 	const created = await createQueuedRun(
 		t,
 		asUser,
@@ -21,6 +22,7 @@ async function startRun(t: ReturnType<typeof initConvexTest>, threadId: Id<'thre
 		executionSecret,
 		'Need a choice'
 	);
+
 	const claimId = 'claim-question';
 	await t.mutation(api.agentRuntime.start, {
 		runId: created.runId,
@@ -38,6 +40,7 @@ async function startRun(t: ReturnType<typeof initConvexTest>, threadId: Id<'thre
 		},
 		executionSecret
 	});
+
 	return { asUser, executionSecret, claimId, runId: created.runId };
 }
 
@@ -69,6 +72,7 @@ describe('agentQuestions', () => {
 			timeoutMs: 5_000,
 			executionSecret
 		});
+
 		expect(first.options.map((option) => option.id)).toEqual([
 			'one',
 			'two',
@@ -87,6 +91,7 @@ describe('agentQuestions', () => {
 		const head = await asUser.query(api.agentQuestions.headPendingForThread, {
 			threadId
 		});
+
 		expect(head?.questionId).toBe(first.questionId);
 
 		await expect(
@@ -147,6 +152,7 @@ describe('agentQuestions', () => {
 			questionId: timed.questionId,
 			executionSecret
 		});
+
 		expect(timedSnapshot?.status).toBe('timedOut');
 
 		vi.useRealTimers();
@@ -177,6 +183,7 @@ describe('agentQuestions', () => {
 			questionId: created.questionId,
 			executionSecret
 		});
+
 		expect(snapshot?.status).toBe('cancelled');
 	});
 
@@ -228,11 +235,13 @@ describe('agentQuestions', () => {
 			options: [{ id: 'postgres', label: 'PostgreSQL' }],
 			executionSecret
 		});
+
 		await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
 			questionId: consumed.questionId,
 			optionId: 'postgres'
 		});
+
 		const pending = await t.mutation(api.agentQuestions.create, {
 			runId,
 			claimId,
@@ -274,6 +283,7 @@ describe('agentQuestions', () => {
 			options: [{ id: 'yes', label: 'Yes' }],
 			executionSecret
 		});
+
 		const second = await t.mutation(api.agentQuestions.create, {
 			runId,
 			claimId,
@@ -295,11 +305,13 @@ describe('agentQuestions', () => {
 			questionId: first.questionId,
 			status: 'pending'
 		});
+
 		const firstAnswer = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
 			questionId: first.questionId,
 			optionId: 'yes'
 		});
+
 		expect(firstAnswer).toMatchObject({
 			question: {
 				status: 'answered',
@@ -346,6 +358,7 @@ describe('agentQuestions', () => {
 			timeoutMs: 1_000,
 			executionSecret
 		});
+
 		const next = await t.mutation(api.agentQuestions.create, {
 			runId,
 			claimId,

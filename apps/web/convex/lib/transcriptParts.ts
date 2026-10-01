@@ -37,6 +37,7 @@ export async function getPromptPart(
 			query.eq('threadId', threadId).eq('sourceKey', promptSourceKey(runId))
 		)
 		.unique();
+
 	return part?.kind === 'prompt' && part.runId === runId && part.prompt ? part : null;
 }
 
@@ -78,18 +79,23 @@ export async function getOrCreateTranscriptState(
 	args: { threadId: Id<'threadRecords'>; userId: string }
 ): Promise<Doc<'threadTranscriptStates'>> {
 	const existing = await getTranscriptState(ctx, args.threadId);
+
 	if (existing) {
 		return existing;
 	}
+
 	const stateId = await ctx.db.insert('threadTranscriptStates', {
 		threadId: args.threadId,
 		userId: args.userId,
 		totalParts: 0
 	});
+
 	const created = await ctx.db.get('threadTranscriptStates', stateId);
+
 	if (!created) {
 		throw new Error('Failed to create transcript state.');
 	}
+
 	return created;
 }
 
@@ -120,6 +126,7 @@ type TranscriptPartInsert = {
 
 export function sameValue(left: Value | undefined, right: Value | undefined): boolean {
 	if (Object.is(left, right)) return true;
+
 	if (Array.isArray(left) || Array.isArray(right)) {
 		return (
 			Array.isArray(left) &&
@@ -128,20 +135,25 @@ export function sameValue(left: Value | undefined, right: Value | undefined): bo
 			left.every((value, index) => sameValue(value, right[index]))
 		);
 	}
+
 	if (left === null || right === null || !(left instanceof Object) || !(right instanceof Object)) {
 		return false;
 	}
+
 	if (left instanceof ArrayBuffer || right instanceof ArrayBuffer) {
 		if (!(left instanceof ArrayBuffer) || !(right instanceof ArrayBuffer)) return false;
 		const leftBytes = new Uint8Array(left);
 		const rightBytes = new Uint8Array(right);
+
 		return (
 			leftBytes.length === rightBytes.length &&
 			leftBytes.every((value, index) => value === rightBytes[index])
 		);
 	}
+
 	const leftEntries = Object.entries(left);
 	const rightEntries = Object.entries(right);
+
 	return (
 		leftEntries.length === rightEntries.length &&
 		leftEntries.every(([key, value]) =>
@@ -154,11 +166,13 @@ export function sameValue(left: Value | undefined, right: Value | undefined): bo
 
 function promptWithoutLegacyUploadIds(prompt: TranscriptPromptBody | undefined) {
 	if (!prompt) return undefined;
+
 	return {
 		...prompt,
 		imageUploads: prompt.imageUploads.map((upload) => {
 			const current = { ...upload };
 			delete current.imageUploadId;
+
 			return current;
 		})
 	};
@@ -169,12 +183,14 @@ export async function appendTranscriptPart(
 	args: AppendTranscriptPartArgs
 ): Promise<{ part: Doc<'threadTranscriptParts'>; inserted: boolean }> {
 	const completion = args.completion ? normalizeCompletionTiming(args.completion) : undefined;
+
 	const existing = await ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_and_sourceKey', (query) =>
 			query.eq('threadId', args.threadId).eq('sourceKey', args.sourceKey)
 		)
 		.unique();
+
 	if (existing) {
 		const expected = {
 			kind: args.kind,
@@ -184,6 +200,7 @@ export async function appendTranscriptPart(
 			tool: args.tool,
 			work: args.work
 		};
+
 		const persisted = {
 			kind: existing.kind,
 			runId: existing.runId,
@@ -192,9 +209,11 @@ export async function appendTranscriptPart(
 			tool: existing.tool,
 			work: existing.work
 		};
+
 		if (!sameValue(persisted, expected)) {
 			throw new Error('Conflicting transcript part retry.');
 		}
+
 		return { part: existing, inserted: false };
 	}
 
@@ -202,7 +221,9 @@ export async function appendTranscriptPart(
 		threadId: args.threadId,
 		userId: args.userId
 	});
+
 	const number = state.totalParts;
+
 	const part: TranscriptPartInsert = {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -212,15 +233,20 @@ export async function appendTranscriptPart(
 		runId: args.runId,
 		work: args.work
 	};
+
 	if (args.prompt) part.prompt = args.prompt;
+
 	if (completion) part.completion = completion;
+
 	if (args.tool) part.tool = args.tool;
 	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
 	const inserted = await ctx.db.get('threadTranscriptParts', partId);
+
 	if (!inserted) {
 		throw new Error('Failed to create transcript part.');
 	}
+
 	return { part: inserted, inserted: true };
 }
 
@@ -232,6 +258,7 @@ export async function loadTranscriptPartsByNumbers(
 	if (numbers.length > MAX_TRANSCRIPT_PARTS_PER_QUERY) {
 		throw new Error(`Request at most ${MAX_TRANSCRIPT_PARTS_PER_QUERY} transcript parts.`);
 	}
+
 	const unique = [...new Set(numbers)].filter((value) => Number.isInteger(value) && value >= 0);
 	const byNumber = new Map<number, Doc<'threadTranscriptParts'>>();
 	await Promise.all(
@@ -242,13 +269,16 @@ export async function loadTranscriptPartsByNumbers(
 					query.eq('threadId', threadId).eq('number', number)
 				)
 				.unique();
+
 			if (part) {
 				byNumber.set(number, part);
 			}
 		})
 	);
+
 	return numbers.flatMap((number) => {
 		const part = byNumber.get(number);
+
 		return part ? [part] : [];
 	});
 }
@@ -260,13 +290,16 @@ export async function attachmentMetaForUploads(
 	if (!imageUploadIds || imageUploadIds.length === 0) {
 		return [];
 	}
+
 	return (
 		await Promise.all(
 			imageUploadIds.map(async (imageUploadId) => {
 				const upload = await ctx.db.get('imageUploads', imageUploadId);
+
 				if (!upload) {
 					return null;
 				}
+
 				return {
 					name: upload.name,
 					mediaType: upload.mediaType,
@@ -287,12 +320,15 @@ export async function hydrateTranscriptPartUrls(
 			if (!part.prompt || part.prompt.imageUploads.length === 0) {
 				return part;
 			}
+
 			const imageUploads = await Promise.all(
 				part.prompt.imageUploads.map(async (upload) => {
 					const url = await ctx.storage.getUrl(upload.storageId);
+
 					return url ? { ...upload, url } : upload;
 				})
 			);
+
 			return {
 				...part,
 				prompt: { ...part.prompt, imageUploads }
@@ -308,6 +344,7 @@ export function stripLegacyAttachmentImageUploadIds(
 		if (!part.prompt || part.prompt.imageUploads.length === 0) {
 			return part;
 		}
+
 		return {
 			...part,
 			prompt: {
@@ -315,6 +352,7 @@ export function stripLegacyAttachmentImageUploadIds(
 				imageUploads: part.prompt.imageUploads.map((upload) => {
 					const attachment = { ...upload };
 					delete attachment.imageUploadId;
+
 					return attachment;
 				})
 			}

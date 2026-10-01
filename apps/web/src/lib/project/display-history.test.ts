@@ -52,7 +52,9 @@ describe('DisplayHistory', () => {
 			text: 'Answer',
 			parts: []
 		};
+
 		let resolve!: (value: TranscriptDisplayPage) => void;
+
 		const fetch = vi
 			.fn()
 			.mockImplementationOnce(
@@ -65,6 +67,7 @@ describe('DisplayHistory', () => {
 				...page([row(0)]),
 				persistedStreams: [{ runId: live.runId, streamId: 'late' }]
 			});
+
 		const history = new DisplayHistory(fetch, () => {});
 		const initial = history.refresh();
 		history.setOverlays([live]);
@@ -86,12 +89,14 @@ describe('DisplayHistory', () => {
 			text: 'Answer',
 			parts: []
 		}));
+
 		const fetch = vi.fn(
 			async (request: { streams?: TranscriptDisplayPage['persistedStreams'] }) => ({
 				...page([row(0)]),
 				persistedStreams: request.streams ?? []
 			})
 		);
+
 		const history = new DisplayHistory(fetch, () => {});
 		history.setOverlays(overlays);
 		await vi.waitFor(() => expect(history.unpersisted(overlays)).toEqual([]));
@@ -109,8 +114,10 @@ describe('DisplayHistory', () => {
 			text: 'Answer',
 			parts: []
 		};
+
 		const persistedStreams = [{ runId: live.runId, streamId: 'live' }];
 		let resolve!: (value: TranscriptDisplayPage) => void;
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(40)], 40))
@@ -122,6 +129,7 @@ describe('DisplayHistory', () => {
 					})
 			)
 			.mockResolvedValueOnce(page([row(1)]));
+
 		const history = new DisplayHistory(fetch, () => {});
 		history.setOverlays([live]);
 		await vi.waitFor(() => expect(history.visibleOverlays([live])).toEqual([live]));
@@ -145,6 +153,7 @@ describe('DisplayHistory', () => {
 				),
 				revision: 101
 			});
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.refresh();
@@ -154,6 +163,7 @@ describe('DisplayHistory', () => {
 
 	it('restores an exhausted cursor when hydration adds rows below the loaded window', async () => {
 		const added = { ...row(5, 101), kind: 'text' as const, text: 'Downloaded later' };
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(60)], 60))
@@ -164,6 +174,7 @@ describe('DisplayHistory', () => {
 				changes: [{ id: added.id, row: added }]
 			})
 			.mockResolvedValueOnce({ ...page([added]), revision: 101 });
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.loadOlder();
@@ -190,6 +201,7 @@ describe('DisplayHistory', () => {
 			text: 'Answer',
 			parts: [{ type: 'text', id: 'answer', text: 'Answer' }]
 		};
+
 		const answer = { ...row(20), kind: 'text' as const, text: 'Answer' };
 		const fetch = vi.fn().mockResolvedValue(page([row(0)]));
 		const history = new DisplayHistory(fetch, () => {});
@@ -222,6 +234,7 @@ describe('DisplayHistory', () => {
 			text: 'Answer',
 			parts: []
 		};
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(0)]))
@@ -229,6 +242,7 @@ describe('DisplayHistory', () => {
 				...page([row(0)]),
 				persistedStreams: [{ runId: live.runId, streamId: 'late' }]
 			});
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		history.setOverlays([live]);
@@ -242,6 +256,7 @@ describe('DisplayHistory', () => {
 			.fn()
 			.mockResolvedValueOnce(page([row(50)], 50))
 			.mockResolvedValueOnce({ ...page([row(1, 1)]), replicaId: 'rebuilt', revision: 1 });
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.refresh();
@@ -252,6 +267,7 @@ describe('DisplayHistory', () => {
 
 	it('inserts background-downloaded text into an already loaded older window', async () => {
 		const added = { ...row(25, 101), kind: 'text' as const, text: 'Downloaded later' };
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(10), row(50)], 10))
@@ -260,6 +276,7 @@ describe('DisplayHistory', () => {
 				revision: 101,
 				changes: [{ id: added.id, row: added }]
 			});
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.refresh();
@@ -277,6 +294,7 @@ describe('DisplayHistory', () => {
 			text: 'Answer',
 			parts: [{ type: 'text', id: 'answer', text: 'Answer' }]
 		};
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([{ ...row(0), provisional: true }]))
@@ -284,6 +302,7 @@ describe('DisplayHistory', () => {
 				...page([row(1)]),
 				persistedStreams: [{ runId: live.runId, streamId: live.streamId }]
 			});
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		expect(history.unpersisted([live])).toEqual([live]);
@@ -296,11 +315,14 @@ describe('DisplayHistory', () => {
 
 	it('retries a failed initial load and clears the error after recovery', async () => {
 		vi.useFakeTimers();
+
 		const fetch = vi
 			.fn()
 			.mockRejectedValueOnce(new Error('offline'))
 			.mockResolvedValue(page([row(1)]));
+
 		const history = new DisplayHistory(fetch, () => {});
+
 		try {
 			await history.refresh();
 			expect(history.error).toBe('Could not load conversation history.');
@@ -319,6 +341,7 @@ describe('DisplayHistory', () => {
 
 	it('updates and deletes loaded sections outside the recent window', async () => {
 		const updated = row(1, 200);
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(40)], 40))
@@ -331,6 +354,7 @@ describe('DisplayHistory', () => {
 					{ id: row(2).id, row: null }
 				]
 			});
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.loadOlder();
@@ -344,6 +368,7 @@ describe('DisplayHistory', () => {
 		vi.useFakeTimers();
 		let resolveOlder!: (page: TranscriptDisplayPage) => void;
 		const current = { ...page([row(40, 101)], 40), revision: 102 };
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(40)], 40))
@@ -356,7 +381,9 @@ describe('DisplayHistory', () => {
 			.mockResolvedValueOnce(current)
 			.mockResolvedValueOnce(current)
 			.mockResolvedValueOnce({ ...page([row(2, 102)]), revision: 102 });
+
 		const history = new DisplayHistory(fetch, () => {});
+
 		try {
 			await history.refresh();
 			const older = history.loadOlder();
@@ -378,10 +405,13 @@ describe('DisplayHistory', () => {
 	it('waits between older indexing retries even when the recent page is ready', async () => {
 		vi.useFakeTimers();
 		let indexing = true;
+
 		const fetch = vi.fn(async ({ before }: { before?: number }) =>
 			before === undefined ? page([row(40)], 40) : { ...page(indexing ? [] : [row(1)]), indexing }
 		);
+
 		const history = new DisplayHistory(fetch, () => {});
+
 		try {
 			await history.refresh();
 			await history.loadOlder();
@@ -406,17 +436,21 @@ describe('DisplayHistory', () => {
 		'retries failed older requests unless stopped, stopped=%s',
 		async (stop) => {
 			vi.useFakeTimers();
+
 			const fetch = vi
 				.fn()
 				.mockResolvedValueOnce(page([row(40)], 40))
 				.mockRejectedValueOnce(new Error('offline'))
 				.mockResolvedValueOnce(page([row(40)], 40))
 				.mockResolvedValueOnce(page([row(1)]));
+
 			const history = new DisplayHistory(fetch, () => {});
+
 			try {
 				await history.refresh();
 				await history.loadOlder();
 				expect(history.stale).toBe(true);
+
 				if (stop) history.stop();
 				await vi.advanceTimersByTimeAsync(2_000);
 				expect(fetch).toHaveBeenCalledTimes(stop ? 2 : 4);
@@ -431,6 +465,7 @@ describe('DisplayHistory', () => {
 
 	it('does not let an overlapping older request overwrite a cursor moved by refresh', async () => {
 		let resolveOlder!: (page: TranscriptDisplayPage) => void;
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(40)], 40))
@@ -441,6 +476,7 @@ describe('DisplayHistory', () => {
 					})
 			)
 			.mockResolvedValueOnce(page([row(20), row(40)], 20));
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		const older = history.loadOlder();
@@ -464,6 +500,7 @@ describe('DisplayHistory', () => {
 				changes: [{ id: row(1).id, row: row(1, 101) }]
 			})
 			.mockResolvedValueOnce({ ...page([row(1, 101)]), revision: 102 });
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.refresh();
@@ -479,6 +516,7 @@ describe('DisplayHistory', () => {
 			.mockResolvedValueOnce(page([row(40)], 40))
 			.mockResolvedValueOnce(page([row(0)]))
 			.mockResolvedValueOnce(page([row(40)], 40));
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		const summary = history.messages[0];
@@ -499,6 +537,7 @@ describe('DisplayHistory', () => {
 			.fn()
 			.mockResolvedValueOnce(page([row(1), row(2)]))
 			.mockResolvedValueOnce(page([row(2), row(3)]));
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		await history.refresh();
@@ -508,6 +547,7 @@ describe('DisplayHistory', () => {
 
 	it('discards an older request after a refresh replaces a history gap', async () => {
 		let resolveOlder!: (page: TranscriptDisplayPage) => void;
+
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(page([row(5)], 5))
@@ -518,6 +558,7 @@ describe('DisplayHistory', () => {
 					})
 			)
 			.mockResolvedValueOnce(page([row(90)], 90));
+
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		const older = history.loadOlder();

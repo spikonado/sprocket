@@ -93,10 +93,13 @@ export const insertMandate = internalMutation({
 	handler: async (ctx, args) => {
 		try {
 			const description = args.description.trim();
+
 			if (!description) {
 				throw new Error('Mandate description is required.');
 			}
+
 			const now = Date.now();
+
 			return await ctx.db.insert('mandates', {
 				userId: args.userId,
 				pravaSessionId: args.pravaSessionId,
@@ -124,6 +127,7 @@ export const getOwnedMandate = internalQuery({
 	returns: v.union(mandateDoc, v.null()),
 	handler: async (ctx, args) => {
 		const mandate = await ctx.db.get('mandates', args.mandateId);
+
 		return mandate?.userId === args.userId ? mandate : null;
 	}
 });
@@ -140,8 +144,11 @@ export const getUserEmail = internalQuery({
 			.query('users')
 			.withIndex('by_subject', (query) => query.eq('subject', args.userId))
 			.collect();
+
 		const primary = pickPrimaryUser(rows);
+
 		if (!primary) throw new Error(`No user record for ${args.userId}.`);
+
 		return primary.email;
 	}
 });
@@ -171,22 +178,31 @@ export const syncMandate = internalMutation({
 	handler: async (ctx, args) => {
 		try {
 			const mandate = await ctx.db.get('mandates', args.mandateId);
+
 			if (!mandate || mandate.userId !== args.userId) {
 				throw new Error('Mandate not found.');
 			}
+
 			const patch: MandateSyncPatch = { updatedAt: Date.now() };
+
 			if (args.pravaMandateId !== undefined && !mandate.pravaMandateId) {
 				patch.pravaMandateId = args.pravaMandateId;
 			}
+
 			// Never rewind a terminal status.
 			const terminal = new Set(['consumed', 'cancelled', 'expired']);
+
 			if (args.status && !(terminal.has(mandate.status) && args.status !== mandate.status)) {
 				patch.status = args.status;
 			}
+
 			if (args.remaining !== undefined) patch.remaining = args.remaining;
+
 			if (args.validUntil !== undefined) patch.validUntil = args.validUntil;
+
 			if (args.renewsAt !== undefined) patch.renewsAt = args.renewsAt;
 			await ctx.db.patch('mandates', args.mandateId, patch);
+
 			return null;
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -236,19 +252,24 @@ export const reserveCharge = internalMutation({
 						query.eq('mandateId', args.mandateId).eq('reference', reference)
 					)
 					.take(2);
+
 				if (matches.length > 1) {
 					throw new Error('Charge reference matches multiple existing charges.');
 				}
+
 				const existing = matches[0];
+
 				if (existing) {
 					if (existing.userId !== args.userId) {
 						throw new Error('Charge not found.');
 					}
+
 					if (existing.amount !== amount || existing.currency !== args.currency) {
 						throw new Error(
 							'Charge reference was already used with a different amount or currency.'
 						);
 					}
+
 					if (existing.pravaTransactionId) {
 						return {
 							kind: 'existing' as const,
@@ -256,6 +277,7 @@ export const reserveCharge = internalMutation({
 							transactionId: existing.pravaTransactionId
 						};
 					}
+
 					if (existing.providerRequestedAt !== undefined) {
 						// Ambiguous delivery: the provider POST may have committed.
 						// Never reclaim for another charge. That would double-bill.
@@ -263,6 +285,7 @@ export const reserveCharge = internalMutation({
 							'A previous charge attempt for this reference may have already been submitted to Prava; refusing to charge again.'
 						);
 					}
+
 					if (existing.status === 'failed') {
 						await ctx.db.patch('mandateCharges', existing._id, {
 							runId: args.runId,
@@ -273,14 +296,17 @@ export const reserveCharge = internalMutation({
 							chargingStartedAt: now,
 							updatedAt: now
 						});
+
 						return { kind: 'reserved' as const, chargeId: existing._id };
 					}
+
 					if (
 						existing.chargingStartedAt !== undefined &&
 						now - existing.chargingStartedAt <= CHARGE_CLAIM_STALE_MS
 					) {
 						return { kind: 'inFlight' as const };
 					}
+
 					// Abandoned reservation that never reached Prava: reclaim.
 					await ctx.db.patch('mandateCharges', existing._id, {
 						runId: args.runId,
@@ -289,6 +315,7 @@ export const reserveCharge = internalMutation({
 						chargingStartedAt: now,
 						updatedAt: now
 					});
+
 					return { kind: 'reserved' as const, chargeId: existing._id };
 				}
 			}
@@ -306,6 +333,7 @@ export const reserveCharge = internalMutation({
 				createdAt: now,
 				updatedAt: now
 			});
+
 			return { kind: 'reserved' as const, chargeId };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -322,6 +350,7 @@ export const markChargeProviderRequested = internalMutation({
 			providerRequestedAt: Date.now(),
 			updatedAt: Date.now()
 		});
+
 		return null;
 	}
 });
@@ -341,6 +370,7 @@ export const completeCharge = internalMutation({
 			chargingStartedAt: undefined,
 			updatedAt: Date.now()
 		});
+
 		return null;
 	}
 });
@@ -350,6 +380,7 @@ export const releaseChargeReservation = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 		if (!charge.pravaTransactionId) {
 			// Drop the live claim so callers aren't stuck in inFlight, but keep
 			// providerRequestedAt, since an ambiguous POST must not be reclaimed.
@@ -358,6 +389,7 @@ export const releaseChargeReservation = internalMutation({
 				updatedAt: Date.now()
 			});
 		}
+
 		return null;
 	}
 });
@@ -367,6 +399,7 @@ export const getOwnedCharge = internalQuery({
 	returns: v.union(chargeDoc, v.null()),
 	handler: async (ctx, args) => {
 		const charge = await ctx.db.get('mandateCharges', args.chargeId);
+
 		return charge?.userId === args.userId ? charge : null;
 	}
 });
@@ -380,17 +413,20 @@ export const updateChargeStatus = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 		if (!charge.reportedAt) {
 			const chargePatch: ChargeStatusPatch = {
 				status: args.status,
 				chargingStartedAt: undefined,
 				updatedAt: Date.now()
 			};
+
 			// Definitive provider failure (or local fail); allow a later
 			// same-reference retry to reclaim the row.
 			if (args.status === 'failed') chargePatch.providerRequestedAt = undefined;
 			await ctx.db.patch('mandateCharges', args.chargeId, chargePatch);
 		}
+
 		return null;
 	}
 });
@@ -408,9 +444,11 @@ export const claimChargeReport = internalMutation({
 	handler: async (ctx, args) => {
 		try {
 			const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 			if (charge.reportedAt) {
 				return 'already';
 			}
+
 			// The first-claimed outcome is immutable. A conflicting report must
 			// never be sent. A crash between the provider POST and the local
 			// finalize would otherwise let a retry overwrite the outcome and POST
@@ -420,6 +458,7 @@ export const claimChargeReport = internalMutation({
 					`Charge already has a ${charge.reportOutcome} report in progress; the outcome cannot be changed.`
 				);
 			}
+
 			if (charge.reportingStartedAt) {
 				// A claim newer than the report window belongs to a live concurrent
 				// caller and has not completed, so say so rather than claim success. An
@@ -429,11 +468,13 @@ export const claimChargeReport = internalMutation({
 					return 'inFlight';
 				}
 			}
+
 			await ctx.db.patch('mandateCharges', args.chargeId, {
 				reportingStartedAt: Date.now(),
 				reportOutcome: args.outcome,
 				updatedAt: Date.now()
 			});
+
 			return 'claimed';
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -453,14 +494,17 @@ export const releaseChargeReport = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 		if (!charge.reportedAt) {
 			const reportPatch: ChargeReportReleasePatch = {
 				reportingStartedAt: undefined,
 				updatedAt: Date.now()
 			};
+
 			if (args.clearOutcome) reportPatch.reportOutcome = undefined;
 			await ctx.db.patch('mandateCharges', args.chargeId, reportPatch);
 		}
+
 		return null;
 	}
 });
@@ -474,6 +518,7 @@ export const finishChargeReport = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 		if (!charge.reportedAt) {
 			const now = Date.now();
 			await ctx.db.patch('mandateCharges', args.chargeId, {
@@ -484,6 +529,7 @@ export const finishChargeReport = internalMutation({
 				updatedAt: now
 			});
 		}
+
 		return null;
 	}
 });
@@ -498,22 +544,27 @@ export const startChargeReportRetrier = internalMutation({
 	returns: v.string(),
 	handler: async (ctx, args): Promise<string> => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 		const postArgs: ChargeReportPostArgs = {
 			chargeId: charge._id,
 			userId: args.userId,
 			outcome: args.outcome
 		};
+
 		if (args.amountPaid !== undefined) postArgs.amountPaid = args.amountPaid;
+
 		const retrierRunId = await reportRetrier.run(
 			ctx,
 			internal.payments.postChargeReport,
 			postArgs,
 			{ onComplete: internal.payments.completeRetriedChargeReport }
 		);
+
 		await ctx.db.patch('mandateCharges', charge._id, {
 			reportRetrierRunId: retrierRunId,
 			updatedAt: Date.now()
 		});
+
 		return retrierRunId;
 	}
 });
@@ -531,23 +582,29 @@ export const postChargeReport = internalAction({
 			chargeId: args.chargeId,
 			userId: args.userId
 		});
+
 		if (!charge || charge.reportedAt) {
 			return null;
 		}
+
 		if (!charge.pravaTransactionId) {
 			throw new Error('Prava transaction id is unavailable.');
 		}
+
 		const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
 			mandateId: charge.mandateId,
 			userId: args.userId
 		});
+
 		if (!mandate?.pravaMandateId) {
 			throw new Error('Prava mandate id is unavailable.');
 		}
+
 		const reportBody: MandateReportRequest = {
 			txn_status: args.outcome === 'approved' ? 'APPROVED' : 'DECLINED',
 			txn_type: 'PURCHASE'
 		};
+
 		if (args.amountPaid !== undefined) reportBody.amount_paid = args.amountPaid;
 		await pravaRequest(
 			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/charges/${encodeURIComponent(charge.pravaTransactionId)}/report`,
@@ -556,6 +613,7 @@ export const postChargeReport = internalAction({
 				body: JSON.stringify(reportBody)
 			}
 		);
+
 		return null;
 	}
 });
@@ -565,13 +623,16 @@ export const completeRetriedChargeReport = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const retrierRunId = args.runId;
+
 		const charge = await ctx.db
 			.query('mandateCharges')
 			.withIndex('by_reportRetrierRunId', (query) => query.eq('reportRetrierRunId', retrierRunId))
 			.unique();
+
 		if (!charge) {
 			return null;
 		}
+
 		if (args.result.type === 'success' && charge.reportOutcome) {
 			await ctx.db.patch('mandateCharges', charge._id, {
 				status: statusForOutcome(charge.reportOutcome),
@@ -580,16 +641,20 @@ export const completeRetriedChargeReport = internalMutation({
 				reportedAt: charge.reportedAt ?? Date.now(),
 				updatedAt: Date.now()
 			});
+
 			return null;
 		}
+
 		if (!charge.reportedAt) {
 			const reportPatch: ChargeReportReleasePatch = {
 				reportingStartedAt: undefined,
 				reportRetrierRunId: undefined,
 				updatedAt: Date.now()
 			};
+
 			await ctx.db.patch('mandateCharges', charge._id, reportPatch);
 		}
+
 		return null;
 	}
 });
@@ -627,11 +692,14 @@ async function createMandateSetup(
 	// Generic (any-scope) mandates are one-time only; Prava still needs a
 	// purchase_context entry, so name a placeholder merchant for it.
 	type MerchantDetails = { name: string; url: string; country_code_iso2: string };
+
 	let merchantDetails: MerchantDetails;
+
 	if (args.scope === 'listed') {
 		if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
 			throw new Error('Listed-scope mandates require merchant name, URL, and country.');
 		}
+
 		merchantDetails = {
 			name: args.merchantName,
 			url: args.merchantUrl,
@@ -674,8 +742,11 @@ async function createMandateSetup(
 					recurring_frequency: args.frequency,
 					merchant_scope: args.scope
 				};
+
 				if (args.maxCharges !== undefined) setup.max_charges = args.maxCharges;
+
 				if (args.validUntil !== undefined) setup.valid_until = args.validUntil;
+
 				return setup;
 			})()
 		})
@@ -694,6 +765,7 @@ async function createMandateSetup(
 		description: args.description,
 		approvalUrl: response.iframe_url
 	});
+
 	return {
 		mandateId,
 		approvalUrl: response.iframe_url,
@@ -712,6 +784,7 @@ export const mandateSetup = action({
 	handler: async (ctx, args): Promise<Infer<typeof vMandateSetupResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
+
 			return await createMandateSetup(ctx, actor.userId, args);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -730,13 +803,16 @@ export const mandateStatus = action({
 	handler: async (ctx, args): Promise<Infer<typeof vMandateStatusResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
+
 			const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
 				mandateId: args.mandateId,
 				userId: actor.userId
 			});
+
 			if (!mandate) throw new Error('Mandate not found.');
 
 			let synced = mandate;
+
 			if (LIVE_MANDATE_STATUSES.has(mandate.status)) {
 				try {
 					const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
@@ -747,6 +823,7 @@ export const mandateStatus = action({
 					// Still awaiting the owner's passkey approval, so keep the stored status.
 				}
 			}
+
 			return mandateStatusResult(synced);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -764,6 +841,7 @@ export const mandateList = action({
 	handler: async (ctx, args): Promise<Infer<typeof vMandateListResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
+
 			return await listLinkedMandates(ctx, actor.userId);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -786,17 +864,21 @@ export const mandateCharge = action({
 	handler: async (ctx, args): Promise<Infer<typeof vMandateChargeResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
+
 			const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
 				mandateId: args.mandateId,
 				userId: actor.userId
 			});
+
 			if (!mandate) throw new Error('Mandate not found.');
 			assertChargeable(mandate, args);
+
 			if (mandate.status === 'paused') {
 				throw new Error('Mandate is paused and cannot be charged.');
 			}
 
 			const reference = args.reference?.trim() || undefined;
+
 			const reservation = await ctx.runMutation(internal.payments.reserveCharge, {
 				mandateId: mandate._id,
 				runId: args.runId,
@@ -806,6 +888,7 @@ export const mandateCharge = action({
 				description: args.description,
 				reference
 			});
+
 			if (reservation.kind === 'existing') {
 				// Credentials are never persisted, only the non-sensitive handle.
 				return {
@@ -813,11 +896,13 @@ export const mandateCharge = action({
 					transactionId: reservation.transactionId
 				};
 			}
+
 			if (reservation.kind === 'inFlight') {
 				throw new Error('A charge with this reference is already in progress. Retry shortly.');
 			}
 
 			const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
+
 			if ((prava.status ?? '').toLowerCase() !== 'active') {
 				await ctx.runMutation(internal.payments.releaseChargeReservation, {
 					chargeId: reservation.chargeId,
@@ -825,6 +910,7 @@ export const mandateCharge = action({
 				});
 				throw new Error('Mandate is not active and cannot be charged.');
 			}
+
 			let result: {
 				transactionId?: string;
 				status?: string;
@@ -837,12 +923,14 @@ export const mandateCharge = action({
 				};
 				errorMessage?: string;
 			};
+
 			// Mark before the network call so a lost response cannot be mistaken
 			// for an abandoned reservation that is safe to reclaim.
 			await ctx.runMutation(internal.payments.markChargeProviderRequested, {
 				chargeId: reservation.chargeId,
 				userId: actor.userId
 			});
+
 			try {
 				result = await pravaRequest(`/v1/mandates/${encodeURIComponent(prava.id)}/charge`, {
 					method: 'POST',
@@ -851,7 +939,9 @@ export const mandateCharge = action({
 							const chargeBody: MandateChargeRequest = {
 								amount: args.amount
 							};
+
 							if (reference !== undefined) chargeBody.reference = reference;
+
 							return chargeBody;
 						})()
 					)
@@ -865,6 +955,7 @@ export const mandateCharge = action({
 			}
 
 			const { credentials, transactionId } = result;
+
 			if (result.status === 'failed' || !credentials || !transactionId) {
 				await ctx.runMutation(internal.payments.updateChargeStatus, {
 					chargeId: reservation.chargeId,
@@ -873,11 +964,13 @@ export const mandateCharge = action({
 				});
 				throw new Error(result.errorMessage ?? result.errorCode ?? 'Mandate charge failed.');
 			}
+
 			await ctx.runMutation(internal.payments.completeCharge, {
 				chargeId: reservation.chargeId,
 				userId: actor.userId,
 				pravaTransactionId: transactionId
 			});
+
 			// Return only validated credential fields. Prava may include extras
 			// (e.g. dynamicDataType) that must not leak into the action result.
 			return {
@@ -907,14 +1000,18 @@ export const mandateReport = action({
 	handler: async (ctx, args): Promise<Infer<typeof vMandateReportResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
+
 			const charge = await ctx.runQuery(internal.payments.getOwnedCharge, {
 				chargeId: args.chargeId,
 				userId: actor.userId
 			});
+
 			if (!charge) throw new Error('Charge not found.');
+
 			if (charge.reportedAt) {
 				return { reported: true, alreadyReported: true };
 			}
+
 			if (charge.reportOutcome && charge.reportOutcome !== args.outcome) {
 				throw new Error(
 					`Charge already has a ${charge.reportOutcome} report in progress; the outcome cannot be changed.`
@@ -924,9 +1021,11 @@ export const mandateReport = action({
 			if (charge.reportRetrierRunId) {
 				// SAFETY: persisted ids are Action Retrier RunIds from reportRetrier.run().
 				const status = await reportRetrier.status(ctx, charge.reportRetrierRunId as RunId);
+
 				if (status.type === 'inProgress') {
 					return { reported: false, inFlight: true };
 				}
+
 				if (status.type === 'completed' && status.result.type === 'success') {
 					if (!charge.reportedAt && charge.reportOutcome) {
 						await ctx.runMutation(internal.payments.finishChargeReport, {
@@ -935,6 +1034,7 @@ export const mandateReport = action({
 							status: statusForOutcome(charge.reportOutcome)
 						});
 					}
+
 					return { reported: true, alreadyReported: true };
 				}
 			}
@@ -944,9 +1044,11 @@ export const mandateReport = action({
 				userId: actor.userId,
 				outcome: args.outcome
 			});
+
 			if (claim === 'already') {
 				return { reported: true, alreadyReported: true };
 			}
+
 			if (claim === 'inFlight') {
 				return { reported: false, inFlight: true };
 			}
@@ -959,10 +1061,12 @@ export const mandateReport = action({
 				});
 				throw new Error('Prava transaction id is unavailable.');
 			}
+
 			const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
 				mandateId: charge.mandateId,
 				userId: actor.userId
 			});
+
 			if (!mandate?.pravaMandateId) {
 				await ctx.runMutation(internal.payments.releaseChargeReport, {
 					chargeId: charge._id,
@@ -977,8 +1081,10 @@ export const mandateReport = action({
 				userId: actor.userId,
 				outcome: args.outcome
 			};
+
 			if (args.amountPaid !== undefined) startArgs.amountPaid = args.amountPaid;
 			await ctx.runMutation(internal.payments.startChargeReportRetrier, startArgs);
+
 			return { reported: false, inFlight: true };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -1018,11 +1124,14 @@ export const setMyMandateLifecycle = action({
 	returns: vMandateStatusResult,
 	handler: async (ctx, args): Promise<Infer<typeof vMandateStatusResult>> => {
 		const userId = await getUserId(ctx);
+
 		const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
 			mandateId: args.mandateId,
 			userId
 		});
+
 		if (!mandate) throw new Error('Mandate not found.');
+
 		// Settings approve in a new tab, so the local row may still lack the
 		// Prava mandate id until the first list/lifecycle call links it.
 		const pravaMandateId =
@@ -1032,8 +1141,10 @@ export const setMyMandateLifecycle = action({
 			`/v1/mandates/${encodeURIComponent(pravaMandateId)}/${args.action}`,
 			{ method: 'POST' }
 		);
+
 		const sync = mandateSyncArgs(mandate._id, userId, { ...updated, id: pravaMandateId });
 		await ctx.runMutation(internal.payments.syncMandate, sync);
+
 		return mandateStatusResult(withMandateSync(mandate, sync));
 	}
 });

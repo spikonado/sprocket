@@ -51,6 +51,7 @@ export class TranscriptReplica implements Store<number> {
 
 	subscribe = (listener: () => void) => {
 		this.#listeners.add(listener);
+
 		return () => {
 			this.#listeners.delete(listener);
 		};
@@ -85,6 +86,7 @@ export class TranscriptReplica implements Store<number> {
 		const ac = new AbortController();
 		this.#displayAbort = ac;
 		const generation = this.#generation;
+
 		const history = new DisplayHistory(
 			(request) => api.fetchTranscriptDisplay({ userId, threadId, ...request }, ac.signal),
 			() => {
@@ -100,12 +102,15 @@ export class TranscriptReplica implements Store<number> {
 				this.pendingCompletions = history
 					.unpersisted(this.overlays)
 					.filter((live) => live !== this.liveCompletion);
+
 				if (this.pendingCompletions.length > 0 && this.pendingCompletions.length < pendingCount) {
 					void history.refresh();
 				}
+
 				this.#emit();
 			}
 		);
+
 		this.#history = history;
 		void history.refresh();
 		void this.#watchDisplayEvents(api, userId, threadId, history, ac, isCurrent);
@@ -113,7 +118,9 @@ export class TranscriptReplica implements Store<number> {
 		return () => {
 			ac.abort();
 			history.stop();
+
 			if (this.#displayAbort === ac) this.#displayAbort = null;
+
 			if (this.#history === history) this.#history = null;
 		};
 	}
@@ -122,8 +129,10 @@ export class TranscriptReplica implements Store<number> {
 		const ac = new AbortController();
 		this.#liveAbort = ac;
 		void this.#watchLiveEvents(api, userId, threadId, ac, isCurrent);
+
 		return () => {
 			ac.abort();
+
 			if (this.#liveAbort === ac) this.#liveAbort = null;
 		};
 	}
@@ -139,9 +148,11 @@ export class TranscriptReplica implements Store<number> {
 	}): TranscriptMessage[] {
 		if (!args.threadId || !args.userId || this.threadId !== args.threadId) return [];
 		const overlays = this.#history?.visibleOverlays(this.overlays) ?? [];
+
 		const liveMessages = mergeLiveOverlays(
 			overlays.filter((overlay) => overlay.threadId === args.threadId)
 		);
+
 		return [
 			...visibleDisplayMessages(this.messages, overlays),
 			...liveMessages.map((message) =>
@@ -162,6 +173,7 @@ export class TranscriptReplica implements Store<number> {
 
 	#emit() {
 		this.#version += 1;
+
 		for (const listener of this.#listeners) listener();
 	}
 
@@ -193,6 +205,7 @@ export class TranscriptReplica implements Store<number> {
 					this.#emit();
 				}
 			}
+
 			if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
 		}
 	}
@@ -213,6 +226,7 @@ export class TranscriptReplica implements Store<number> {
 						onEvent: (event) => {
 							if (ac.signal.aborted || !isCurrent()) return;
 							const current = this.liveCompletion;
+
 							if (
 								current &&
 								(event.eventType === 'cleared' || event.live.streamId !== current.streamId)
@@ -220,8 +234,10 @@ export class TranscriptReplica implements Store<number> {
 								if (this.#history?.unpersisted([current]).length) {
 									this.pendingCompletions = [...this.pendingCompletions, current];
 								}
+
 								void this.#history?.refresh();
 							}
+
 							this.liveCompletion = event.eventType === 'updated' ? event.live : null;
 							this.#emit();
 						}
@@ -230,6 +246,7 @@ export class TranscriptReplica implements Store<number> {
 			} catch {
 				if (ac.signal.aborted) return;
 			}
+
 			await abortableDelay(400, ac.signal);
 		}
 	}
@@ -238,11 +255,13 @@ export class TranscriptReplica implements Store<number> {
 export function useTranscriptReplica() {
 	const [replica] = useState(() => new TranscriptReplica());
 	useStore(replica);
+
 	return replica;
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal) {
 	if (signal.aborted) return Promise.resolve();
+
 	return new Promise<void>((resolve) => {
 		const timer = setTimeout(resolve, milliseconds);
 		signal.addEventListener(

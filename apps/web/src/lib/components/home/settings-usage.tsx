@@ -22,18 +22,22 @@ function fillClass(atLimit: boolean, nearLimit: boolean) {
 	if (atLimit) {
 		return 'bg-rose-400/90';
 	}
+
 	if (nearLimit) {
 		return 'bg-amber-400/90';
 	}
+
 	return 'bg-foreground/25';
 }
 
 export default function SettingsUsage() {
 	const convexAuth = useConvexAuth();
+
 	const usageQuery = useConvexQueryResult({
 		query: api.usage.getMyUsage,
 		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	});
+
 	const usage = usageQuery.status === 'success' ? usageQuery.data : null;
 	const usageError = usageQuery.status === 'error';
 	const [now, setNow] = useState(() => Date.now());
@@ -42,6 +46,7 @@ export default function SettingsUsage() {
 		const interval = setInterval(() => {
 			setNow(Date.now());
 		}, 60_000);
+
 		return () => {
 			clearInterval(interval);
 		};
@@ -94,11 +99,14 @@ export default function SettingsUsage() {
 									<div className="mt-4 space-y-6">
 										{meter.windows.map((meterWindow) => {
 											const hasLimit = meterWindow.limit > 0;
+
 											const percent = hasLimit
 												? Math.round((meterWindow.used / meterWindow.limit) * 100)
 												: 0;
+
 											const atLimit = hasLimit && meterWindow.used >= meterWindow.limit;
 											const nearLimit = hasLimit && meterWindow.used >= meterWindow.limit * 0.9;
+
 											return (
 												<div key={meterWindow.period}>
 													<div className="flex items-baseline justify-between gap-3">
