@@ -333,7 +333,10 @@ async function startLocalServer() {
 	const bootstrapResponse = await fetch(`${serverBaseUrl}/api/auth/desktop-bootstrap`, {
 		headers: {
 			'x-sprocket-desktop-bootstrap-token': desktopBootstrapToken
-		}
+		},
+		// Health already passed, but the bootstrap handler can still hang (slow
+		// disk, wedged handler). Fail loudly instead of stalling startup forever.
+		signal: AbortSignal.timeout(10_000)
 	});
 
 	if (!bootstrapResponse.ok) {
