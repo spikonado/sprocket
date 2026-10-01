@@ -487,6 +487,7 @@ it.each([
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
 	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+
 	const runtime = createRuntime(
 		createDesktopApi({
 			listProjectAttachments: async () => [alpha],
@@ -500,6 +501,7 @@ it.each([
 			runAgent
 		})
 	);
+
 	runtime.fetchGatewayModelCatalog = async () => ({
 		...modelCatalog,
 		models: [
@@ -512,7 +514,9 @@ it.each([
 	fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
 	fireEvent.click(await screen.findByRole('button', { name: /ChatGPT Subscription/ }));
 	await waitFor(() =>
-		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toContain('GPT-6.1 Sol')
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toContain(
+			'GPT-6.1 Sol'
+		)
 	);
 	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });

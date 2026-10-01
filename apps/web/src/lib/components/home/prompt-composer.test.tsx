@@ -381,6 +381,7 @@ describe('PromptComposer skill menu', () => {
 describe('PromptComposer model selection', () => {
 	it('offers ChatGPT gateway models and allows sending when connected', async () => {
 		const onSelectedModelChange = vi.fn();
+
 		const { props, textarea } = renderComposer({
 			modelCatalog: {
 				...modelCatalog,
