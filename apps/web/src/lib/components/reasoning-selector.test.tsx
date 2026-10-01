@@ -41,7 +41,7 @@ describe('ReasoningSelector provider-managed reasoning', () => {
 		renderSelector({
 			model: { ...providerManagedModel, supportsFastMode: false },
 			reasoningEffort: 'none',
-			fastModeAccess: 'unsupported'
+			fastModeAvailable: false
 		});
 		expect(document.querySelector('button')).toBeNull();
 		expect(document.body.textContent).not.toContain('None');
@@ -51,7 +51,7 @@ describe('ReasoningSelector provider-managed reasoning', () => {
 		renderSelector({
 			model: providerManagedModel,
 			reasoningEffort: 'none',
-			fastModeAccess: 'available'
+			fastModeAvailable: true
 		});
 		openSelector();
 		expect(document.body.textContent).toContain('Speed');
@@ -66,7 +66,7 @@ describe('ReasoningSelector Fast mode', () => {
 		renderSelector({
 			model: { ...model, supportsFastMode: false },
 			fastMode: true,
-			fastModeAccess: 'unsupported'
+			fastModeAvailable: false
 		});
 		openSelector();
 		expect(document.querySelector('[role="switch"]')).toBeNull();
@@ -76,7 +76,7 @@ describe('ReasoningSelector Fast mode', () => {
 
 	it('renders an enabled toggle when Fast mode is available', () => {
 		const onFastModeChange = vi.fn();
-		const { rerender } = renderSelector({ fastModeAccess: 'available', onFastModeChange });
+		const { rerender } = renderSelector({ fastModeAvailable: true, onFastModeChange });
 		openSelector();
 		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
 		expect(toggle?.getAttribute('aria-checked')).toBe('false');
@@ -88,22 +88,11 @@ describe('ReasoningSelector Fast mode', () => {
 			<ReasoningSelector
 				model={model}
 				reasoningEffort="medium"
-				fastModeAccess="available"
+				fastModeAvailable
 				fastMode
 				onFastModeChange={onFastModeChange}
 			/>
 		);
 		expect(toggle?.getAttribute('aria-checked')).toBe('true');
-	});
-
-	it('renders a locked toggle when the model supports Fast but the tier does not', () => {
-		renderSelector({
-			fastModeAccess: 'locked',
-			fastModeLockTooltip: 'Upgrade to use Fast mode'
-		});
-		openSelector();
-		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
-		expect(toggle?.getAttribute('aria-disabled')).toBe('true');
-		expect(toggle?.getAttribute('aria-label')).toContain('Upgrade to use Fast mode');
 	});
 });

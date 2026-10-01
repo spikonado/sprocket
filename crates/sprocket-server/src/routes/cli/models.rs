@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -19,8 +18,6 @@ struct Catalog {
     default_model_id: String,
     default_reasoning_effort: String,
     models: Vec<Model>,
-    tier_allowed_models: HashMap<String, Vec<String>>,
-    tier_allowed_service_tiers: HashMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -60,7 +57,7 @@ pub(super) async fn resolve(
 }
 
 pub(super) async fn available(context: &RunContext) -> anyhow::Result<CliModelsResponse> {
-    available_for_tier(fetch(&context.gateway_url).await?, &context.tier)
+    list_models(&fetch(&context.gateway_url).await?)
 }
 
 async fn fetch(gateway_url: &str) -> anyhow::Result<Catalog> {
@@ -86,16 +83,22 @@ fn validate(catalog: &Catalog) -> anyhow::Result<()> {
         catalog.protocol_version == 1,
         "unsupported model catalog protocol"
     );
+    anyhow::ensure!(
+        catalog
+            .models
+            .iter()
+            .any(|model| model.id == catalog.default_model_id),
+        "default model {} is missing from the catalog",
+        catalog.default_model_id
+    );
     Ok(())
 }
 
-fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsResponse> {
-    validate(&catalog)?;
-    let default_model_id = resolve_model_for_tier(&catalog, tier)?;
+fn list_models(catalog: &Catalog) -> anyhow::Result<CliModelsResponse> {
+    validate(catalog)?;
     let models: Vec<CliModel> = catalog
         .models
         .iter()
-        .filter(|model| model_is_allowed(&catalog, tier, &model.id))
         .map(|model| CliModel {
             id: model.id.clone(),
             label: model.label.clone(),
@@ -104,45 +107,9 @@ fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsR
         })
         .collect();
     Ok(CliModelsResponse {
-        default_model_id,
+        default_model_id: catalog.default_model_id.clone(),
         models,
     })
-}
-
-// Mirrors the UI's resolveModelForTier, additionally skipping allowed ids that are no longer
-// in the catalog so listing and runs never name a model the gateway removed.
-fn resolve_model_for_tier(catalog: &Catalog, tier: &str) -> anyhow::Result<String> {
-    if model_is_allowed(catalog, tier, &catalog.default_model_id) {
-        return Ok(catalog.default_model_id.clone());
-    }
-    match catalog.tier_allowed_models.get(tier) {
-        Some(allowed) => allowed
-            .iter()
-            .find(|id| catalog.models.iter().any(|model| model.id == **id))
-            .cloned()
-            .context("no models are available for this account"),
-        None => Ok(catalog.default_model_id.clone()),
-    }
-}
-
-// Tiers missing from the catalog allow every model, matching the UI's isModelAllowedForTier.
-fn model_is_allowed(catalog: &Catalog, tier: &str, model: &str) -> bool {
-    catalog
-        .tier_allowed_models
-        .get(tier)
-        .is_none_or(|allowed| allowed.iter().any(|id| id == model))
-}
-
-// Tiers missing from the catalog allow fast mode, matching the UI's fastModeAccessForModelAndTier.
-fn fast_mode_is_allowed(catalog: &Catalog, tier: &str, model: &Model) -> bool {
-    model
-        .service_tiers
-        .iter()
-        .any(|service_tier| service_tier == "fast")
-        && catalog
-            .tier_allowed_service_tiers
-            .get(tier)
-            .is_none_or(|tiers| tiers.iter().any(|service_tier| service_tier == "fast"))
 }
 
 fn select(
@@ -152,39 +119,19 @@ fn select(
 ) -> anyhow::Result<Settings> {
     validate(&catalog)?;
     let model_overridden = request.model.is_some();
-    let inherited_model = request.model.clone().or_else(|| {
-        context
-            .thread
-            .as_ref()
-            .map(|thread| thread.selected_model.clone())
-    });
-    let (model, coerced) = match inherited_model {
-        Some(model) if model_is_allowed(&catalog, &context.tier, &model) => (model, false),
-        Some(model) if model_overridden => {
-            anyhow::bail!("model {model} is unavailable for this account")
-        }
-        // Like the UI's resolveModelForTier, fall back to the tier's first allowed model
-        // when the inherited model is locked.
-        Some(_) => (resolve_model_for_tier(&catalog, &context.tier)?, true),
-        None => {
-            let resolved = resolve_model_for_tier(&catalog, &context.tier)?;
-            // A fresh run uses the model's own default effort when the catalog default
-            // was not allowed for this tier, and the catalog-wide default otherwise.
-            let tier_fallback = resolved != catalog.default_model_id;
-            (resolved, tier_fallback)
-        }
-    };
-    // Like the UI, coercion to a different model drops the thread's fast mode setting;
-    // only an explicit --fast asks for it on the replacement model.
+    let model = request
+        .model
+        .clone()
+        .or_else(|| {
+            context
+                .thread
+                .as_ref()
+                .map(|thread| thread.selected_model.clone())
+        })
+        .unwrap_or_else(|| catalog.default_model_id.clone());
     let fast = request
         .fast
-        .or_else(|| {
-            if coerced {
-                None
-            } else {
-                context.thread.as_ref().map(|thread| thread.fast_mode)
-            }
-        })
+        .or_else(|| context.thread.as_ref().map(|thread| thread.fast_mode))
         .unwrap_or(false);
     let entry = catalog
         .models
@@ -195,7 +142,7 @@ fn select(
         .reasoning
         .clone()
         .or_else(|| {
-            if model_overridden || coerced {
+            if model_overridden {
                 None
             } else {
                 context
@@ -205,7 +152,7 @@ fn select(
             }
         })
         .unwrap_or_else(|| {
-            if model_overridden || coerced {
+            if model_overridden {
                 entry.default_reasoning_effort.clone()
             } else {
                 catalog.default_reasoning_effort.clone()
@@ -217,8 +164,8 @@ fn select(
     );
     if fast {
         anyhow::ensure!(
-            fast_mode_is_allowed(&catalog, &context.tier, entry),
-            "fast mode is unavailable for this model or account"
+            entry.service_tiers.iter().any(|tier| tier == "fast"),
+            "fast mode is unavailable for {model}"
         );
     }
     Ok(Settings {
@@ -237,21 +184,14 @@ mod tests {
             "protocolVersion": 1, "defaultModelId": "default", "defaultReasoningEffort": "high",
             "models": [
                 {"id": "default", "label": "Default", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
-                {"id": "paid", "label": "Paid", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
-                {"id": "paid-first", "label": "Paid First", "reasoningEfforts": ["xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard"]}
-            ],
-            "tierAllowedModels": {"free": ["default"], "paid": ["stale", "paid-first", "paid"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
+                {"id": "pro", "label": "Pro", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
+                {"id": "pro-fast", "label": "Pro Fast", "reasoningEfforts": ["xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard", "fast"]}
+            ]
         })).unwrap()
     }
 
-    #[test]
-    fn defaults_do_not_enable_fast_and_invalid_overrides_never_fall_back() {
-        let context = RunContext {
-            gateway_url: String::new(),
-            tier: "free".into(),
-            thread: None,
-        };
-        let mut request = CliRunRequest {
+    fn run_request() -> CliRunRequest {
+        CliRunRequest {
             client_id: "client".into(),
             prompt: "task".into(),
             directory: "/tmp".into(),
@@ -259,11 +199,41 @@ mod tests {
             model: None,
             reasoning: None,
             fast: None,
-        };
+        }
+    }
+
+    fn fresh_context() -> RunContext {
+        RunContext {
+            gateway_url: String::new(),
+            thread: None,
+        }
+    }
+
+    fn thread_context(selected_model: &str, reasoning_effort: &str, fast_mode: bool) -> RunContext {
+        RunContext {
+            gateway_url: String::new(),
+            thread: Some(thread_settings(selected_model, reasoning_effort, fast_mode)),
+        }
+    }
+
+    fn thread_settings(
+        selected_model: &str,
+        reasoning_effort: &str,
+        fast_mode: bool,
+    ) -> super::super::ThreadSettings {
+        super::super::ThreadSettings {
+            repository_key: "repo".into(),
+            selected_model: selected_model.into(),
+            reasoning_effort: reasoning_effort.into(),
+            fast_mode,
+        }
+    }
+
+    #[test]
+    fn defaults_do_not_enable_fast_and_invalid_overrides_never_fall_back() {
+        let context = fresh_context();
+        let mut request = run_request();
         assert!(!select(catalog(), &context, &request).unwrap().fast);
-        request.fast = Some(true);
-        assert!(select(catalog(), &context, &request).is_err());
-        request.fast = None;
         request.model = Some("missing".into());
         assert!(select(catalog(), &context, &request).is_err());
         request.model = None;
@@ -272,182 +242,87 @@ mod tests {
     }
 
     #[test]
-    fn tier_filtering_uses_the_same_default_for_listing_and_runs() {
-        let response = available_for_tier(catalog(), "free").unwrap();
+    fn lists_the_full_catalog_with_the_gateway_default() {
+        let response = list_models(&catalog()).unwrap();
         assert_eq!(response.default_model_id, "default");
         assert_eq!(
             response.models,
-            [CliModel {
-                id: "default".into(),
-                label: "Default".into(),
-                reasoning_efforts: vec!["medium".into(), "high".into()],
-                default_reasoning_effort: "high".into(),
-            }]
+            [
+                CliModel {
+                    id: "default".into(),
+                    label: "Default".into(),
+                    reasoning_efforts: vec!["medium".into(), "high".into()],
+                    default_reasoning_effort: "high".into(),
+                },
+                CliModel {
+                    id: "pro".into(),
+                    label: "Pro".into(),
+                    reasoning_efforts: vec!["max".into()],
+                    default_reasoning_effort: "max".into(),
+                },
+                CliModel {
+                    id: "pro-fast".into(),
+                    label: "Pro Fast".into(),
+                    reasoning_efforts: vec!["xhigh".into()],
+                    default_reasoning_effort: "xhigh".into(),
+                }
+            ]
         );
-        let paid = available_for_tier(catalog(), "paid").unwrap();
-        // Allowed ids the gateway removed from the catalog are skipped.
-        assert_eq!(paid.default_model_id, "paid-first");
-
-        let settings = select(
-            catalog(),
-            &RunContext {
-                gateway_url: String::new(),
-                tier: "paid".into(),
-                thread: None,
-            },
-            &CliRunRequest {
-                client_id: "client".into(),
-                prompt: "task".into(),
-                directory: "/tmp".into(),
-                thread_id: None,
-                model: None,
-                reasoning: None,
-                fast: None,
-            },
-        )
-        .unwrap();
-        assert_eq!(settings.model, "paid-first");
-        // The catalog default is not allowed for this tier, so the run uses the
-        // replacement model's own default effort.
-        assert_eq!(settings.reasoning, "xhigh");
-
-        // Tiers missing from the catalog allow everything, like the UI.
-        let enterprise = available_for_tier(catalog(), "enterprise").unwrap();
-        assert_eq!(enterprise.default_model_id, "default");
-        assert_eq!(enterprise.models.len(), catalog().models.len());
     }
 
     #[test]
-    fn locked_inherited_model_falls_back_to_the_tiers_first_allowed_model() {
+    fn selects_and_inherits_formerly_locked_models() {
+        let mut request = run_request();
+        request.model = Some("pro".into());
+        let settings = select(catalog(), &fresh_context(), &request).unwrap();
+        assert_eq!(settings.model, "pro");
+        assert_eq!(settings.reasoning, "max");
+
         let settings = select(
             catalog(),
-            &RunContext {
-                gateway_url: String::new(),
-                tier: "free".into(),
-                thread: Some(super::super::ThreadSettings {
-                    repository_key: "repo".into(),
-                    selected_model: "paid".into(),
-                    reasoning_effort: "max".into(),
-                    fast_mode: false,
-                }),
-            },
-            &CliRunRequest {
-                client_id: "client".into(),
-                prompt: "task".into(),
-                directory: "/tmp".into(),
-                thread_id: Some("thread".into()),
-                model: None,
-                reasoning: None,
-                fast: None,
-            },
+            &thread_context("pro", "max", false),
+            &run_request(),
         )
         .unwrap();
-
-        assert_eq!(settings.model, "default");
-        // Coerced to a model with a different effort set, so the inherited effort is
-        // dropped for the model's own default.
-        assert_eq!(settings.reasoning, "high");
-    }
-
-    #[test]
-    fn locked_explicit_model_is_an_error() {
-        let result = select(
-            catalog(),
-            &RunContext {
-                gateway_url: String::new(),
-                tier: "free".into(),
-                thread: None,
-            },
-            &CliRunRequest {
-                client_id: "client".into(),
-                prompt: "task".into(),
-                directory: "/tmp".into(),
-                thread_id: None,
-                model: Some("paid".into()),
-                reasoning: None,
-                fast: None,
-            },
-        );
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn coercion_drops_the_inherited_fast_mode_like_the_ui() {
-        let settings = select(
-            catalog(),
-            &RunContext {
-                gateway_url: String::new(),
-                tier: "free".into(),
-                thread: Some(super::super::ThreadSettings {
-                    repository_key: "repo".into(),
-                    selected_model: "paid".into(),
-                    reasoning_effort: "max".into(),
-                    fast_mode: true,
-                }),
-            },
-            &CliRunRequest {
-                client_id: "client".into(),
-                prompt: "task".into(),
-                directory: "/tmp".into(),
-                thread_id: Some("thread".into()),
-                model: None,
-                reasoning: None,
-                fast: None,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(settings.model, "default");
+        assert_eq!(settings.model, "pro");
+        assert_eq!(settings.reasoning, "max");
         assert!(!settings.fast);
-
-        // An explicit --fast still applies to the replacement model.
-        let request = CliRunRequest {
-            client_id: "client".into(),
-            prompt: "task".into(),
-            directory: "/tmp".into(),
-            thread_id: Some("thread".into()),
-            model: None,
-            reasoning: None,
-            fast: Some(true),
-        };
-        let context = RunContext {
-            gateway_url: String::new(),
-            tier: "free".into(),
-            thread: Some(super::super::ThreadSettings {
-                repository_key: "repo".into(),
-                selected_model: "paid".into(),
-                reasoning_effort: "max".into(),
-                fast_mode: true,
-            }),
-        };
-        // The free tier allows no fast service tier, so --fast still errors.
-        assert!(select(catalog(), &context, &request).is_err());
     }
 
     #[test]
-    fn tiers_missing_from_the_catalog_allow_every_model_and_fast_mode() {
+    fn selects_and_inherits_fast_mode_on_supported_models() {
+        let mut request = run_request();
+        request.fast = Some(true);
+        assert!(select(catalog(), &fresh_context(), &request).unwrap().fast);
+        request.model = Some("pro-fast".into());
+        assert!(select(catalog(), &fresh_context(), &request).unwrap().fast);
         let settings = select(
             catalog(),
-            &RunContext {
-                gateway_url: String::new(),
-                tier: "enterprise".into(),
-                thread: None,
-            },
-            &CliRunRequest {
-                client_id: "client".into(),
-                prompt: "task".into(),
-                directory: "/tmp".into(),
-                thread_id: None,
-                model: Some("default".into()),
-                reasoning: None,
-                fast: Some(true),
-            },
+            &thread_context("pro-fast", "xhigh", true),
+            &run_request(),
         )
         .unwrap();
-
-        assert_eq!(settings.model, "default");
+        assert_eq!(settings.model, "pro-fast");
         assert!(settings.fast);
+    }
+
+    #[test]
+    fn fast_mode_requires_model_support() {
+        let mut request = run_request();
+        request.model = Some("pro".into());
+        request.fast = Some(true);
+        assert!(select(catalog(), &fresh_context(), &request).is_err());
+        assert!(
+            select(
+                catalog(),
+                &thread_context("pro", "max", true),
+                &run_request()
+            )
+            .is_err()
+        );
+        request.fast = Some(false);
+        let settings = select(catalog(), &thread_context("pro", "max", true), &request).unwrap();
+        assert!(!settings.fast);
     }
 
     #[test]
@@ -456,27 +331,59 @@ mod tests {
             catalog(),
             &RunContext {
                 gateway_url: String::new(),
-                tier: "paid".into(),
-                thread: Some(super::super::ThreadSettings {
-                    repository_key: "repo".into(),
-                    selected_model: "default".into(),
-                    reasoning_effort: "high".into(),
-                    fast_mode: false,
-                }),
+                thread: Some(thread_settings("default", "high", false)),
             },
             &CliRunRequest {
                 client_id: "client".into(),
                 prompt: "task".into(),
                 directory: "/tmp".into(),
                 thread_id: Some("thread".into()),
-                model: Some("paid".into()),
+                model: Some("pro".into()),
                 reasoning: None,
                 fast: None,
             },
         )
         .unwrap();
 
-        assert_eq!(settings.model, "paid");
+        assert_eq!(settings.model, "pro");
         assert_eq!(settings.reasoning, "max");
+    }
+
+    #[test]
+    fn released_gateway_eligibility_fields_are_ignored() {
+        let catalog: Catalog = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1, "defaultModelId": "default", "defaultReasoningEffort": "high",
+            "models": [
+                {"id": "default", "label": "Default", "reasoningEfforts": ["high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard"]},
+                {"id": "pro", "label": "Pro", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard", "fast"]}
+            ],
+            "tierAllowedModels": {"free": ["default"]},
+            "tierAllowedServiceTiers": {"free": ["standard"]}
+        }))
+        .unwrap();
+
+        let response = list_models(&catalog).unwrap();
+        assert_eq!(response.models.len(), 2);
+
+        let mut request = run_request();
+        request.model = Some("pro".into());
+        request.fast = Some(true);
+        let settings = select(catalog, &fresh_context(), &request).unwrap();
+        assert_eq!(settings.model, "pro");
+        assert!(settings.fast);
+    }
+
+    #[test]
+    fn catalog_default_model_must_exist() {
+        let catalog: Catalog = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1, "defaultModelId": "missing", "defaultReasoningEffort": "high",
+            "models": [
+                {"id": "default", "label": "Default", "reasoningEfforts": ["high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard"]}
+            ]
+        }))
+        .unwrap();
+
+        assert!(list_models(&catalog).is_err());
+        assert!(select(catalog, &fresh_context(), &run_request()).is_err());
     }
 }

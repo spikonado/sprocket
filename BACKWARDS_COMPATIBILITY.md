@@ -4,6 +4,16 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Provider SDK backwards compatibility
 
+### Retired gateway model eligibility fields
+
+Sprocket ignores `tierAllowedModels`, `modelLockUpgradeMessage`,
+`tierAllowedServiceTiers`, and `serviceTierLockUpgradeMessage` in gateway
+catalogs. The web client offers every gateway model and Fast mode on every
+subscription tier. The gateway still returns these fields with every model and
+service tier allowed for released clients that require them. Remove the gateway
+response fields only after clients that validate or apply them are outside the
+supported upgrade window. Model selections and Convex data need no migration.
+
 ### OpenAI BYOK response item replay
 
 Rig 0.42 can drop contentless reasoning items and regroup streamed output before

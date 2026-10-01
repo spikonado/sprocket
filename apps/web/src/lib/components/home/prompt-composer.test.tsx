@@ -31,11 +31,7 @@ const modelCatalog: ModelCatalog = {
 			defaultReasoningEffort: 'high',
 			supportsFastMode: false
 		}
-	],
-	tierAllowedModels: { pro: ['model-one', 'model-two'], free: ['model-one'] },
-	tierAllowsFastMode: { pro: true, free: false },
-	modelLockUpgradeMessage: 'Upgrade to unlock this model',
-	fastModeLockUpgradeMessage: 'Upgrade to use Fast mode'
+	]
 };
 
 const skills = [
@@ -383,23 +379,127 @@ describe('PromptComposer skill menu', () => {
 });
 
 describe('PromptComposer model selection', () => {
-	it('reports the selected model and resets reasoning effort', async () => {
+	it.each(['free', 'go', 'budget', 'pro', 'enterprise', undefined])(
+		'selects every model and resets reasoning on tier %s',
+		async (tier) => {
+			const onSelectedModelChange = vi.fn();
+			const onSelectedReasoningEffortChange = vi.fn();
+			renderComposer({
+				modelCatalog,
+				selectedModel: 'model-one',
+				selectedReasoningEffort: 'medium',
+				usage: tier === undefined ? undefined : { tier, exhausted: false, resetsAt: null },
+				onSelectedModelChange,
+				onSelectedReasoningEffortChange
+			});
+
+			await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
+			await click(findButton('Model Two'));
+
+			expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
+			expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
+		}
+	);
+
+	it('keeps the selected model when the subscription tier loads and changes', async () => {
 		const onSelectedModelChange = vi.fn();
-		const onSelectedReasoningEffortChange = vi.fn();
+
+		const { props, rerender, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-two',
+			selectedReasoningEffort: 'high',
+			prompt: 'Hello',
+			onSelectedModelChange
+		});
+
+		await act(async () => {
+			rerender({ ...props, usage: { tier: 'free', exhausted: false, resetsAt: null } });
+		});
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+		await act(async () => {
+			rerender({ ...props, usage: { tier: 'pro', exhausted: false, resetsAt: null } });
+		});
+		expect(document.querySelector('[aria-label="Select model"]')?.textContent).toContain(
+			'Model Two'
+		);
+		expect(onSelectedModelChange).not.toHaveBeenCalled();
+	});
+});
+
+describe('PromptComposer Fast mode', () => {
+	it.each([
+		{ tier: 'free', usage: { tier: 'free', exhausted: false, resetsAt: null } },
+		{ tier: 'paid', usage: { tier: 'paid', exhausted: false, resetsAt: null } },
+		{ tier: 'loading', usage: undefined }
+	])('offers and toggles Fast for a supported model on $tier', async ({ usage }) => {
+		const onFastModeChange = vi.fn();
 		renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
 			selectedReasoningEffort: 'medium',
-			usage: { tier: 'pro', exhausted: false, resetsAt: null },
-			onSelectedModelChange,
-			onSelectedReasoningEffortChange
+			usage,
+			onFastModeChange
 		});
 
-		await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
-		await click(findButton('Model Two'));
+		await click(
+			document.querySelector<HTMLButtonElement>(
+				'[aria-label="Select reasoning effort and Fast mode"]'
+			)
+		);
+		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
+		expect(toggle?.getAttribute('aria-checked')).toBe('false');
+		await click(toggle);
+		expect(onFastModeChange).toHaveBeenCalledWith(true);
+	});
 
-		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
-		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
+	it('keeps Fast on when the subscription tier loads and changes', async () => {
+		const onFastModeChange = vi.fn();
+
+		const { props, rerender } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			fastMode: true,
+			onFastModeChange
+		});
+
+		await act(async () => {
+			rerender({ ...props, usage: { tier: 'free', exhausted: false, resetsAt: null } });
+		});
+		await act(async () => {
+			rerender({ ...props, usage: { tier: 'pro', exhausted: false, resetsAt: null } });
+		});
+
+		expect(onFastModeChange).not.toHaveBeenCalledWith(false);
+	});
+
+	it('turns Fast off only when the model does not support it', async () => {
+		const onFastModeChange = vi.fn();
+		renderComposer({
+			modelCatalog,
+			selectedModel: 'model-two',
+			selectedReasoningEffort: 'high',
+			fastMode: true,
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
+			onFastModeChange
+		});
+
+		expect(onFastModeChange).toHaveBeenCalledWith(false);
+		expect(document.querySelector('[role="switch"]')).toBeNull();
+	});
+
+	it('blocks submit when the free usage quota is exhausted even with Fast off', async () => {
+		const { textarea, props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			prompt: 'Hello',
+			usage: { tier: 'free', exhausted: true, resetsAt: null }
+		});
+
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 });
 

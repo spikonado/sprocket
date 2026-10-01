@@ -11,16 +11,12 @@ export type { CatalogModel, ModelCatalog };
 
 export type CatalogModelId = CatalogModel['id'];
 
-export type FastModeAccess = 'unsupported' | 'locked' | 'available';
-
 export { CATALOG_UNAVAILABLE_MESSAGE };
 
 export type ModelSelectorOption = {
 	id: CatalogModelId;
 	label: string;
 	provider: string;
-	locked?: boolean;
-	lockTooltip?: string;
 };
 
 export function getCatalogModel(
@@ -30,71 +26,15 @@ export function getCatalogModel(
 	return catalog.models.find((model) => model.id === modelId);
 }
 
-export function isModelAllowedForTier(
-	catalog: ModelCatalog,
-	tier: string,
-	modelId: CatalogModelId
-): boolean {
-	// Tiers missing from the catalog allow every model.
-	return (catalog.tierAllowedModels[tier] ?? catalog.models.map((model) => model.id)).includes(
-		modelId
-	);
-}
-
-export function resolveModelForTier(
-	catalog: ModelCatalog,
-	tier: string,
-	modelId: CatalogModelId
-): CatalogModelId {
-	if (isModelAllowedForTier(catalog, tier, modelId)) return modelId;
-
-	return catalog.tierAllowedModels[tier]?.[0] ?? catalog.defaultModelId;
-}
-
-export function fastModeAccessForModelAndTier(
-	catalog: ModelCatalog,
-	tier: string,
-	model: CatalogModel
-): FastModeAccess {
-	if (!model.supportsFastMode) return 'unsupported';
-
-	// Tiers missing from the catalog allow fast mode.
-	return (catalog.tierAllowsFastMode[tier] ?? true) ? 'available' : 'locked';
-}
-
 export function showsReasoningControl(model: CatalogModel): boolean {
 	return model.reasoningEfforts.length !== 1 || model.reasoningEfforts[0] !== 'none';
 }
 
-export function modelOptionsForTier(catalog: ModelCatalog, tier: string): ModelSelectorOption[] {
-	const unlocked: ModelSelectorOption[] = [];
-	const locked: ModelSelectorOption[] = [];
-
-	for (const model of catalog.models) {
-		const option = { id: model.id, label: model.label, provider: model.provider };
-
-		if (isModelAllowedForTier(catalog, tier, model.id)) {
-			unlocked.push(option);
-		} else {
-			locked.push({
-				...option,
-				locked: true,
-				lockTooltip: catalog.modelLockUpgradeMessage
-			});
-		}
-	}
-
-	return [...unlocked, ...locked];
-}
-
 export function modelOptionsForCompletionProvider(
 	catalog: ModelCatalog,
-	tier: string,
 	provider: CompletionProvider,
 	chatGptModelIds: readonly string[] | null = null
 ): ModelSelectorOption[] {
-	if (provider === 'spikonado') return modelOptionsForTier(catalog, tier);
-
 	if (provider === 'chatgpt') {
 		return (chatGptModelIds ?? []).flatMap((id) => {
 			const model = catalog.models.find((model) => model.id === id && model.provider === 'openai');
@@ -104,22 +44,23 @@ export function modelOptionsForCompletionProvider(
 	}
 
 	return catalog.models
-		.filter((model) => model.provider === 'openai')
+		.filter((model) => provider === 'spikonado' || model.provider === 'openai')
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
 }
 
 export function resolveModelForCompletionProvider(
 	catalog: ModelCatalog,
-	tier: string,
 	provider: CompletionProvider,
 	modelId: CatalogModelId,
 	chatGptModelIds: readonly string[] | null = null
 ): CatalogModelId | undefined {
-	const options = modelOptionsForCompletionProvider(catalog, tier, provider, chatGptModelIds);
+	const options = modelOptionsForCompletionProvider(catalog, provider, chatGptModelIds);
 
-	if (options.some((option) => option.id === modelId && !option.locked)) return modelId;
+	if (options.some((option) => option.id === modelId)) return modelId;
 
-	return options.find((option) => !option.locked)?.id;
+	return options.some((option) => option.id === catalog.defaultModelId)
+		? catalog.defaultModelId
+		: options[0]?.id;
 }
 
 /** Prefer a known label; fall back to the raw id so newer catalog values still render. */
@@ -162,19 +103,7 @@ const gatewayModelsResponseSchema = z.object({
 		defaultModelId: z.string().min(1),
 		defaultReasoningEffort: z.string().min(1),
 		defaultServiceTier: z.string().min(1),
-		models: z.array(gatewayModelSchema).min(1),
-		tierAllowedModels: z
-			.record(z.string(), z.array(z.string()))
-			.refine((maps) => Object.keys(maps).length > 0, {
-				message: 'Expected at least one tier in tierAllowedModels.'
-			}),
-		tierAllowedServiceTiers: z
-			.record(z.string(), z.array(z.string()))
-			.refine((maps) => Object.keys(maps).length > 0, {
-				message: 'Expected at least one tier in tierAllowedServiceTiers.'
-			}),
-		modelLockUpgradeMessage: z.string().min(1),
-		serviceTierLockUpgradeMessage: z.string().min(1)
+		models: z.array(gatewayModelSchema).min(1)
 	})
 });
 
@@ -205,16 +134,7 @@ function catalogFromGatewayPayload(
 			defaultReasoningEffort: model.defaultReasoningEffort,
 			supportsFastMode: model.serviceTiers.includes('fast'),
 			usagePolicy: model.usagePolicy
-		})),
-		tierAllowedModels: sprocket.tierAllowedModels,
-		tierAllowsFastMode: Object.fromEntries(
-			Object.entries(sprocket.tierAllowedServiceTiers).map(([tier, serviceTiers]) => [
-				tier,
-				serviceTiers.includes('fast')
-			])
-		),
-		modelLockUpgradeMessage: sprocket.modelLockUpgradeMessage,
-		fastModeLockUpgradeMessage: sprocket.serviceTierLockUpgradeMessage
+		}))
 	};
 }
 
