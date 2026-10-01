@@ -234,14 +234,16 @@ export const getPublicCatalog = action({
 
 				tierPrices = retrieved.filter((entry) => entry !== null);
 
-				try {
-					await ctx.runMutation(internal.pricingData.cacheTierPrices, {
-						cacheKey,
-						tierPrices,
-						expiresAt: now + DODO_PRICE_CACHE_TTL_MS
-					});
-				} catch (error) {
-					console.error('Could not cache Dodo product prices.', error);
+				if (tierPrices.length === configuredProducts.length) {
+					try {
+						await ctx.runMutation(internal.pricingData.cacheTierPrices, {
+							cacheKey,
+							tierPrices,
+							expiresAt: now + DODO_PRICE_CACHE_TTL_MS
+						});
+					} catch (error) {
+						console.error('Could not cache Dodo product prices.', error);
+					}
 				}
 			}
 

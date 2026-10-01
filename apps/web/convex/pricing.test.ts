@@ -18,13 +18,14 @@ describe('public pricing catalog', () => {
 			vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
 			vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
 			vi.spyOn(console, 'error').mockImplementation(() => {});
+			let recovered = false;
 			vi.stubGlobal(
 				'fetch',
 				vi.fn(async (request: Request | string | URL) => {
 					const url = new URL(request instanceof Request ? request.url : String(request));
 					const productId = url.pathname.split('/').at(-1);
 
-					if (productId === 'prod_broken' && failure === 'request') {
+					if (productId === 'prod_broken' && failure === 'request' && !recovered) {
 						return Response.json({ message: 'Invalid product' }, { status: 400 });
 					}
 
@@ -36,7 +37,8 @@ describe('public pricing catalog', () => {
 							price: 2_000,
 							currency: 'USD',
 							payment_frequency_count: 1,
-							payment_frequency_interval: productId === 'prod_broken' ? 'Year' : 'Month'
+							payment_frequency_interval:
+								productId === 'prod_broken' && !recovered ? 'Year' : 'Month'
 						}
 					});
 				})
@@ -66,6 +68,15 @@ describe('public pricing catalog', () => {
 				annual: null
 			});
 			expect(catalog.plans.find((plan) => plan.id === 'pro')?.prices.monthly).toBeNull();
+
+			if (failure === 'request') {
+				recovered = true;
+				const recoveredCatalog = await t.action(api.pricing.getPublicCatalog, {});
+
+				expect(
+					recoveredCatalog.plans.find((plan) => plan.id === 'pro')?.prices.monthly
+				).toMatchObject({ productId: 'prod_broken', amountMinor: 2_000 });
+			}
 		}
 	);
 
