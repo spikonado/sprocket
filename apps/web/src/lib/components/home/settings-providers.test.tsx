@@ -310,6 +310,27 @@ it('reserves the popup before waiting for sign-in and closes a stale start', asy
 	expect(loginWindow.close).toHaveBeenCalledOnce();
 });
 
+it('cancels a stalled sign-in start and closes its reserved popup immediately', async () => {
+	const started = Promise.withResolvers<{ state: string; authorizeUrl: string }>();
+	const cancel = vi.fn(async () => {});
+
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: () => started.promise,
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+	expect(loginWindow.close).toHaveBeenCalledOnce();
+	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
+	await act(async () => {
+		started.resolve({ state: 'state-1', authorizeUrl: 'https://auth.openai.test/authorize' });
+	});
+	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+});
+
 it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();
@@ -362,6 +383,7 @@ it('cancels the pending browser login on unmount while its poll is in flight', a
 		result.resolve({ status: 'complete' });
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(loginWindow.close).toHaveBeenCalledOnce();
 	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
 });
 
@@ -436,6 +458,7 @@ it('ignores a stale login completion after the user cancels and starts again', a
 		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(loginWindow.close).toHaveBeenCalledOnce();
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});

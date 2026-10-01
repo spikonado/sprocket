@@ -50,10 +50,11 @@ export default function SettingsProviders({
 	const [openAiError, setOpenAiError] = useState<string | null>(null);
 	const [openAiSaved, setOpenAiSaved] = useState(false);
 	const [chatGptPending, setChatGptPending] = useState(false);
-	const [browserLogin, setBrowserLoginState] = useState<ChatGptBrowserLoginStart | null>(null);
+	const [browserLoginActive, setBrowserLoginActive] = useState(false);
 	const [signOutWarning, setSignOutWarning] = useState<string | null>(null);
 	const [chatGptError, setChatGptError] = useState<string | null>(null);
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
+	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
 
 	const activeAccount =
@@ -63,8 +64,15 @@ export default function SettingsProviders({
 
 	const setBrowserLogin = (userIdForLogin: string, next: ChatGptBrowserLoginStart | null) => {
 		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
-		setBrowserLoginState(next);
+		setBrowserLoginActive(Boolean(next));
+
+		if (!next) closeLoginWindow();
 	};
+
+	function closeLoginWindow() {
+		loginWindowRef.current?.close();
+		loginWindowRef.current = null;
+	}
 
 	function errorMessage(error: Error, fallback: string): string {
 		return convexClientErrorMessage(error) ?? fallback;
@@ -80,14 +88,15 @@ export default function SettingsProviders({
 		generationRef.current += 1;
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
-		setBrowserLoginState(null);
+		setBrowserLoginActive(false);
+		closeLoginWindow();
 		setChatGptPending(false);
 
 		return pending;
 	}
 
 	useEffect(() => {
-		setBrowserLoginState(null);
+		setBrowserLoginActive(false);
 		setChatGptPending(false);
 		setChatGptError(null);
 		setSignOutWarning(null);
@@ -96,6 +105,7 @@ export default function SettingsProviders({
 			generationRef.current += 1;
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
+			closeLoginWindow();
 
 			if (pending) {
 				desktopApi
@@ -160,6 +170,7 @@ export default function SettingsProviders({
 
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
+		setBrowserLoginActive(true);
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
@@ -171,6 +182,7 @@ export default function SettingsProviders({
 		try {
 			if (!bridge) {
 				loginWindow = window.open('about:blank', '_blank');
+				loginWindowRef.current = loginWindow;
 
 				if (!loginWindow)
 					throw new Error('Your browser blocked the sign-in window. Allow popups and try again.');
@@ -185,7 +197,6 @@ export default function SettingsProviders({
 
 			if (generation !== generationRef.current) {
 				cancelLoginOnServer(pending);
-				loginWindow?.close();
 
 				return;
 			}
@@ -198,7 +209,6 @@ export default function SettingsProviders({
 
 			if (generation !== generationRef.current) {
 				cancelLoginOnServer(pending);
-				loginWindow?.close();
 
 				return;
 			}
@@ -206,11 +216,12 @@ export default function SettingsProviders({
 			setBrowserLogin(userIdAtStart, login);
 			void waitForBrowserLogin(pending, api, generation);
 		} catch (error) {
-			loginWindow?.close();
+			if (loginWindowRef.current === loginWindow) closeLoginWindow();
 
 			if (pending) cancelLoginOnServer(pending);
 
 			if (generation !== generationRef.current) return;
+			setBrowserLoginActive(false);
 			setChatGptError(
 				errorMessage(
 					z.instanceof(Error).catch(new Error()).parse(error),
@@ -424,7 +435,7 @@ export default function SettingsProviders({
 							</button>
 						</div>
 
-						{browserLogin ? (
+						{browserLoginActive ? (
 							<div className="mt-5 flex items-center gap-3">
 								<span className="text-muted-foreground text-[12px]">Signing in…</span>
 								<button
