@@ -31,6 +31,12 @@ attempts their revocation through the normal sign-out path, then deletes them.
 Interrupted-refresh recovery moves the refresh token into that retained list.
 An unconfirmed revocation produces a status warning with ChatGPT settings
 guidance. Records left by terminal refresh failures follow the same rule.
+Sign-out saves a hidden tokenless revocation record until its bounded attempt
+finishes, so a restart can retry an interrupted attempt. This record keeps only
+the existing client/connection IDs, a new session ID and refresh tokens. The
+subject becomes the non-identifying `signed-out` placeholder so older readers
+still accept the record. The label and other tokens are cleared before the
+attempt.
 The host ID stays unchanged. Remove this cleanup
 only after releases that retained signed-out records are outside the
 supported direct-upgrade window and supported stores have been rewritten.

@@ -774,7 +774,7 @@ impl ChatGptService {
                 accounts
                     .accounts
                     .iter()
-                    .any(|account| account.connection_id == connection),
+                    .any(|account| account.connection_id == connection && account.tokens.is_some()),
                 "Saved ChatGPT account was not found."
             );
             if accounts.active.as_deref() != Some(&connection) {
@@ -874,36 +874,39 @@ impl ChatGptService {
                 return Ok(None);
             }
             let account = account.context("Saved ChatGPT account was not found.")?;
-            if let Some(tokens) = &mut account.tokens {
-                tokens.refresh_in_flight = true;
+            if let Some(tokens) = account.tokens.take() {
+                account.retired_refresh_tokens.push(tokens.refresh_token);
             }
-            service.persist(&candidate).await?;
-            *state = candidate;
-            let accounts = state.users.get_mut(&user).context("Saved ChatGPT account was not found.")?;
-            let position = accounts
-                .accounts
-                .iter()
-                .position(|account| account.connection_id == connection)
-                .context("Saved ChatGPT account was not found.")?;
-            let removed = accounts.accounts.remove(position);
-            let mut retired = removed.retired_refresh_tokens;
-            if let Some(tokens) = removed.tokens {
-                retired.push(tokens.refresh_token);
-            }
-            let client_id = removed.client_id;
+            account.subject = "signed-out".to_owned();
+            account.email = None;
+            account.session_id = Uuid::new_v4().to_string();
+            let marker_session = account.session_id.clone();
+            let retired = account.retired_refresh_tokens.clone();
+            let client_id = account.client_id.clone();
+            let accounts = candidate.users.get_mut(&user).unwrap();
             if accounts.active.as_deref() == Some(&connection) {
                 accounts.active = None;
             }
-            service.notify(&user, accounts);
-            if accounts.accounts.is_empty() {
-                state.users.remove(&user);
-            }
-            let saved = service.persist(&state).await;
+            service.persist(&candidate).await?;
+            *state = candidate;
+            service.notify(&user, &state.users[&user]);
             drop(state);
             let mut confirmed = true;
             for token in retired {
                 confirmed &= service.revoke(&client_id, &token).await;
             }
+            let mut state = service.state.lock().await;
+            let saved = if let Some(accounts) = state.users.get_mut(&user) {
+                accounts.accounts.retain(|account| {
+                    account.connection_id != connection || account.session_id != marker_session
+                });
+                if accounts.accounts.is_empty() {
+                    state.users.remove(&user);
+                }
+                service.persist(&state).await
+            } else {
+                Ok(())
+            };
             let warning = (!confirmed).then(|| "Signed out locally. OpenAI revocation could not be confirmed. Remove the agent in ChatGPT settings if needed.".to_owned());
             if let Err(error) = saved {
                 return Err(match warning {
@@ -1163,6 +1166,7 @@ impl ChatGptService {
                 accounts: accounts
                     .accounts
                     .iter()
+                    .filter(|account| account.tokens.is_some())
                     .map(|account| AccountStatus {
                         connection_id: account.connection_id.clone(),
                         label: account
@@ -2291,6 +2295,73 @@ mod tests {
         assert_eq!(status.models.len(), 1);
         assert_eq!(status.models[0].id, "gpt-visible");
         assert!(status.error.unwrap().contains("could not be confirmed"));
+    }
+
+    #[tokio::test]
+    async fn sign_out_keeps_interrupted_revocations_durable_and_hidden() {
+        for revoke_status in [200, 500] {
+            let fixture = fixture().await;
+            fixture.provider.set_revoke_status(revoke_status);
+            insert(
+                &fixture.service,
+                "user-a",
+                account(
+                    "connection-1",
+                    "client-1",
+                    "subject-1",
+                    Some(tokens(
+                        &fixture,
+                        "client-1",
+                        "subject-1",
+                        "access-1",
+                        "refresh-1",
+                        now() + 3600,
+                    )),
+                ),
+            )
+            .await;
+            let watch = fixture.service.for_user("user-a".into()).connection();
+            fixture.provider.shared.lock().unwrap().hold_revoke = true;
+            let sign_out = tokio::spawn({
+                let service = Arc::clone(&fixture.service);
+                async move { service.disconnect("user-a", "connection-1").await }
+            });
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while fixture.provider.posts("/revoke").is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(*watch.borrow(), None);
+            let restarted =
+                ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+            let marker = stored_account(&restarted, "user-a", "connection-1").await;
+            assert!(marker.tokens.is_none());
+            assert_eq!(marker.subject, "signed-out");
+            assert_eq!(marker.email, None);
+            assert_eq!(marker.retired_refresh_tokens, vec!["refresh-1"]);
+            assert!(restarted.select("user-a", "connection-1").await.is_err());
+            let interrupted =
+                std::fs::read(fixture.directory.path().join("chatgpt-siwc.json")).unwrap();
+            fixture.provider.shared.lock().unwrap().hold_revoke = false;
+            sign_out.await.unwrap().unwrap();
+            crate::profile::write_private_file(
+                &fixture.directory.path().join("chatgpt-siwc.json"),
+                &interrupted,
+            )
+            .unwrap();
+            let restarted =
+                ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+            let status = restarted.status("user-a").await.unwrap();
+            assert!(status.accounts.is_empty());
+            assert_eq!(status.active_connection_id, None);
+            assert_eq!(status.error.is_some(), revoke_status != 200);
+            assert!(fixture.provider.posts("/revoke").len() >= 2);
+            let reloaded =
+                ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
+            assert!(reloaded.state.lock().await.users.is_empty());
+        }
     }
 
     #[tokio::test]
