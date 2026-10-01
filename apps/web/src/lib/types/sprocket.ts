@@ -382,5 +382,6 @@ export type ProjectAttachment = {
 	availability: LocalAttachmentAvailability;
 	lastValidatedAt: number;
 	lastUsedAt: number;
+	lastMessageSentAt?: number;
 	unavailableReason?: string;
 };

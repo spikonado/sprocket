@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
 import {
 	buildDesktopProjectAttachmentsByPath,
+	compareProjectRecency,
 	findCanonicalProjectAttachment,
 	launchAgentRun,
 	resolveSubmissionId,
@@ -105,6 +106,22 @@ function launchArgs(
 		...overrides
 	};
 }
+
+it('orders projects by sent messages before attachment recency with stable path ties', () => {
+	const alpha = projectAttachment('/alpha', 'alpha', 400);
+	const beta = { ...projectAttachment('/beta', 'beta', 100), lastMessageSentAt: 20 };
+	const gamma = { ...projectAttachment('/gamma', 'gamma', 200), lastMessageSentAt: 10 };
+	const delta = projectAttachment('/delta', 'delta', 400);
+	const legacy = projectAttachment('/legacy', 'legacy', 500);
+
+	expect([gamma, delta, beta, legacy, alpha].sort(compareProjectRecency)).toEqual([
+		beta,
+		gamma,
+		legacy,
+		alpha,
+		delta
+	]);
+});
 
 function resolveRecoveredSubmission(
 	overrides: Partial<Parameters<typeof resolveSubmissionId>[0]> = {}

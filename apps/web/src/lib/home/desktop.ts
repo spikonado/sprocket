@@ -17,6 +17,18 @@ export type ProjectState = Project & {
 	localAttachmentAvailability: LocalAttachmentAvailability;
 };
 
+export function compareProjectRecency(left: ProjectAttachment, right: ProjectAttachment): number {
+	return (
+		(right.lastMessageSentAt ?? 0) - (left.lastMessageSentAt ?? 0) ||
+		right.lastUsedAt - left.lastUsedAt ||
+		(left.workspacePath < right.workspacePath
+			? -1
+			: left.workspacePath > right.workspacePath
+				? 1
+				: 0)
+	);
+}
+
 export function projectFromAttachment(attachment: ProjectAttachment): ProjectState {
 	return {
 		repositoryKey: attachment.repositoryKey,
