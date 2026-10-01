@@ -53,6 +53,7 @@ test('assembles version-matched root and native packages', async () => {
 
 		assert.equal(rootManifest.version, '1.2.3');
 		assert.equal(rootManifest.optionalDependencies['@spikonado/sprocket-linux-x64-gnu'], '1.2.3');
+		assert(rootManifest.files.includes('THIRD_PARTY_NOTICES.md'));
 		await access(path.join(output, 'sprocket/web/index.html'));
 		await access(path.join(output, 'sprocket/targets.json'));
 		assert.equal(
@@ -63,6 +64,10 @@ test('assembles version-matched root and native packages', async () => {
 			await readFile(path.join(output, 'sprocket/README.md'), 'utf8'),
 			await readFile(path.join(ROOT, 'README.md'), 'utf8')
 		);
+		assert.equal(
+			await readFile(path.join(output, 'sprocket/THIRD_PARTY_NOTICES.md'), 'utf8'),
+			await readFile(path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8')
+		);
 
 		const nativeManifest = JSON.parse(
 			await readFile(path.join(output, 'linux-x64-gnu/package.json'), 'utf8')
@@ -70,6 +75,7 @@ test('assembles version-matched root and native packages', async () => {
 
 		assert.equal(nativeManifest.name, '@spikonado/sprocket-linux-x64-gnu');
 		assert.equal(nativeManifest.version, '1.2.3');
+		assert(nativeManifest.files.includes('THIRD_PARTY_NOTICES.md'));
 		assert.equal(
 			await readFile(path.join(output, 'linux-x64-gnu/LICENSE'), 'utf8'),
 			await readFile(path.join(ROOT, 'LICENSE.md'), 'utf8')
@@ -77,6 +83,10 @@ test('assembles version-matched root and native packages', async () => {
 		assert.equal(
 			await readFile(path.join(output, 'linux-x64-gnu/README.md'), 'utf8'),
 			await readFile(path.join(ROOT, 'README.md'), 'utf8')
+		);
+		assert.equal(
+			await readFile(path.join(output, 'linux-x64-gnu/THIRD_PARTY_NOTICES.md'), 'utf8'),
+			await readFile(path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8')
 		);
 
 		const sourceManifest = JSON.parse(
