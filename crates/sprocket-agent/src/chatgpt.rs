@@ -26,6 +26,8 @@ const STREAM_REQUIRED: &str =
     "ChatGPT inference requires streaming; non-streaming completion is not supported.";
 const STREAM_INTERRUPTED: &str = "ChatGPT response stream ended before a terminal response event.";
 const SIWC_TOOL_NAMESPACE: &str = "sprocket";
+const ERROR_BODY_LIMIT: usize = 64 * 1024;
+const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 const UNSUPPORTED_FIELDS: &[&str] = &[
     "background",
@@ -254,13 +256,7 @@ impl HttpClientExt for SiwcHttpClient {
                 .await
                 .map_err(|error| stream_error(error.to_string()))?;
             if !response.status().is_success() {
-                let status = response.status();
-                return Err(http_client::Error::InvalidStatusCodeWithMessage(
-                    status,
-                    format!(
-                        "ChatGPT inference returned HTTP {status}. Check your account's plan access or reconnect in Settings."
-                    ),
-                ));
+                return Err(inference_error(response, &token).await);
             }
             let mut res = Response::builder()
                 .status(response.status())
@@ -275,6 +271,82 @@ impl HttpClientExt for SiwcHttpClient {
             res.body(stream).map_err(http_client::Error::Protocol)
         }
     }
+}
+
+async fn read_error_body(
+    mut response: reqwest::Response,
+) -> Result<serde_json::Value, &'static str> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > ERROR_BODY_LIMIT as u64)
+    {
+        return Err("Provider error response was too large.");
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Could not read provider error response.")?
+    {
+        if bytes.len().saturating_add(chunk.len()) > ERROR_BODY_LIMIT {
+            return Err("Provider error response was too large.");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "Provider error response was not valid JSON.")
+}
+
+fn diagnostic_text(value: &str, access_token: &str) -> String {
+    let redacted = if access_token.is_empty() {
+        value.to_string()
+    } else {
+        value.replace(access_token, "[redacted]")
+    };
+    let mut chars = redacted.chars();
+    let mut text: String = chars.by_ref().take(1024).collect();
+    if chars.next().is_some() {
+        text.push_str("...");
+    }
+    serde_json::to_string(&text).expect("diagnostic text serializes")
+}
+
+async fn inference_error(response: reqwest::Response, access_token: &str) -> http_client::Error {
+    let status = response.status();
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| diagnostic_text(value, access_token));
+    let mut message = format!("ChatGPT inference returned HTTP {status}.");
+    match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
+        Ok(Ok(body)) => {
+            let recognized = [
+                ("error.message", body["error"]["message"].as_str()),
+                ("error.code", body["error"]["code"].as_str()),
+                ("error.param", body["error"]["param"].as_str()),
+                ("detail", body["detail"].as_str()),
+            ];
+            let mut found = false;
+            for (name, value) in recognized {
+                if let Some(value) = value {
+                    message.push_str(&format!(" {name}={}", diagnostic_text(value, access_token)));
+                    found = true;
+                }
+            }
+            if !found {
+                message.push_str(" Provider returned an unrecognized error response.");
+            }
+        }
+        Ok(Err(reason)) => {
+            message.push(' ');
+            message.push_str(reason);
+        }
+        Err(_) => message.push_str(" Reading provider error response timed out."),
+    }
+    if let Some(request_id) = request_id {
+        message.push_str(&format!(" request_id={request_id}"));
+    }
+    http_client::Error::InvalidStatusCodeWithMessage(status, message)
 }
 
 struct SiwcStreamGuard<S> {
@@ -502,6 +574,7 @@ fn namespace_function_tools(
         serde_json::json!([{
             "type": "namespace",
             "name": SIWC_TOOL_NAMESPACE,
+            "description": "Tools for working on the user's project in Sprocket.",
             "tools": functions,
         }]),
     );
@@ -605,6 +678,130 @@ mod tests {
         let credentials = StubCredentials::connected(connection);
         let client = ChatGptClient::new(credentials.clone()).unwrap();
         (credentials, client)
+    }
+
+    fn error_response(
+        status: http::StatusCode,
+        body: impl Into<reqwest::Body>,
+    ) -> reqwest::Response {
+        http::Response::builder()
+            .status(status)
+            .header("x-request-id", "req-test")
+            .body(body.into())
+            .unwrap()
+            .into()
+    }
+
+    #[tokio::test]
+    async fn inference_errors_preserve_structured_diagnostics() {
+        let response = error_response(
+            http::StatusCode::BAD_REQUEST,
+            json!({"error": {
+                "message": "Missing required parameter: 'tools[0].description'.",
+                "code": "missing_required_parameter",
+                "param": "tools[0].description"
+            }})
+            .to_string(),
+        );
+        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            message,
+            "ChatGPT inference returned HTTP 400 Bad Request. error.message=\"Missing required parameter: 'tools[0].description'.\" error.code=\"missing_required_parameter\" error.param=\"tools[0].description\" request_id=\"req-test\""
+        );
+    }
+
+    #[tokio::test]
+    async fn inference_errors_preserve_direct_admission_details() {
+        let response = error_response(
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            json!({"detail": "Direct routing is unavailable."}).to_string(),
+        );
+        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert_eq!(status, http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            message,
+            "ChatGPT inference returned HTTP 503 Service Unavailable. detail=\"Direct routing is unavailable.\" request_id=\"req-test\""
+        );
+    }
+
+    #[tokio::test]
+    async fn inference_errors_bound_and_redact_diagnostic_text() {
+        let response = http::Response::builder()
+            .status(http::StatusCode::UNAUTHORIZED)
+            .header("x-request-id", "test-token")
+            .body(json!({"detail": format!("Bearer test-token\n{}", "é".repeat(2048))}).to_string())
+            .unwrap()
+            .into();
+        let http_client::Error::InvalidStatusCodeWithMessage(_, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert!(message.contains("Bearer [redacted]\\n"));
+        assert!(message.ends_with("...\" request_id=\"[redacted]\""));
+        assert!(message.len() < 2300);
+    }
+
+    #[tokio::test]
+    async fn inference_errors_keep_status_and_request_id_for_unusable_bodies() {
+        let unreadable = reqwest::Body::wrap_stream(futures::stream::iter([Err::<Bytes, _>(
+            std::io::Error::other("read failed"),
+        )]));
+        for (body, reason) in [
+            (
+                reqwest::Body::from("{not json"),
+                "Provider error response was not valid JSON.",
+            ),
+            (
+                reqwest::Body::from(r#"{"unexpected":"private data"}"#),
+                "Provider returned an unrecognized error response.",
+            ),
+            (
+                reqwest::Body::from(vec![b' '; ERROR_BODY_LIMIT + 1]),
+                "Provider error response was too large.",
+            ),
+            (unreadable, "Could not read provider error response."),
+        ] {
+            let response = error_response(http::StatusCode::BAD_GATEWAY, body);
+            let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+                inference_error(response, "test-token").await
+            else {
+                panic!("expected HTTP status and diagnostics");
+            };
+            assert_eq!(status, http::StatusCode::BAD_GATEWAY);
+            assert_eq!(
+                message,
+                format!(
+                    "ChatGPT inference returned HTTP 502 Bad Gateway. {reason} request_id=\"req-test\""
+                )
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inference_errors_keep_diagnostics_when_the_body_stalls() {
+        let body =
+            reqwest::Body::wrap_stream(futures::stream::pending::<Result<Bytes, std::io::Error>>());
+        let response = error_response(http::StatusCode::BAD_GATEWAY, body);
+        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert_eq!(status, http::StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            message,
+            "ChatGPT inference returned HTTP 502 Bad Gateway. Reading provider error response timed out. request_id=\"req-test\""
+        );
     }
 
     #[tokio::test]
@@ -872,6 +1069,11 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["type"], json!("namespace"));
         assert_eq!(tools[0]["name"], json!(SIWC_TOOL_NAMESPACE));
+        assert!(
+            tools[0]["description"]
+                .as_str()
+                .is_some_and(|description| !description.is_empty())
+        );
         let functions = tools[0]["tools"].as_array().unwrap();
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0]["type"], json!("function"));
@@ -892,11 +1094,9 @@ mod tests {
     #[test]
     fn siwc_body_shaping_is_idempotent() {
         let mut body = shaped_body(test_request(vec![Message::user("hello")]));
+        let original = body.clone();
         shape_siwc_body(&mut body).unwrap();
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["type"], json!("namespace"));
-        assert_eq!(tools[0]["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body, original);
     }
 
     #[test]
