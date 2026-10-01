@@ -273,6 +273,50 @@ it('loads ChatGPT automatically and refreshes account status when the window ret
 	expect(await screen.findByRole('button', { name: 'Reconnect' })).toBeTruthy();
 });
 
+it('sends with configured OpenAI while initial ChatGPT discovery is pending', async () => {
+	const client = createConvexFixtures();
+	client.registerAction(api.providerCredentials.getMyConfiguration, {
+		openai: true,
+		chatgpt: false,
+		chatgptModelIds: null
+	});
+	const status = Promise.withResolvers<Awaited<ReturnType<DesktopApi['fetchChatGptStatus']>>>();
+	const fetchChatGptStatus = vi.fn<DesktopApi['fetchChatGptStatus']>(() => status.promise);
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+
+	await renderApp(client, {
+		...createRuntime(
+			createDesktopApi({
+				fetchChatGptStatus,
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				runAgent
+			})
+		),
+		fetchGatewayModelCatalog: async () => ({
+			...modelCatalog,
+			models: modelCatalog.models.map((model) => ({ ...model, provider: 'openai' }))
+		})
+	});
+	await projectTrigger('Alpha');
+	await waitFor(() => expect(fetchChatGptStatus).toHaveBeenCalledOnce());
+	const provider = screen.getByRole('button', { name: 'Select provider' });
+	await waitFor(() => expect(provider).toHaveProperty('disabled', false));
+	fireEvent.click(provider);
+	fireEvent.click(screen.getByRole('button', { name: /OpenAI API$/ }));
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({ completionProvider: 'openai', prompt: 'Fix the robot' })
+		)
+	);
+});
+
 it('surfaces a verification failure for the initially selected project', async () => {
 	const unavailable = projectAttachment(
 		'/work/alpha',

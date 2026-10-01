@@ -49,6 +49,7 @@ export type PromptComposerProps = {
 	chatGptModelIds?: readonly string[] | null;
 	chatGptModels?: readonly { id: string; name: string }[];
 	chatGptStatusError?: string | null;
+	chatGptStatusLoading?: boolean;
 	providersReady?: boolean;
 	selectedCompletionProvider?: CompletionProvider;
 	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
@@ -112,6 +113,7 @@ export function PromptComposerView({
 	chatGptModelIds = null,
 	chatGptModels = [],
 	chatGptStatusError = null,
+	chatGptStatusLoading = false,
 	providersReady = true,
 	selectedCompletionProvider = 'spikonado',
 	onSelectedCompletionProviderChange,
@@ -568,7 +570,9 @@ export function PromptComposerView({
 		if (!modelCatalog) return;
 
 		const nextProvider =
-			providersReady && !configuredProviders.includes(selectedCompletionProvider)
+			providersReady &&
+			!configuredProviders.includes(selectedCompletionProvider) &&
+			(selectedCompletionProvider !== 'chatgpt' || !chatGptStatusLoading)
 				? 'spikonado'
 				: selectedCompletionProvider;
 
@@ -605,6 +609,7 @@ export function PromptComposerView({
 		selectedModel,
 		subscriptionTier,
 		chatGptModelIds,
+		chatGptStatusLoading,
 		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,

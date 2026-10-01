@@ -2588,7 +2588,8 @@ export default function App({
 										chatGptModelIds={chatGptModelIds}
 										chatGptModels={chatGptStatus?.models}
 										chatGptStatusError={chatGptStatusError}
-										providersReady={providerConfigurationReady && !chatGptStatusLoading}
+										chatGptStatusLoading={chatGptStatusLoading}
+										providersReady={providerConfigurationReady}
 										selectedCompletionProvider={selectedCompletionProvider}
 										onSelectedCompletionProviderChange={setSelectedCompletionProvider}
 										selectedReasoningEffort={selectedReasoningEffort}

@@ -383,6 +383,31 @@ describe('PromptComposer skill menu', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it('keeps a selected ChatGPT provider until its initial discovery settles', () => {
+		const onSelectedCompletionProviderChange = vi.fn();
+
+		const view = renderComposer({
+			modelCatalog,
+			selectedCompletionProvider: 'chatgpt',
+			configuredProviders: ['spikonado', 'openai'],
+			providersReady: true,
+			chatGptStatusLoading: true,
+			onSelectedCompletionProviderChange
+		});
+
+		view.rerender({
+			...view.props,
+			configuredProviders: ['spikonado', 'openai', 'chatgpt'],
+			chatGptStatusLoading: false
+		});
+		expect(document.querySelector('[aria-label="Select provider"]')?.textContent).toContain(
+			'ChatGPT Subscription'
+		);
+		view.rerender({ ...view.props, chatGptStatusLoading: false });
+		expect(onSelectedCompletionProviderChange).toHaveBeenCalledOnce();
+		expect(onSelectedCompletionProviderChange).toHaveBeenCalledWith('spikonado');
+	});
+
 	it('explains an empty ChatGPT gateway intersection and adopts newly discovered exact matches', async () => {
 		const catalog: ModelCatalog = {
 			...modelCatalog,
