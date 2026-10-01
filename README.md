@@ -136,6 +136,22 @@ Start the browser development environment:
 bun dev
 ```
 
+This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
+It targets the dev Convex deployment. To run against the production Convex
+deployment with `~/.sprocket` state instead:
+
+```sh
+bun dev:prod
+```
+
+To develop against Electron instead, run:
+
+```sh
+bun dev:desktop
+```
+
+The `dev:prod` / `dev:prod:desktop` variants use the production Convex deployment and `~/.sprocket`.
+
 After creating a Convex deployment and configuring AuthKit, give the deployment an API key for each model provider you want to enable.
 
 ### Dodo Payments
@@ -154,22 +170,6 @@ Put **only monthly products** in one Dodo Product Collection and **only annual p
 Weekly usage resets Monday at 00:00 UTC. Free monthly usage resets on the first of the month. Monthly paid usage follows Dodo's billing dates. Annual paid usage resets each month on the UTC day and time of the current annual term's start; a missing day clamps to the last day of that month, then returns to the original day when possible. Paid access ends at the known Dodo billing-period end until a renewal webhook confirms the next term. A successful paid upgrade resets both usage allowances; downgrades and cancellations do not reset them early.
 
 Point the Dodo webhook at `https://<deployment>.convex.site/dodopayments-webhook`. The webhook, rather than the browser redirect, grants and removes paid access. AuthKit must allow `https://spikonado.com` as a CORS origin and `https://spikonado.com/pricing/callback` as a redirect URI.
-
-This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
-It targets the dev Convex deployment. To run against the production Convex
-deployment with `~/.sprocket` state instead:
-
-```sh
-bun dev:prod
-```
-
-To develop against Electron instead, run:
-
-```sh
-bun dev:desktop
-```
-
-The `dev:prod` / `dev:prod:desktop` variants use the production Convex deployment and `~/.sprocket`.
 
 ### Building and testing
 

@@ -9,6 +9,7 @@ import { vSubscriptionStatus } from '@convex/lib/validators';
 type BillingInterval = 'monthly' | 'annual';
 
 const http = httpRouter();
+
 const subscriptionMetadataSchema = z.object({
 	userId: z.string().optional(),
 	tierId: z.string().optional(),
@@ -22,13 +23,16 @@ function eventTimestampMs(timestamp: Date | string | undefined): number {
 			: timestamp
 				? Date.parse(timestamp)
 				: Number.NaN;
+
 	if (!Number.isFinite(milliseconds)) throw new Error('Dodo webhook has an invalid timestamp.');
+
 	return milliseconds;
 }
 
 function billingInterval(data: Subscription): BillingInterval {
 	if (data.payment_frequency_interval === 'Month' && data.payment_frequency_count === 1)
 		return 'monthly';
+
 	if (
 		(data.payment_frequency_interval === 'Year' && data.payment_frequency_count === 1) ||
 		(data.payment_frequency_interval === 'Month' && data.payment_frequency_count === 12)
@@ -46,17 +50,23 @@ async function persistSubscription(
 ): Promise<void> {
 	const metadata = subscriptionMetadataSchema.safeParse(data.metadata);
 	const metadataUserId = metadata.success ? metadata.data.userId : undefined;
+
 	const knownCustomer = metadataUserId
 		? null
 		: await ctx.runQuery(internal.billingCustomers.getByDodoId, {
 				dodoCustomerId: data.customer.customer_id
 			});
+
 	const userId = metadataUserId ?? knownCustomer?.userId;
+
 	if (!userId) {
 		console.error('Ignoring Dodo subscription without a Sprocket user.', data.subscription_id);
+
 		return;
 	}
+
 	const metadataCheckoutAttemptId = metadata.success ? metadata.data.checkoutAttemptId : undefined;
+
 	const checkoutTier: string | null =
 		metadataUserId && metadataCheckoutAttemptId
 			? await ctx.runQuery(internal.billing.getCheckoutTier, {
@@ -65,13 +75,16 @@ async function persistSubscription(
 					productId: data.product_id
 				})
 			: null;
+
 	const existingTier: string | null = await ctx.runQuery(internal.billing.getDodoSubscriptionTier, {
 		userId,
 		dodoSubscriptionId: data.subscription_id
 	});
+
 	const storedTier: string | null = await ctx.runQuery(internal.pricingData.getTierForProduct, {
 		productId: data.product_id
 	});
+
 	const tier = resolveSubscriptionTier({
 		checkoutTier,
 		metadataTier: metadata.success ? metadata.data.tierId : undefined,
@@ -82,8 +95,10 @@ async function persistSubscription(
 			(!data.scheduled_change ||
 				eventTimestampMs(data.scheduled_change.effective_at) <= eventTimestampMs(timestamp))
 	});
+
 	if (!tier) {
 		console.warn('Ignoring Dodo subscription for an unknown product.', data.product_id);
+
 		return;
 	}
 
@@ -114,6 +129,7 @@ http.route({
 			persistSubscription(ctx, payload.data, 'active', payload.timestamp, true),
 		onSubscriptionUpdated: async (ctx, payload) => {
 			const status = payload.data.status;
+
 			if (!['active', 'on_hold', 'cancelled', 'expired', 'failed'].includes(status)) return;
 			await persistSubscription(
 				ctx,

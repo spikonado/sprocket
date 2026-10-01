@@ -6,11 +6,13 @@ import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import { initConvexTest } from './test.setup';
 
 const ENV_KEYS = ['DODO_PAYMENTS_API_KEY'] as const;
+
 const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
 	for (const key of ENV_KEYS) {
 		const value = originalEnv[key];
+
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
 	}
@@ -145,6 +147,7 @@ describe('marketing checkout URLs', () => {
 describe('Dodo subscription persistence', () => {
 	it('reuses a matching checkout reservation and rejects plan changes until expiry', async () => {
 		const t = initConvexTest();
+
 		const first = await t.mutation(internal.billing.reserveCheckoutSession, {
 			userId: 'user_checkout',
 			attemptId: 'attempt_1',
@@ -153,6 +156,7 @@ describe('Dodo subscription persistence', () => {
 			productId: 'prod_monthly',
 			now: 1_000
 		});
+
 		expect(first).toEqual({
 			kind: 'create',
 			attemptId: 'attempt_1',
@@ -244,6 +248,7 @@ describe('Dodo subscription persistence', () => {
 				.query('billingCheckoutSessions')
 				.withIndex('by_userId', (query) => query.eq('userId', 'user_checkout'))
 				.unique();
+
 			if (!reservation) throw new Error('Missing checkout reservation.');
 			await ctx.db.patch(reservation._id, { expiresAt: 1_999 });
 		});
@@ -299,6 +304,7 @@ describe('Dodo subscription persistence', () => {
 			productId: 'prod_monthly',
 			now: 1_000
 		});
+
 		const args = {
 			userId: 'user_1',
 			tier: 'team',
@@ -312,6 +318,7 @@ describe('Dodo subscription persistence', () => {
 			cancelAtNextBillingDate: false,
 			eventAt: 2_000
 		};
+
 		await t.mutation(internal.billing.upsertDodoSubscription, args);
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
@@ -329,14 +336,17 @@ describe('Dodo subscription persistence', () => {
 				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 				.unique()
 		}));
+
 		expect(stored.subscription).toMatchObject({ tier: 'team', status: 'active', eventAt: 2_000 });
 		expect(stored.customer).toMatchObject({ dodoCustomerId: 'cus_1' });
+
 		const checkoutSession = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCheckoutSessions')
 				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 				.unique()
 		);
+
 		expect(checkoutSession).toBeNull();
 
 		await t.run(async (ctx) => {
@@ -358,6 +368,7 @@ describe('Dodo subscription persistence', () => {
 
 	it('does not reactivate a lapsed subscription with the same event timestamp', async () => {
 		const t = initConvexTest();
+
 		const args = {
 			userId: 'user_lapsed',
 			tier: 'pro',
@@ -371,6 +382,7 @@ describe('Dodo subscription persistence', () => {
 			cancelAtNextBillingDate: false,
 			eventAt: 2_000
 		};
+
 		await t.mutation(internal.billing.upsertDodoSubscription, args);
 		await t.mutation(internal.billing.upsertDodoSubscription, { ...args, status: 'active' });
 
@@ -380,6 +392,7 @@ describe('Dodo subscription persistence', () => {
 				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 				.unique()
 		);
+
 		expect(subscription).toMatchObject({ status: 'cancelled', eventAt: 2_000 });
 	});
 
@@ -406,19 +419,23 @@ describe('Dodo subscription persistence', () => {
 			cancelAtNextBillingDate: false,
 			eventAt: 2
 		});
+
 		const subscription = await t.run(async (ctx) =>
 			ctx.db
 				.query('subscriptions')
 				.withIndex('by_userId', (query) => query.eq('userId', 'user_max'))
 				.unique()
 		);
+
 		expect(subscription).toMatchObject({ tier: 'max', status: 'active' });
+
 		const customer = await t.run(async (ctx) =>
 			ctx.db
 				.query('billingCustomers')
 				.withIndex('by_userId', (query) => query.eq('userId', 'user_max'))
 				.unique()
 		);
+
 		expect(customer).toBeNull();
 
 		await t.run(async (ctx) => {
@@ -432,6 +449,7 @@ describe('Dodo subscription persistence', () => {
 	it('keeps a scheduled cancellation paid until renewal, then permits a new interval checkout', async () => {
 		const t = initConvexTest();
 		const now = Date.now();
+
 		const args = {
 			userId: 'user_interval_change',
 			tier: 'pro',
@@ -445,6 +463,7 @@ describe('Dodo subscription persistence', () => {
 			billingPeriodEnd: now + 86_400_000,
 			cancelAtNextBillingDate: false
 		};
+
 		await t.mutation(internal.billing.upsertDodoSubscription, args);
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
@@ -452,13 +471,16 @@ describe('Dodo subscription persistence', () => {
 			cancelAtNextBillingDate: true,
 			eventAt: now
 		});
+
 		const before = await t.run(async (ctx) =>
 			ctx.db
 				.query('subscriptions')
 				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
 				.unique()
 		);
+
 		expect(before).toMatchObject({ status: 'active', tier: 'pro', cancelAtNextBillingDate: true });
+
 		const annualCheckout = {
 			userId: args.userId,
 			attemptId: 'attempt_annual',
@@ -467,6 +489,7 @@ describe('Dodo subscription persistence', () => {
 			productId: 'prod_annual',
 			now
 		};
+
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, {
 				...annualCheckout

@@ -25,12 +25,15 @@ const dodo = new DodoPayments(components.dodopayments, {
 	identify: async (ctx): Promise<{ dodoCustomerId: string } | null> => {
 		const userId = await getUserId(ctx);
 		const customer = await ctx.runQuery(internal.billingCustomers.getManageable, { userId });
+
 		return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
 	},
 	apiKey: process.env.DODO_PAYMENTS_API_KEY!,
 	environment: readDodoEnvironment()
 });
+
 const payments = dodo.api();
+
 const CHECKOUT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
 
 function assertPaymentsConfigured(): void {
@@ -42,6 +45,7 @@ export const getDodoSubscriptionTier = internalQuery({
 	returns: v.union(v.string(), v.null()),
 	handler: async (ctx, { userId, dodoSubscriptionId }) => {
 		const subscription = await getSubscriptionDoc(ctx, userId);
+
 		return subscription?.dodoSubscriptionId === dodoSubscriptionId ? subscription.tier : null;
 	}
 });
@@ -54,6 +58,7 @@ export const getCheckoutTier = internalQuery({
 			.query('billingCheckoutSessions')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
+
 		return checkout?.attemptId === attemptId && checkout.productId === productId
 			? checkout.tierId
 			: null;
@@ -71,12 +76,14 @@ export const getMySubscription = query({
 		const userId = await getUserId(ctx);
 		const subscription = await getSubscriptionDoc(ctx, userId);
 		const tier = subscriptionIsActive(subscription) ? subscription!.tier : 'free';
+
 		const customer = subscription?.dodoSubscriptionId
 			? await ctx.db
 					.query('billingCustomers')
 					.withIndex('by_userId', (query) => query.eq('userId', userId))
 					.unique()
 			: null;
+
 		return {
 			tier,
 			tierLabel: await getTierLabel(ctx, tier),
@@ -106,21 +113,28 @@ export const checkout = action({
 	returns: v.object({ checkout_url: v.string() }),
 	handler: async (ctx, { tier, interval }): Promise<{ checkout_url: string }> => {
 		const identity = await requireIdentity(ctx);
+
 		if (tier === 'free') throw new Error('The Free tier does not use checkout.');
+
 		const productId: string | null = await ctx.runQuery(internal.pricingData.getTierProduct, {
 			tierId: tier,
 			interval
 		});
+
 		if (!productId) {
 			throw new Error(`No ${interval} checkout product is configured for tier "${tier}".`);
 		}
+
 		assertPaymentsConfigured();
 
 		const billingCustomer = await ctx.runQuery(internal.billingCustomers.get, {
 			userId: identity.subject
 		});
+
 		const email = identity.email?.trim();
+
 		if (!billingCustomer && !email) throw new Error('Your account does not have a billing email.');
+
 		const reserved = await ctx.runMutation(internal.billing.reserveCheckoutSession, {
 			userId: identity.subject,
 			attemptId: crypto.randomUUID(),
@@ -129,9 +143,11 @@ export const checkout = action({
 			productId,
 			now: Date.now()
 		});
+
 		if (reserved.kind === 'existing') return { checkout_url: reserved.checkoutUrl };
 
 		const { return_url, cancel_url } = resolveMarketingPricingUrls(process.env, tier);
+
 		const session = await ctx.runAction(internal.pricing.createCheckoutSession, {
 			attemptId: reserved.attemptId,
 			userId: identity.subject,
@@ -147,11 +163,13 @@ export const checkout = action({
 						name: identity.name ?? identity.nickname ?? email!
 					}
 		});
+
 		await ctx.runMutation(internal.billing.attachCheckoutSession, {
 			userId: identity.subject,
 			attemptId: reserved.attemptId,
 			checkoutUrl: session.checkoutUrl
 		});
+
 		return { checkout_url: session.checkoutUrl };
 	}
 });
@@ -176,6 +194,7 @@ export const reserveCheckoutSession = internalMutation({
 	),
 	handler: async (ctx, args) => {
 		const subscription = await getSubscriptionDocExclusive(ctx, args.userId);
+
 		if (subscription?.status === 'active' && subscription.tier !== 'free') {
 			throw new Error('A paid plan is already active on this account.');
 		}
@@ -184,6 +203,7 @@ export const reserveCheckoutSession = internalMutation({
 			.query('billingCheckoutSessions')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
+
 		if (existing && existing.expiresAt > args.now) {
 			if (
 				existing.tierId !== args.tierId ||
@@ -194,6 +214,7 @@ export const reserveCheckoutSession = internalMutation({
 					`A ${existing.interval} checkout is still active. Try that plan again or change plans after it expires.`
 				);
 			}
+
 			return existing.checkoutUrl
 				? { kind: 'existing' as const, checkoutUrl: existing.checkoutUrl }
 				: {
@@ -212,8 +233,10 @@ export const reserveCheckoutSession = internalMutation({
 			productId: args.productId,
 			expiresAt: args.now + CHECKOUT_SESSION_TTL_MS
 		};
+
 		if (existing) await ctx.db.replace(existing._id, reservation);
 		else await ctx.db.insert('billingCheckoutSessions', reservation);
+
 		return {
 			kind: 'create' as const,
 			attemptId: args.attemptId,
@@ -231,10 +254,13 @@ export const attachCheckoutSession = internalMutation({
 			.query('billingCheckoutSessions')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
+
 		if (!reservation || reservation.attemptId !== args.attemptId) {
 			throw new Error('Checkout reservation expired.');
 		}
+
 		await ctx.db.patch(reservation._id, { checkoutUrl: args.checkoutUrl });
+
 		return null;
 	}
 });
@@ -246,7 +272,9 @@ export const customerPortal = action({
 		assertPaymentsConfigured();
 		await getUserId(ctx);
 		const portal = await payments.customerPortal(ctx, { send_email: false });
+
 		if (!portal.portal_url) throw new Error('Customer portal did not return a URL.');
+
 		return { portal_url: portal.portal_url };
 	}
 });
@@ -270,11 +298,15 @@ export const upsertDodoSubscription = internalMutation({
 		if (args.billingPeriodEnd <= args.billingPeriodStart) {
 			throw new Error('Dodo billing period must have a positive duration.');
 		}
+
 		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
+
 		if (existing?.status === 'active' && existing.tier !== 'free' && !existing.dodoSubscriptionId) {
 			return null;
 		}
+
 		if (existing && args.eventAt < existing.eventAt) return null;
+
 		if (
 			existing?.dodoSubscriptionId &&
 			existing.dodoSubscriptionId !== args.dodoSubscriptionId &&
@@ -282,9 +314,11 @@ export const upsertDodoSubscription = internalMutation({
 		) {
 			return null;
 		}
+
 		if (existing && args.eventAt === existing.eventAt && existing.status !== 'active') {
 			if (args.status === 'active') return null;
 		}
+
 		if (
 			existing?.dodoSubscriptionId &&
 			args.status !== 'active' &&
@@ -297,6 +331,7 @@ export const upsertDodoSubscription = internalMutation({
 			.query('billingCustomers')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
+
 		if (customer) await ctx.db.patch(customer._id, { dodoCustomerId: args.dodoCustomerId });
 		else {
 			await ctx.db.insert('billingCustomers', {
@@ -311,14 +346,18 @@ export const upsertDodoSubscription = internalMutation({
 			args.eventAt < args.billingPeriodEnd
 				? 'active'
 				: args.status;
+
 		const isNewPaidTerm =
 			effectiveStatus === 'active' &&
 			(!existing || existing.dodoSubscriptionId !== args.dodoSubscriptionId);
+
 		const oldLimits =
 			args.status === 'active' && existing && existing.tier !== args.tier
 				? await resolveTierLimits(ctx, existing.tier)
 				: null;
+
 		const newLimits = oldLimits ? await resolveTierLimits(ctx, args.tier) : null;
+
 		const isUpgrade =
 			oldLimits !== null &&
 			newLimits !== null &&
@@ -326,6 +365,7 @@ export const upsertDodoSubscription = internalMutation({
 			newLimits.modelUsage.monthly >= oldLimits.modelUsage.monthly &&
 			(newLimits.modelUsage.weekly > oldLimits.modelUsage.weekly ||
 				newLimits.modelUsage.monthly > oldLimits.modelUsage.monthly);
+
 		const subscription = {
 			userId: args.userId,
 			tier: args.tier,
@@ -342,15 +382,19 @@ export const upsertDodoSubscription = internalMutation({
 			dodoSubscriptionId: args.dodoSubscriptionId,
 			dodoProductId: args.dodoProductId
 		};
+
 		if (existing) await ctx.db.replace(existing._id, subscription);
 		else await ctx.db.insert('subscriptions', subscription);
+
 		if (args.status === 'active') {
 			const checkoutSession = await ctx.db
 				.query('billingCheckoutSessions')
 				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 				.unique();
+
 			if (checkoutSession) await ctx.db.delete('billingCheckoutSessions', checkoutSession._id);
 		}
+
 		return null;
 	}
 });
