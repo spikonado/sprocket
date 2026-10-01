@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
+import type { ChatGptStatus } from '$lib/types/sprocket';
 import {
 	createLocalClient,
 	ensureLocalSession,
@@ -598,26 +599,30 @@ describe('transcript attachment fetch', () => {
 });
 
 describe('chatgpt local sign-in', () => {
-	it('fetches status with accounts, models, and login availability', async () => {
-		const status = {
-			accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
-			activeConnectionId: 'conn-1',
-			models: [{ id: 'gpt-5.4', name: 'GPT-5.4' }],
-			loginAvailable: true
-		};
-		const fetch = vi.fn(async () => Response.json(status));
-		vi.stubGlobal('fetch', fetch);
+	it.each([undefined, 'Could not load ChatGPT models. Retry later.'])(
+		'fetches account status with optional guidance %s',
+		async (error) => {
+			const status: ChatGptStatus = {
+				accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+				activeConnectionId: 'conn-1',
+				models: [{ id: 'gpt-5.4', name: 'GPT-5.4' }],
+				loginAvailable: true
+			};
+			if (error) status.error = error;
+			const fetch = vi.fn(async () => Response.json(status));
+			vi.stubGlobal('fetch', fetch);
 
-		const result = await createLocalClient('http://127.0.0.1:7731').fetchChatGptStatus({
-			userId: 'user-1'
-		});
+			const result = await createLocalClient('http://127.0.0.1:7731').fetchChatGptStatus({
+				userId: 'user-1'
+			});
 
-		expect(result).toEqual(status);
-		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/chatgpt/status',
-			expect.objectContaining({ method: 'POST', body: JSON.stringify({ userId: 'user-1' }) })
-		);
-	});
+			expect(result).toEqual(status);
+			expect(fetch).toHaveBeenCalledWith(
+				'http://127.0.0.1:7731/api/chatgpt/status',
+				expect.objectContaining({ method: 'POST', body: JSON.stringify({ userId: 'user-1' }) })
+			);
+		}
+	);
 
 	it('starts a browser login without exposing codes or tokens to the browser', async () => {
 		const fetch = vi.fn(async () =>

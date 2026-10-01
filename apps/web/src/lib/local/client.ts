@@ -173,7 +173,8 @@ const chatGptStatusSchema = z.object({
 	),
 	activeConnectionId: z.string().nullable(),
 	models: z.array(z.object({ id: z.string(), name: z.string() })),
-	loginAvailable: z.boolean()
+	loginAvailable: z.boolean(),
+	error: z.string().optional()
 });
 const chatGptBrowserLoginStartSchema = z.object({ state: z.string(), authorizeUrl: z.string() });
 const chatGptBrowserLoginResultSchema = z.object({
