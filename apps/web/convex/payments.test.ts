@@ -172,19 +172,17 @@ async function createApprovedMandate(
 }
 
 beforeEach(() => {
-	process.env.PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
+	vi.stubEnv('PRAVA_BACKEND_URL', 'https://sandbox.api.prava.space');
+	vi.stubEnv('PRAVA_SECRET_KEY', 'sk_test_secret');
 });
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	delete process.env.PRAVA_SECRET_KEY;
-	delete process.env.PRAVA_BACKEND_URL;
+	vi.unstubAllEnvs();
 });
 
 describe('payments mandates', () => {
 	it('creates a mandate setup session and stores non-sensitive state', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
 				session_id: 'prava-session-1',
@@ -243,8 +241,7 @@ describe('payments mandates', () => {
 	});
 
 	it('reports a missing Prava backend URL instead of a fetch failure', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		delete process.env.PRAVA_BACKEND_URL;
+		vi.stubEnv('PRAVA_BACKEND_URL', undefined);
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -254,8 +251,6 @@ describe('payments mandates', () => {
 	});
 
 	it('resolves the synced account email without a caller identity', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
 				session_id: 'prava-session-1',
@@ -278,7 +273,6 @@ describe('payments mandates', () => {
 	});
 
 	it('syncs a pending mandate to active once the owner approves', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup } = await createApprovedMandate(t, run);
@@ -294,7 +288,6 @@ describe('payments mandates', () => {
 	});
 
 	it('charges an active mandate and returns credentials without persisting them', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -344,7 +337,6 @@ describe('payments mandates', () => {
 	});
 
 	it('reuses a completed charge handle without replaying credentials', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -403,7 +395,6 @@ describe('payments mandates', () => {
 	});
 
 	it('refuses to re-POST after a lost Prava charge response for the same reference', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -456,7 +447,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -490,7 +480,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects charging a paused mandate before calling Prava', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -513,7 +502,6 @@ describe('payments mandates', () => {
 	});
 
 	it('does not resolve a mandate approved in a different currency', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -534,7 +522,6 @@ describe('payments mandates', () => {
 	});
 
 	it('does not resolve an approval whose scope or cadence differs', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -570,7 +557,6 @@ describe('payments mandates', () => {
 	});
 
 	it('reports a charge outcome only once', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -615,7 +601,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects charging another user’s mandate before calling Prava', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const alice = await startRun(t, 'user_alice');
 		const bob = await startRun(t, 'user_bob');
@@ -635,7 +620,6 @@ describe('payments mandates', () => {
 	});
 
 	it('re-sends the report to Prava when retrying an abandoned stale claim', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -687,7 +671,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects an opposite-outcome retry instead of posting a conflicting report', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -733,7 +716,6 @@ describe('payments mandates', () => {
 	});
 
 	it('keeps the first-claimed outcome after a lost Prava response', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -801,7 +783,6 @@ describe('payments mandates', () => {
 	});
 
 	it('reports an in-flight claim as not-yet-reported instead of claiming success', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -844,7 +825,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects a recurring frequency for an any-merchant mandate', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -861,7 +841,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects charging when multiple approved mandates match instead of picking one', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -887,7 +866,6 @@ describe('payments mandates', () => {
 	});
 
 	it('syncs a pending mandate to active when exactly one live approval matches', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
@@ -909,8 +887,6 @@ describe('payments mandates', () => {
 	});
 
 	it('lists only the calling user’s mandates via the user-facing action', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
 				mandates: [liveListedMandate()]
@@ -932,7 +908,6 @@ describe('payments mandates', () => {
 	});
 
 	it('does not link an approval when multiple local setups match it', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const alice = await startRun(t, 'user_alice');
 
@@ -993,7 +968,6 @@ describe('payments mandates', () => {
 	});
 
 	it('links a newly approved mandate so settings can pause or cancel it', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const alice = await startRun(t, 'user_alice');
 
@@ -1048,8 +1022,6 @@ describe('payments mandates', () => {
 	});
 
 	it('treats a first-time customer’s CUSTOMER_NOT_FOUND as an empty mandate list', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValue(
@@ -1069,7 +1041,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects the user-facing lifecycle action on another user’s mandate', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const alice = await startRun(t, 'user_alice');
 		const bob = await startRun(t, 'user_bob');
@@ -1086,7 +1057,6 @@ describe('payments mandates', () => {
 	});
 
 	it('pauses an owned mandate via the lifecycle action', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const alice = await startRun(t, 'user_alice');
 

@@ -552,7 +552,7 @@ export const deleteChatGptCredentialState = internalMutation({
 	handler: async (ctx, args) => {
 		const state = await chatGptState(ctx, args.userId);
 
-		if (state) await ctx.db.delete(state._id);
+		if (state) await ctx.db.delete('providerCredentialStates', state._id);
 
 		return null;
 	}

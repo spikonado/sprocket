@@ -142,15 +142,14 @@ async function startedChatGptRun() {
 
 describe('provider credentials', () => {
 	beforeEach(() => {
-		process.env.WORKOS_API_KEY = 'sk_workos_test';
-		process.env.WORKOS_CLIENT_ID = 'client_test';
+		vi.stubEnv('WORKOS_API_KEY', 'sk_workos_test');
+		vi.stubEnv('WORKOS_CLIENT_ID', 'client_test');
 	});
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		vi.useRealTimers();
-		delete process.env.WORKOS_API_KEY;
-		delete process.env.WORKOS_CLIENT_ID;
+		vi.unstubAllEnvs();
 	});
 
 	it('validates and stores an OpenAI key without returning it', async () => {

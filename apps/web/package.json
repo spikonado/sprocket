@@ -37,6 +37,7 @@
 		"zod": "^4.1.8"
 	},
 	"devDependencies": {
+		"@convex-dev/eslint-plugin": "5.0.0",
 		"@edge-runtime/vm": "^5.0.0",
 		"@sprocket/eslint-config": "workspace:*",
 		"@sprocket/typescript-config": "workspace:*",

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 import type { ConvexTestInstance } from './test.setup';
@@ -41,13 +41,12 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 
 describe('gateway quota', () => {
 	beforeEach(() => {
-		process.env.MODEL_GATEWAY_URL = gatewayUrl;
-		process.env.MODEL_GATEWAY_TOKEN_SECRET = tokenSecret;
+		vi.stubEnv('MODEL_GATEWAY_URL', gatewayUrl);
+		vi.stubEnv('MODEL_GATEWAY_TOKEN_SECRET', tokenSecret);
 	});
 
 	afterEach(() => {
-		delete process.env.MODEL_GATEWAY_URL;
-		delete process.env.MODEL_GATEWAY_TOKEN_SECRET;
+		vi.unstubAllEnvs();
 	});
 
 	it('mints a user credential and reports remaining quota', async () => {
