@@ -1,16 +1,12 @@
-import { Check, ChevronDown, Lock, Search } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useLockTooltip } from '$lib/components/ui/lock-tooltip';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
-import Tooltip from '$lib/components/ui/tooltip';
 import { cn } from '$lib/utils';
 
 type SelectorOption = {
 	id: string;
 	label: string;
 	triggerLabel?: string;
-	locked?: boolean;
-	lockTooltip?: string;
 };
 
 export default function OptionSelector<TOption extends SelectorOption>({
@@ -41,14 +37,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const searchRef = useRef<HTMLInputElement | null>(null);
-	const lockTooltipState = useLockTooltip();
-
-	const matched = options.find((option) => option.id === value);
-
-	const selectedOption =
-		matched && !matched.locked
-			? matched
-			: (options.find((option) => !option.locked) ?? matched ?? options[0] ?? null);
+	const selectedOption = options.find((option) => option.id === value) ?? options[0] ?? null;
 
 	const filteredOptions =
 		searchable && searchQuery.trim()
@@ -56,8 +45,6 @@ export default function OptionSelector<TOption extends SelectorOption>({
 					option.label.toLocaleLowerCase().includes(searchQuery.trim().toLocaleLowerCase())
 				)
 			: options;
-
-	const selectableFilteredOptions = filteredOptions.filter((option) => !option.locked);
 
 	function toggleMenu() {
 		if (disabled) {
@@ -71,17 +58,10 @@ export default function OptionSelector<TOption extends SelectorOption>({
 		else setSearchQuery('');
 	}
 
-	function selectOption(optionId: TOption['id'], event?: React.MouseEvent) {
+	function selectOption(optionId: TOption['id']) {
 		const option = options.find((entry) => entry.id === optionId);
 
 		if (!option) return;
-
-		if (option.locked) {
-			if (event && option.lockTooltip)
-				lockTooltipState.showLockTooltip(event, option.lockTooltip, true);
-
-			return;
-		}
 
 		if (optionId !== value) {
 			onValueChange?.(optionId);
@@ -89,21 +69,18 @@ export default function OptionSelector<TOption extends SelectorOption>({
 
 		setIsOpen(false);
 		setSearchQuery('');
-		lockTooltipState.hideLockTooltip(true);
 		triggerRef.current?.focus();
 	}
 
 	function handleSearchKeydown(event: React.KeyboardEvent) {
-		if (event.key !== 'Enter' || selectableFilteredOptions.length === 0) return;
+		if (event.key !== 'Enter' || filteredOptions.length === 0) return;
 		event.preventDefault();
-		selectOption(selectableFilteredOptions[0].id);
+		selectOption(filteredOptions[0].id);
 	}
 
-	const { hideLockTooltip } = lockTooltipState;
 	useEffect(() => {
 		if (!isOpen) {
 			setSearchQuery('');
-			hideLockTooltip();
 
 			return;
 		}
@@ -118,7 +95,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen, hideLockTooltip]);
+	}, [isOpen]);
 
 	useEffect(() => {
 		if (disabled) {
@@ -180,72 +157,40 @@ export default function OptionSelector<TOption extends SelectorOption>({
 					)}
 
 					<div className={cn('space-y-0.5', searchable && 'pt-1.5')}>
-						{filteredOptions.map((option) => {
-							const locked = Boolean(option.locked);
-
-							return (
-								<button
-									key={option.id}
-									type="button"
-									className={cn(
-										'focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:ring-2',
-										locked ? 'cursor-not-allowed opacity-45' : 'hover:bg-hover-fill',
-										!locked && option.id === value && 'bg-hover-fill'
-									)}
-									aria-pressed={!locked && option.id === value}
-									aria-disabled={locked}
-									aria-label={
-										locked && option.lockTooltip
-											? `${option.label}. ${option.lockTooltip}`
-											: undefined
-									}
-									onMouseEnter={(event) => {
-										if (locked && option.lockTooltip)
-											lockTooltipState.showLockTooltip(event, option.lockTooltip);
-									}}
-									onMouseLeave={() => lockTooltipState.hideLockTooltip()}
-									onFocus={(event) => {
-										if (locked && option.lockTooltip)
-											lockTooltipState.showLockTooltip(event, option.lockTooltip);
-									}}
-									onBlur={() => lockTooltipState.hideLockTooltip()}
-									onClick={(event) => {
-										selectOption(option.id, event);
-									}}
-								>
-									{optionIcon ? (
-										<span
-											className={cn(
-												'flex size-7 shrink-0 items-center justify-center',
-												'text-muted-foreground'
-											)}
-										>
-											{optionIcon(option)}
-										</span>
-									) : null}
+						{filteredOptions.map((option) => (
+							<button
+								key={option.id}
+								type="button"
+								className={cn(
+									'focus-visible:ring-ring/60 hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:ring-2',
+									option.id === value && 'bg-hover-fill'
+								)}
+								aria-pressed={option.id === value}
+								onClick={() => {
+									selectOption(option.id);
+								}}
+							>
+								{optionIcon ? (
 									<span
 										className={cn(
-											'min-w-0 flex-1 truncate text-sm font-medium',
-											locked ? 'text-muted-foreground' : 'text-foreground'
+											'flex size-7 shrink-0 items-center justify-center',
+											'text-muted-foreground'
 										)}
 									>
-										{option.label}
+										{optionIcon(option)}
 									</span>
-									{locked ? (
-										<span className="text-muted-foreground shrink-0" aria-hidden="true">
-											<Lock className="size-3.5" />
-										</span>
-									) : (
-										<Check
-											className={cn(
-												'text-accent-strong size-4 shrink-0 transition-opacity',
-												option.id === value ? 'opacity-100' : 'opacity-0'
-											)}
-										/>
+								) : null}
+								<span className="text-foreground min-w-0 flex-1 truncate text-sm font-medium">
+									{option.label}
+								</span>
+								<Check
+									className={cn(
+										'text-accent-strong size-4 shrink-0 transition-opacity',
+										option.id === value ? 'opacity-100' : 'opacity-0'
 									)}
-								</button>
-							);
-						})}
+								/>
+							</button>
+						))}
 						{filteredOptions.length === 0 ? (
 							<p className="text-muted-foreground px-3 py-5 text-center text-sm">
 								No matches found
@@ -254,8 +199,6 @@ export default function OptionSelector<TOption extends SelectorOption>({
 					</div>
 				</div>
 			) : null}
-
-			<Tooltip tooltip={lockTooltipState.lockTooltip} />
 		</div>
 	);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Eye, EyeOff, ExternalLink } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import Button from '$lib/components/ui/button/button';
@@ -50,11 +50,11 @@ export default function SettingsProviders({
 	const [openAiError, setOpenAiError] = useState<string | null>(null);
 	const [openAiSaved, setOpenAiSaved] = useState(false);
 	const [chatGptPending, setChatGptPending] = useState(false);
-	const [browserLogin, setBrowserLoginState] = useState<ChatGptBrowserLoginStart | null>(null);
-	const [confirmSignOut, setConfirmSignOut] = useState<string | null>(null);
+	const [browserLoginActive, setBrowserLoginActive] = useState(false);
 	const [signOutWarning, setSignOutWarning] = useState<string | null>(null);
 	const [chatGptError, setChatGptError] = useState<string | null>(null);
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
+	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
 
 	const activeAccount =
@@ -64,8 +64,15 @@ export default function SettingsProviders({
 
 	const setBrowserLogin = (userIdForLogin: string, next: ChatGptBrowserLoginStart | null) => {
 		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
-		setBrowserLoginState(next);
+		setBrowserLoginActive(Boolean(next));
+
+		if (!next) closeLoginWindow();
 	};
+
+	function closeLoginWindow() {
+		loginWindowRef.current?.close();
+		loginWindowRef.current = null;
+	}
 
 	function errorMessage(error: Error, fallback: string): string {
 		return convexClientErrorMessage(error) ?? fallback;
@@ -81,23 +88,24 @@ export default function SettingsProviders({
 		generationRef.current += 1;
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
-		setBrowserLoginState(null);
+		setBrowserLoginActive(false);
+		closeLoginWindow();
 		setChatGptPending(false);
 
 		return pending;
 	}
 
 	useEffect(() => {
-		setBrowserLoginState(null);
+		setBrowserLoginActive(false);
 		setChatGptPending(false);
 		setChatGptError(null);
-		setConfirmSignOut(null);
 		setSignOutWarning(null);
 
 		return () => {
 			generationRef.current += 1;
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
+			closeLoginWindow();
 
 			if (pending) {
 				desktopApi
@@ -162,27 +170,58 @@ export default function SettingsProviders({
 
 		if (!api || chatGptPending) return;
 		setChatGptPending(true);
+		setBrowserLoginActive(true);
 		setChatGptError(null);
-		setConfirmSignOut(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
+		const bridge = window.sprocketDesktopBridge;
+		let loginWindow: Window | null = null;
+		let pending: PendingBrowserLogin | null = null;
 
 		try {
+			if (!bridge) {
+				loginWindow = window.open('about:blank', '_blank');
+				loginWindowRef.current = loginWindow;
+
+				if (!loginWindow)
+					throw new Error('Your browser blocked the sign-in window. Allow popups and try again.');
+				loginWindow.opener = null;
+			}
+
 			const login = await api.startChatGptBrowserLogin(
 				connectionId ? { userId: userIdAtStart, connectionId } : { userId: userIdAtStart }
 			);
 
+			pending = { userId: userIdAtStart, login };
+
 			if (generation !== generationRef.current) {
-				cancelLoginOnServer({ userId: userIdAtStart, login });
+				cancelLoginOnServer(pending);
+
+				return;
+			}
+
+			if (bridge) {
+				await bridge.openExternal(login.authorizeUrl);
+			} else {
+				loginWindow?.location.replace(login.authorizeUrl);
+			}
+
+			if (generation !== generationRef.current) {
+				cancelLoginOnServer(pending);
 
 				return;
 			}
 
 			setBrowserLogin(userIdAtStart, login);
-			void waitForBrowserLogin({ userId: userIdAtStart, login }, api, generation);
+			void waitForBrowserLogin(pending, api, generation);
 		} catch (error) {
+			if (loginWindowRef.current === loginWindow) closeLoginWindow();
+
+			if (pending) cancelLoginOnServer(pending);
+
 			if (generation !== generationRef.current) return;
+			setBrowserLoginActive(false);
 			setChatGptError(
 				errorMessage(
 					z.instanceof(Error).catch(new Error()).parse(error),
@@ -262,8 +301,9 @@ export default function SettingsProviders({
 		if (pendingLogin) cancelLoginOnServer(pendingLogin);
 		setChatGptPending(true);
 		setChatGptError(null);
+		setSignOutWarning(null);
 		const userIdAtStart = userId;
-		const generation = generationRef.current;
+		const generation = ++generationRef.current;
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
@@ -271,11 +311,28 @@ export default function SettingsProviders({
 				connectionId
 			});
 
+			if (generation !== generationRef.current || api !== desktopApi) return;
+			setSignOutWarning(warning);
+
+			if (chatGptStatus) {
+				const activeConnectionId =
+					chatGptStatus.activeConnectionId === connectionId
+						? null
+						: chatGptStatus.activeConnectionId;
+
+				onChatGptStatusChange({
+					accounts: chatGptStatus.accounts.filter(
+						(account) => account.connectionId !== connectionId
+					),
+					activeConnectionId,
+					models: activeConnectionId ? chatGptStatus.models : [],
+					loginAvailable: chatGptStatus.loginAvailable
+				});
+			}
+
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
-			setConfirmSignOut(null);
-			setSignOutWarning(warning);
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -378,27 +435,16 @@ export default function SettingsProviders({
 							</button>
 						</div>
 
-						{browserLogin ? (
-							<div className="border-border bg-hover-fill mt-5 rounded-lg border p-4">
-								<p className="text-foreground text-sm">Sign in with your ChatGPT subscription:</p>
-								<div className="mt-3 flex items-center gap-3">
-									<a
-										href={browserLogin.authorizeUrl}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="bg-primary text-primary-foreground inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium"
-									>
-										Open ChatGPT <ExternalLink className="ml-2 size-3.5" />
-									</a>
-									<button
-										type="button"
-										className="text-muted-foreground text-[13px]"
-										onClick={stopBrowserLogin}
-									>
-										Cancel
-									</button>
-									<span className="text-muted-foreground text-[12px]">Waiting for approval…</span>
-								</div>
+						{browserLoginActive ? (
+							<div className="mt-5 flex items-center gap-3">
+								<span className="text-muted-foreground text-[12px]">Signing in…</span>
+								<button
+									type="button"
+									className="text-muted-foreground text-[13px]"
+									onClick={stopBrowserLogin}
+								>
+									Cancel
+								</button>
 							</div>
 						) : (
 							<div className="mt-5 space-y-4">
@@ -440,35 +486,14 @@ export default function SettingsProviders({
 															Reconnect
 														</button>
 													)}
-													{confirmSignOut === account.connectionId ? (
-														<>
-															<button
-																type="button"
-																className="text-destructive text-[13px] disabled:opacity-50"
-																disabled={chatGptPending}
-																onClick={() => void signOutAccount(account.connectionId)}
-															>
-																{chatGptPending ? 'Signing out…' : 'Confirm sign out'}
-															</button>
-															<button
-																type="button"
-																className="text-muted-foreground hover:text-foreground text-[13px] disabled:opacity-50"
-																disabled={chatGptPending}
-																onClick={() => setConfirmSignOut(null)}
-															>
-																Cancel
-															</button>
-														</>
-													) : (
-														<button
-															type="button"
-															className="text-muted-foreground hover:text-foreground text-[13px] disabled:opacity-50"
-															disabled={chatGptPending}
-															onClick={() => setConfirmSignOut(account.connectionId)}
-														>
-															Sign out
-														</button>
-													)}
+													<button
+														type="button"
+														className="text-muted-foreground hover:text-foreground text-[13px] disabled:opacity-50"
+														disabled={chatGptPending}
+														onClick={() => void signOutAccount(account.connectionId)}
+													>
+														Sign out
+													</button>
 												</li>
 											);
 										})}

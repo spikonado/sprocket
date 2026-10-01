@@ -350,7 +350,6 @@ async fn start(
 #[serde(rename_all = "camelCase")]
 struct RunContext {
     gateway_url: String,
-    tier: String,
     thread: Option<ThreadSettings>,
 }
 
@@ -363,11 +362,6 @@ struct ThreadSettings {
     fast_mode: bool,
 }
 
-#[derive(Deserialize)]
-struct Subscription {
-    tier: String,
-}
-
 async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserConvexClient> {
     state.native_auth.require_user(user_id).await?;
     state.convex_client_for(user_id).await
@@ -377,9 +371,6 @@ async fn run_context(
     rpc: &UserConvexClient,
     thread_id: Option<&str>,
 ) -> anyhow::Result<RunContext> {
-    let subscription: Subscription = rpc
-        .query("billing:getMySubscription", BTreeMap::new())
-        .await?;
     let thread = match thread_id {
         Some(thread_id) => {
             let args = BTreeMap::from([("threadId".into(), Value::String(thread_id.to_owned()))]);
@@ -389,7 +380,6 @@ async fn run_context(
     };
     Ok(RunContext {
         gateway_url: models::gateway_url()?,
-        tier: subscription.tier,
         thread,
     })
 }

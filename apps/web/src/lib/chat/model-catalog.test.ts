@@ -1,8 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
-	fastModeAccessForModelAndTier,
 	fetchGatewayModelCatalog,
-	isModelAllowedForTier,
 	modelOptionsForCompletionProvider,
 	resolveModelForCompletionProvider,
 	showsReasoningControl
@@ -27,19 +25,7 @@ const catalogPayload = {
 				defaultReasoningEffort: 'medium',
 				serviceTiers: ['standard', 'fast']
 			}
-		],
-		tierAllowedModels: {
-			free: ['model-small'],
-			go: ['model-small'],
-			budget: ['model-small']
-		},
-		tierAllowedServiceTiers: {
-			free: ['standard'],
-			go: ['standard', 'fast'],
-			budget: ['standard', 'fast']
-		},
-		modelLockUpgradeMessage: 'Upgrade to use this model',
-		serviceTierLockUpgradeMessage: 'Upgrade to use Fast mode'
+		]
 	}
 };
 
@@ -59,48 +45,42 @@ describe('gateway model catalog', () => {
 		);
 		expect(catalog.models[0]).not.toHaveProperty('autoCompactTokenLimit');
 		expect(catalog.models[0].supportsFastMode).toBe(true);
-		expect(catalog.tierAllowsFastMode).toEqual({
-			free: false,
-			go: true,
-			budget: true
-		});
-		expect(fastModeAccessForModelAndTier(catalog, 'free', catalog.models[0])).toBe('locked');
-		expect(fastModeAccessForModelAndTier(catalog, 'go', catalog.models[0])).toBe('available');
-		expect(fastModeAccessForModelAndTier(catalog, 'budget', catalog.models[0])).toBe('available');
+		expect(catalog).not.toHaveProperty('tierAllowsFastMode');
 	});
 
-	it('allows everything for tiers missing from the catalog', async () => {
+	it('ignores retired tier restriction fields from older gateways', async () => {
+		const payload = structuredClone(catalogPayload);
+		payload.sprocket.models.push({
+			...payload.sprocket.models[0],
+			id: 'model-large',
+			label: 'Model Large'
+		});
+		payload.sprocket.defaultModelId = 'model-large';
 		vi.stubGlobal(
 			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(catalogPayload), { status: 200 }))
+			vi.fn(async () =>
+				Response.json({
+					sprocket: {
+						...payload.sprocket,
+						tierAllowedModels: { free: ['model-small'] },
+						modelLockUpgradeMessage: 'Upgrade to use this model',
+						tierAllowedServiceTiers: { free: ['standard'] },
+						serviceTierLockUpgradeMessage: 'Upgrade to use Fast mode'
+					}
+				})
+			)
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(isModelAllowedForTier(catalog, 'enterprise', 'model-small')).toBe(true);
-		expect(isModelAllowedForTier(catalog, 'enterprise', 'model-unknown')).toBe(false);
-		expect(fastModeAccessForModelAndTier(catalog, 'enterprise', catalog.models[0])).toBe(
-			'available'
+		expect(modelOptionsForCompletionProvider(catalog, 'spikonado')).toEqual([
+			{ id: 'model-small', label: 'Model Small', provider: 'provider-one' },
+			{ id: 'model-large', label: 'Model Large', provider: 'provider-one' }
+		]);
+		expect(resolveModelForCompletionProvider(catalog, 'spikonado', 'model-large')).toBe(
+			'model-large'
 		);
-	});
-
-	it('rejects catalogs with empty permission maps', async () => {
-		const base = structuredClone(catalogPayload);
-
-		// SAFETY: test-only payload exercising the empty-maps rejection path.
-		const payload = {
-			sprocket: {
-				...base.sprocket,
-				tierAllowedModels: {} as Record<string, string[]>,
-				tierAllowedServiceTiers: {} as Record<string, string[]>
-			}
-		};
-
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }))
-		);
-		await expect(fetchGatewayModelCatalog('https://ai-gateway.spikonado.com')).rejects.toThrow(
-			'Model catalog is unavailable.'
-		);
+		expect(resolveModelForCompletionProvider(catalog, 'spikonado', 'unknown')).toBe('model-large');
+		expect(catalog.models.every((model) => model.supportsFastMode)).toBe(true);
+		expect(catalog).not.toHaveProperty('tierAllowedModels');
 	});
 
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
@@ -113,7 +93,6 @@ describe('gateway model catalog', () => {
 
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(catalog.models[0].supportsFastMode).toBe(false);
-		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('unsupported');
 	});
 
 	it('offers only OpenAI models for a direct OpenAI provider without tier locks', async () => {
@@ -122,19 +101,16 @@ describe('gateway model catalog', () => {
 			{ ...payload.sprocket.models[0], id: 'openai-paid', provider: 'openai' },
 			{ ...payload.sprocket.models[0], id: 'other-free', provider: 'other' }
 		];
-		payload.sprocket.tierAllowedModels.free = ['other-free'];
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => Response.json(payload))
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 
-		expect(modelOptionsForCompletionProvider(catalog, 'free', 'openai')).toEqual([
+		expect(modelOptionsForCompletionProvider(catalog, 'openai')).toEqual([
 			expect.objectContaining({ id: 'openai-paid', provider: 'openai' })
 		]);
-		expect(resolveModelForCompletionProvider(catalog, 'free', 'openai', 'other-free')).toBe(
-			'openai-paid'
-		);
+		expect(resolveModelForCompletionProvider(catalog, 'openai', 'other-free')).toBe('openai-paid');
 	});
 
 	it('offers only ChatGPT account models present in the gateway catalog', async () => {
@@ -151,25 +127,23 @@ describe('gateway model catalog', () => {
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(
-			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-second', 'gpt-5.4']).map(
+			modelOptionsForCompletionProvider(catalog, 'chatgpt', ['gpt-second', 'gpt-5.4']).map(
 				(model) => model.id
 			)
 		).toEqual(['gpt-second', 'gpt-5.4']);
 		expect(
-			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-5.4', 'gpt-account-only'])
+			modelOptionsForCompletionProvider(catalog, 'chatgpt', ['gpt-5.4', 'gpt-account-only'])
 		).toEqual([expect.objectContaining({ id: 'gpt-5.4', provider: 'openai' })]);
 		expect(
-			resolveModelForCompletionProvider(catalog, 'free', 'chatgpt', 'gpt-account-only', ['gpt-5.4'])
+			resolveModelForCompletionProvider(catalog, 'chatgpt', 'gpt-account-only', ['gpt-5.4'])
 		).toBe('gpt-5.4');
-		expect(
-			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-account-only'])
-		).toEqual([]);
-		expect(modelOptionsForCompletionProvider(catalog, 'free', 'openai')).toEqual([
+		expect(modelOptionsForCompletionProvider(catalog, 'chatgpt', ['gpt-account-only'])).toEqual([]);
+		expect(modelOptionsForCompletionProvider(catalog, 'openai')).toEqual([
 			expect.objectContaining({ id: 'gpt-5.4' }),
 			expect.objectContaining({ id: 'gpt-second' }),
 			expect.objectContaining({ id: 'gpt-gateway-only' })
 		]);
-		expect(modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', null)).toEqual([]);
+		expect(modelOptionsForCompletionProvider(catalog, 'chatgpt', null)).toEqual([]);
 	});
 });
 

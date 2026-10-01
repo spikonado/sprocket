@@ -19,11 +19,6 @@ export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;
 	models: readonly CatalogModel[];
-	/** Tier ids are gateway-owned; keys are dynamic strings. */
-	tierAllowedModels: Readonly<Record<string, readonly string[]>>;
-	tierAllowsFastMode: Readonly<Record<string, boolean>>;
-	modelLockUpgradeMessage: string;
-	fastModeLockUpgradeMessage: string;
 	protocolVersion?: number;
 	catalogVersion?: string;
 };

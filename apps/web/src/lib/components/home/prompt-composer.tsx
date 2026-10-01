@@ -10,14 +10,11 @@ import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 import {
-	fastModeAccessForModelAndTier,
 	getCatalogModel,
-	isModelAllowedForTier,
 	modelOptionsForCompletionProvider,
 	resolveModelForCompletionProvider,
 	showsReasoningControl,
 	type CatalogModelId,
-	type FastModeAccess,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
 import { formatCountdownDuration } from '$lib/format';
@@ -133,7 +130,6 @@ export function PromptComposerView({
 	usage,
 	usageFailed
 }: PromptComposerViewProps) {
-	const subscriptionTier = usage?.tier;
 	const [now, setNow] = useState(() => Date.now());
 
 	useEffect(() => {
@@ -146,7 +142,6 @@ export function PromptComposerView({
 		};
 	}, []);
 
-	// Until the tier is known, render the free allowlist so locked models are never selectable.
 	const providerOptions = configuredProviders.map((provider) => ({
 		id: provider,
 		label:
@@ -158,12 +153,7 @@ export function PromptComposerView({
 	}));
 
 	const providerModelOptions = modelCatalog
-		? modelOptionsForCompletionProvider(
-				modelCatalog,
-				subscriptionTier ?? 'free',
-				selectedCompletionProvider,
-				chatGptModelIds
-			)
+		? modelOptionsForCompletionProvider(modelCatalog, selectedCompletionProvider, chatGptModelIds)
 		: [];
 
 	const modelOptions =
@@ -178,20 +168,10 @@ export function PromptComposerView({
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
 
-	const selectedFastModeAccess: FastModeAccess | undefined = (() => {
-		if (!modelCatalog || !selectedCatalogModel) return undefined;
+	// Fast mode only runs through Spikonado's gateway; other providers never offer it.
+	const selectedFastModeAvailable =
+		selectedCompletionProvider === 'spikonado' && selectedCatalogModel?.supportsFastMode === true;
 
-		if (selectedCompletionProvider !== 'spikonado') return 'unsupported';
-
-		if (!selectedCatalogModel.supportsFastMode) return 'unsupported';
-
-		if (!subscriptionTier) return undefined;
-
-		return fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, selectedCatalogModel);
-	})();
-
-	// Block send until a catalog model is selected. If the usage query fails, keep send
-	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel =
 		(selectedCompletionProvider === 'spikonado' ||
 			(providersReady && configuredProviders.includes(selectedCompletionProvider))) &&
@@ -200,10 +180,7 @@ export function PromptComposerView({
 			? selectedCatalogModel.provider === 'openai' &&
 				(selectedCompletionProvider !== 'chatgpt' ||
 					chatGptModelIds?.includes(selectedModel) === true)
-			: usageFailed ||
-				(subscriptionTier !== undefined &&
-					modelCatalog !== undefined &&
-					isModelAllowedForTier(modelCatalog, subscriptionTier, selectedModel)));
+			: usageFailed || usage !== undefined);
 
 	const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
@@ -240,9 +217,7 @@ export function PromptComposerView({
 		if (!modelCatalog) return null;
 
 		const option = modelOptions.find(
-			(candidate) =>
-				!candidate.locked &&
-				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
+			(candidate) => getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
 		);
 
 		return option?.label ?? null;
@@ -539,7 +514,6 @@ export function PromptComposerView({
 
 		const modelId = resolveModelForCompletionProvider(
 			modelCatalog,
-			subscriptionTier ?? 'free',
 			provider,
 			selectedModel,
 			chatGptModelIds
@@ -566,18 +540,12 @@ export function PromptComposerView({
 			onSelectedCompletionProviderChange?.(nextProvider);
 		}
 
-		const resolvedModel =
-			nextProvider !== 'spikonado'
-				? resolveModelForCompletionProvider(
-						modelCatalog,
-						subscriptionTier ?? 'free',
-						nextProvider,
-						selectedModel,
-						chatGptModelIds
-					)
-				: getCatalogModel(modelCatalog, selectedModel)
-					? selectedModel
-					: modelCatalog.defaultModelId;
+		const resolvedModel = resolveModelForCompletionProvider(
+			modelCatalog,
+			nextProvider,
+			selectedModel,
+			chatGptModelIds
+		);
 
 		if (resolvedModel && resolvedModel !== selectedModel) {
 			onSelectedModelChange?.(resolvedModel);
@@ -593,7 +561,6 @@ export function PromptComposerView({
 		configuredProviders,
 		selectedCompletionProvider,
 		selectedModel,
-		subscriptionTier,
 		chatGptModelIds,
 		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
@@ -608,49 +575,12 @@ export function PromptComposerView({
 	}, [selectedCompletionProvider, fastMode, onFastModeChange]);
 
 	useEffect(() => {
-		// Only coerce after a successful tier + catalog load so paid users are not snapped to
-		// free defaults during loading or transient query failures.
-		if (!modelCatalog || !subscriptionTier) return;
+		if (!selectedCatalogModel) return;
 
-		const allowedModel = resolveModelForCompletionProvider(
-			modelCatalog,
-			subscriptionTier,
-			selectedCompletionProvider,
-			selectedModel,
-			chatGptModelIds
-		);
-
-		if (!allowedModel) return;
-
-		if (allowedModel !== selectedModel) {
-			onSelectedModelChange?.(allowedModel);
-			onSelectedReasoningEffortChange?.(
-				getCatalogModel(modelCatalog, allowedModel)?.defaultReasoningEffort ??
-					modelCatalog.defaultReasoningEffort
-			);
-		}
-
-		const catalogModel = getCatalogModel(modelCatalog, allowedModel);
-
-		if (!catalogModel) return;
-
-		if (
-			fastMode &&
-			fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, catalogModel) !== 'available'
-		) {
+		if (fastMode && !selectedCatalogModel.supportsFastMode) {
 			onFastModeChange?.(false);
 		}
-	}, [
-		modelCatalog,
-		subscriptionTier,
-		selectedCompletionProvider,
-		selectedModel,
-		chatGptModelIds,
-		fastMode,
-		onSelectedModelChange,
-		onSelectedReasoningEffortChange,
-		onFastModeChange
-	]);
+	}, [selectedCatalogModel, fastMode, onFastModeChange]);
 
 	useEffect(() => {
 		syncComposerHeight();
@@ -894,16 +824,14 @@ export function PromptComposerView({
 										{selectedCatalogModel ? (
 											<>
 												{showsReasoningControl(selectedCatalogModel) ||
-												selectedFastModeAccess === 'available' ||
-												selectedFastModeAccess === 'locked' ? (
+												selectedFastModeAvailable ? (
 													<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 												) : null}
 												<ReasoningSelector
 													model={selectedCatalogModel}
 													reasoningEffort={selectedReasoningEffort}
 													fastMode={fastMode}
-													fastModeAccess={selectedFastModeAccess}
-													fastModeLockTooltip={modelCatalog?.fastModeLockUpgradeMessage}
+													fastModeAvailable={selectedFastModeAvailable}
 													disabled={composerLocked || answeringQuestion}
 													className="z-20 shrink-0"
 													onReasoningEffortChange={onSelectedReasoningEffortChange}

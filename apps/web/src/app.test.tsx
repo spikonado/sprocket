@@ -28,11 +28,7 @@ const modelCatalog: ModelCatalog = {
 			defaultReasoningEffort,
 			supportsFastMode: true
 		}
-	],
-	tierAllowedModels: { pro: [defaultModelId], free: [defaultModelId] },
-	tierAllowsFastMode: { pro: true, free: false },
-	modelLockUpgradeMessage: 'Upgrade to unlock this model',
-	fastModeLockUpgradeMessage: 'Upgrade to use Fast mode'
+	]
 };
 
 const testConfig: RuntimeConfig = {
