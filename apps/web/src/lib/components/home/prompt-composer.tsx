@@ -255,8 +255,10 @@ export function PromptComposerView({
 	const canAttachMore = !composerLocked && !answeringQuestion;
 	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
 	const atQuery = getActiveAtQuery(prompt, caretPosition);
+
 	const skillsPopupOpen =
 		dollarQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
+
 	const pathsPopupOpen = atQuery !== null && !pathsDismissed && !answeringQuestion && !isSubmitting;
 	const paths = useComposerPaths(projectPaths, pathsPopupOpen ? atQuery : null);
 	const activePathIndex = Math.min(pathHighlightedIndex, Math.max(0, paths.entries.length - 1));
