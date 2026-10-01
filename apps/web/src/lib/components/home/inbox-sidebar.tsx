@@ -21,6 +21,7 @@ import { inboxState, type InboxState } from '@convex/lib/inboxState';
 import type { Project } from '$lib/types/sprocket';
 import type { SprocketTheme } from '$lib/theme';
 import type { InboxSectionData } from '$lib/project/inbox';
+import { cn } from '$lib/utils';
 import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
 import AppUpdate from './app-update';
@@ -206,12 +207,12 @@ export default function InboxSidebar({
 		return `${Math.floor(minutes / 1440)}d`;
 	}
 
-	function runStatus(thread: Thread) {
-		if (thread.status === 'queued') return 'Starting';
+	function runStatus(thread: Thread): { label: string; className: string } | null {
+		if (thread.status === 'queued') return { label: 'Starting', className: 'inbox-working' };
 
-		if (thread.status === 'running') return 'Working';
+		if (thread.status === 'running') return { label: 'Working', className: 'inbox-working' };
 
-		return thread.status === 'failed' ? 'Failed' : null;
+		return thread.status === 'failed' ? { label: 'Failed', className: 'inbox-attention' } : null;
 	}
 
 	function choose(thread: Thread) {
@@ -399,7 +400,9 @@ export default function InboxSidebar({
 							</label>
 							<div className="inbox-project-list">
 								<button
-									className={`inbox-project-option${selectedProjects.length === 0 ? 'inbox-project-selected' : ''}`}
+									className={cn('inbox-project-option', {
+										'inbox-project-selected': selectedProjects.length === 0
+									})}
 									type="button"
 									aria-pressed={selectedProjects.length === 0}
 									onClick={() => filterProjects([])}
@@ -413,7 +416,9 @@ export default function InboxSidebar({
 									return (
 										<button
 											key={project.repositoryKey}
-											className={`inbox-project-option${selected ? 'inbox-project-selected' : ''}`}
+											className={cn('inbox-project-option', {
+												'inbox-project-selected': selected
+											})}
 											type="button"
 											aria-pressed={selected}
 											onClick={() => filterProjects([project.repositoryKey])}
@@ -466,14 +471,16 @@ export default function InboxSidebar({
 							{(section.state !== 'settled' || settledOpen) && (
 								<>
 									{section.rows.map((thread) => {
-										const stateLabel = runStatus(thread);
+										const status = runStatus(thread);
 										const model = threadModel(thread);
 										const isRenaming = renameThread?._id === thread._id;
 
 										return (
 											<div
 												key={thread._id}
-												className={`inbox-row${thread._id === currentThreadId ? 'inbox-row-selected' : ''}`}
+												className={cn('inbox-row', {
+													'inbox-row-selected': thread._id === currentThreadId
+												})}
 												draggable={mutationsEnabled && !busy && !isRenaming}
 												onDragStart={(event) => {
 													setDragging(thread);
@@ -559,15 +566,9 @@ export default function InboxSidebar({
 															) : (
 																<span className="truncate">Unknown model</span>
 															)}
-															{stateLabel && (
-																<span
-																	className={`inbox-status${
-																		thread.status === 'queued' || thread.status === 'running'
-																			? 'inbox-working'
-																			: ''
-																	}${thread.status === 'failed' ? 'inbox-attention' : ''}`}
-																>
-																	{stateLabel}
+															{status && (
+																<span className={cn('inbox-status', status.className)}>
+																	{status.label}
 																</span>
 															)}
 														</span>
