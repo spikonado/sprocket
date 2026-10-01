@@ -32,17 +32,8 @@ export function showsReasoningControl(model: CatalogModel): boolean {
 
 export function modelOptionsForCompletionProvider(
 	catalog: ModelCatalog,
-	provider: CompletionProvider,
-	chatGptModelIds: readonly string[] | null = null
+	provider: CompletionProvider
 ): ModelSelectorOption[] {
-	if (provider === 'chatgpt') {
-		return (chatGptModelIds ?? []).flatMap((id) => {
-			const model = catalog.models.find((model) => model.id === id && model.provider === 'openai');
-
-			return model ? [{ id, label: model.label, provider: model.provider }] : [];
-		});
-	}
-
 	return catalog.models
 		.filter((model) => provider === 'spikonado' || model.provider === 'openai')
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
@@ -51,10 +42,9 @@ export function modelOptionsForCompletionProvider(
 export function resolveModelForCompletionProvider(
 	catalog: ModelCatalog,
 	provider: CompletionProvider,
-	modelId: CatalogModelId,
-	chatGptModelIds: readonly string[] | null = null
+	modelId: CatalogModelId
 ): CatalogModelId | undefined {
-	const options = modelOptionsForCompletionProvider(catalog, provider, chatGptModelIds);
+	const options = modelOptionsForCompletionProvider(catalog, provider);
 
 	if (options.some((option) => option.id === modelId)) return modelId;
 

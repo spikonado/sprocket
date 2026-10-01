@@ -525,6 +525,41 @@ describe('PromptComposer skill menu', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it('offers ChatGPT gateway models and allows sending when connected', async () => {
+		const onSelectedModelChange = vi.fn();
+
+		const { props, textarea } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [
+					{
+						...modelCatalog.models[0],
+						id: 'gpt-6.1-sol',
+						label: 'GPT-6.1 Sol',
+						provider: 'openai'
+					},
+					{ ...modelCatalog.models[1], id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'openai' },
+					modelCatalog.models[0]
+				]
+			},
+			configuredProviders: ['spikonado', 'chatgpt'],
+			selectedCompletionProvider: 'chatgpt',
+			selectedModel: 'gpt-6.1-sol',
+			prompt: 'Hello',
+			onSelectedModelChange
+		});
+
+		await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
+		const menu = document.querySelector('[role="dialog"][aria-label="Model"]');
+		expect(
+			Array.from(menu?.querySelectorAll('button') ?? [], (button) => button.textContent)
+		).toEqual([expect.stringContaining('GPT-6.1 Sol'), expect.stringContaining('GPT-6 Luna')]);
+		await click(findButton('GPT-6 Luna'));
+		expect(onSelectedModelChange).toHaveBeenCalledWith('gpt-6-luna');
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
 	it.each(['free', 'go', 'budget', 'pro', 'enterprise', undefined])(
 		'selects every model and resets reasoning on tier %s',
 		async (tier) => {
