@@ -31,6 +31,16 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### Local project message recency
+
+Older `project-attachments.json` files omit `lastMessageSentAt`. The server
+defaults it to zero and rewrites missing fields on load. Historical send times
+cannot be recovered from attachment records, so projects without a recorded
+send use `lastUsedAt` as their ordering fallback. The UI also accepts the absent
+field. Remove these defaults and the missing-field rewrite after releases
+without this field are outside the supported direct-upgrade window and all
+supported stores have been rewritten.
+
 ### Forgotten SIWC accounts
 
 Older servers kept tokenless ChatGPT account records after sign-out. Loading

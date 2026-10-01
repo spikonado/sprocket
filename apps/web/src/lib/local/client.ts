@@ -41,6 +41,7 @@ const projectAttachmentSchema = z.object({
 	availability: z.enum(['available', 'unavailable']),
 	lastValidatedAt: z.int(),
 	lastUsedAt: z.int(),
+	lastMessageSentAt: z.int().optional(),
 	unavailableReason: z.string().optional()
 });
 

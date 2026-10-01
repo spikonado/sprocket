@@ -68,6 +68,31 @@ describe('workspace launch fragments', () => {
 	});
 });
 
+it('preserves local project send times when listing and attaching projects', async () => {
+	const attachment = {
+		workspacePath: '/work/robot',
+		repositoryKey: 'robot',
+		attachmentKey: 'directory:robot',
+		displayName: 'Robot',
+		availability: 'available',
+		lastValidatedAt: 30,
+		lastUsedAt: 10,
+		lastMessageSentAt: 20
+	};
+
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(async (_url: string, init?: RequestInit) =>
+			Response.json(init?.method === 'POST' ? attachment : [attachment])
+		)
+	);
+	const client = createLocalClient('http://127.0.0.1:7731');
+	expect(await client.listProjectAttachments()).toEqual([attachment]);
+	expect(await client.attachProject({ workspacePath: attachment.workspacePath })).toEqual(
+		attachment
+	);
+});
+
 describe('display transcript pages', () => {
 	it('cancels an in-flight page request when its thread is left', async () => {
 		const fetch = vi.fn(

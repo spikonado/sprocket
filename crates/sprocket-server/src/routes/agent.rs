@@ -133,6 +133,9 @@ pub(crate) async fn launch_agent(
         .filter(|key| crate::project_attachments::repository_key_matches(&attachment, key))
         .unwrap_or(attachment.repository_key.as_str())
         .to_string();
+    let project_attachments = Arc::clone(&state.project_attachments);
+    let attachment_key = attachment.attachment_key.clone();
+    let is_question_continuation = payload.continuation_of_run_id.is_some();
 
     state
         .machines
@@ -202,7 +205,21 @@ pub(crate) async fn launch_agent(
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
-                if let Some(prompt_part) = run.prompt_part().cloned() {
+                let prompt_part = run.prompt_part().cloned();
+                let sent_at = prompt_part
+                    .as_ref()
+                    .map(|part| part.created_at.unwrap_or_else(crate::now_ms))
+                    .or_else(|| is_question_continuation.then(crate::now_ms));
+                if let Some(sent_at) = sent_at
+                    && let Err(error) = project_attachments
+                        .record_message_sent(&attachment_key, sent_at)
+                        .await
+                {
+                    eprintln!(
+                        "sprocket-server: failed to save project message recency for run {run_id}: {error:#}"
+                    );
+                }
+                if let Some(prompt_part) = prompt_part {
                     match transcript
                         .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
                         .await

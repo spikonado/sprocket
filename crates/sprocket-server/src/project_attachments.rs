@@ -24,6 +24,8 @@ pub struct ProjectAttachmentRecord {
     pub availability: WorkspaceAvailability,
     pub last_validated_at: u64,
     pub last_used_at: u64,
+    #[serde(default)]
+    pub last_message_sent_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
 }
@@ -76,13 +78,13 @@ impl ProjectAttachmentStore {
         self.refresh_all().await?;
         let sessions = self.attachments.read().await;
         let mut listed: Vec<ProjectAttachmentRecord> = sessions.values().cloned().collect();
-        listed.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
+        listed.sort_by(compare_project_recency);
         Ok(listed)
     }
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
-        let validated = resolve_attachment(request.workspace_path).await?;
+        let mut validated = resolve_attachment(request.workspace_path).await?;
         let replace_workspace_path = request
             .replace_workspace_path
             .as_deref()
@@ -110,6 +112,12 @@ impl ProjectAttachmentStore {
                     existing.workspace_path
                 );
             }
+            validated.last_message_sent_at = sessions
+                .values()
+                .filter(|attachment| attachment.attachment_key == validated.attachment_key)
+                .map(|attachment| attachment.last_message_sent_at)
+                .max()
+                .unwrap_or_default();
             sessions.insert(validated.workspace_path.clone(), validated.clone());
             if let Some(previous_path) = replace_workspace_path.as_deref() {
                 sessions.remove(previous_path);
@@ -128,7 +136,7 @@ impl ProjectAttachmentStore {
         workspace_path: String,
     ) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
-        let resolved = resolve_attachment(workspace_path).await?;
+        let mut resolved = resolve_attachment(workspace_path).await?;
         let _update_guard = self.update_lock.lock().await;
         let changed = {
             let mut attachments = self.attachments.write().await;
@@ -140,6 +148,7 @@ impl ProjectAttachmentStore {
 
             match existing {
                 Some(existing) => {
+                    resolved.last_message_sent_at = existing.last_message_sent_at;
                     if existing.workspace_path == resolved.workspace_path {
                         attachments.insert(resolved.workspace_path.clone(), resolved.clone());
                         changed = true;
@@ -156,6 +165,24 @@ impl ProjectAttachmentStore {
             self.save_to_disk().await?;
         }
         Ok(resolved)
+    }
+
+    pub async fn record_message_sent(&self, attachment_key: &str, sent_at: u64) -> Result<()> {
+        self.ensure_loaded().await?;
+        let _update_guard = self.update_lock.lock().await;
+        let mut attachments = self.attachments.write().await;
+        let Some(attachment) = attachments
+            .values_mut()
+            .find(|attachment| attachment.attachment_key == attachment_key)
+        else {
+            return Ok(());
+        };
+        if sent_at <= attachment.last_message_sent_at {
+            return Ok(());
+        }
+        attachment.last_message_sent_at = sent_at;
+        drop(attachments);
+        self.save_to_disk().await
     }
 
     pub async fn workspace_path(&self, workspace_path: &str) -> Result<String> {
@@ -218,9 +245,10 @@ impl ProjectAttachmentStore {
             let stored_json: serde_json::Value = serde_json::from_str(&contents)
                 .with_context(|| "failed to parse project attachments")?;
             should_save = stored_json.as_array().is_some_and(|attachments| {
-                attachments
-                    .iter()
-                    .any(|attachment| attachment.get("previousRepositoryKey").is_some())
+                attachments.iter().any(|attachment| {
+                    attachment.get("previousRepositoryKey").is_some()
+                        || attachment.get("lastMessageSentAt").is_none()
+                })
             });
             let stored: Vec<ProjectAttachmentRecord> = serde_json::from_value(stored_json)
                 .with_context(|| "failed to parse project attachments")?;
@@ -317,7 +345,7 @@ impl ProjectAttachmentStore {
             .cloned()
             .collect();
 
-        sessions.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
+        sessions.sort_by(compare_project_recency);
         sessions.truncate(MAX_PERSISTED_PROJECT_ATTACHMENTS);
 
         store.clear();
@@ -325,6 +353,21 @@ impl ProjectAttachmentStore {
             store.insert(session.workspace_path.clone(), session);
         }
     }
+}
+
+fn compare_project_recency(
+    left: &ProjectAttachmentRecord,
+    right: &ProjectAttachmentRecord,
+) -> Ordering {
+    right
+        .last_message_sent_at
+        .cmp(&left.last_message_sent_at)
+        .then_with(|| right.last_used_at.cmp(&left.last_used_at))
+        .then_with(|| {
+            left.workspace_path
+                .encode_utf16()
+                .cmp(right.workspace_path.encode_utf16())
+        })
 }
 
 fn deduplicate_repository_attachments(
@@ -407,6 +450,7 @@ fn mark_available(
         last_validated_at: crate::now_ms(),
         unavailable_reason: None,
         last_used_at: session.last_used_at,
+        last_message_sent_at: session.last_message_sent_at,
     }
 }
 
@@ -481,6 +525,7 @@ async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentR
         availability: WorkspaceAvailability::Available,
         last_validated_at: now,
         last_used_at: now,
+        last_message_sent_at: 0,
         unavailable_reason: None,
     })
     .await?;
@@ -544,6 +589,7 @@ mod tests {
             availability: WorkspaceAvailability::Available,
             last_validated_at: last_used_at,
             last_used_at,
+            last_message_sent_at: 0,
             unavailable_reason: None,
         }
     }
@@ -570,6 +616,121 @@ mod tests {
         assert_eq!(listed[0].workspace_path, session.workspace_path);
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn message_recency_survives_reload_validation_and_reconnect() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let alpha = temp_root.path().join("alpha");
+        let beta = temp_root.path().join("beta");
+        let beta_worktree = temp_root.path().join("beta-worktree");
+        init_repo_with_origin(&alpha, "https://github.com/example/alpha.git");
+        init_repo_with_origin(&beta, "https://github.com/example/beta.git");
+        init_repo_with_origin(&beta_worktree, "https://github.com/example/beta.git");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached_alpha = store
+            .attach(AttachProjectRequest {
+                workspace_path: alpha.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach alpha");
+        let attached_beta = store
+            .attach(AttachProjectRequest {
+                workspace_path: beta.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach beta");
+        store
+            .record_message_sent(&attached_alpha.attachment_key, 100)
+            .await
+            .expect("send to alpha");
+        store
+            .record_message_sent(&attached_beta.attachment_key, 200)
+            .await
+            .expect("send to beta");
+        store
+            .record_message_sent(&attached_beta.attachment_key, 150)
+            .await
+            .expect("late acknowledgement of an earlier send");
+
+        store
+            .attach(AttachProjectRequest {
+                workspace_path: attached_alpha.workspace_path.clone(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("reopen alpha");
+        let resolved_beta = store
+            .resolve_run_workspace(beta_worktree.to_string_lossy().into_owned())
+            .await
+            .expect("resolve beta worktree");
+        assert_eq!(resolved_beta.last_message_sent_at, 200);
+        let reconnected_beta = store
+            .attach(AttachProjectRequest {
+                workspace_path: beta_worktree.to_string_lossy().into_owned(),
+                replace_workspace_path: Some(attached_beta.workspace_path),
+            })
+            .await
+            .expect("reconnect beta");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("reload and validate attachments");
+        assert_eq!(listed[0].workspace_path, reconnected_beta.workspace_path);
+        assert_eq!(listed[0].last_message_sent_at, 200);
+        assert_eq!(listed[1].workspace_path, attached_alpha.workspace_path);
+        assert_eq!(listed[1].last_message_sent_at, 100);
+    }
+
+    #[tokio::test]
+    async fn legacy_attachments_gain_message_recency_with_stable_fallback_ordering() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let alpha = temp_root.path().join("alpha");
+        let beta = temp_root.path().join("beta");
+        init_repo_with_origin(&alpha, "https://github.com/example/alpha.git");
+        init_repo_with_origin(&beta, "https://github.com/example/beta.git");
+        let mut records = serde_json::to_value(vec![
+            attachment_record(alpha.to_string_lossy(), "github.com/example/alpha", 1),
+            attachment_record(beta.to_string_lossy(), "github.com/example/beta", 2),
+        ])
+        .expect("serialize legacy records");
+        for record in records.as_array_mut().expect("records array") {
+            record
+                .as_object_mut()
+                .expect("record object")
+                .remove("lastMessageSentAt");
+        }
+        let store_path = temp_root.path().join(PROJECT_ATTACHMENTS_FILE);
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&records).expect("legacy JSON"),
+        )
+        .expect("write legacy records");
+
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let listed = store.list().await.expect("load legacy records");
+        assert_eq!(listed[0].workspace_path, beta.to_string_lossy());
+        let persisted: Vec<serde_json::Value> =
+            serde_json::from_slice(&fs::read(&store_path).expect("read migrated records"))
+                .expect("parse migrated records");
+        assert!(persisted.iter().all(|record| {
+            record
+                .get("lastMessageSentAt")
+                .and_then(serde_json::Value::as_u64)
+                == Some(0)
+        }));
+
+        store
+            .record_message_sent(&listed[1].attachment_key, 10)
+            .await
+            .expect("record alpha message");
+        assert_eq!(
+            store.list().await.expect("ordered records")[0].workspace_path,
+            alpha.to_string_lossy()
+        );
     }
 
     #[cfg(unix)]

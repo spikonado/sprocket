@@ -1,5 +1,5 @@
 // @vitest-environment-options {"url":"https://sprocket.test/"}
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -243,6 +243,97 @@ it('populates projects from the desktop client resolved during boot', async () =
 	expect(await projectTrigger('Alpha')).toBeTruthy();
 	expect(listProjectAttachments).toHaveBeenCalled();
 });
+
+it('shares local message recency across the project menus and recent directories', async () => {
+	const alpha = { ...projectAttachment('/work/alpha', 'repo-alpha', 'Alpha'), lastUsedAt: 500 };
+
+	const beta = {
+		...projectAttachment('/work/beta', 'repo-beta', 'Beta'),
+		lastMessageSentAt: 200
+	};
+
+	const gamma = {
+		...projectAttachment('/work/gamma', 'repo-gamma', 'Gamma'),
+		lastMessageSentAt: 100
+	};
+
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha, gamma, beta],
+				browseFilesystem: async () => ({ parentPath: '/home', entries: [] })
+			})
+		)
+	);
+	fireEvent.click(await projectTrigger('Beta'));
+	expect(
+		screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+	).toEqual(['Beta', 'Gamma', 'Alpha']);
+	fireEvent.click(await projectTrigger('Beta'));
+	expect(
+		Array.from(document.querySelectorAll('.inbox-project-option')).map((item) => item.textContent)
+	).toEqual(['All projects', 'Beta', 'Gamma', 'Alpha']);
+	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
+	const dialog = await screen.findByRole('dialog');
+
+	const recents = within(dialog)
+		.getAllByRole('button')
+		.filter((button) => ['alpha', 'beta', 'gamma'].includes(button.textContent ?? ''));
+
+	expect(recents.map((button) => button.textContent)).toEqual(['beta', 'gamma', 'alpha']);
+});
+
+it('refreshes message recency after a successful send even when another project is open', async () => {
+	const alpha = {
+		...projectAttachment('/work/alpha', 'repo-alpha', 'Alpha'),
+		lastMessageSentAt: 10
+	};
+
+	const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	let sent = false;
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha, { ...beta, lastMessageSentAt: sent ? 20 : 0 }],
+				resolveWorkspacePath: async ({ workspacePath }) =>
+					workspacePath === beta.workspacePath ? beta : alpha,
+				runAgent
+			})
+		)
+	);
+	await openProjectFromHeading('Alpha', 'Beta');
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	fireEvent.click(await projectTrigger('Beta'));
+	expect(
+		screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+	).toEqual(['Alpha', 'Beta']);
+	fireEvent.click(await projectTrigger('Beta'));
+	await openProjectFromHeading('Beta', 'Alpha');
+	await act(async () => {
+		sent = true;
+		launch.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			runId: 'run-new' as Id<'runs'>,
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			threadId: 'thread-new' as Id<'threadRecords'>
+		});
+	});
+	fireEvent.click(await projectTrigger('Alpha'));
+	await waitFor(() =>
+		expect(
+			screen.getAllByRole('menuitemradio').map((item) => item.getAttribute('aria-label'))
+		).toEqual(['Beta', 'Alpha'])
+	);
+}, 15_000);
 
 it('surfaces a verification failure for the initially selected project', async () => {
 	const unavailable = projectAttachment(

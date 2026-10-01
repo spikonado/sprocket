@@ -55,6 +55,7 @@ import ProjectPicker, { type ProjectSelection } from '$lib/components/home/proje
 import Button from '$lib/components/ui/button/button';
 import {
 	attachLocalProject as attachLocalProjectForPath,
+	compareProjectRecency,
 	findCanonicalProjectAttachment,
 	launchAgentRun,
 	lifecycleResumeKind,
@@ -640,12 +641,14 @@ export default function App({
 		}
 	}
 
-	const projects = useMemo<ProjectState[]>(
-		() =>
-			Object.values(desktopProjectAttachmentsByPath)
-				.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
-				.map(projectFromAttachment),
+	const orderedProjectAttachments = useMemo(
+		() => Object.values(desktopProjectAttachmentsByPath).sort(compareProjectRecency),
 		[desktopProjectAttachmentsByPath]
+	);
+
+	const projects = useMemo<ProjectState[]>(
+		() => orderedProjectAttachments.map(projectFromAttachment),
+		[orderedProjectAttachments]
 	);
 
 	const inboxProjects = useMemo(
@@ -889,7 +892,7 @@ export default function App({
 		const seen = new Set<string>();
 		const recents: Array<{ workspacePath: string; displayName: string }> = [];
 
-		for (const attachment of Object.values(desktopProjectAttachmentsByPath)) {
+		for (const attachment of orderedProjectAttachments) {
 			if (attachment.availability !== 'available' || seen.has(attachment.workspacePath)) {
 				continue;
 			}
@@ -902,8 +905,8 @@ export default function App({
 			recents.push({ workspacePath: attachment.workspacePath, displayName });
 		}
 
-		return recents.sort((left, right) => right.displayName.localeCompare(left.displayName));
-	}, [desktopProjectAttachmentsByPath]);
+		return recents;
+	}, [orderedProjectAttachments]);
 
 	function publishDesktopProjectAttachments(attachments: Record<string, ProjectAttachment>) {
 		desktopProjectAttachmentsRef.current = attachments;
@@ -1774,6 +1777,10 @@ export default function App({
 					);
 				},
 				onStarted: (_runId, createdThreadId) => {
+					if (isSubmittedUserCurrent()) {
+						void refreshDesktopProjectAttachments().catch(() => {});
+					}
+
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					launchedThreadId = createdThreadId;
 
