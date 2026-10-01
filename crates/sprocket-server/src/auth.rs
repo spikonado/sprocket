@@ -11,7 +11,7 @@ use cookie::{Cookie, SameSite};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
+use tokio::sync::{OwnedRwLockWriteGuard, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
 use crate::config::SESSION_COOKIE_NAME;
@@ -77,6 +77,10 @@ struct SessionRecord {
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
+}
+
+pub(crate) struct SessionUserGuard<'a> {
+    _sessions: RwLockReadGuard<'a, HashMap<String, SessionRecord>>,
 }
 
 fn deserialize_session_user_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -296,6 +300,25 @@ impl AuthState {
             Some(_) => anyhow::bail!("local session belongs to a different user"),
             None => anyhow::bail!("local session is not bound to a user; sign in again"),
         }
+    }
+
+    pub(crate) async fn lock_session_user(
+        &self,
+        session_token: &str,
+        expected_user_id: &str,
+    ) -> anyhow::Result<SessionUserGuard<'_>> {
+        let sessions = self.sessions.read().await;
+        anyhow::ensure!(
+            sessions
+                .get(session_token)
+                .is_some_and(|session| !session_is_expired(session)
+                    && session.local_browser
+                    && session.user_id.as_deref() == Some(expected_user_id)),
+            "authentication required"
+        );
+        Ok(SessionUserGuard {
+            _sessions: sessions,
+        })
     }
 
     pub async fn session_has_user(&self, session_token: &str) -> bool {
@@ -872,6 +895,21 @@ mod tests {
             .await
             .unwrap();
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn session_guard_serializes_sign_in_commit_with_logout() {
+        let directory = tempfile::tempdir().unwrap();
+        let auth = AuthState::load(directory.path()).unwrap();
+        let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
+        auth.bind_session_user(&token, "user-1").await.unwrap();
+        let guard = auth.lock_session_user(&token, "user-1").await.unwrap();
+        let logout = auth.end_session(&token);
+        tokio::pin!(logout);
+        assert!(futures::poll!(&mut logout).is_pending());
+        drop(guard);
+        logout.await.unwrap();
+        assert!(auth.lock_session_user(&token, "user-1").await.is_err());
     }
 
     #[test]

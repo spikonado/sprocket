@@ -65,6 +65,8 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()
     file.as_file().sync_all()?;
     file.persist(path)
         .context("failed to persist private file")?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 

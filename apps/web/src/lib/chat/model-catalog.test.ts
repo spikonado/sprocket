@@ -139,6 +139,7 @@ describe('gateway model catalog', () => {
 		const payload = structuredClone(catalogPayload);
 		payload.sprocket.models = [
 			{ ...payload.sprocket.models[0], id: 'gpt-5.4', provider: 'openai' },
+			{ ...payload.sprocket.models[0], id: 'gpt-second', provider: 'openai' },
 			{ ...payload.sprocket.models[0], id: 'gpt-gateway-only', provider: 'openai' },
 			{ ...payload.sprocket.models[0], id: 'other', provider: 'other' }
 		];
@@ -147,6 +148,11 @@ describe('gateway model catalog', () => {
 			vi.fn(async () => Response.json(payload))
 		);
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+		expect(
+			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-second', 'gpt-5.4']).map(
+				(model) => model.id
+			)
+		).toEqual(['gpt-second', 'gpt-5.4']);
 		expect(
 			modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', ['gpt-5.4', 'gpt-account-only'])
 		).toEqual([expect.objectContaining({ id: 'gpt-5.4', provider: 'openai' })]);
@@ -158,6 +164,7 @@ describe('gateway model catalog', () => {
 		).toEqual([]);
 		expect(modelOptionsForCompletionProvider(catalog, 'free', 'openai')).toEqual([
 			expect.objectContaining({ id: 'gpt-5.4' }),
+			expect.objectContaining({ id: 'gpt-second' }),
 			expect.objectContaining({ id: 'gpt-gateway-only' })
 		]);
 		expect(modelOptionsForCompletionProvider(catalog, 'free', 'chatgpt', null)).toEqual([]);

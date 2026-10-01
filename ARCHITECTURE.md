@@ -36,6 +36,7 @@ flowchart LR
     Local <--> Convex
     Web -->|"GET /api/v1/models"| Gateway[AI gateway]
     Local -->|"POST /api/v1/responses"| Gateway
+    Local -->|"SIWC models and Responses"| OpenAI[Public OpenAI API]
     Gateway --> Providers[Model providers]
     Gateway -->|"quota check, consume units"| Convex
     Web <--> Auth[WorkOS AuthKit]
@@ -124,6 +125,7 @@ Sprocket deliberately separates cloud and machine-local state.
 | Internal process credential and browser sessions                     | Local server         |
 | Native WorkOS access token and user                                  | Local process memory |
 | Native WorkOS refresh token                                          | OS credential store  |
+| ChatGPT SIWC registration and rotating credentials                   | Private local file   |
 | Active commands, cancellation tokens, and run execution capabilities | Local process memory |
 | Source files and build artifacts                                     | User workspace       |
 | Artifact identity, scope, and synced content                         | Convex               |
@@ -362,5 +364,8 @@ packaged in two separate products:
 
 The local executable receives only public runtime configuration. It obtains the
 public WorkOS client ID from Convex and never receives a WorkOS client secret.
-Model-provider secrets live in the gateway deployment; Convex still keeps
-`OPENAI_API_KEY` for browser automation.
+Gateway model-provider secrets live in the gateway deployment; Convex still keeps
+`OPENAI_API_KEY` for browser automation. User-supplied OpenAI keys remain in WorkOS
+Vault. ChatGPT SIWC credentials belong to the local Rust server and never pass
+through Convex or browser storage. ChatGPT inference goes directly to the public
+OpenAI Responses API. It does not use the gateway's credentials.

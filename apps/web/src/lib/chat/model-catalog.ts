@@ -86,12 +86,14 @@ export function modelOptionsForCompletionProvider(
 	chatGptModelIds: readonly string[] | null = null
 ): ModelSelectorOption[] {
 	if (provider === 'spikonado') return modelOptionsForTier(catalog, tier);
+	if (provider === 'chatgpt') {
+		return (chatGptModelIds ?? []).flatMap((id) => {
+			const model = catalog.models.find((model) => model.id === id && model.provider === 'openai');
+			return model ? [{ id, label: model.label, provider: model.provider }] : [];
+		});
+	}
 	return catalog.models
-		.filter(
-			(model) =>
-				model.provider === 'openai' &&
-				(provider !== 'chatgpt' || chatGptModelIds?.includes(model.id))
-		)
+		.filter((model) => model.provider === 'openai')
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
 }
 

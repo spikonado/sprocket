@@ -1,4 +1,5 @@
 use anyhow::{Context, anyhow};
+use futures::future::BoxFuture;
 use rig::completion::Message;
 use rig::message::{
     AdditionalParams, AssistantContent, ProviderCallId, ReasoningContent, Text, ToolCall,
@@ -6,6 +7,7 @@ use rig::message::{
 };
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -31,7 +33,25 @@ pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
 }
 
 #[derive(Clone)]
+pub struct ChatGptAccess {
+    pub connection_id: String,
+    pub access_token: String,
+    pub expires_at: u64,
+}
+
+/// The user-scoped local ChatGPT credential service handle supplied with a run.
+pub trait ChatGptCredentials: Send + Sync {
+    /// Session generation, not the saved-account selector ID. Switches and reconnects must change it.
+    fn connection(&self) -> tokio::sync::watch::Receiver<Option<String>>;
+
+    /// Expiry uses Unix milliseconds.
+    fn credential(&self) -> BoxFuture<'_, anyhow::Result<ChatGptAccess>>;
+}
+
+#[derive(Clone)]
 pub struct RunAgentRequest {
+    /// Local ChatGPT credential service handle. Required for ChatGPT runs.
+    pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,
@@ -77,17 +97,6 @@ pub struct GatewayCredential {
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiCredential {
     pub api_key: String,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatGptCredential {
-    pub access_token: String,
-    pub connection_id: String,
-    pub account_id: String,
-    pub residency: Option<String>,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
-    pub expires_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

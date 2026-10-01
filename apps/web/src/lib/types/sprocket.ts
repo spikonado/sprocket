@@ -248,6 +248,35 @@ export type ArtifactsWatchEvent = {
 	error?: string;
 };
 
+export type ChatGptAccount = {
+	connectionId: string;
+	label: string;
+	connected: boolean;
+};
+
+export type ChatGptModel = {
+	id: string;
+	name: string;
+};
+
+export type ChatGptStatus = {
+	accounts: ChatGptAccount[];
+	activeConnectionId: string | null;
+	models: ChatGptModel[];
+	loginAvailable: boolean;
+	error?: string;
+};
+
+export type ChatGptBrowserLoginStart = {
+	state: string;
+	authorizeUrl: string;
+};
+
+export type ChatGptBrowserLoginResult = {
+	status: 'pending' | 'complete' | 'error';
+	error?: string;
+};
+
 export type DesktopApi = {
 	browseFilesystem: (input: {
 		partialPath: string;
@@ -299,6 +328,18 @@ export type DesktopApi = {
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;
 	endAccountSession: (request: LocalUserRequest) => Promise<void>;
+	fetchChatGptStatus: (request: LocalUserRequest) => Promise<ChatGptStatus>;
+	startChatGptBrowserLogin: (
+		request: LocalUserRequest & { connectionId?: string }
+	) => Promise<ChatGptBrowserLoginStart>;
+	fetchChatGptBrowserLoginResult: (
+		request: LocalUserRequest & { state: string }
+	) => Promise<ChatGptBrowserLoginResult>;
+	cancelChatGptBrowserLogin: (request: LocalUserRequest & { state: string }) => Promise<void>;
+	selectChatGptAccount: (request: LocalUserRequest & { connectionId: string }) => Promise<void>;
+	disconnectChatGptAccount: (
+		request: LocalUserRequest & { connectionId: string }
+	) => Promise<string | null>;
 };
 
 export type WorkspacePathResolution = {

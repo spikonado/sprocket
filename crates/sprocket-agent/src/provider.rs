@@ -70,8 +70,7 @@ pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     gateway_url: String,
     model: String,
-    deployment_url: String,
-    user_id: String,
+    chatgpt_client: Option<ChatGptClient>,
 }
 
 pub(crate) struct AgentProviderRequest {
@@ -110,15 +109,21 @@ impl AgentProvider {
     pub(crate) fn default_for_run(
         context: &RunContextResponse,
         gateway_url: &str,
-        deployment_url: &str,
-    ) -> Self {
-        Self {
+        chatgpt_client: Option<ChatGptClient>,
+    ) -> anyhow::Result<Self> {
+        let chatgpt_client = if context.run.completion_provider == CompletionProvider::Chatgpt {
+            Some(chatgpt_client.ok_or_else(|| {
+                anyhow!("ChatGPT runs require the local ChatGPT credential service.")
+            })?)
+        } else {
+            None
+        };
+        Ok(Self {
             completion_provider: context.run.completion_provider,
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
-            deployment_url: deployment_url.to_string(),
-            user_id: context.run.user_id.clone(),
-        }
+            chatgpt_client,
+        })
     }
 
     pub(crate) async fn run(
@@ -192,22 +197,13 @@ impl AgentProvider {
                 .await
             }
             CompletionProvider::Chatgpt => {
-                let completion_client = match ChatGptClient::new(
-                    runtime.clone(),
-                    request.run_id.clone(),
-                    request.claim_id.clone(),
-                    self.deployment_url,
-                    self.user_id,
-                )
-                .await
-                {
-                    Ok(client) => client,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error,
-                        };
-                    }
+                let Some(completion_client) = self.chatgpt_client else {
+                    return AgentProviderResult::Failed {
+                        text: String::new(),
+                        error: anyhow!(
+                            "ChatGPT runs require the local ChatGPT credential service."
+                        ),
+                    };
                 };
                 run_with_completion_client(completion_client, self.model, runtime, request).await
             }
