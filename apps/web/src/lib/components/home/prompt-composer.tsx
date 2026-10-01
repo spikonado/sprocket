@@ -43,8 +43,6 @@ export type PromptComposerProps = {
 	selectedModel?: CatalogModelId;
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
 	configuredProviders?: CompletionProvider[];
-	chatGptModelIds?: readonly string[] | null;
-	chatGptModels?: readonly { id: string; name: string }[];
 	providersReady?: boolean;
 	selectedCompletionProvider?: CompletionProvider;
 	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
@@ -105,8 +103,6 @@ export function PromptComposerView({
 	selectedModel = defaultModelId,
 	onSelectedModelChange,
 	configuredProviders = ['spikonado'],
-	chatGptModelIds = null,
-	chatGptModels = [],
 	providersReady = true,
 	selectedCompletionProvider = 'spikonado',
 	onSelectedCompletionProviderChange,
@@ -152,17 +148,9 @@ export function PromptComposerView({
 					: 'OpenAI API'
 	}));
 
-	const providerModelOptions = modelCatalog
-		? modelOptionsForCompletionProvider(modelCatalog, selectedCompletionProvider, chatGptModelIds)
+	const modelOptions = modelCatalog
+		? modelOptionsForCompletionProvider(modelCatalog, selectedCompletionProvider)
 		: [];
-
-	const modelOptions =
-		selectedCompletionProvider === 'chatgpt'
-			? providerModelOptions.map((option) => ({
-					...option,
-					label: chatGptModels.find((model) => model.id === option.id)?.name ?? option.label
-				}))
-			: providerModelOptions;
 
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
@@ -177,9 +165,7 @@ export function PromptComposerView({
 			(providersReady && configuredProviders.includes(selectedCompletionProvider))) &&
 		selectedCatalogModel !== undefined &&
 		(selectedCompletionProvider !== 'spikonado'
-			? selectedCatalogModel.provider === 'openai' &&
-				(selectedCompletionProvider !== 'chatgpt' ||
-					chatGptModelIds?.includes(selectedModel) === true)
+			? selectedCatalogModel.provider === 'openai'
 			: usageFailed || usage !== undefined);
 
 	const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
@@ -512,12 +498,7 @@ export function PromptComposerView({
 		if (!modelCatalog) return;
 		onSelectedCompletionProviderChange?.(provider);
 
-		const modelId = resolveModelForCompletionProvider(
-			modelCatalog,
-			provider,
-			selectedModel,
-			chatGptModelIds
-		);
+		const modelId = resolveModelForCompletionProvider(modelCatalog, provider, selectedModel);
 
 		if (!modelId) return;
 		onSelectedModelChange?.(modelId);
@@ -543,8 +524,7 @@ export function PromptComposerView({
 		const resolvedModel = resolveModelForCompletionProvider(
 			modelCatalog,
 			nextProvider,
-			selectedModel,
-			chatGptModelIds
+			selectedModel
 		);
 
 		if (resolvedModel && resolvedModel !== selectedModel) {
@@ -561,7 +541,6 @@ export function PromptComposerView({
 		configuredProviders,
 		selectedCompletionProvider,
 		selectedModel,
-		chatGptModelIds,
 		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,

@@ -480,6 +480,55 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
 });
 
+it.each([
+	{ models: [{ id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' }] },
+	{ models: [], error: 'Could not load ChatGPT models. Retry or reconnect in Settings.' }
+])('launches ChatGPT despite stale or unavailable models %j', async (status) => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const runtime = createRuntime(
+		createDesktopApi({
+			listProjectAttachments: async () => [alpha],
+			resolveWorkspacePath: async () => alpha,
+			fetchChatGptStatus: async () => ({
+				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
+				activeConnectionId: 'chatgpt-1',
+				loginAvailable: true,
+				...status
+			}),
+			runAgent
+		})
+	);
+	runtime.fetchGatewayModelCatalog = async () => ({
+		...modelCatalog,
+		models: [
+			...modelCatalog.models,
+			{ ...modelCatalog.models[0], id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai' }
+		]
+	});
+	await renderApp(createConvexFixtures(), runtime);
+	await projectTrigger('Alpha');
+	fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+	fireEvent.click(await screen.findByRole('button', { name: /ChatGPT Subscription/ }));
+	await waitFor(() =>
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toContain('GPT-6.1 Sol')
+	);
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				completionProvider: 'chatgpt',
+				selectedModel: 'gpt-6.1-sol',
+				prompt: 'Fix the robot'
+			})
+		)
+	);
+});
+
 it('launches the continuation prompt after an agent question is answered', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');

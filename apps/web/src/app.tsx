@@ -237,7 +237,6 @@ export default function App({
 	const [catalogLoading, setCatalogLoading] = useState(true);
 	const [openAiConfigured, setOpenAiConfigured] = useState(false);
 	const [chatGptConfigured, setChatGptConfigured] = useState(false);
-	const [chatGptModelIds, setChatGptModelIds] = useState<string[] | null>(null);
 	const [chatGptStatus, setChatGptStatus] = useState<ChatGptStatus | null>(null);
 	const [chatGptStatusLoading, setChatGptStatusLoading] = useState(false);
 	const [chatGptStatusError, setChatGptStatusError] = useState<string | null>(null);
@@ -352,7 +351,6 @@ export default function App({
 			chatGptStatusLoadedFor.current = null;
 			setChatGptStatus(null);
 			setChatGptConfigured(false);
-			setChatGptModelIds(null);
 			setChatGptStatusLoading(false);
 
 			return;
@@ -367,7 +365,6 @@ export default function App({
 		const generation = ++chatGptStatusGeneration.current;
 		setChatGptStatus(null);
 		setChatGptConfigured(false);
-		setChatGptModelIds(null);
 		setChatGptStatusLoading(true);
 		setChatGptStatusError(null);
 		desktopApi
@@ -392,7 +389,6 @@ export default function App({
 
 				setChatGptStatus(null);
 				setChatGptConfigured(false);
-				setChatGptModelIds(null);
 				setChatGptStatusError(
 					(error instanceof Error && convexClientErrorMessage(error)) ||
 						'Couldn’t load ChatGPT connection status.'
@@ -875,9 +871,6 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
-		(pendingAgentQuestion ||
-			selectedCompletionProvider !== 'chatgpt' ||
-			chatGptModelIds?.includes(selectedModel) === true) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
@@ -1250,7 +1243,6 @@ export default function App({
 
 		const configured = active?.connected === true;
 		setChatGptConfigured(configured);
-		setChatGptModelIds(configured ? status.models.map((model) => model.id) : null);
 
 		if (!configured && selectedCompletionProvider === 'chatgpt') {
 			setSelectedCompletionProvider('spikonado');
@@ -1979,7 +1971,6 @@ export default function App({
 		providerConfigurationLoadedFor.current = null;
 		setOpenAiConfigured(false);
 		setChatGptConfigured(false);
-		setChatGptModelIds(null);
 		setChatGptStatus(null);
 		setChatGptStatusLoading(false);
 		setChatGptStatusError(null);
@@ -2669,8 +2660,6 @@ export default function App({
 										selectedModel={selectedModel}
 										onSelectedModelChange={setSelectedModel}
 										configuredProviders={configuredProviders}
-										chatGptModelIds={chatGptModelIds}
-										chatGptModels={chatGptStatus?.models}
 										providersReady={providerConfigurationReady}
 										selectedCompletionProvider={selectedCompletionProvider}
 										onSelectedCompletionProviderChange={setSelectedCompletionProvider}
