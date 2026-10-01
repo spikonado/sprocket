@@ -175,12 +175,14 @@ export const getPublicCatalog = action({
 		);
 
 		const productOwners = new Map<string, { tierId: string; interval: BillingInterval }>();
+		const ambiguousProducts = new Set<string>();
 
 		for (const product of configuredProducts) {
 			const owner = productOwners.get(product.productId);
 
 			if (owner) {
-				throw new Error(
+				ambiguousProducts.add(product.productId);
+				console.error(
 					`Dodo product "${product.productId}" is assigned to both ${owner.tierId} ${owner.interval} and ${product.tierId} ${product.interval}.`
 				);
 			}
@@ -213,27 +215,34 @@ export const getPublicCatalog = action({
 				const client = createDodoClient();
 
 				const retrieved = await Promise.all(
-					configuredProducts.map(async ({ tierId, interval, productId }) => ({
-						tierId,
-						interval,
-						price: await retrieveRecurringPrice(client, productId, interval)
-					}))
+					configuredProducts.map(async ({ tierId, interval, productId }) => {
+						if (ambiguousProducts.has(productId)) return null;
+
+						try {
+							return {
+								tierId,
+								interval,
+								price: await retrieveRecurringPrice(client, productId, interval)
+							};
+						} catch (error) {
+							console.error(`Could not load Dodo product ${productId}.`, error);
+
+							return null;
+						}
+					})
 				);
 
-				for (const plan of tierConfigs) {
-					const prices = retrieved.filter((entry) => entry.tierId === plan.id);
+				tierPrices = retrieved.filter((entry) => entry !== null);
 
-					if (prices.length === 2 && prices[0].price.currency !== prices[1].price.currency) {
-						throw new Error(`Dodo products for tier "${plan.id}" use different currencies.`);
-					}
+				try {
+					await ctx.runMutation(internal.pricingData.cacheTierPrices, {
+						cacheKey,
+						tierPrices,
+						expiresAt: now + DODO_PRICE_CACHE_TTL_MS
+					});
+				} catch (error) {
+					console.error('Could not cache Dodo product prices.', error);
 				}
-
-				tierPrices = retrieved;
-				await ctx.runMutation(internal.pricingData.cacheTierPrices, {
-					cacheKey,
-					tierPrices,
-					expiresAt: now + DODO_PRICE_CACHE_TTL_MS
-				});
 			}
 
 			const plans = tierConfigs.map((plan) =>

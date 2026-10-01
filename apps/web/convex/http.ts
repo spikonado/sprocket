@@ -81,9 +81,12 @@ async function persistSubscription(
 		dodoSubscriptionId: data.subscription_id
 	});
 
-	const storedTier: string | null = await ctx.runQuery(internal.pricingData.getTierForProduct, {
-		productId: data.product_id
-	});
+	const storedTier: string | null =
+		existingTier && !preferConfiguredTier
+			? null
+			: await ctx.runQuery(internal.pricingData.getTierForProduct, {
+					productId: data.product_id
+				});
 
 	const tier = resolveSubscriptionTier({
 		checkoutTier,
@@ -136,8 +139,7 @@ http.route({
 				payload.data,
 				// SAFETY: the includes check above narrows status to the five vSubscriptionStatus literals.
 				status as Infer<typeof vSubscriptionStatus>,
-				payload.timestamp,
-				true
+				payload.timestamp
 			);
 		},
 		onSubscriptionOnHold: (ctx, payload) =>
