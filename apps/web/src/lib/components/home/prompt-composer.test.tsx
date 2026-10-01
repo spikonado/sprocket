@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
@@ -199,6 +199,66 @@ describe('PromptComposer file drag and drop', () => {
 		expect(transfer.dropEffect).toBe('move');
 		expect(props.onAttachFiles).not.toHaveBeenCalled();
 		expect(document.querySelector('[role="status"]')).toBeNull();
+	});
+});
+
+describe('PromptComposer workspace path mentions', () => {
+	const entries = [
+		{ path: 'src/app.tsx', kind: 'file' as const },
+		{ path: 'src/my components', kind: 'directory' as const }
+	];
+
+	it('selects files and directories by keyboard without submitting', async () => {
+		const { props, textarea } = renderComposer({
+			projectPaths: {
+				workspacePath: '/workspace',
+				search: vi.fn(async () => ({ entries, scanning: false }))
+			}
+		});
+
+		await typeInComposer(textarea, 'Fix @src');
+		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		expect(textarea.getAttribute('aria-expanded')).toBe('true');
+		await pressKey(textarea, { key: 'Enter', isComposing: true });
+		expect(textarea.value).toBe('Fix @src');
+		await pressKey(textarea, { key: 'Enter' });
+		expect(textarea.value).toBe('Fix @src/app.tsx ');
+		expect(textarea.selectionStart).toBe(textarea.value.length);
+
+		await typeInComposer(textarea, 'Inspect @src');
+		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await pressKey(textarea, { key: 'ArrowDown' });
+		expect(textarea.getAttribute('aria-activedescendant')).toBe('composer-path-option-1');
+		await pressKey(textarea, { key: 'Tab' });
+		expect(textarea.value).toBe('Inspect @"src/my components/" ');
+		expect(props.onSubmit).not.toHaveBeenCalled();
+	});
+
+	it('selects with the mouse and dismisses with Escape', async () => {
+		const { textarea } = renderComposer({
+			projectPaths: {
+				workspacePath: '/workspace',
+				search: vi.fn(async () => ({ entries, scanning: false }))
+			}
+		});
+
+		await typeInComposer(textarea, '@app');
+		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await pressKey(textarea, { key: 'Escape' });
+		expect(textarea.getAttribute('aria-expanded')).toBe('false');
+		await typeInComposer(textarea, '@apps');
+		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await click(findButton('src/app.tsx'));
+		expect(textarea.value).toBe('@src/app.tsx ');
+		expect(document.activeElement).toBe(textarea);
+	});
+
+	it('explains how to enable search without a connected workspace', async () => {
+		const { textarea } = renderComposer();
+		await typeInComposer(textarea, '@');
+		expect(document.querySelector('[role="listbox"]')?.textContent).toContain(
+			'Select a workspace and connect its server'
+		);
 	});
 });
 

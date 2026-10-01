@@ -27,6 +27,11 @@ const workspaceSkillsResultSchema = z.object({
 	warnings: z.array(z.string())
 });
 
+const workspaceSearchResultSchema = z.object({
+	entries: z.array(z.object({ path: z.string(), kind: z.enum(['file', 'directory']) })),
+	scanning: z.boolean()
+});
+
 const workspacePathResolutionSchema = z.object({
 	workspacePath: z.string(),
 	displayName: z.string(),
@@ -383,6 +388,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify({
 					workspacePath: input.workspacePath
 				})
+			}),
+		searchWorkspace: (input, signal) =>
+			request('/api/workspace/search', workspaceSearchResultSchema, {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
 			}),
 		resolveWorkspacePath: (input) => {
 			const body = input.createIfMissing
