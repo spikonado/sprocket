@@ -492,7 +492,10 @@ describe('Dodo subscription persistence', () => {
 		});
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, annualCheckout)
-		).rejects.toThrow('A paid plan is already active');
+		).resolves.toMatchObject({
+			kind: 'create',
+			interval: 'annual'
+		});
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
 			status: 'expired',

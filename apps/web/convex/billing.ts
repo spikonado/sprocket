@@ -196,7 +196,7 @@ export const reserveCheckoutSession = internalMutation({
 	handler: async (ctx, args) => {
 		const subscription = await getSubscriptionDocExclusive(ctx, args.userId);
 
-		if (subscription?.status === 'active' && subscription.tier !== 'free') {
+		if (subscriptionIsActive(subscription) && subscription!.tier !== 'free') {
 			throw new Error('A paid plan is already active on this account.');
 		}
 

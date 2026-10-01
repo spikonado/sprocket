@@ -7,9 +7,68 @@ const ENV_KEYS = ['DODO_PAYMENTS_API_KEY', 'DODO_PAYMENTS_ENVIRONMENT'] as const
 
 afterEach(() => {
 	vi.unstubAllEnvs();
+	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
 
 describe('public pricing catalog', () => {
+	it.each(['request', 'interval', 'assignment'])(
+		'keeps healthy prices when another product has a %s failure',
+		async (failure) => {
+			vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
+			vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (request: Request | string | URL) => {
+					const url = new URL(request instanceof Request ? request.url : String(request));
+					const productId = url.pathname.split('/').at(-1);
+
+					if (productId === 'prod_broken' && failure === 'request') {
+						return Response.json({ message: 'Invalid product' }, { status: 400 });
+					}
+
+					return Response.json({
+						product_id: productId,
+						name: productId,
+						price: {
+							type: 'recurring_price',
+							price: 2_000,
+							currency: 'USD',
+							payment_frequency_count: 1,
+							payment_frequency_interval: productId === 'prod_broken' ? 'Year' : 'Month'
+						}
+					});
+				})
+			);
+			const t = initConvexTest();
+			await t.run(async (ctx) => {
+				await ctx.db.insert('tiers', {
+					tierId: 'team',
+					label: 'Team',
+					weekly: 1,
+					monthly: 1,
+					monthlyProductId: 'prod_healthy',
+					annualProductId: failure === 'assignment' ? 'prod_broken' : undefined
+				});
+				await ctx.db.insert('tiers', {
+					tierId: 'pro',
+					label: 'Pro',
+					weekly: 1,
+					monthly: 1,
+					monthlyProductId: 'prod_broken'
+				});
+			});
+
+			const catalog = await t.action(api.pricing.getPublicCatalog, {});
+			expect(catalog.plans.find((plan) => plan.id === 'team')?.prices).toMatchObject({
+				monthly: { productId: 'prod_healthy', amountMinor: 2_000 },
+				annual: null
+			});
+			expect(catalog.plans.find((plan) => plan.id === 'pro')?.prices.monthly).toBeNull();
+		}
+	);
+
 	it('caches Dodo prices until their expiration', async () => {
 		const t = initConvexTest();
 
