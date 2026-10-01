@@ -1,21 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { matchesBillingInterval, readDodoEnvironment } from '@convex/lib/dodoProducts';
 import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import { initConvexTest } from './test.setup';
 
-const ENV_KEYS = ['DODO_PAYMENTS_API_KEY'] as const;
-
-const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-
 afterEach(() => {
-	for (const key of ENV_KEYS) {
-		const value = originalEnv[key];
-
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
+	vi.unstubAllEnvs();
 });
 
 describe('Dodo product mapping', () => {
@@ -84,7 +75,7 @@ describe('Dodo product mapping', () => {
 	});
 
 	it('accepts checkout for an arbitrary tier with a configured product', async () => {
-		delete process.env.DODO_PAYMENTS_API_KEY;
+		vi.stubEnv('DODO_PAYMENTS_API_KEY', undefined);
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', {
@@ -250,7 +241,7 @@ describe('Dodo subscription persistence', () => {
 				.unique();
 
 			if (!reservation) throw new Error('Missing checkout reservation.');
-			await ctx.db.patch(reservation._id, { expiresAt: 1_999 });
+			await ctx.db.patch('billingCheckoutSessions', reservation._id, { expiresAt: 1_999 });
 		});
 
 		await expect(
@@ -497,7 +488,7 @@ describe('Dodo subscription persistence', () => {
 		).rejects.toThrow('A paid plan is already active');
 		await t.run(async (ctx) => {
 			if (!before) throw new Error('Expected paid subscription.');
-			await ctx.db.patch(before._id, { billingPeriodEnd: now - 1 });
+			await ctx.db.patch('subscriptions', before._id, { billingPeriodEnd: now - 1 });
 		});
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, annualCheckout)

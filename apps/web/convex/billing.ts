@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
 import {
 	action,
+	env,
 	internalMutation,
 	internalQuery,
 	mutation,
@@ -28,8 +29,8 @@ const dodo = new DodoPayments(components.dodopayments, {
 
 		return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
 	},
-	apiKey: process.env.DODO_PAYMENTS_API_KEY!,
-	environment: readDodoEnvironment()
+	apiKey: env.DODO_PAYMENTS_API_KEY!,
+	environment: readDodoEnvironment(env)
 });
 
 const payments = dodo.api();
@@ -37,7 +38,7 @@ const payments = dodo.api();
 const CHECKOUT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
 
 function assertPaymentsConfigured(): void {
-	if (!process.env.DODO_PAYMENTS_API_KEY?.trim()) throw new Error('Payments are not configured.');
+	if (!env.DODO_PAYMENTS_API_KEY?.trim()) throw new Error('Payments are not configured.');
 }
 
 export const getDodoSubscriptionTier = internalQuery({
@@ -146,7 +147,7 @@ export const checkout = action({
 
 		if (reserved.kind === 'existing') return { checkout_url: reserved.checkoutUrl };
 
-		const { return_url, cancel_url } = resolveMarketingPricingUrls(process.env, tier);
+		const { return_url, cancel_url } = resolveMarketingPricingUrls(env, tier);
 
 		const session = await ctx.runAction(internal.pricing.createCheckoutSession, {
 			attemptId: reserved.attemptId,
@@ -234,7 +235,7 @@ export const reserveCheckoutSession = internalMutation({
 			expiresAt: args.now + CHECKOUT_SESSION_TTL_MS
 		};
 
-		if (existing) await ctx.db.replace(existing._id, reservation);
+		if (existing) await ctx.db.replace('billingCheckoutSessions', existing._id, reservation);
 		else await ctx.db.insert('billingCheckoutSessions', reservation);
 
 		return {
@@ -259,7 +260,9 @@ export const attachCheckoutSession = internalMutation({
 			throw new Error('Checkout reservation expired.');
 		}
 
-		await ctx.db.patch(reservation._id, { checkoutUrl: args.checkoutUrl });
+		await ctx.db.patch('billingCheckoutSessions', reservation._id, {
+			checkoutUrl: args.checkoutUrl
+		});
 
 		return null;
 	}
@@ -332,7 +335,8 @@ export const upsertDodoSubscription = internalMutation({
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
 
-		if (customer) await ctx.db.patch(customer._id, { dodoCustomerId: args.dodoCustomerId });
+		if (customer)
+			await ctx.db.patch('billingCustomers', customer._id, { dodoCustomerId: args.dodoCustomerId });
 		else {
 			await ctx.db.insert('billingCustomers', {
 				userId: args.userId,
@@ -383,7 +387,7 @@ export const upsertDodoSubscription = internalMutation({
 			dodoProductId: args.dodoProductId
 		};
 
-		if (existing) await ctx.db.replace(existing._id, subscription);
+		if (existing) await ctx.db.replace('subscriptions', existing._id, subscription);
 		else await ctx.db.insert('subscriptions', subscription);
 
 		if (args.status === 'active') {

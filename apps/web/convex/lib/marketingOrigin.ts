@@ -3,7 +3,7 @@ type MarketingOriginEnv = {
 	DODO_PAYMENTS_ENVIRONMENT?: string;
 };
 
-export function resolveMarketingPricingUrls(env: MarketingOriginEnv = process.env, tierId: string) {
+export function resolveMarketingPricingUrls(env: MarketingOriginEnv, tierId: string) {
 	const configured = env.SPROCKET_MARKETING_ORIGIN?.trim().replace(/\/$/, '');
 	const allowed = new Set(['https://spikonado.com']);
 
