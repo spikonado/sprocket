@@ -82,6 +82,7 @@ import type * as pricingData from "../pricingData.js";
 import type * as providerCredentials from "../providerCredentials.js";
 import type * as runLifecycle from "../runLifecycle.js";
 import type * as storageCleanup from "../storageCleanup.js";
+import type * as subscriptionExpiry from "../subscriptionExpiry.js";
 import type * as threads from "../threads.js";
 import type * as transcript from "../transcript.js";
 import type * as uiPreferences from "../uiPreferences.js";
@@ -170,6 +171,7 @@ declare const fullApi: ApiFromModules<{
   providerCredentials: typeof providerCredentials;
   runLifecycle: typeof runLifecycle;
   storageCleanup: typeof storageCleanup;
+  subscriptionExpiry: typeof subscriptionExpiry;
   threads: typeof threads;
   transcript: typeof transcript;
   uiPreferences: typeof uiPreferences;

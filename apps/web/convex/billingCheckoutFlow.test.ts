@@ -1,10 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { initConvexTest, type ConvexTestInstance } from './test.setup';
 
 const WEBHOOK_SECRET = 'test_webhook_secret';
 
+beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 });

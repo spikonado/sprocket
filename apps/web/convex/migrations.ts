@@ -5,6 +5,7 @@ import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { z } from 'zod';
 import { EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER } from '@convex/lib/contextHandoff';
+import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -20,6 +21,25 @@ import { EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER } from '@convex/lib/contextHan
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
+});
+
+export const backfillSubscriptionExpiry = migrations.define({
+	table: 'subscriptions',
+	migrateOne: async (ctx, subscription) => {
+		if (!subscription.dodoSubscriptionId) return;
+
+		await scheduleSubscriptionExpiry(ctx, subscription);
+	}
+});
+
+export const runSubscriptionExpiryBackfill = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		await migrations.runOne(ctx, internal.migrations.backfillSubscriptionExpiry);
+
+		return null;
+	}
 });
 
 export const removeTranscriptStateWorkThrough = migrations.define({

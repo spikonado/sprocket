@@ -173,7 +173,7 @@ async function blockedMeterLimit(
 
 			const limit = limits[meterId][period];
 
-			return { period, end: window.end, blocked: limit > 0 && used >= limit };
+			return { period, end: window.end, blocked: used >= limit };
 		})
 	);
 
