@@ -11,6 +11,10 @@ import dodopayments from '@dodopayments/convex/convex.config';
 
 const app = defineApp({
 	env: {
+		DODO_PAYMENTS_API_KEY: v.optional(v.string()),
+		DODO_PAYMENTS_ENVIRONMENT: v.optional(v.string()),
+		DODO_PAYMENTS_WEBHOOK_SECRET: v.optional(v.string()),
+		SPROCKET_MARKETING_ORIGIN: v.optional(v.string()),
 		EXA_API_KEY: v.string(),
 		FIRECRAWL_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),

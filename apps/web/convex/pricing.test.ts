@@ -1,19 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { initConvexTest } from './test.setup';
 
 const ENV_KEYS = ['DODO_PAYMENTS_API_KEY', 'DODO_PAYMENTS_ENVIRONMENT'] as const;
 
-const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-
 afterEach(() => {
-	for (const key of ENV_KEYS) {
-		const value = originalEnv[key];
-
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
+	vi.unstubAllEnvs();
 });
 
 describe('public pricing catalog', () => {
@@ -68,7 +61,7 @@ describe('public pricing catalog', () => {
 	});
 
 	it('returns every tier in card order with card defaults when Dodo is not configured', async () => {
-		for (const key of ENV_KEYS) delete process.env[key];
+		for (const key of ENV_KEYS) vi.stubEnv(key, undefined);
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', {
@@ -136,8 +129,8 @@ describe('public pricing catalog', () => {
 	});
 
 	it('returns cached prices for an arbitrary configured tier', async () => {
-		process.env.DODO_PAYMENTS_API_KEY = 'test_key';
-		process.env.DODO_PAYMENTS_ENVIRONMENT = 'test_mode';
+		vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
+		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
 			await ctx.db.insert('tiers', {

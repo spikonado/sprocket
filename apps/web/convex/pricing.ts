@@ -3,7 +3,7 @@
 import DodoPayments from 'dodopayments';
 import { v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
-import { action, internalAction } from '@convex/_generated/server';
+import { action, env, internalAction } from '@convex/_generated/server';
 import {
 	matchesBillingInterval,
 	readDodoEnvironment,
@@ -73,8 +73,8 @@ const vPublicPricingCatalog = v.object({
 
 function createDodoClient(): DodoPayments {
 	return new DodoPayments({
-		bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-		environment: readDodoEnvironment()
+		bearerToken: env.DODO_PAYMENTS_API_KEY,
+		environment: readDodoEnvironment(env)
 	});
 }
 
@@ -188,12 +188,12 @@ export const getPublicCatalog = action({
 			productOwners.set(product.productId, product);
 		}
 
-		if (configuredProducts.length === 0 || !process.env.DODO_PAYMENTS_API_KEY?.trim()) {
+		if (configuredProducts.length === 0 || !env.DODO_PAYMENTS_API_KEY?.trim()) {
 			return { plans: emptyPlans };
 		}
 
 		try {
-			const cacheKey = `${readDodoEnvironment()}:${configuredProducts
+			const cacheKey = `${readDodoEnvironment(env)}:${configuredProducts
 				.map(({ tierId, interval, productId }) => `${tierId}:${interval}:${productId}`)
 				.sort()
 				.join('|')}`;

@@ -31,7 +31,7 @@ export const cacheTierPrices = internalMutation({
 			.withIndex('by_cacheKey', (query) => query.eq('cacheKey', args.cacheKey))
 			.unique();
 
-		if (cached) await ctx.db.replace(cached._id, args);
+		if (cached) await ctx.db.replace('dodoPricingCache', cached._id, args);
 		else await ctx.db.insert('dodoPricingCache', args);
 
 		return null;
