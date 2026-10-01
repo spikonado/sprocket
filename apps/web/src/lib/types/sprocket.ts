@@ -261,15 +261,9 @@ export type ChatGptAccount = {
 	connected: boolean;
 };
 
-export type ChatGptModel = {
-	id: string;
-	name: string;
-};
-
 export type ChatGptStatus = {
 	accounts: ChatGptAccount[];
 	activeConnectionId: string | null;
-	models: ChatGptModel[];
 	loginAvailable: boolean;
 	error?: string;
 };
