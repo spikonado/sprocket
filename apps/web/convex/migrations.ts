@@ -94,7 +94,7 @@ export const migrateToolPartJobIds = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: async (ctx, part) => {
 		if (part.kind !== 'tool' || !part.tool?.jobId) return;
-		const job = await ctx.db.get(part.tool.jobId);
+		const job = await ctx.db.get('executorJobs', part.tool.jobId);
 
 		if (!job) return;
 		const tool = { ...part.tool };

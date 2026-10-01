@@ -22,7 +22,7 @@ async function storeUpload(
 		// convex-test's storeBlob syscall omits the Content-Type metadata.
 		if (args.type) {
 			const db: GenericDatabaseWriter<GenericDataModel> = ctx.db;
-			await db.patch(storageId, { contentType: args.type });
+			await db.patch('_storage', storageId, { contentType: args.type });
 		}
 
 		return storageId;

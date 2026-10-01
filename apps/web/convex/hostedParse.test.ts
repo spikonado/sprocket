@@ -95,7 +95,7 @@ async function storeBlob(
 			if (args.type) metadata.contentType = args.type;
 
 			if (args.size !== undefined) metadata.size = args.size;
-			await db.patch(storageId, metadata);
+			await db.patch('_storage', storageId, metadata);
 		}
 
 		return storageId;
@@ -178,7 +178,7 @@ describe('hostedParse', () => {
 	});
 
 	it('gates createUpload on a configured server API key', async () => {
-		delete process.env.FIRECRAWL_API_KEY;
+		vi.stubEnv('FIRECRAWL_API_KEY', undefined);
 		const t = initConvexTest();
 		const run = await seedParseJob(t, { executionSecret: 'hosted-config-secret' });
 		await expect(

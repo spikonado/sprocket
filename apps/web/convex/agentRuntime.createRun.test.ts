@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -606,13 +606,12 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 	const gatewayUrl = 'https://preview.gateway.example';
 
 	beforeEach(() => {
-		process.env.MODEL_GATEWAY_URL = gatewayUrl;
-		process.env.MODEL_GATEWAY_TOKEN_SECRET = 'test-gateway-token-secret';
+		vi.stubEnv('MODEL_GATEWAY_URL', gatewayUrl);
+		vi.stubEnv('MODEL_GATEWAY_TOKEN_SECRET', 'test-gateway-token-secret');
 	});
 
 	afterEach(() => {
-		delete process.env.MODEL_GATEWAY_URL;
-		delete process.env.MODEL_GATEWAY_TOKEN_SECRET;
+		vi.unstubAllEnvs();
 	});
 
 	it('resolves storageIds and stores storage-only prompt metadata', async () => {
