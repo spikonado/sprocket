@@ -586,7 +586,7 @@ mod tests {
         assert_eq!(
             status,
             serde_json::json!({
-                "accounts":[], "activeConnectionId":null, "models":[], "loginAvailable":true
+                "accounts":[], "activeConnectionId":null, "loginAvailable":true
             })
         );
         let response = app

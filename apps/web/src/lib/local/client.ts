@@ -190,7 +190,6 @@ const chatGptStatusSchema = z.object({
 		z.object({ connectionId: z.string(), label: z.string(), connected: z.boolean() })
 	),
 	activeConnectionId: z.string().nullable(),
-	models: z.array(z.object({ id: z.string(), name: z.string() })),
 	loginAvailable: z.boolean(),
 	error: z.string().optional()
 });
