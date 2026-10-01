@@ -883,11 +883,12 @@ impl ChatGptService {
             if accounts.accounts.is_empty() {
                 state.users.remove(&user);
             }
+            service.persist(&state).await?;
+            drop(state);
             let mut confirmed = true;
             for token in retired {
                 confirmed &= service.revoke(&client_id, &token).await;
             }
-            service.persist(&state).await?;
             Ok((!confirmed).then(|| "Signed out locally. OpenAI revocation could not be confirmed. Remove the agent in ChatGPT settings if needed.".to_owned()))
         }).await.context("ChatGPT sign-out task stopped.")?
     }
@@ -1052,6 +1053,7 @@ impl ChatGptService {
         let user = user.to_owned();
         tokio::spawn(async move {
             let mut error = service.storage_error.clone();
+            let mut cleanup_warning = None;
             if error.is_none() {
                 let forgotten = {
                     let state = service.state.lock().await;
@@ -1070,7 +1072,7 @@ impl ChatGptService {
                 };
                 for connection in forgotten {
                     match service.forget(&user, &connection, true).await {
-                        Ok(Some(warning)) => error = Some(warning),
+                        Ok(Some(warning)) => cleanup_warning = Some(warning),
                         Ok(None) => {}
                         Err(failure) => error = Some(failure.to_string()),
                     }
@@ -1150,7 +1152,7 @@ impl ChatGptService {
                     .collect(),
                 active_connection_id: accounts.active,
                 models,
-                error,
+                error: error.or(cleanup_warning),
             })
         })
         .await
@@ -1206,6 +1208,7 @@ mod tests {
         token: (u16, String),
         revoke_status: u16,
         hold_token: bool,
+        hold_revoke: bool,
         models: (u16, String),
     }
 
@@ -1370,6 +1373,11 @@ mod tests {
                         tokio::time::sleep(Duration::from_millis(5)).await;
                     }
                 }
+                if path == "/revoke" {
+                    while provider.shared.lock().unwrap().hold_revoke {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                }
                 let reason = match status {
                     200 => "OK",
                     400 => "Bad Request",
@@ -1409,6 +1417,7 @@ mod tests {
                 token: (500, String::new()),
                 revoke_status: 200,
                 hold_token: false,
+                hold_revoke: false,
                 models: (200, serde_json::json!({"models": [
                     {"slug": "gpt-visible", "display_name": "Visible model", "visibility": "list"},
                     {"slug": "gpt-hidden", "display_name": "Hidden model", "visibility": "hidden"}
@@ -2224,6 +2233,84 @@ mod tests {
                 ChatGptService::test_load(fixture.directory.path(), &fixture.provider.issuer);
             assert!(restarted.state.lock().await.users.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn cleanup_warning_preserves_healthy_account_models() {
+        let fixture = fixture().await;
+        fixture.provider.set_revoke_status(500);
+        insert(
+            &fixture.service,
+            "user-a",
+            account(
+                "healthy",
+                "client-current",
+                "subject-current",
+                Some(tokens(
+                    &fixture,
+                    "client-current",
+                    "subject-current",
+                    "access-current",
+                    "refresh-current",
+                    now() + 3600,
+                )),
+            ),
+        )
+        .await;
+        let mut signed_out = account("signed-out", "client-old", "subject-old", None);
+        signed_out.retired_refresh_tokens = vec!["refresh-retired".into()];
+        insert(&fixture.service, "user-a", signed_out).await;
+        let status = fixture.service.status("user-a").await.unwrap();
+        assert_eq!(status.accounts.len(), 1);
+        assert_eq!(status.active_connection_id.as_deref(), Some("healthy"));
+        assert_eq!(status.models.len(), 1);
+        assert_eq!(status.models[0].id, "gpt-visible");
+        assert!(status.error.unwrap().contains("could not be confirmed"));
+    }
+
+    #[tokio::test]
+    async fn legacy_revocation_does_not_block_other_users_credentials() {
+        let fixture = fixture().await;
+        let mut signed_out = account("signed-out", "client-old", "subject-old", None);
+        signed_out.retired_refresh_tokens = vec!["refresh-retired".into()];
+        insert(&fixture.service, "user-a", signed_out).await;
+        insert(
+            &fixture.service,
+            "user-b",
+            account(
+                "healthy",
+                "client-current",
+                "subject-current",
+                Some(tokens(
+                    &fixture,
+                    "client-current",
+                    "subject-current",
+                    "access-current",
+                    "refresh-current",
+                    now() + 3600,
+                )),
+            ),
+        )
+        .await;
+        fixture.provider.shared.lock().unwrap().hold_revoke = true;
+        let cleanup = tokio::spawn({
+            let service = Arc::clone(&fixture.service);
+            async move { service.status("user-a").await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while fixture.provider.posts("/revoke").is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let access = tokio::time::timeout(Duration::from_secs(1), fixture.service.access("user-b"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(access.access_token, "access-current");
+        fixture.provider.shared.lock().unwrap().hold_revoke = false;
+        assert!(cleanup.await.unwrap().unwrap().accounts.is_empty());
     }
 
     #[tokio::test]
