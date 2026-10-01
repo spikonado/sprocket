@@ -8,7 +8,7 @@ import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
-import { applyPathSelection, getActiveAtQuery } from '$lib/chat/at-paths';
+import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
 import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 import {
 	getCatalogModel,
@@ -254,7 +254,8 @@ export function PromptComposerView({
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
 	const canAttachMore = !composerLocked && !answeringQuestion;
 	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
-	const atQuery = getActiveAtQuery(prompt, caretPosition);
+	const atMention = getActiveAtMention(prompt, caretPosition);
+	const atQuery = atMention?.query ?? null;
 
 	const skillsPopupOpen =
 		dollarQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
@@ -492,12 +493,14 @@ export function PromptComposerView({
 			}
 
 			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
-				event.preventDefault();
 				const entry = paths.entries[activePathIndex];
 
-				if (entry) selectPath(entry);
+				if (entry) {
+					event.preventDefault();
+					selectPath(entry);
 
-				return;
+					return;
+				}
 			}
 		}
 
@@ -708,7 +711,7 @@ export function PromptComposerView({
 	useEffect(() => {
 		setPathsDismissed(false);
 		setPathHighlightedIndex(0);
-	}, [atQuery, projectPaths]);
+	}, [atQuery, atMention?.start, projectPaths]);
 
 	return (
 		<>
@@ -811,7 +814,10 @@ export function PromptComposerView({
 											entries={paths.entries}
 											scanning={paths.scanning}
 											highlightedIndex={activePathIndex}
-											onRetry={paths.retry}
+											onRetry={() => {
+												paths.retry();
+												composerTextarea.current?.focus();
+											}}
 											onHighlight={setPathHighlightedIndex}
 											onSelect={selectPath}
 										/>

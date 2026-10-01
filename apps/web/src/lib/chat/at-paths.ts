@@ -10,7 +10,7 @@ export function workspaceEntryDisplayPath(entry: WorkspaceSearchEntry) {
 	return entry.path + (entry.kind === 'directory' ? '/' : '');
 }
 
-function matchActivePathToken(text: string, caret: number) {
+export function getActiveAtMention(text: string, caret: number) {
 	if (caret < 0 || caret > text.length) return null;
 	const match = text.slice(0, caret).match(ACTIVE_PATH_TOKEN);
 
@@ -22,12 +22,8 @@ function matchActivePathToken(text: string, caret: number) {
 	return { query, quoted, start: match.index + match[1].length };
 }
 
-export function getActiveAtQuery(text: string, caret: number): string | null {
-	return matchActivePathToken(text, caret)?.query ?? null;
-}
-
 export function applyPathSelection(text: string, caret: number, entry: WorkspaceSearchEntry) {
-	const match = matchActivePathToken(text, caret);
+	const match = getActiveAtMention(text, caret);
 
 	if (!match) return null;
 	let end = caret;

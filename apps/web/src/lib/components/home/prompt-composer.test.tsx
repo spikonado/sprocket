@@ -4,6 +4,7 @@ import { render, waitFor } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
+import type { WorkspaceSearchResult } from '$lib/types/sprocket';
 
 const modelCatalog: ModelCatalog = {
 	defaultModelId: 'model-one',
@@ -88,21 +89,23 @@ async function pressKey(
 	target: EventTarget,
 	init: { key: string; shiftKey?: boolean; isComposing?: boolean }
 ) {
+	const event = new KeyboardEvent('keydown', {
+		key: init.key,
+		shiftKey: init.shiftKey ?? false,
+		bubbles: true,
+		cancelable: true
+	});
+
+	if (init.isComposing) {
+		Object.defineProperty(event, 'isComposing', { value: true });
+	}
+
 	await act(async () => {
-		const event = new KeyboardEvent('keydown', {
-			key: init.key,
-			shiftKey: init.shiftKey ?? false,
-			bubbles: true,
-			cancelable: true
-		});
-
-		if (init.isComposing) {
-			Object.defineProperty(event, 'isComposing', { value: true });
-		}
-
 		target.dispatchEvent(event);
 		await Promise.resolve();
 	});
+
+	return event;
 }
 
 async function typeInComposer(textarea: HTMLTextAreaElement, value: string) {
@@ -208,16 +211,104 @@ describe('PromptComposer workspace path mentions', () => {
 		{ path: 'src/my components', kind: 'directory' as const }
 	];
 
-	it('selects files and directories by keyboard without submitting', async () => {
-		const { props, textarea } = renderComposer({
+	function renderWithPathSearch(overrides: Partial<PromptComposerViewProps> = {}) {
+		return renderComposer({
 			projectPaths: {
 				workspacePath: '/workspace',
 				search: vi.fn(async () => ({ entries, scanning: false }))
-			}
+			},
+			...overrides
+		});
+	}
+
+	async function waitForPathOptions(count: number) {
+		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(count));
+	}
+
+	it.each([
+		['unavailable', 'Select a workspace'],
+		['loading', 'Searching workspace files'],
+		['scanning', 'Searching workspace files'],
+		['empty', 'No matching files or directories'],
+		['error', "Couldn't search workspace files"]
+	])('allows submission and focus navigation while search is %s', async (state, message) => {
+		const pending = Promise.withResolvers<WorkspaceSearchResult>();
+
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
+			projectPaths:
+				state === 'unavailable'
+					? null
+					: {
+							workspacePath: '/workspace',
+							search: vi.fn(async () => {
+								if (state === 'loading') return pending.promise;
+
+								if (state === 'error') throw new Error('Search failed');
+
+								return { entries: [], scanning: state === 'scanning' };
+							})
+						}
 		});
 
+		await typeInComposer(textarea, 'Inspect @missing');
+		await waitFor(() =>
+			expect(document.querySelector('[role="listbox"]')?.textContent).toContain(message)
+		);
+		const tab = await pressKey(textarea, { key: 'Tab' });
+		expect(tab.defaultPrevented).toBe(false);
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
+	it('returns focus to the composer after retry so results can be selected by keyboard', async () => {
+		const search = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('Search failed'))
+			.mockResolvedValueOnce({ entries, scanning: false });
+
+		const { textarea } = renderComposer({
+			projectPaths: { workspacePath: '/workspace', search }
+		});
+
+		await typeInComposer(textarea, '@src');
+		await waitFor(() =>
+			expect(document.querySelector('[role="listbox"]')?.textContent).toContain(
+				"Couldn't search workspace files"
+			)
+		);
+		const retry = findButton('Retry');
+		await act(async () => retry.focus());
+		await click(retry);
+		expect(document.activeElement).toBe(textarea);
+		await waitForPathOptions(2);
+		await pressKey(textarea, { key: 'Enter' });
+		expect(textarea.value).toBe('@src/app.tsx ');
+	});
+
+	it('opens completion for a second identical mention after dismissing the first', async () => {
+		const { textarea } = renderWithPathSearch();
+
+		await typeInComposer(textarea, '@src @src');
+		await waitForPathOptions(2);
+		await pressKey(textarea, { key: 'Escape' });
+		expect(textarea.getAttribute('aria-expanded')).toBe('false');
+		await act(async () => {
+			textarea.setSelectionRange(4, 4);
+			textarea.click();
+		});
+		await waitForPathOptions(2);
+		await pressKey(textarea, { key: 'Enter' });
+		expect(textarea.value).toBe('@src/app.tsx @src');
+	});
+
+	it('selects files and directories by keyboard without submitting', async () => {
+		const { props, textarea } = renderWithPathSearch();
+
 		await typeInComposer(textarea, 'Fix @src');
-		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await waitForPathOptions(2);
 		expect(textarea.getAttribute('aria-expanded')).toBe('true');
 		await pressKey(textarea, { key: 'Enter', isComposing: true });
 		expect(textarea.value).toBe('Fix @src');
@@ -226,7 +317,7 @@ describe('PromptComposer workspace path mentions', () => {
 		expect(textarea.selectionStart).toBe(textarea.value.length);
 
 		await typeInComposer(textarea, 'Inspect @src');
-		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await waitForPathOptions(2);
 		await pressKey(textarea, { key: 'ArrowDown' });
 		expect(textarea.getAttribute('aria-activedescendant')).toBe('composer-path-option-1');
 		await pressKey(textarea, { key: 'Tab' });
@@ -235,19 +326,14 @@ describe('PromptComposer workspace path mentions', () => {
 	});
 
 	it('selects with the mouse and dismisses with Escape', async () => {
-		const { textarea } = renderComposer({
-			projectPaths: {
-				workspacePath: '/workspace',
-				search: vi.fn(async () => ({ entries, scanning: false }))
-			}
-		});
+		const { textarea } = renderWithPathSearch();
 
 		await typeInComposer(textarea, '@app');
-		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await waitForPathOptions(2);
 		await pressKey(textarea, { key: 'Escape' });
 		expect(textarea.getAttribute('aria-expanded')).toBe('false');
 		await typeInComposer(textarea, '@apps');
-		await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(2));
+		await waitForPathOptions(2);
 		await click(findButton('src/app.tsx'));
 		expect(textarea.value).toBe('@src/app.tsx ');
 		expect(document.activeElement).toBe(textarea);

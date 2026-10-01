@@ -201,6 +201,7 @@ mod tests {
         std::fs::write(workspace.path().join("src/main.rs"), "fn main() {}").unwrap();
         let auth = crate::auth::AuthState::load(data.path()).unwrap();
         let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
+        auth.bind_session_user(&token, "test-user").await.unwrap();
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
