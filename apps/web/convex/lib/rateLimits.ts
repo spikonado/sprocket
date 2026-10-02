@@ -294,11 +294,13 @@ export async function assertModelUsageAvailable(
 	ctx: GenericMutationCtx<DataModel>,
 	userId: string
 ): Promise<void> {
-	// Tests and unconfigured deployments have no `tiers` rows. Production always
-	// does; skip rather than fail every run create when the table is empty.
-	if (!(await getCachedTier(ctx, 'free'))) return;
 	const tier = await ensureSubscription(ctx, userId);
-	await checkMeterLimits(ctx, 'modelUsage', userId, await resolveTierLimits(ctx, tier));
+	// Tests and unconfigured deployments have no `tiers` rows. Skip rather than
+	// fail every run create; if this user's tier (or free) exists, enforce it.
+	const limits = (await getCachedTier(ctx, tier)) ?? (await getCachedTier(ctx, 'free'));
+
+	if (!limits) return;
+	await checkMeterLimits(ctx, 'modelUsage', userId, limits.limits);
 }
 
 export async function applyGatewayUsageCharge(

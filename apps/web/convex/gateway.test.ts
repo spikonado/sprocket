@@ -180,6 +180,44 @@ describe('gateway quota', () => {
 		expect(runs).toHaveLength(0);
 	}, 15_000);
 
+	it('enforces a paid tier when the free tier row is missing', async () => {
+		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('tiers', {
+				tierId: 'pro',
+				label: 'Pro',
+				weekly: 25 * UNITS_PER_DOLLAR,
+				monthly: 75 * UNITS_PER_DOLLAR
+			});
+		});
+		const { asUser, threadId, subject } = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId: subject,
+				tier: 'pro',
+				status: 'active',
+				eventAt: 1
+			});
+		});
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subject,
+			count: 26 * UNITS_PER_DOLLAR
+		});
+
+		await expect(
+			asUser.action(api.agentRuntime.createGatewayRun, {
+				submissionId: 'gateway-run-pro-exhausted',
+				threadId,
+				prompt: 'Ship it',
+				storageIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				fastMode: false,
+				executionSecret: 'gateway-pro-exhausted'
+			})
+		).rejects.toThrow(/model usage limit reached/);
+	}, 15_000);
+
 	it('reconciles an existing submission after quota is exhausted', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
