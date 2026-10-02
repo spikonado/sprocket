@@ -6,7 +6,6 @@ import type { WorkId } from '@convex-dev/workpool';
 import type { GenericDatabaseWriter, GenericDataModel, SystemDataModel } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { cancelWebToolWork } from '@convex/lib/toolJobs';
 import {
 	FIRECRAWL_PARSE_URL,
 	HOSTED_PARSE_MAX_OUTPUT_BYTES,
@@ -317,7 +316,12 @@ describe('hostedParse', () => {
 		});
 		const fetch = vi.fn();
 		vi.stubGlobal('fetch', fetch);
-		await t.run((ctx) => cancelWebToolWork(ctx, run.runId));
+		await run.asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: run.runId,
+			executionSecret: run.executionSecret,
+			text: '',
+			status: 'cancelled'
+		});
 		await vi.advanceTimersByTimeAsync(1_000);
 		await t.finishInProgressScheduledFunctions();
 		expect(fetch).not.toHaveBeenCalled();

@@ -73,6 +73,7 @@ import type * as machines from "../machines.js";
 import type * as migrations from "../migrations.js";
 import type * as payments from "../payments.js";
 import type * as providerCredentials from "../providerCredentials.js";
+import type * as runCleanup from "../runCleanup.js";
 import type * as runLifecycle from "../runLifecycle.js";
 import type * as storageCleanup from "../storageCleanup.js";
 import type * as threads from "../threads.js";
@@ -154,6 +155,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   payments: typeof payments;
   providerCredentials: typeof providerCredentials;
+  runCleanup: typeof runCleanup;
   runLifecycle: typeof runLifecycle;
   storageCleanup: typeof storageCleanup;
   threads: typeof threads;
