@@ -20,12 +20,28 @@ export const vCompletionProvider = v.union(...literals(completionProviderIds));
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();
 
+export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'));
+
+// Public checkout mode surfaced to the website; never exposes raw provider
+// environment naming.
+export const vDodoMode = v.union(v.literal('test'), v.literal('live'));
+
 export const vSubscriptionStatus = v.union(
 	v.literal('active'),
 	v.literal('on_hold'),
 	v.literal('cancelled'),
 	v.literal('expired'),
 	v.literal('failed')
+);
+
+// Neutral provider-backed attempt status; never asserts entitlement by itself.
+export const vCheckoutAttemptStatus = v.union(
+	v.literal('awaiting_payment'),
+	v.literal('pending'),
+	v.literal('succeeded'),
+	v.literal('failed'),
+	v.literal('expired'),
+	v.literal('unknown')
 );
 
 export const vWorkspaceInstruction = v.object({

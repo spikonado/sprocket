@@ -10,6 +10,12 @@ import workpool from '@convex-dev/workpool/convex.config';
 
 const app = defineApp({
 	env: {
+		DODO_PAYMENTS_API_KEY: v.optional(v.string()),
+		DODO_PAYMENTS_ENVIRONMENT: v.optional(v.string()),
+		DODO_PAYMENTS_WEBHOOK_SECRET: v.optional(v.string()),
+		DODO_CHECKOUT_IDEMPOTENCY_WINDOW_MS: v.optional(v.string()),
+		SPROCKET_MARKETING_ORIGIN: v.optional(v.string()),
+		SPROCKET_BILLING_STAGING_ORIGIN: v.optional(v.string()),
 		EXA_API_KEY: v.string(),
 		FIRECRAWL_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),
@@ -39,5 +45,9 @@ app.use(actionRetrier);
 app.use(workpool, { name: 'webSearchWorkpool' });
 
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
+
+app.use(workpool, { name: 'billingWebhookWorkpool' });
+
+app.use(workpool, { name: 'billingReconciliationWorkpool' });
 
 export default app;
