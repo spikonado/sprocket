@@ -58,6 +58,7 @@ async function settleMandateReport(
 	args: {
 		chargeId: import('@convex/_generated/dataModel').Id<'mandateCharges'>;
 		outcome: 'approved' | 'declined';
+		amountPaid?: string;
 	}
 ) {
 	const startedFake = !vi.isFakeTimers();
@@ -843,6 +844,7 @@ describe('payments mandates', () => {
 			description: 'Order 8842',
 			...auth(run)
 		});
+
 		fetchMock.mockClear();
 
 		await expect(
@@ -859,11 +861,17 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
 
 		fetchMock.mockResolvedValue(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+
 		const retry = await settleMandateReport(t, run, {
 			chargeId: charge.chargeId,
-			outcome: 'approved'
+			outcome: 'approved',
+			amountPaid: '40'
 		});
+
 		expect(retry).toMatchObject({ reported: true });
+		expect(JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body))).toMatchObject({
+			amount_paid: '40.00'
+		});
 	});
 
 	it('rejects a recurring frequency for an any-merchant mandate', async () => {
