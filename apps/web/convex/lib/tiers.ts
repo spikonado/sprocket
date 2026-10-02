@@ -131,36 +131,56 @@ export async function getSubscriptionTier(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	userId: string
 ): Promise<SubscriptionTier> {
-	const subscription = await getSubscriptionDoc(ctx, userId);
-
-	return subscriptionIsActive(subscription) ? subscription!.tier : 'free';
+	return subscriptionTier(await getSubscriptionDoc(ctx, userId));
 }
 
-export function subscriptionIsActive(subscription: Doc<'subscriptions'> | null): boolean {
+/** Rows without a Dodo ID are operator grants and skip the billing-period clock check. */
+type SubscriptionActivity = Pick<
+	Doc<'subscriptions'>,
+	'status' | 'dodoSubscriptionId' | 'billingPeriodEnded' | 'billingPeriodEnd'
+>;
+
+export function subscriptionIsActive<T extends SubscriptionActivity>(
+	subscription: T | null,
+	now: number = Date.now()
+): subscription is T {
 	return (
-		subscription?.status === 'active' &&
+		subscription !== null &&
+		subscription.status === 'active' &&
 		(!subscription.dodoSubscriptionId ||
 			(subscription.billingPeriodEnded !== true &&
-				(subscription.billingPeriodEnd === undefined ||
-					Date.now() < subscription.billingPeriodEnd)))
+				(subscription.billingPeriodEnd === undefined || now < subscription.billingPeriodEnd)))
 	);
+}
+
+export function subscriptionTier(
+	subscription: Doc<'subscriptions'> | null,
+	now: number = Date.now()
+): SubscriptionTier {
+	return subscriptionIsActive(subscription, now) ? subscription.tier : 'free';
 }
 
 /** Insert a free/active row when missing; never overwrites an existing grant. */
 export async function ensureSubscription(
 	ctx: GenericMutationCtx<DataModel>,
-	userId: string
-): Promise<SubscriptionTier> {
+	userId: string,
+	now: number = Date.now()
+): Promise<{ tier: SubscriptionTier; subscription: Doc<'subscriptions'> }> {
 	const existing = await getSubscriptionDocExclusive(ctx, userId);
 
-	if (existing) return subscriptionIsActive(existing) ? existing.tier : 'free';
+	if (existing) return { tier: subscriptionTier(existing, now), subscription: existing };
 	// eventAt 0 so bootstrap rows never win ordering over operator edits.
-	await ctx.db.insert('subscriptions', {
+
+	const id = await ctx.db.insert('subscriptions', {
 		userId,
 		tier: 'free',
 		status: 'active',
 		eventAt: 0
 	});
 
-	return 'free';
+	const subscription = await ctx.db.get('subscriptions', id);
+
+	if (!subscription) throw new Error('Subscription bootstrap did not persist.');
+
+	return { tier: 'free', subscription };
 }

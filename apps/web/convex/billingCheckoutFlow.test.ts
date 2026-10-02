@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest, type ConvexTestInstance } from './test.setup';
-
-const WEBHOOK_SECRET = 'test_webhook_secret';
+import { initConvexTest } from './test.setup';
+import { sendSubscriptionWebhook, subscriptionPayload } from './billingWebhook.test.setup';
 
 beforeEach(() => vi.useFakeTimers());
 
@@ -15,7 +14,6 @@ afterEach(() => {
 async function billingFixture() {
 	vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
 	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
-	vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', btoa(WEBHOOK_SECRET));
 	const t = initConvexTest();
 	await t.run(async (ctx) => {
 		await ctx.db.insert('tiers', {
@@ -62,87 +60,6 @@ async function billingFixture() {
 	});
 
 	return { t, requests, owner: t.withIdentity({ subject: 'owner', email: 'owner@example.com' }) };
-}
-
-async function subscriptionActiveWebhook(
-	t: ConvexTestInstance,
-	args: {
-		subscriptionId: string;
-		productId: string;
-		interval: 'Month' | 'Year';
-		userId: string;
-		tierId: string;
-		checkoutAttemptId: string;
-		eventAt: number;
-		periodStart: number;
-		periodEnd: number;
-	}
-) {
-	const body = JSON.stringify({
-		business_id: 'business',
-		type: 'subscription.active',
-		timestamp: new Date(args.eventAt).toISOString(),
-		data: {
-			payload_type: 'Subscription',
-			addons: [],
-			billing: { city: null, country: 'US', state: null, street: null, zipcode: null },
-			brand_id: 'brand',
-			cancel_at_next_billing_date: false,
-			created_at: new Date(args.periodStart).toISOString(),
-			credit_entitlement_cart: [],
-			currency: 'USD',
-			customer: { customer_id: 'cus_owner', email: 'owner@example.com', name: 'Owner' },
-			metadata: {
-				userId: args.userId,
-				tierId: args.tierId,
-				checkoutAttemptId: args.checkoutAttemptId
-			},
-			meter_credit_entitlement_cart: [],
-			meters: [],
-			next_billing_date: new Date(args.periodEnd).toISOString(),
-			on_demand: false,
-			payment_frequency_count: 1,
-			payment_frequency_interval: args.interval,
-			previous_billing_date: new Date(args.periodStart).toISOString(),
-			product_id: args.productId,
-			quantity: 1,
-			recurring_pre_tax_amount: 2_000,
-			status: 'active',
-			subscription_id: args.subscriptionId,
-			subscription_period_count: 1,
-			subscription_period_interval: args.interval,
-			tax_inclusive: false,
-			trial_period_days: 0
-		}
-	});
-
-	const webhookId = `webhook_${args.subscriptionId}`;
-	const timestamp = String(Math.floor(args.eventAt / 1_000));
-	const encoder = new TextEncoder();
-
-	const key = await crypto.subtle.importKey(
-		'raw',
-		encoder.encode(WEBHOOK_SECRET),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign']
-	);
-
-	const signature = await crypto.subtle.sign(
-		'HMAC',
-		key,
-		encoder.encode(`${webhookId}.${timestamp}.${body}`)
-	);
-
-	return await t.fetch('/dodopayments-webhook', {
-		method: 'POST',
-		body,
-		headers: {
-			'webhook-id': webhookId,
-			'webhook-timestamp': timestamp,
-			'webhook-signature': `v1,${btoa(String.fromCharCode(...new Uint8Array(signature)))}`
-		}
-	});
 }
 
 describe('checkout selection changes', () => {
@@ -219,17 +136,18 @@ describe('checkout selection changes', () => {
 
 		const now = Date.now();
 
-		const response = await subscriptionActiveWebhook(t, {
-			subscriptionId: 'sub_monthly',
-			productId: 'prod_monthly',
-			interval: 'Month',
-			userId: 'owner',
-			tierId: 'pro',
-			checkoutAttemptId: monthly.attemptId,
-			eventAt: now,
-			periodStart: now,
-			periodEnd: now + 30 * 86_400_000
-		});
+		const response = await sendSubscriptionWebhook(
+			t,
+			'subscription.active',
+			subscriptionPayload({
+				subscription_id: 'sub_monthly',
+				product_id: 'prod_monthly',
+				metadata: { userId: 'owner', tierId: 'pro', checkoutAttemptId: monthly.attemptId },
+				previous_billing_date: new Date(now),
+				next_billing_date: new Date(now + 30 * 86_400_000)
+			}),
+			now
+		);
 
 		expect(response.status).toBe(200);
 

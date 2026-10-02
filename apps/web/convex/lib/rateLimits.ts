@@ -11,7 +11,7 @@ import {
 	type RunQueryCtx
 } from '@convex-dev/rate-limiter';
 import { components } from '@convex/_generated/api';
-import type { DataModel, Doc } from '@convex/_generated/dataModel';
+import type { DataModel } from '@convex/_generated/dataModel';
 import { internalMutation } from '@convex/_generated/server';
 import { type GenericMutationCtx } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
@@ -27,8 +27,7 @@ import {
 	type UsageMeterId,
 	type UsagePeriod
 } from '@convex/lib/usageMeters';
-import { billingWindow } from '@convex/lib/billingWindows';
-import { getSubscriptionDoc } from '@convex/lib/tiers';
+import { billingWindow, type BillingWindowSubscription } from '@convex/lib/billingWindows';
 
 export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 
@@ -37,6 +36,8 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 const METER_CAPACITY = 4_000_000_000_000_000;
 
 const STORAGE_PERIOD = 365 * DAY;
+
+type MeterWindowSubscription = BillingWindowSubscription & { quotaResetAt?: number };
 
 function meterLimitName(meterId: UsageMeterId, period: UsagePeriod): string {
 	return `${meterId}${period === 'weekly' ? 'Weekly' : 'Monthly'}`;
@@ -56,11 +57,9 @@ function windowKey(userId: string, period: UsagePeriod, start: number, resetAt?:
 }
 
 function meterWindowConfig(
-	meterId: UsageMeterId,
-	period: UsagePeriod,
 	userId: string,
-	limits: TierLimits,
-	subscription: Doc<'subscriptions'> | null,
+	period: UsagePeriod,
+	subscription: MeterWindowSubscription | null,
 	now: number
 ) {
 	const { start, end } = billingWindow(period, subscription, now);
@@ -79,10 +78,10 @@ async function usedInWindow(
 	period: UsagePeriod,
 	userId: string,
 	limits: TierLimits,
-	subscription: Doc<'subscriptions'> | null,
+	subscription: MeterWindowSubscription | null,
 	now: number
 ) {
-	const window = meterWindowConfig(meterId, period, userId, limits, subscription, now);
+	const window = meterWindowConfig(userId, period, subscription, now);
 
 	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
 		key: window.key,
@@ -156,7 +155,7 @@ async function blockedMeterLimit(
 	meterId: UsageMeterId,
 	userId: string,
 	limits: TierLimits,
-	subscription: Doc<'subscriptions'> | null,
+	subscription: MeterWindowSubscription | null,
 	now: number
 ): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
 	const statuses = await Promise.all(
@@ -191,7 +190,7 @@ async function checkMeterLimits(
 	meterId: UsageMeterId,
 	userId: string,
 	limits: TierLimits,
-	subscription: Doc<'subscriptions'> | null,
+	subscription: MeterWindowSubscription | null,
 	now: number
 ): Promise<void> {
 	const blocked = await blockedMeterLimit(ctx, meterId, userId, limits, subscription, now);
@@ -208,17 +207,11 @@ export async function gatewayQuotaStatus(
 	ctx: GenericMutationCtx<DataModel>,
 	userId: string
 ): Promise<{ tier: SubscriptionTier; exhausted: boolean; message?: string }> {
-	const tier = await ensureSubscription(ctx, userId);
+	const now = Date.now();
+	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 	const limits = await resolveTierLimits(ctx, tier);
 
-	const blocked = await blockedMeterLimit(
-		ctx,
-		'modelUsage',
-		userId,
-		limits,
-		await getSubscriptionDoc(ctx, userId),
-		Date.now()
-	);
+	const blocked = await blockedMeterLimit(ctx, 'modelUsage', userId, limits, subscription, now);
 
 	if (!blocked) return { tier, exhausted: false };
 
@@ -234,7 +227,7 @@ async function chargeMeterLimits(
 	meterId: UsageMeterId,
 	userId: string,
 	limits: TierLimits,
-	subscription: Doc<'subscriptions'> | null,
+	subscription: MeterWindowSubscription | null,
 	now: number,
 	count: number
 ): Promise<void> {
@@ -264,7 +257,7 @@ export async function getMeterWindow(
 	period: UsagePeriod,
 	userId: string,
 	limits: TierLimits,
-	subscription: Doc<'subscriptions'> | null,
+	subscription: MeterWindowSubscription | null,
 	now: number = Date.now()
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
 	const { used, window } = await usedInWindow(
@@ -290,14 +283,15 @@ export async function applyGatewayUsageCharge(
 	count: number
 ): Promise<void> {
 	if (!Number.isFinite(count) || count <= 0) return;
-	const tier = await ensureSubscription(ctx, userId);
+	const now = Date.now();
+	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 	await chargeMeterLimits(
 		ctx,
 		'modelUsage',
 		userId,
 		await resolveTierLimits(ctx, tier),
-		await getSubscriptionDoc(ctx, userId),
-		Date.now(),
+		subscription,
+		now,
 		count
 	);
 }
@@ -306,14 +300,15 @@ export const checkUsageLimits = internalMutation({
 	args: { userId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, { userId }) => {
-		const tier = await ensureSubscription(ctx, userId);
+		const now = Date.now();
+		const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 		await checkMeterLimits(
 			ctx,
 			'modelUsage',
 			userId,
 			await resolveTierLimits(ctx, tier),
-			await getSubscriptionDoc(ctx, userId),
-			Date.now()
+			subscription,
+			now
 		);
 
 		return null;

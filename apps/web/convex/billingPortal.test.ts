@@ -1,4 +1,3 @@
-import { defineSchema } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { initConvexTest } from './test.setup';
@@ -22,11 +21,6 @@ describe('billing portal recovery', () => {
 				return Response.json({ link: 'https://customer.dodopayments.com/owner-portal' });
 			});
 			const t = initConvexTest();
-			t.registerComponent(
-				'dodopayments',
-				defineSchema({}),
-				import.meta.glob('../node_modules/@dodopayments/convex/dist/component/**/*.js')
-			);
 			await t.run(async (ctx) => {
 				await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', weekly: 1, monthly: 1 });
 				await ctx.db.insert('subscriptions', {

@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
+import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import {
@@ -89,13 +89,7 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	dodoPricingCache: defineTable({
 		cacheKey: v.string(),
-		tierPrices: v.array(
-			v.object({
-				tierId: v.string(),
-				interval: vBillingInterval,
-				price: vDodoPublicPrice
-			})
-		),
+		tierPrices: v.array(vTierPrice),
 		expiresAt: v.number()
 	}).index('by_cacheKey', ['cacheKey']),
 	subscriptions: defineTable({

@@ -18,12 +18,14 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 			{
 				tierId: 'pro',
 				label: 'Pro',
+				monthlyProductId: 'prod_pro',
 				weekly: 25 * UNITS_PER_DOLLAR,
 				monthly: 75 * UNITS_PER_DOLLAR
 			},
 			{
 				tierId: 'max',
 				label: 'Max',
+				monthlyProductId: 'prod_max',
 				weekly: 170 * UNITS_PER_DOLLAR,
 				monthly: 500 * UNITS_PER_DOLLAR
 			}
@@ -409,6 +411,7 @@ describe('subscription and usage backend', () => {
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			tier: 'max',
+			preferConfiguredTier: true,
 			dodoProductId: 'prod_max',
 			eventAt: now + 1
 		});
@@ -439,6 +442,7 @@ describe('subscription and usage backend', () => {
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			eventAt: Date.now(),
+			preferConfiguredTier: true,
 			billingPeriodStart: subscription.billingPeriodEnd,
 			billingPeriodEnd: subscription.billingPeriodEnd + 30 * 86_400_000
 		});
@@ -454,6 +458,7 @@ describe('subscription and usage backend', () => {
 			ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
+				monthlyProductId: 'prod_team',
 				weekly: 25 * UNITS_PER_DOLLAR,
 				monthly: 75 * UNITS_PER_DOLLAR
 			})
@@ -471,6 +476,7 @@ describe('subscription and usage backend', () => {
 		const planChange = {
 			...subscription,
 			tier: 'team',
+			preferConfiguredTier: true,
 			dodoProductId: 'prod_team',
 			eventAt: subscription.eventAt + 1
 		};

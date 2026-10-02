@@ -32,12 +32,20 @@ export function matchesBillingInterval(
 	paymentFrequencyCount: number,
 	paymentFrequencyInterval: string
 ): boolean {
-	if (interval === 'monthly') {
-		return paymentFrequencyCount === 1 && paymentFrequencyInterval === 'Month';
-	}
+	return classifyBillingInterval(paymentFrequencyCount, paymentFrequencyInterval) === interval;
+}
 
-	return (
-		(paymentFrequencyCount === 1 && paymentFrequencyInterval === 'Year') ||
-		(paymentFrequencyCount === 12 && paymentFrequencyInterval === 'Month')
-	);
+export function classifyBillingInterval(
+	paymentFrequencyCount: number,
+	paymentFrequencyInterval: string
+): BillingInterval | null {
+	if (paymentFrequencyInterval === 'Month' && paymentFrequencyCount === 1) return 'monthly';
+
+	if (
+		(paymentFrequencyInterval === 'Year' && paymentFrequencyCount === 1) ||
+		(paymentFrequencyInterval === 'Month' && paymentFrequencyCount === 12)
+	)
+		return 'annual';
+
+	return null;
 }
