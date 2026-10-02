@@ -700,6 +700,100 @@ mod tests {
             .into()
     }
 
+    #[derive(Clone, Debug)]
+    struct HeaderlessStreamClient(SiwcHttpClient);
+
+    impl HttpClientExt for HeaderlessStreamClient {
+        fn send<T, U>(
+            &self,
+            req: Request<T>,
+        ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        + WasmCompatSend
+        + 'static
+        where
+            T: Into<Bytes> + WasmCompatSend,
+            U: From<Bytes> + WasmCompatSend + 'static,
+        {
+            self.0.send(req)
+        }
+
+        fn send_multipart<U>(
+            &self,
+            req: Request<rig::http_client::MultipartForm>,
+        ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        + WasmCompatSend
+        + 'static
+        where
+            U: From<Bytes> + WasmCompatSend + 'static,
+        {
+            self.0.send_multipart(req)
+        }
+
+        fn send_streaming<T>(
+            &self,
+            req: Request<T>,
+        ) -> impl Future<Output = http_client::Result<http_client::StreamingResponse>> + WasmCompatSend
+        where
+            T: Into<Bytes> + WasmCompatSend,
+        {
+            let (_, connection) = self.0.authorization.as_ref().unwrap();
+            let connection = Arc::clone(connection);
+            async move {
+                assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
+                let body: serde_json::Value =
+                    serde_json::from_slice(&rewrite_request_body(&req.into_body().into())?)
+                        .unwrap();
+                assert_eq!(body["tools"][0]["type"], "namespace");
+                let event = json!({
+                    "type": "response.completed",
+                    "sequence_number": 0,
+                    "response": {
+                        "id": "resp-test",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-6.1-sol",
+                        "output": [],
+                        "tools": [],
+                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                    }
+                });
+                let response = http::Response::builder()
+                    .header("x-request-id", "req-stream")
+                    .body(format!("data: {event}\n\n"))
+                    .unwrap()
+                    .into();
+                streaming_response(response, connection)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_client_completes_a_headerless_siwc_stream() {
+        let (credentials, client) = stub_client("connection-1");
+        let http = HeaderlessStreamClient(SiwcHttpClient {
+            authorization: Some((credentials, Arc::clone(&client.connection))),
+            ..Default::default()
+        });
+        let model = openai::Client::builder()
+            .api_key("test-token")
+            .http_client(http)
+            .build()
+            .unwrap()
+            .completion_model("gpt-6.1-sol");
+        let mut stream = model
+            .stream(test_request(vec![Message::user("hello")]))
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.expect("Rig must accept the headerless SIWC handshake and parse its events");
+        }
+        let response = stream.response.expect("parsed terminal response");
+        assert_eq!(response.usage.total_tokens, 2);
+        assert_eq!(response.response_id.as_deref(), Some("resp-test"));
+        assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
+    }
+
     #[tokio::test]
     async fn streaming_response_supplies_missing_sse_content_type_and_preserves_events() {
         let (_, client) = stub_client("connection-1");
