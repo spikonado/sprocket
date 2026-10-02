@@ -922,7 +922,10 @@ mod tests {
         ] {
             let raw_error = first_stream_error(stub_model(Some((status, body)))).await;
             let raw_diagnostic = raw_error.to_string();
-            let error = user_facing_error(rig::completion::PromptError::from(raw_error).into());
+            let error = user_facing_error(
+                anyhow::Error::new(rig::completion::PromptError::from(raw_error))
+                    .context("Context handoff failed. Retry to continue the conversation."),
+            );
             assert_eq!(
                 error.to_string(),
                 "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to the OpenAI API key provider in Settings."

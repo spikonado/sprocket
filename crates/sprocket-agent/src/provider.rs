@@ -532,7 +532,7 @@ where
                                 if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
-                                        error: anyhow!("Context handoff failed. Retry to continue the conversation."),
+                                        error: anyhow!(error).context("Context handoff failed. Retry to continue the conversation."),
                                     };
                                 }
                                 let text = if final_text.is_empty() {
