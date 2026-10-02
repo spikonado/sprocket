@@ -261,7 +261,7 @@ export const checkoutEligibility = query({
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.take(MAX_OPEN_CHECKOUT_SELECTIONS + 1);
 
-		if (retainedAttempts.length > MAX_OPEN_CHECKOUT_SELECTIONS) {
+		if (retainedAttempts.length >= MAX_OPEN_CHECKOUT_SELECTIONS) {
 			return {
 				eligibility: 'confirmation_pending',
 				checkoutEnabled: true,
@@ -387,9 +387,8 @@ export const checkout = action({
 			interval
 		});
 
-		// Product revalidation happens here against the operator tier mapping
-		// and again inside createCheckoutSession against the provider; the
-		// cached catalog price is never a purchase promise.
+		// Cached display prices never authorize a purchase: revalidate the
+		// operator mapping here and the provider product before freezing create.
 		if (!productId) {
 			throw new Error(`No ${interval} checkout product is configured for tier "${tier}".`);
 		}
@@ -493,6 +492,12 @@ export const checkout = action({
 				'Checkout is still confirming with the payment provider. Try again in a moment.'
 			);
 		}
+
+		budget();
+		await ctx.runAction(internal.pricing.validateCheckoutProduct, {
+			productId: reserved.createRequest?.productId ?? reserved.productId,
+			interval: reserved.interval
+		});
 
 		const frozen = await ctx.runMutation(internal.billing.freezeCheckoutCreateRequest, {
 			userId: identity.subject,
@@ -1176,9 +1181,21 @@ export const getCheckoutStatus = action({
 		}
 
 		if (attempt.dodoSessionId) {
-			const provider = await ctx.runAction(internal.pricing.recoverCheckoutSession, {
-				sessionId: attempt.dodoSessionId
-			});
+			let provider;
+
+			try {
+				provider = await ctx.runAction(internal.pricing.recoverCheckoutSession, {
+					sessionId: attempt.dodoSessionId
+				});
+			} catch {
+				return {
+					attemptId,
+					status: 'unknown',
+					checkout_url: attempt.checkoutUrl,
+					sessionId: attempt.dodoSessionId,
+					expiresAt: attempt.expiresAt
+				};
+			}
 
 			// The provider still knows the session, so it outlives the local
 			// expiry; report the authoritative status.
@@ -1689,9 +1706,6 @@ export async function applyDodoSubscriptionProjection(
 	// unchanged-product remaps never mint a fresh generation.
 	const isNewIdentity = !existing || !sameSubscription;
 
-	// A quota-bearing change must win its watermark outright; an equal-time
-	// retry or observation at the current watermark never mints a second
-	// generation for the same effective change.
 	const winsPayloadWatermark = !sameSubscription || !stalePayload;
 
 	const isPlanChange = previousTier !== undefined && previousTier !== tier;
@@ -1700,15 +1714,18 @@ export async function applyDodoSubscriptionProjection(
 	const priorGeneration = existing?.quotaGeneration ?? existing?.quotaResetAt;
 	const transitionAt = payload.observedAt ?? payload.eventAt;
 
-	const nextGeneration =
-		sameSubscription && existing?.quotaTransitionAt === transitionAt
-			? (priorGeneration ?? 1)
-			: (priorGeneration ?? 0) + 1;
-
 	const resets =
 		isNewIdentity || (isPlanChange && winsPayloadWatermark)
-			? { generation: nextGeneration, transitionAt }
-			: { generation: priorGeneration, transitionAt: existing?.quotaTransitionAt };
+			? {
+					generation: (priorGeneration ?? 0) + 1,
+					transitionAt,
+					resetAt: Math.max(transitionAt, (existing?.quotaResetAt ?? -Infinity) + 1)
+				}
+			: {
+					generation: priorGeneration,
+					transitionAt: existing?.quotaTransitionAt,
+					resetAt: existing?.quotaResetAt
+				};
 
 	const terminalConfirmed =
 		effectiveStatus === 'cancelled' || effectiveStatus === 'expired' || effectiveStatus === 'failed'
@@ -1845,8 +1862,8 @@ export async function applyDodoSubscriptionProjection(
 		cancelAtNextBillingDate: payload.cancelAtNextBillingDate,
 		quotaGeneration: resets.generation ?? existing?.quotaGeneration,
 		quotaTransitionAt: resets.transitionAt ?? existing?.quotaTransitionAt,
-		// Released gateway readers still key buckets by this timestamp.
-		quotaResetAt: resets.transitionAt ?? existing?.quotaResetAt,
+		// Released readers key buckets here; equal-time changes advance it by 1ms.
+		quotaResetAt: resets.resetAt,
 		terminalConfirmed,
 		dodoSubscriptionId: payload.dodoSubscriptionId,
 		dodoProductId: payload.dodoProductId

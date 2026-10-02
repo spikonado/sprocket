@@ -158,6 +158,16 @@ export const ensureCustomer = internalAction({
 	}
 });
 
+export const validateCheckoutProduct = internalAction({
+	args: { productId: v.string(), interval: vBillingInterval },
+	returns: v.null(),
+	handler: async (_ctx, args) => {
+		await retrieveRecurringPrice(createDodoClient(), args.productId, args.interval);
+
+		return null;
+	}
+});
+
 export const createCheckoutSession = internalAction({
 	args: {
 		attemptId: v.string(),
@@ -173,7 +183,6 @@ export const createCheckoutSession = internalAction({
 	returns: v.object({ checkoutUrl: v.union(v.string(), v.null()), sessionId: v.string() }),
 	handler: async (_ctx, args) => {
 		const client = createDodoClient();
-		await retrieveRecurringPrice(client, args.productId, args.interval);
 
 		const session = await client.checkoutSessions.create(
 			{

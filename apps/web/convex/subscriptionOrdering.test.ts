@@ -144,12 +144,11 @@ describe('subscription projection ordering', () => {
 		const reverse = await converge(loser, winner);
 
 		expect(forward.quotaGeneration).toBe(1);
-		expect(reverse.quotaGeneration).toBe(1);
+		expect(reverse.quotaGeneration).toBe(2);
 		expect(reverse).toMatchObject({
 			status: forward.status,
 			dodoProductId: forward.dodoProductId,
-			billingPeriodEnd: forward.billingPeriodEnd,
-			quotaGeneration: forward.quotaGeneration
+			billingPeriodEnd: forward.billingPeriodEnd
 		});
 	});
 

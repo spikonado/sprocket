@@ -576,6 +576,26 @@ describe('getCheckoutStatus', () => {
 		expect(['pending', 'awaiting_payment', 'unknown']).toContain(status.status);
 	});
 
+	it('keeps an attached session recoverable when provider retrieval fails', async () => {
+		const t = initConvexTest();
+		await seedProTier(t);
+		const requests = stubDodo({ onSessionStatus: () => new Response(null, { status: 404 }) });
+		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
+		const checkout = await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
+
+		if (!checkout.attemptId) throw new Error('Missing checkout attempt.');
+		await expect(
+			owner.action(api.billing.getCheckoutStatus, { attemptId: checkout.attemptId })
+		).resolves.toMatchObject({
+			status: 'unknown',
+			sessionId: 'cks_1',
+			checkout_url: checkout.checkout_url
+		});
+		expect(
+			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
+		).toHaveLength(1);
+	});
+
 	it('keeps an ambiguous create unknown when the provider lookup fails', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);

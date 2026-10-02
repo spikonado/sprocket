@@ -48,6 +48,12 @@ expire after TTL plus 30 days. The daily paginated cleanup preserves ambiguous,
 legacy-unknown, and provider-payable rows. Resolve those with provider evidence,
 not speculative deletion, before making room for more selections.
 
+Webhook cleanup completes a fixed ingestion snapshot in bounded scheduled batches.
+Settled payloads expire after 48 hours; pending and problem-event payloads remain
+available for processing/repair until the finite 14-day replay horizon. All rows
+expire at that horizon. Alert and resolve backlog before it expires; after expiry,
+recover from provider evidence rather than assuming local replay is possible.
+
 Inspect `subscriptionReconciliation:getReconciliation` by subscription row ID for the latest durable `pending`/`completed`/`exhausted` chain. After fixing an exhausted incident, invoke protected `queueReconciliation` with the current subscription/provider identity and projection revision, plus `replay: true`. Duplicate chain starts coalesce; a changed projection or access boundary may initiate fresh bounded recovery. These records contain no provider responses or hosted URLs.
 
 1. Complete migrations and deploy Convex first. Verify signing, processing/replay, mappings, access boundary jobs, protected operator lookup, provider request budgets, and generated website contract compatibility.

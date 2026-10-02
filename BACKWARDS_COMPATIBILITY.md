@@ -289,7 +289,8 @@ before the monotonic `quotaGeneration` counter carry `quotaResetAt`, an event
 timestamp used as the same key. While released gateway readers still use that
 timestamp, current readers prefer `quotaResetAt` too; otherwise old and new
 servers would charge different buckets. New writes retain `quotaResetAt` as the
-transition timestamp while `quotaGeneration` identifies the durable transition;
+transition timestamp, advancing it by 1ms when distinct winning tier transitions
+share a timestamp, while `quotaGeneration` counts the durable transitions;
 `backfillSubscriptionAccess` derives the initial generation from the
 legacy timestamp so the migration neither resets usage nor mints allowance.
 
@@ -343,9 +344,14 @@ creation-order iteration remains necessary.
 #### Webhook dedup retention
 
 `dodoWebhookEvents` keeps identity/outcome rows for the 14-day provider replay
-horizon; replayable payloads are pruned after 48h while outcome/duplicate
-counts persist for dedup. Payload secrets and customer details are never
-logged.
+horizon; settled payloads are pruned after 48h while outcome/duplicate
+counts persist for dedup. Pending, failed, unresolved, competing, and unsupported
+payloads remain replayable until the 14-day horizon, when the full row expires.
+Cleanup chains bounded batches over a fixed ingestion snapshot on each run.
+The legacy `dodoWebhookCleanup` cursor remains diagnostic; scheduled continuation
+arguments carry progress. Remove that table after released cleanup callers age out
+and its diagnostic rows have been migrated or deleted. Payload secrets and customer
+details are never logged.
 
 ### Retired cloud-held ChatGPT sign-in
 

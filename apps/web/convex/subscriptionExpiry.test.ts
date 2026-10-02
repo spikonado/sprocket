@@ -128,6 +128,10 @@ describe('subscription access phase boundaries', () => {
 
 		// At the start boundary, access opens and the term-end check chains.
 		vi.setSystemTime(futureStart + 1);
+		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({ tier: 'pro' });
+		await expect(
+			t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 1 })
+		).resolves.toBeNull();
 		await t.mutation(internal.subscriptionExpiry.checkSubscriptionExpiry, {
 			subscriptionId: subscription!._id,
 			dodoSubscriptionId: 'sub_future',

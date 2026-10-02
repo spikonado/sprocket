@@ -279,13 +279,7 @@ export function subscriptionAccessPhase(
 	)
 		return 'none';
 
-	// Enforcement computes the same policy as computeAccess from the
-	// confirmed term end. Materialized `accessPhase === 'none'` is honored as
-	// written (a boundary check already decided); any other materialized
-	// value only bounds access through its deadline, and the phase itself is
-	// re-derived from the term clock so a delayed scheduler neither ends the
-	// fixed grace window early nor extends access past its real deadline.
-	if (subscription.accessPhase === 'none') return 'none';
+	if (subscription.accessPhase === 'none' && !hasPendingTermStart(subscription)) return 'none';
 
 	if (now < termEnd) {
 		// Legacy rows closed early by billingPeriodEnded stay closed.
@@ -305,6 +299,13 @@ export function subscriptionAccessPhase(
 	return now < graceEnd ? 'renewal_processing' : 'none';
 }
 
+function hasPendingTermStart(subscription: AccessFields): boolean {
+	return (
+		subscription.billingPeriodStart !== undefined &&
+		subscription.accessEndsAt === subscription.billingPeriodStart
+	);
+}
+
 /**
  * Latest wall time at which `subscriptionIsActive` can report paid access
  * for this row, or undefined when access has no clock bound (operator grants,
@@ -320,7 +321,8 @@ export function subscriptionAccessDeadline(subscription: AccessFields | null): n
 
 	if (subscription.billingPeriodEnd === undefined) return undefined;
 
-	if (subscription.accessPhase === 'none') return subscription.accessEndsAt ?? 0;
+	if (subscription.accessPhase === 'none' && !hasPendingTermStart(subscription))
+		return subscription.accessEndsAt ?? 0;
 
 	if (subscription.cancelAtNextBillingDate === true) return subscription.billingPeriodEnd;
 
