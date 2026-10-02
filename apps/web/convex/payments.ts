@@ -297,6 +297,7 @@ export const reserveCharge = internalMutation({
 							chargingStartedAt: now,
 							updatedAt: now
 						});
+
 						return { kind: 'reserved' as const, chargeId: existing._id, chargingStartedAt: now };
 					}
 
@@ -315,6 +316,7 @@ export const reserveCharge = internalMutation({
 						chargingStartedAt: now,
 						updatedAt: now
 					});
+
 					return { kind: 'reserved' as const, chargeId: existing._id, chargingStartedAt: now };
 				}
 			}
@@ -332,6 +334,7 @@ export const reserveCharge = internalMutation({
 				createdAt: now,
 				updatedAt: now
 			});
+
 			return { kind: 'reserved' as const, chargeId, chargingStartedAt: now };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -393,6 +396,7 @@ export const releaseChargeReservation = internalMutation({
 			) {
 				return null;
 			}
+
 			// Drop the live claim so callers aren't stuck in inFlight, but keep
 			// providerRequestedAt, since an ambiguous POST must not be reclaimed.
 			await ctx.db.patch('mandateCharges', args.chargeId, {
