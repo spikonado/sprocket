@@ -77,31 +77,10 @@ async fn register_file(
         result = read_artifact_file(&context.workspace_root, path) => result.map_err(tool_error)?,
     };
     let (registration_id, existing_id, baseline) = if function == "artifacts:addArtifact" {
-        let previous = bindings
+        let path = bindings
             .at_path(&context.workspace_root, &file.local_path)
             .await
-            .map_err(tool_error)?;
-        if let Some(previous) = &previous {
-            let args = mutation_args_from_payload(
-                &context.run_id,
-                &context.claim_id,
-                &json!({"registrationIds": [previous.registration_id]}),
-            )?;
-            let deleted: Vec<String> = tokio::select! {
-                _ = cancellation.cancelled() => return Err(cancelled_error()),
-                result = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    context.runtime.query_json("artifacts:getDeletedRegistrationIdsForRun", args),
-                ) => result.map_err(|error| tool_error(error.into()))?.map_err(tool_error)?,
-            };
-            if deleted.contains(&previous.registration_id) {
-                bindings
-                    .bindings
-                    .retain(|binding| binding.registration_id != previous.registration_id);
-                bindings.persist().await.map_err(tool_error)?;
-            }
-        }
-        let path = previous
+            .map_err(tool_error)?
             .map(|binding| binding.local_path)
             .unwrap_or_else(|| file.local_path.clone());
         let binding = bindings.reserve(path);

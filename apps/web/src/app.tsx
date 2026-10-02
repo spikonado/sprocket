@@ -847,6 +847,15 @@ export default function App({
 	const deleteArtifact =
 		currentRepositoryKey && convexAuth.isAuthenticated && !convexAuth.isLoading
 			? async (artifactId: string) => {
+					if (desktopApi && signedInUserId && currentWorkspacePath) {
+						await desktopApi.deleteArtifact({
+							userId: signedInUserId,
+							repositoryKey: currentRepositoryKey,
+							workspacePath: currentWorkspacePath,
+							artifactId
+						});
+						return;
+					}
 					// SAFETY: artifact IDs come from the authenticated artifact registry.
 					await deleteArtifactRecord({
 						artifactId: artifactId as Id<'artifacts'>,

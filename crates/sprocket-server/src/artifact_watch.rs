@@ -98,12 +98,12 @@ impl ArtifactWatchers {
         })
     }
 
-    fn bindings(&self, key: &WatchKey) -> ArtifactBindings {
+    pub(crate) fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
         ArtifactBindings::new(
             &self.bindings_root,
             &self.deployment_url,
-            &key.user_id,
-            Path::new(&key.workspace_path),
+            user_id,
+            workspace,
         )
     }
 
@@ -127,7 +127,7 @@ impl ArtifactWatchers {
                 self.deployment_url.clone(),
                 Arc::clone(&self.native_auth),
                 key.clone(),
-                self.bindings(&key),
+                self.bindings(&key.user_id, Path::new(&key.workspace_path)),
                 events.clone(),
                 Arc::clone(&latest),
             ));
@@ -175,20 +175,17 @@ impl ArtifactWatchSession {
                 &self.key,
             )
             .await?;
-            let bindings = self.watchers.bindings(&self.key);
+            let bindings = self
+                .watchers
+                .bindings(&self.key.user_id, Path::new(&self.key.workspace_path));
             let mut feed = ArtifactFeed::new(self.key.clone(), bindings.clone());
-            let reconciliation_retry = Mutex::new(None);
             flush_feed(
                 &mut feed,
                 || async {
-                    Ok(load_registry(
-                        &client,
-                        &bindings,
-                        &self.key.repository_key,
-                        &reconciliation_retry,
-                    )
-                    .await?
-                    .artifacts)
+                    Ok(client
+                        .list_artifacts(&self.key.repository_key)
+                        .await?
+                        .artifacts)
                 },
                 |request| {
                     let client = &client;
@@ -336,7 +333,6 @@ async fn cloud_worker(
     pending: tokio::sync::watch::Receiver<Vec<SyncRequest>>,
     output: tokio::sync::mpsc::Sender<anyhow::Result<ArtifactSnapshot>>,
 ) {
-    let reconciliation_retry = Mutex::new(None);
     loop {
         let outcome = async {
             let client = timeout(NETWORK_TIMEOUT, connect(&url, &auth, &key)).await??;
@@ -353,14 +349,7 @@ async fn cloud_worker(
                 }),
                 &pending,
                 &output,
-                || {
-                    load_registry(
-                        &client,
-                        &bindings,
-                        &key.repository_key,
-                        &reconciliation_retry,
-                    )
-                },
+                || client.list_artifacts(&key.repository_key),
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
@@ -402,7 +391,6 @@ where
         .ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??;
     let mut observed_revision = Some(first);
     let mut loaded_revision = None;
-    let mut reconciliation_retry_at = None;
     let mut requests = Vec::new();
     let mut poll = interval(Duration::from_secs(1));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -413,7 +401,6 @@ where
         }
         // A page load can read ahead of buffered subscription updates.
         if had_pending
-            || reconciliation_retry_at.is_some_and(|retry| tokio::time::Instant::now() >= retry)
             || observed_revision
                 .is_some_and(|next| loaded_revision.is_none_or(|loaded| next > loaded))
         {
@@ -422,9 +409,6 @@ where
                 anyhow::bail!("Artifact registry changed during refresh; retrying");
             }
             loaded_revision = Some(snapshot.revision);
-            reconciliation_retry_at = snapshot
-                .reconciliation_pending
-                .then(|| tokio::time::Instant::now() + Duration::from_secs(30));
             if output.send(Ok(snapshot)).await.is_err() {
                 return Ok(());
             }
@@ -488,101 +472,6 @@ struct SyncRequest {
     path: String,
     baseline: String,
     content: String,
-}
-
-async fn load_registry(
-    client: &UserConvexClient,
-    bindings: &ArtifactBindings,
-    repository_key: &str,
-    reconciliation_retry: &Mutex<Option<tokio::time::Instant>>,
-) -> anyhow::Result<ArtifactSnapshot> {
-    let mut snapshot = client.list_artifacts(repository_key).await?;
-    if reconciliation_retry
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .is_some_and(|retry| tokio::time::Instant::now() < retry)
-    {
-        snapshot.reconciliation_pending = true;
-        return Ok(snapshot);
-    }
-    let visible_ids = snapshot
-        .artifacts
-        .iter()
-        .map(|artifact| artifact.id.clone())
-        .collect();
-    // Reconciliation is maintenance, not a prerequisite for displaying or
-    // syncing the current registry. Bound the entire pass even in large stores.
-    match timeout(
-        Duration::from_secs(5),
-        reconcile_bindings(bindings, &visible_ids, |ids| {
-            client.deleted_registration_ids(ids)
-        }),
-    )
-    .await
-    {
-        Ok(Ok(())) => {
-            *reconciliation_retry
-                .lock()
-                .unwrap_or_else(|error| error.into_inner()) = None;
-        }
-        result => {
-            *reconciliation_retry
-                .lock()
-                .unwrap_or_else(|error| error.into_inner()) =
-                Some(tokio::time::Instant::now() + Duration::from_secs(30));
-            snapshot.reconciliation_pending = true;
-            tracing::warn!(?result, "artifact binding reconciliation deferred");
-        }
-    }
-    Ok(snapshot)
-}
-
-async fn reconcile_bindings<M, MF>(
-    bindings: &ArtifactBindings,
-    visible_ids: &std::collections::HashSet<String>,
-    mut missing_ids: M,
-) -> anyhow::Result<()>
-where
-    M: FnMut(Vec<String>) -> MF,
-    MF: std::future::Future<Output = anyhow::Result<Vec<String>>>,
-{
-    // Project list absence alone does not prove deletion: legacy bindings may
-    // belong to another project, and new registrations reserve paths first.
-    let candidates: std::collections::BTreeSet<_> = bindings
-        .snapshot()
-        .await?
-        .into_iter()
-        .filter(|binding| {
-            binding
-                .artifact_id
-                .as_ref()
-                .is_none_or(|id| !visible_ids.contains(id))
-        })
-        .map(|binding| binding.registration_id)
-        .collect();
-    if candidates.is_empty() {
-        return Ok(());
-    }
-    let candidates: Vec<_> = candidates.into_iter().collect();
-    let mut deleted = std::collections::HashSet::new();
-    // Deletion records contain no artifact content; check bounded index reads.
-    for chunk in candidates.chunks(128) {
-        let confirmed = timeout(NETWORK_TIMEOUT, missing_ids(chunk.to_vec())).await??;
-        deleted.extend(confirmed.into_iter().filter(|id| chunk.contains(id)));
-    }
-    if deleted.is_empty() {
-        return Ok(());
-    }
-    let mut guard = bindings.lock().await?;
-    let previous = guard.bindings.len();
-    guard
-        .bindings
-        .retain(|binding| !deleted.contains(&binding.registration_id));
-    let changed = previous != guard.bindings.len();
-    if changed {
-        guard.persist().await?;
-    }
-    Ok(())
 }
 
 async fn sync(
@@ -791,7 +680,6 @@ mod tests {
                     let revision = task_loads.fetch_add(1, Ordering::SeqCst) as u64 + 2;
                     std::future::ready(Ok(ArtifactSnapshot {
                         artifacts: vec![],
-                        reconciliation_pending: false,
                         revision,
                     }))
                 },
@@ -816,58 +704,6 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn deferred_reconciliation_retries_without_registry_changes() {
-        let (updates, subscription) = futures::channel::mpsc::unbounded();
-        let (_pending, pending) = tokio::sync::watch::channel(Vec::new());
-        let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
-        let loads = Arc::new(AtomicUsize::new(0));
-        let task_loads = Arc::clone(&loads);
-        let task = tokio::spawn(async move {
-            cloud_session(
-                subscription,
-                &pending,
-                &output,
-                || {
-                    let attempt = task_loads.fetch_add(1, Ordering::SeqCst);
-                    std::future::ready(Ok(ArtifactSnapshot {
-                        artifacts: vec![],
-                        revision: 1,
-                        reconciliation_pending: attempt == 0,
-                    }))
-                },
-                |_| async { panic!("idle watcher must not sync") },
-            )
-            .await
-        });
-        updates.unbounded_send(Ok(1)).unwrap();
-        assert!(
-            snapshots
-                .recv()
-                .await
-                .unwrap()
-                .unwrap()
-                .reconciliation_pending
-        );
-        tokio::time::advance(Duration::from_secs(29)).await;
-        tokio::task::yield_now().await;
-        assert_eq!(loads.load(Ordering::SeqCst), 1);
-        tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(
-            !snapshots
-                .recv()
-                .await
-                .unwrap()
-                .unwrap()
-                .reconciliation_pending
-        );
-        tokio::time::advance(Duration::from_secs(60)).await;
-        tokio::task::yield_now().await;
-        assert_eq!(loads.load(Ordering::SeqCst), 2);
-        drop(snapshots);
-        task.await.unwrap().unwrap();
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn local_changes_sync_without_a_cloud_revision_event() {
         let (updates, subscription) = futures::channel::mpsc::unbounded();
         let (pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
@@ -882,7 +718,6 @@ mod tests {
                 || async {
                     Ok(ArtifactSnapshot {
                         artifacts: vec![],
-                        reconciliation_pending: false,
                         revision: 1,
                     })
                 },
@@ -925,7 +760,6 @@ mod tests {
                 || async {
                     Ok(ArtifactSnapshot {
                         artifacts: vec![],
-                        reconciliation_pending: false,
                         revision: 1,
                     })
                 },
@@ -1043,89 +877,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconciliation_prunes_only_confirmed_deletions_and_clears_queued_sync() {
+    async fn cloud_deletion_preserves_local_bindings_and_files() {
         let (dir, mut feed) = setup().await;
+        std::fs::write(dir.path().join("notes.md"), "initial").unwrap();
         bind(&feed).await;
-        tokio::fs::write(dir.path().join("notes.md"), "local edit")
-            .await
-            .unwrap();
         feed.refresh().await.unwrap();
-        assert_eq!(feed.pending.len(), 1);
-        let mut guard = feed.bindings.lock().await.unwrap();
-        let mut unrelated = guard.get("artifact").unwrap().clone();
-        unrelated.registration_id = "other-registration".into();
-        unrelated.artifact_id = Some("other-project".into());
-        unrelated.local_path = "other.md".into();
-        guard.bind(unrelated).unwrap();
-        guard.reserve("in-flight.md".into());
-        guard.persist().await.unwrap();
-        drop(guard);
-        // Reopening the store must also clean bindings never observed by this
-        // watcher, using owned deletion records rather than project absence.
-        let restarted =
-            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
-        reconcile_bindings(&restarted, &Default::default(), |ids| {
-            assert_eq!(ids.len(), 3);
-            assert!(ids.contains(&"registration".into()));
-            assert!(ids.contains(&"other-registration".into()));
-            std::future::ready(Ok(vec!["registration".into(), "unsolicited".into()]))
-        })
-        .await
-        .unwrap();
-        let guard = restarted.lock().await.unwrap();
-        assert!(guard.get("artifact").is_none());
-        assert!(guard.get("other-project").is_some());
-        assert!(
-            guard
-                .bindings
-                .iter()
-                .any(|binding| binding.artifact_id.is_none())
-        );
-        drop(guard);
         feed.apply_registry(vec![]);
         feed.refresh().await.unwrap();
-        assert!(feed.pending.is_empty());
+
         assert!(feed.local.is_empty());
-        assert_eq!(
-            tokio::fs::read_to_string(dir.path().join("notes.md"))
-                .await
-                .unwrap(),
-            "local edit"
-        );
-    }
-
-    #[tokio::test]
-    async fn reconciliation_releases_cancelled_add_reservations_after_deletion() {
-        let (_dir, feed) = setup().await;
-        let mut guard = feed.bindings.lock().await.unwrap();
-        let registration_id = guard.reserve("pending.md".into()).registration_id.clone();
-        guard.persist().await.unwrap();
-        drop(guard);
-        reconcile_bindings(&feed.bindings, &Default::default(), |ids| {
-            assert_eq!(ids, vec![registration_id.clone()]);
-            std::future::ready(Ok(ids))
-        })
-        .await
-        .unwrap();
-        let mut guard = feed.bindings.lock().await.unwrap();
-        assert!(guard.bindings.is_empty());
-        assert_ne!(
-            guard.reserve("pending.md".into()).registration_id,
-            registration_id
-        );
-    }
-
-    #[tokio::test]
-    async fn failed_reconciliation_preserves_bindings() {
-        let (_dir, feed) = setup().await;
-        bind(&feed).await;
-        assert!(
-            reconcile_bindings(&feed.bindings, &Default::default(), |_| {
-                std::future::ready(Err(anyhow::anyhow!("disconnected")))
-            })
-            .await
-            .is_err()
-        );
+        assert!(feed.pending.is_empty());
         assert!(
             feed.bindings
                 .lock()
@@ -1134,33 +895,10 @@ mod tests {
                 .get("artifact")
                 .is_some()
         );
-    }
-
-    #[tokio::test]
-    async fn reconciliation_batches_requests_within_cloud_limit() {
-        let (_dir, feed) = setup().await;
-        let mut guard = feed.bindings.lock().await.unwrap();
-        for index in 0..130 {
-            guard
-                .bind(ArtifactBinding {
-                    registration_id: format!("registration-{index}"),
-                    artifact_id: Some(format!("artifact-{index}")),
-                    local_path: format!("file-{index}.md"),
-                    content_hash: String::new(),
-                })
-                .unwrap();
-        }
-        guard.persist().await.unwrap();
-        drop(guard);
-        let mut batches = Vec::new();
-        reconcile_bindings(&feed.bindings, &Default::default(), |ids| {
-            batches.push(ids.len());
-            std::future::ready(Ok(ids))
-        })
-        .await
-        .unwrap();
-        assert_eq!(batches, vec![128, 2]);
-        assert!(feed.bindings.snapshot().await.unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
+            "initial"
+        );
     }
 
     #[tokio::test]

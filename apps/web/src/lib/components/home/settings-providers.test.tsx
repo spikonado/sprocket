@@ -57,6 +57,7 @@ function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		fetchTranscriptAttachment: unused,
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
+		deleteArtifact: unused,
 		watchArtifacts: unused,
 		requestRunCancellation: unused,
 		startAccountSession: unused,

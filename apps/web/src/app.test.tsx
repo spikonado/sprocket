@@ -107,6 +107,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		fetchTranscriptAttachment: unused,
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
+		deleteArtifact: async () => {},
 		watchArtifacts: () => new Promise<void>(() => {}),
 		requestRunCancellation: async () => {},
 		startAccountSession: async () => {},
@@ -243,6 +244,60 @@ it('populates projects from the desktop client resolved during boot', async () =
 
 	expect(await projectTrigger('Alpha')).toBeTruthy();
 	expect(listProjectAttachments).toHaveBeenCalled();
+});
+
+it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
+	const client = createConvexFixtures();
+	const artifact: Doc<'artifacts'> = {
+		// SAFETY: this fixture ID is only compared as an opaque Convex document ID.
+		_id: 'artifact-a' as Id<'artifacts'>,
+		_creationTime: 1,
+		userId: 'user-a',
+		repositoryKey: 'repo-alpha',
+		scope: 'project',
+		registrationId: 'registration-a',
+		content: 'Notes',
+		type: 'markdown',
+		title: 'Artifact notes',
+		revision: 1,
+		createdAt: 1,
+		updatedAt: 1
+	};
+	client.registerQuery(api.artifacts.listArtifacts, {
+		page: [artifact],
+		isDone: true,
+		continueCursor: '',
+		revision: 1
+	});
+	const deleteArtifact = vi
+		.fn<DesktopApi['deleteArtifact']>()
+		.mockRejectedValueOnce(new Error('artifact deletion timed out'))
+		.mockResolvedValue(undefined);
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [
+					projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')
+				],
+				deleteArtifact
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.contextMenu(await screen.findByText('Artifact notes'));
+	fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete artifact' }));
+	expect((await screen.findByRole('alert')).textContent).toContain('artifact deletion timed out');
+	fireEvent.click(screen.getByRole('menuitem', { name: 'Delete artifact' }));
+	await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+	expect(deleteArtifact).toHaveBeenCalledTimes(2);
+	expect(deleteArtifact).toHaveBeenLastCalledWith({
+		userId: 'user-a',
+		repositoryKey: 'repo-alpha',
+		workspacePath: '/work/alpha',
+		artifactId: 'artifact-a'
+	});
 });
 
 it('shares local message recency across the project menus and recent directories', async () => {

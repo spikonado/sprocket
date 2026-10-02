@@ -576,15 +576,10 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow(/no longer active/i);
 	});
 
-	it('reports owned deletions across projects and blocks cancelled add retries', async () => {
+	it('rejects reuse of a deleted registration and allows a fresh registration', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
-		const args = { registrationIds: [fields.registrationId] };
-		expect(await asUser.query(api.artifacts.getDeletedRegistrationIds, args)).toEqual([]);
 		await asUser.mutation(api.artifacts.deleteArtifact, { repositoryKey, artifactId });
-		expect(await asUser.query(api.artifacts.getDeletedRegistrationIds, args)).toEqual([
-			fields.registrationId
-		]);
 		await expect(
 			asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields })
 		).rejects.toThrow(/registration was deleted/i);
@@ -595,33 +590,7 @@ describe('cloud artifacts', () => {
 			...fields,
 			registrationId: 'new-registration'
 		});
-
 		expect(recreated.artifactId).not.toBe(artifactId);
-		expect(
-			await t
-				.withIdentity({ subject: 'user_bob' })
-				.query(api.artifacts.getDeletedRegistrationIds, args)
-		).toEqual([]);
-		const other = await seedActiveRun('user_alice', t);
-		await t.run((ctx) => ctx.db.patch('threadRecords', other.threadId, { repositoryKey: 'other' }));
-		expect(
-			await asUser.query(api.artifacts.getDeletedRegistrationIdsForRun, { ...other.auth, ...args })
-		).toEqual([fields.registrationId]);
-		await expect(
-			asUser.query(api.artifacts.getDeletedRegistrationIdsForRun, {
-				...other.auth,
-				...args,
-				claimId: 'expired'
-			})
-		).rejects.toThrow();
-		await expect(t.query(api.artifacts.getDeletedRegistrationIds, args)).rejects.toThrow(
-			/authentication required/i
-		);
-		await expect(
-			asUser.query(api.artifacts.getDeletedRegistrationIds, {
-				registrationIds: Array.from({ length: 129 }, () => fields.registrationId)
-			})
-		).rejects.toThrow(/128/);
 	});
 
 	it('pages more than 16 MB of content', async () => {

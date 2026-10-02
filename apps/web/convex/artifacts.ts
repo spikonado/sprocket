@@ -409,50 +409,6 @@ export const deleteArtifact = mutation({
 	}
 });
 
-// Bindings span projects in a workspace. Return only this account's deletion
-// records, including those from a former project, to release those reservations.
-async function deletedRegistrationIds(ctx: QueryCtx, userId: string, registrationIds: string[]) {
-	if (registrationIds.length > 128) throw new Error('Cannot check more than 128 registrations.');
-	const deleted: string[] = [];
-
-	for (const registrationId of new Set(registrationIds)) {
-		if (!registrationId || registrationId.length > 128) throw new Error('Invalid registration ID.');
-
-		const record = await ctx.db
-			.query('artifactDeletions')
-			.withIndex('by_userId_and_registrationId', (q) =>
-				q.eq('userId', userId).eq('registrationId', registrationId)
-			)
-			.unique();
-
-		if (record) deleted.push(registrationId);
-	}
-
-	return deleted;
-}
-
-export const getDeletedRegistrationIds = query({
-	args: { registrationIds: v.array(v.string()) },
-	returns: v.array(v.string()),
-	handler: async (ctx, args) =>
-		deletedRegistrationIds(ctx, await getUserId(ctx), args.registrationIds)
-});
-
-export const getDeletedRegistrationIdsForRun = query({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		registrationIds: v.array(v.string())
-	},
-	returns: v.array(v.string()),
-	handler: async (ctx, args) => {
-		const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-
-		return deletedRegistrationIds(ctx, run.userId, args.registrationIds);
-	}
-});
-
 export const deleteArtifactForRun = mutation({
 	args: {
 		runId: v.id('runs'),
