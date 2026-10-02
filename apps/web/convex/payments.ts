@@ -327,6 +327,7 @@ export const reserveCharge = internalMutation({
 							claimGeneration,
 							updatedAt: now
 						});
+
 						return {
 							kind: 'reserved' as const,
 							chargeId: existing._id,
@@ -351,6 +352,7 @@ export const reserveCharge = internalMutation({
 						claimGeneration,
 						updatedAt: now
 					});
+
 					return {
 						kind: 'reserved' as const,
 						chargeId: existing._id,
@@ -373,6 +375,7 @@ export const reserveCharge = internalMutation({
 				createdAt: now,
 				updatedAt: now
 			});
+
 			return { kind: 'reserved' as const, chargeId, claimGeneration: 1 };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -389,16 +392,19 @@ export const markChargeProviderRequested = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+
 		if ((charge.claimGeneration ?? 0) !== args.claimGeneration) {
 			throw new Error(
 				'Charge reservation was taken over by another attempt; refusing to charge again.'
 			);
 		}
+
 		if (charge.providerRequestedAt !== undefined) {
 			throw new Error(
 				'A previous charge attempt for this reference may have already been submitted to Prava; refusing to charge again.'
 			);
 		}
+
 		await ctx.db.patch('mandateCharges', args.chargeId, {
 			providerRequestedAt: Date.now(),
 			updatedAt: Date.now()
