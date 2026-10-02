@@ -47,39 +47,6 @@ export async function reconcileTerminalRun(
 		return;
 	}
 
-	if (questionCursor !== null) {
-		const afterQuestion = questionCursor;
-
-		const questions = ctx.db
-			.query('agentQuestions')
-			.withIndex('by_runId_sequence', (query) =>
-				query.eq('runId', run._id).gt('sequence', afterQuestion)
-			);
-
-		for await (const question of questions) {
-			if (question.status === 'pending') {
-				await ctx.db.patch(
-					'agentQuestions',
-					question._id,
-					run.status === 'cancelled'
-						? { status: 'cancelled', answeredAt: args.completedAt }
-						: { requiresContinuation: true }
-				);
-			}
-
-			questionCursor = question.sequence;
-			processed++;
-
-			if (processed >= TERMINAL_CLEANUP_BATCH_SIZE || !(await hasCleanupHeadroom(ctx))) {
-				await scheduleContinuation();
-
-				return;
-			}
-		}
-
-		questionCursor = null;
-	}
-
 	const jobs = ctx.db
 		.query('executorJobs')
 		.withIndex('by_runId_sequence', (query) =>
@@ -111,6 +78,36 @@ export async function reconcileTerminalRun(
 			job: finalizedJob
 		});
 		jobCursor = job.sequence;
+		processed++;
+
+		if (processed >= TERMINAL_CLEANUP_BATCH_SIZE || !(await hasCleanupHeadroom(ctx))) {
+			await scheduleContinuation();
+
+			return;
+		}
+	}
+
+	if (questionCursor === null) return;
+	const afterQuestion = questionCursor;
+
+	const questions = ctx.db
+		.query('agentQuestions')
+		.withIndex('by_runId_sequence', (query) =>
+			query.eq('runId', run._id).gt('sequence', afterQuestion)
+		);
+
+	for await (const question of questions) {
+		if (question.status === 'pending') {
+			await ctx.db.patch(
+				'agentQuestions',
+				question._id,
+				run.status === 'cancelled'
+					? { status: 'cancelled', answeredAt: args.completedAt }
+					: { requiresContinuation: true }
+			);
+		}
+
+		questionCursor = question.sequence;
 		processed++;
 
 		if (processed >= TERMINAL_CLEANUP_BATCH_SIZE || !(await hasCleanupHeadroom(ctx))) {

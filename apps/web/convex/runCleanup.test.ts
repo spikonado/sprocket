@@ -259,7 +259,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 	});
 
 	it.each(['cancelled', 'failed', 'completed'] as const)(
-		'finishes questions across pages before recording %s job transcripts',
+		'finishes %s jobs before processing questions across batches',
 		async (status) => {
 			const t = initConvexTest();
 			const { asUser, threadId } = await seedOwnedThread(t);
@@ -286,6 +286,10 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				text: '',
 				status
 			});
+
+			const firstJob = await t.run((ctx) => ctx.db.get('executorJobs', jobs[0]._id));
+
+			expect(firstJob?.status).toBe('cancelled');
 
 			if (status === 'cancelled') {
 				const highestSequence = Math.max(...jobs.map((job) => job.sequence));
