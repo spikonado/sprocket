@@ -576,10 +576,10 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow(/no longer active/i);
 	});
 
-	it('reports only owned project deletion records and blocks cancelled add retries', async () => {
+	it('reports owned deletions across projects and blocks cancelled add retries', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
-		const args = { repositoryKey, registrationIds: [fields.registrationId] };
+		const args = { registrationIds: [fields.registrationId] };
 		expect(await asUser.query(api.artifacts.getDeletedRegistrationIds, args)).toEqual([]);
 		await asUser.mutation(api.artifacts.deleteArtifact, { repositoryKey, artifactId });
 		expect(await asUser.query(api.artifacts.getDeletedRegistrationIds, args)).toEqual([
@@ -602,18 +602,23 @@ describe('cloud artifacts', () => {
 				.withIdentity({ subject: 'user_bob' })
 				.query(api.artifacts.getDeletedRegistrationIds, args)
 		).toEqual([]);
+		const other = await seedActiveRun('user_alice', t);
+		await t.run((ctx) => ctx.db.patch('threadRecords', other.threadId, { repositoryKey: 'other' }));
 		expect(
-			await asUser.query(api.artifacts.getDeletedRegistrationIds, {
+			await asUser.query(api.artifacts.getDeletedRegistrationIdsForRun, { ...other.auth, ...args })
+		).toEqual([fields.registrationId]);
+		await expect(
+			asUser.query(api.artifacts.getDeletedRegistrationIdsForRun, {
+				...other.auth,
 				...args,
-				repositoryKey: 'other'
+				claimId: 'expired'
 			})
-		).toEqual([]);
+		).rejects.toThrow();
 		await expect(t.query(api.artifacts.getDeletedRegistrationIds, args)).rejects.toThrow(
 			/authentication required/i
 		);
 		await expect(
 			asUser.query(api.artifacts.getDeletedRegistrationIds, {
-				repositoryKey,
 				registrationIds: Array.from({ length: 129 }, () => fields.registrationId)
 			})
 		).rejects.toThrow(/128/);

@@ -98,6 +98,7 @@ impl UserConvexClient {
                 return Ok(ArtifactSnapshot {
                     artifacts,
                     revision: page.revision,
+                    reconciliation_pending: false,
                 });
             }
             let cursor = Value::String(page.continue_cursor);
@@ -127,10 +128,9 @@ impl UserConvexClient {
 
     pub(crate) async fn deleted_registration_ids(
         &self,
-        repository_key: &str,
         registration_ids: Vec<String>,
     ) -> anyhow::Result<Vec<String>> {
-        let mut args = artifacts_list_args(repository_key);
+        let mut args = BTreeMap::new();
         args.insert(
             "registrationIds".to_string(),
             Value::Array(registration_ids.into_iter().map(Value::String).collect()),
@@ -200,6 +200,7 @@ fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
 }
 
 pub(crate) struct ArtifactSnapshot {
+    pub reconciliation_pending: bool,
     pub artifacts: Vec<crate::artifact_watch::RemoteArtifact>,
     pub revision: u64,
 }

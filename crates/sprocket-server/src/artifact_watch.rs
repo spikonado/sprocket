@@ -388,6 +388,7 @@ where
         .ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??;
     let mut observed_revision = Some(first);
     let mut loaded_revision = None;
+    let mut reconciliation_pending = false;
     let mut requests = Vec::new();
     let mut poll = interval(Duration::from_secs(1));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -398,6 +399,7 @@ where
         }
         // A page load can read ahead of buffered subscription updates.
         if had_pending
+            || reconciliation_pending
             || observed_revision
                 .is_some_and(|next| loaded_revision.is_none_or(|loaded| next > loaded))
         {
@@ -406,6 +408,7 @@ where
                 anyhow::bail!("Artifact registry changed during refresh; retrying");
             }
             loaded_revision = Some(snapshot.revision);
+            reconciliation_pending = snapshot.reconciliation_pending;
             if output.send(Ok(snapshot)).await.is_err() {
                 return Ok(());
             }
@@ -476,7 +479,7 @@ async fn load_registry(
     bindings: &ArtifactBindings,
     repository_key: &str,
 ) -> anyhow::Result<ArtifactSnapshot> {
-    let snapshot = client.list_artifacts(repository_key).await?;
+    let mut snapshot = client.list_artifacts(repository_key).await?;
     let visible_ids = snapshot
         .artifacts
         .iter()
@@ -487,13 +490,16 @@ async fn load_registry(
     match timeout(
         Duration::from_secs(5),
         reconcile_bindings(bindings, &visible_ids, |ids| {
-            client.deleted_registration_ids(repository_key, ids)
+            client.deleted_registration_ids(ids)
         }),
     )
     .await
     {
         Ok(Ok(())) => {}
-        result => tracing::warn!(?result, "artifact binding reconciliation deferred"),
+        result => {
+            snapshot.reconciliation_pending = true;
+            tracing::warn!(?result, "artifact binding reconciliation deferred");
+        }
     }
     Ok(snapshot)
 }
@@ -752,6 +758,7 @@ mod tests {
                     let revision = task_loads.fetch_add(1, Ordering::SeqCst) as u64 + 2;
                     std::future::ready(Ok(ArtifactSnapshot {
                         artifacts: vec![],
+                        reconciliation_pending: false,
                         revision,
                     }))
                 },
@@ -776,6 +783,54 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn deferred_reconciliation_retries_without_registry_changes() {
+        let (updates, subscription) = futures::channel::mpsc::unbounded();
+        let (_pending, pending) = tokio::sync::watch::channel(Vec::new());
+        let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
+        let loads = Arc::new(AtomicUsize::new(0));
+        let task_loads = Arc::clone(&loads);
+        let task = tokio::spawn(async move {
+            cloud_session(
+                subscription,
+                &pending,
+                &output,
+                || {
+                    let attempt = task_loads.fetch_add(1, Ordering::SeqCst);
+                    std::future::ready(Ok(ArtifactSnapshot {
+                        artifacts: vec![],
+                        revision: 1,
+                        reconciliation_pending: attempt == 0,
+                    }))
+                },
+                |_| async { panic!("idle watcher must not sync") },
+            )
+            .await
+        });
+        updates.unbounded_send(Ok(1)).unwrap();
+        assert!(
+            snapshots
+                .recv()
+                .await
+                .unwrap()
+                .unwrap()
+                .reconciliation_pending
+        );
+        assert!(
+            !snapshots
+                .recv()
+                .await
+                .unwrap()
+                .unwrap()
+                .reconciliation_pending
+        );
+        tokio::time::advance(Duration::from_secs(60)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(loads.load(Ordering::SeqCst), 2);
+        drop(snapshots);
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn local_changes_sync_without_a_cloud_revision_event() {
         let (updates, subscription) = futures::channel::mpsc::unbounded();
         let (pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
@@ -790,6 +845,7 @@ mod tests {
                 || async {
                     Ok(ArtifactSnapshot {
                         artifacts: vec![],
+                        reconciliation_pending: false,
                         revision: 1,
                     })
                 },
@@ -832,6 +888,7 @@ mod tests {
                 || async {
                     Ok(ArtifactSnapshot {
                         artifacts: vec![],
+                        reconciliation_pending: false,
                         revision: 1,
                     })
                 },
