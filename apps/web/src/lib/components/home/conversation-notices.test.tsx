@@ -5,7 +5,7 @@ import ConversationNotices from './conversation-notices';
 import { PromptComposerView } from './prompt-composer';
 
 const usageLimit =
-	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to the OpenAI API key provider in Settings.";
+	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
 
 function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}) {
 	return (
