@@ -338,7 +338,6 @@ describe('payments mandates', () => {
 	});
 
 	it('rejects markChargeProviderRequested after a stale reclaim bumps claimGeneration', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup } = await createApprovedMandate(t, run);
@@ -352,6 +351,7 @@ describe('payments mandates', () => {
 			description: 'Order 8842',
 			reference: 'order-gen'
 		});
+
 		expect(first).toMatchObject({ kind: 'reserved', claimGeneration: 1 });
 
 		await t.run(async (ctx) => {
@@ -370,7 +370,9 @@ describe('payments mandates', () => {
 			description: 'Order 8842 retry',
 			reference: 'order-gen'
 		});
+
 		expect(reclaimed).toMatchObject({ kind: 'reserved', claimGeneration: 2 });
+
 		if (reclaimed.kind !== 'reserved' || first.kind !== 'reserved') {
 			throw new Error('expected reserved generations');
 		}
