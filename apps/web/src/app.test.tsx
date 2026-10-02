@@ -935,6 +935,57 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 	expect(within(composer).getByRole('button', { name: 'Stop generation' })).toBeTruthy();
 });
 
+it('shows reconnecting beside an empty selected conversation and clears it on recovery', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+
+	const watchers = new Map<string, Parameters<DesktopApi['watchTranscript']>[1]['onEvent']>();
+
+	let stale = true;
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				fetchTranscriptDisplay: async ({ threadId }) => ({
+					...emptyDisplayPage(`replica-${threadId}`),
+					stale: threadId === thread._id && stale
+				}),
+				watchTranscript: (request, handlers) => {
+					watchers.set(request.threadId, handlers.onEvent);
+
+					return new Promise<void>(() => {});
+				}
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	const composer = screen.getByRole('group', { name: 'Message composer' });
+	expect((await within(composer).findByRole('status')).textContent).toContain(
+		'Reconnecting to conversation history.'
+	);
+	expect(within(composer).getByRole('combobox')).toBeTruthy();
+
+	fireEvent.click(await screen.findByText('Other work'));
+	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
+	await act(async () => {
+		watchers.get(thread._id)?.({ eventType: 'updated', stale: true });
+	});
+	expect(within(composer).queryByRole('status')).toBeNull();
+
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	await within(composer).findByRole('status');
+	await act(async () => {
+		stale = false;
+		watchers.get(thread._id)?.({ eventType: 'updated', stale: false });
+	});
+	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
+});
+
 it('launches the continuation prompt after an agent question is answered', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
