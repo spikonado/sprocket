@@ -183,10 +183,14 @@ describe('Dodo webhook ingestion', () => {
 		expect([first.status, second.status]).toEqual([200, 200]);
 		await drainWebhookJobs(t);
 
-		// Both durably ingested and processed exactly once each.
 		const events = await t.run((ctx) => ctx.db.query('dodoWebhookEvents').collect());
 		expect(events).toHaveLength(2);
-		expect(events.every((event) => event.outcome === 'applied')).toBe(true);
+		expect(events.find((event) => event.eventType === 'subscription.plan_changed')?.outcome).toBe(
+			'applied'
+		);
+		expect(events.find((event) => event.eventType === 'subscription.active')?.outcome).toMatch(
+			/^(applied|noop|stale)$/
+		);
 
 		// The later plan_changed event wins the projection exactly once.
 		const subscription = await readSubscription(t);

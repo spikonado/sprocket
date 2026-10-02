@@ -22,8 +22,8 @@ export const billingWebhookWorkpool = new Workpool(components.billingWebhookWork
 // dedup retention must cover the replay horizon.
 const DEDUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 
-// Payloads are replayable for 48h; compact identity/outcome rows persist
-// for the full dedup retention after payload cleanup.
+// Successfully settled payloads last 48h; unresolved payloads remain
+// replayable through the finite dedup horizon.
 const PAYLOAD_RETENTION_MS = 48 * 60 * 60 * 1_000;
 
 // Signed payloads beyond this size are rejected before persistence.
@@ -576,17 +576,10 @@ export const listProblemEvents = internalQuery({
 	}
 });
 
-/**
- * Finite retention driven by a persisted cursor over the ingestion sequence.
- * Payloads are pruned after PAYLOAD_RETENTION_MS while compact
- * identity/outcome rows are kept for DEDUP_RETENTION_MS, so dedup and
- * incident lookup survive payload cleanup. The cursor prevents rescanning
- * the newest rows on every run, which would starve the older remainder.
- */
 export const cleanupEvents = internalMutation({
-	args: {},
+	args: { cursor: v.optional(v.number()), throughSeq: v.optional(v.number()) },
 	returns: v.null(),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		const now = Date.now();
 
 		const state = await ctx.db
@@ -594,25 +587,27 @@ export const cleanupEvents = internalMutation({
 			.withIndex('by_key', (query) => query.eq('key', 'cleanup'))
 			.unique();
 
-		let cursor = state?.cursor ?? -Number.MAX_VALUE;
+		const throughSeq =
+			args.throughSeq ??
+			(await ctx.db.query('dodoWebhookEvents').withIndex('by_seq').order('desc').first())?.seq;
 
-		let batch = await ctx.db
+		if (throughSeq === undefined) return null;
+
+		const cursor = args.cursor ?? -Number.MAX_VALUE;
+
+		const batch = await ctx.db
 			.query('dodoWebhookEvents')
-			.withIndex('by_seq', (query) => query.gt('seq', cursor))
+			.withIndex('by_seq', (query) => query.gt('seq', cursor).lte('seq', throughSeq))
 			.take(CLEANUP_BATCH_SIZE);
-
-		if (batch.length === 0) {
-			cursor = -Number.MAX_VALUE;
-			batch = await ctx.db
-				.query('dodoWebhookEvents')
-				.withIndex('by_seq', (query) => query.gt('seq', cursor))
-				.take(CLEANUP_BATCH_SIZE);
-		}
 
 		for (const event of batch) {
 			if (event.receivedAt < now - DEDUP_RETENTION_MS) {
 				await ctx.db.delete('dodoWebhookEvents', event._id);
-			} else if (event.payload !== undefined && event.receivedAt < now - PAYLOAD_RETENTION_MS) {
+			} else if (
+				['applied', 'stale', 'noop'].includes(event.outcome) &&
+				event.payload !== undefined &&
+				event.receivedAt < now - PAYLOAD_RETENTION_MS
+			) {
 				await ctx.db.patch('dodoWebhookEvents', event._id, { payload: undefined });
 			}
 		}
@@ -623,6 +618,13 @@ export const cleanupEvents = internalMutation({
 			await ctx.db.patch('dodoWebhookCleanup', state._id, { cursor: lastSeq });
 		} else {
 			await ctx.db.insert('dodoWebhookCleanup', { key: 'cleanup', cursor: lastSeq });
+		}
+
+		if (batch.length === CLEANUP_BATCH_SIZE && lastSeq < throughSeq) {
+			await ctx.scheduler.runAfter(1_000, internal.billingWebhook.cleanupEvents, {
+				cursor: lastSeq,
+				throughSeq
+			});
 		}
 
 		return null;

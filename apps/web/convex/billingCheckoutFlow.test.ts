@@ -72,6 +72,56 @@ async function billingFixture() {
 }
 
 describe('checkout selection changes', () => {
+	it('allows a healthy selection after product validation fails before creation', async () => {
+		const { t, owner, requests } = await billingFixture();
+		const providerFetch = globalThis.fetch;
+		vi.stubGlobal('fetch', async (input: Request | string | URL, init?: RequestInit) => {
+			const request = input instanceof Request ? input : new Request(input, init);
+
+			if (new URL(request.url).pathname === '/products/prod_monthly') {
+				return new Response(null, { status: 404 });
+			}
+
+			return providerFetch(request);
+		});
+
+		await expect(
+			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
+		).rejects.toThrow();
+		expect(await t.run((ctx) => ctx.db.query('billingCheckoutSessions').unique())).toMatchObject({
+			outcome: 'reserved'
+		});
+		await expect(
+			owner.action(api.billing.checkout, { tier: 'pro', interval: 'annual' })
+		).resolves.toMatchObject({ checkout_url: 'https://checkout.example/prod_annual' });
+		expect(
+			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
+		).toHaveLength(1);
+	});
+
+	it('reports the retained-history cap before offering another purchase', async () => {
+		const { t, owner } = await billingFixture();
+		await t.run(async (ctx) => {
+			for (let index = 0; index < 25; index++) {
+				await ctx.db.insert('billingCheckoutAttempts', {
+					userId: 'owner',
+					attemptId: `paid_${index}`,
+					tierId: 'pro',
+					interval: 'monthly',
+					productId: 'prod_monthly',
+					outcome: 'paid',
+					expiresAt: Date.now()
+				});
+			}
+		});
+		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
+			eligibility: 'confirmation_pending'
+		});
+		await expect(
+			owner.action(api.billing.checkout, { tier: 'pro', interval: 'annual' })
+		).rejects.toThrow(/reconcile existing checkouts/);
+	});
+
 	it('opens a different interval immediately on the same saved customer and reuses matching retries', async () => {
 		const { t, owner, requests } = await billingFixture();
 		await expect(

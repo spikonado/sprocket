@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkId } from '@convex-dev/workpool';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { initConvexTest, type ConvexTestInstance } from './test.setup';
 import { drainWebhookJobs } from './billingWebhook.test.setup';
@@ -411,6 +411,54 @@ describe('durable webhook ingestion and projection', () => {
 		expect(lateEvent?.outcome).toBe('stale');
 	});
 
+	it('resets both windows for distinct equal-time plan transitions without resetting on replay', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		await t.run((ctx) =>
+			ctx.db.insert('tiers', {
+				tierId: 'team',
+				label: 'Team',
+				weekly: 25 * UNITS_PER_DOLLAR,
+				monthly: 75 * UNITS_PER_DOLLAR,
+				monthlyProductId: 'prod_team'
+			})
+		);
+		const owner = t.withIdentity({ subject: userId });
+
+		const usage = async () =>
+			(await owner.query(api.usage.getMyUsage, {})).meters[0]!.windows.map((window) => window.used);
+
+		const project = async (productId: string) => {
+			const eventId = await recordEvent(t, {
+				webhookId: crypto.randomUUID(),
+				eventType: 'subscription.plan_changed',
+				eventAt: termStart,
+				payload: envelope(
+					'subscription.plan_changed',
+					termStart,
+					subscriptionData({ product_id: productId })
+				)
+			});
+
+			await t.mutation(internal.billingWebhook.processEvent, { eventId });
+		};
+
+		await project('prod_max');
+
+		for (const productId of ['prod_pro', 'prod_team']) {
+			const previousUsage = await usage();
+			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 5 });
+			expect(await usage()).toEqual(previousUsage.map((used) => used + 5));
+			const before = await readSubscription(t);
+			await project(productId);
+			expect(await usage()).toEqual([0, 0]);
+			expect((await readSubscription(t))?.quotaGeneration).toBe(before!.quotaGeneration! + 1);
+			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 3 });
+			await project(productId);
+			expect(await usage()).toEqual([3, 3]);
+		}
+	});
+
 	it('resets usage generation exactly once for an effective tier change', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
@@ -818,7 +866,43 @@ describe('durable webhook ingestion and projection', () => {
 		expect(await readEvent(t, eventId)).toBeNull();
 	});
 
-	it('cleanup cursor advances past fresh rows so an aged tail row is not starved', async () => {
+	it('cleanup preserves pending and problem payloads through the replay horizon', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const eventIds: Id<'dodoWebhookEvents'>[] = [];
+
+		for (const outcome of [
+			'pending',
+			'failed',
+			'unresolved',
+			'competing',
+			'unsupported'
+		] as const) {
+			const eventId = await recordEvent(t, {
+				webhookId: `wh_retained_${outcome}`,
+				eventType: 'subscription.active',
+				eventAt: termStart,
+				payload: envelope('subscription.active', termStart, subscriptionData())
+			});
+
+			await t.run((ctx) => ctx.db.patch('dodoWebhookEvents', eventId, { outcome }));
+			eventIds.push(eventId);
+		}
+
+		vi.setSystemTime(termStart + 3 * DAY);
+		await t.mutation(internal.billingWebhook.cleanupEvents, {});
+
+		for (const eventId of eventIds) expect((await requireEvent(t, eventId)).payload).toBeDefined();
+		await expect(
+			t.mutation(internal.billingWebhook.processEvent, { eventId: eventIds[0]! })
+		).resolves.toBe('applied');
+		vi.setSystemTime(termStart + 15 * DAY);
+		await t.mutation(internal.billingWebhook.cleanupEvents, {});
+
+		for (const eventId of eventIds) expect(await readEvent(t, eventId)).toBeNull();
+	});
+
+	it('cleanup automatically scans beyond one batch and revisits newly aged rows next run', async () => {
 		const t = initConvexTest();
 
 		const now = Date.now();
@@ -862,9 +946,8 @@ describe('durable webhook ingestion and projection', () => {
 
 		expect(cursor?.cursor).toBe(49);
 
-		// Second run resumes at the cursor, scans the remaining 5 fresh rows plus
-		// the aged tail row, and deletes the aged one instead of rescanning.
-		await t.mutation(internal.billingWebhook.cleanupEvents, {});
+		await vi.advanceTimersByTimeAsync(1_000);
+		await t.finishInProgressScheduledFunctions();
 		expect(await readEvent(t, oldId)).toBeNull();
 
 		cursor = await t.run((ctx) =>
@@ -874,5 +957,10 @@ describe('durable webhook ingestion and projection', () => {
 				.unique()
 		);
 		expect(cursor?.cursor).toBe(55);
+		vi.setSystemTime(now + 15 * DAY);
+		await t.mutation(internal.billingWebhook.cleanupEvents, {});
+		await vi.advanceTimersByTimeAsync(1_000);
+		await t.finishInProgressScheduledFunctions();
+		expect(await t.run((ctx) => ctx.db.query('dodoWebhookEvents').collect())).toEqual([]);
 	});
 });
