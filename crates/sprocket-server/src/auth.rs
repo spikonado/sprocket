@@ -271,7 +271,8 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<bool> {
-        self.assign_session_user(session_token, user_id, false).await
+        self.assign_session_user(session_token, user_id, false)
+            .await
     }
 
     async fn assign_session_user(
@@ -1043,9 +1044,7 @@ mod tests {
                 .to_string(),
             "local session belongs to a different user"
         );
-        auth.sync_sessions_with_owner(Some("user-2"))
-            .await
-            .unwrap();
+        auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
         auth.require_session_user(&session_token, "user-1")
             .await
             .unwrap();
