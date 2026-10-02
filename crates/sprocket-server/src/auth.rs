@@ -77,6 +77,8 @@ struct SessionRecord {
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
+    #[serde(skip)]
+    uncommitted: bool,
 }
 
 impl SessionRecord {
@@ -151,6 +153,7 @@ impl AuthState {
                 role: "owner".into(),
                 created_at: crate::now_ms(),
                 user_id: None,
+                uncommitted: false,
             },
         );
     }
@@ -221,6 +224,7 @@ impl AuthState {
                 role: "owner".to_string(),
                 created_at: crate::now_ms(),
                 user_id: None,
+                uncommitted: false,
             },
         );
         self.save_sessions(sessions).await?;
@@ -277,28 +281,32 @@ impl AuthState {
         persist: bool,
     ) -> anyhow::Result<bool> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
-        let session = sessions
-            .get_mut(session_token)
-            .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
-        if session_is_expired(session) {
-            anyhow::bail!("authentication required");
-        }
-        session.reject_foreign_user(user_id)?;
-        if session.user_id.as_deref() == Some(user_id) {
-            return Ok(false);
-        }
-        session.user_id = Some(user_id.to_string());
-        if !persist {
-            return Ok(true);
-        }
-        if let Err(error) = self.save_sessions(sessions).await {
-            let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(session_token) {
-                if session.user_id.as_deref() == Some(user_id) {
-                    session.user_id = None;
-                }
+        {
+            let session = sessions
+                .get_mut(session_token)
+                .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+            if session_is_expired(session) {
+                anyhow::bail!("authentication required");
             }
-            return Err(error);
+            session.reject_foreign_user(user_id)?;
+            if session.user_id.as_deref() == Some(user_id) {
+                return Ok(false);
+            }
+            if !persist {
+                session.user_id = Some(user_id.to_string());
+                session.uncommitted = true;
+                return Ok(true);
+            }
+        }
+        let mut snapshot = (*sessions).clone();
+        if let Some(pending) = snapshot.get_mut(session_token) {
+            pending.user_id = Some(user_id.to_string());
+            pending.uncommitted = false;
+        }
+        self.flush_sessions(&snapshot).await?;
+        if let Some(session) = sessions.get_mut(session_token) {
+            session.user_id = Some(user_id.to_string());
+            session.uncommitted = false;
         }
         Ok(true)
     }
@@ -316,6 +324,7 @@ impl AuthState {
             return Ok(());
         }
         session.user_id = None;
+        session.uncommitted = false;
         Ok(())
     }
 
@@ -343,11 +352,16 @@ impl AuthState {
             if session.ephemeral || session.local_browser {
                 if user_id.is_none() {
                     session.user_id = None;
+                    session.uncommitted = false;
                 } else if session.user_id.is_none() {
                     session.user_id = user_id.map(str::to_owned);
+                    session.uncommitted = false;
+                } else if session.user_id.as_deref() == user_id {
+                    session.uncommitted = false;
                 }
             } else if session.user_id.as_deref() != user_id {
                 session.user_id = None;
+                session.uncommitted = false;
             }
         }
         self.save_sessions(sessions).await
@@ -420,6 +434,19 @@ impl AuthState {
         if sessions.remove(token).is_some() {
             self.save_sessions(sessions).await?;
         }
+        Ok(())
+    }
+
+    async fn flush_sessions(
+        &self,
+        sessions: &HashMap<String, SessionRecord>,
+    ) -> anyhow::Result<()> {
+        let sessions_path = self.data_dir.join(SESSIONS_FILE);
+        let payload = serde_json::to_vec(&sessions_snapshot(sessions))?;
+        tokio::task::spawn_blocking(move || {
+            crate::profile::write_private_file(&sessions_path, &payload)
+        })
+        .await??;
         Ok(())
     }
 
@@ -707,9 +734,15 @@ fn sessions_snapshot(sessions: &HashMap<String, SessionRecord>) -> Vec<Persisted
     sessions
         .iter()
         .filter(|(_, session)| !session.ephemeral && !session_is_expired(session))
-        .map(|(token, session)| PersistedSessionRecord {
-            token: token.clone(),
-            session: session.clone(),
+        .map(|(token, session)| {
+            let mut session = session.clone();
+            if session.uncommitted {
+                session.user_id = None;
+            }
+            PersistedSessionRecord {
+                token: token.clone(),
+                session,
+            }
         })
         .collect()
 }
@@ -860,6 +893,7 @@ mod tests {
                         role: "owner".into(),
                         created_at: now.saturating_sub(10_000 - index as u64),
                         user_id: Some("user-1".into()),
+                        uncommitted: false,
                     },
                 );
             }
@@ -871,6 +905,7 @@ mod tests {
                     role: "owner".into(),
                     created_at: now.saturating_sub(20_000),
                     user_id: None,
+                    uncommitted: false,
                 },
             );
         }
@@ -980,10 +1015,10 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            auth.claim_session_user(&session_token, "user-1")
+            !auth
+                .claim_session_user(&session_token, "user-1")
                 .await
                 .unwrap()
-                == false
         );
         auth.assert_session_can_bind(&session_token, "user-1")
             .await
@@ -1036,6 +1071,9 @@ mod tests {
         auth.require_session_user(&session_token, "user-1")
             .await
             .unwrap();
+        auth.bootstrap_browser_session(true)
+            .await
+            .expect("other session persist must not write the claim");
         let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
         assert!(
             reloaded
