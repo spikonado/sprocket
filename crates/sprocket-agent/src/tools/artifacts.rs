@@ -92,7 +92,7 @@ async fn register_file(
                 result = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
                     context.runtime.query_json("artifacts:getDeletedRegistrationIdsForRun", args),
-                ) => result.map_err(tool_error)?.map_err(tool_error)?,
+                ) => result.map_err(|error| tool_error(error.into()))?.map_err(tool_error)?,
             };
             if deleted.contains(&previous.registration_id) {
                 bindings
