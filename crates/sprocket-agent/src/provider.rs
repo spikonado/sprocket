@@ -205,7 +205,15 @@ impl AgentProvider {
                         ),
                     };
                 };
-                run_with_completion_client(completion_client, self.model, runtime, request).await
+                match run_with_completion_client(completion_client, self.model, runtime, request)
+                    .await
+                {
+                    AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
+                        text,
+                        error: crate::chatgpt::user_facing_error(error),
+                    },
+                    result => result,
+                }
             }
         }
     }
