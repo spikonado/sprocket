@@ -382,6 +382,40 @@ describe('checkout attempt recovery', () => {
 });
 
 describe('getCheckoutStatus', () => {
+	it.each([
+		['paid', 'succeeded', 'live_mode', 'live', ''],
+		['paid', 'succeeded', 'test_mode', 'test', 'invalid'],
+		['failed', 'failed', 'live_mode', 'live', 'invalid'],
+		['failed', 'failed', 'test_mode', 'test', '']
+	] as const)(
+		'reports stored %s status %s in %s/%s with current environment %j',
+		async (outcome, status, dodoEnvironment, mode, currentEnvironment) => {
+			const t = initConvexTest();
+			await seedProTier(t);
+			const requests = stubDodo({});
+			await t.run(async (ctx) => {
+				await ctx.db.insert('billingCheckoutAttempts', {
+					userId: 'owner',
+					attemptId: 'attempt_settled',
+					tierId: 'pro',
+					interval: 'monthly',
+					productId: 'prod_monthly',
+					dodoEnvironment,
+					outcome,
+					expiresAt: Date.now() - 1_000
+				});
+			});
+			vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', currentEnvironment);
+			vi.stubEnv('DODO_PAYMENTS_API_KEY', '');
+			const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
+
+			await expect(
+				owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_settled' })
+			).resolves.toMatchObject({ status, mode });
+			expect(requests).toEqual([]);
+		}
+	);
+
 	it('is bound to the owning account', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);
