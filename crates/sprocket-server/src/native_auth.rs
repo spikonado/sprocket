@@ -352,7 +352,7 @@ impl NativeAuthManager {
                 let mut claimed = false;
                 if let Some(sessions) = &self.local_sessions {
                     match sessions
-                        .bind_session_user(&pending_session_token, &user_id)
+                        .claim_session_user(&pending_session_token, &user_id)
                         .await
                     {
                         Ok(assigned) => claimed = assigned,
