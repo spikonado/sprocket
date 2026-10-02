@@ -263,7 +263,6 @@ const SUPPORTED_SUBSCRIPTION_EVENTS = new Set([
 	'subscription.updated',
 	'subscription.on_hold',
 	'subscription.past_due',
-	'subscription.update_payment_method',
 	'subscription.cancelled',
 	'subscription.expired',
 	'subscription.failed'

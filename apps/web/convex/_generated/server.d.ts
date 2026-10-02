@@ -30,7 +30,6 @@ import type { DataModel } from "./dataModel.js";
 type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
-  readonly DODO_CHECKOUT_ENABLED: string | undefined;
   readonly DODO_CHECKOUT_IDEMPOTENCY_WINDOW_MS: string | undefined;
   readonly DODO_PAYMENTS_API_KEY: string | undefined;
   readonly DODO_PAYMENTS_ENVIRONMENT: string | undefined;

@@ -35,7 +35,6 @@ import {
 import {
 	vBillingInterval,
 	vCheckoutAttemptStatus,
-	vCheckoutEligibility,
 	vDodoMode,
 	vSubscriptionStatus,
 	vSubscriptionTier
@@ -56,14 +55,11 @@ function checkoutOutcomeIsTerminal(outcome: string | undefined): boolean {
 	return outcome === 'paid' || outcome === 'failed';
 }
 
-// Pacing before reissuing an ambiguous provider create under the same key.
 const AMBIGUOUS_CREATE_RETRY_MS = 30 * 1_000;
 
-// Hard cap on provider round-trips per checkout invocation.
 const CHECKOUT_PROVIDER_REQUEST_BUDGET = 8;
 
-// Public checkout mode surfaced to the website; never the raw provider
-// environment name.
+// Public checkout mode; never the raw provider environment name.
 type DodoMode = 'test' | 'live';
 
 function publicMode(mode: 'test_mode' | 'live_mode'): DodoMode {
@@ -78,46 +74,7 @@ function billingApiKey(): string {
 	return key;
 }
 
-/** Explicit kill-switch parse: anything but "true"/"false" is misconfiguration. */
-function readCheckoutEnabled() {
-	const value = env.DODO_CHECKOUT_ENABLED;
-
-	if (value === 'true') return { enabled: true };
-
-	if (value === 'false' || value === undefined || value === '') return { enabled: false };
-
-	throw new Error('DODO_CHECKOUT_ENABLED must be "true" or "false".');
-}
-
-/**
- * Checkout readiness, failing closed on every prerequisite: the kill switch
- * (default disabled), explicit provider environment, API key, signing secret,
- * and a validated marketing origin. Portal repair never consults the switch.
- */
-function checkoutReadiness() {
-	try {
-		if (!readCheckoutEnabled().enabled) return { ready: false, mode: null };
-
-		const mode = publicMode(readDodoEnvironment(env));
-
-		if (!env.DODO_PAYMENTS_API_KEY?.trim()) return { ready: false, mode };
-
-		if (!env.DODO_PAYMENTS_WEBHOOK_SECRET?.trim()) return { ready: false, mode };
-
-		resolveMarketingPricingUrls(env, 'readiness-probe');
-
-		return { ready: true, mode };
-	} catch {
-		return { ready: false, mode: null };
-	}
-}
-
-/** Throwing variant for checkout itself; surfaces misconfiguration loudly. */
-function assertCheckoutReady(): void {
-	if (!readCheckoutEnabled().enabled) {
-		throw new Error('Checkout is temporarily disabled. Manage billing from the customer portal.');
-	}
-
+function assertCheckoutConfigured(): void {
 	if (!env.DODO_PAYMENTS_WEBHOOK_SECRET?.trim()) {
 		throw new Error('Payments are not configured.');
 	}
@@ -127,7 +84,6 @@ function assertCheckoutReady(): void {
 	resolveMarketingPricingUrls(env, 'readiness-probe');
 }
 
-/** Portal repair only needs provider credentials, never the checkout switch. */
 function assertPaymentsConfigured(): void {
 	readDodoEnvironment(env);
 	billingApiKey();
@@ -164,8 +120,6 @@ function paidAccessState(subscription: SubscriptionActivityRow | null): PaidAcce
 		return subscription.cancelAtNextBillingDate === true ? 'scheduled_cancel' : 'active';
 	}
 
-	// Phase ended. A Dodo-linked row that is not authoritatively terminal is
-	// recoverable through the portal and still blocks a fresh purchase.
 	if (subscription.dodoSubscriptionId) {
 		return subscription.terminalConfirmed === true ? 'none' : 'ended';
 	}
@@ -173,147 +127,12 @@ function paidAccessState(subscription: SubscriptionActivityRow | null): PaidAcce
 	return 'none';
 }
 
-type CheckoutEligibilityState =
-	'purchasable' | 'active' | 'repair_required' | 'confirmation_pending' | 'checkout_disabled';
-
-type CheckoutEligibilityResult = {
-	eligibility: CheckoutEligibilityState;
-	checkoutEnabled: boolean;
-	mode: DodoMode | undefined;
-	reason: string;
-};
-
-const vCheckoutEligibilityResult = v.object({
-	eligibility: vCheckoutEligibility,
-	checkoutEnabled: v.boolean(),
-	mode: v.optional(vDodoMode),
-	reason: v.string()
-});
-
-export const checkoutEligibility = query({
-	args: {},
-	returns: vCheckoutEligibilityResult,
-	handler: async (ctx): Promise<CheckoutEligibilityResult> => {
-		const identity = await ctx.auth.getUserIdentity();
-		const readiness = checkoutReadiness();
-		const mode = readiness.mode ?? undefined;
-
-		if (!identity) {
-			return {
-				eligibility: 'purchasable',
-				checkoutEnabled: readiness.ready,
-				mode,
-				reason: 'Sign in to check out.'
-			};
-		}
-
-		const userId = identity.subject;
-
-		if (!readiness.ready) {
-			return {
-				eligibility: 'checkout_disabled',
-				checkoutEnabled: false,
-				mode,
-				reason: 'Checkout is temporarily disabled. Manage billing from the customer portal.'
-			};
-		}
-
-		// Eligibility is account-wide: any Dodo-linked row blocks or repairs,
-		// not only the "picked" current one, and open attempts count too. Uses
-		// the materialized access phase so the query stays reactive.
-		const subscriptions = await listSubscriptionDocs(ctx, userId);
-		const accesses = subscriptions.map((subscription) => paidAccessState(subscription));
-
-		if (accesses.includes('active') || accesses.includes('scheduled_cancel')) {
-			const scheduled = !accesses.includes('active');
-
-			return {
-				eligibility: 'active',
-				checkoutEnabled: true,
-				mode,
-				reason: scheduled
-					? 'A paid plan is active until its scheduled cancellation. Change plans from the customer portal.'
-					: 'A paid plan is already active on this account. Manage it from the customer portal.'
-			};
-		}
-
-		const dodoLinked = subscriptions.some(
-			(subscription) => subscription.dodoSubscriptionId && !subscription.terminalConfirmed
-		);
-
-		if (accesses.includes('ended')) {
-			return {
-				eligibility: 'repair_required',
-				checkoutEnabled: true,
-				mode,
-				reason:
-					'A subscription on this account needs attention. Repair or cancel it from the customer portal before purchasing again.'
-			};
-		}
-
-		const openAttempts = await ctx.db
-			.query('billingCheckoutSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.take(MAX_OPEN_CHECKOUT_SELECTIONS + 1);
-
-		const retainedAttempts = await ctx.db
-			.query('billingCheckoutAttempts')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.take(MAX_OPEN_CHECKOUT_SELECTIONS + 1);
-
-		if (retainedAttempts.length >= MAX_OPEN_CHECKOUT_SELECTIONS) {
-			return {
-				eligibility: 'confirmation_pending',
-				checkoutEnabled: true,
-				mode,
-				reason: 'Checkout history needs billing support reconciliation before another purchase.'
-			};
-		}
-
-		// Only an ambiguous provider create blocks a new purchase, and it keeps
-		// blocking past the local expiry: the provider may still hold the
-		// idempotency key, so minting a fresh reservation is never safe. Look it
-		// up from the pricing page instead of paying again.
-		if (
-			[...openAttempts, ...retainedAttempts].some(
-				(attempt) => attempt.outcome === 'create_ambiguous'
-			)
-		) {
-			return {
-				eligibility: 'confirmation_pending',
-				checkoutEnabled: true,
-				mode,
-				reason:
-					'A recent checkout is still confirming. Look it up from the pricing page instead of starting a new payment.'
-			};
-		}
-
-		if (dodoLinked) {
-			return {
-				eligibility: 'confirmation_pending',
-				checkoutEnabled: true,
-				mode,
-				reason:
-					'A payment for this account is still confirming. Purchase becomes available once it resolves.'
-			};
-		}
-
-		return {
-			eligibility: 'purchasable',
-			checkoutEnabled: true,
-			mode,
-			reason: 'You can purchase a plan.'
-		};
-	}
-});
-
 export const getMySubscription = query({
 	args: {},
 	returns: v.object({
 		tier: vSubscriptionTier,
 		tierLabel: v.string(),
 		billingManaged: v.boolean(),
-		checkoutEligibility: v.optional(vCheckoutEligibility),
 		accessPhase: v.optional(
 			v.union(
 				v.literal('active'),
@@ -335,18 +154,10 @@ export const getMySubscription = query({
 
 		const accessPhase = paidAccessState(subscription);
 
-		const checkoutEligibility: CheckoutEligibilityState =
-			accessPhase === 'active' || accessPhase === 'scheduled_cancel'
-				? 'active'
-				: accessPhase === 'ended'
-					? 'repair_required'
-					: 'purchasable';
-
 		return {
 			tier,
 			tierLabel: await getTierLabel(ctx, tier),
 			billingManaged: customer !== null,
-			checkoutEligibility,
 			accessPhase
 		};
 	}
@@ -369,18 +180,20 @@ export const checkout = action({
 	},
 	returns: v.object({
 		checkout_url: v.string(),
+		mode: vDodoMode,
 		attemptId: v.optional(v.string()),
 		sessionId: v.optional(v.string())
 	}),
 	handler: async (
 		ctx,
 		{ tier, interval }
-	): Promise<{ checkout_url: string; attemptId?: string; sessionId?: string }> => {
+	): Promise<{ checkout_url: string; mode: DodoMode; attemptId?: string; sessionId?: string }> => {
 		const identity = await requireIdentity(ctx);
 
 		if (tier === 'free') throw new Error('The Free tier does not use checkout.');
 
-		assertCheckoutReady();
+		assertCheckoutConfigured();
+		const mode = publicMode(readDodoEnvironment(env));
 
 		const productId: string | null = await ctx.runQuery(internal.pricingData.getTierProduct, {
 			tierId: tier,
@@ -414,6 +227,7 @@ export const checkout = action({
 		if (reserved.kind === 'existing') {
 			return {
 				checkout_url: reserved.checkoutUrl,
+				mode,
 				attemptId: reserved.attemptId,
 				sessionId: reserved.sessionId
 			};
@@ -435,6 +249,7 @@ export const checkout = action({
 
 				return {
 					checkout_url: recovered.checkoutUrl,
+					mode,
 					attemptId: reserved.attemptId,
 					sessionId: reserved.sessionId
 				};
@@ -459,10 +274,8 @@ export const checkout = action({
 			throw new Error('The previous checkout attempt failed. Start checkout again.');
 		}
 
-		// Only a persisted key is ever sent to the provider. Legacy rows minted
-		// no key at reservation time; freezeCheckoutCreateRequest backfills one
-		// transactionally with the frozen body. Legacy ambiguous rows (no key,
-		// no frozen body) cannot be replayed byte-identically and fail closed.
+		// Legacy ambiguous rows (no key, no frozen body) cannot be replayed
+		// byte-identically and fail closed.
 		if (
 			reserved.outcome === 'create_ambiguous' &&
 			(!reserved.createRequest || !reserved.idempotencyKey)
@@ -568,6 +381,7 @@ export const checkout = action({
 
 		return {
 			checkout_url: created.checkoutUrl,
+			mode,
 			attemptId: reserved.attemptId,
 			sessionId: created.sessionId
 		};
@@ -621,29 +435,6 @@ export const reserveCheckoutSession = internalMutation({
 		})
 	),
 	handler: async (ctx, args) => {
-		// Wall-clock recheck: enforcement cannot rely on materialized state
-		// alone; a delayed scheduler must not let a purchase slip through.
-		const subscription = await getSubscriptionDoc(ctx, args.userId);
-		const activeRows = await listSubscriptionDocs(ctx, args.userId);
-
-		const access = paidAccessState(subscription);
-
-		const clockActive = activeRows.some((row) => subscriptionIsActive(row, args.now));
-
-		if (access === 'active' || access === 'scheduled_cancel' || clockActive) {
-			throw new Error(
-				access === 'scheduled_cancel'
-					? 'A paid plan is active until its scheduled cancellation. Change plans from the customer portal.'
-					: 'A paid plan is already active on this account.'
-			);
-		}
-
-		if (activeRows.some((row) => paidAccessState(row) === 'ended')) {
-			throw new Error(
-				'A subscription on this account needs attention. Repair or cancel it from the customer portal before purchasing again.'
-			);
-		}
-
 		const openRows = await ctx.db
 			.query('billingCheckoutSessions')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
@@ -654,48 +445,43 @@ export const reserveCheckoutSession = internalMutation({
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.take(MAX_OPEN_CHECKOUT_SELECTIONS + 1);
 
-		// Ambiguous creates block past local expiry: the provider may still hold
-		// the key, and minting a new reservation must never lose that history. A
-		// same-selection ambiguous attempt is the caller's own retry and flows
-		// through the `existing` resume path below with its original key.
-		const ambiguousRows = [...openRows, ...retainedRows].filter(
-			(attempt) => attempt.outcome === 'create_ambiguous' && !attempt.dodoSessionId
-		);
-
-		const ambiguousMatch = ambiguousRows.find(
+		// Same-selection retries keep their original key and frozen request,
+		// including when a response was lost before the session id was saved.
+		const ambiguousMatch = [...openRows, ...retainedRows].find(
 			(attempt) =>
+				attempt.outcome === 'create_ambiguous' &&
+				!attempt.dodoSessionId &&
 				attempt.tierId === args.tierId &&
 				attempt.interval === args.interval &&
 				attempt.productId === args.productId
 		);
 
-		if (ambiguousRows.length > 0 && !ambiguousMatch) {
-			throw new Error(
-				'A recent checkout is still confirming with the payment provider. Look it up from the pricing page instead of starting a new payment.'
-			);
-		}
+		const environment = readDodoEnvironment(env);
+		const existing = openRows[0];
 
 		const ambiguousMatchRetained =
 			ambiguousMatch !== undefined && !openRows.some((row) => row._id === ambiguousMatch._id);
 
 		if (ambiguousMatchRetained) {
+			if (ambiguousMatch.dodoEnvironment && ambiguousMatch.dodoEnvironment !== environment) {
+				throw new Error(
+					'This checkout belongs to a different payment environment. Contact billing support.'
+				);
+			}
+
 			return {
 				kind: 'create' as const,
 				attemptId: ambiguousMatch.attemptId,
 				interval: ambiguousMatch.interval,
 				productId: ambiguousMatch.productId,
-				// No key was ever persisted for this row: the checkout action fails
-				// closed on legacy ambiguous attempts rather than inventing one.
+				// Only the persisted key is ever replayed; legacy rows without one
+				// fail closed at the checkout action.
 				idempotencyKey: ambiguousMatch.idempotencyKey,
 				outcome: ambiguousMatch.outcome,
 				outcomeUpdatedAt: ambiguousMatch.outcomeUpdatedAt,
 				createRequest: ambiguousMatch.createRequest
 			};
 		}
-
-		// by_userId holds at most one open reservation; reuse the bounded read
-		// above instead of a second query.
-		const existing = openRows[0];
 
 		// An ambiguous attempt for this exact selection resumes with its original
 		// key even past local expiry; the provider may still hold the key. A
@@ -715,6 +501,12 @@ export const reserveCheckoutSession = internalMutation({
 		) {
 			// Terminal attempts never resume; the caller gets a fresh reservation.
 			if (!checkoutOutcomeIsTerminal(existing.outcome)) {
+				if (existing.dodoEnvironment && existing.dodoEnvironment !== environment) {
+					throw new Error(
+						'This checkout belongs to a different payment environment. Contact billing support.'
+					);
+				}
+
 				if (existing.checkoutUrl) {
 					return {
 						kind: 'existing' as const,
@@ -730,9 +522,6 @@ export const reserveCheckoutSession = internalMutation({
 					interval: existing.interval,
 					productId: existing.productId,
 					sessionId: existing.dodoSessionId,
-					// Only the persisted key is ever replayed; legacy rows without
-					// one fail closed at the freeze step instead of falling back to
-					// a caller-known id the provider may never have seen.
 					idempotencyKey: existing.idempotencyKey,
 					outcome: existing.outcome,
 					outcomeUpdatedAt: existing.outcomeUpdatedAt,
@@ -757,7 +546,7 @@ export const reserveCheckoutSession = internalMutation({
 			productId: args.productId,
 			outcome: 'reserved' as const,
 			idempotencyKey: `sprocket-checkout:${crypto.randomUUID()}`,
-			dodoEnvironment: readDodoEnvironment(env),
+			dodoEnvironment: environment,
 			outcomeUpdatedAt: args.now,
 			expiresAt: args.now + CHECKOUT_SESSION_TTL_MS
 		};
@@ -1107,6 +896,7 @@ export const getCheckoutStatus = action({
 	returns: v.object({
 		attemptId: v.string(),
 		status: vCheckoutAttemptStatus,
+		mode: vDodoMode,
 		// True only when this account's projection shows paid access matching
 		// this attempt's tier/interval. Never asserted from provider state or a
 		// different attempt.
@@ -1121,6 +911,7 @@ export const getCheckoutStatus = action({
 	): Promise<{
 		attemptId: string;
 		status: 'awaiting_payment' | 'pending' | 'succeeded' | 'failed' | 'expired' | 'unknown';
+		mode: DodoMode;
 		activated?: boolean;
 		checkout_url?: string;
 		sessionId?: string;
@@ -1135,6 +926,10 @@ export const getCheckoutStatus = action({
 
 		if (!attempt) throw new Error('Unknown checkout attempt.');
 
+		const environment = readDodoEnvironment(env);
+		const mode = publicMode(attempt.dodoEnvironment ?? environment);
+		const environmentMismatch =
+			attempt.dodoEnvironment !== undefined && attempt.dodoEnvironment !== environment;
 		const now = Date.now();
 
 		if (attempt.outcome === 'paid') {
@@ -1146,11 +941,11 @@ export const getCheckoutStatus = action({
 				now
 			});
 
-			return { attemptId, status: 'succeeded', sessionId: attempt.dodoSessionId, activated };
+			return { attemptId, mode, status: 'succeeded', sessionId: attempt.dodoSessionId, activated };
 		}
 
 		if (attempt.outcome === 'failed') {
-			return { attemptId, status: 'failed', expiresAt: attempt.expiresAt };
+			return { attemptId, mode, status: 'failed', expiresAt: attempt.expiresAt };
 		}
 
 		// Local expiry is never proof of provider expiry. A lost create response
@@ -1167,13 +962,14 @@ export const getCheckoutStatus = action({
 		) {
 			// Reserved-but-never-sent attempts have no provider identity; the local
 			// reservation is the only possible record and its expiry is final.
-			return { attemptId, status: 'expired', expiresAt: attempt.expiresAt };
+			return { attemptId, mode, status: 'expired', expiresAt: attempt.expiresAt };
 		}
 
-		if (!env.DODO_PAYMENTS_API_KEY?.trim()) {
+		if (!env.DODO_PAYMENTS_API_KEY?.trim() || environmentMismatch) {
 			return {
 				attemptId,
 				status: 'unknown',
+				mode,
 				checkout_url: attempt.checkoutUrl,
 				sessionId: attempt.dodoSessionId,
 				expiresAt: attempt.expiresAt
@@ -1191,6 +987,7 @@ export const getCheckoutStatus = action({
 				return {
 					attemptId,
 					status: 'unknown',
+					mode,
 					checkout_url: attempt.checkoutUrl,
 					sessionId: attempt.dodoSessionId,
 					expiresAt: attempt.expiresAt
@@ -1204,6 +1001,7 @@ export const getCheckoutStatus = action({
 					return {
 						attemptId,
 						status: 'succeeded',
+						mode,
 						sessionId: attempt.dodoSessionId
 					};
 				case 'failed':
@@ -1212,11 +1010,12 @@ export const getCheckoutStatus = action({
 						attemptId
 					});
 
-					return { attemptId, status: 'failed', expiresAt: attempt.expiresAt };
+					return { attemptId, mode, status: 'failed', expiresAt: attempt.expiresAt };
 				case 'awaiting_payment':
 					return {
 						attemptId,
 						status: 'awaiting_payment',
+						mode,
 						checkout_url: attempt.checkoutUrl,
 						sessionId: attempt.dodoSessionId,
 						expiresAt: attempt.expiresAt
@@ -1225,6 +1024,7 @@ export const getCheckoutStatus = action({
 					return {
 						attemptId,
 						status: 'pending',
+						mode,
 						checkout_url: attempt.checkoutUrl,
 						sessionId: attempt.dodoSessionId,
 						expiresAt: attempt.expiresAt
@@ -1235,7 +1035,7 @@ export const getCheckoutStatus = action({
 		if (locallyExpired && attempt.outcome === 'create_ambiguous') {
 			// Status lookup is read-only. Recovery uses the explicit checkout
 			// retry path; POST /checkouts is not a provider lookup operation.
-			return { attemptId, status: 'unknown', expiresAt: attempt.expiresAt };
+			return { attemptId, mode, status: 'unknown', expiresAt: attempt.expiresAt };
 		}
 
 		// No session id yet: creation either never reached the provider or the
@@ -1243,6 +1043,7 @@ export const getCheckoutStatus = action({
 		return {
 			attemptId,
 			status: attempt.outcome === 'create_ambiguous' ? 'pending' : 'awaiting_payment',
+			mode,
 			expiresAt: attempt.expiresAt
 		};
 	}
@@ -1269,6 +1070,7 @@ export const lookupCheckoutAttempt = internalQuery({
 					dodoCustomerId: v.string()
 				})
 			),
+			dodoEnvironment: v.optional(v.union(v.literal('test_mode'), v.literal('live_mode'))),
 			expiresAt: v.number()
 		}),
 		v.null()
@@ -1303,6 +1105,9 @@ export const lookupCheckoutAttempt = internalQuery({
 			idempotencyKey: retained.idempotencyKey,
 			outcomeUpdatedAt: retained.outcomeUpdatedAt,
 			createRequest: retained.createRequest,
+			dodoEnvironment: retained.dodoEnvironment
+				? readDodoEnvironment({ DODO_PAYMENTS_ENVIRONMENT: retained.dodoEnvironment })
+				: undefined,
 			expiresAt: retained.expiresAt
 		};
 	}

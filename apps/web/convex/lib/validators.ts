@@ -34,14 +34,6 @@ export const vSubscriptionStatus = v.union(
 	v.literal('failed')
 );
 
-export const vCheckoutEligibility = v.union(
-	v.literal('purchasable'),
-	v.literal('active'),
-	v.literal('repair_required'),
-	v.literal('confirmation_pending'),
-	v.literal('checkout_disabled')
-);
-
 // Neutral provider-backed attempt status; never asserts entitlement by itself.
 export const vCheckoutAttemptStatus = v.union(
 	v.literal('awaiting_payment'),

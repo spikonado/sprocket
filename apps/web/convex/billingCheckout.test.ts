@@ -78,7 +78,6 @@ describe('Dodo product mapping', () => {
 	});
 
 	it('accepts checkout for an arbitrary tier with a configured product', async () => {
-		vi.stubEnv('DODO_CHECKOUT_ENABLED', 'true');
 		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
 		vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'whsec_test');
 		vi.stubEnv('DODO_PAYMENTS_API_KEY', undefined);
@@ -384,7 +383,7 @@ describe('Dodo subscription persistence', () => {
 		).resolves.toMatchObject({ attemptId: expired.attemptId, productId: 'prod_monthly' });
 	});
 
-	it('rejects a checkout reservation when a paid tier is active', async () => {
+	it('reserves a checkout even when a paid tier is active', async () => {
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', {
@@ -404,7 +403,7 @@ describe('Dodo subscription persistence', () => {
 				productId: 'prod_monthly',
 				now: 2_000
 			})
-		).rejects.toThrow('A paid plan is already active on this account.');
+		).resolves.toMatchObject({ kind: 'create', productId: 'prod_monthly', interval: 'monthly' });
 	});
 
 	it('activates an arbitrary Dodo tier, links the customer, and ignores an older cancellation', async () => {
@@ -564,7 +563,7 @@ describe('Dodo subscription persistence', () => {
 		).resolves.toMatchObject({ tier: 'max', billingManaged: false });
 	});
 
-	it('keeps a scheduled cancellation paid until renewal, then permits a new interval checkout', async () => {
+	it('keeps a scheduled cancellation paid until renewal, then permits new interval reservations', async () => {
 		const t = initConvexTest();
 		const now = Date.now();
 
@@ -619,10 +618,11 @@ describe('Dodo subscription persistence', () => {
 		};
 
 		await expect(
-			t.mutation(internal.billing.reserveCheckoutSession, {
-				...annualCheckout
-			})
-		).rejects.toThrow('A paid plan is active until its scheduled cancellation');
+			t.mutation(internal.billing.reserveCheckoutSession, annualCheckout)
+		).resolves.toMatchObject({
+			kind: 'create',
+			interval: 'annual'
+		});
 		await t.run(async (ctx) => {
 			if (!before) throw new Error('Expected paid subscription.');
 			await ctx.db.patch('subscriptions', before._id, {
@@ -630,9 +630,13 @@ describe('Dodo subscription persistence', () => {
 				accessPhase: 'none'
 			});
 		});
+
 		await expect(
 			t.mutation(internal.billing.reserveCheckoutSession, annualCheckout)
-		).rejects.toThrow('needs attention');
+		).resolves.toMatchObject({
+			kind: 'create',
+			interval: 'annual'
+		});
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...args,
 			status: 'expired',
