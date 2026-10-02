@@ -349,13 +349,12 @@ impl NativeAuthManager {
         {
             Ok(response) => {
                 let user_id = response.user.id.clone();
-                let mut claimed = false;
-                if let Some(sessions) = &self.local_sessions {
+                let claimed = if let Some(sessions) = &self.local_sessions {
                     match sessions
                         .claim_session_user(&pending_session_token, &user_id)
                         .await
                     {
-                        Ok(assigned) => claimed = assigned,
+                        Ok(assigned) => assigned,
                         Err(error) => {
                             self.session
                                 .lock()
@@ -365,7 +364,9 @@ impl NativeAuthManager {
                             return Err(error);
                         }
                     }
-                }
+                } else {
+                    false
+                };
                 match self.accept_login(response).await {
                     Ok(user) => {
                         if let Some(sessions) = &self.local_sessions {
@@ -373,11 +374,12 @@ impl NativeAuthManager {
                                 .bind_session_user(&pending_session_token, &user.id)
                                 .await
                             {
-                                if claimed {
-                                    let _ = sessions
-                                        .clear_session_user_if(&pending_session_token, &user.id)
-                                        .await;
-                                }
+                                self.release_uncommitted_session_claim(
+                                    &pending_session_token,
+                                    &user.id,
+                                    claimed,
+                                )
+                                .await;
                                 self.session
                                     .lock()
                                     .await
@@ -389,13 +391,12 @@ impl NativeAuthManager {
                         Ok((user, pending_session_token))
                     }
                     Err(error) => {
-                        if claimed {
-                            if let Some(sessions) = &self.local_sessions {
-                                let _ = sessions
-                                    .clear_session_user_if(&pending_session_token, &user_id)
-                                    .await;
-                            }
-                        }
+                        self.release_uncommitted_session_claim(
+                            &pending_session_token,
+                            &user_id,
+                            claimed,
+                        )
+                        .await;
                         Err(error)
                     }
                 }
@@ -408,6 +409,20 @@ impl NativeAuthManager {
                     .insert(pending_session_token, provider_error(&error));
                 Err(error).context("WorkOS authorization-code exchange failed")
             }
+        }
+    }
+
+    async fn release_uncommitted_session_claim(
+        &self,
+        session_token: &str,
+        user_id: &str,
+        claimed: bool,
+    ) {
+        if !claimed {
+            return;
+        }
+        if let Some(sessions) = &self.local_sessions {
+            sessions.clear_session_user_if(session_token, user_id).await;
         }
     }
 
