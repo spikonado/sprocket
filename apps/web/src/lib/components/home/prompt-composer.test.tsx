@@ -285,7 +285,7 @@ describe('PromptComposer workspace path mentions', () => {
 		expect(document.activeElement).toBe(textarea);
 		await waitForPathOptions(2);
 		await pressKey(textarea, { key: 'Enter' });
-		expect(textarea.value).toBe('@src/app.tsx ');
+		expect(textarea.value).toBe('[app.tsx](src/app.tsx) ');
 	});
 
 	it('opens completion for a second identical mention after dismissing the first', async () => {
@@ -301,7 +301,7 @@ describe('PromptComposer workspace path mentions', () => {
 		});
 		await waitForPathOptions(2);
 		await pressKey(textarea, { key: 'Enter' });
-		expect(textarea.value).toBe('@src/app.tsx @src');
+		expect(textarea.value).toBe('[app.tsx](src/app.tsx) @src');
 	});
 
 	it('selects files and directories by keyboard without submitting', async () => {
@@ -313,7 +313,7 @@ describe('PromptComposer workspace path mentions', () => {
 		await pressKey(textarea, { key: 'Enter', isComposing: true });
 		expect(textarea.value).toBe('Fix @src');
 		await pressKey(textarea, { key: 'Enter' });
-		expect(textarea.value).toBe('Fix @src/app.tsx ');
+		expect(textarea.value).toBe('Fix [app.tsx](src/app.tsx) ');
 		expect(textarea.selectionStart).toBe(textarea.value.length);
 
 		await typeInComposer(textarea, 'Inspect @src');
@@ -321,7 +321,7 @@ describe('PromptComposer workspace path mentions', () => {
 		await pressKey(textarea, { key: 'ArrowDown' });
 		expect(textarea.getAttribute('aria-activedescendant')).toBe('composer-path-option-1');
 		await pressKey(textarea, { key: 'Tab' });
-		expect(textarea.value).toBe('Inspect @"src/my components/" ');
+		expect(textarea.value).toBe('Inspect [my components](src/my%20components/) ');
 		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 
@@ -335,7 +335,7 @@ describe('PromptComposer workspace path mentions', () => {
 		await typeInComposer(textarea, '@apps');
 		await waitForPathOptions(2);
 		await click(findButton('src/app.tsx'));
-		expect(textarea.value).toBe('@src/app.tsx ');
+		expect(textarea.value).toBe('[app.tsx](src/app.tsx) ');
 		expect(document.activeElement).toBe(textarea);
 	});
 

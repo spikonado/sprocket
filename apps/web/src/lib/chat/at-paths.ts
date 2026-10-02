@@ -2,12 +2,27 @@ import type { WorkspaceSearchEntry } from '$lib/types/sprocket';
 
 const ACTIVE_PATH_TOKEN = /(^|\s)@([^\s"@]*|"(?:[^"\\]|\\.)*)$/;
 
-const UNQUOTED_PATH_CHARACTER = /[\s"\\@]/;
-
 const QUOTED_TOKEN_ESCAPE = /\\(["\\])/g;
+
+const MARKDOWN_LABEL_SPECIALS = /[\\[\]`*_<>&~]/g;
+
+const URI_PUNCTUATION = /[!'()*]/g;
 
 export function workspaceEntryDisplayPath(entry: WorkspaceSearchEntry) {
 	return entry.path + (entry.kind === 'directory' ? '/' : '');
+}
+
+function escapeMarkdownLabel(name: string) {
+	return name.replace(MARKDOWN_LABEL_SPECIALS, (character) =>
+		character === '&' ? '&amp;' : `&#${character.charCodeAt(0)};`
+	);
+}
+
+function encodePathSegment(segment: string) {
+	return encodeURIComponent(segment).replace(
+		URI_PUNCTUATION,
+		(character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+	);
 }
 
 export function getActiveAtMention(text: string, caret: number) {
@@ -40,8 +55,10 @@ export function applyPathSelection(text: string, caret: number, entry: Workspace
 
 	if (text[end] === ' ') end += 1;
 	const path = workspaceEntryDisplayPath(entry);
-	const reference = UNQUOTED_PATH_CHARACTER.test(path) ? JSON.stringify(path) : path;
-	const replacement = `@${reference} `;
+	const name = entry.path.slice(entry.path.lastIndexOf('/') + 1);
+	const label = escapeMarkdownLabel(name);
+	const destination = path.split('/').map(encodePathSegment).join('/');
+	const replacement = `[${label}](${destination}) `;
 
 	return {
 		text: text.slice(0, match.start) + replacement + text.slice(end),

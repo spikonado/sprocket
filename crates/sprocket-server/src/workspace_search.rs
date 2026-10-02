@@ -182,6 +182,7 @@ fn directory_path(path: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use std::fs;
     use std::time::Duration;
 
@@ -250,6 +251,58 @@ mod tests {
                 .entries
                 .iter()
                 .any(|entry| entry.path == "empty directory" && entry.is_dir)
+        );
+    }
+
+    #[test]
+    fn completion_respects_gitignore_rules_in_a_git_workspace() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let root = workspace.path();
+        gix::init(root).expect("gix init");
+        fs::write(root.join(".gitignore"), "ignored-dir/\n*.log\n").unwrap();
+
+        fs::create_dir_all(root.join("ignored-dir")).unwrap();
+        fs::create_dir_all(root.join("src/nested/scratch")).unwrap();
+
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("src/notes.txt"), "notes").unwrap();
+        fs::write(root.join("src/debug.log"), "log").unwrap();
+        fs::write(root.join("ignored-dir/hidden.rs"), "fn hidden() {}").unwrap();
+
+        let nested = root.join("src/nested");
+        fs::write(
+            nested.join(".gitignore"),
+            "scratch/\n*.tmp\n!important.tmp\n",
+        )
+        .unwrap();
+        fs::write(nested.join("scratch/temp.rs"), "fn temp() {}").unwrap();
+        fs::write(nested.join("keep.rs"), "fn keep() {}").unwrap();
+        fs::write(nested.join("data.tmp"), "tmp").unwrap();
+        fs::write(nested.join("important.tmp"), "important").unwrap();
+
+        let root = root.canonicalize().unwrap();
+        let index = WorkspaceSearchIndex::new();
+        wait_for_scan(&index, &root);
+
+        let outcome = index.search(&root, "").expect("search");
+        let indexed: BTreeSet<(&str, bool)> = outcome
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.is_dir))
+            .collect();
+
+        assert_eq!(
+            indexed,
+            BTreeSet::from([
+                (".gitignore", false),
+                ("src", true),
+                ("src/main.rs", false),
+                ("src/notes.txt", false),
+                ("src/nested", true),
+                ("src/nested/.gitignore", false),
+                ("src/nested/keep.rs", false),
+                ("src/nested/important.tmp", false),
+            ])
         );
     }
 
