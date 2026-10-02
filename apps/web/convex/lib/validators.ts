@@ -493,6 +493,7 @@ export const vParsedFileResult = v.union(
 
 export const vExecutorJobResult = v.union(
 	v.string(),
+	v.object({ threadId: v.id('threadRecords') }),
 	vParsedFileResult,
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
@@ -540,6 +541,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('ask_question'),
 	v.literal('await_question'),
 	v.literal('exec_command'),
+	v.literal('get_thread_id'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
 	v.literal('mandate_status'),

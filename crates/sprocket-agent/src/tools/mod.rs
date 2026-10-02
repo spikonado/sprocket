@@ -12,6 +12,7 @@ mod patch;
 mod questions;
 mod scrape_files;
 mod skills;
+mod thread;
 mod web;
 
 use std::path::PathBuf;
@@ -29,6 +30,7 @@ use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
 use self::questions::{AskQuestionTool, AwaitQuestionTool};
 use self::skills::ReadSkillTool;
+use self::thread::GetThreadIdTool;
 use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -52,6 +54,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) await_question: AwaitQuestionTool,
     pub(crate) command_sessions: CommandSessionManager,
     pub(crate) exec_command: ExecCommandTool,
+    pub(crate) get_thread_id: GetThreadIdTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
@@ -153,6 +156,7 @@ pub(crate) fn agent_tools(
         await_question: AwaitQuestionTool(context.clone()),
         command_sessions,
         exec_command: ExecCommandTool(context.clone()),
+        get_thread_id: GetThreadIdTool(context.clone()),
         parse_file: ParseFileTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),

@@ -8,6 +8,7 @@ import {
 	FileDiff,
 	FileText,
 	Globe,
+	Hash,
 	Hourglass,
 	ListChecks,
 	NotebookPen,
@@ -39,6 +40,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Save;
 		case 'exec_command':
 			return Terminal;
+		case 'get_thread_id':
+			return Hash;
 		case 'get_workspace_instructions':
 			return ScrollText;
 		case 'mandate_charge':

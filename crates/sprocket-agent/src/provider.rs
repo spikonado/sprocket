@@ -275,6 +275,7 @@ where
         .additional_params(additional_params)
         .tool(tools.apply_patch)
         .tool(tools.exec_command)
+        .tool(tools.get_thread_id)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)

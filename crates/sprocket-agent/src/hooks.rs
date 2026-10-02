@@ -16,6 +16,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "await_question",
     "edit_artifact",
     "exec_command",
+    "get_thread_id",
     "list_artifacts",
     "mandate_charge",
     "mandate_list",
