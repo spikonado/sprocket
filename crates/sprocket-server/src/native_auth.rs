@@ -367,7 +367,14 @@ impl NativeAuthManager {
                     }
                 }
                 match self.accept_login(response).await {
-                    Ok(user) => Ok((user, pending_session_token)),
+                    Ok(user) => {
+                        if let Some(sessions) = &self.local_sessions {
+                            let _ = sessions
+                                .bind_session_user(&pending_session_token, &user.id)
+                                .await;
+                        }
+                        Ok((user, pending_session_token))
+                    }
                     Err(error) => {
                         if claimed {
                             if let Some(sessions) = &self.local_sessions {
@@ -1770,6 +1777,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.token().as_deref(), Some("refresh-new"));
+    }
+
+    #[tokio::test]
+    async fn repeat_login_persists_a_new_browser_session_for_the_current_user() {
+        let store = MemoryRefreshTokenStore::empty();
+        let mut manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::OK,
+            serde_json::to_value(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-repeat",
+            ))
+            .unwrap(),
+        )
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, local_session) = local.bootstrap_browser_session(true).await.unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        manager.authenticate_for_test("user_123").await;
+        let login = manager
+            .start_login(&local_session, NativeLoginFlow::SignIn)
+            .await
+            .unwrap();
+
+        manager
+            .complete_login("authorization-code", &login.login_id)
+            .await
+            .unwrap();
+
+        local
+            .require_session_user(&local_session, "user_123")
+            .await
+            .unwrap();
+        let reloaded = crate::auth::AuthState::load(directory.path()).unwrap();
+        reloaded
+            .require_session_user(&local_session, "user_123")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
