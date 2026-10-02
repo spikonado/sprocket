@@ -82,13 +82,12 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
             };
             return (session, slot.state.clone());
         }
-        // Drop the channel's initial receiver and subscribe after spawn so a
-        // first publish cannot already sit in `rx`. Artifact SSE emits
-        // `latest_event()` first; a queued copy of that snapshot would repeat.
-        let (events, _) = broadcast::channel(capacity);
+        // Keep the channel's initial receiver so a first publish during spawn
+        // is not dropped. Transcript SSE has no snapshot fallback; artifact
+        // SSE skips a queued copy of the snapshot it already emitted.
+        let (events, rx) = broadcast::channel(capacity);
         let state = make_state();
         let task = spawn(events.clone(), state.clone());
-        let rx = events.subscribe();
         let generation = inner.next_generation;
         inner.next_generation += 1;
         inner.slots.insert(
@@ -208,6 +207,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn first_open_receiver_sees_events_sent_during_spawn() {
+        let registry: Arc<WatchRegistry<String, u32>> = WatchRegistry::new();
+        let (mut session, ()) = registry.open_with(
+            "key".to_string(),
+            4,
+            || (),
+            |events, ()| {
+                let _ = events.send(1);
+                tokio::spawn(std::future::pending())
+            },
+        );
+        assert_eq!(session.receiver().try_recv().unwrap(), 1);
+    }
+
+    #[tokio::test]
     async fn last_drop_aborts_the_task() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -234,9 +248,12 @@ mod tests {
             }
         };
         let (first, ()) = registry.open_with("key".to_string(), 4, || (), spawn);
-        let (second, ()) = registry.open_with("key".to_string(), 4, || (), |_, ()| {
-            panic!("existing slot should not spawn")
-        });
+        let (second, ()) = registry.open_with(
+            "key".to_string(),
+            4,
+            || (),
+            |_, ()| panic!("existing slot should not spawn"),
+        );
         started_rx.await.expect("watch task started");
         assert_eq!(live.load(Ordering::SeqCst), 1);
         drop(first);
