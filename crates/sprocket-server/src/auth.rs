@@ -290,9 +290,10 @@ impl AuthState {
             }
             session.reject_foreign_user(user_id)?;
             if session.user_id.as_deref() == Some(user_id) {
-                return Ok(false);
-            }
-            if !persist {
+                if !persist || !session.uncommitted {
+                    return Ok(false);
+                }
+            } else if !persist {
                 session.user_id = Some(user_id.to_string());
                 session.uncommitted = true;
                 return Ok(true);
