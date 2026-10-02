@@ -16,6 +16,7 @@ import {
 	Search,
 	SquareTerminal,
 	Terminal,
+	Trash2,
 	Wallet,
 	Wrench,
 	type LucideIcon
@@ -35,6 +36,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'add_artifact':
 		case 'create_artifact':
 			return FileCode;
+		case 'delete_artifact':
+			return Trash2;
 		case 'save_artifact':
 			return Save;
 		case 'exec_command':

@@ -180,8 +180,7 @@ impl ArtifactWatchSession {
             flush_feed(
                 &mut feed,
                 || async {
-                    Ok(client
-                        .list_artifacts(&self.key.repository_key)
+                    Ok(load_registry(&client, &bindings, &self.key.repository_key)
                         .await?
                         .artifacts)
                 },
@@ -347,7 +346,7 @@ async fn cloud_worker(
                 }),
                 &pending,
                 &output,
-                || client.list_artifacts(&key.repository_key),
+                || load_registry(&client, &bindings, &key.repository_key),
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
@@ -470,6 +469,66 @@ struct SyncRequest {
     path: String,
     baseline: String,
     content: String,
+}
+
+async fn load_registry(
+    client: &UserConvexClient,
+    bindings: &ArtifactBindings,
+    repository_key: &str,
+) -> anyhow::Result<ArtifactSnapshot> {
+    let snapshot = client.list_artifacts(repository_key).await?;
+    let visible_ids = snapshot
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.id.clone())
+        .collect();
+    reconcile_bindings(bindings, &visible_ids, |ids| {
+        client.missing_artifact_ids(repository_key, ids)
+    })
+    .await?;
+    Ok(snapshot)
+}
+
+async fn reconcile_bindings<M, MF>(
+    bindings: &ArtifactBindings,
+    visible_ids: &std::collections::HashSet<String>,
+    mut missing_ids: M,
+) -> anyhow::Result<()>
+where
+    M: FnMut(Vec<String>) -> MF,
+    MF: std::future::Future<Output = anyhow::Result<Vec<String>>>,
+{
+    // Project list absence alone does not prove deletion: legacy bindings may
+    // belong to another project, and new registrations reserve paths first.
+    let candidates: std::collections::BTreeSet<_> = bindings
+        .snapshot()
+        .await?
+        .into_iter()
+        .filter_map(|binding| binding.artifact_id)
+        .filter(|id| !visible_ids.contains(id))
+        .collect();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let candidates: Vec<_> = candidates.into_iter().collect();
+    let mut deleted = std::collections::HashSet::new();
+    // Keep below the getMissingArtifactIds document-read limit.
+    for chunk in candidates.chunks(16) {
+        let confirmed = timeout(NETWORK_TIMEOUT, missing_ids(chunk.to_vec())).await??;
+        deleted.extend(confirmed.into_iter().filter(|id| chunk.contains(id)));
+    }
+    if deleted.is_empty() {
+        return Ok(());
+    }
+    let mut guard = bindings.lock().await?;
+    let mut changed = false;
+    for id in deleted {
+        changed |= guard.remove(&id);
+    }
+    if changed {
+        guard.persist().await?;
+    }
+    Ok(())
 }
 
 async fn sync(
@@ -872,6 +931,104 @@ mod tests {
             })
             .unwrap();
         guard.persist().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconciliation_prunes_only_confirmed_deletions_and_clears_queued_sync() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        tokio::fs::write(dir.path().join("notes.md"), "local edit")
+            .await
+            .unwrap();
+        feed.refresh().await.unwrap();
+        assert_eq!(feed.pending.len(), 1);
+        let mut guard = feed.bindings.lock().await.unwrap();
+        let mut unrelated = guard.get("artifact").unwrap().clone();
+        unrelated.registration_id = "other-registration".into();
+        unrelated.artifact_id = Some("other-project".into());
+        unrelated.local_path = "other.md".into();
+        guard.bind(unrelated).unwrap();
+        guard.reserve("in-flight.md".into());
+        guard.persist().await.unwrap();
+        drop(guard);
+        // Reopening the store must also clean bindings never observed by this
+        // watcher, using authoritative ID absence rather than project absence.
+        let restarted =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        reconcile_bindings(&restarted, &Default::default(), |ids| {
+            assert_eq!(ids, vec!["artifact", "other-project"]);
+            std::future::ready(Ok(vec!["artifact".into(), "unsolicited".into()]))
+        })
+        .await
+        .unwrap();
+        let guard = restarted.lock().await.unwrap();
+        assert!(guard.get("artifact").is_none());
+        assert!(guard.get("other-project").is_some());
+        assert!(
+            guard
+                .bindings
+                .iter()
+                .any(|binding| binding.artifact_id.is_none())
+        );
+        drop(guard);
+        feed.apply_registry(vec![]);
+        feed.refresh().await.unwrap();
+        assert!(feed.pending.is_empty());
+        assert!(feed.local.is_empty());
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("notes.md"))
+                .await
+                .unwrap(),
+            "local edit"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_reconciliation_preserves_bindings() {
+        let (_dir, feed) = setup().await;
+        bind(&feed).await;
+        assert!(
+            reconcile_bindings(&feed.bindings, &Default::default(), |_| {
+                std::future::ready(Err(anyhow::anyhow!("disconnected")))
+            })
+            .await
+            .is_err()
+        );
+        assert!(
+            feed.bindings
+                .lock()
+                .await
+                .unwrap()
+                .get("artifact")
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciliation_batches_requests_within_cloud_limit() {
+        let (_dir, feed) = setup().await;
+        let mut guard = feed.bindings.lock().await.unwrap();
+        for index in 0..18 {
+            guard
+                .bind(ArtifactBinding {
+                    registration_id: format!("registration-{index}"),
+                    artifact_id: Some(format!("artifact-{index}")),
+                    local_path: format!("file-{index}.md"),
+                    content_hash: String::new(),
+                })
+                .unwrap();
+        }
+        guard.persist().await.unwrap();
+        drop(guard);
+        let mut batches = Vec::new();
+        reconcile_bindings(&feed.bindings, &Default::default(), |ids| {
+            batches.push(ids.len());
+            std::future::ready(Ok(ids))
+        })
+        .await
+        .unwrap();
+        assert_eq!(batches, vec![16, 2]);
+        assert!(feed.bindings.snapshot().await.unwrap().is_empty());
     }
 
     #[tokio::test]

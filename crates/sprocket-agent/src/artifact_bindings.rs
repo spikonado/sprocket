@@ -165,6 +165,13 @@ impl BindingGuard {
             .find(|binding| binding.artifact_id.as_deref() == Some(artifact_id))
     }
 
+    pub fn remove(&mut self, artifact_id: &str) -> bool {
+        let previous = self.bindings.len();
+        self.bindings
+            .retain(|binding| binding.artifact_id.as_deref() != Some(artifact_id));
+        previous != self.bindings.len()
+    }
+
     pub fn reserve(&mut self, path: String) -> &mut ArtifactBinding {
         let index = self
             .bindings
@@ -298,6 +305,43 @@ pub async fn save_new_file(workspace: &Path, path: &str, content: &str) -> anyho
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn removing_binding_preserves_files_and_creates_fresh_registration_on_readd() {
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        save_new_file(dir.path(), "notes.md", "source")
+            .await
+            .unwrap();
+        let mut guard = store.lock().await.unwrap();
+        let binding = guard.reserve("notes.md".into());
+        binding.artifact_id = Some("deleted".into());
+        let old_registration = binding.registration_id.clone();
+        let pending_registration = guard.reserve("pending.md".into()).registration_id.clone();
+        assert!(guard.remove("deleted"));
+        assert!(!guard.remove("deleted"));
+        guard.persist().await.unwrap();
+        drop(guard);
+        let mut guard = store.lock().await.unwrap();
+        assert!(guard.get("deleted").is_none());
+        assert!(
+            guard
+                .bindings
+                .iter()
+                .any(|binding| binding.registration_id == pending_registration)
+        );
+        assert_ne!(
+            guard.reserve("notes.md".into()).registration_id,
+            old_registration
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("notes.md"))
+                .await
+                .unwrap(),
+            "source"
+        );
+    }
 
     #[tokio::test]
     async fn legacy_bindings_migrate_without_merging_colliding_files() {

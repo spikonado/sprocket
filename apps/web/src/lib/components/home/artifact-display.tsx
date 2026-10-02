@@ -1,3 +1,4 @@
+import ArtifactContextMenu from '$lib/components/artifact-context-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -14,6 +15,7 @@ type Props = {
 	/** Enter true browser fullscreen for this artifact (content only). */
 	onOpenFullscreen?: () => void;
 	onBack?: () => void;
+	onDelete?: () => Promise<void>;
 };
 
 export default function ArtifactDisplay({
@@ -24,7 +26,8 @@ export default function ArtifactDisplay({
 	localError,
 	variant = 'card',
 	onOpenFullscreen,
-	onBack
+	onBack,
+	onDelete
 }: Props) {
 	const previewDocument = useMemo(
 		() => buildArtifactPreviewDocument(artifactType, content),
@@ -97,71 +100,75 @@ export default function ArtifactDisplay({
 	}
 
 	return (
-		<div
-			className={
-				variant === 'full'
-					? 'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border'
-					: 'bg-card rounded-lg border'
-			}
-		>
-			<div className="flex items-center gap-2 px-3 py-2">
-				{onBack ? (
-					<button
-						type="button"
-						className="text-muted-foreground hover:text-foreground shrink-0 transition"
-						onClick={onBack}
-						aria-label="Back to artifacts"
-					>
-						<ArrowLeft className="size-4" aria-hidden="true" />
-					</button>
-				) : null}
-				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-					<div className="flex min-w-0 items-center gap-2">
-						<span className="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
-						<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
+		<ArtifactContextMenu title={title} onDelete={onDelete}>
+			<div
+				className={
+					variant === 'full'
+						? 'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border'
+						: 'bg-card rounded-lg border'
+				}
+			>
+				<div className="flex items-center gap-2 px-3 py-2">
+					{onBack ? (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground shrink-0 transition"
+							onClick={onBack}
+							aria-label="Back to artifacts"
+						>
+							<ArrowLeft className="size-4" aria-hidden="true" />
+						</button>
+					) : null}
+					<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+						<div className="flex min-w-0 items-center gap-2">
+							<span className="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
+							<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
+						</div>
+						{localPath ? (
+							<span className="text-muted-foreground min-w-0 truncate text-[11px]">
+								{localPath}
+							</span>
+						) : null}
 					</div>
-					{localPath ? (
-						<span className="text-muted-foreground min-w-0 truncate text-[11px]">{localPath}</span>
+					{previewDocument ? (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition"
+							onClick={() => setShowSource((value) => !value)}
+							aria-label={showSource ? 'Show preview' : 'Show source'}
+						>
+							{showSource ? (
+								<>
+									<Eye className="size-3.5" aria-hidden="true" />
+									Preview
+								</>
+							) : (
+								<>
+									<Code2 className="size-3.5" aria-hidden="true" />
+									Source
+								</>
+							)}
+						</button>
+					) : null}
+					{onOpenFullscreen ? (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground shrink-0 transition"
+							onClick={onOpenFullscreen}
+							aria-label="Open fullscreen"
+							title="Open fullscreen"
+						>
+							<Fullscreen className="size-4" aria-hidden="true" />
+						</button>
 					) : null}
 				</div>
-				{previewDocument ? (
-					<button
-						type="button"
-						className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition"
-						onClick={() => setShowSource((value) => !value)}
-						aria-label={showSource ? 'Show preview' : 'Show source'}
-					>
-						{showSource ? (
-							<>
-								<Eye className="size-3.5" aria-hidden="true" />
-								Preview
-							</>
-						) : (
-							<>
-								<Code2 className="size-3.5" aria-hidden="true" />
-								Source
-							</>
-						)}
-					</button>
+				{localError ? (
+					<p role="alert" className="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">
+						{localError}
+					</p>
 				) : null}
-				{onOpenFullscreen ? (
-					<button
-						type="button"
-						className="text-muted-foreground hover:text-foreground shrink-0 transition"
-						onClick={onOpenFullscreen}
-						aria-label="Open fullscreen"
-						title="Open fullscreen"
-					>
-						<Fullscreen className="size-4" aria-hidden="true" />
-					</button>
-				) : null}
+				{renderBody(variant === 'full' ? 'h-full' : 'h-64')}
 			</div>
-			{localError ? (
-				<p role="alert" className="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">
-					{localError}
-				</p>
-			) : null}
-			{renderBody(variant === 'full' ? 'h-full' : 'h-64')}
-		</div>
+		</ArtifactContextMenu>
 	);
 }

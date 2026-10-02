@@ -282,6 +282,7 @@ where
         .tool(tools.list_artifacts)
         .tool(tools.edit_artifact)
         .tool(tools.save_artifact)
+        .tool(tools.delete_artifact)
         .tool(tools.mandate_status)
         .tool(tools.mandate_list)
         .tool(tools.mandate_charge)

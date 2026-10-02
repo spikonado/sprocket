@@ -80,6 +80,11 @@ export const vEditArtifactPayload = v.object({
 	artifactId: v.string()
 });
 
+// Edit, save and delete tools identify an artifact with the same payload shape.
+export const vDeleteArtifactPayload = vEditArtifactPayload;
+
+export const vDeleteArtifactResult = vDeleteArtifactPayload;
+
 // Stored leftover executorJobs from create_artifact / update_artifact.
 export const vCreateArtifactPayload = v.object({
 	title: v.string(),
@@ -557,6 +562,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
 	v.literal('edit_artifact'),
+	v.literal('delete_artifact'),
 	v.literal('save_artifact')
 );
 

@@ -34,6 +34,8 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Listed Artifacts';
 		case 'save_artifact':
 			return 'Saved Artifacts';
+		case 'delete_artifact':
+			return 'Deleted Artifacts';
 		case 'exec_command':
 			return 'Ran Commands';
 		case 'get_workspace_instructions':
@@ -97,6 +99,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'create_artifact':
 		case 'edit_artifact':
 		case 'save_artifact':
+		case 'delete_artifact':
 			return summarizeArtifactTool(input);
 		case 'list_artifacts':
 			return 'Artifacts';
@@ -334,6 +337,7 @@ export function toolItemSummary(
 		kind === 'add_artifact' ||
 		kind === 'edit_artifact' ||
 		kind === 'save_artifact' ||
+		kind === 'delete_artifact' ||
 		kind === 'create_artifact'
 	) {
 		return summarizeArtifactTool(

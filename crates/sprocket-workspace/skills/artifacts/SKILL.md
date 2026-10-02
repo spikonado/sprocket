@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Use when publishing, saving, or editing artifacts, including Markdown documents, HTML previews, and self-contained React mocks.
+description: Use when publishing, saving, editing, or deleting artifacts, including Markdown documents, HTML previews, and self-contained React mocks.
 ---
 
 # Artifacts
@@ -15,6 +15,8 @@ description: Use when publishing, saving, or editing artifacts, including Markdo
 After moving a file, call `edit_artifact` with `artifactId` and the new `path`. This binds the existing file and replaces the cloud content; it does not move or edit the file. The filename supplies the title. Bindings stay in Sprocket's local data directory, not in Convex.
 
 Missing files retain the last preview and report a local error; they are not recreated automatically. If both cloud and disk changed, synchronization pauses. Inspect both versions before resolving with `edit_artifact`, or save the cloud version to a new path. An unchanged older local file never replaces newer cloud content.
+
+Call `delete_artifact` with `artifactId` to remove an artifact from the project. Its local source file stays on disk, and file edits stop syncing to the deleted artifact.
 
 ## React previews
 

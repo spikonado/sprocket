@@ -65,6 +65,7 @@ type Props = {
 	) => Promise<TranscriptDisplayDetails>;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
+	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 };
 
 const SCROLL_EPSILON_PX = 28;
@@ -128,7 +129,8 @@ export default function ThreadTranscript({
 	loadAttachment,
 	loadSectionDetails,
 	artifacts = [],
-	onOpenArtifact
+	onOpenArtifact,
+	onDeleteArtifact
 }: Props) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const contentRef = useRef<HTMLDivElement | null>(null);
@@ -599,6 +601,7 @@ export default function ThreadTranscript({
 						className="text-foreground"
 						artifacts={artifacts}
 						onOpenArtifact={onOpenArtifact}
+						onDeleteArtifact={onDeleteArtifact}
 						openLinksInNewTab
 					/>
 				</div>
@@ -632,6 +635,7 @@ export default function ThreadTranscript({
 							className="text-foreground"
 							artifacts={artifacts}
 							onOpenArtifact={onOpenArtifact}
+							onDeleteArtifact={onDeleteArtifact}
 							openLinksInNewTab
 						/>
 					) : null}
@@ -647,6 +651,7 @@ export default function ThreadTranscript({
 										className="text-foreground"
 										artifacts={artifacts}
 										onOpenArtifact={onOpenArtifact}
+										onDeleteArtifact={onDeleteArtifact}
 										openLinksInNewTab
 									/>
 								</div>

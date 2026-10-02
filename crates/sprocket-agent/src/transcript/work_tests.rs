@@ -116,6 +116,7 @@ fn artifact_calls_and_results_appear_in_work_details() {
         "list_artifacts",
         "edit_artifact",
         "save_artifact",
+        "delete_artifact",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();

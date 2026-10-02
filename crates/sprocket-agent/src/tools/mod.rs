@@ -19,7 +19,9 @@ use std::sync::Arc;
 
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
-use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool};
+use self::artifacts::{
+    AddArtifactTool, DeleteArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool,
+};
 use self::commands::{ExecCommandTool, WriteStdinTool};
 use self::context::AgentToolContext;
 use self::mandates::{
@@ -62,6 +64,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) edit_artifact: EditArtifactTool,
     pub(crate) save_artifact: SaveArtifactTool,
+    pub(crate) delete_artifact: DeleteArtifactTool,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -164,6 +167,7 @@ pub(crate) fn agent_tools(
         list_artifacts: ListArtifactsTool(context.clone()),
         edit_artifact: EditArtifactTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
+        delete_artifact: DeleteArtifactTool(context.clone()),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),
