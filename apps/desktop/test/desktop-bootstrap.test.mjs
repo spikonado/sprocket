@@ -11,6 +11,7 @@ test('accepts a non-empty httpBaseUrl', () => {
 test('rejects missing or blank httpBaseUrl', () => {
 	for (const value of [
 		null,
+		[],
 		{},
 		{ httpBaseUrl: '' },
 		{ httpBaseUrl: '   ' },
