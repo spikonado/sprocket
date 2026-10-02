@@ -258,19 +258,27 @@ impl HttpClientExt for SiwcHttpClient {
             if !response.status().is_success() {
                 return Err(inference_error(response, &token).await);
             }
-            let mut res = Response::builder()
-                .status(response.status())
-                .version(response.version());
-            if let Some(headers) = res.headers_mut() {
-                *headers = response.headers().clone();
-            }
-            let stream: rig::http_client::sse::BoxedStream = Box::pin(SiwcStreamGuard::new(
-                response.bytes_stream(),
-                Arc::clone(connection),
-            ));
-            res.body(stream).map_err(http_client::Error::Protocol)
+            streaming_response(response, Arc::clone(connection))
         }
     }
+}
+
+fn streaming_response(
+    response: reqwest::Response,
+    connection: SharedConnection,
+) -> http_client::Result<http_client::StreamingResponse> {
+    let mut res = Response::builder()
+        .status(response.status())
+        .version(response.version());
+    if let Some(headers) = res.headers_mut() {
+        *headers = response.headers().clone();
+        headers
+            .entry(http::header::CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("text/event-stream"));
+    }
+    let stream: rig::http_client::sse::BoxedStream =
+        Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
+    res.body(stream).map_err(http_client::Error::Protocol)
 }
 
 async fn read_error_body(
@@ -690,6 +698,166 @@ mod tests {
             .body(body.into())
             .unwrap()
             .into()
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct HeaderlessStreamClient(SiwcHttpClient);
+
+    impl HttpClientExt for HeaderlessStreamClient {
+        fn send<T, U>(
+            &self,
+            req: Request<T>,
+        ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        + WasmCompatSend
+        + 'static
+        where
+            T: Into<Bytes> + WasmCompatSend,
+            U: From<Bytes> + WasmCompatSend + 'static,
+        {
+            self.0.send(req)
+        }
+
+        fn send_multipart<U>(
+            &self,
+            req: Request<rig::http_client::MultipartForm>,
+        ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        + WasmCompatSend
+        + 'static
+        where
+            U: From<Bytes> + WasmCompatSend + 'static,
+        {
+            self.0.send_multipart(req)
+        }
+
+        fn send_streaming<T>(
+            &self,
+            req: Request<T>,
+        ) -> impl Future<Output = http_client::Result<http_client::StreamingResponse>> + WasmCompatSend
+        where
+            T: Into<Bytes> + WasmCompatSend,
+        {
+            let (_, connection) = self.0.authorization.as_ref().unwrap();
+            let connection = Arc::clone(connection);
+            async move {
+                assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
+                let body: serde_json::Value =
+                    serde_json::from_slice(&rewrite_request_body(&req.into_body().into())?)
+                        .unwrap();
+                assert_eq!(body["tools"][0]["type"], "namespace");
+                let event = json!({
+                    "type": "response.completed",
+                    "sequence_number": 0,
+                    "response": {
+                        "id": "resp-test",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-6.1-sol",
+                        "output": [],
+                        "tools": [],
+                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                    }
+                });
+                let response = http::Response::builder()
+                    .header("x-request-id", "req-stream")
+                    .body(format!("data: {event}\n\n"))
+                    .unwrap()
+                    .into();
+                streaming_response(response, connection)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_client_completes_a_headerless_siwc_stream() {
+        let (credentials, client) = stub_client("connection-1");
+        let http = HeaderlessStreamClient(SiwcHttpClient {
+            authorization: Some((credentials, Arc::clone(&client.connection))),
+            ..Default::default()
+        });
+        let model = openai::Client::builder()
+            .api_key("test-token")
+            .http_client(http)
+            .build()
+            .unwrap()
+            .completion_model("gpt-6.1-sol");
+        let mut stream = model
+            .stream(test_request(vec![Message::user("hello")]))
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.expect("Rig must accept the headerless SIWC handshake and parse its events");
+        }
+        let response = stream.response.expect("parsed terminal response");
+        assert_eq!(response.usage.total_tokens, 2);
+        assert_eq!(response.response_id.as_deref(), Some("resp-test"));
+        assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
+    }
+
+    #[tokio::test]
+    async fn streaming_response_supplies_missing_sse_content_type_and_preserves_events() {
+        let (_, client) = stub_client("connection-1");
+        let frame = Bytes::from_static(
+            b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+        );
+        let response = http::Response::builder()
+            .status(http::StatusCode::OK)
+            .version(http::Version::HTTP_2)
+            .header("x-request-id", "req-stream")
+            .body(frame.clone())
+            .unwrap()
+            .into();
+        let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(response.version(), http::Version::HTTP_2);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        assert_eq!(response.headers()["x-request-id"], "req-stream");
+        let mut stream = response.into_body();
+        assert_eq!(stream.next().await.unwrap().unwrap(), frame);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[test]
+    fn streaming_response_preserves_explicit_content_types() {
+        let (_, client) = stub_client("connection-1");
+        for content_type in ["text/event-stream; charset=utf-8", "application/json", ""] {
+            let response = http::Response::builder()
+                .header(http::header::CONTENT_TYPE, content_type)
+                .body("")
+                .unwrap()
+                .into();
+            let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
+            assert_eq!(response.headers()[http::header::CONTENT_TYPE], content_type);
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_response_requires_terminal_events_even_without_content_type() {
+        let (_, client) = stub_client("connection-1");
+        for body in [
+            "",
+            r#"{"detail":"not an SSE response"}"#,
+            "data: {not json}\n\n",
+        ] {
+            let response = http::Response::builder().body(body).unwrap().into();
+            let mut stream = streaming_response(response, Arc::clone(&client.connection))
+                .unwrap()
+                .into_body();
+            let error = stream
+                .by_ref()
+                .filter_map(|item| std::future::ready(item.err()))
+                .next()
+                .await
+                .expect("stream must report an error");
+            let http_client::Error::Instance(error) = error else {
+                panic!("expected terminal-event validation error");
+            };
+            assert_eq!(error.to_string(), STREAM_INTERRUPTED);
+            assert!(stream.next().await.is_none());
+        }
     }
 
     #[tokio::test]
