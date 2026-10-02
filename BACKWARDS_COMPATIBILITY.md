@@ -265,6 +265,7 @@ thread-scope/threadId schema fields, reader projection, migration and its cron
 only after the migration finishes and production scans find no legacy rows.
 Historical executor tool payloads/results retain optional scope/thread metadata
 permanently because conversation history describes the original calls.
+
 ### Billing (Dodo) backwards compatibility
 
 #### Legacy subscription rows without access/projection fields
