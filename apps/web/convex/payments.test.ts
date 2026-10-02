@@ -447,7 +447,6 @@ describe('payments mandates', () => {
 	});
 
 	it('refuses to re-POST after an incomplete Prava charge response for the same reference', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
@@ -474,6 +473,7 @@ describe('payments mandates', () => {
 				)
 				.unique()
 		);
+
 		expect(afterIncomplete?.providerRequestedAt).toEqual(expect.any(Number));
 		expect(afterIncomplete?.pravaTransactionId).toBeUndefined();
 		expect(afterIncomplete?.status).not.toBe('failed');

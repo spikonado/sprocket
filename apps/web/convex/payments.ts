@@ -964,6 +964,7 @@ export const mandateCharge = action({
 				});
 				throw new Error(result.errorMessage ?? result.errorCode ?? 'Mandate charge failed.');
 			}
+
 			if (!credentials || !transactionId) {
 				// The response is unusable but the charge may still have committed
 				// at Prava, exactly like a lost response. Keep providerRequestedAt
@@ -976,6 +977,7 @@ export const mandateCharge = action({
 					'Prava returned an incomplete charge response and the charge may have been submitted; refusing a same-reference retry to avoid a duplicate charge.'
 				);
 			}
+
 			await ctx.runMutation(internal.payments.completeCharge, {
 				chargeId: reservation.chargeId,
 				userId: actor.userId,
