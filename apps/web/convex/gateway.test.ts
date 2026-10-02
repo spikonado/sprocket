@@ -180,6 +180,35 @@ describe('gateway quota', () => {
 		expect(runs).toHaveLength(0);
 	}, 15_000);
 
+	it('reconciles an existing submission after quota is exhausted', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const { asUser, threadId, subject } = await seedOwnedThread(t);
+		const executionSecret = 'gateway-reconcile-exhausted';
+		const request = {
+			submissionId: 'gateway-run-reconcile-exhausted',
+			threadId,
+			prompt: 'Ship it',
+			storageIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium' as const,
+			fastMode: false,
+			executionSecret
+		};
+
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, request);
+		expect(created.created).toBe(true);
+
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subject,
+			count: 6 * UNITS_PER_DOLLAR
+		});
+
+		const retried = await asUser.action(api.agentRuntime.createGatewayRun, request);
+		expect(retried.created).toBe(false);
+		expect(retried.runId).toBe(created.runId);
+	}, 15_000);
+
 	it('snapshots the gateway protocol on new runs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
