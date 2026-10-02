@@ -26,6 +26,8 @@ const STREAM_REQUIRED: &str =
     "ChatGPT inference requires streaming; non-streaming completion is not supported.";
 const STREAM_INTERRUPTED: &str = "ChatGPT response stream ended before a terminal response event.";
 const SIWC_TOOL_NAMESPACE: &str = "sprocket";
+const ERROR_BODY_LIMIT: usize = 64 * 1024;
+const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 const UNSUPPORTED_FIELDS: &[&str] = &[
     "background",
@@ -254,27 +256,105 @@ impl HttpClientExt for SiwcHttpClient {
                 .await
                 .map_err(|error| stream_error(error.to_string()))?;
             if !response.status().is_success() {
-                let status = response.status();
-                return Err(http_client::Error::InvalidStatusCodeWithMessage(
-                    status,
-                    format!(
-                        "ChatGPT inference returned HTTP {status}. Check your account's plan access or reconnect in Settings."
-                    ),
-                ));
+                return Err(inference_error(response, &token).await);
             }
-            let mut res = Response::builder()
-                .status(response.status())
-                .version(response.version());
-            if let Some(headers) = res.headers_mut() {
-                *headers = response.headers().clone();
-            }
-            let stream: rig::http_client::sse::BoxedStream = Box::pin(SiwcStreamGuard::new(
-                response.bytes_stream(),
-                Arc::clone(connection),
-            ));
-            res.body(stream).map_err(http_client::Error::Protocol)
+            streaming_response(response, Arc::clone(connection))
         }
     }
+}
+
+fn streaming_response(
+    response: reqwest::Response,
+    connection: SharedConnection,
+) -> http_client::Result<http_client::StreamingResponse> {
+    let mut res = Response::builder()
+        .status(response.status())
+        .version(response.version());
+    if let Some(headers) = res.headers_mut() {
+        *headers = response.headers().clone();
+        headers
+            .entry(http::header::CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("text/event-stream"));
+    }
+    let stream: rig::http_client::sse::BoxedStream =
+        Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
+    res.body(stream).map_err(http_client::Error::Protocol)
+}
+
+async fn read_error_body(
+    mut response: reqwest::Response,
+) -> Result<serde_json::Value, &'static str> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > ERROR_BODY_LIMIT as u64)
+    {
+        return Err("Provider error response was too large.");
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Could not read provider error response.")?
+    {
+        if bytes.len().saturating_add(chunk.len()) > ERROR_BODY_LIMIT {
+            return Err("Provider error response was too large.");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "Provider error response was not valid JSON.")
+}
+
+fn diagnostic_text(value: &str, access_token: &str) -> String {
+    let redacted = if access_token.is_empty() {
+        value.to_string()
+    } else {
+        value.replace(access_token, "[redacted]")
+    };
+    let mut chars = redacted.chars();
+    let mut text: String = chars.by_ref().take(1024).collect();
+    if chars.next().is_some() {
+        text.push_str("...");
+    }
+    serde_json::to_string(&text).expect("diagnostic text serializes")
+}
+
+async fn inference_error(response: reqwest::Response, access_token: &str) -> http_client::Error {
+    let status = response.status();
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| diagnostic_text(value, access_token));
+    let mut message = format!("ChatGPT inference returned HTTP {status}.");
+    match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
+        Ok(Ok(body)) => {
+            let recognized = [
+                ("error.message", body["error"]["message"].as_str()),
+                ("error.code", body["error"]["code"].as_str()),
+                ("error.param", body["error"]["param"].as_str()),
+                ("detail", body["detail"].as_str()),
+            ];
+            let mut found = false;
+            for (name, value) in recognized {
+                if let Some(value) = value {
+                    message.push_str(&format!(" {name}={}", diagnostic_text(value, access_token)));
+                    found = true;
+                }
+            }
+            if !found {
+                message.push_str(" Provider returned an unrecognized error response.");
+            }
+        }
+        Ok(Err(reason)) => {
+            message.push(' ');
+            message.push_str(reason);
+        }
+        Err(_) => message.push_str(" Reading provider error response timed out."),
+    }
+    if let Some(request_id) = request_id {
+        message.push_str(&format!(" request_id={request_id}"));
+    }
+    http_client::Error::InvalidStatusCodeWithMessage(status, message)
 }
 
 struct SiwcStreamGuard<S> {
@@ -502,6 +582,7 @@ fn namespace_function_tools(
         serde_json::json!([{
             "type": "namespace",
             "name": SIWC_TOOL_NAMESPACE,
+            "description": "Tools for working on the user's project in Sprocket.",
             "tools": functions,
         }]),
     );
@@ -605,6 +686,290 @@ mod tests {
         let credentials = StubCredentials::connected(connection);
         let client = ChatGptClient::new(credentials.clone()).unwrap();
         (credentials, client)
+    }
+
+    fn error_response(
+        status: http::StatusCode,
+        body: impl Into<reqwest::Body>,
+    ) -> reqwest::Response {
+        http::Response::builder()
+            .status(status)
+            .header("x-request-id", "req-test")
+            .body(body.into())
+            .unwrap()
+            .into()
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct HeaderlessStreamClient(SiwcHttpClient);
+
+    impl HttpClientExt for HeaderlessStreamClient {
+        fn send<T, U>(
+            &self,
+            req: Request<T>,
+        ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        + WasmCompatSend
+        + 'static
+        where
+            T: Into<Bytes> + WasmCompatSend,
+            U: From<Bytes> + WasmCompatSend + 'static,
+        {
+            self.0.send(req)
+        }
+
+        fn send_multipart<U>(
+            &self,
+            req: Request<rig::http_client::MultipartForm>,
+        ) -> impl Future<Output = http_client::Result<Response<http_client::LazyBody<U>>>>
+        + WasmCompatSend
+        + 'static
+        where
+            U: From<Bytes> + WasmCompatSend + 'static,
+        {
+            self.0.send_multipart(req)
+        }
+
+        fn send_streaming<T>(
+            &self,
+            req: Request<T>,
+        ) -> impl Future<Output = http_client::Result<http_client::StreamingResponse>> + WasmCompatSend
+        where
+            T: Into<Bytes> + WasmCompatSend,
+        {
+            let (_, connection) = self.0.authorization.as_ref().unwrap();
+            let connection = Arc::clone(connection);
+            async move {
+                assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
+                let body: serde_json::Value =
+                    serde_json::from_slice(&rewrite_request_body(&req.into_body().into())?)
+                        .unwrap();
+                assert_eq!(body["tools"][0]["type"], "namespace");
+                let event = json!({
+                    "type": "response.completed",
+                    "sequence_number": 0,
+                    "response": {
+                        "id": "resp-test",
+                        "object": "response",
+                        "created_at": 0,
+                        "status": "completed",
+                        "model": "gpt-6.1-sol",
+                        "output": [],
+                        "tools": [],
+                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                    }
+                });
+                let response = http::Response::builder()
+                    .header("x-request-id", "req-stream")
+                    .body(format!("data: {event}\n\n"))
+                    .unwrap()
+                    .into();
+                streaming_response(response, connection)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn responses_client_completes_a_headerless_siwc_stream() {
+        let (credentials, client) = stub_client("connection-1");
+        let http = HeaderlessStreamClient(SiwcHttpClient {
+            authorization: Some((credentials, Arc::clone(&client.connection))),
+            ..Default::default()
+        });
+        let model = openai::Client::builder()
+            .api_key("test-token")
+            .http_client(http)
+            .build()
+            .unwrap()
+            .completion_model("gpt-6.1-sol");
+        let mut stream = model
+            .stream(test_request(vec![Message::user("hello")]))
+            .await
+            .unwrap();
+        while let Some(item) = stream.next().await {
+            item.expect("Rig must accept the headerless SIWC handshake and parse its events");
+        }
+        let response = stream.response.expect("parsed terminal response");
+        assert_eq!(response.usage.total_tokens, 2);
+        assert_eq!(response.response_id.as_deref(), Some("resp-test"));
+        assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
+    }
+
+    #[tokio::test]
+    async fn streaming_response_supplies_missing_sse_content_type_and_preserves_events() {
+        let (_, client) = stub_client("connection-1");
+        let frame = Bytes::from_static(
+            b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+        );
+        let response = http::Response::builder()
+            .status(http::StatusCode::OK)
+            .version(http::Version::HTTP_2)
+            .header("x-request-id", "req-stream")
+            .body(frame.clone())
+            .unwrap()
+            .into();
+        let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(response.version(), http::Version::HTTP_2);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        assert_eq!(response.headers()["x-request-id"], "req-stream");
+        let mut stream = response.into_body();
+        assert_eq!(stream.next().await.unwrap().unwrap(), frame);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[test]
+    fn streaming_response_preserves_explicit_content_types() {
+        let (_, client) = stub_client("connection-1");
+        for content_type in ["text/event-stream; charset=utf-8", "application/json", ""] {
+            let response = http::Response::builder()
+                .header(http::header::CONTENT_TYPE, content_type)
+                .body("")
+                .unwrap()
+                .into();
+            let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
+            assert_eq!(response.headers()[http::header::CONTENT_TYPE], content_type);
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_response_requires_terminal_events_even_without_content_type() {
+        let (_, client) = stub_client("connection-1");
+        for body in [
+            "",
+            r#"{"detail":"not an SSE response"}"#,
+            "data: {not json}\n\n",
+        ] {
+            let response = http::Response::builder().body(body).unwrap().into();
+            let mut stream = streaming_response(response, Arc::clone(&client.connection))
+                .unwrap()
+                .into_body();
+            let error = stream
+                .by_ref()
+                .filter_map(|item| std::future::ready(item.err()))
+                .next()
+                .await
+                .expect("stream must report an error");
+            let http_client::Error::Instance(error) = error else {
+                panic!("expected terminal-event validation error");
+            };
+            assert_eq!(error.to_string(), STREAM_INTERRUPTED);
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn inference_errors_preserve_structured_diagnostics() {
+        let response = error_response(
+            http::StatusCode::BAD_REQUEST,
+            json!({"error": {
+                "message": "Missing required parameter: 'tools[0].description'.",
+                "code": "missing_required_parameter",
+                "param": "tools[0].description"
+            }})
+            .to_string(),
+        );
+        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            message,
+            "ChatGPT inference returned HTTP 400 Bad Request. error.message=\"Missing required parameter: 'tools[0].description'.\" error.code=\"missing_required_parameter\" error.param=\"tools[0].description\" request_id=\"req-test\""
+        );
+    }
+
+    #[tokio::test]
+    async fn inference_errors_preserve_direct_admission_details() {
+        let response = error_response(
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            json!({"detail": "Direct routing is unavailable."}).to_string(),
+        );
+        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert_eq!(status, http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            message,
+            "ChatGPT inference returned HTTP 503 Service Unavailable. detail=\"Direct routing is unavailable.\" request_id=\"req-test\""
+        );
+    }
+
+    #[tokio::test]
+    async fn inference_errors_bound_and_redact_diagnostic_text() {
+        let response = http::Response::builder()
+            .status(http::StatusCode::UNAUTHORIZED)
+            .header("x-request-id", "test-token")
+            .body(json!({"detail": format!("Bearer test-token\n{}", "é".repeat(2048))}).to_string())
+            .unwrap()
+            .into();
+        let http_client::Error::InvalidStatusCodeWithMessage(_, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert!(message.contains("Bearer [redacted]\\n"));
+        assert!(message.ends_with("...\" request_id=\"[redacted]\""));
+        assert!(message.len() < 2300);
+    }
+
+    #[tokio::test]
+    async fn inference_errors_keep_status_and_request_id_for_unusable_bodies() {
+        let unreadable = reqwest::Body::wrap_stream(futures::stream::iter([Err::<Bytes, _>(
+            std::io::Error::other("read failed"),
+        )]));
+        for (body, reason) in [
+            (
+                reqwest::Body::from("{not json"),
+                "Provider error response was not valid JSON.",
+            ),
+            (
+                reqwest::Body::from(r#"{"unexpected":"private data"}"#),
+                "Provider returned an unrecognized error response.",
+            ),
+            (
+                reqwest::Body::from(vec![b' '; ERROR_BODY_LIMIT + 1]),
+                "Provider error response was too large.",
+            ),
+            (unreadable, "Could not read provider error response."),
+        ] {
+            let response = error_response(http::StatusCode::BAD_GATEWAY, body);
+            let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+                inference_error(response, "test-token").await
+            else {
+                panic!("expected HTTP status and diagnostics");
+            };
+            assert_eq!(status, http::StatusCode::BAD_GATEWAY);
+            assert_eq!(
+                message,
+                format!(
+                    "ChatGPT inference returned HTTP 502 Bad Gateway. {reason} request_id=\"req-test\""
+                )
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inference_errors_keep_diagnostics_when_the_body_stalls() {
+        let body =
+            reqwest::Body::wrap_stream(futures::stream::pending::<Result<Bytes, std::io::Error>>());
+        let response = error_response(http::StatusCode::BAD_GATEWAY, body);
+        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
+            inference_error(response, "test-token").await
+        else {
+            panic!("expected HTTP status and diagnostics");
+        };
+        assert_eq!(status, http::StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            message,
+            "ChatGPT inference returned HTTP 502 Bad Gateway. Reading provider error response timed out. request_id=\"req-test\""
+        );
     }
 
     #[tokio::test]
@@ -872,6 +1237,11 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["type"], json!("namespace"));
         assert_eq!(tools[0]["name"], json!(SIWC_TOOL_NAMESPACE));
+        assert!(
+            tools[0]["description"]
+                .as_str()
+                .is_some_and(|description| !description.is_empty())
+        );
         let functions = tools[0]["tools"].as_array().unwrap();
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0]["type"], json!("function"));
@@ -892,11 +1262,9 @@ mod tests {
     #[test]
     fn siwc_body_shaping_is_idempotent() {
         let mut body = shaped_body(test_request(vec![Message::user("hello")]));
+        let original = body.clone();
         shape_siwc_body(&mut body).unwrap();
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["type"], json!("namespace"));
-        assert_eq!(tools[0]["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body, original);
     }
 
     #[test]

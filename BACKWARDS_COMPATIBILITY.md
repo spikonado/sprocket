@@ -4,14 +4,17 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Provider SDK backwards compatibility
 
-### ChatGPT account model discovery
+### SIWC streaming content type
 
-The local ChatGPT status response keeps its `models` list because released
-clients require it. OpenAI's SIWC list can lag behind working inference IDs.
-The current picker uses only OpenAI models, labels, and settings from the
-ai-gateway catalog, not the account list. Remove the account model lookup and
-the status `models` field only after clients that require them are outside the
-supported upgrade window. Credentials and stored model selections need no migration.
+The ChatGPT SIWC route can omit `Content-Type` on a successful streaming
+Responses request. Rig requires `text/event-stream` before consuming it, so
+the SIWC transport supplies that value only when the header is absent. Explicit
+content types remain unchanged, and the stream must still reach a parsed
+terminal Responses event. This does not change saved credentials or transcripts.
+
+Remove the fallback once the SIWC route consistently sends the SSE content type
+for supported accounts, or the installed Rig Responses client supports missing
+content types, and the headerless-stream regression passes without it.
 
 ### Retired gateway model eligibility fields
 

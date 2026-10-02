@@ -114,7 +114,6 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		fetchChatGptStatus: async () => ({
 			accounts: [],
 			activeConnectionId: null,
-			models: [],
 			loginAvailable: false
 		}),
 		startChatGptBrowserLogin: unused,
@@ -573,10 +572,7 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
 });
 
-it.each([
-	{ models: [{ id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' }] },
-	{ models: [], error: 'Could not load ChatGPT models. Retry or reconnect in Settings.' }
-])('launches ChatGPT despite stale or unavailable models %j', async (status) => {
+it('launches ChatGPT with a gateway model and a connected local account', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
 	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
@@ -588,8 +584,7 @@ it.each([
 			fetchChatGptStatus: async () => ({
 				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
 				activeConnectionId: 'chatgpt-1',
-				loginAvailable: true,
-				...status
+				loginAvailable: true
 			}),
 			runAgent
 		})
@@ -792,7 +787,6 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 		status.resolve({
 			accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
 			activeConnectionId: 'chatgpt-1',
-			models: [],
 			loginAvailable: true
 		});
 		configuration.resolve({ openai: false, chatgpt: false, chatgptModelIds: null });

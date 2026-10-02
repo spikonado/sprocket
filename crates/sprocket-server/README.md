@@ -105,9 +105,8 @@ session and stop using it after sign-out or account changes. Signing out does
 not delete conversations or projects.
 Inference uses the public OpenAI API, not Convex or ChatGPT's private backend.
 The picker uses OpenAI models, labels, and settings from the ai-gateway catalog.
-The status response retains the account's public `/v1/models` list for released
-clients, but the current picker does not use it as an access check. That list can
-lag behind working inference IDs. OpenAI enforces account access during inference.
+Local status checks validate credentials without fetching an account model list.
+OpenAI enforces account access during inference.
 
 Old cloud-held Codex grants cannot become SIWC grants. Convex retires those Vault
 objects and reports the old connection as disconnected. Users must sign in again

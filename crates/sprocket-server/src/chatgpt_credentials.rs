@@ -27,7 +27,6 @@ pub(crate) struct ChatGptService {
     path: Arc<PathBuf>,
     issuer: String,
     token_endpoint: String,
-    models_endpoint: String,
     client: reqwest::Client,
     watches: Arc<StdMutex<HashMap<String, watch::Sender<Option<String>>>>>,
     persistence_pending: Arc<AtomicBool>,
@@ -91,7 +90,6 @@ pub(crate) struct PendingGrant {
 pub(crate) struct ServiceStatus {
     accounts: Vec<AccountStatus>,
     active_connection_id: Option<String>,
-    models: Vec<ModelStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -102,12 +100,6 @@ struct AccountStatus {
     connection_id: String,
     label: String,
     connected: bool,
-}
-
-#[derive(Serialize)]
-struct ModelStatus {
-    id: String,
-    name: String,
 }
 
 #[derive(Deserialize)]
@@ -132,18 +124,6 @@ struct Identity {
 struct Discovery {
     issuer: String,
     revocation_endpoint: String,
-}
-
-#[derive(Deserialize)]
-struct ModelCatalog {
-    models: Vec<CatalogModel>,
-}
-
-#[derive(Deserialize)]
-struct CatalogModel {
-    slug: String,
-    display_name: String,
-    visibility: String,
 }
 
 #[derive(Deserialize)]
@@ -448,7 +428,6 @@ impl ChatGptService {
             path: Arc::new(path),
             issuer: issuer.to_owned(),
             token_endpoint: format!("{issuer}/api/accounts/oauth/token"),
-            models_endpoint: format!("{RESOURCE}/models"),
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .retry(reqwest::retry::never())
@@ -1112,56 +1091,13 @@ impl ChatGptService {
                 }
                 state.users.get(&user).and_then(session).is_some()
             };
-            let mut models = Vec::new();
-            let mut model_session = None;
             if connected && error.is_none() {
-                match service.access(&user).await {
-                    Ok(access) => {
-                        model_session = Some(access.connection_id);
-                        let result = async {
-                            let response = service
-                                .client
-                                .get(&service.models_endpoint)
-                                .bearer_auth(&access.access_token)
-                                .send()
-                                .await
-                                .context("Could not load ChatGPT models.")?;
-                            ensure!(
-                                response.status().is_success(),
-                                "Could not load ChatGPT models. Retry or reconnect in Settings."
-                            );
-                            let catalog: ModelCatalog = json(response).await?;
-                            Ok::<_, anyhow::Error>(
-                                catalog
-                                    .models
-                                    .into_iter()
-                                    .filter(|model| model.visibility == "list")
-                                    .map(|model| ModelStatus {
-                                        id: model.slug,
-                                        name: model.display_name,
-                                    })
-                                    .collect::<Vec<ModelStatus>>(),
-                            )
-                        }
-                        .await;
-                        match result {
-                            Ok(discovered) => models = discovered,
-                            Err(failure) => error = Some(failure.to_string()),
-                        }
-                    }
-                    Err(failure) => {
-                        error = Some(failure.to_string());
-                    }
+                if let Err(failure) = service.access(&user).await {
+                    error = Some(failure.to_string());
                 }
             }
             let state = service.state.lock().await;
             let accounts = state.users.get(&user).cloned().unwrap_or_default();
-            if let Some(model_session) = model_session {
-                if session(&accounts).as_deref() != Some(&model_session) {
-                    models.clear();
-                    error = Some("ChatGPT account changed while loading models. Retry.".to_owned());
-                }
-            }
             Ok(ServiceStatus {
                 accounts: accounts
                     .accounts
@@ -1177,7 +1113,6 @@ impl ChatGptService {
                     })
                     .collect(),
                 active_connection_id: accounts.active,
-                models,
                 error: match (error, cleanup_warning) {
                     (Some(error), Some(warning)) => Some(format!("{error} {warning}")),
                     (error, warning) => error.or(warning),
@@ -1238,7 +1173,6 @@ mod tests {
         revoke_status: u16,
         hold_token: bool,
         hold_revoke: bool,
-        models: (u16, String),
     }
 
     #[derive(Clone)]
@@ -1391,7 +1325,6 @@ mod tests {
                         ),
                         "/.well-known/jwks.json" => (200, provider.jwks.clone()),
                         "/api/accounts/oauth/token" => shared.token.clone(),
-                        "/models" => shared.models.clone(),
                         "/revoke" => (shared.revoke_status, String::new()),
                         _ => panic!("unexpected provider request path {path}"),
                     }
@@ -1447,16 +1380,11 @@ mod tests {
                 revoke_status: 200,
                 hold_token: false,
                 hold_revoke: false,
-                models: (200, serde_json::json!({"models": [
-                    {"slug": "gpt-visible", "display_name": "Visible model", "visibility": "list"},
-                    {"slug": "gpt-hidden", "display_name": "Hidden model", "visibility": "hidden"}
-                ]}).to_string()),
             })),
             arrivals: Arc::new(AtomicUsize::new(0)),
         };
         tokio::spawn(serve(listener, provider.clone()));
-        let mut service = ChatGptService::test_load(directory.path(), &issuer);
-        Arc::get_mut(&mut service).unwrap().models_endpoint = format!("{issuer}/models");
+        let service = ChatGptService::test_load(directory.path(), &issuer);
         Fixture {
             service,
             provider,
@@ -2252,7 +2180,6 @@ mod tests {
             );
             let status = reloaded.status("user-a").await.unwrap();
             assert!(status.accounts.is_empty());
-            assert!(status.models.is_empty());
             assert_eq!(status.active_connection_id, None);
             assert_eq!(status.error.is_some(), revoke_status != 200);
             let posts = fixture.provider.posts("/revoke");
@@ -2265,7 +2192,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleanup_warning_preserves_healthy_account_models() {
+    async fn cleanup_warning_preserves_healthy_account_status() {
         let fixture = fixture().await;
         fixture.provider.set_revoke_status(500);
         insert(
@@ -2292,8 +2219,7 @@ mod tests {
         let status = fixture.service.status("user-a").await.unwrap();
         assert_eq!(status.accounts.len(), 1);
         assert_eq!(status.active_connection_id.as_deref(), Some("healthy"));
-        assert_eq!(status.models.len(), 1);
-        assert_eq!(status.models[0].id, "gpt-visible");
+        assert!(status.accounts[0].connected);
         assert!(status.error.unwrap().contains("could not be confirmed"));
     }
 
@@ -2412,10 +2338,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_lookup_failure_preserves_legacy_revocation_guidance() {
+    async fn credential_refresh_failure_preserves_legacy_revocation_guidance() {
         let fixture = fixture().await;
         fixture.provider.set_revoke_status(500);
-        fixture.provider.shared.lock().unwrap().models = (500, String::new());
         insert(
             &fixture.service,
             "user-a",
@@ -2429,7 +2354,7 @@ mod tests {
                     "subject-current",
                     "access-current",
                     "refresh-current",
-                    now() + 3600,
+                    now() - 10,
                 )),
             ),
         )
@@ -2441,7 +2366,7 @@ mod tests {
         assert_eq!(status.accounts.len(), 1);
         assert!(status.accounts[0].connected);
         let error = status.error.unwrap();
-        assert!(error.contains("Could not load ChatGPT models"));
+        assert!(error.contains("ChatGPT refresh is temporarily unavailable"));
         assert!(error.contains("OpenAI revocation could not be confirmed"));
         assert!(error.contains("Remove the agent in ChatGPT settings"));
     }
@@ -2546,7 +2471,6 @@ mod tests {
         let status = fixture.service.status("user-a").await.unwrap();
         assert_eq!(status.accounts.len(), 1);
         assert_eq!(status.accounts[0].connection_id, "connection-3");
-        assert!(status.models.is_empty());
     }
 
     #[tokio::test]
@@ -2585,7 +2509,6 @@ mod tests {
         let status = fixture.service.status("user-a").await.unwrap();
         assert!(status.accounts.is_empty());
         assert_eq!(status.active_connection_id, None);
-        assert!(status.models.is_empty());
 
         let revocations = fixture.provider.posts("/revoke");
         assert_eq!(revocations.len(), 1, "disconnect must attempt revocation");
@@ -2689,7 +2612,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_keeps_account_controls_available_during_model_outages() {
+    async fn status_reports_a_connected_account_with_fresh_credentials() {
         let fixture = fixture().await;
         insert(
             &fixture.service,
@@ -2710,25 +2633,90 @@ mod tests {
         )
         .await;
         let status = fixture.service.status("user-a").await.unwrap();
-        assert_eq!(status.models.len(), 1);
-        assert_eq!(status.models[0].id, "gpt-visible");
-        assert_eq!(status.models[0].name, "Visible model");
-        fixture.provider.shared.lock().unwrap().models = (500, String::new());
-        let status = fixture.service.status("user-a").await.unwrap();
-        assert_eq!(status.accounts[0].connection_id, "connection-1");
-        assert!(status.accounts[0].connected);
-        assert!(status.models.is_empty());
-        assert!(
-            status
-                .error
-                .unwrap()
-                .contains("Could not load ChatGPT models")
+        assert_eq!(
+            serde_json::to_value(status).unwrap(),
+            serde_json::json!({
+                "accounts": [{
+                    "connectionId": "connection-1",
+                    "label": "agent@example.com",
+                    "connected": true
+                }],
+                "activeConnectionId": "connection-1"
+            })
         );
-        fixture
-            .service
-            .disconnect("user-a", "connection-1")
+    }
+
+    #[tokio::test]
+    async fn status_refreshes_expired_credentials() {
+        let fixture = fixture().await;
+        insert(
+            &fixture.service,
+            "user-a",
+            account(
+                "connection-1",
+                "client-1",
+                "subject-1",
+                Some(tokens(
+                    &fixture,
+                    "client-1",
+                    "subject-1",
+                    "access-old",
+                    "refresh-old",
+                    now() - 10,
+                )),
+            ),
+        )
+        .await;
+        fixture.provider.set_token(
+            200,
+            token_response("access-new", "refresh-new", None, None, 3600),
+        );
+        let status = fixture.service.status("user-a").await.unwrap();
+        assert_eq!(status.active_connection_id.as_deref(), Some("connection-1"));
+        assert!(status.accounts[0].connected);
+        assert_eq!(status.error, None);
+        let refreshed = stored_account(&fixture.service, "user-a", "connection-1")
             .await
+            .tokens
             .unwrap();
+        assert_eq!(refreshed.access_token, "access-new");
+        assert_eq!(refreshed.refresh_token, "refresh-new");
+    }
+
+    #[tokio::test]
+    async fn status_reports_revoked_credentials_as_disconnected() {
+        let fixture = fixture().await;
+        insert(
+            &fixture.service,
+            "user-a",
+            account(
+                "connection-1",
+                "client-1",
+                "subject-1",
+                Some(tokens(
+                    &fixture,
+                    "client-1",
+                    "subject-1",
+                    "access-old",
+                    "refresh-old",
+                    now() - 10,
+                )),
+            ),
+        )
+        .await;
+        fixture.provider.set_token(
+            400,
+            serde_json::json!({"error": "invalid_grant"}).to_string(),
+        );
+        let status = fixture.service.status("user-a").await.unwrap();
+        assert!(status.accounts.is_empty());
+        assert!(status.error.unwrap().contains("session expired"));
+        assert!(
+            stored_account(&fixture.service, "user-a", "connection-1")
+                .await
+                .tokens
+                .is_none()
+        );
     }
 
     #[tokio::test]

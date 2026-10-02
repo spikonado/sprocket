@@ -684,13 +684,12 @@ describe('transcript attachment fetch', () => {
 });
 
 describe('chatgpt local sign-in', () => {
-	it.each([undefined, 'Could not load ChatGPT models. Retry later.'])(
+	it.each([undefined, 'ChatGPT refresh is temporarily unavailable. Retry later.'])(
 		'fetches account status with optional guidance %s',
 		async (error) => {
 			const status: ChatGptStatus = {
 				accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
 				activeConnectionId: 'conn-1',
-				models: [{ id: 'gpt-5.4', name: 'GPT-5.4' }],
 				loginAvailable: true
 			};
 

@@ -33,7 +33,6 @@ function statusFixture(overrides: Partial<ChatGptStatus> = {}): ChatGptStatus {
 	return {
 		accounts: [],
 		activeConnectionId: null,
-		models: [],
 		loginAvailable: true,
 		...overrides
 	};
@@ -180,8 +179,7 @@ it('opens browser sign-in on the first click and reports the refreshed status', 
 
 	const connectedStatus = statusFixture({
 		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
-		activeConnectionId: 'conn-1',
-		models: [{ id: 'test-model', name: 'Test Model' }]
+		activeConnectionId: 'conn-1'
 	});
 
 	const start = vi.fn(async () => ({
@@ -479,8 +477,7 @@ it('switches the active account and reports the refreshed status', async () => {
 			{ connectionId: 'conn-1', label: 'a@example.com', connected: true },
 			{ connectionId: 'conn-2', label: 'b@example.com', connected: true }
 		],
-		activeConnectionId: 'conn-1',
-		models: [{ id: 'model-a', name: 'Model A' }]
+		activeConnectionId: 'conn-1'
 	});
 
 	const switchedStatus = { ...status, activeConnectionId: 'conn-2' };
@@ -502,8 +499,7 @@ it('signs an account out on the first click and shows the server warning', async
 
 	const status = statusFixture({
 		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
-		activeConnectionId: 'conn-1',
-		models: [{ id: 'model-a', name: 'Model A' }]
+		activeConnectionId: 'conn-1'
 	});
 
 	const signedOutStatus = statusFixture();
@@ -527,8 +523,7 @@ it('forgets a signed-out account before a follow-up status check settles', async
 
 	const status = statusFixture({
 		accounts: [{ connectionId: 'conn-1', label: 'Account A', connected: true }],
-		activeConnectionId: 'conn-1',
-		models: [{ id: 'model-a', name: 'Model A' }]
+		activeConnectionId: 'conn-1'
 	});
 
 	const view = mount(new ConvexTestClient(), {
