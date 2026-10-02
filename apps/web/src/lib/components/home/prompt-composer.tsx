@@ -18,6 +18,7 @@ import {
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
 import { formatCountdownDuration } from '$lib/format';
+import { useUsageTime } from '$lib/usage-time';
 import AgentQuestion from '$lib/components/home/agent-question';
 import RunElapsed from '$lib/components/home/run-elapsed';
 import RunningCommands from '$lib/components/home/running-commands';
@@ -986,10 +987,11 @@ export function PromptComposerView({
 
 export default function PromptComposer(props: PromptComposerProps) {
 	const convexAuth = useConvexAuth();
+	const usageTime = useUsageTime();
 
 	const usageQuery = useQuery_experimental({
 		query: api.usage.getMyUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now: usageTime } : 'skip'
 	});
 
 	return (

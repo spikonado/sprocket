@@ -1,18 +1,21 @@
 import { query } from '@convex/_generated/server';
+import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vMyUsage } from '@convex/lib/docs';
 import { getMeterWindow, usageMeters, usagePeriods } from '@convex/lib/rateLimits';
-import { getSubscriptionDoc, resolveTierInfo, subscriptionTier } from '@convex/lib/tiers';
+import { getSubscriptionDoc, resolveTier, subscriptionMaterializedTier } from '@convex/lib/tiers';
 
 export const getMyUsage = query({
-	args: {},
+	args: { now: v.optional(v.number()) },
 	returns: vMyUsage,
-	handler: async (ctx) => {
-		const now = Date.now();
+	handler: async (ctx, args) => {
+		const now = args.now ?? Date.now();
+
+		if (!Number.isFinite(now)) throw new Error('Usage display time must be finite.');
 		const userId = await getUserId(ctx);
 		const subscription = await getSubscriptionDoc(ctx, userId);
-		const tier = subscriptionTier(subscription, now);
-		const { limits, label: tierLabel } = await resolveTierInfo(ctx, tier);
+		const tier = subscriptionMaterializedTier(subscription);
+		const { limits, label: tierLabel } = await resolveTier(ctx, tier);
 
 		const meters = await Promise.all(
 			usageMeters.map(async (meter) => ({

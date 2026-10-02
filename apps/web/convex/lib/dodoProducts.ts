@@ -18,7 +18,7 @@ export type DodoPublicPrice = Infer<typeof vDodoPublicPrice>;
 export type DodoEnvironment = 'test_mode' | 'live_mode';
 
 export function readDodoEnvironment(env: { DODO_PAYMENTS_ENVIRONMENT?: string }): DodoEnvironment {
-	const value = env.DODO_PAYMENTS_ENVIRONMENT?.trim() || 'test_mode';
+	const value = env.DODO_PAYMENTS_ENVIRONMENT?.trim();
 
 	if (value !== 'test_mode' && value !== 'live_mode') {
 		throw new Error('DODO_PAYMENTS_ENVIRONMENT must be test_mode or live_mode.');

@@ -34,7 +34,7 @@ describe('billing portal recovery', () => {
 				await ctx.db.insert('billingCustomers', { userId: 'other', dodoCustomerId: 'cus_other' });
 			});
 			const owner = t.withIdentity({ subject: 'owner' });
-			await expect(owner.query(api.billing.getMySubscription, {})).resolves.toEqual({
+			await expect(owner.query(api.billing.getMySubscription, {})).resolves.toMatchObject({
 				tier: 'free',
 				tierLabel: 'Free',
 				billingManaged: true

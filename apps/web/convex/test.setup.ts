@@ -67,6 +67,8 @@ export function initConvexTest(): ConvexTestInstance {
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
+	workpoolTest.register(backend, 'billingWebhookWorkpool');
+	workpoolTest.register(backend, 'billingReconciliationWorkpool');
 
 	return t;
 }

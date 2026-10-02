@@ -1,39 +1,44 @@
-import type { Subscription } from '@dodopayments/convex';
 import { vi } from 'vitest';
 import type { ConvexTestInstance } from './test.setup';
 
 const WEBHOOK_SECRET = 'test_webhook_secret';
 
-export function subscriptionPayload(overrides: Partial<Subscription> = {}): Subscription {
+export type WebhookSubscriptionPayload = {
+	payload_type: 'Subscription';
+	subscription_id: string;
+	product_id: string;
+	status: string;
+	previous_billing_date: Date;
+	next_billing_date: Date;
+	cancel_at_next_billing_date: boolean;
+	payment_frequency_count: number;
+	payment_frequency_interval: string;
+	customer: { customer_id: string; email?: string; name?: string };
+	metadata?: { userId?: string; tierId?: string; checkoutAttemptId?: string };
+	scheduled_change?: {
+		id: string;
+		product_id: string;
+		effective_at: Date;
+	} | null;
+};
+
+export function subscriptionPayload(
+	overrides: Partial<WebhookSubscriptionPayload> = {}
+): WebhookSubscriptionPayload {
 	const now = Date.now();
 
 	return {
 		payload_type: 'Subscription',
-		addons: [],
-		billing: { city: null, country: 'US', state: null, street: null, zipcode: null },
-		brand_id: 'brand',
 		cancel_at_next_billing_date: false,
-		created_at: new Date(now - 60_000),
-		credit_entitlement_cart: [],
-		currency: 'USD',
 		customer: { customer_id: 'cus_owner', email: 'owner@example.com', name: 'Owner' },
 		metadata: { userId: 'owner', tierId: 'pro' },
-		meter_credit_entitlement_cart: [],
-		meters: [],
 		next_billing_date: new Date(now + 60_000),
-		on_demand: false,
 		payment_frequency_count: 1,
 		payment_frequency_interval: 'Month',
 		previous_billing_date: new Date(now - 60_000),
 		product_id: 'prod_pro',
-		quantity: 1,
-		recurring_pre_tax_amount: 2_000,
 		status: 'active',
 		subscription_id: 'sub_owner',
-		subscription_period_count: 1,
-		subscription_period_interval: 'Month',
-		tax_inclusive: false,
-		trial_period_days: 0,
 		...overrides
 	};
 }
@@ -41,11 +46,9 @@ export function subscriptionPayload(overrides: Partial<Subscription> = {}): Subs
 export async function sendSubscriptionWebhook(
 	t: ConvexTestInstance,
 	type: string,
-	data: Subscription,
+	data: WebhookSubscriptionPayload,
 	eventAt = Date.now()
 ) {
-	vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', btoa(WEBHOOK_SECRET));
-
 	const body = JSON.stringify({
 		business_id: 'business',
 		type,
@@ -53,7 +56,22 @@ export async function sendSubscriptionWebhook(
 		data
 	});
 
-	const webhookId = `webhook_${crypto.randomUUID()}`;
+	return await sendRawWebhook(t, body);
+}
+
+/** Sign and POST a raw body, optionally with a tampered signature. */
+export async function sendRawWebhook(
+	t: ConvexTestInstance,
+	body: string,
+	options: { webhookId?: string; tamperSignature?: boolean } = {}
+) {
+	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
+	vi.stubEnv(
+		'DODO_PAYMENTS_WEBHOOK_SECRET',
+		`whsec_${Buffer.from(WEBHOOK_SECRET).toString('base64url')}`
+	);
+
+	const webhookId = options.webhookId ?? `webhook_${crypto.randomUUID()}`;
 	const timestamp = String(Math.floor(Date.now() / 1_000));
 	const encoder = new TextEncoder();
 
@@ -71,13 +89,35 @@ export async function sendSubscriptionWebhook(
 		encoder.encode(`${webhookId}.${timestamp}.${body}`)
 	);
 
+	const signatureHeader = options.tamperSignature
+		? 'v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+		: `v1,${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+
 	return await t.fetch('/dodopayments-webhook', {
 		method: 'POST',
 		body,
 		headers: {
 			'webhook-id': webhookId,
 			'webhook-timestamp': timestamp,
-			'webhook-signature': `v1,${btoa(String.fromCharCode(...new Uint8Array(signature)))}`
+			'webhook-signature': signatureHeader
 		}
 	});
+}
+
+export async function drainWebhookJobs(t: ConvexTestInstance): Promise<void> {
+	for (let round = 0; round < 100; round++) {
+		await vi.advanceTimersByTimeAsync(10);
+		await t.finishInProgressScheduledFunctions();
+
+		const pending = await t.run((ctx) =>
+			ctx.db
+				.query('dodoWebhookEvents')
+				.withIndex('by_outcome_and_nextAttemptAt', (q) => q.eq('outcome', 'pending'))
+				.collect()
+		);
+
+		if (pending.length === 0) return;
+	}
+
+	throw new Error('Webhook workers did not finish within the near-now drain window.');
 }

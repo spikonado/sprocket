@@ -78,4 +78,32 @@ crons.interval(
 	{}
 );
 
+crons.interval(
+	'retry failed Dodo webhook processing',
+	{ minutes: 15 },
+	internal.billingWebhook.retryPending,
+	{}
+);
+
+crons.interval(
+	'backfill Dodo webhook ingestion sequences',
+	{ hours: 1 },
+	internal.billingWebhook.backfillSequences,
+	{}
+);
+
+crons.interval(
+	'prune Dodo webhook payloads and expired dedup rows',
+	{ hours: 12 },
+	internal.billingWebhook.cleanupEvents,
+	{}
+);
+
+crons.interval(
+	'compact terminal Dodo checkout history',
+	{ hours: 24 },
+	internal.billing.cleanupCheckoutHistory,
+	{}
+);
+
 export default crons;
