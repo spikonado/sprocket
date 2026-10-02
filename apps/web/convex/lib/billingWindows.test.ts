@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { Doc } from '@convex/_generated/dataModel';
-import { billingWindow } from './billingWindows';
+import { billingWindow, type BillingWindowSubscription } from './billingWindows';
 
 const timestamp = (value: string) => Date.parse(value);
 
-function paidSubscription(interval: 'monthly' | 'annual', start: string, end: string) {
-	// SAFETY: the literal sets exactly the subscription fields billingWindow reads,
-	// and the remaining Doc<'subscriptions'> fields are unused by the code under test.
+function paidSubscription(
+	interval: 'monthly' | 'annual',
+	start: string,
+	end: string,
+	overrides: Partial<BillingWindowSubscription> = {}
+) {
 	return {
-		status: 'active',
+		status: 'active' as const,
+		dodoSubscriptionId: 'sub_test',
 		billingInterval: interval,
 		billingPeriodStart: timestamp(start),
-		billingPeriodEnd: timestamp(end)
-	} as Doc<'subscriptions'>;
+		billingPeriodEnd: timestamp(end),
+		...overrides
+	};
 }
 
 describe('UTC usage windows', () => {
@@ -56,6 +60,18 @@ describe('UTC usage windows', () => {
 		expect(billingWindow('monthly', paid, timestamp('2026-04-30T18:45:11Z'))).toEqual({
 			start: timestamp('2026-04-30T18:45:11Z'),
 			end: timestamp('2026-05-31T18:45:11Z')
+		});
+	});
+
+	it('keeps operator grants on calendar windows even with billing dates present', () => {
+		const grant = paidSubscription('annual', '2026-01-31T18:45:11Z', '2027-01-31T18:45:11Z', {
+			dodoSubscriptionId: undefined,
+			billingPeriodEnded: true
+		});
+
+		expect(billingWindow('monthly', grant, timestamp('2026-02-28T18:45:10Z'))).toEqual({
+			start: timestamp('2026-02-01T00:00:00Z'),
+			end: timestamp('2026-03-01T00:00:00Z')
 		});
 	});
 });

@@ -1,9 +1,20 @@
 import type { Doc } from '@convex/_generated/dataModel';
+import { subscriptionIsActive } from '@convex/lib/tiers';
 import type { UsagePeriod } from '@convex/lib/usageMeters';
 
 const DAY = 86_400_000;
 
 type UsageWindow = { start: number; end: number };
+
+export type BillingWindowSubscription = Pick<
+	Doc<'subscriptions'>,
+	| 'status'
+	| 'dodoSubscriptionId'
+	| 'billingInterval'
+	| 'billingPeriodStart'
+	| 'billingPeriodEnd'
+	| 'billingPeriodEnded'
+>;
 
 function utcMonth(year: number, month: number, day: number, anchor: Date): number {
 	const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
@@ -21,8 +32,8 @@ function utcMonth(year: number, month: number, day: number, anchor: Date): numbe
 
 export function billingWindow(
 	period: UsagePeriod,
-	subscription: Doc<'subscriptions'> | null,
-	now: number
+	subscription: BillingWindowSubscription | null,
+	now: number = Date.now()
 ): UsageWindow {
 	const date = new Date(now);
 
@@ -33,10 +44,7 @@ export function billingWindow(
 		return { start: monday, end: monday + 7 * DAY };
 	}
 
-	const paid =
-		subscription?.status === 'active' &&
-		subscription.billingPeriodEnded !== true &&
-		(subscription.billingPeriodEnd === undefined || now < subscription.billingPeriodEnd);
+	const paid = subscriptionIsActive(subscription, now) && !!subscription.dodoSubscriptionId;
 
 	if (paid && subscription.billingInterval === 'monthly') {
 		if (

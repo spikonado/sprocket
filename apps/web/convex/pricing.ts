@@ -7,34 +7,18 @@ import { action, env, internalAction } from '@convex/_generated/server';
 import {
 	matchesBillingInterval,
 	readDodoEnvironment,
-	vDodoPublicPrice,
 	type BillingInterval,
 	type DodoPublicPrice
 } from '@convex/lib/dodoProducts';
+import {
+	vPublicPricingCatalog,
+	type PublicPricingCatalog,
+	type PublicPricingPlan,
+	type TierPricingConfig
+} from '@convex/lib/pricingValidators';
 import { vBillingInterval } from '@convex/lib/validators';
 
 const DODO_PRICE_CACHE_TTL_MS = 5 * 60 * 1_000;
-
-type PublicPricingPlan = {
-	id: string;
-	label: string;
-	weeklyUsageDollars: number;
-	monthlyUsageDollars: number;
-	description: string | null;
-	features: string[];
-	displayOrder: number;
-	highlighted: boolean;
-	prices: { monthly: DodoPublicPrice | null; annual: DodoPublicPrice | null };
-};
-
-type TierPricingConfig = Omit<PublicPricingPlan, 'prices'> & {
-	monthlyProductId: string | null;
-	annualProductId: string | null;
-};
-
-type PublicPricingCatalog = {
-	plans: PublicPricingPlan[];
-};
 
 function publicPlanFromConfig(
 	plan: TierPricingConfig,
@@ -52,24 +36,6 @@ function publicPlanFromConfig(
 		prices
 	};
 }
-
-const vOptionalDodoPrice = v.union(v.null(), vDodoPublicPrice);
-
-const vPublicPricingCatalog = v.object({
-	plans: v.array(
-		v.object({
-			id: v.string(),
-			label: v.string(),
-			weeklyUsageDollars: v.number(),
-			monthlyUsageDollars: v.number(),
-			description: v.union(v.string(), v.null()),
-			features: v.array(v.string()),
-			displayOrder: v.number(),
-			highlighted: v.boolean(),
-			prices: v.object({ monthly: vOptionalDodoPrice, annual: vOptionalDodoPrice })
-		})
-	)
-});
 
 function createDodoClient(): DodoPayments {
 	return new DodoPayments({
@@ -173,6 +139,20 @@ export const createCheckoutSession = internalAction({
 		if (!session.checkout_url) throw new Error('Checkout session did not return a URL.');
 
 		return { checkoutUrl: session.checkout_url };
+	}
+});
+
+export const createCustomerPortal = internalAction({
+	args: { dodoCustomerId: v.string() },
+	returns: v.object({ portal_url: v.string() }),
+	handler: async (_ctx, { dodoCustomerId }) => {
+		const session = await createDodoClient().customers.customerPortal.create(dodoCustomerId, {
+			send_email: false
+		});
+
+		if (!session.link) throw new Error('Customer portal did not return a URL.');
+
+		return { portal_url: session.link };
 	}
 });
 

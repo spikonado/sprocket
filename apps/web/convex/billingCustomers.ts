@@ -10,15 +10,6 @@ export const get = internalQuery({
 			.unique()
 });
 
-export const getByDodoId = internalQuery({
-	args: { dodoCustomerId: v.string() },
-	handler: async (ctx, { dodoCustomerId }) =>
-		await ctx.db
-			.query('billingCustomers')
-			.withIndex('by_dodoCustomerId', (query) => query.eq('dodoCustomerId', dodoCustomerId))
-			.unique()
-});
-
 export const remember = internalMutation({
 	args: { userId: v.string(), dodoCustomerId: v.string() },
 	returns: v.string(),

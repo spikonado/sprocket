@@ -23,7 +23,7 @@ export const modules = import.meta.glob([
 	'!./**/*.test.ts',
 	'!./**/*.config.ts',
 	'!./**/*.d.ts',
-	'!./**/test.setup.ts'
+	'!./**/*test.setup.ts'
 ]);
 
 export type ConvexTestInstance = TestConvex<typeof schema>;

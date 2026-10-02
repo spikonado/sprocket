@@ -165,13 +165,6 @@ describe('Dodo subscription persistence', () => {
 				now: 2_000
 			})
 		).resolves.toEqual(first);
-		await expect(
-			t.query(internal.billing.getCheckoutTier, {
-				userId: 'user_checkout',
-				attemptId: 'attempt_1',
-				productId: 'prod_monthly'
-			})
-		).resolves.toBe('pro');
 		await t.mutation(internal.billing.attachCheckoutSession, {
 			userId: 'user_checkout',
 			attemptId: 'attempt_1',
@@ -351,12 +344,6 @@ describe('Dodo subscription persistence', () => {
 		await expect(
 			t.withIdentity({ subject: args.userId }).query(api.billing.getMySubscription, {})
 		).resolves.toMatchObject({ tier: 'team', tierLabel: 'Team', billingManaged: true });
-		await expect(
-			t.query(internal.billing.getDodoSubscriptionTier, {
-				userId: args.userId,
-				dodoSubscriptionId: args.dodoSubscriptionId
-			})
-		).resolves.toBe('team');
 		await expect(
 			t.query(internal.billingCustomers.get, { userId: args.userId })
 		).resolves.toMatchObject({ dodoCustomerId: 'cus_1' });

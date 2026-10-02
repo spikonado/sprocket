@@ -1,13 +1,37 @@
 import { v } from 'convex/values';
+import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import { internalMutation, internalQuery } from '@convex/_generated/server';
-import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
+import type { DataModel } from '@convex/_generated/dataModel';
+import { vTierPrice, vTierPricingConfig } from '@convex/lib/pricingValidators';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 
-const vTierPrice = v.object({
-	tierId: v.string(),
-	interval: v.union(v.literal('monthly'), v.literal('annual')),
-	price: vDodoPublicPrice
-});
+/**
+ * Dodo products must be assigned to exactly one tier interval. Returns the
+ * owning tier id, or null when unassigned; multiple assignments fail fast.
+ */
+export async function lookupTierForProduct(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	productId: string
+): Promise<string | null> {
+	const [monthly, annual] = await Promise.all([
+		ctx.db
+			.query('tiers')
+			.withIndex('by_monthlyProductId', (query) => query.eq('monthlyProductId', productId))
+			.take(2),
+		ctx.db
+			.query('tiers')
+			.withIndex('by_annualProductId', (query) => query.eq('annualProductId', productId))
+			.take(2)
+	]);
+
+	const assignments = [...monthly, ...annual];
+
+	if (assignments.length > 1) {
+		throw new Error(`Dodo product "${productId}" is assigned more than once.`);
+	}
+
+	return assignments[0]?.tierId ?? null;
+}
 
 export const getCachedTierPrices = internalQuery({
 	args: { cacheKey: v.string(), now: v.number() },
@@ -40,20 +64,7 @@ export const cacheTierPrices = internalMutation({
 
 export const getPublicPlans = internalQuery({
 	args: {},
-	returns: v.array(
-		v.object({
-			id: v.string(),
-			label: v.string(),
-			weeklyUsageDollars: v.number(),
-			monthlyUsageDollars: v.number(),
-			description: v.union(v.string(), v.null()),
-			features: v.array(v.string()),
-			displayOrder: v.number(),
-			highlighted: v.boolean(),
-			monthlyProductId: v.union(v.string(), v.null()),
-			annualProductId: v.union(v.string(), v.null())
-		})
-	),
+	returns: v.array(vTierPricingConfig),
 	handler: async (ctx) => {
 		const tiers = await ctx.db.query('tiers').collect();
 		const seen = new Set<string>();
@@ -105,20 +116,7 @@ export const getTierProduct = internalQuery({
 
 		if (!productId) return null;
 
-		const [monthly, annual] = await Promise.all([
-			ctx.db
-				.query('tiers')
-				.withIndex('by_monthlyProductId', (query) => query.eq('monthlyProductId', productId))
-				.take(2),
-			ctx.db
-				.query('tiers')
-				.withIndex('by_annualProductId', (query) => query.eq('annualProductId', productId))
-				.take(2)
-		]);
-
-		if (monthly.length + annual.length !== 1) {
-			throw new Error(`Dodo product "${productId}" is assigned more than once.`);
-		}
+		if ((await lookupTierForProduct(ctx, productId)) === null) return null;
 
 		return productId;
 	}
@@ -127,24 +125,5 @@ export const getTierProduct = internalQuery({
 export const getTierForProduct = internalQuery({
 	args: { productId: v.string() },
 	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, { productId }) => {
-		const [monthly, annual] = await Promise.all([
-			ctx.db
-				.query('tiers')
-				.withIndex('by_monthlyProductId', (query) => query.eq('monthlyProductId', productId))
-				.take(2),
-			ctx.db
-				.query('tiers')
-				.withIndex('by_annualProductId', (query) => query.eq('annualProductId', productId))
-				.take(2)
-		]);
-
-		const assignments = [...monthly, ...annual];
-
-		if (assignments.length > 1) {
-			throw new Error(`Dodo product "${productId}" is assigned more than once.`);
-		}
-
-		return assignments[0]?.tierId ?? null;
-	}
+	handler: async (ctx, { productId }) => await lookupTierForProduct(ctx, productId)
 });

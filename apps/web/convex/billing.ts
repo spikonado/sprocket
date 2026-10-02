@@ -1,70 +1,26 @@
-import { DodoPayments } from '@dodopayments/convex';
 import { v } from 'convex/values';
-import { components, internal } from '@convex/_generated/api';
-import {
-	action,
-	env,
-	internalMutation,
-	internalQuery,
-	mutation,
-	query
-} from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
+import { action, env, internalMutation, mutation, query } from '@convex/_generated/server';
 import { ensureCurrentUser, getUserId, requireIdentity } from '@convex/lib/auth';
-import { readDodoEnvironment } from '@convex/lib/dodoProducts';
+import { resolveSubscriptionTier } from '@convex/lib/dodoSubscription';
 import { resolveMarketingPricingUrls } from '@convex/lib/marketingOrigin';
 import {
 	ensureSubscription,
 	getSubscriptionDoc,
 	getSubscriptionDocExclusive,
 	getTierLabel,
-	subscriptionIsActive
+	subscriptionIsActive,
+	subscriptionTier
 } from '@convex/lib/tiers';
 import { vBillingInterval, vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
-
-const dodo = new DodoPayments(components.dodopayments, {
-	identify: async (ctx): Promise<{ dodoCustomerId: string } | null> => {
-		const userId = await getUserId(ctx);
-		const customer = await ctx.runQuery(internal.billingCustomers.get, { userId });
-
-		return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
-	},
-	apiKey: env.DODO_PAYMENTS_API_KEY!,
-	environment: readDodoEnvironment(env)
-});
-
-const payments = dodo.api();
+import { lookupTierForProduct } from '@convex/pricingData';
 
 const CHECKOUT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
 
 function assertPaymentsConfigured(): void {
 	if (!env.DODO_PAYMENTS_API_KEY?.trim()) throw new Error('Payments are not configured.');
 }
-
-export const getDodoSubscriptionTier = internalQuery({
-	args: { userId: v.string(), dodoSubscriptionId: v.string() },
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, { userId, dodoSubscriptionId }) => {
-		const subscription = await getSubscriptionDoc(ctx, userId);
-
-		return subscription?.dodoSubscriptionId === dodoSubscriptionId ? subscription.tier : null;
-	}
-});
-
-export const getCheckoutTier = internalQuery({
-	args: { userId: v.string(), attemptId: v.string(), productId: v.string() },
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, { userId, attemptId, productId }) => {
-		const checkout = await ctx.db
-			.query('billingCheckoutSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
-
-		return checkout?.attemptId === attemptId && checkout.productId === productId
-			? checkout.tierId
-			: null;
-	}
-});
 
 export const getMySubscription = query({
 	args: {},
@@ -76,7 +32,7 @@ export const getMySubscription = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const subscription = await getSubscriptionDoc(ctx, userId);
-		const tier = subscriptionIsActive(subscription) ? subscription!.tier : 'free';
+		const tier = subscriptionTier(subscription);
 
 		const customer = await ctx.db
 			.query('billingCustomers')
@@ -184,7 +140,7 @@ export const reserveCheckoutSession = internalMutation({
 	handler: async (ctx, args) => {
 		const subscription = await getSubscriptionDocExclusive(ctx, args.userId);
 
-		if (subscriptionIsActive(subscription) && subscription!.tier !== 'free') {
+		if (subscriptionIsActive(subscription, args.now) && subscription.tier !== 'free') {
 			throw new Error('A paid plan is already active on this account.');
 		}
 
@@ -255,12 +211,16 @@ export const attachCheckoutSession = internalMutation({
 export const customerPortal = action({
 	args: {},
 	returns: v.object({ portal_url: v.string() }),
-	handler: async (ctx) => {
+	handler: async (ctx): Promise<{ portal_url: string }> => {
 		assertPaymentsConfigured();
-		await getUserId(ctx);
-		const portal = await payments.customerPortal(ctx, { send_email: false });
+		const userId = await getUserId(ctx);
+		const customer = await ctx.runQuery(internal.billingCustomers.get, { userId });
 
-		if (!portal.portal_url) throw new Error('Customer portal did not return a URL.');
+		if (!customer) throw new Error('This account does not have a billing customer.');
+
+		const portal = await ctx.runAction(internal.pricing.createCustomerPortal, {
+			dodoCustomerId: customer.dodoCustomerId
+		});
 
 		return { portal_url: portal.portal_url };
 	}
@@ -268,8 +228,10 @@ export const customerPortal = action({
 
 export const upsertDodoSubscription = internalMutation({
 	args: {
-		userId: v.string(),
-		tier: v.string(),
+		userId: v.optional(v.string()),
+		tier: v.optional(v.string()),
+		checkoutAttemptId: v.optional(v.string()),
+		preferConfiguredTier: v.optional(v.boolean()),
 		dodoSubscriptionId: v.string(),
 		dodoProductId: v.string(),
 		dodoCustomerId: v.string(),
@@ -286,7 +248,24 @@ export const upsertDodoSubscription = internalMutation({
 			throw new Error('Dodo billing period must have a positive duration.');
 		}
 
-		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
+		const knownCustomer = await ctx.db
+			.query('billingCustomers')
+			.withIndex('by_dodoCustomerId', (query) => query.eq('dodoCustomerId', args.dodoCustomerId))
+			.unique();
+
+		const userId = args.userId ?? knownCustomer?.userId;
+
+		if (!userId) {
+			console.error('Ignoring Dodo subscription without a Sprocket user.', args.dodoSubscriptionId);
+
+			return null;
+		}
+
+		if (knownCustomer && knownCustomer.userId !== userId) {
+			throw new Error('Dodo subscription customer does not match this account.');
+		}
+
+		const existing = await getSubscriptionDocExclusive(ctx, userId);
 
 		if (existing?.status === 'active' && existing.tier !== 'free' && !existing.dodoSubscriptionId) {
 			return null;
@@ -302,8 +281,13 @@ export const upsertDodoSubscription = internalMutation({
 			return null;
 		}
 
-		if (existing && args.eventAt === existing.eventAt && existing.status !== 'active') {
-			if (args.status === 'active') return null;
+		if (
+			existing &&
+			args.eventAt === existing.eventAt &&
+			existing.status !== 'active' &&
+			args.status === 'active'
+		) {
+			return null;
 		}
 
 		if (
@@ -316,18 +300,49 @@ export const upsertDodoSubscription = internalMutation({
 
 		const customer = await ctx.db
 			.query('billingCustomers')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
 
 		if (customer && customer.dodoCustomerId !== args.dodoCustomerId) {
 			throw new Error('Dodo subscription customer does not match this account.');
 		}
 
+		const checkoutSession = await ctx.db
+			.query('billingCheckoutSessions')
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.unique();
+
+		const checkoutTier =
+			checkoutSession &&
+			checkoutSession.attemptId === args.checkoutAttemptId &&
+			checkoutSession.productId === args.dodoProductId
+				? checkoutSession.tierId
+				: null;
+
+		const existingTier =
+			existing?.dodoSubscriptionId === args.dodoSubscriptionId ? existing.tier : null;
+
+		const needsConfiguredTier =
+			!checkoutTier && (args.preferConfiguredTier || (!existingTier && !args.tier));
+
+		const tier = resolveSubscriptionTier({
+			checkoutTier,
+			metadataTier: args.tier,
+			existingTier,
+			configuredTier: needsConfiguredTier
+				? await lookupTierForProduct(ctx, args.dodoProductId)
+				: null,
+			preferConfiguredTier: args.preferConfiguredTier
+		});
+
+		if (!tier) {
+			console.warn('Ignoring Dodo subscription for an unknown product.', args.dodoProductId);
+
+			return null;
+		}
+
 		if (!customer) {
-			await ctx.db.insert('billingCustomers', {
-				userId: args.userId,
-				dodoCustomerId: args.dodoCustomerId
-			});
+			await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: args.dodoCustomerId });
 		}
 
 		const effectiveStatus =
@@ -341,11 +356,11 @@ export const upsertDodoSubscription = internalMutation({
 			effectiveStatus === 'active' &&
 			(!existing || existing.dodoSubscriptionId !== args.dodoSubscriptionId);
 
-		const isPlanChange = args.status === 'active' && existing && existing.tier !== args.tier;
+		const isPlanChange = args.status === 'active' && existing && existing.tier !== tier;
 
 		const subscription = {
-			userId: args.userId,
-			tier: args.tier,
+			userId,
+			tier,
 			status: effectiveStatus,
 			eventAt: args.eventAt,
 			billingInterval: args.billingInterval,
@@ -368,13 +383,8 @@ export const upsertDodoSubscription = internalMutation({
 
 		await scheduleSubscriptionExpiry(ctx, { _id: subscriptionId, ...subscription });
 
-		if (args.status === 'active') {
-			const checkoutSession = await ctx.db
-				.query('billingCheckoutSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', args.userId))
-				.unique();
-
-			if (checkoutSession) await ctx.db.delete('billingCheckoutSessions', checkoutSession._id);
+		if (args.status === 'active' && checkoutSession) {
+			await ctx.db.delete('billingCheckoutSessions', checkoutSession._id);
 		}
 
 		return null;
