@@ -8,6 +8,7 @@ use sprocket_workspace::{
     resolve_workspace_root,
 };
 use std::future::Future;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
@@ -43,6 +44,8 @@ const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a diff
 const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
+const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
+const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
 
 fn submission_owned_by_another_executor(error: &str) -> bool {
     error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
@@ -123,6 +126,8 @@ fn build_workspace_prompt_context(
     skills: &[WorkspaceSkill],
     model_label: &str,
     model_id: &str,
+    thread_id: &str,
+    transcript_dir: &Path,
 ) -> WorkspacePromptContext {
     let user_instructions = workspace_instructions
         .iter()
@@ -170,7 +175,12 @@ fn build_workspace_prompt_context(
     let model_identity = format!("Your model is {model_label} ({model_id}).");
     let base_instructions = SYSTEM_PROMPT_TEMPLATE
         .trim_end()
-        .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity);
+        .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
+        .replace(THREAD_ID_PLACEHOLDER, thread_id)
+        .replace(
+            TRANSCRIPT_DIR_PLACEHOLDER,
+            &transcript_dir.display().to_string(),
+        );
     let initial_context = Message::user(
         [
             "# Thread-Scoped Workspace Context",
@@ -810,6 +820,7 @@ pub async fn run_agent(
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
+    let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
 
     let provider = match AgentProvider::default_for_run(&context, &gateway_url, chatgpt_client) {
         Ok(provider) => provider,
@@ -893,6 +904,8 @@ pub async fn run_agent(
             &skills,
             &capabilities.label,
             &context.run.selected_model,
+            &context.run.thread_id,
+            &transcript_dir,
         );
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
@@ -983,7 +996,7 @@ pub async fn run_agent(
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
                     supports_required_tool_choice: capabilities.supports_required_tool_choice,
-                    transcript_dir: store.thread_dir(&context.run.user_id, &context.run.thread_id),
+                    transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
                 },
@@ -1056,6 +1069,8 @@ mod tests {
             skills,
             MODEL_LABEL,
             MODEL_ID,
+            "thread-id",
+            std::path::Path::new("/tmp/transcripts/user/thread-id"),
         )
     }
 
@@ -1077,16 +1092,64 @@ mod tests {
 
     #[test]
     fn base_instructions_include_the_selected_model_identity() {
-        let prompt_context =
-            build_workspace_prompt_context("/tmp/project", &[], &[], MODEL_LABEL, MODEL_ID);
+        let prompt_context = build_test_prompt_context(&[], &[]);
 
         assert!(
             prompt_context
                 .base_instructions
-                .contains(
-                    "Your name is Sprocket.\nYour model is GPT-5.6 Sol (gpt-5.6-sol).\nYou are an engineering agent"
-                )
+                .lines()
+                .any(|line| line == "Your model is GPT-5.6 Sol (gpt-5.6-sol).")
         );
+        assert!(
+            !prompt_context
+                .base_instructions
+                .contains(super::MODEL_IDENTITY_PLACEHOLDER)
+        );
+    }
+
+    #[test]
+    fn identity_includes_the_current_thread_id_and_transcript_location() {
+        for (data_dir, thread_id) in [
+            ("/home/user/.sprocket", "first-thread-id"),
+            ("/srv/custom sprocket data", "second-thread-id"),
+        ] {
+            let store = crate::transcript::TranscriptStore::new(
+                std::path::Path::new(data_dir).join("transcripts"),
+            );
+            let transcript_dir = store.thread_dir("user-id", thread_id);
+            let prompt_context = build_workspace_prompt_context(
+                "/tmp/project",
+                &[],
+                &[],
+                MODEL_LABEL,
+                MODEL_ID,
+                thread_id,
+                &transcript_dir,
+            );
+            let identity = prompt_context
+                .base_instructions
+                .split_once("## Identity\n")
+                .unwrap()
+                .1
+                .split_once("\n## Working on tasks")
+                .unwrap()
+                .0;
+            assert!(identity.contains(&format!(
+                "This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.",
+                transcript_dir.display()
+            )));
+            assert!(
+                !prompt_context
+                    .base_instructions
+                    .contains(super::THREAD_ID_PLACEHOLDER)
+            );
+            assert!(
+                !prompt_context
+                    .base_instructions
+                    .contains(super::TRANSCRIPT_DIR_PLACEHOLDER)
+            );
+            assert!(!identity.contains("~/.sprocket/"));
+        }
     }
 
     #[test]
