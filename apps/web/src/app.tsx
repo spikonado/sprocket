@@ -762,6 +762,16 @@ export default function App({
 
 	const currentProjectPath = currentProject?.workspacePath ?? currentWorkspacePath;
 
+	const composerProjectPaths = useMemo(() => {
+		if (!currentProjectPath || !desktopApi) return null;
+
+		return {
+			workspacePath: currentProjectPath,
+			search: (query: string, signal: AbortSignal) =>
+				desktopApi.searchWorkspace({ workspacePath: currentProjectPath, query }, signal)
+		};
+	}, [currentProjectPath, desktopApi]);
+
 	const composerProjectSkills = useMemo(() => {
 		const workspacePath = currentProject?.workspacePath ?? null;
 		const api = desktopApi;
@@ -2688,6 +2698,7 @@ export default function App({
 										isRunning={isRunning}
 										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
+										projectPaths={composerProjectPaths}
 										onSubmit={() => void submitPrompt()}
 										onCancel={() => void cancelRun()}
 									/>
