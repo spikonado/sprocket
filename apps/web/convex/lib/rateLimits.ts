@@ -37,7 +37,19 @@ const METER_CAPACITY = 4_000_000_000_000_000;
 
 const STORAGE_PERIOD = 365 * DAY;
 
-type MeterWindowSubscription = BillingWindowSubscription & { quotaResetAt?: number };
+type MeterWindowSubscription = BillingWindowSubscription & {
+	quotaGeneration?: number;
+	// Legacy usage-generation key (an event timestamp) written before the
+	// monotonic generation existed.
+	quotaResetAt?: number;
+};
+
+// The window key's usage generation. Rows written by the current projection
+// carry the monotonic counter; pre-migration rows fall back to the legacy
+// timestamp key so their buckets stay consistent until backfilled.
+function quotaGenerationOf(subscription: MeterWindowSubscription | null): number | undefined {
+	return subscription?.quotaResetAt ?? subscription?.quotaGeneration;
+}
 
 function meterLimitName(meterId: UsageMeterId, period: UsagePeriod): string {
 	return `${meterId}${period === 'weekly' ? 'Weekly' : 'Monthly'}`;
@@ -65,7 +77,7 @@ function meterWindowConfig(
 	const { start, end } = billingWindow(period, subscription, now);
 
 	return {
-		key: windowKey(userId, period, start, subscription?.quotaResetAt),
+		key: windowKey(userId, period, start, quotaGenerationOf(subscription)),
 		config: { kind: 'fixed window' as const, period: STORAGE_PERIOD, rate: METER_CAPACITY, start },
 		start,
 		end
@@ -92,7 +104,7 @@ async function usedInWindow(
 		return { used: Math.max(0, METER_CAPACITY - stored.value), window, migrated: true };
 	}
 
-	if (subscription?.quotaResetAt !== undefined) return { used: 0, window, migrated: true };
+	if (quotaGenerationOf(subscription) !== undefined) return { used: 0, window, migrated: true };
 
 	const oldConfig = meterLimitConfig(
 		meterId,

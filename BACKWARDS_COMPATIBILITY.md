@@ -106,6 +106,88 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+## Billing (Dodo) backwards compatibility
+
+### Legacy subscription rows without access/projection fields
+
+Subscription rows written before the durable-billing projection may omit
+`projectionRevision`, `payloadEventAt`, `termEventAt`, `accessPhase`, and
+`accessEndsAt`. Readers treat missing access fields as `paid`/`none` per the
+legacy `billingPeriodEnded` flag, and missing watermarks as the row's
+`eventAt`. `backfillSubscriptionAccess` fills the materialized access
+phase/deadline and projection revision, and `backfillSubscriptionExpiry`
+reschedules boundary checks fenced by the new revision. Both are idempotent.
+
+Removal gate: after `runSubscriptionAccessBackfill` and
+`runSubscriptionExpiryBackfill` have run to completion in production, the
+legacy fallbacks in `lib/tiers.ts` and `subscriptionExpiry.ts` can be removed
+and the fields made required.
+
+### Legacy usage-generation key (`quotaResetAt`)
+
+Usage buckets key off the subscription's usage generation. Rows written
+before the monotonic `quotaGeneration` counter carry `quotaResetAt`, an event
+timestamp used as the same key. While released gateway readers still use that
+timestamp, current readers prefer `quotaResetAt` too; otherwise old and new
+servers would charge different buckets. New writes retain `quotaResetAt` as the
+transition timestamp while `quotaGeneration` identifies the durable transition;
+`backfillSubscriptionAccess` derives the initial generation from the
+legacy timestamp so the migration neither resets usage nor mints allowance.
+
+Removal gate: after released readers that key directly on `quotaResetAt` age
+out, migrate outstanding usage into generation-keyed buckets before changing
+the key preference. A subscription backfill alone does not migrate consumed
+allowance. Keep the timestamp field until that migration completes.
+
+### Usage display time
+
+New clients pass `now` to `usage.getMyUsage` and refresh it each minute. The
+optional argument preserves released clients calling with `{}`; that legacy
+display-only path retains its wall-clock fallback until those clients age out.
+Entitlement and charge mutations never trust the browser's display time.
+
+Removal gate: after all supported clients pass `now`, require the argument and
+remove the query clock fallback.
+
+### Checkout attempt retention
+
+`billingCheckoutSessions` keeps the current selection; superseded attempts
+live in `billingCheckoutAttempts` so already-created payment links stay
+payable and their provider idempotency keys survive. Legacy attempts used the
+attempt id as the provider idempotency key but did not always persist it.
+Recovery requires a persisted key, frozen body, and first-create timestamp
+inside an operator-confirmed provider idempotency window; it never invents a
+key for an ambiguous attempt. Missing proof fails closed for support repair.
+The 24h reservation TTL is not provider expiry. All retained selections count
+toward the 25-row account limit, including locally expired payable links.
+Terminal rows lose hosted URLs/create bodies immediately and are removed after
+30 days; never-sent reservations are removed 30 days after local expiry.
+Unresolved/payable records remain until authoritative resolution. Subscription
+and superseded-identity records retain purchase identity after checkout cleanup.
+
+Legacy ambiguous creates without a frozen request cannot safely reconstruct
+the old return origin/customer. They require provider reconciliation instead
+of a speculative create with changed parameters. Legacy subscription rows
+without `checkoutAttemptId` never prove activation of a specific attempt.
+
+Removal gate: after all pre-freeze ambiguous attempts resolve and legacy
+uncorrelated subscriptions terminate, remove these fail-closed recovery paths.
+
+### Checkout creation-order indexes
+
+The checkout tables retain `by_userId` alongside the attempt/session indexes
+because released readers use it and bounded history iteration needs creation
+order. Remove the current-session shim only after released readers age out and
+all current lookups use the compound indexes. Keep the history index while
+creation-order iteration remains necessary.
+
+### Webhook dedup retention
+
+`dodoWebhookEvents` keeps identity/outcome rows for the 14-day provider replay
+horizon; replayable payloads are pruned after 48h while outcome/duplicate
+counts persist for dedup. Payload secrets and customer details are never
+logged.
+
 ### Retired cloud-held ChatGPT sign-in
 
 Cloud-held ChatGPT/Codex OAuth is retired in favor of local sign in with

@@ -11,9 +11,15 @@ export const get = internalQuery({
 });
 
 export const remember = internalMutation({
-	args: { userId: v.string(), dodoCustomerId: v.string() },
+	args: {
+		userId: v.string(),
+		dodoCustomerId: v.string(),
+		dodoEnvironment: v.optional(v.string())
+	},
 	returns: v.string(),
-	handler: async (ctx, { userId, dodoCustomerId }) => {
+	handler: async (ctx, args) => {
+		const { userId, dodoCustomerId } = args;
+
 		const existing = await ctx.db
 			.query('billingCustomers')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -21,7 +27,11 @@ export const remember = internalMutation({
 
 		if (existing) return existing.dodoCustomerId;
 
-		await ctx.db.insert('billingCustomers', { userId, dodoCustomerId });
+		await ctx.db.insert('billingCustomers', {
+			userId,
+			dodoCustomerId,
+			dodoEnvironment: args.dodoEnvironment
+		});
 
 		return dodoCustomerId;
 	}

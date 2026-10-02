@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
 import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { usageMeters, usagePeriods } from '@convex/lib/usageMeters';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
 import { formatRemainingDuration } from '$lib/format';
+import { useUsageTime } from '$lib/usage-time';
 
 const dollars = new Intl.NumberFormat('en-US', {
 	style: 'currency',
@@ -32,25 +32,15 @@ function fillClass(atLimit: boolean, nearLimit: boolean) {
 
 export default function SettingsUsage() {
 	const convexAuth = useConvexAuth();
+	const now = useUsageTime();
 
 	const usageQuery = useConvexQueryResult({
 		query: api.usage.getMyUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now } : 'skip'
 	});
 
 	const usage = usageQuery.status === 'success' ? usageQuery.data : null;
 	const usageError = usageQuery.status === 'error';
-	const [now, setNow] = useState(() => Date.now());
-
-	useEffect(() => {
-		const interval = setInterval(() => {
-			setNow(Date.now());
-		}, 60_000);
-
-		return () => {
-			clearInterval(interval);
-		};
-	}, []);
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">

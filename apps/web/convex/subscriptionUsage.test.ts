@@ -72,6 +72,78 @@ async function seedActiveSubscription(
 }
 
 describe('subscription and usage backend', () => {
+	it('backfills legacy paid access without moving consumed usage or granting expired grace', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const now = Date.now();
+		const userId = 'legacy_billing';
+
+		const subscriptionId = await t.run((ctx) =>
+			ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'pro',
+				status: 'active',
+				eventAt: now - 1000,
+				dodoSubscriptionId: 'sub_legacy',
+				dodoProductId: 'prod_pro',
+				billingInterval: 'monthly',
+				billingPeriodStart: now - 60_000,
+				billingPeriodEnd: now + 60_000,
+				quotaResetAt: now - 1000
+			})
+		);
+
+		await t.run((ctx) =>
+			ctx.db.insert('subscriptions', {
+				userId: 'long_expired',
+				tier: 'pro',
+				status: 'active',
+				eventAt: now - 86_400_000,
+				dodoSubscriptionId: 'sub_expired',
+				billingInterval: 'monthly',
+				billingPeriodStart: now - 2 * 86_400_000,
+				billingPeriodEnd: now - 86_400_000
+			})
+		);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId,
+			count: 8 * UNITS_PER_DOLLAR
+		});
+		const asUser = t.withIdentity({ subject: userId });
+		const before = await asUser.query(api.usage.getMyUsage, { now });
+		await t.mutation(internal.migrations.backfillSubscriptionAccess, {
+			cursor: null,
+			dryRun: false,
+			oneBatchOnly: true
+		});
+		const after = await asUser.query(api.usage.getMyUsage, { now });
+		expect(after.meters[0]?.windows.map((window) => window.used)).toEqual(
+			before.meters[0]?.windows.map((window) => window.used)
+		);
+		const migrated = await t.run((ctx) => ctx.db.get('subscriptions', subscriptionId));
+		expect(migrated).toMatchObject({
+			accessPhase: 'paid',
+			quotaResetAt: now - 1000,
+			quotaGeneration: now - 1000
+		});
+		expect(migrated?.billingPeriodCheckId).toBeDefined();
+
+		const expired = await t.run((ctx) =>
+			ctx.db
+				.query('subscriptions')
+				.withIndex('by_userId', (query) => query.eq('userId', 'long_expired'))
+				.unique()
+		);
+
+		expect(expired).toMatchObject({ accessPhase: 'none', quotaGeneration: 0 });
+		expect(expired?.terminalConfirmed).not.toBe(true);
+		await t.mutation(internal.migrations.backfillSubscriptionAccess, {
+			cursor: null,
+			dryRun: false,
+			oneBatchOnly: true
+		});
+		expect((await asUser.query(api.usage.getMyUsage, { now })).meters).toEqual(after.meters);
+	});
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
 
@@ -411,7 +483,6 @@ describe('subscription and usage backend', () => {
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			tier: 'max',
-			preferConfiguredTier: true,
 			dodoProductId: 'prod_max',
 			eventAt: now + 1
 		});
@@ -442,7 +513,6 @@ describe('subscription and usage backend', () => {
 		await t.mutation(internal.billing.upsertDodoSubscription, {
 			...subscription,
 			eventAt: Date.now(),
-			preferConfiguredTier: true,
 			billingPeriodStart: subscription.billingPeriodEnd,
 			billingPeriodEnd: subscription.billingPeriodEnd + 30 * 86_400_000
 		});
@@ -476,7 +546,6 @@ describe('subscription and usage backend', () => {
 		const planChange = {
 			...subscription,
 			tier: 'team',
-			preferConfiguredTier: true,
 			dodoProductId: 'prod_team',
 			eventAt: subscription.eventAt + 1
 		};
@@ -489,6 +558,87 @@ describe('subscription and usage backend', () => {
 		});
 		await t.mutation(internal.billing.upsertDodoSubscription, planChange);
 		expect(await windowUsage()).toEqual([UNITS_PER_DOLLAR, UNITS_PER_DOLLAR]);
+	});
+
+	it('a renewal term advance opens the new window without minting extra allowance', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const now = Date.now();
+
+		const { subscription, windowUsage } = await seedActiveSubscription(
+			t,
+			'user_renewal',
+			now,
+			now + 30 * 86_400_000
+		);
+
+		expect(await windowUsage()).toEqual([8 * UNITS_PER_DOLLAR, 8 * UNITS_PER_DOLLAR]);
+
+		// Renewal: same product, same tier, new confirmed term. The monthly
+		// window opens empty because the window start advanced — NOT because a
+		// new usage generation was minted.
+		const renewed = await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			eventAt: now + 30 * 86_400_000,
+			billingPeriodStart: now + 30 * 86_400_000,
+			billingPeriodEnd: now + 60 * 86_400_000
+		});
+
+		expect(renewed.outcome).toBe('applied');
+		expect(await windowUsage()).toEqual([8 * UNITS_PER_DOLLAR, 0]);
+
+		// A redelivered renewal and a status-only touch at a later event time
+		// must not reset either window.
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			eventAt: now + 30 * 86_400_000,
+			billingPeriodStart: now + 30 * 86_400_000,
+			billingPeriodEnd: now + 60 * 86_400_000
+		});
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			eventAt: now + 31 * 86_400_000,
+			billingPeriodStart: now + 30 * 86_400_000,
+			billingPeriodEnd: now + 60 * 86_400_000
+		});
+		expect(await windowUsage()).toEqual([8 * UNITS_PER_DOLLAR, 0]);
+	});
+
+	it('an older redelivered plan-change event cannot mint a second reset', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const now = Date.now();
+
+		const { subscription, windowUsage } = await seedActiveSubscription(
+			t,
+			'user_plan_dedupe',
+			now,
+			now + 30 * 86_400_000
+		);
+
+		// Confirmed plan change resets once.
+		const change = await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			dodoProductId: 'prod_max',
+			eventAt: now + 10
+		});
+
+		expect(change.outcome).toBe('applied');
+		expect(await windowUsage()).toEqual([0, 0]);
+
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subscription.userId,
+			count: 5 * UNITS_PER_DOLLAR
+		});
+
+		// The same plan-change event redelivered is an ordering no-op and keeps
+		// the charged usage.
+		await t.mutation(internal.billing.upsertDodoSubscription, {
+			...subscription,
+			dodoProductId: 'prod_max',
+			eventAt: now + 10
+		});
+		expect(await windowUsage()).toEqual([5 * UNITS_PER_DOLLAR, 5 * UNITS_PER_DOLLAR]);
 	});
 
 	it('materializes exactly one users row per subject across repeated page loads', async () => {
