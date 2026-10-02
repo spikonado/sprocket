@@ -72,19 +72,27 @@ async fn watch_handler(
         )
         .await;
     let stream = unfold(
-        (session.latest_event(), session),
-        |(initial, mut session)| async move {
-            if let Some(event) = initial {
-                return encode_watch_event(event).map(|event| (event, (None, session)));
+        (true, session.latest_event(), session),
+        |(first, last, mut session)| async move {
+            if first {
+                if let Some(event) = last.clone() {
+                    return encode_watch_event(event).map(|event| (event, (false, last, session)));
+                }
             }
             loop {
                 match session.receiver().recv().await {
+                    Ok(event) if last.as_ref() == Some(&event) => continue,
                     Ok(event) => {
-                        return encode_watch_event(event).map(|event| (event, (None, session)));
+                        return encode_watch_event(event.clone())
+                            .map(|encoded| (encoded, (false, Some(event), session)));
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         if let Some(event) = session.latest_event() {
-                            return encode_watch_event(event).map(|event| (event, (None, session)));
+                            if last.as_ref() == Some(&event) {
+                                continue;
+                            }
+                            return encode_watch_event(event.clone())
+                                .map(|encoded| (encoded, (false, Some(event), session)));
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
