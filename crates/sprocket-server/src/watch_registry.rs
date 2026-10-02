@@ -82,9 +82,13 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
             };
             return (session, slot.state.clone());
         }
-        let (events, rx) = broadcast::channel(capacity);
+        // Drop the channel's initial receiver and subscribe after spawn so a
+        // first publish cannot already sit in `rx`. Artifact SSE emits
+        // `latest_event()` first; a queued copy of that snapshot would repeat.
+        let (events, _) = broadcast::channel(capacity);
         let state = make_state();
         let task = spawn(events.clone(), state.clone());
+        let rx = events.subscribe();
         let generation = inner.next_generation;
         inner.next_generation += 1;
         inner.slots.insert(
@@ -209,32 +213,45 @@ mod tests {
 
         let registry: Arc<WatchRegistry<String, u32>> = WatchRegistry::new();
         let live = Arc::new(AtomicUsize::new(0));
-        let spawn = |events: broadcast::Sender<u32>, ()| {
-            let _ = events;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let spawn = {
             let live = Arc::clone(&live);
-            live.fetch_add(1, Ordering::SeqCst);
-            tokio::spawn(async move {
-                struct DropLive(Arc<AtomicUsize>);
-                impl Drop for DropLive {
-                    fn drop(&mut self) {
-                        self.0.fetch_sub(1, Ordering::SeqCst);
+            move |events: broadcast::Sender<u32>, ()| {
+                let _ = events;
+                let live = Arc::clone(&live);
+                tokio::spawn(async move {
+                    struct DropLive(Arc<AtomicUsize>);
+                    impl Drop for DropLive {
+                        fn drop(&mut self) {
+                            self.0.fetch_sub(1, Ordering::SeqCst);
+                        }
                     }
-                }
-                let _live = DropLive(live);
-                std::future::pending::<()>().await;
-            })
+                    live.fetch_add(1, Ordering::SeqCst);
+                    let _live = DropLive(live);
+                    let _ = started_tx.send(());
+                    std::future::pending::<()>().await;
+                })
+            }
         };
-        let (first, ()) = registry.open_with("key".to_string(), 4, || (), &spawn);
-        let (second, ()) = registry.open_with("key".to_string(), 4, || (), &spawn);
-        // Let the watch task start: aborting a never-polled task drops it
-        // before its body (and drop guards) ever run.
-        tokio::task::yield_now().await;
+        let (first, ()) = registry.open_with("key".to_string(), 4, || (), spawn);
+        let (second, ()) = registry.open_with("key".to_string(), 4, || (), |_, ()| {
+            panic!("existing slot should not spawn")
+        });
+        started_rx.await.expect("watch task started");
         assert_eq!(live.load(Ordering::SeqCst), 1);
         drop(first);
         assert_eq!(registry.active_count(), 1);
         drop(second);
         assert_eq!(registry.active_count(), 0);
-        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-        assert_eq!(live.load(Ordering::SeqCst), 0);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if live.load(Ordering::SeqCst) == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("watch task dropped after last session");
     }
 }
