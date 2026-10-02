@@ -7,10 +7,13 @@ export function parseNonEmptyString(value) {
 	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {
 		return null;
 	}
+
 	if (value !== `${value}`) {
 		return null;
 	}
+
 	const trimmed = value.trim();
+
 	return trimmed.length > 0 ? trimmed : null;
 }
 
@@ -28,7 +31,9 @@ export function parsePairingProof(value) {
 	if (!isPlainObject(value)) {
 		return null;
 	}
+
 	const httpBaseUrl = parseNonEmptyString(value.httpBaseUrl);
+
 	if (
 		httpBaseUrl === null ||
 		(value.webUiEnabled !== true && value.webUiEnabled !== false) ||
@@ -36,6 +41,7 @@ export function parsePairingProof(value) {
 	) {
 		return null;
 	}
+
 	return {
 		httpBaseUrl,
 		webUiEnabled: value.webUiEnabled,
