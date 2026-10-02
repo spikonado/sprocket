@@ -1,7 +1,8 @@
-use anyhow::anyhow;
 use axum::Json;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts, Query, Request};
 use axum::http::{HeaderMap, request::Parts};
+use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use serde::de::DeserializeOwned;
 
@@ -38,6 +39,28 @@ pub(crate) trait UserScoped {
     fn user_id(&self) -> &str;
 }
 
+pub(crate) enum AuthorizedRejection {
+    Auth(ApiError),
+    Json(JsonRejection),
+    Query(QueryRejection),
+}
+
+impl From<ApiError> for AuthorizedRejection {
+    fn from(error: ApiError) -> Self {
+        Self::Auth(error)
+    }
+}
+
+impl IntoResponse for AuthorizedRejection {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Auth(error) => error.into_response(),
+            Self::Json(error) => error.into_response(),
+            Self::Query(error) => error.into_response(),
+        }
+    }
+}
+
 /// JSON body whose `userId` must match the caller's session and native identity.
 pub(crate) struct AuthorizedJson<T>(pub T);
 
@@ -45,14 +68,14 @@ impl<T> FromRequest<AppState> for AuthorizedJson<T>
 where
     T: DeserializeOwned + UserScoped + Send,
 {
-    type Rejection = ApiError;
+    type Rejection = AuthorizedRejection;
 
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
         let headers = req.headers().clone();
         let jar = CookieJar::from_headers(&headers);
         let Json(payload) = Json::<T>::from_request(req, state)
             .await
-            .map_err(|rejection| ApiError::bad_request(anyhow!("{rejection}")))?;
+            .map_err(AuthorizedRejection::Json)?;
         state
             .require_session_user(&headers, &jar, payload.user_id())
             .await?;
@@ -67,7 +90,7 @@ impl<T> FromRequestParts<AppState> for AuthorizedQuery<T>
 where
     T: DeserializeOwned + UserScoped + Send,
 {
-    type Rejection = ApiError;
+    type Rejection = AuthorizedRejection;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -81,7 +104,7 @@ where
             .map_err(|_| ApiError::authentication_required())?;
         let Query(query) = Query::<T>::from_request_parts(parts, state)
             .await
-            .map_err(|rejection| ApiError::bad_request(anyhow!("{rejection}")))?;
+            .map_err(AuthorizedRejection::Query)?;
         state
             .require_session_user(&headers, &jar, query.user_id())
             .await?;
@@ -207,5 +230,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authorized_json_keeps_axum_json_rejection_for_bad_bodies() {
+        let (state, session_token) = test_state(Some("user-a")).await;
+        let response = router(state)
+            .oneshot(echo_request(Some(&session_token), "not-json"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
