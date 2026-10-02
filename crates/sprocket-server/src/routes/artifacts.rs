@@ -203,6 +203,7 @@ mod tests {
             },
             crate::auth::desktop_login_callback_url(7731),
         );
+        native_auth.authenticate_for_test("alice").await;
         let state = AppState::for_test(
             auth,
             native_auth,

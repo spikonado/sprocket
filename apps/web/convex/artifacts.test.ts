@@ -590,6 +590,7 @@ describe('cloud artifacts', () => {
 			...fields,
 			registrationId: 'new-registration'
 		});
+
 		expect(recreated.artifactId).not.toBe(artifactId);
 	});
 

@@ -248,7 +248,8 @@ it('populates projects from the desktop client resolved during boot', async () =
 
 it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
 	const client = createConvexFixtures();
-	const artifact: Doc<'artifacts'> = {
+
+	const artifact: FunctionReturnType<typeof api.artifacts.listArtifacts>['page'][number] = {
 		// SAFETY: this fixture ID is only compared as an opaque Convex document ID.
 		_id: 'artifact-a' as Id<'artifacts'>,
 		_creationTime: 1,
@@ -263,16 +264,19 @@ it('deletes an attached project artifact through the local server and keeps fail
 		createdAt: 1,
 		updatedAt: 1
 	};
+
 	client.registerQuery(api.artifacts.listArtifacts, {
 		page: [artifact],
 		isDone: true,
 		continueCursor: '',
 		revision: 1
 	});
+
 	const deleteArtifact = vi
 		.fn<DesktopApi['deleteArtifact']>()
 		.mockRejectedValueOnce(new Error('artifact deletion timed out'))
 		.mockResolvedValue(undefined);
+
 	await renderApp(
 		client,
 		createRuntime(
