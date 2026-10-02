@@ -149,10 +149,12 @@ impl BindingGuard {
     ) -> anyhow::Result<()> {
         let destination = path_identity(workspace, &binding.local_path).await;
         for existing in &self.bindings {
-            if existing.registration_id != binding.registration_id
-                && (existing.artifact_id.is_none() || existing.artifact_id != binding.artifact_id)
-                && path_identity(workspace, &existing.local_path).await == destination
-            {
+            let conflicts = match (&existing.artifact_id, &binding.artifact_id) {
+                (Some(existing), Some(next)) => existing != next,
+                (Some(_), None) => true,
+                (None, _) => existing.registration_id != binding.registration_id,
+            };
+            if conflicts && path_identity(workspace, &existing.local_path).await == destination {
                 bail!("This path is already bound to another artifact; choose a distinct path.");
             }
         }

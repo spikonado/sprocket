@@ -177,12 +177,18 @@ impl ArtifactWatchSession {
             .await?;
             let bindings = self.watchers.bindings(&self.key);
             let mut feed = ArtifactFeed::new(self.key.clone(), bindings.clone());
+            let reconciliation_retry = Mutex::new(None);
             flush_feed(
                 &mut feed,
                 || async {
-                    Ok(load_registry(&client, &bindings, &self.key.repository_key)
-                        .await?
-                        .artifacts)
+                    Ok(load_registry(
+                        &client,
+                        &bindings,
+                        &self.key.repository_key,
+                        &reconciliation_retry,
+                    )
+                    .await?
+                    .artifacts)
                 },
                 |request| {
                     let client = &client;
@@ -330,6 +336,7 @@ async fn cloud_worker(
     pending: tokio::sync::watch::Receiver<Vec<SyncRequest>>,
     output: tokio::sync::mpsc::Sender<anyhow::Result<ArtifactSnapshot>>,
 ) {
+    let reconciliation_retry = Mutex::new(None);
     loop {
         let outcome = async {
             let client = timeout(NETWORK_TIMEOUT, connect(&url, &auth, &key)).await??;
@@ -346,7 +353,14 @@ async fn cloud_worker(
                 }),
                 &pending,
                 &output,
-                || load_registry(&client, &bindings, &key.repository_key),
+                || {
+                    load_registry(
+                        &client,
+                        &bindings,
+                        &key.repository_key,
+                        &reconciliation_retry,
+                    )
+                },
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
@@ -388,7 +402,7 @@ where
         .ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??;
     let mut observed_revision = Some(first);
     let mut loaded_revision = None;
-    let mut reconciliation_pending = false;
+    let mut reconciliation_retry_at = None;
     let mut requests = Vec::new();
     let mut poll = interval(Duration::from_secs(1));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -399,7 +413,7 @@ where
         }
         // A page load can read ahead of buffered subscription updates.
         if had_pending
-            || reconciliation_pending
+            || reconciliation_retry_at.is_some_and(|retry| tokio::time::Instant::now() >= retry)
             || observed_revision
                 .is_some_and(|next| loaded_revision.is_none_or(|loaded| next > loaded))
         {
@@ -408,7 +422,9 @@ where
                 anyhow::bail!("Artifact registry changed during refresh; retrying");
             }
             loaded_revision = Some(snapshot.revision);
-            reconciliation_pending = snapshot.reconciliation_pending;
+            reconciliation_retry_at = snapshot
+                .reconciliation_pending
+                .then(|| tokio::time::Instant::now() + Duration::from_secs(30));
             if output.send(Ok(snapshot)).await.is_err() {
                 return Ok(());
             }
@@ -478,8 +494,17 @@ async fn load_registry(
     client: &UserConvexClient,
     bindings: &ArtifactBindings,
     repository_key: &str,
+    reconciliation_retry: &Mutex<Option<tokio::time::Instant>>,
 ) -> anyhow::Result<ArtifactSnapshot> {
     let mut snapshot = client.list_artifacts(repository_key).await?;
+    if reconciliation_retry
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .is_some_and(|retry| tokio::time::Instant::now() < retry)
+    {
+        snapshot.reconciliation_pending = true;
+        return Ok(snapshot);
+    }
     let visible_ids = snapshot
         .artifacts
         .iter()
@@ -495,8 +520,16 @@ async fn load_registry(
     )
     .await
     {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => {
+            *reconciliation_retry
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+        }
         result => {
+            *reconciliation_retry
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) =
+                Some(tokio::time::Instant::now() + Duration::from_secs(30));
             snapshot.reconciliation_pending = true;
             tracing::warn!(?result, "artifact binding reconciliation deferred");
         }
@@ -815,6 +848,10 @@ mod tests {
                 .unwrap()
                 .reconciliation_pending
         );
+        tokio::time::advance(Duration::from_secs(29)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+        tokio::time::advance(Duration::from_secs(1)).await;
         assert!(
             !snapshots
                 .recv()
