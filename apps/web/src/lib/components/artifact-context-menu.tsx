@@ -113,6 +113,7 @@ export default function ArtifactContextMenu({
 					return;
 				event.preventDefault();
 				event.stopPropagation();
+
 				const bounds =
 					event.target instanceof Element ? event.target.getBoundingClientRect() : null;
 

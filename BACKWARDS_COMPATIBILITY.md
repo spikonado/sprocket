@@ -341,3 +341,7 @@ When any summary exists, history reload also omits stored encrypted reasoning.
 Old run-level summaries can replace context that the reasoning depended on, so
 replaying that ciphertext is unsafe. The reasoning filter can be removed once
 no row retains only `contextSummaryThroughRunId`.
+
+### Artifact deletion records
+
+`artifactDeletions` retains the account, project, and registration ID of deleted artifacts. These records prevent retries of interrupted adds from recreating deleted artifacts and let watchers release completed or pending local bindings without disclosing other accounts' artifacts. Local source files are retained. Removal gate: do not expire deletion records until all clients and persisted local reservations that can retry those registration IDs have aged out or have been migrated.

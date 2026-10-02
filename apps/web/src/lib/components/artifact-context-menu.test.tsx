@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import ArtifactContextMenu from './artifact-context-menu';
 import ChatMarkdown from './chat-markdown';
+import ArtifactDisplay from './home/artifact-display';
 import SidePanel from './home/side-panel';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 
@@ -55,6 +56,7 @@ it('keeps deletion errors visible and allows a retry', async () => {
 		.fn<() => Promise<void>>()
 		.mockRejectedValueOnce(new Error('Disconnected'))
 		.mockResolvedValue(undefined);
+
 	render(
 		<ArtifactContextMenu title="Notes" onDelete={onDelete}>
 			<button>Notes</button>
@@ -169,4 +171,28 @@ it('dismisses a preview menu before collapsing the expanded sidebar', () => {
 	expect(onToggleExpanded).not.toHaveBeenCalled();
 	fireEvent.keyDown(window, { key: 'Escape' });
 	expect(onToggleExpanded).toHaveBeenCalledOnce();
+});
+
+it('opens a preview menu only for gestures from its own sandboxed frame', async () => {
+	const onDelete = vi.fn(async () => {});
+	render(
+		<ArtifactDisplay
+			title="Interactive"
+			artifactType="html"
+			content="<button>App</button>"
+			onDelete={onDelete}
+		/>
+	);
+	const frame = screen.getByTitle('Interactive preview');
+
+	if (!(frame instanceof HTMLIFrameElement)) throw new Error('Expected a preview frame.');
+	expect(frame.srcdoc).toContain('sprocket-artifact-menu');
+	const data = { type: 'sprocket-artifact-menu', x: 10, y: 20 };
+	fireEvent(window, new MessageEvent('message', { data, source: window }));
+	expect(screen.queryByRole('menu')).toBeNull();
+	fireEvent(window, new MessageEvent('message', { data, source: frame.contentWindow }));
+	expect(screen.getByRole('menu')).toBeTruthy();
+	expect(onDelete).not.toHaveBeenCalled();
+	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
+	expect(onDelete).toHaveBeenCalledOnce();
 });

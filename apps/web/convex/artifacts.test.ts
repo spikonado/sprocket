@@ -265,7 +265,7 @@ describe('cloud artifacts', () => {
 		try {
 			const { t, asUser, threadId, repositoryKey } = await seedActiveRun();
 
-			const artifactId = await t.run(async (ctx) => {
+			const artifactIds = await t.run(async (ctx) => {
 				await ctx.db.insert('migrationSchedules', {
 					name: 'legacy-compat-backfill-2026-10',
 					notBefore: 1,
@@ -273,34 +273,46 @@ describe('cloud artifacts', () => {
 					completedAt: 2
 				});
 
-				return await ctx.db.insert('artifacts', {
-					userId: 'user_alice',
-					scope: 'thread',
-					threadId,
-					repositoryKey,
-					registrationId: 'legacy',
-					content: 'preserved',
-					type: 'markdown',
-					title: 'Legacy',
-					revision: 4,
-					createdAt: 1,
-					updatedAt: 2
-				});
+				const ids = [];
+
+				for (let index = 0; index < 19; index++) {
+					ids.push(
+						await ctx.db.insert('artifacts', {
+							userId: 'user_alice',
+							scope: 'thread',
+							threadId,
+							repositoryKey,
+							registrationId: `legacy-${index}`,
+							content: 'preserved',
+							type: 'markdown',
+							title: 'Legacy',
+							revision: 4,
+							createdAt: 1,
+							updatedAt: 2
+						})
+					);
+				}
+
+				return ids;
 			});
 
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
-			const stored = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
-			expect(stored).toMatchObject({
-				scope: 'project',
-				content: 'preserved',
-				revision: 4,
-				createdAt: 1,
-				updatedAt: 2
-			});
-			expect(stored).not.toHaveProperty('threadId');
-			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+
+			for (const artifactId of artifactIds) {
+				const stored = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
+				expect(stored).toMatchObject({
+					scope: 'project',
+					content: 'preserved',
+					revision: 4,
+					createdAt: 1,
+					updatedAt: 2
+				});
+				expect(stored).not.toHaveProperty('threadId');
+			}
+
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
 
 			const schedule = await t.run((ctx) =>
 				ctx.db
@@ -311,7 +323,7 @@ describe('cloud artifacts', () => {
 
 			expect(schedule?.completedAt).toBeDefined();
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
-			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -545,6 +557,7 @@ describe('cloud artifacts', () => {
 			...auth,
 			artifactId
 		});
+
 		expect(result).toEqual({ artifactId });
 		expect(
 			await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })
@@ -563,41 +576,47 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow(/no longer active/i);
 	});
 
-	it('reports only truly missing binding IDs and preserves existing foreign artifacts', async () => {
+	it('reports only owned project deletion records and blocks cancelled add retries', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
-		const bobRun = await seedActiveRun('user_bob', t);
-		const foreign = await bobRun.asUser.mutation(api.artifacts.addArtifact, {
-			...bobRun.auth,
-			...fields
-		});
-		const otherProjectRun = await seedActiveRun('user_alice', t);
-		await t.run((ctx) =>
-			ctx.db.patch('threadRecords', otherProjectRun.threadId, { repositoryKey: 'other' })
-		);
-
-		const otherProject = await asUser.mutation(api.artifacts.addArtifact, {
-			...otherProjectRun.auth,
-			...fields,
-			registrationId: 'other-project'
-		});
-
-		const args = {
-			repositoryKey,
-			artifactIds: [artifactId, foreign.artifactId, otherProject.artifactId]
-		};
-		expect(await asUser.query(api.artifacts.getMissingArtifactIds, args)).toEqual([]);
+		const args = { repositoryKey, registrationIds: [fields.registrationId] };
+		expect(await asUser.query(api.artifacts.getDeletedRegistrationIds, args)).toEqual([]);
 		await asUser.mutation(api.artifacts.deleteArtifact, { repositoryKey, artifactId });
-		expect(await asUser.query(api.artifacts.getMissingArtifactIds, args)).toEqual([artifactId]);
-		await expect(t.query(api.artifacts.getMissingArtifactIds, args)).rejects.toThrow(
+		expect(await asUser.query(api.artifacts.getDeletedRegistrationIds, args)).toEqual([
+			fields.registrationId
+		]);
+		await expect(
+			asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields })
+		).rejects.toThrow(/registration was deleted/i);
+		expect(await t.run((ctx) => ctx.db.query('artifacts').collect())).toEqual([]);
+
+		const recreated = await asUser.mutation(api.artifacts.addArtifact, {
+			...auth,
+			...fields,
+			registrationId: 'new-registration'
+		});
+
+		expect(recreated.artifactId).not.toBe(artifactId);
+		expect(
+			await t
+				.withIdentity({ subject: 'user_bob' })
+				.query(api.artifacts.getDeletedRegistrationIds, args)
+		).toEqual([]);
+		expect(
+			await asUser.query(api.artifacts.getDeletedRegistrationIds, {
+				...args,
+				repositoryKey: 'other'
+			})
+		).toEqual([]);
+		await expect(t.query(api.artifacts.getDeletedRegistrationIds, args)).rejects.toThrow(
 			/authentication required/i
 		);
 		await expect(
-			asUser.query(api.artifacts.getMissingArtifactIds, {
+			asUser.query(api.artifacts.getDeletedRegistrationIds, {
 				repositoryKey,
-				artifactIds: Array.from({ length: 17 }, () => artifactId)
+				registrationIds: Array.from({ length: 129 }, () => fields.registrationId)
 			})
-		).rejects.toThrow(/16/);
+		).rejects.toThrow(/128/);
 	});
 
 	it('pages more than 16 MB of content', async () => {

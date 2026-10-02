@@ -482,10 +482,19 @@ async fn load_registry(
         .iter()
         .map(|artifact| artifact.id.clone())
         .collect();
-    reconcile_bindings(bindings, &visible_ids, |ids| {
-        client.missing_artifact_ids(repository_key, ids)
-    })
-    .await?;
+    // Reconciliation is maintenance, not a prerequisite for displaying or
+    // syncing the current registry. Bound the entire pass even in large stores.
+    match timeout(
+        Duration::from_secs(5),
+        reconcile_bindings(bindings, &visible_ids, |ids| {
+            client.deleted_registration_ids(repository_key, ids)
+        }),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        result => tracing::warn!(?result, "artifact binding reconciliation deferred"),
+    }
     Ok(snapshot)
 }
 
@@ -504,16 +513,21 @@ where
         .snapshot()
         .await?
         .into_iter()
-        .filter_map(|binding| binding.artifact_id)
-        .filter(|id| !visible_ids.contains(id))
+        .filter(|binding| {
+            binding
+                .artifact_id
+                .as_ref()
+                .is_none_or(|id| !visible_ids.contains(id))
+        })
+        .map(|binding| binding.registration_id)
         .collect();
     if candidates.is_empty() {
         return Ok(());
     }
     let candidates: Vec<_> = candidates.into_iter().collect();
     let mut deleted = std::collections::HashSet::new();
-    // Keep below the getMissingArtifactIds document-read limit.
-    for chunk in candidates.chunks(16) {
+    // Deletion records contain no artifact content; check bounded index reads.
+    for chunk in candidates.chunks(128) {
         let confirmed = timeout(NETWORK_TIMEOUT, missing_ids(chunk.to_vec())).await??;
         deleted.extend(confirmed.into_iter().filter(|id| chunk.contains(id)));
     }
@@ -521,10 +535,11 @@ where
         return Ok(());
     }
     let mut guard = bindings.lock().await?;
-    let mut changed = false;
-    for id in deleted {
-        changed |= guard.remove(&id);
-    }
+    let previous = guard.bindings.len();
+    guard
+        .bindings
+        .retain(|binding| !deleted.contains(&binding.registration_id));
+    let changed = previous != guard.bindings.len();
     if changed {
         guard.persist().await?;
     }
@@ -952,12 +967,14 @@ mod tests {
         guard.persist().await.unwrap();
         drop(guard);
         // Reopening the store must also clean bindings never observed by this
-        // watcher, using authoritative ID absence rather than project absence.
+        // watcher, using owned deletion records rather than project absence.
         let restarted =
             ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
         reconcile_bindings(&restarted, &Default::default(), |ids| {
-            assert_eq!(ids, vec!["artifact", "other-project"]);
-            std::future::ready(Ok(vec!["artifact".into(), "unsolicited".into()]))
+            assert_eq!(ids.len(), 3);
+            assert!(ids.contains(&"registration".into()));
+            assert!(ids.contains(&"other-registration".into()));
+            std::future::ready(Ok(vec!["registration".into(), "unsolicited".into()]))
         })
         .await
         .unwrap();
@@ -980,6 +997,27 @@ mod tests {
                 .await
                 .unwrap(),
             "local edit"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciliation_releases_cancelled_add_reservations_after_deletion() {
+        let (_dir, feed) = setup().await;
+        let mut guard = feed.bindings.lock().await.unwrap();
+        let registration_id = guard.reserve("pending.md".into()).registration_id.clone();
+        guard.persist().await.unwrap();
+        drop(guard);
+        reconcile_bindings(&feed.bindings, &Default::default(), |ids| {
+            assert_eq!(ids, vec![registration_id.clone()]);
+            std::future::ready(Ok(ids))
+        })
+        .await
+        .unwrap();
+        let mut guard = feed.bindings.lock().await.unwrap();
+        assert!(guard.bindings.is_empty());
+        assert_ne!(
+            guard.reserve("pending.md".into()).registration_id,
+            registration_id
         );
     }
 
@@ -1008,7 +1046,7 @@ mod tests {
     async fn reconciliation_batches_requests_within_cloud_limit() {
         let (_dir, feed) = setup().await;
         let mut guard = feed.bindings.lock().await.unwrap();
-        for index in 0..18 {
+        for index in 0..130 {
             guard
                 .bind(ArtifactBinding {
                     registration_id: format!("registration-{index}"),
@@ -1027,7 +1065,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(batches, vec![16, 2]);
+        assert_eq!(batches, vec![128, 2]);
         assert!(feed.bindings.snapshot().await.unwrap().is_empty());
     }
 

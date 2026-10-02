@@ -1,6 +1,7 @@
 import ArtifactContextMenu from '$lib/components/artifact-context-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { z } from 'zod';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import type { ArtifactType } from '@convex/lib/validators';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
@@ -18,6 +19,27 @@ type Props = {
 	onDelete?: () => Promise<void>;
 };
 
+// Sandboxed previews have an opaque origin. Forward only menu-opening gestures;
+// the parent still requires the user to choose the deletion action.
+const previewMenuBridge = `<script>
+window.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  parent.postMessage({ type: 'sprocket-artifact-menu', x: event.clientX, y: event.clientY }, '*');
+}, true);
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+  event.preventDefault();
+  const bounds = event.target.getBoundingClientRect();
+  parent.postMessage({ type: 'sprocket-artifact-menu', x: bounds.left, y: bounds.bottom }, '*');
+}, true);
+</script>`;
+
+const previewMenuMessage = z.object({
+	type: z.literal('sprocket-artifact-menu'),
+	x: z.number().finite(),
+	y: z.number().finite()
+});
+
 export default function ArtifactDisplay({
 	title,
 	artifactType,
@@ -29,14 +51,47 @@ export default function ArtifactDisplay({
 	onBack,
 	onDelete
 }: Props) {
-	const previewDocument = useMemo(
-		() => buildArtifactPreviewDocument(artifactType, content),
-		[artifactType, content]
-	);
+	const previewDocument = useMemo(() => {
+		const document = buildArtifactPreviewDocument(artifactType, content);
+
+		if (!document || !onDelete) return document;
+
+		return /<head(?:\s[^>]*)?>/i.test(document)
+			? document.replace(/<head(?:\s[^>]*)?>/i, (head) => head + previewMenuBridge)
+			: document + previewMenuBridge;
+	}, [artifactType, content, onDelete]);
 
 	const [showSource, setShowSource] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const frameRef = useRef<HTMLIFrameElement>(null);
+
+	useEffect(() => {
+		if (!onDelete) return;
+
+		function openPreviewMenu(event: MessageEvent) {
+			const frame = frameRef.current;
+
+			if (!frame || event.source !== frame.contentWindow) return;
+			const parsed = previewMenuMessage.safeParse(event.data);
+
+			if (!parsed.success) return;
+			const data = parsed.data;
+			const bounds = frame.getBoundingClientRect();
+			frame.dispatchEvent(
+				new MouseEvent('contextmenu', {
+					bubbles: true,
+					cancelable: true,
+					clientX: bounds.left + Math.max(0, Math.min(data.x, bounds.width)),
+					clientY: bounds.top + Math.max(0, Math.min(data.y, bounds.height))
+				})
+			);
+		}
+
+		window.addEventListener('message', openPreviewMenu);
+
+		return () => window.removeEventListener('message', openPreviewMenu);
+	}, [onDelete]);
 
 	async function copyContent() {
 		try {
@@ -69,6 +124,7 @@ export default function ArtifactDisplay({
 			<div className="relative min-h-0 flex-1 border-t">
 				{previewDocument && !showSource ? (
 					<iframe
+						ref={frameRef}
 						title={`${title} preview`}
 						srcDoc={previewDocument}
 						sandbox="allow-scripts"

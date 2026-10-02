@@ -125,17 +125,17 @@ impl UserConvexClient {
         self.mutation_json("artifacts:syncArtifact", args).await
     }
 
-    pub(crate) async fn missing_artifact_ids(
+    pub(crate) async fn deleted_registration_ids(
         &self,
         repository_key: &str,
-        artifact_ids: Vec<String>,
+        registration_ids: Vec<String>,
     ) -> anyhow::Result<Vec<String>> {
         let mut args = artifacts_list_args(repository_key);
         args.insert(
-            "artifactIds".to_string(),
-            Value::Array(artifact_ids.into_iter().map(Value::String).collect()),
+            "registrationIds".to_string(),
+            Value::Array(registration_ids.into_iter().map(Value::String).collect()),
         );
-        self.query_json("artifacts:getMissingArtifactIds", args)
+        self.query_json("artifacts:getDeletedRegistrationIds", args)
             .await
     }
 

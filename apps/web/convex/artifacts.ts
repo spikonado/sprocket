@@ -219,6 +219,11 @@ async function deleteAccessibleArtifact(
 	const artifact = await findAccessibleArtifact(ctx, artifactId, userId, repositoryKey);
 
 	if (artifact) {
+		await ctx.db.insert('artifactDeletions', {
+			userId,
+			repositoryKey,
+			registrationId: artifact.registrationId
+		});
 		await ctx.db.delete('artifacts', artifactId);
 		await bumpRegistry(ctx, userId, repositoryKey);
 	}
@@ -293,6 +298,18 @@ export const addArtifact = mutation({
 				throw new Error('Invalid registration ID.');
 			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
+
+			const deletion = await ctx.db
+				.query('artifactDeletions')
+				.withIndex('by_userId_and_registrationId', (q) =>
+					q.eq('userId', run.userId).eq('registrationId', args.registrationId)
+				)
+				.unique();
+
+			if (deletion)
+				throw new Error(
+					'Artifact registration was deleted. Add it again with a new registration ID.'
+				);
 
 			const existing = await ctx.db
 				.query('artifacts')
@@ -392,26 +409,34 @@ export const deleteArtifact = mutation({
 	}
 });
 
-// A project list cannot distinguish deleted artifacts from bindings belonging to
-// another project. Only authoritative absence permits dropping a local binding.
-export const getMissingArtifactIds = query({
-	args: { repositoryKey: v.string(), artifactIds: v.array(v.id('artifacts')) },
-	returns: v.array(v.id('artifacts')),
+// Only deletion records owned by this account and project can release bindings.
+export const getDeletedRegistrationIds = query({
+	args: { repositoryKey: v.string(), registrationIds: v.array(v.string()) },
+	returns: v.array(v.string()),
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
-		await authorizeProject(ctx, repositoryKey);
+		const userId = await authorizeProject(ctx, repositoryKey);
 
-		// Reading 16 maximum-size artifact documents leaves headroom below the
-		// transaction read limit. Keep the Rust reconciliation batch size in sync.
-		if (args.artifactIds.length > 16) throw new Error('Cannot check more than 16 artifacts.');
+		if (args.registrationIds.length > 128)
+			throw new Error('Cannot check more than 128 registrations.');
 
-		const missing: Id<'artifacts'>[] = [];
+		const deleted: string[] = [];
 
-		for (const artifactId of new Set(args.artifactIds)) {
-			if (!(await ctx.db.get('artifacts', artifactId))) missing.push(artifactId);
+		for (const registrationId of new Set(args.registrationIds)) {
+			if (!registrationId || registrationId.length > 128)
+				throw new Error('Invalid registration ID.');
+
+			const record = await ctx.db
+				.query('artifactDeletions')
+				.withIndex('by_userId_and_registrationId', (q) =>
+					q.eq('userId', userId).eq('registrationId', registrationId)
+				)
+				.unique();
+
+			if (record?.repositoryKey === repositoryKey) deleted.push(registrationId);
 		}
 
-		return missing;
+		return deleted;
 	}
 });
 
