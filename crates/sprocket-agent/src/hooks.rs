@@ -32,6 +32,10 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "write_stdin",
 ];
 
+#[cfg(test)]
+#[path = "thread_tool_integration_tests.rs"]
+mod thread_tool_integration_tests;
+
 pub(crate) fn available_agent_tool_names(
     allow_interaction: bool,
     supports_images: bool,
