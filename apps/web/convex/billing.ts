@@ -928,8 +928,10 @@ export const getCheckoutStatus = action({
 
 		const environment = readDodoEnvironment(env);
 		const mode = publicMode(attempt.dodoEnvironment ?? environment);
+
 		const environmentMismatch =
 			attempt.dodoEnvironment !== undefined && attempt.dodoEnvironment !== environment;
+
 		const now = Date.now();
 
 		if (attempt.outcome === 'paid') {

@@ -518,7 +518,7 @@ describe('checkout selection changes', () => {
 	});
 
 	it('resuming a same-selection hosted link keeps its original environment after a config flip', async () => {
-		const { t, owner } = await billingFixture();
+		const { owner } = await billingFixture();
 
 		const first = await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
 
