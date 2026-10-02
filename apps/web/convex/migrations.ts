@@ -1,6 +1,8 @@
 import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation } from '@convex/_generated/server';
+import { internalMutation, type MutationCtx } from '@convex/_generated/server';
+import { bumpRegistry } from '@convex/lib/artifactRegistry';
+import type { FunctionReference } from 'convex/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { z } from 'zod';
@@ -197,7 +199,22 @@ export const removeArtifactRegistryRekeyTargets = migrations.define({
 	}
 });
 
-const legacyCompatBackfillMigrations = [
+// Project ownership is available immediately through artifact readers; this
+// backfill removes historical confinement without changing artifact identities
+// or content revisions. Registry invalidation refreshes installed-client caches.
+export const promoteThreadArtifacts = migrations.define({
+	table: 'artifacts',
+	batchSize: 8,
+	migrateOne: async (ctx, artifact) => {
+		if (artifact.scope === 'project' && artifact.threadId === undefined) return;
+
+		await bumpRegistry(ctx, artifact.userId, artifact.repositoryKey);
+
+		return { scope: 'project' as const, threadId: undefined };
+	}
+});
+
+const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[] = [
 	internal.migrations.removeTranscriptStateWorkThrough,
 	internal.migrations.removeMandateSetupUserEmail,
 	internal.migrations.normalizeScrapeUrlResults,
@@ -214,40 +231,58 @@ export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMig
 
 const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10';
 
-export const runLegacyCompatBackfillAutomatically = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const schedule = await ctx.db
-			.query('migrationSchedules')
-			.withIndex('by_name', (q) => q.eq('name', LEGACY_COMPAT_BACKFILL))
-			.unique();
+const projectArtifactMigrations: FunctionReference<'mutation', 'internal'>[] = [
+	internal.migrations.promoteThreadArtifacts
+];
 
-		if (schedule?.completedAt !== undefined) return null;
-		let scheduleId = schedule?._id;
+export const runProjectArtifactBackfill = migrations.runner(projectArtifactMigrations);
 
-		if (!schedule) {
-			scheduleId = await ctx.db.insert('migrationSchedules', {
-				name: LEGACY_COMPAT_BACKFILL,
-				notBefore: Date.now(),
-				startedAt: Date.now()
-			});
-		} else if (schedule.startedAt === undefined) {
-			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
-		}
+async function runBackfillAutomatically(
+	ctx: MutationCtx,
+	name: string,
+	backfills: FunctionReference<'mutation', 'internal'>[]
+): Promise<null> {
+	const schedule = await ctx.db
+		.query('migrationSchedules')
+		.withIndex('by_name', (q) => q.eq('name', name))
+		.unique();
 
-		const statuses = await migrations.getStatus(ctx, {
-			migrations: legacyCompatBackfillMigrations
+	if (schedule?.completedAt !== undefined) return null;
+	let scheduleId = schedule?._id;
+
+	if (!schedule) {
+		scheduleId = await ctx.db.insert('migrationSchedules', {
+			name,
+			notBefore: Date.now(),
+			startedAt: Date.now()
 		});
+	} else if (schedule.startedAt === undefined) {
+		await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
+	}
 
-		if (statuses.every((status) => status.isDone)) {
-			await ctx.db.patch('migrationSchedules', scheduleId!, { completedAt: Date.now() });
+	const statuses = await migrations.getStatus(ctx, { migrations: backfills });
 
-			return null;
-		}
-
-		await migrations.runSerially(ctx, legacyCompatBackfillMigrations);
+	if (statuses.every((status) => status.isDone)) {
+		await ctx.db.patch('migrationSchedules', scheduleId!, { completedAt: Date.now() });
 
 		return null;
 	}
+
+	await migrations.runSerially(ctx, backfills);
+
+	return null;
+}
+
+export const runLegacyCompatBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: (ctx): Promise<null> =>
+		runBackfillAutomatically(ctx, LEGACY_COMPAT_BACKFILL, legacyCompatBackfillMigrations)
+});
+
+export const runProjectArtifactBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: (ctx): Promise<null> =>
+		runBackfillAutomatically(ctx, 'project-artifacts-2026-10', projectArtifactMigrations)
 });

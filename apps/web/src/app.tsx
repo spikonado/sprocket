@@ -809,13 +809,12 @@ export default function App({
 				? {
 						userId: signedInUserId,
 						repositoryKey: currentRepositoryKey,
-						workspacePath: currentWorkspacePath ?? '',
-						threadId: currentThreadId
+						workspacePath: currentWorkspacePath ?? ''
 					}
 				: null;
 
 		artifactPanel.selectScope(scope);
-	}, [artifactPanel, signedInUserId, currentRepositoryKey, currentWorkspacePath, currentThreadId]);
+	}, [artifactPanel, signedInUserId, currentRepositoryKey, currentWorkspacePath]);
 
 	useEffect(() => {
 		const scope =
@@ -823,8 +822,7 @@ export default function App({
 				? {
 						userId: signedInUserId,
 						repositoryKey: currentRepositoryKey,
-						workspacePath: currentWorkspacePath ?? '',
-						threadId: currentThreadId
+						workspacePath: currentWorkspacePath ?? ''
 					}
 				: null;
 
@@ -839,7 +837,6 @@ export default function App({
 		signedInUserId,
 		currentRepositoryKey,
 		currentWorkspacePath,
-		currentThreadId,
 		desktopApi,
 		artifactClient,
 		convexAuth.isLoading,

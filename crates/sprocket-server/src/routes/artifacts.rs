@@ -27,16 +27,10 @@ struct ArtifactWatchRequest {
     user_id: String,
     repository_key: String,
     workspace_path: String,
-    #[serde(default)]
-    thread_id: Option<String>,
 }
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new().route("/artifacts/watch", post(watch_handler))
-}
-
-fn normalize_thread_id(thread_id: Option<&str>) -> Option<&str> {
-    thread_id.map(str::trim).filter(|id| !id.is_empty())
 }
 
 async fn watch_handler(
@@ -60,16 +54,10 @@ async fn watch_handler(
         .require_matching_workspace(workspace_path, repository_key)
         .await
         .map_err(ApiError::bad_request)?;
-    let thread_id = normalize_thread_id(payload.thread_id.as_deref());
-    authorize_watch_scope(&state, &payload.user_id, repository_key, thread_id).await?;
+    authorize_watch_project(&state, &payload.user_id, repository_key).await?;
     let session = state
         .artifact_watchers
-        .open(
-            &payload.user_id,
-            repository_key,
-            &attachment.workspace_path,
-            thread_id,
-        )
+        .open(&payload.user_id, repository_key, &attachment.workspace_path)
         .await;
     let stream = unfold(
         (session.latest_event(), session),
@@ -95,20 +83,16 @@ async fn watch_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-async fn authorize_watch_scope(
+async fn authorize_watch_project(
     state: &AppState,
     user_id: &str,
     repository_key: &str,
-    thread_id: Option<&str>,
 ) -> Result<(), ApiError> {
     let mut args = BTreeMap::new();
     args.insert(
         "repositoryKey".to_string(),
         Value::String(repository_key.to_string()),
     );
-    if let Some(thread_id) = thread_id {
-        args.insert("threadId".to_string(), Value::String(thread_id.to_string()));
-    }
     let query = timeout(AUTHORIZE_TIMEOUT, async {
         let client = state.convex_client_for(user_id).await?;
         client

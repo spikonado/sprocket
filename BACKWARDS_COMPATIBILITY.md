@@ -43,6 +43,17 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### Legacy artifact binding scopes
+
+Existing local `bindings.json` rows accept `scope` and `thread_id`; the first
+locked load atomically drops those fields while retaining every
+registration/artifact ID, path, and content baseline. Bindings from different
+former scopes can resolve to the same file; synchronization pauses for all
+colliding bindings until artifacts are saved or rebound to distinct paths.
+Migration never writes artifact files. Remove legacy-field detection once all
+supported clients have upgraded and their data directories have been migrated;
+collision protection remains a general safety rule.
+
 ### Local project message recency
 
 Older `project-attachments.json` files omit `lastMessageSentAt`. The server
@@ -105,6 +116,28 @@ direct-upgrade window, remove the raw JSON field-presence check and its legacy
 JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
+
+### Project-owned artifacts
+
+Released agents may send `scope: 'thread'` to `artifacts.addArtifact` or include
+artifact scope/thread metadata in executor payloads and results. The add mutation
+accepts that optional argument but always stores and returns project scope.
+Released web/server clients may send `threadId` to artifact reads and sync;
+Convex validates the supplied thread's ownership and repository but authorizes
+artifact access by user and repository only. All current read responses normalize
+legacy rows to `scope: 'project'` and omit `threadId`. Remove these API arguments
+after clients sending them have aged out.
+
+The hourly `runProjectArtifactBackfillAutomatically` runner records completion
+under `project-artifacts-2026-10`, separately from earlier compatibility backfills.
+`promoteThreadArtifacts` rewrites stored thread artifacts to project scope and
+removes `threadId`, preserving IDs, registration IDs, content revisions and
+timestamps while advancing each project's registry revision. Add retries and
+successful edits/syncs also normalize legacy rows in place. Remove the stored
+thread-scope/threadId schema fields, reader projection, migration and its cron
+only after the migration finishes and production scans find no legacy rows.
+Historical executor tool payloads/results retain optional scope/thread metadata
+permanently because conversation history describes the original calls.
 
 ### Retired cloud-held ChatGPT sign-in
 

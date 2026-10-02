@@ -128,7 +128,6 @@ pub(crate) fn agent_tools(
     workspace_root: PathBuf,
     transcript_dir: PathBuf,
     artifact_bindings: crate::artifact_bindings::ArtifactBindings,
-    thread_id: String,
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
@@ -142,7 +141,6 @@ pub(crate) fn agent_tools(
         workspace_root,
         transcript_dir,
         artifact_bindings,
-        thread_id,
         supports_images,
         tool_call_tracker,
         command_sessions.clone(),
@@ -338,16 +336,14 @@ mod tests {
 
     #[test]
     fn mutation_args_from_payload_merges_run_claim() {
-        let job_payload = serde_json::json!({"path": "doc.md", "scope": "thread"});
+        let job_payload = serde_json::json!({"path": "doc.md"});
         let job_args = mutation_args_from_payload("run-1", "claim-1", &job_payload).unwrap();
         assert_eq!(job_args.get("runId"), Some(&Value::from("run-1")));
         assert_eq!(job_args.get("claimId"), Some(&Value::from("claim-1")));
         assert_eq!(job_args.get("path"), Some(&Value::from("doc.md")));
-        assert_eq!(job_args.get("scope"), Some(&Value::from("thread")));
         assert!(job_args.get("content").is_none());
 
         let mutation_payload = serde_json::json!({
-            "scope": "thread",
             "localPath": "doc.md",
             "content": "function App() { return null; }",
             "title": "doc.md",

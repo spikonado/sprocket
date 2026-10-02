@@ -1,51 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { artifactWatchScopeKey, artifactsWatchRequest, isCurrentArtifactsWatch } from './artifacts';
+import { artifactWatchScopeKey, isCurrentArtifactsWatch } from './artifacts';
 
 describe('artifact watch snapshots', () => {
-	it('omits threadId from the request until a thread is selected', () => {
-		expect(
-			artifactsWatchRequest({
-				userId: 'user-1',
-				repositoryKey: 'repo-1',
-				workspacePath: '/ws'
-			})
-		).toEqual({
-			userId: 'user-1',
-			repositoryKey: 'repo-1',
-			workspacePath: '/ws'
-		});
-		expect(
-			artifactsWatchRequest({
-				userId: 'user-1',
-				repositoryKey: 'repo-1',
-				workspacePath: '/ws',
-				threadId: 'thread-1'
-			}).threadId
-		).toBe('thread-1');
-	});
-
-	it('distinguishes project and thread watch scopes', () => {
-		const project = artifactWatchScopeKey({
-			userId: 'user-1',
-			repositoryKey: 'repo-1',
-			workspacePath: '/ws'
-		});
-
-		const thread = artifactWatchScopeKey({
-			userId: 'user-1',
-			repositoryKey: 'repo-1',
-			workspacePath: '/ws',
-			threadId: 'thread-1'
-		});
-
-		const otherWorkspace = artifactWatchScopeKey({
-			userId: 'user-1',
-			repositoryKey: 'repo-1',
-			workspacePath: '/other'
-		});
-
-		expect(project).not.toBe(thread);
-		expect(project).not.toBe(otherWorkspace);
+	it('distinguishes project, workspace, and account watch scopes', () => {
+		const scope = { userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' };
+		const key = artifactWatchScopeKey(scope);
+		expect(key).not.toBe(artifactWatchScopeKey({ ...scope, workspacePath: '/other' }));
+		expect(key).not.toBe(artifactWatchScopeKey({ ...scope, repositoryKey: 'repo-2' }));
+		expect(key).not.toBe(artifactWatchScopeKey({ ...scope, userId: 'user-2' }));
 	});
 
 	it('ignores late events after abort, generation bump, or scope switch', () => {
@@ -55,11 +17,10 @@ describe('artifact watch snapshots', () => {
 			workspacePath: '/ws'
 		});
 
-		const threadScope = artifactWatchScopeKey({
+		const otherScope = artifactWatchScopeKey({
 			userId: 'user-1',
 			repositoryKey: 'repo-1',
-			workspacePath: '/ws',
-			threadId: 'thread-1'
+			workspacePath: '/other'
 		});
 
 		expect(
@@ -86,7 +47,7 @@ describe('artifact watch snapshots', () => {
 				generation: 2,
 				currentGeneration: 2,
 				eventScopeKey: projectScope,
-				currentScopeKey: threadScope
+				currentScopeKey: otherScope
 			})
 		).toBe(false);
 		expect(
@@ -94,8 +55,8 @@ describe('artifact watch snapshots', () => {
 				aborted: false,
 				generation: 2,
 				currentGeneration: 2,
-				eventScopeKey: threadScope,
-				currentScopeKey: threadScope
+				eventScopeKey: otherScope,
+				currentScopeKey: otherScope
 			})
 		).toBe(true);
 	});
