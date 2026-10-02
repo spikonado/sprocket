@@ -29,6 +29,7 @@
 		},
 		"files": [
 			"main.mjs",
+			"desktop-bootstrap.mjs",
 			"local-server.mjs",
 			"updater.mjs",
 			"preload.cjs",
