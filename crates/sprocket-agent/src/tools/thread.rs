@@ -20,7 +20,7 @@ impl rig::tool::Tool for GetThreadIdTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Get the ID of the current Sprocket thread (conversation). Returns threadId.".to_string()
+        "Get the ID of the current Sprocket thread.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
