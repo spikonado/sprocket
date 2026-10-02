@@ -259,6 +259,23 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<bool> {
+        self.assign_session_user(session_token, user_id, true).await
+    }
+
+    pub async fn claim_session_user(
+        &self,
+        session_token: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool> {
+        self.assign_session_user(session_token, user_id, false).await
+    }
+
+    async fn assign_session_user(
+        &self,
+        session_token: &str,
+        user_id: &str,
+        persist: bool,
+    ) -> anyhow::Result<bool> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         let session = sessions
             .get_mut(session_token)
@@ -271,7 +288,18 @@ impl AuthState {
             return Ok(false);
         }
         session.user_id = Some(user_id.to_string());
-        self.save_sessions(sessions).await?;
+        if !persist {
+            return Ok(true);
+        }
+        if let Err(error) = self.save_sessions(sessions).await {
+            let mut sessions = self.sessions.write().await;
+            if let Some(session) = sessions.get_mut(session_token) {
+                if session.user_id.as_deref() == Some(user_id) {
+                    session.user_id = None;
+                }
+            }
+            return Err(error);
+        }
         Ok(true)
     }
 
@@ -280,7 +308,7 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<()> {
-        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(session_token) else {
             return Ok(());
         };
@@ -288,7 +316,7 @@ impl AuthState {
             return Ok(());
         }
         session.user_id = None;
-        self.save_sessions(sessions).await
+        Ok(())
     }
 
     pub async fn assert_session_can_bind(
@@ -956,6 +984,12 @@ mod tests {
         auth.bind_session_user(&session_token, "user-1")
             .await
             .unwrap();
+        assert!(
+            auth.claim_session_user(&session_token, "user-1")
+                .await
+                .unwrap()
+                == false
+        );
         auth.assert_session_can_bind(&session_token, "user-1")
             .await
             .unwrap();
@@ -982,6 +1016,35 @@ mod tests {
         auth.sync_sessions_with_owner(None).await.unwrap();
         assert!(
             auth.require_session_user(&session_token, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn claim_session_user_stays_in_memory_until_a_later_persist() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap should succeed");
+        assert!(
+            auth.claim_session_user(&session_token, "user-1")
+                .await
+                .unwrap()
+        );
+        auth.require_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
+        assert!(
+            reloaded
+                .require_session_user(&session_token, "user-1")
                 .await
                 .unwrap_err()
                 .to_string()
