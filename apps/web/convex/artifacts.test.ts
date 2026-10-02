@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { describe, expect, it, vi } from 'vitest';
+import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
 	createQueuedRun,
@@ -110,56 +110,84 @@ describe('cloud artifacts', () => {
 		).toBe('<p>edited</p>');
 	});
 
-	it('enforces thread, project and account boundaries for reads and writes', async () => {
+	it('promotes released thread-scope writes and allows project-wide access across threads', async () => {
 		const { t, asUser, threadId, repositoryKey, auth } = await seedActiveRun();
-		const project = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 
-		const privateArtifact = await asUser.mutation(api.artifacts.addArtifact, {
+		const created = await asUser.mutation(api.artifacts.addArtifact, {
 			...auth,
 			...fields,
-			registrationId: 'private',
 			scope: 'thread'
 		});
 
-		const otherThread = await seedThreadRecord(t, 'user_alice', repositoryKey);
-		const anotherRepo = await seedThreadRecord(t, 'user_alice', 'other');
-		const list = await asUser.query(api.artifacts.listArtifacts, { repositoryKey, threadId });
-		expect(list.page).toHaveLength(2);
-		expect(
-			(await asUser.query(api.artifacts.listArtifacts, { repositoryKey })).page.map(
-				(artifact) => artifact._id
-			)
-		).toEqual([project.artifactId]);
+		expect(created.scope).toBe('project');
+		const stored = await t.run((ctx) => ctx.db.get('artifacts', created.artifactId));
+		expect(stored?.scope).toBe('project');
+		expect(stored).not.toHaveProperty('threadId');
 
-		for (const scope of [
-			{ repositoryKey },
-			{ repositoryKey, threadId: otherThread },
-			{ repositoryKey: 'other', threadId: anotherRepo }
-		]) {
-			await expect(
-				asUser.query(api.artifacts.getArtifact, {
-					...scope,
-					artifactId: privateArtifact.artifactId
-				})
-			).rejects.toThrow(/not found/i);
-			await expect(
-				asUser.mutation(api.artifacts.syncArtifact, {
-					...scope,
-					artifactId: privateArtifact.artifactId,
+		const otherThread = await seedThreadRecord(t, 'user_alice', repositoryKey);
+
+		for (const project of [{ repositoryKey }, { repositoryKey, threadId: otherThread }]) {
+			const listed = await asUser.query(api.artifacts.listArtifacts, project);
+			expect(listed.page.map((artifact) => artifact._id)).toEqual([created.artifactId]);
+
+			const loaded = await asUser.query(api.artifacts.getArtifact, {
+				...project,
+				artifactId: created.artifactId
+			});
+
+			expect(loaded.scope).toBe('project');
+			expect(loaded).not.toHaveProperty('threadId');
+			expect(
+				await asUser.mutation(api.artifacts.syncArtifact, {
+					...project,
+					artifactId: created.artifactId,
 					expectedRevision: 1,
-					content: 'forbidden'
+					content: 'initial'
 				})
-			).rejects.toThrow(/not found/i);
+			).toBe(true);
 		}
+
+		const { scope, ...currentFields } = fields;
+		void scope;
+		expect(await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...currentFields })).toEqual(
+			created
+		);
+		expect(await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields })).toEqual(
+			created
+		);
+
+		await expect(
+			asUser.query(api.artifacts.getArtifact, {
+				artifactId: created.artifactId,
+				repositoryKey: 'other'
+			})
+		).rejects.toThrow(/not found/i);
+		await expect(
+			asUser.mutation(api.artifacts.syncArtifact, {
+				artifactId: created.artifactId,
+				repositoryKey: 'other',
+				expectedRevision: 1,
+				content: 'forbidden'
+			})
+		).rejects.toThrow(/not found/i);
+		await expect(
+			asUser.query(api.artifacts.listArtifacts, {
+				repositoryKey: 'other',
+				threadId
+			})
+		).rejects.toThrow(/not found/i);
 
 		const bob = t.withIdentity({ subject: 'user_bob' });
 		await expect(
-			bob.query(api.artifacts.getArtifact, { repositoryKey, artifactId: project.artifactId })
+			bob.query(api.artifacts.getArtifact, {
+				repositoryKey,
+				artifactId: created.artifactId
+			})
 		).rejects.toThrow(/not found/i);
 		await expect(
 			bob.mutation(api.artifacts.syncArtifact, {
 				repositoryKey,
-				artifactId: project.artifactId,
+				artifactId: created.artifactId,
 				expectedRevision: 1,
 				content: 'forbidden'
 			})
@@ -167,9 +195,138 @@ describe('cloud artifacts', () => {
 		await expect(t.query(api.artifacts.listArtifacts, { repositoryKey })).rejects.toThrow(
 			/authentication required/i
 		);
-		await expect(
-			asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields, scope: 'thread' })
-		).rejects.toThrow(/not found/i);
+	});
+
+	it('reads historical thread artifacts as project artifacts and promotes unchanged writes in place', async () => {
+		const { t, asUser, threadId, repositoryKey, auth } = await seedActiveRun();
+
+		const legacyId = await t.run((ctx) =>
+			ctx.db.insert('artifacts', {
+				userId: 'user_alice',
+				scope: 'thread',
+				threadId,
+				repositoryKey,
+				registrationId: fields.registrationId,
+				content: fields.content,
+				type: fields.contentType,
+				title: fields.title,
+				revision: 7,
+				createdAt: 1,
+				updatedAt: 2
+			})
+		);
+
+		const otherRun = await seedActiveRun('user_alice', t);
+		expect(otherRun.repositoryKey).toBe(repositoryKey);
+
+		const loaded = await otherRun.asUser.query(api.artifacts.getArtifactForRun, {
+			...otherRun.auth,
+			artifactId: legacyId
+		});
+
+		expect(loaded).toMatchObject({ _id: legacyId, scope: 'project', revision: 7 });
+		expect(loaded).not.toHaveProperty('threadId');
+		const listed = await asUser.query(api.artifacts.listArtifactsForRun, auth);
+		expect(listed.page[0]).toMatchObject({ artifactId: legacyId, scope: 'project' });
+		expect(listed.page[0]).not.toHaveProperty('threadId');
+		expect((await asUser.query(api.artifacts.listArtifacts, { repositoryKey })).page).toHaveLength(
+			1
+		);
+
+		expect(
+			await asUser.mutation(api.artifacts.syncArtifact, {
+				artifactId: legacyId,
+				repositoryKey,
+				expectedRevision: 7,
+				content: fields.content
+			})
+		).toBe(true);
+		expect(await t.run((ctx) => ctx.db.get('artifacts', legacyId))).toMatchObject({
+			scope: 'project',
+			revision: 7,
+			createdAt: 1,
+			updatedAt: 2
+		});
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+
+		const retry = await asUser.mutation(api.artifacts.addArtifact, {
+			...otherRun.auth,
+			...fields,
+			scope: 'thread'
+		});
+
+		expect(retry).toMatchObject({ artifactId: legacyId, scope: 'project', revision: 7 });
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+	});
+
+	it('automatically migrates legacy artifacts even after earlier backfills completed', async () => {
+		vi.useFakeTimers();
+
+		try {
+			const { t, asUser, threadId, repositoryKey } = await seedActiveRun();
+
+			const artifactIds = await t.run(async (ctx) => {
+				await ctx.db.insert('migrationSchedules', {
+					name: 'legacy-compat-backfill-2026-10',
+					notBefore: 1,
+					startedAt: 1,
+					completedAt: 2
+				});
+
+				const ids = [];
+
+				for (let index = 0; index < 19; index++) {
+					ids.push(
+						await ctx.db.insert('artifacts', {
+							userId: 'user_alice',
+							scope: 'thread',
+							threadId,
+							repositoryKey,
+							registrationId: `legacy-${index}`,
+							content: 'preserved',
+							type: 'markdown',
+							title: 'Legacy',
+							revision: 4,
+							createdAt: 1,
+							updatedAt: 2
+						})
+					);
+				}
+
+				return ids;
+			});
+
+			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
+
+			for (const artifactId of artifactIds) {
+				const stored = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
+				expect(stored).toMatchObject({
+					scope: 'project',
+					content: 'preserved',
+					revision: 4,
+					createdAt: 1,
+					updatedAt: 2
+				});
+				expect(stored).not.toHaveProperty('threadId');
+			}
+
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
+
+			const schedule = await t.run((ctx) =>
+				ctx.db
+					.query('migrationSchedules')
+					.withIndex('by_name', (q) => q.eq('name', 'project-artifacts-2026-10'))
+					.unique()
+			);
+
+			expect(schedule?.completedAt).toBeDefined();
+			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('requires an active execution claim and validates content bytes and opaque registration IDs', async () => {
@@ -212,11 +369,9 @@ describe('cloud artifacts', () => {
 			['add_artifact', 'edit_artifact', 'save_artifact', 'list_artifacts'] as const
 		).entries()) {
 			const payload =
-				kind === 'add_artifact'
-					? { scope: 'project' as const }
-					: kind === 'list_artifacts'
-						? {}
-						: { artifactId: artifact.artifactId };
+				kind === 'add_artifact' || kind === 'list_artifacts'
+					? {}
+					: { artifactId: artifact.artifactId };
 
 			const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				...auth,
@@ -227,7 +382,15 @@ describe('cloud artifacts', () => {
 
 			const result =
 				kind === 'list_artifacts'
-					? { artifacts: (await asUser.query(api.artifacts.listArtifactsForRun, auth)).page }
+					? {
+							artifacts: (await asUser.query(api.artifacts.listArtifactsForRun, auth)).page.map(
+								({ scope, ...metadata }) => {
+									void scope;
+
+									return metadata;
+								}
+							)
+						}
 					: artifact;
 
 			expect(
@@ -243,6 +406,41 @@ describe('cloud artifacts', () => {
 			expect(job.payload).not.toHaveProperty('path');
 			expect(job.result).not.toHaveProperty('localPath');
 		}
+	});
+
+	it('keeps released thread-scope executor payloads and results readable', async () => {
+		const { t, asUser, threadId, auth } = await seedActiveRun();
+		const artifact = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+		const metadata = (await asUser.query(api.artifacts.listArtifactsForRun, auth)).page[0];
+
+		const results = [
+			{
+				kind: 'add_artifact' as const,
+				payload: { scope: 'thread' as const },
+				result: { ...artifact, scope: 'thread' as const }
+			},
+			{
+				kind: 'list_artifacts' as const,
+				payload: {},
+				result: { artifacts: [{ ...metadata, scope: 'thread' as const, threadId }] }
+			}
+		];
+
+		for (const [index, { kind, payload, result }] of results.entries()) {
+			const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				...auth,
+				...toolTranscriptAssignment(auth.runId, auth.claimId, index + 1),
+				kind,
+				payload
+			});
+
+			expect(
+				await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })
+			).toBe(true);
+		}
+
+		const jobs = await t.run((ctx) => ctx.db.query('executorJobs').collect());
+		expect(jobs.map((job) => job.result)).toEqual(results.map(({ result }) => result));
 	});
 
 	it('pages more than 16 MB of content', async () => {

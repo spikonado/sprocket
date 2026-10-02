@@ -326,7 +326,7 @@ export default defineSchema({
 		userId: v.string(),
 		scope: vArtifactScope,
 		repositoryKey: v.string(),
-		// Present only for thread-scoped artifacts.
+		// Legacy thread confinement; current writes omit this field and migrations remove it.
 		threadId: v.optional(v.id('threadRecords')),
 		registrationId: v.string(),
 		content: v.string(),

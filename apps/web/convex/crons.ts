@@ -11,6 +11,13 @@ crons.interval(
 );
 
 crons.interval(
+	'promote legacy thread artifacts to projects',
+	{ hours: 1 },
+	internal.migrations.runProjectArtifactBackfillAutomatically,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

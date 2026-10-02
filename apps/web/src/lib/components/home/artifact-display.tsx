@@ -2,7 +2,6 @@ import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import type { ArtifactType } from '@convex/lib/validators';
-import type { ArtifactScope } from '$lib/types/sprocket';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 
 type Props = {
@@ -10,7 +9,6 @@ type Props = {
 	artifactType: ArtifactType;
 	content: string;
 	localPath?: string;
-	scope?: ArtifactScope;
 	localError?: string;
 	variant?: 'card' | 'full';
 	/** Enter true browser fullscreen for this artifact (content only). */
@@ -23,7 +21,6 @@ export default function ArtifactDisplay({
 	artifactType,
 	content,
 	localPath,
-	scope,
 	localError,
 	variant = 'card',
 	onOpenFullscreen,
@@ -122,11 +119,6 @@ export default function ArtifactDisplay({
 					<div className="flex min-w-0 items-center gap-2">
 						<span className="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
 						<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
-						{scope ? (
-							<span className="text-muted-foreground shrink-0 text-[11px]">
-								{scope === 'project' ? 'Project' : 'Thread'}
-							</span>
-						) : null}
 					</div>
 					{localPath ? (
 						<span className="text-muted-foreground min-w-0 truncate text-[11px]">{localPath}</span>

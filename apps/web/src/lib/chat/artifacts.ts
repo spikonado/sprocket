@@ -1,6 +1,5 @@
 import type { ArtifactType } from '@convex/lib/validators';
 import type {
-	ArtifactScope,
 	ArtifactsWatchEvent,
 	ArtifactsWatchRequest,
 	LocalArtifact
@@ -12,15 +11,7 @@ export type ArtifactEntry = {
 	artifactType: ArtifactType;
 	content: string;
 	localPath?: string;
-	scope: ArtifactScope;
 	localError?: string;
-};
-
-export type ArtifactWatchScope = {
-	userId: string;
-	repositoryKey: string;
-	workspacePath: string;
-	threadId?: string | null;
 };
 
 export type ArtifactWatchState = {
@@ -35,22 +26,8 @@ export const EMPTY_ARTIFACT_WATCH_STATE: ArtifactWatchState = {
 	error: null
 };
 
-export function artifactWatchScopeKey(scope: ArtifactWatchScope): string {
-	return [scope.userId, scope.repositoryKey, scope.workspacePath, scope.threadId ?? ''].join('\0');
-}
-
-export function artifactsWatchRequest(scope: ArtifactWatchScope): ArtifactsWatchRequest {
-	const request: ArtifactsWatchRequest = {
-		userId: scope.userId,
-		repositoryKey: scope.repositoryKey,
-		workspacePath: scope.workspacePath
-	};
-
-	if (scope.threadId) {
-		request.threadId = scope.threadId;
-	}
-
-	return request;
+export function artifactWatchScopeKey(scope: ArtifactsWatchRequest): string {
+	return [scope.userId, scope.repositoryKey, scope.workspacePath].join('\0');
 }
 
 export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
@@ -60,7 +37,6 @@ export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
 		artifactType: artifact.type,
 		content: artifact.content,
 		localPath: artifact.localPath,
-		scope: artifact.scope,
 		localError: artifact.localError
 	};
 }

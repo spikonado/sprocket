@@ -40,15 +40,13 @@ afterEach(() => {
 });
 
 describe('cloud artifact subscriptions', () => {
-	it('subscribes by repository but reads artifacts in the selected thread', async () => {
+	it('subscribes and reads artifacts by project', async () => {
 		const fixture = clientFixture();
 		fixture.query.mockResolvedValue({ page: [], isDone: true, continueCursor: '', revision: 1 });
-		// SAFETY: the mock records this ID without sending a Convex request.
-		const threadId = 'thread' as Id<'threadRecords'>;
 
 		const stop = watchCloudArtifacts(
 			fixture.client,
-			{ userId: 'alice', repositoryKey: 'repo', threadId },
+			{ userId: 'alice', repositoryKey: 'repo' },
 			vi.fn()
 		);
 
@@ -57,7 +55,6 @@ describe('cloud artifact subscriptions', () => {
 		await Promise.resolve();
 		expect(fixture.query.mock.calls[0]?.[1]).toEqual({
 			repositoryKey: 'repo',
-			threadId,
 			cursor: null
 		});
 		stop();
@@ -174,7 +171,6 @@ describe('cloud artifact subscriptions', () => {
 					_id: 'id',
 					userId: 'alice',
 					repositoryKey: 'repo',
-					scope: 'project',
 					content: 'cloud',
 					title: 'Notes',
 					type: 'markdown',

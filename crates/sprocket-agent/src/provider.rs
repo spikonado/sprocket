@@ -256,7 +256,6 @@ where
         request.workspace_root.clone(),
         request.transcript_dir.clone(),
         request.artifact_bindings.clone(),
-        request.thread_id.clone(),
         request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),

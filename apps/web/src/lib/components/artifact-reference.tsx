@@ -26,9 +26,7 @@ export default function ArtifactReference({
 			</div>
 			<div className="min-w-0 flex-1">
 				<div className="text-foreground truncate text-sm font-medium">{artifact.title}</div>
-				<div className="text-muted-foreground mt-0.5 text-xs">
-					Artifact · {artifact.scope === 'project' ? 'Project' : 'Thread'}
-				</div>
+				<div className="text-muted-foreground mt-0.5 text-xs">Artifact</div>
 			</div>
 			<button
 				type="button"

@@ -5,7 +5,6 @@ import type {
 	DesktopApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
-	LocalArtifact,
 	ProjectAttachment
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
@@ -166,14 +165,10 @@ const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('cleared') })
 ]);
 
-const artifactScopeSchema = z.enum(['thread', 'project']);
-
 const localArtifactSchema = z.object({
 	_id: z.string(),
 	userId: z.string(),
-	scope: artifactScopeSchema,
 	repositoryKey: z.string(),
-	threadId: z.string().optional(),
 	localPath: z.string().optional(),
 	content: z.string(),
 	type: z.enum(['markdown', 'html', 'react']),
@@ -246,21 +241,11 @@ function parseLiveCompletionWatchEvent(
 	return { eventType: 'cleared' };
 }
 
-function parseLocalArtifact(artifact: z.infer<typeof localArtifactSchema>): LocalArtifact {
-	const { threadId, ...rest } = artifact;
-
-	if (artifact.scope === 'thread' && threadId) {
-		return { ...rest, threadId };
-	}
-
-	return rest;
-}
-
 function parseArtifactsWatchEvent(
 	event: z.infer<typeof artifactsWatchEventSchema>
 ): ArtifactsWatchEvent {
 	return {
-		artifacts: event.artifacts.map(parseLocalArtifact),
+		artifacts: event.artifacts,
 		stale: event.stale,
 		error: event.error
 	};

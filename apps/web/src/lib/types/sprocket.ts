@@ -222,16 +222,11 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
-export type ArtifactScope = 'thread' | 'project';
-
 /** Local file-backed artifact snapshot from POST /api/artifacts/watch. */
 export type LocalArtifact = {
 	_id: string;
 	userId: string;
-	scope: ArtifactScope;
 	repositoryKey: string;
-	/** Present only for thread-scoped artifacts. */
-	threadId?: string;
 	localPath?: string;
 	content: string;
 	type: ArtifactType;
@@ -246,7 +241,6 @@ export type ArtifactsWatchRequest = {
 	userId: string;
 	repositoryKey: string;
 	workspacePath: string;
-	threadId?: string;
 };
 
 export type ArtifactsWatchEvent = {
