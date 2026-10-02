@@ -278,12 +278,26 @@ export type ChatGptBrowserLoginResult = {
 	error?: string;
 };
 
+export type WorkspaceSearchEntry = {
+	path: string;
+	kind: 'file' | 'directory';
+};
+
+export type WorkspaceSearchResult = {
+	entries: WorkspaceSearchEntry[];
+	scanning: boolean;
+};
+
 export type DesktopApi = {
 	browseFilesystem: (input: {
 		partialPath: string;
 		cwd?: string;
 	}) => Promise<FilesystemBrowseResult>;
 	listWorkspaceSkills: (input: { workspacePath: string }) => Promise<WorkspaceSkillsResult>;
+	searchWorkspace: (
+		input: { workspacePath: string; query: string },
+		signal?: AbortSignal
+	) => Promise<WorkspaceSearchResult>;
 	resolveWorkspacePath: (input: {
 		workspacePath: string;
 		createIfMissing?: boolean;

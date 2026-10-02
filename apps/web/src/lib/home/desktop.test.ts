@@ -43,6 +43,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
 		browseFilesystem: unusedDesktopCall,
 		listWorkspaceSkills: unusedDesktopCall,
+		searchWorkspace: unusedDesktopCall,
 		resolveWorkspacePath: unusedDesktopCall,
 		listProjectAttachments: unusedDesktopCall,
 		attachProject: unusedDesktopCall,

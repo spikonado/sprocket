@@ -68,6 +68,34 @@ describe('workspace launch fragments', () => {
 	});
 });
 
+describe('workspace path search', () => {
+	it('passes the workspace, query, and cancellation signal to the server', async () => {
+		const result = {
+			entries: [{ path: 'src', kind: 'directory' }],
+			scanning: false
+		};
+
+		const fetch = vi.fn(async () => Response.json(result));
+		vi.stubGlobal('fetch', fetch);
+		const controller = new AbortController();
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').searchWorkspace(
+				{ workspacePath: '/workspace', query: 'src' },
+				controller.signal
+			)
+		).resolves.toEqual(result);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/workspace/search',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ workspacePath: '/workspace', query: 'src' }),
+				signal: controller.signal
+			})
+		);
+	});
+});
+
 it('preserves local project send times when listing and attaching projects', async () => {
 	const attachment = {
 		workspacePath: '/work/robot',

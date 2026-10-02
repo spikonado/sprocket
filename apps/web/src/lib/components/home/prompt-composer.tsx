@@ -8,6 +8,7 @@ import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
+import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
 import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 import {
 	getCatalogModel,
@@ -22,10 +23,12 @@ import AgentQuestion from '$lib/components/home/agent-question';
 import RunElapsed from '$lib/components/home/run-elapsed';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
+import ComposerPathMenu from '$lib/components/home/composer-path-menu';
+import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import OptionSelector from '$lib/components/option-selector';
 import ProviderLogo from '$lib/components/provider-logo';
 import ReasoningSelector from '$lib/components/reasoning-selector';
-import type { SkillSummary } from '$lib/types/sprocket';
+import type { SkillSummary, WorkspaceSearchEntry } from '$lib/types/sprocket';
 
 export type PendingAgentQuestion = {
 	questionId: string;
@@ -65,6 +68,7 @@ export type PromptComposerProps = {
 		workspacePath: string | null;
 		load: () => Promise<SkillSummary[]>;
 	} | null;
+	projectPaths?: ComposerPathSource | null;
 	onSubmit: () => void;
 	onCancel: () => void;
 };
@@ -121,6 +125,7 @@ export function PromptComposerView({
 	isRunning,
 	runStartedAt,
 	projectSkills = null,
+	projectPaths = null,
 	onSubmit,
 	onCancel,
 	usage,
@@ -180,6 +185,8 @@ export function PromptComposerView({
 	const [skillsDismissed, setSkillsDismissed] = useState(false);
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	const [caretPosition, setCaretPosition] = useState(0);
+	const [pathsDismissed, setPathsDismissed] = useState(false);
+	const [pathHighlightedIndex, setPathHighlightedIndex] = useState(0);
 	const skillsRequestId = useRef(0);
 	const skillsCacheKey = useRef<string | null | undefined>(undefined);
 	const [draggingFiles, setDraggingFiles] = useState(false);
@@ -233,7 +240,16 @@ export function PromptComposerView({
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
 	const canAttachMore = !composerLocked && !answeringQuestion;
 	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
-	const skillsPopupOpen = dollarQuery !== null && !skillsDismissed && !answeringQuestion;
+	const atMention = getActiveAtMention(prompt, caretPosition);
+	const atQuery = atMention?.query ?? null;
+
+	const skillsPopupOpen =
+		dollarQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
+
+	const pathsPopupOpen = atQuery !== null && !pathsDismissed && !answeringQuestion && !isSubmitting;
+	const paths = useComposerPaths(projectPaths, pathsPopupOpen ? atQuery : null);
+	const activePathIndex = Math.min(pathHighlightedIndex, Math.max(0, paths.entries.length - 1));
+	const popupOpen = skillsPopupOpen || pathsPopupOpen;
 
 	const filteredSkills = useMemo(
 		() => (dollarQuery === null ? [] : filterSkills(skills, dollarQuery)),
@@ -241,9 +257,11 @@ export function PromptComposerView({
 	);
 
 	const activeOptionId =
-		skillsPopupOpen && filteredSkills.length > 0
-			? `composer-skill-option-${highlightedIndex}`
-			: undefined;
+		pathsPopupOpen && paths.entries[activePathIndex]
+			? `composer-path-option-${activePathIndex}`
+			: skillsPopupOpen && filteredSkills.length > 0
+				? `composer-skill-option-${highlightedIndex}`
+				: undefined;
 
 	const syncCaretFromTextarea = useCallback(() => {
 		setCaretPosition(composerTextarea.current?.selectionStart ?? prompt.length);
@@ -339,6 +357,23 @@ export function PromptComposerView({
 		});
 	}
 
+	function selectPath(entry: WorkspaceSearchEntry) {
+		const selection = applyPathSelection(prompt, caretPosition, entry);
+
+		if (!selection) return;
+		onPromptChange?.(selection.text);
+		setCaretPosition(selection.caret);
+		setPathsDismissed(true);
+		queueMicrotask(() => {
+			const textarea = composerTextarea.current;
+
+			if (!textarea) return;
+			textarea.focus();
+			textarea.setSelectionRange(selection.caret, selection.caret);
+			syncComposerHeight();
+		});
+	}
+
 	function handleAttachmentInputChange(event: React.ChangeEvent<HTMLInputElement>) {
 		const input = event.currentTarget;
 		const files = Array.from(input.files ?? []);
@@ -421,6 +456,40 @@ export function PromptComposerView({
 	}
 
 	function handleComposerKeydown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+		if (event.nativeEvent.isComposing) return;
+
+		if (pathsPopupOpen) {
+			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+				event.preventDefault();
+				const count = paths.entries.length;
+
+				if (count > 0) {
+					const delta = event.key === 'ArrowDown' ? 1 : -1;
+					setPathHighlightedIndex((activePathIndex + delta + count) % count);
+				}
+
+				return;
+			}
+
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				setPathsDismissed(true);
+
+				return;
+			}
+
+			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+				const entry = paths.entries[activePathIndex];
+
+				if (entry) {
+					event.preventDefault();
+					selectPath(entry);
+
+					return;
+				}
+			}
+		}
+
 		if (skillsPopupOpen) {
 			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 				event.preventDefault();
@@ -618,6 +687,11 @@ export function PromptComposerView({
 		setHighlightedIndex(0);
 	}, [filteredSkills]);
 
+	useEffect(() => {
+		setPathsDismissed(false);
+		setPathHighlightedIndex(0);
+	}, [atQuery, atMention?.start, projectPaths]);
+
 	return (
 		<>
 			<footer className="shrink-0 px-6 py-4">
@@ -713,6 +787,20 @@ export function PromptComposerView({
 									/>
 								) : null}
 								<div className="relative min-h-0 flex-1">
+									{pathsPopupOpen ? (
+										<ComposerPathMenu
+											loadState={paths.loadState}
+											entries={paths.entries}
+											scanning={paths.scanning}
+											highlightedIndex={activePathIndex}
+											onRetry={() => {
+												paths.retry();
+												composerTextarea.current?.focus();
+											}}
+											onHighlight={setPathHighlightedIndex}
+											onSelect={selectPath}
+										/>
+									) : null}
 									{skillsPopupOpen ? (
 										<ComposerSkillMenu
 											loadState={skillsLoadState}
@@ -739,8 +827,14 @@ export function PromptComposerView({
 										role="combobox"
 										aria-autocomplete="list"
 										aria-haspopup="listbox"
-										aria-expanded={skillsPopupOpen}
-										aria-controls={skillsPopupOpen ? 'composer-skills-listbox' : undefined}
+										aria-expanded={popupOpen}
+										aria-controls={
+											pathsPopupOpen
+												? 'composer-paths-listbox'
+												: skillsPopupOpen
+													? 'composer-skills-listbox'
+													: undefined
+										}
 										aria-activedescendant={activeOptionId}
 										autoComplete="off"
 										onKeyDown={handleComposerKeydown}

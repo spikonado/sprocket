@@ -18,6 +18,7 @@ mod static_files;
 mod transcript_client;
 mod transcript_watch;
 mod work_sync;
+mod workspace_search;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
 pub use profile::read_server_address;
@@ -97,6 +98,7 @@ pub struct AppState {
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
     pub artifact_watchers: Arc<ArtifactWatchers>,
+    pub(crate) workspace_search: Arc<workspace_search::WorkspaceSearchIndex>,
     pub machines: Arc<machines::MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
     pub http_base_url: String,
@@ -159,6 +161,7 @@ impl AppState {
             Arc::clone(&native_auth),
             data_dir.join("artifact-bindings"),
         );
+        let workspace_search = workspace_search::WorkspaceSearchIndex::new();
         let machine_identity =
             Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
         let chatgpt_credentials =
@@ -176,6 +179,7 @@ impl AppState {
             transcript,
             transcript_watchers,
             artifact_watchers,
+            workspace_search: Arc::new(workspace_search),
             machines: machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
                 Arc::clone(&native_auth),
@@ -245,6 +249,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         Arc::clone(&native_auth),
         data_dir.join("artifact-bindings"),
     );
+    let workspace_search = workspace_search::WorkspaceSearchIndex::new();
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -271,6 +276,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         transcript,
         transcript_watchers,
         artifact_watchers,
+        workspace_search: Arc::new(workspace_search),
         machines: Arc::clone(&machines),
         live_completions: Arc::new(LiveCompletionHub::new()),
         http_base_url: http_base_url.clone(),
