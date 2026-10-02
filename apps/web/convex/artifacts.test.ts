@@ -299,6 +299,7 @@ describe('cloud artifacts', () => {
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
+
 			for (const artifactId of artifactIds) {
 				const stored = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
 				expect(stored).toMatchObject({
@@ -310,6 +311,7 @@ describe('cloud artifacts', () => {
 				});
 				expect(stored).not.toHaveProperty('threadId');
 			}
+
 			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
 
 			const schedule = await t.run((ctx) =>
