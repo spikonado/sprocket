@@ -7,6 +7,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
 import { waitForServerReady } from './local-server.mjs';
+import { shouldDenyUntrustedNavigation } from './navigation-guard.mjs';
 import { createAppImageUpdater, DesktopUpdater, stopUpdateProcess } from './updater.mjs';
 
 const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
@@ -460,7 +461,7 @@ function createMainWindow() {
 	});
 
 	const preventUntrustedNavigation = (event, url) => {
-		if (new URL(url).origin !== rendererOrigin) {
+		if (shouldDenyUntrustedNavigation(url, rendererOrigin)) {
 			event.preventDefault();
 		}
 	};
