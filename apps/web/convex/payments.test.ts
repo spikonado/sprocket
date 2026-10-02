@@ -888,6 +888,48 @@ describe('payments mandates', () => {
 		expect(stored?.reportedAt).toBeUndefined();
 	});
 
+	it('rejects an invalid amountPaid without claiming the report', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
+		});
+		fetchMock.mockClear();
+
+		await expect(
+			run.asUser.action(api.payments.mandateReport, {
+				chargeId: charge.chargeId,
+				outcome: 'approved',
+				amountPaid: 'not-money',
+				...auth(run)
+			})
+		).rejects.toThrow(/Amount paid must be a non-negative decimal amount/);
+
+		const afterInvalid = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
+		expect(afterInvalid?.reportingStartedAt).toBeUndefined();
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
+
+		fetchMock.mockResolvedValue(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+		const retry = await settleMandateReport(t, run, {
+			chargeId: charge.chargeId,
+			outcome: 'approved'
+		});
+		expect(retry).toMatchObject({ reported: true });
+	});
+
 	it('rejects a recurring frequency for an any-merchant mandate', async () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
