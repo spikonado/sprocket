@@ -29,6 +29,39 @@ const SIWC_TOOL_NAMESPACE: &str = "sprocket";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
+)]
+struct SubscriptionUsageLimit {
+    #[source]
+    source: anyhow::Error,
+}
+
+fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
+    let error = body
+        .get("error")
+        .or_else(|| body.get("response")?.get("error"));
+    error
+        .and_then(|error| error.get("code"))
+        .and_then(serde_json::Value::as_str)
+        == Some("subscription_sharing_usage_limit_exceeded")
+}
+
+pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
+    let usage_limit = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<CompletionError>()
+            .and_then(|error| error.provider_response_json().ok().flatten())
+            .is_some_and(|body| is_subscription_usage_limit(&body))
+    });
+    if usage_limit {
+        SubscriptionUsageLimit { source: error }.into()
+    } else {
+        error
+    }
+}
+
 const UNSUPPORTED_FIELDS: &[&str] = &[
     "background",
     "conversation",
@@ -326,8 +359,10 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
         .and_then(|value| value.to_str().ok())
         .map(|value| diagnostic_text(value, access_token));
     let mut message = format!("ChatGPT inference returned HTTP {status}.");
+    let mut usage_limit = false;
     match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
         Ok(Ok(body)) => {
+            usage_limit = is_subscription_usage_limit(&body);
             let recognized = [
                 ("error.message", body["error"]["message"].as_str()),
                 ("error.code", body["error"]["code"].as_str()),
@@ -353,6 +388,16 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
     }
     if let Some(request_id) = request_id {
         message.push_str(&format!(" request_id={request_id}"));
+    }
+    if usage_limit {
+        // Rig must retain a structured code when it wraps this HTTP failure.
+        message = serde_json::json!({
+            "error": {
+                "code": "subscription_sharing_usage_limit_exceeded",
+                "message": message,
+            }
+        })
+        .to_string();
     }
     http_client::Error::InvalidStatusCodeWithMessage(status, message)
 }
@@ -701,9 +746,13 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default)]
-    struct HeaderlessStreamClient(SiwcHttpClient);
+    struct StubResponseClient {
+        http: SiwcHttpClient,
+        body: Option<String>,
+        status: Option<http::StatusCode>,
+    }
 
-    impl HttpClientExt for HeaderlessStreamClient {
+    impl HttpClientExt for StubResponseClient {
         fn send<T, U>(
             &self,
             req: Request<T>,
@@ -714,7 +763,7 @@ mod tests {
             T: Into<Bytes> + WasmCompatSend,
             U: From<Bytes> + WasmCompatSend + 'static,
         {
-            self.0.send(req)
+            self.http.send(req)
         }
 
         fn send_multipart<U>(
@@ -726,7 +775,7 @@ mod tests {
         where
             U: From<Bytes> + WasmCompatSend + 'static,
         {
-            self.0.send_multipart(req)
+            self.http.send_multipart(req)
         }
 
         fn send_streaming<T>(
@@ -736,8 +785,9 @@ mod tests {
         where
             T: Into<Bytes> + WasmCompatSend,
         {
-            let (_, connection) = self.0.authorization.as_ref().unwrap();
-            let connection = Arc::clone(connection);
+            let connection = self.http.authorization.as_ref().unwrap().1.clone();
+            let response_body = self.body.clone();
+            let status = self.status.unwrap_or(http::StatusCode::OK);
             async move {
                 assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
                 let body: serde_json::Value =
@@ -759,28 +809,59 @@ mod tests {
                     }
                 });
                 let response = http::Response::builder()
+                    .status(status)
                     .header("x-request-id", "req-stream")
-                    .body(format!("data: {event}\n\n"))
+                    .body(response_body.unwrap_or_else(|| format!("data: {event}\n\n")))
                     .unwrap()
                     .into();
-                streaming_response(response, connection)
+                if status.is_success() {
+                    streaming_response(response, connection)
+                } else {
+                    Err(inference_error(response, "test-token").await)
+                }
             }
+        }
+    }
+
+    fn stub_model(
+        response: Option<(http::StatusCode, String)>,
+    ) -> openai::responses_api::ResponsesCompletionModel<StubResponseClient> {
+        let (credentials, client) = stub_client("connection-1");
+        let (status, body) = response.unzip();
+        let http = StubResponseClient {
+            http: SiwcHttpClient {
+                authorization: Some((credentials, Arc::clone(&client.connection))),
+                ..Default::default()
+            },
+            status,
+            body,
+        };
+        openai::Client::builder()
+            .api_key("test-token")
+            .http_client(http)
+            .build()
+            .unwrap()
+            .completion_model("gpt-6.1-sol")
+    }
+
+    async fn first_stream_error(model: impl CompletionModel) -> CompletionError {
+        match model
+            .stream(test_request(vec![Message::user("hello")]))
+            .await
+        {
+            Err(error) => error,
+            Ok(mut stream) => stream
+                .by_ref()
+                .filter_map(|item| std::future::ready(item.err()))
+                .next()
+                .await
+                .expect("provider error must fail the stream"),
         }
     }
 
     #[tokio::test]
     async fn responses_client_completes_a_headerless_siwc_stream() {
-        let (credentials, client) = stub_client("connection-1");
-        let http = HeaderlessStreamClient(SiwcHttpClient {
-            authorization: Some((credentials, Arc::clone(&client.connection))),
-            ..Default::default()
-        });
-        let model = openai::Client::builder()
-            .api_key("test-token")
-            .http_client(http)
-            .build()
-            .unwrap()
-            .completion_model("gpt-6.1-sol");
+        let model = stub_model(None);
         let mut stream = model
             .stream(test_request(vec![Message::user("hello")]))
             .await
@@ -792,6 +873,82 @@ mod tests {
         assert_eq!(response.usage.total_tokens, 2);
         assert_eq!(response.response_id.as_deref(), Some("resp-test"));
         assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
+    }
+
+    #[tokio::test]
+    async fn subscription_usage_limit_has_actionable_message_and_preserves_diagnostics() {
+        let error = json!({
+            "type": "invalid_request_error",
+            "code": "subscription_sharing_usage_limit_exceeded",
+            "message": "The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.",
+            "param": null,
+        });
+        for (status, body) in [
+            (
+                http::StatusCode::BAD_REQUEST,
+                json!({"error": error}).to_string(),
+            ),
+            (
+                http::StatusCode::TOO_MANY_REQUESTS,
+                json!({"error": error}).to_string(),
+            ),
+            (
+                http::StatusCode::OK,
+                format!(
+                    "data: {}\n\n",
+                    json!({"type": "error", "error": error, "sequence_number": 2})
+                ),
+            ),
+            (
+                http::StatusCode::OK,
+                format!(
+                    "event: response.failed\ndata: {}\n\n",
+                    json!({
+                        "type": "response.failed",
+                        "response": {
+                            "id": "resp-test",
+                            "object": "response",
+                            "created_at": 0,
+                            "status": "failed",
+                            "model": "gpt-6.1-sol",
+                            "error": error,
+                            "output": [],
+                            "tools": [],
+                        },
+                        "sequence_number": 2,
+                    })
+                ),
+            ),
+        ] {
+            let raw_error = first_stream_error(stub_model(Some((status, body)))).await;
+            let raw_diagnostic = raw_error.to_string();
+            let error = user_facing_error(
+                anyhow::Error::new(rig::completion::PromptError::from(raw_error))
+                    .context("Context handoff failed. Retry to continue the conversation."),
+            );
+            assert_eq!(
+                error.to_string(),
+                "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
+            );
+            assert!(
+                error
+                    .chain()
+                    .any(|cause| cause.to_string() == raw_diagnostic)
+            );
+        }
+    }
+
+    #[test]
+    fn other_provider_errors_keep_their_diagnostics() {
+        for body in [
+            json!({"error": {"code": "rate_limit_exceeded", "message": "Retry later."}}).to_string(),
+            json!({"error": {"code": "invalid_api_key", "message": "subscription_sharing_usage_limit_exceeded"}}).to_string(),
+            "not JSON".to_string(),
+        ] {
+            let error = anyhow::Error::new(CompletionError::from_provider_body(body));
+            let diagnostic = format!("{error:#}");
+            assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
+        }
     }
 
     #[tokio::test]
