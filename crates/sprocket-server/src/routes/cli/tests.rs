@@ -57,16 +57,20 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
     assert_eq!(terminal.1["executionFinished"], true);
     assert_eq!(terminal.1["answer"], "");
     request.after_revision = None;
-    state
-        .auth
-        .bind_session_user(&token, "other-user")
-        .await
-        .unwrap();
+    assert_eq!(
+        state
+            .auth
+            .bind_session_user(&token, "other-user")
+            .await
+            .unwrap_err()
+            .to_string(),
+        "local session belongs to a different user"
+    );
     assert_eq!(
         call(&state, &token, "output", &request, "127.0.0.1:1000")
             .await
             .0,
-        StatusCode::UNAUTHORIZED
+        StatusCode::OK
     );
 }
 

@@ -258,6 +258,9 @@ impl AuthState {
         if session.user_id.as_deref() == Some(user_id) {
             return Ok(());
         }
+        if session.user_id.is_some() {
+            anyhow::bail!("local session belongs to a different user");
+        }
         session.user_id = Some(user_id.to_string());
         self.save_sessions(sessions).await
     }
@@ -269,7 +272,17 @@ impl AuthState {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         for session in sessions.values_mut() {
             if session.ephemeral || session.local_browser {
-                session.user_id = user_id.map(str::to_owned);
+                match session.user_id.as_deref() {
+                    None => session.user_id = user_id.map(str::to_owned),
+                    Some(existing) if user_id == Some(existing) => {}
+                    Some(_) => {
+                        // Already bound to someone else. Sign-out still clears;
+                        // a new owner must not inherit that cookie.
+                        if user_id.is_none() {
+                            session.user_id = None;
+                        }
+                    }
+                }
             } else if session.user_id.as_deref() != user_id {
                 session.user_id = None;
             }
@@ -894,6 +907,42 @@ mod tests {
             .require_session_user(&session_token, "user-1")
             .await
             .unwrap();
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn bind_and_owner_sync_do_not_steal_another_users_session() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap should succeed");
+        auth.bind_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            auth.bind_session_user(&session_token, "user-2")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "local session belongs to a different user"
+        );
+        auth.sync_sessions_with_owner(Some("user-2"))
+            .await
+            .unwrap();
+        auth.require_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        auth.sync_sessions_with_owner(None).await.unwrap();
+        assert!(
+            auth.require_session_user(&session_token, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+
         let _ = fs::remove_dir_all(temp_dir);
     }
 
