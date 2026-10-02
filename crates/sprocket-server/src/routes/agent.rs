@@ -5,10 +5,9 @@ use std::time::Duration;
 use anyhow::anyhow;
 use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
-use axum_extra::extract::CookieJar;
 use futures::StreamExt;
 use futures::stream::{self, unfold};
 use serde::Deserialize;
@@ -22,9 +21,9 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::auth::require_session_user;
 use crate::cli_protocol::RunStarted;
 use crate::routes::api_error::ApiError;
+use crate::routes::session::{AuthorizedJson, UserScoped};
 
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -68,6 +67,12 @@ pub(crate) struct RunAgentApiRequest {
     /// secret; the launch reuses it instead of minting its own.
     #[serde(default)]
     pub execution_secret: Option<String>,
+}
+
+impl UserScoped for RunAgentApiRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -139,13 +144,8 @@ async fn terminate_command_handler(
 
 async fn run_agent_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<RunAgentApiRequest>,
+    AuthorizedJson(payload): AuthorizedJson<RunAgentApiRequest>,
 ) -> Result<(StatusCode, Json<RunStarted>), ApiError> {
-    require_session_user(&state.auth, &headers, &jar, &payload.user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let started = launch_agent(
         state,
         payload,
@@ -419,6 +419,12 @@ struct LiveCompletionWatchRequest {
     thread_id: String,
 }
 
+impl UserScoped for LiveCompletionWatchRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 struct LiveSseStream {
     receiver: broadcast::Receiver<LiveCompletionWatchEvent>,
     hub: Arc<LiveCompletionHub>,
@@ -427,13 +433,8 @@ struct LiveSseStream {
 
 async fn live_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<LiveCompletionWatchRequest>,
+    AuthorizedJson(payload): AuthorizedJson<LiveCompletionWatchRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    require_session_user(&state.auth, &headers, &jar, &payload.user_id)
-        .await
-        .map_err(ApiError::unauthorized)?;
     let hub = Arc::clone(&state.live_completions);
     let subscription = hub.subscribe(&payload.thread_id);
     let snapshot = encode_live_event(match subscription.snapshot {

@@ -2,14 +2,13 @@ use std::collections::BTreeMap;
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::routing::post;
-use axum_extra::extract::CookieJar;
 use convex::Value;
 use serde::Deserialize;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
+use crate::routes::session::{AuthorizedJson, UserScoped};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -29,6 +28,24 @@ struct CancelRequest {
 struct LifecycleRequest {
     user_id: String,
     thread_id: String,
+}
+
+impl UserScoped for UserRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for CancelRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for LifecycleRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -51,13 +68,8 @@ fn thread_args(thread_id: String) -> BTreeMap<String, Value> {
 
 async fn lifecycle_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<LifecycleRequest>,
+    AuthorizedJson(payload): AuthorizedJson<LifecycleRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let result = state
         .convex_client_for(&payload.user_id)
         .await
@@ -72,13 +84,8 @@ async fn lifecycle_handler(
 }
 async fn cancel_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<CancelRequest>,
+    AuthorizedJson(payload): AuthorizedJson<CancelRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
     let result = state
         .convex_client_for(&payload.user_id)
@@ -92,13 +99,8 @@ async fn cancel_handler(
 
 async fn start_account_session_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<UserRequest>,
+    AuthorizedJson(payload): AuthorizedJson<UserRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     state
         .machines
         .register(&payload.user_id)
@@ -109,13 +111,8 @@ async fn start_account_session_handler(
 
 async fn end_account_session_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<UserRequest>,
+    AuthorizedJson(payload): AuthorizedJson<UserRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     state
         .machines
         .end(&payload.user_id)
