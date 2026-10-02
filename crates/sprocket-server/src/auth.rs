@@ -290,11 +290,11 @@ impl AuthState {
                 anyhow::bail!("authentication required");
             }
             session.reject_foreign_user(user_id)?;
-            if session.user_id.as_deref() == Some(user_id) {
-                if !persist || !session.uncommitted {
-                    return Ok(false);
-                }
-            } else if !persist {
+            let already_assigned = session.user_id.as_deref() == Some(user_id);
+            if already_assigned && (!persist || !session.uncommitted) {
+                return Ok(false);
+            }
+            if !persist {
                 session.user_id = Some(user_id.to_string());
                 session.uncommitted = true;
                 return Ok(true);
@@ -313,36 +313,16 @@ impl AuthState {
         Ok(true)
     }
 
-    pub async fn clear_session_user_if(
-        &self,
-        session_token: &str,
-        user_id: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn clear_session_user_if(&self, session_token: &str, user_id: &str) {
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(session_token) else {
-            return Ok(());
+            return;
         };
         if session.user_id.as_deref() != Some(user_id) {
-            return Ok(());
+            return;
         }
         session.user_id = None;
         session.uncommitted = false;
-        Ok(())
-    }
-
-    pub async fn assert_session_can_bind(
-        &self,
-        session_token: &str,
-        user_id: &str,
-    ) -> anyhow::Result<()> {
-        let sessions = self.sessions.read().await;
-        let session = sessions
-            .get(session_token)
-            .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
-        if session_is_expired(session) {
-            anyhow::bail!("authentication required");
-        }
-        session.reject_foreign_user(user_id)
     }
 
     pub(crate) async fn sync_sessions_with_owner(
@@ -1021,16 +1001,6 @@ mod tests {
                 .claim_session_user(&session_token, "user-1")
                 .await
                 .unwrap()
-        );
-        auth.assert_session_can_bind(&session_token, "user-1")
-            .await
-            .unwrap();
-        assert_eq!(
-            auth.assert_session_can_bind(&session_token, "user-2")
-                .await
-                .unwrap_err()
-                .to_string(),
-            "local session belongs to a different user"
         );
         assert_eq!(
             auth.bind_session_user(&session_token, "user-2")
