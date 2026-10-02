@@ -369,9 +369,22 @@ impl NativeAuthManager {
                 match self.accept_login(response).await {
                     Ok(user) => {
                         if let Some(sessions) = &self.local_sessions {
-                            let _ = sessions
+                            if let Err(error) = sessions
                                 .bind_session_user(&pending_session_token, &user.id)
-                                .await;
+                                .await
+                            {
+                                if claimed {
+                                    let _ = sessions
+                                        .clear_session_user_if(&pending_session_token, &user.id)
+                                        .await;
+                                }
+                                self.session
+                                    .lock()
+                                    .await
+                                    .login_errors
+                                    .insert(pending_session_token, error.to_string());
+                                return Err(error);
+                            }
                         }
                         Ok((user, pending_session_token))
                     }
@@ -1816,6 +1829,52 @@ mod tests {
             .require_session_user(&local_session, "user_123")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_repeat_login_bind_rejects_the_login() {
+        let store = MemoryRefreshTokenStore::empty();
+        let mut manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::OK,
+            serde_json::to_value(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-repeat",
+            ))
+            .unwrap(),
+        )
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, local_session) = local.bootstrap_browser_session(true).await.unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        manager.authenticate_for_test("user_123").await;
+        let login = manager
+            .start_login(&local_session, NativeLoginFlow::SignIn)
+            .await
+            .unwrap();
+        let sessions_path = directory.path().join("sessions.json");
+        std::fs::remove_file(&sessions_path).unwrap();
+        std::fs::create_dir(&sessions_path).unwrap();
+
+        let error = manager
+            .complete_login("authorization-code", &login.login_id)
+            .await
+            .expect_err("failed session persist must reject the login");
+
+        assert!(error.to_string().contains("failed to persist private file"));
+        assert!(
+            local
+                .require_session_user(&local_session, "user_123")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        assert!(matches!(
+            manager.status(&local_session).await,
+            NativeLoginStatus::Failed { .. }
+        ));
     }
 
     #[tokio::test]
