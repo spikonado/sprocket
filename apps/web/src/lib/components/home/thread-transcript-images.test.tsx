@@ -100,8 +100,6 @@ it('opens a transcript attachment in the image viewer and restores focus after E
 
 	render(
 		<ThreadTranscript
-			currentError={null}
-			runError={null}
 			messages={[message]}
 			actions={[]}
 			activeRunId={null}

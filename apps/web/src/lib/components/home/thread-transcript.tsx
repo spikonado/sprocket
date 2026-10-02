@@ -45,14 +45,11 @@ import '$lib/components/home/thread-transcript.css';
 
 type Props = {
 	userId?: string;
-	currentError: string | null;
-	runError: string | null;
 	messages: TranscriptMessage[];
 	actions: ExecutorJob[];
 	activeRunId: TranscriptMessage['runId'] | null;
 	project: Project | null;
 	emptyStateMessage?: string;
-	stale?: boolean;
 	loadingOlder?: boolean;
 	nextBefore?: number;
 	onLoadOlder?: () => void;
@@ -97,8 +94,6 @@ function laterTimestamp(left: number | undefined, right: number | undefined) {
 
 export default function ThreadTranscript({
 	userId,
-	currentError,
-	runError,
 	messages,
 	actions,
 	activeRunId,
@@ -106,7 +101,6 @@ export default function ThreadTranscript({
 	emptyStateMessage = project
 		? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 		: 'Add a project to begin.',
-	stale = false,
 	loadingOlder = false,
 	nextBefore,
 	onLoadOlder,
@@ -779,33 +773,6 @@ export default function ThreadTranscript({
 					ref={contentRef}
 					className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 py-8"
 				>
-					{currentError ? (
-						<div
-							role="alert"
-							className="text-destructive mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm"
-						>
-							{currentError}
-						</div>
-					) : null}
-
-					{runError ? (
-						<div
-							role="alert"
-							className="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
-						>
-							{runError}
-						</div>
-					) : null}
-
-					{stale ? (
-						<div
-							role="status"
-							className="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
-						>
-							Reconnecting to conversation history.
-						</div>
-					) : null}
-
 					{messages.length === 0 ? (
 						emptyStateMessage ? (
 							<div className="flex flex-1 items-center justify-center">
