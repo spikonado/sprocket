@@ -848,7 +848,7 @@ mod tests {
                 .into_body();
             let error = stream
                 .by_ref()
-                .filter_map(|item| async move { item.err() })
+                .filter_map(|item| std::future::ready(item.err()))
                 .next()
                 .await
                 .expect("stream must report an error");
