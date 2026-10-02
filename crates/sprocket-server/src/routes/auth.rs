@@ -331,11 +331,16 @@ async fn desktop_login_result(
             .await
             .map_err(ApiError::internal)?,
     };
-    if matches!(status, NativeLoginStatus::Authenticated { .. })
-        && connection == BrowserConnection::Loopback
-        && !state.auth.session_has_user(&session_token).await
-    {
-        return Ok(Json(NativeLoginStatus::SignedOut));
+    if let NativeLoginStatus::Authenticated { ref user } = status {
+        if connection == BrowserConnection::Loopback
+            && state
+                .auth
+                .require_session_user(&session_token, &user.id)
+                .await
+                .is_err()
+        {
+            return Ok(Json(NativeLoginStatus::SignedOut));
+        }
     }
     Ok(Json(status))
 }
@@ -1416,6 +1421,33 @@ mod tests {
                 .unwrap_or_default()
                 .contains("127.0.0.1")
         );
+    }
+
+    #[tokio::test]
+    async fn result_does_not_report_authenticated_for_a_foreign_session() {
+        let (state, session_token, _) = test_state(true).await;
+        state
+            .auth
+            .bind_session_user(&session_token, "user-a")
+            .await
+            .unwrap();
+        state.native_auth.authenticate_for_test("user-b").await;
+        let app = router(state);
+
+        let result = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/desktop-login/result")
+                    .header(header::COOKIE, session_cookie(&session_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::OK);
+        let payload = read_json(result).await;
+        assert_eq!(payload["status"], "signedOut");
     }
 
     #[tokio::test]
