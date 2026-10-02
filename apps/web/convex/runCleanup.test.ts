@@ -14,6 +14,7 @@ import {
 } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
+
 afterEach(() => vi.useRealTimers());
 
 async function seedJobs(
@@ -29,6 +30,7 @@ async function seedJobs(
 			await t.run(async (ctx) => {
 				const run = (await ctx.db.get('runs', runId))!;
 				const settled = index % 3 !== 0;
+
 				const jobId = await ctx.db.insert('executorJobs', {
 					threadId: run.threadId,
 					runId,
@@ -53,6 +55,7 @@ async function seedJobs(
 					sectionKey: `section:${runId}:${index}`,
 					sectionOrdinal: index
 				});
+
 				const job = (await ctx.db.get('executorJobs', jobId))!;
 
 				if (settled && index % 2 === 0) {
@@ -78,6 +81,7 @@ async function expectCleanedJobs(t: ConvexTestInstance, jobs: Doc<'executorJobs'
 			const persisted = await ctx.db.get('executorJobs', job._id);
 			expect(persisted?.status).toBe(job.status === 'claimed' ? 'cancelled' : job.status);
 			expect(persisted?.result).toEqual(job.result);
+
 			const part = await ctx.db
 				.query('threadTranscriptParts')
 				.withIndex('by_threadId_and_sourceKey', (q) =>
@@ -86,6 +90,7 @@ async function expectCleanedJobs(t: ConvexTestInstance, jobs: Doc<'executorJobs'
 						.eq('sourceKey', toolSourceKey(toolInvocationIdForJob(job), 'finished'))
 				)
 				.unique();
+
 			expect(part?.tool).toMatchObject({
 				toolInvocationId: toolInvocationIdForJob(job),
 				status: persisted?.status
@@ -135,6 +140,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 	it('registers a replacement machine atomically even when its runs have large histories', async () => {
 		const t = initConvexTest();
 		const { asUser, subject } = await seedOwnedThread(t);
+
 		const machine = {
 			machineId: 'large-machine',
 			friendlyName: 'Workshop',
@@ -144,6 +150,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			hostname: 'workbench',
 			appVersion: '0.3.2'
 		};
+
 		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash: await executionSecretHash('old-process')
@@ -153,6 +160,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 		for (let index = 0; index < 3; index++) {
 			const threadId = await seedThreadRecord(t, subject, 'alpha');
+
 			const { runId } = await insertQueuedRun(t, asUser, {
 				threadId,
 				submissionId: `machine-run-${index}`,
@@ -160,6 +168,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				prompt: 'Work',
 				machineId: machine.machineId
 			});
+
 			runIds.push(runId);
 			jobs.push(...(await seedJobs(t, runId, 17, true)));
 		}
@@ -192,6 +201,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'early-answer-run', 'secret');
 		const [job] = await seedJobs(t, runId, 1, false);
+
 		const questionIds = await t.run(async (ctx) => {
 			const ids: Id<'agentQuestions'>[] = [];
 
@@ -213,6 +223,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 			return ids;
 		});
+
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			executionSecret: 'secret',
@@ -227,11 +238,13 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				optionId: 'yes'
 			});
 		}
+
 		const result = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
 			questionId: questionIds.at(-1)!,
 			optionId: 'yes'
 		});
+
 		expect(result.continuation).toMatchObject({
 			runId,
 			prompt: expect.stringContaining('Answer 34')
@@ -276,6 +289,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 
 			if (status === 'cancelled') {
 				const highestSequence = Math.max(...jobs.map((job) => job.sequence));
+
 				const deferredQuestion = await t.run((ctx) =>
 					ctx.db
 						.query('agentQuestions')
@@ -283,6 +297,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 						.order('desc')
 						.first()
 				);
+
 				expect(deferredQuestion?.sequence).toBe(highestSequence);
 				await expect(
 					asUser.mutation(api.agentQuestions.answer, {

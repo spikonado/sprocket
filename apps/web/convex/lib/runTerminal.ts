@@ -6,7 +6,9 @@ import { cancelCloudToolJob } from '@convex/lib/toolJobs';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 
 const TERMINAL_CLEANUP_BATCH_SIZE = 16;
+
 const READ_RESERVE_BYTES = 6 * 1024 * 1024;
+
 const WRITE_RESERVE_BYTES = 4 * 1024 * 1024;
 
 async function hasCleanupHeadroom(ctx: MutationCtx): Promise<boolean> {
@@ -47,6 +49,7 @@ export async function reconcileTerminalRun(
 
 	if (questionCursor !== null) {
 		const afterQuestion = questionCursor;
+
 		const questions = ctx.db
 			.query('agentQuestions')
 			.withIndex('by_runId_sequence', (query) =>
@@ -85,6 +88,7 @@ export async function reconcileTerminalRun(
 
 	for await (const job of jobs) {
 		await cancelCloudToolJob(ctx, job);
+
 		const [finalizedJob] = cancelExecutorJobsForTerminalRun({
 			jobs: [job],
 			runStatus: run.status,
