@@ -73,6 +73,7 @@ describe('subscription and usage backend', () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 		const userId = 'user_fractional';
+
 		for (const count of [1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
 			await expect(
 				t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
