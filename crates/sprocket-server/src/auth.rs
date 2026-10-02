@@ -258,7 +258,7 @@ impl AuthState {
         &self,
         session_token: &str,
         user_id: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         let session = sessions
             .get_mut(session_token)
@@ -268,9 +268,26 @@ impl AuthState {
         }
         session.reject_foreign_user(user_id)?;
         if session.user_id.as_deref() == Some(user_id) {
-            return Ok(());
+            return Ok(false);
         }
         session.user_id = Some(user_id.to_string());
+        self.save_sessions(sessions).await?;
+        Ok(true)
+    }
+
+    pub async fn clear_session_user_if(
+        &self,
+        session_token: &str,
+        user_id: &str,
+    ) -> anyhow::Result<()> {
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        let Some(session) = sessions.get_mut(session_token) else {
+            return Ok(());
+        };
+        if session.user_id.as_deref() != Some(user_id) {
+            return Ok(());
+        }
+        session.user_id = None;
         self.save_sessions(sessions).await
     }
 

@@ -348,22 +348,37 @@ impl NativeAuthManager {
             .await
         {
             Ok(response) => {
+                let user_id = response.user.id.clone();
+                let mut claimed = false;
                 if let Some(sessions) = &self.local_sessions {
-                    if let Err(error) = sessions
-                        .assert_session_can_bind(&pending_session_token, &response.user.id)
+                    match sessions
+                        .bind_session_user(&pending_session_token, &user_id)
                         .await
                     {
-                        self.session
-                            .lock()
-                            .await
-                            .login_errors
-                            .insert(pending_session_token, error.to_string());
-                        return Err(error);
+                        Ok(assigned) => claimed = assigned,
+                        Err(error) => {
+                            self.session
+                                .lock()
+                                .await
+                                .login_errors
+                                .insert(pending_session_token, error.to_string());
+                            return Err(error);
+                        }
                     }
                 }
-                self.accept_login(response)
-                    .await
-                    .map(|user| (user, pending_session_token))
+                match self.accept_login(response).await {
+                    Ok(user) => Ok((user, pending_session_token)),
+                    Err(error) => {
+                        if claimed {
+                            if let Some(sessions) = &self.local_sessions {
+                                let _ = sessions
+                                    .clear_session_user_if(&pending_session_token, &user_id)
+                                    .await;
+                            }
+                        }
+                        Err(error)
+                    }
+                }
             }
             Err(error) => {
                 self.session
@@ -1719,6 +1734,82 @@ mod tests {
             manager.status(&local_session).await,
             NativeLoginStatus::Failed { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn complete_login_binds_the_initiating_session_before_returning() {
+        let store = MemoryRefreshTokenStore::empty();
+        let mut manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::OK,
+            serde_json::to_value(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-new",
+            ))
+            .unwrap(),
+        )
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, local_session) = local.bootstrap_browser_session(true).await.unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        let login = manager
+            .start_login(&local_session, NativeLoginFlow::SignIn)
+            .await
+            .unwrap();
+
+        let (user, session_token) = manager
+            .complete_login("authorization-code", &login.login_id)
+            .await
+            .unwrap();
+
+        assert_eq!(user.id, "user_123");
+        assert_eq!(session_token, local_session);
+        local
+            .require_session_user(&local_session, "user_123")
+            .await
+            .unwrap();
+        assert_eq!(store.token().as_deref(), Some("refresh-new"));
+    }
+
+    #[tokio::test]
+    async fn failed_complete_login_persistence_unbinds_the_initiating_session() {
+        let store = MemoryRefreshTokenStore::empty();
+        let mut manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::OK,
+            serde_json::to_value(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-new",
+            ))
+            .unwrap(),
+        )
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, local_session) = local.bootstrap_browser_session(true).await.unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        store.fail_save.store(true, Ordering::SeqCst);
+        let login = manager
+            .start_login(&local_session, NativeLoginFlow::SignIn)
+            .await
+            .unwrap();
+
+        let error = manager
+            .complete_login("authorization-code", &login.login_id)
+            .await
+            .expect_err("failed persistence must reject the login");
+
+        assert!(error.to_string().contains("credential store unavailable"));
+        assert!(manager.session.lock().await.user.is_none());
+        assert!(
+            local
+                .require_session_user(&local_session, "user_123")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
     }
 
     #[tokio::test]
