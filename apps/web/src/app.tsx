@@ -886,7 +886,9 @@ export default function App({
 		(queryError ? convexClientErrorMessage(queryError) : null);
 
 	const runError =
-		latestRunResumeKind === 'failed' && !isSubmittingPrompt ? (runState?.lastError ?? null) : null;
+		(latestRunResumeKind === 'failed' || latestRunResumeKind === 'crash') && !isSubmittingPrompt
+			? (runState?.lastError ?? null)
+			: null;
 
 	const canSend = Boolean(
 		currentProjectPath &&
