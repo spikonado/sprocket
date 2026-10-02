@@ -27,14 +27,6 @@ pub(crate) struct SaveArtifactTool(pub(super) AgentToolContext);
 pub(crate) struct AddArtifactArgs {
     /// Existing UTF-8 file. Relative paths resolve against the current workspace.
     pub(crate) path: String,
-    pub(crate) scope: ArtifactScope,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum ArtifactScope {
-    Thread,
-    Project,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -76,14 +68,13 @@ async fn register_file(
         result = read_artifact_file(&context.workspace_root, path) => result.map_err(tool_error)?,
     };
     let (registration_id, existing_id, baseline) = if function == "artifacts:addArtifact" {
-        let scope = fields["scope"].as_str().unwrap();
-        let thread = (scope == "thread").then_some(context.thread_id.as_str());
         let path = bindings
-            .at_path(&context.workspace_root, &file.local_path, scope, thread)
+            .at_path(&context.workspace_root, &file.local_path)
             .await
+            .map_err(tool_error)?
             .map(|binding| binding.local_path)
             .unwrap_or_else(|| file.local_path.clone());
-        let binding = bindings.reserve(path, scope, thread);
+        let binding = bindings.reserve(path);
         if binding.content_hash.is_empty() {
             binding.content_hash = content_hash(&file.content);
         }
@@ -114,19 +105,12 @@ async fn register_file(
         fields["registrationId"] = json!(registration_id);
         None
     };
-    let scope = existing
-        .as_ref()
-        .map(|artifact| artifact.scope.as_str())
-        .unwrap_or_else(|| fields["scope"].as_str().unwrap());
-    let thread_id = (scope == "thread").then(|| context.thread_id.clone());
     let mut binding = ArtifactBinding {
         registration_id: existing
             .as_ref()
             .map(|artifact| artifact.registration_id.clone())
             .unwrap_or(registration_id),
         artifact_id: existing_id,
-        scope: scope.into(),
-        thread_id,
         local_path: file.local_path.clone(),
         content_hash: if existing.is_some() {
             content_hash(&file.content)
@@ -164,8 +148,6 @@ struct StoredArtifact {
     #[serde(rename = "_id")]
     id: String,
     registration_id: String,
-    scope: String,
-    thread_id: Option<String>,
     content: String,
     title: String,
     #[serde(rename = "type")]
@@ -199,9 +181,7 @@ fn artifact_summary(artifact: serde_json::Value) -> serde_json::Value {
         summary.insert("artifactId".to_string(), id.clone());
     }
     for key in [
-        "scope",
         "repositoryKey",
-        "threadId",
         "title",
         "type",
         "contentType",
@@ -224,7 +204,7 @@ impl rig::tool::Tool for AddArtifactTool {
 
     fn description(&self) -> String {
         format!(
-            "Register an existing local file as a thread or project artifact. Write the file first with normal file tools. HTML and JSX render as previews; other UTF-8 files render as Markdown. File changes sync automatically. Maximum file size: {MAX_ARTIFACT_BYTES} bytes."
+            "Register an existing local file as a project artifact. Write the file first with normal file tools. HTML and JSX render as previews; other UTF-8 files render as Markdown. File changes sync automatically. Maximum file size: {MAX_ARTIFACT_BYTES} bytes."
         )
     }
 
@@ -244,7 +224,7 @@ impl rig::tool::Tool for AddArtifactTool {
                 cancellation,
                 "artifacts:addArtifact",
                 &args.path,
-                json!({"scope": args.scope}),
+                json!({}),
             )
             .await
         })
@@ -259,7 +239,7 @@ impl rig::tool::Tool for EditArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Point an artifact from the current thread or project at a different existing file. To edit its content, edit the registered file normally instead.".to_string()
+        "Point an artifact from the current project at a different existing file. To edit its content, edit the registered file normally instead.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -293,7 +273,7 @@ impl rig::tool::Tool for SaveArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Save an artifact from this thread or project to an absolute or workspace-relative file path, and bind the file so future edits sync. Existing files with different contents are never overwritten.".into()
+        "Save an artifact from this project to an absolute or workspace-relative file path, and bind the file so future edits sync. Existing files with different contents are never overwritten.".into()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -318,8 +298,7 @@ impl rig::tool::Tool for SaveArtifactTool {
                 if cancellation.is_cancelled() { return Err(cancelled_error()); }
                 let mut binding = ArtifactBinding {
                     registration_id: artifact.registration_id,
-                    artifact_id: Some(artifact.id.clone()), scope: artifact.scope.clone(),
-                    thread_id: artifact.thread_id,
+                    artifact_id: Some(artifact.id.clone()),
                     local_path: normalize_destination(&args.path).map_err(tool_error)?, content_hash: content_hash(&artifact.content),
                 };
                 bindings.validate_destination(&self.0.workspace_root, &binding).await.map_err(tool_error)?;
@@ -328,7 +307,7 @@ impl rig::tool::Tool for SaveArtifactTool {
                 bindings.bind(binding).map_err(tool_error)?;
                 bindings.persist().await.map_err(tool_error)?;
                 Ok(json!({"artifactId": artifact.id, "revision": artifact.revision, "title": artifact.title,
-                    "contentType": artifact.content_type, "scope": artifact.scope}))
+                    "contentType": artifact.content_type}))
             }).await
     }
 }
@@ -340,7 +319,7 @@ impl rig::tool::Tool for ListArtifactsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List artifact IDs and metadata for the current thread and project. Use save_artifact to obtain a local file for an artifact that is not saved on this machine.".to_string()
+        "List artifact IDs and metadata for the current project. Use save_artifact to obtain a local file for an artifact that is not saved on this machine.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -371,7 +350,7 @@ impl rig::tool::Tool for ListArtifactsTool {
                         };
                         if revision.is_some_and(|revision| revision != page.revision) { break; }
                         revision = Some(page.revision);
-                        artifacts.extend(page.page);
+                        artifacts.extend(page.page.into_iter().map(artifact_summary));
                         if page.is_done { return Ok(json!({"artifacts": artifacts})); }
                         if cursor.as_ref() == Some(&page.continue_cursor) {
                             return Err(tool_error(anyhow::anyhow!("Artifact page cursor did not advance")));
@@ -404,7 +383,7 @@ mod tests {
                 "localPath": "doc.md",
                 "scope": "project"
             })),
-            json!({"artifactId": "id", "scope": "project", "threadId": "thread", "type": "markdown", "title": "doc.md", "revision": 3})
+            json!({"artifactId": "id", "type": "markdown", "title": "doc.md", "revision": 3})
         );
         assert_eq!(
             artifact_summary(json!({
@@ -416,7 +395,7 @@ mod tests {
                 "scope": "thread",
                 "content": "body"
             })),
-            json!({"artifactId": "id", "scope": "thread", "title": "doc.md", "revision": 2, "contentType": "markdown"})
+            json!({"artifactId": "id", "title": "doc.md", "revision": 2, "contentType": "markdown"})
         );
     }
 }

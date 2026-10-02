@@ -27,6 +27,7 @@ import type * as inbox from "../inbox.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentQuestions from "../lib/agentQuestions.js";
+import type * as lib_artifactRegistry from "../lib/artifactRegistry.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
@@ -109,6 +110,7 @@ declare const fullApi: ApiFromModules<{
   "lib/access": typeof lib_access;
   "lib/agentErrors": typeof lib_agentErrors;
   "lib/agentQuestions": typeof lib_agentQuestions;
+  "lib/artifactRegistry": typeof lib_artifactRegistry;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/auth": typeof lib_auth;
   "lib/claimedWebJob": typeof lib_claimedWebJob;

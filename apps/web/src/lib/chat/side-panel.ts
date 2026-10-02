@@ -1,9 +1,9 @@
 import type { Id } from '@convex/_generated/dataModel';
 
-/** The right sidebar shows the agent's browser live view alongside thread artifacts. */
+/** The right sidebar shows the agent's browser live view alongside project artifacts. */
 export type SidePanelTab = 'live' | 'artifacts';
 
-/** Stored panel state, restored when revisiting a thread. */
+/** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {
 	open: boolean;
 	/** When true, the panel covers the full Sprocket workspace UI. */

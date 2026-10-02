@@ -246,12 +246,7 @@ pub(crate) async fn launch_agent(
                 } else {
                     Some(
                         artifact_watchers
-                            .open(
-                                &user_id,
-                                &artifact_repository_key,
-                                &artifact_workspace_path,
-                                (!thread_id.is_empty()).then_some(thread_id.as_str()),
-                            )
+                            .open(&user_id, &artifact_repository_key, &artifact_workspace_path)
                             .await,
                     )
                 };

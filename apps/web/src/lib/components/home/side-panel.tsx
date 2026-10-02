@@ -190,7 +190,6 @@ export default function SidePanel({
 									artifactType={selected.artifactType}
 									content={selected.content}
 									localPath={selected.localPath}
-									scope={selected.scope}
 									localError={selected.localError}
 									variant="full"
 									onOpenFullscreen={() => onOpenFullscreen(selected.key)}
@@ -225,7 +224,7 @@ export default function SidePanel({
 																{artifact.title}
 															</span>
 															<span className="text-muted-foreground shrink-0 text-[11px]">
-																{artifact.scope === 'project' ? 'Project' : 'Thread'}
+																{artifact.artifactType}
 															</span>
 														</span>
 														<span className="text-muted-foreground min-w-0 truncate text-[11px]">

@@ -7,7 +7,7 @@ type ArtifactPage = FunctionReturnType<typeof api.artifacts.listArtifacts>;
 
 export type CloudArtifactScope = Pick<
 	FunctionArgs<typeof api.artifacts.listArtifacts>,
-	'repositoryKey' | 'threadId'
+	'repositoryKey'
 > & {
 	userId: string;
 };

@@ -2,13 +2,11 @@ import { useState } from 'react';
 import type { Watch } from 'convex/react';
 import type { FunctionArgs, FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import {
 	EMPTY_ARTIFACT_WATCH_STATE,
 	applyArtifactsWatchEvent,
 	artifactEntryFromLocal,
 	artifactWatchScopeKey,
-	artifactsWatchRequest,
 	isCurrentArtifactsWatch,
 	mergeArtifactSources,
 	type ArtifactWatchState
@@ -16,7 +14,7 @@ import {
 import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
 import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
 import { useStore, type Store } from '$lib/store';
-import type { DesktopApi } from '$lib/types/sprocket';
+import type { ArtifactsWatchRequest, DesktopApi } from '$lib/types/sprocket';
 
 type ArtifactClient = Parameters<typeof watchCloudArtifacts>[0];
 
@@ -35,13 +33,6 @@ export type ConvexArtifactClient = {
 		query: ArtifactStateQuery,
 		args: Pick<FunctionArgs<ArtifactStateQuery>, 'repositoryKey'>
 	) => Pick<Watch<FunctionReturnType<ArtifactStateQuery>>, 'localQueryResult' | 'onUpdate'>;
-};
-
-type Scope = {
-	userId: string;
-	repositoryKey: string;
-	workspacePath: string;
-	threadId: Id<'threadRecords'> | null;
 };
 
 export class ArtifactPanel implements Store<number> {
@@ -74,7 +65,7 @@ export class ArtifactPanel implements Store<number> {
 		return this.artifacts.find((artifact) => artifact.key === this.fullscreenKey) ?? null;
 	}
 
-	selectScope(scope: Scope | null) {
+	selectScope(scope: ArtifactsWatchRequest | null) {
 		const scopeKey = scope ? artifactWatchScopeKey(scope) : null;
 
 		if (scopeKey === this.#panelScopeKey) return;
@@ -92,7 +83,7 @@ export class ArtifactPanel implements Store<number> {
 		localApi: ArtifactLocalApi | null;
 		artifactClient: ArtifactClient;
 		cloudReady: boolean;
-		scope: Scope | null;
+		scope: ArtifactsWatchRequest | null;
 	}) {
 		const generation = ++this.#watchGeneration;
 		this.watchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
@@ -107,7 +98,6 @@ export class ArtifactPanel implements Store<number> {
 		const scopeKey = artifactWatchScopeKey(args.scope);
 		this.#watchScope = scopeKey;
 		const ac = new AbortController();
-		const request = artifactsWatchRequest(args.scope);
 		let cloud: ArtifactWatchState = { artifacts: [], stale: true, error: null };
 		let local: ArtifactWatchState | null = null;
 
@@ -122,8 +112,6 @@ export class ArtifactPanel implements Store<number> {
 			repositoryKey: args.scope.repositoryKey
 		};
 
-		if (args.scope.threadId) cloudScope.threadId = args.scope.threadId;
-
 		const stopCloud = args.cloudReady
 			? watchCloudArtifacts(args.artifactClient, cloudScope, (snapshot) => {
 					cloud = snapshot;
@@ -131,7 +119,7 @@ export class ArtifactPanel implements Store<number> {
 				})
 			: () => {};
 
-		void this.#watchLocal(args.localApi, args.scope.workspacePath, request, {
+		void this.#watchLocal(args.localApi, args.scope.workspacePath, args.scope, {
 			ac,
 			generation,
 			scopeKey,
@@ -176,7 +164,7 @@ export class ArtifactPanel implements Store<number> {
 	async #watchLocal(
 		localApi: ArtifactLocalApi | null,
 		workspacePath: string,
-		request: ReturnType<typeof artifactsWatchRequest>,
+		request: ArtifactsWatchRequest,
 		state: {
 			ac: AbortController;
 			generation: number;

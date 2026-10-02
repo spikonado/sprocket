@@ -7,8 +7,7 @@ const artifact: ArtifactEntry = {
 	key: 'ks73zzsnfj2najtd871p43f45s8ec23d',
 	title: 'About Me.md',
 	artifactType: 'markdown',
-	content: '# About me',
-	scope: 'thread'
+	content: '# About me'
 };
 
 function renderChatMarkdown(props: {
@@ -44,7 +43,7 @@ describe('artifact references', () => {
 
 		const reference = document.querySelector(`[data-artifact-reference="${artifact.key}"]`);
 		expect(reference?.textContent).toContain('About Me.md');
-		expect(reference?.textContent).toContain('Artifact · Thread');
+		expect(reference?.textContent).toContain('Artifact');
 
 		fireEvent.click(reference!.querySelector<HTMLButtonElement>('button')!);
 		expect(onOpenArtifact).toHaveBeenCalledOnce();

@@ -69,10 +69,11 @@ export const vWriteStdinPayload = v.object({
 
 export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
 
+// Historical stored artifacts and tool results retain thread scope until migrated.
 export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
 
 export const vAddArtifactPayload = v.object({
-	scope: vArtifactScope
+	scope: v.optional(vArtifactScope)
 });
 
 export const vEditArtifactPayload = v.object({
@@ -453,7 +454,8 @@ export const vListArtifactsResult = v.object({
 	artifacts: v.array(
 		v.object({
 			artifactId: v.string(),
-			scope: vArtifactScope,
+			// Released tools include scope/thread metadata; current results omit it.
+			scope: v.optional(vArtifactScope),
 			repositoryKey: v.string(),
 			threadId: v.optional(v.id('threadRecords')),
 			type: vArtifactType,

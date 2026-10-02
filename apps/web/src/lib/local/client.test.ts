@@ -350,7 +350,6 @@ describe('watchArtifacts', () => {
 	const artifact = {
 		_id: 'artifact-1',
 		userId: 'user-1',
-		scope: 'project' as const,
 		repositoryKey: 'repo-1',
 		localPath: 'docs/spec.md',
 		content: '# Spec',
@@ -428,55 +427,23 @@ describe('watchArtifacts', () => {
 		expect(onEvent).not.toHaveBeenCalled();
 	});
 
-	it('strips threadId from project-scoped artifacts and keeps stale snapshots', async () => {
-		const threadArtifact = {
-			...artifact,
-			_id: 'artifact-2',
-			scope: 'thread' as const,
-			threadId: 'thread-1',
-			localPath: 'notes.md'
+	it('keeps stale snapshots and their local errors', async () => {
+		const snapshot = {
+			artifacts: [{ ...artifact, localError: 'File missing' }],
+			stale: true,
+			error: 'cloud lag'
 		};
 
 		vi.stubGlobal(
 			'fetch',
-			vi.fn(
-				async () =>
-					new Response(
-						sseResponse([
-							{
-								artifacts: [{ ...artifact, threadId: 'thread-1' }, threadArtifact],
-								stale: true,
-								error: 'cloud lag'
-							}
-						]),
-						{ status: 200 }
-					)
-			)
+			vi.fn(async () => new Response(sseResponse([snapshot]), { status: 200 }))
 		);
-
-		const events: unknown[] = [];
+		const onEvent = vi.fn();
 		await createLocalClient('http://127.0.0.1:7731').watchArtifacts(
-			{
-				userId: 'user-1',
-				repositoryKey: 'repo-1',
-				workspacePath: '/ws',
-				threadId: 'thread-1'
-			},
-			{
-				signal: new AbortController().signal,
-				onEvent: (event) => {
-					events.push(event);
-				}
-			}
+			{ userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' },
+			{ signal: new AbortController().signal, onEvent }
 		);
-
-		expect(events).toEqual([
-			{
-				artifacts: [artifact, threadArtifact],
-				stale: true,
-				error: 'cloud lag'
-			}
-		]);
+		expect(onEvent).toHaveBeenCalledWith(snapshot);
 	});
 });
 

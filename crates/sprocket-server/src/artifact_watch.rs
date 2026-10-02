@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use sprocket_agent::artifact_bindings::{ArtifactBindings, content_hash};
+use sprocket_agent::artifact_bindings::{ArtifactBindings, conflicting_binding_ids, content_hash};
 use sprocket_convex::{decode_labeled_function_result, deserialize_convex_u64};
 use sprocket_workspace::{ArtifactContentType, read_artifact_file};
 use tokio::sync::broadcast;
@@ -17,23 +17,13 @@ use crate::transcript_client::{ArtifactSnapshot, UserConvexClient};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ArtifactScope {
-    Thread,
-    Project,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RemoteArtifact {
     #[serde(rename = "_id")]
     pub id: String,
     pub user_id: String,
-    pub scope: ArtifactScope,
     pub repository_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thread_id: Option<String>,
     pub content: String,
     #[serde(rename = "type")]
     pub content_type: ArtifactContentType,
@@ -71,7 +61,6 @@ struct WatchKey {
     user_id: String,
     repository_key: String,
     workspace_path: String,
-    thread_id: Option<String>,
 }
 
 struct WatchSlot {
@@ -123,13 +112,11 @@ impl ArtifactWatchers {
         user_id: &str,
         repository_key: &str,
         workspace_path: &str,
-        thread_id: Option<&str>,
     ) -> ArtifactWatchSession {
         let key = WatchKey {
             user_id: user_id.into(),
             repository_key: repository_key.into(),
             workspace_path: workspace_path.into(),
-            thread_id: thread_id.map(str::to_string),
         };
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         let slot = inner.entry(key.clone()).or_insert_with(|| {
@@ -194,14 +181,22 @@ impl ArtifactWatchSession {
                 &mut feed,
                 || async {
                     Ok(client
-                        .list_artifacts(&self.key.repository_key, self.key.thread_id.as_deref())
+                        .list_artifacts(&self.key.repository_key)
                         .await?
                         .artifacts)
                 },
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
-                    async move { sync(client, bindings, &request).await }
+                    async move {
+                        sync(
+                            client,
+                            bindings,
+                            Path::new(&self.key.workspace_path),
+                            &request,
+                        )
+                        .await
+                    }
                 },
             )
             .await
@@ -352,11 +347,12 @@ async fn cloud_worker(
                 }),
                 &pending,
                 &output,
-                || client.list_artifacts(&key.repository_key, key.thread_id.as_deref()),
+                || client.list_artifacts(&key.repository_key),
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
-                    async move { sync(client, bindings, &request).await }
+                    let workspace = Path::new(&key.workspace_path);
+                    async move { sync(client, bindings, workspace, &request).await }
                 },
             )
             .await
@@ -479,6 +475,7 @@ struct SyncRequest {
 async fn sync(
     client: &UserConvexClient,
     bindings: &ArtifactBindings,
+    workspace: &Path,
     request: &SyncRequest,
 ) -> anyhow::Result<()> {
     let mut guard = bindings.lock().await?;
@@ -488,11 +485,11 @@ async fn sync(
     if binding.local_path != request.path || binding.content_hash != request.baseline {
         return Ok(());
     }
+    guard.validate_destination(workspace, binding).await?;
     if client
         .sync_artifact(
             &request.artifact.id,
             &request.artifact.repository_key,
-            request.artifact.thread_id.as_deref(),
             request.artifact.revision,
             &request.content,
         )
@@ -531,9 +528,6 @@ impl ArtifactFeed {
             .filter(|artifact| {
                 artifact.user_id == self.key.user_id
                     && artifact.repository_key == self.key.repository_key
-                    && (artifact.scope == ArtifactScope::Project
-                        || (self.key.thread_id.is_some()
-                            && artifact.thread_id == self.key.thread_id))
             })
             .map(|artifact| (artifact.id.clone(), artifact))
             .collect();
@@ -550,10 +544,10 @@ impl ArtifactFeed {
     }
 
     async fn refresh(&mut self) -> anyhow::Result<()> {
-        let bindings: HashMap<_, _> = self
-            .bindings
-            .snapshot()
-            .await?
+        let snapshot = self.bindings.snapshot().await?;
+        let conflicts =
+            conflicting_binding_ids(Path::new(&self.key.workspace_path), &snapshot).await;
+        let bindings: HashMap<_, _> = snapshot
             .into_iter()
             .filter_map(|binding| binding.artifact_id.clone().map(|id| (id, binding)))
             .collect();
@@ -567,6 +561,7 @@ impl ArtifactFeed {
             .filter_map(|id| {
                 bindings
                     .get(id)
+                    .filter(|binding| !conflicts.contains(&binding.registration_id))
                     .map(|binding| (id.clone(), binding.local_path.clone()))
             })
             .collect();
@@ -586,6 +581,11 @@ impl ArtifactFeed {
             };
             if let Some(binding) = bindings.get(&artifact.id).cloned() {
                 view.local_path = Some(binding.local_path.clone());
+                if conflicts.contains(&binding.registration_id) {
+                    view.local_error = Some("Multiple artifacts are bound to this file. Sync is paused; save or rebind the artifacts to distinct paths.".into());
+                    local.insert(artifact.id.clone(), view);
+                    continue;
+                }
                 match files
                     .remove(&artifact.id)
                     .expect("every bound artifact was read")
@@ -793,9 +793,9 @@ mod tests {
             auth,
             dir.path().into(),
         );
-        let first = watchers.open("alice", "repo", "/workspace", None).await;
-        let second = watchers.open("alice", "repo", "/workspace", None).await;
-        let other = watchers.open("bob", "repo", "/workspace", None).await;
+        let first = watchers.open("alice", "repo", "/workspace").await;
+        let second = watchers.open("alice", "repo", "/workspace").await;
+        let other = watchers.open("bob", "repo", "/workspace").await;
         let task = watchers
             .inner
             .lock()
@@ -837,9 +837,7 @@ mod tests {
         RemoteArtifact {
             id: "artifact".into(),
             user_id: "alice".into(),
-            scope: ArtifactScope::Project,
             repository_key: "repo".into(),
-            thread_id: None,
             content: "initial".into(),
             content_type: ArtifactContentType::Markdown,
             title: "Notes".into(),
@@ -855,7 +853,6 @@ mod tests {
             user_id: "alice".into(),
             repository_key: "repo".into(),
             workspace_path: dir.path().to_str().unwrap().into(),
-            thread_id: None,
         };
         let bindings =
             ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
@@ -870,8 +867,6 @@ mod tests {
             .bind(ArtifactBinding {
                 registration_id: "registration".into(),
                 artifact_id: Some("artifact".into()),
-                scope: "project".into(),
-                thread_id: None,
                 local_path: "notes.md".into(),
                 content_hash: content_hash("initial"),
             })
@@ -888,6 +883,46 @@ mod tests {
         assert_eq!(view.local_path, None);
         assert!(feed.pending.is_empty());
         assert!(!dir.path().join("notes.md").exists());
+    }
+
+    #[tokio::test]
+    async fn colliding_legacy_bindings_keep_cloud_content_and_pause_sync() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        tokio::fs::write(dir.path().join("notes.md"), "local edit")
+            .await
+            .unwrap();
+        let mut guard = feed.bindings.lock().await.unwrap();
+        let mut second_binding = guard.get("artifact").unwrap().clone();
+        second_binding.registration_id = "second-registration".into();
+        second_binding.artifact_id = Some("second".into());
+        second_binding.local_path = "./notes.md".into();
+        guard.bindings.push(second_binding);
+        guard.persist().await.unwrap();
+        drop(guard);
+        feed.apply_registry(vec![
+            remote(),
+            RemoteArtifact {
+                id: "second".into(),
+                content: "second content".into(),
+                ..remote()
+            },
+        ]);
+        feed.refresh().await.unwrap();
+        assert!(feed.pending.is_empty());
+        assert_eq!(feed.local["artifact"].remote.content, "initial");
+        assert_eq!(feed.local["second"].remote.content, "second content");
+        assert!(
+            feed.local
+                .values()
+                .all(|artifact| artifact.local_error.is_some())
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("notes.md"))
+                .await
+                .unwrap(),
+            "local edit"
+        );
     }
 
     #[tokio::test]
@@ -998,8 +1033,6 @@ mod tests {
             .bind(ArtifactBinding {
                 registration_id: "missing".into(),
                 artifact_id: Some("missing".into()),
-                scope: "project".into(),
-                thread_id: None,
                 local_path: "missing.md".into(),
                 content_hash: content_hash("initial"),
             })
@@ -1064,7 +1097,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registry_filters_account_repository_and_thread() {
+    async fn registry_filters_account_and_repository() {
         let (_dir, mut feed) = setup().await;
         for artifact in [
             RemoteArtifact {
@@ -1073,11 +1106,6 @@ mod tests {
             },
             RemoteArtifact {
                 repository_key: "other".into(),
-                ..remote()
-            },
-            RemoteArtifact {
-                scope: ArtifactScope::Thread,
-                thread_id: Some("private".into()),
                 ..remote()
             },
         ] {

@@ -44,8 +44,7 @@ function createFakeClient(readRevision: () => number | undefined) {
 const scope = (repositoryKey: string) => ({
 	userId: 'user-a',
 	repositoryKey,
-	workspacePath: `/worktrees/${repositoryKey}`,
-	threadId: null
+	workspacePath: `/worktrees/${repositoryKey}`
 });
 
 it('delivers the current registry revision immediately and on every change', () => {

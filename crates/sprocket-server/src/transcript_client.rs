@@ -70,7 +70,7 @@ impl UserConvexClient {
         self.client
             .subscribe(
                 "artifacts:getArtifactState",
-                artifacts_list_args(repository_key, None),
+                artifacts_list_args(repository_key),
             )
             .await
     }
@@ -78,9 +78,8 @@ impl UserConvexClient {
     pub(crate) async fn list_artifacts(
         &self,
         repository_key: &str,
-        thread_id: Option<&str>,
     ) -> anyhow::Result<ArtifactSnapshot> {
-        let mut args = artifacts_list_args(repository_key, thread_id);
+        let mut args = artifacts_list_args(repository_key);
         let mut artifacts = Vec::new();
         let mut revision = None;
         loop {
@@ -113,11 +112,10 @@ impl UserConvexClient {
         &self,
         artifact_id: &str,
         repository_key: &str,
-        thread_id: Option<&str>,
         expected_revision: u64,
         content: &str,
     ) -> anyhow::Result<bool> {
-        let mut args = artifacts_list_args(repository_key, thread_id);
+        let mut args = artifacts_list_args(repository_key);
         args.insert("artifactId".to_string(), artifact_id.to_string().into());
         args.insert(
             "expectedRevision".to_string(),
@@ -202,15 +200,12 @@ struct ArtifactPage {
     revision: u64,
 }
 
-fn artifacts_list_args(repository_key: &str, thread_id: Option<&str>) -> BTreeMap<String, Value> {
+fn artifacts_list_args(repository_key: &str) -> BTreeMap<String, Value> {
     let mut args = BTreeMap::new();
     args.insert(
         "repositoryKey".to_string(),
         repository_key.to_string().into(),
     );
-    if let Some(thread_id) = thread_id {
-        args.insert("threadId".to_string(), thread_id.to_string().into());
-    }
     args
 }
 

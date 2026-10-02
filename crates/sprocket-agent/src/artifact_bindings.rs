@@ -14,8 +14,6 @@ pub struct ArtifactBindings {
 pub struct ArtifactBinding {
     pub registration_id: String,
     pub artifact_id: Option<String>,
-    pub scope: String,
-    pub thread_id: Option<String>,
     pub local_path: String,
     pub content_hash: String,
 }
@@ -28,6 +26,28 @@ pub struct BindingGuard {
 
 pub fn content_hash(content: &str) -> String {
     hex::encode(Sha256::digest(content.as_bytes()))
+}
+
+/// Legacy thread bindings can converge on one project path. Preserve every
+/// binding, but pause synchronization until the user chooses distinct paths.
+pub async fn conflicting_binding_ids(
+    workspace: &Path,
+    bindings: &[ArtifactBinding],
+) -> std::collections::HashSet<String> {
+    let mut paths: std::collections::HashMap<PathBuf, Vec<&ArtifactBinding>> =
+        std::collections::HashMap::new();
+    for binding in bindings {
+        paths
+            .entry(path_identity(workspace, &binding.local_path).await)
+            .or_default()
+            .push(binding);
+    }
+    paths
+        .into_values()
+        .filter(|bindings| bindings.len() > 1)
+        .flatten()
+        .map(|binding| binding.registration_id.clone())
+        .collect()
 }
 
 impl ArtifactBindings {
@@ -67,19 +87,35 @@ impl ArtifactBindings {
                 Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
             }
         }
-        let bindings = self.snapshot().await?;
-        Ok(BindingGuard {
+        let (bindings, legacy_fields) = self.load().await?;
+        let guard = BindingGuard {
             _lock: lock,
             directory: self.directory.clone(),
             bindings,
-        })
+        };
+        if legacy_fields {
+            guard.persist().await?;
+        }
+        Ok(guard)
     }
 
     pub async fn snapshot(&self) -> anyhow::Result<Vec<ArtifactBinding>> {
+        Ok(self.load().await?.0)
+    }
+
+    async fn load(&self) -> anyhow::Result<(Vec<ArtifactBinding>, bool)> {
         match tokio::fs::read(self.directory.join("bindings.json")).await {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .context("Invalid artifact bindings; refusing to overwrite them"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Ok(bytes) => {
+                let rows: Vec<serde_json::Value> = serde_json::from_slice(&bytes)
+                    .context("Invalid artifact bindings; refusing to overwrite them")?;
+                let legacy_fields = rows
+                    .iter()
+                    .any(|row| row.get("scope").is_some() || row.get("thread_id").is_some());
+                let bindings = serde_json::from_value(serde_json::Value::Array(rows))
+                    .context("Invalid artifact bindings; refusing to overwrite them")?;
+                Ok((bindings, legacy_fields))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((Vec::new(), false)),
             Err(error) => Err(error.into()),
         }
     }
@@ -90,19 +126,20 @@ impl BindingGuard {
         &self,
         workspace: &Path,
         path: &str,
-        scope: &str,
-        thread_id: Option<&str>,
-    ) -> Option<ArtifactBinding> {
+    ) -> anyhow::Result<Option<ArtifactBinding>> {
         let destination = path_identity(workspace, path).await;
+        let mut existing = None;
         for binding in &self.bindings {
-            if binding.scope == scope
-                && binding.thread_id.as_deref() == thread_id
-                && path_identity(workspace, &binding.local_path).await == destination
-            {
-                return Some(binding.clone());
+            if path_identity(workspace, &binding.local_path).await == destination {
+                if existing.is_some() {
+                    bail!(
+                        "Multiple artifacts are bound to this path; save or rebind them to distinct paths."
+                    );
+                }
+                existing = Some(binding.clone());
             }
         }
-        None
+        Ok(existing)
     }
 
     pub async fn validate_destination(
@@ -110,17 +147,13 @@ impl BindingGuard {
         workspace: &Path,
         binding: &ArtifactBinding,
     ) -> anyhow::Result<()> {
-        if let Some(existing) = self
-            .at_path(
-                workspace,
-                &binding.local_path,
-                &binding.scope,
-                binding.thread_id.as_deref(),
-            )
-            .await
-        {
-            if existing.artifact_id.is_some() && existing.artifact_id != binding.artifact_id {
-                bail!("This path is already bound to another artifact in the same scope.");
+        let destination = path_identity(workspace, &binding.local_path).await;
+        for existing in &self.bindings {
+            if existing.registration_id != binding.registration_id
+                && (existing.artifact_id.is_none() || existing.artifact_id != binding.artifact_id)
+                && path_identity(workspace, &existing.local_path).await == destination
+            {
+                bail!("This path is already bound to another artifact; choose a distinct path.");
             }
         }
         Ok(())
@@ -132,26 +165,15 @@ impl BindingGuard {
             .find(|binding| binding.artifact_id.as_deref() == Some(artifact_id))
     }
 
-    pub fn reserve(
-        &mut self,
-        path: String,
-        scope: &str,
-        thread_id: Option<&str>,
-    ) -> &mut ArtifactBinding {
+    pub fn reserve(&mut self, path: String) -> &mut ArtifactBinding {
         let index = self
             .bindings
             .iter()
-            .position(|binding| {
-                binding.local_path == path
-                    && binding.scope == scope
-                    && binding.thread_id.as_deref() == thread_id
-            })
+            .position(|binding| binding.local_path == path)
             .unwrap_or_else(|| {
                 self.bindings.push(ArtifactBinding {
                     registration_id: uuid::Uuid::new_v4().to_string(),
                     artifact_id: None,
-                    scope: scope.into(),
-                    thread_id: thread_id.map(str::to_string),
                     local_path: path,
                     content_hash: String::new(),
                 });
@@ -163,15 +185,13 @@ impl BindingGuard {
     pub fn bind(&mut self, binding: ArtifactBinding) -> anyhow::Result<()> {
         if self.bindings.iter().any(|existing| {
             existing.local_path == binding.local_path
-                && existing.scope == binding.scope
-                && existing.thread_id == binding.thread_id
                 && existing.artifact_id.is_some()
                 && existing.artifact_id != binding.artifact_id
         }) {
-            bail!("This path is already bound to another artifact in the same scope.");
+            bail!("This path is already bound to another artifact; choose a distinct path.");
         }
         self.bindings.retain(|existing| {
-            existing.artifact_id != binding.artifact_id
+            (binding.artifact_id.is_none() || existing.artifact_id != binding.artifact_id)
                 && existing.registration_id != binding.registration_id
         });
         self.bindings.push(binding);
@@ -280,11 +300,84 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn legacy_bindings_migrate_without_merging_colliding_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        tokio::fs::create_dir_all(&store.directory).await.unwrap();
+        save_new_file(dir.path(), "notes.md", "untouched")
+            .await
+            .unwrap();
+        let legacy = serde_json::json!([
+            {"registration_id": "first-registration", "artifact_id": "first", "scope": "project",
+             "thread_id": null, "local_path": "notes.md", "content_hash": "first-baseline"},
+            {"registration_id": "second-registration", "artifact_id": "second", "scope": "thread",
+             "thread_id": "old-thread", "local_path": "./notes.md", "content_hash": "second-baseline"}
+        ]);
+        tokio::fs::write(
+            store.directory.join("bindings.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut guard = store.lock().await.unwrap();
+        assert_eq!(guard.bindings.len(), 2);
+        assert_eq!(guard.get("first").unwrap().content_hash, "first-baseline");
+        assert_eq!(
+            guard.get("second").unwrap().registration_id,
+            "second-registration"
+        );
+        assert_eq!(
+            conflicting_binding_ids(dir.path(), &guard.bindings)
+                .await
+                .len(),
+            2
+        );
+        assert!(guard.at_path(dir.path(), "notes.md").await.is_err());
+        assert!(
+            guard
+                .validate_destination(dir.path(), guard.get("second").unwrap())
+                .await
+                .is_err()
+        );
+        let persisted: Vec<serde_json::Value> = serde_json::from_slice(
+            &tokio::fs::read(store.directory.join("bindings.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            persisted
+                .iter()
+                .all(|row| row.get("scope").is_none() && row.get("thread_id").is_none())
+        );
+        let mut rebound = guard.get("second").unwrap().clone();
+        rebound.local_path = "second.md".into();
+        guard
+            .validate_destination(dir.path(), &rebound)
+            .await
+            .unwrap();
+        guard.bind(rebound).unwrap();
+        guard.persist().await.unwrap();
+        assert!(
+            conflicting_binding_ids(dir.path(), &guard.bindings)
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("notes.md"))
+                .await
+                .unwrap(),
+            "untouched"
+        );
+    }
+
+    #[tokio::test]
     async fn bindings_survive_restart_and_are_isolated_and_locked() {
         let dir = tempfile::tempdir().unwrap();
         let store = ArtifactBindings::new(dir.path(), "deployment", "alice", Path::new("/ws"));
         let mut guard = store.lock().await.unwrap();
-        let entry = guard.reserve("notes.md".into(), "project", None);
+        let entry = guard.reserve("notes.md".into());
         entry.artifact_id = Some("artifact".into());
         entry.content_hash = content_hash("hello");
         guard.persist().await.unwrap();
@@ -354,7 +447,7 @@ mod tests {
             ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
         save_new_file(dir.path(), "doc.md", "hello").await.unwrap();
         let mut guard = store.lock().await.unwrap();
-        let mut binding = guard.reserve("doc.md".into(), "project", None).clone();
+        let mut binding = guard.reserve("doc.md".into()).clone();
         binding.artifact_id = Some("first".into());
         guard.bind(binding.clone()).unwrap();
         binding.artifact_id = Some("second".into());
