@@ -401,7 +401,6 @@ describe('payments mandates', () => {
 	});
 
 	it('releases the charge reservation when mandate resolution fails', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const fetchMock = vi.fn(async () => jsonResponse({ mandates: [] }));
@@ -436,6 +435,7 @@ describe('payments mandates', () => {
 				)
 				.collect()
 		);
+
 		expect(charges).toHaveLength(1);
 		expect(charges[0]?.chargingStartedAt).toBeUndefined();
 
@@ -452,7 +452,6 @@ describe('payments mandates', () => {
 	});
 
 	it('keeps a newer claim when a stale resolve failure releases', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup } = await createApprovedMandate(t, run);
@@ -466,6 +465,7 @@ describe('payments mandates', () => {
 			description: 'Order 8842',
 			reference: 'order-stale-release'
 		});
+
 		if (first.kind !== 'reserved') throw new Error('expected reserved');
 
 		const newerClaim = first.chargingStartedAt + 120_000;
