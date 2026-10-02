@@ -265,7 +265,7 @@ describe('cloud artifacts', () => {
 		try {
 			const { t, asUser, threadId, repositoryKey } = await seedActiveRun();
 
-			const artifactId = await t.run(async (ctx) => {
+			const artifactIds = await t.run(async (ctx) => {
 				await ctx.db.insert('migrationSchedules', {
 					name: 'legacy-compat-backfill-2026-10',
 					notBefore: 1,
@@ -273,34 +273,44 @@ describe('cloud artifacts', () => {
 					completedAt: 2
 				});
 
-				return await ctx.db.insert('artifacts', {
-					userId: 'user_alice',
-					scope: 'thread',
-					threadId,
-					repositoryKey,
-					registrationId: 'legacy',
-					content: 'preserved',
-					type: 'markdown',
-					title: 'Legacy',
-					revision: 4,
-					createdAt: 1,
-					updatedAt: 2
-				});
+				const ids = [];
+
+				for (let index = 0; index < 19; index++) {
+					ids.push(
+						await ctx.db.insert('artifacts', {
+							userId: 'user_alice',
+							scope: 'thread',
+							threadId,
+							repositoryKey,
+							registrationId: `legacy-${index}`,
+							content: 'preserved',
+							type: 'markdown',
+							title: 'Legacy',
+							revision: 4,
+							createdAt: 1,
+							updatedAt: 2
+						})
+					);
+				}
+
+				return ids;
 			});
 
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
-			const stored = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
-			expect(stored).toMatchObject({
-				scope: 'project',
-				content: 'preserved',
-				revision: 4,
-				createdAt: 1,
-				updatedAt: 2
-			});
-			expect(stored).not.toHaveProperty('threadId');
-			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+			for (const artifactId of artifactIds) {
+				const stored = await t.run((ctx) => ctx.db.get('artifacts', artifactId));
+				expect(stored).toMatchObject({
+					scope: 'project',
+					content: 'preserved',
+					revision: 4,
+					createdAt: 1,
+					updatedAt: 2
+				});
+				expect(stored).not.toHaveProperty('threadId');
+			}
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
 
 			const schedule = await t.run((ctx) =>
 				ctx.db
@@ -311,7 +321,7 @@ describe('cloud artifacts', () => {
 
 			expect(schedule?.completedAt).toBeDefined();
 			await t.mutation(internal.migrations.runProjectArtifactBackfillAutomatically, {});
-			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(1);
+			expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(19);
 		} finally {
 			vi.useRealTimers();
 		}
