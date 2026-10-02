@@ -30,6 +30,7 @@
 		"files": [
 			"main.mjs",
 			"local-server.mjs",
+			"navigation-guard.mjs",
 			"updater.mjs",
 			"preload.cjs",
 			"local-config.mjs",
