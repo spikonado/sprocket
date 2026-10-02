@@ -1131,14 +1131,22 @@ mod tests {
             "test-access-token"
         );
 
-        auth.bind_session_user(&remote_session, "user-b")
-            .await
-            .unwrap();
-        let mismatched = app
+        assert_eq!(
+            auth.bind_session_user(&remote_session, "user-b")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "local session belongs to a different user"
+        );
+        let still_owner = app
             .oneshot(with_peer(request(&remote_session), loopback_peer()))
             .await
             .unwrap();
-        assert_eq!(mismatched.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(still_owner.status(), StatusCode::OK);
+        assert_eq!(
+            read_json(still_owner).await["accessToken"],
+            "test-access-token"
+        );
     }
 
     #[test]
