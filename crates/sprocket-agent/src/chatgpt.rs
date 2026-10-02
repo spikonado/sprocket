@@ -31,7 +31,7 @@ const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to the OpenAI API key provider in Settings."
+    "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
 )]
 struct SubscriptionUsageLimit {
     #[source]
@@ -928,7 +928,7 @@ mod tests {
             );
             assert_eq!(
                 error.to_string(),
-                "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to the OpenAI API key provider in Settings."
+                "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
             );
             assert!(
                 error
