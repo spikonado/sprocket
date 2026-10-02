@@ -667,6 +667,53 @@ describe('durable webhook ingestion and projection', () => {
 		expect(problems.some((problem) => problem.eventId === eventId)).toBe(true);
 	});
 
+	it('keeps the removed update_payment_method event durable but unsupported', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+
+		// Deliberately no longer applied: only the payload's own status is
+		// authoritative for the projection.
+		const eventId = await recordEvent(t, {
+			webhookId: 'wh_update_pm',
+			eventType: 'subscription.update_payment_method',
+			eventAt: termStart,
+			subscriptionId: 'sub_1',
+			payload: envelope('subscription.update_payment_method', termStart, subscriptionData())
+		});
+
+		await t.mutation(internal.billingWebhook.processEvent, { eventId });
+
+		const event = await readEvent(t, eventId);
+		expect(event?.outcome).toBe('unsupported');
+
+		expect(await readSubscription(t)).toBeNull();
+	});
+
+	it('maps a past_due event onto on_hold access', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+
+		const eventId = await recordEvent(t, {
+			webhookId: 'wh_past_due',
+			eventType: 'subscription.past_due',
+			eventAt: termStart,
+			subscriptionId: 'sub_1',
+			payload: envelope(
+				'subscription.past_due',
+				termStart,
+				subscriptionData({ status: 'past_due' })
+			)
+		});
+
+		await t.mutation(internal.billingWebhook.processEvent, { eventId });
+
+		const event = await readEvent(t, eventId);
+		expect(event?.outcome).toBe('applied');
+
+		const subscription = await readSubscription(t);
+		expect(subscription?.status).toBe('on_hold');
+	});
+
 	it('retries a failed projection with bounded backoff until exhaustion', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);

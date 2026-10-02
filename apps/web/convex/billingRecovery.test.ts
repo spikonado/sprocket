@@ -71,7 +71,6 @@ async function seedProTier(t: ConvexTestInstance) {
 	vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
 	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
 	vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'whsec_test');
-	vi.stubEnv('DODO_CHECKOUT_ENABLED', 'true');
 	vi.stubEnv('DODO_CHECKOUT_IDEMPOTENCY_WINDOW_MS', '3600000');
 	vi.stubEnv('SPROCKET_MARKETING_ORIGIN', 'https://spikonado.com');
 
@@ -88,88 +87,37 @@ async function seedProTier(t: ConvexTestInstance) {
 	});
 }
 
-describe('checkout readiness kill switch', () => {
-	it('blocks new checkout when disabled, even with an API key, but keeps the portal open', async () => {
-		vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
-		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
-		vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'whsec_test');
-		vi.stubEnv('SPROCKET_MARKETING_ORIGIN', 'https://spikonado.com');
+describe('checkout local purchase delegation', () => {
+	it('delegates a new checkout to the provider for an active Free bootstrap row', async () => {
 		const t = initConvexTest();
-
-		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', {
-				tierId: 'pro',
-				label: 'Pro',
-				weekly: 1,
-				monthly: 1,
-				monthlyProductId: 'prod_monthly'
-			});
-			await ctx.db.insert('billingCustomers', {
-				userId: 'owner',
-				dodoCustomerId: 'cus_owner'
-			});
-		});
-
+		await seedProTier(t);
 		const requests = stubDodo({});
 		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
 
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'checkout_disabled',
-			checkoutEnabled: false
-		});
-		await expect(
-			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
-		).rejects.toThrow('Checkout is temporarily disabled');
+		await owner.mutation(api.billing.ensureMySubscription, {});
 
-		expect(requests.filter((request) => new URL(request.url).pathname === '/checkouts')).toEqual(
-			[]
+		const bootstrap = await t.run(async (ctx) =>
+			ctx.db
+				.query('subscriptions')
+				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.unique()
 		);
 
-		vi.stubGlobal('fetch', async (input: Request | string | URL, init?: RequestInit) => {
-			const request = input instanceof Request ? input : new Request(input, init);
-			const path = new URL(request.url).pathname;
+		expect(bootstrap).toMatchObject({ tier: 'free', status: 'active' });
 
-			// Actual SDK endpoint: POST /customers/{id}/customer-portal/session.
-			if (path.endsWith('/customer-portal/session')) {
-				return Response.json({ link: 'https://portal.example/1' });
-			}
+		const result = await owner.action(api.billing.checkout, {
+			tier: 'pro',
+			interval: 'monthly'
+		});
 
-			throw new Error(`Unexpected Dodo request: ${path}`);
-		});
-		await expect(owner.action(api.billing.customerPortal, {})).resolves.toEqual({
-			portal_url: 'https://portal.example/1'
-		});
+		expect(result.mode).toBe('test');
+		expect(result.checkout_url).toBe('https://checkout.example/cks_1');
+		expect(
+			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
+		).toHaveLength(1);
 	});
 
-	it('enables checkout only for the exact string "true"', async () => {
-		vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
-		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
-		vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'whsec_test');
-		vi.stubEnv('SPROCKET_MARKETING_ORIGIN', 'https://spikonado.com');
-		vi.stubEnv('DODO_CHECKOUT_ENABLED', 'yes');
-		const t = initConvexTest();
-		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
-
-		await expect(
-			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
-		).rejects.toThrow('DODO_CHECKOUT_ENABLED must be "true" or "false".');
-	});
-});
-
-describe('checkout eligibility', () => {
-	it('reports purchasable for a free account with no attempts', async () => {
-		const t = initConvexTest();
-		await seedProTier(t);
-		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
-
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'purchasable',
-			checkoutEnabled: true,
-			mode: 'test'
-		});
-	});
-
-	it('reports active for a paid subscriber and scheduled cancellation', async () => {
+	it('delegates a new checkout to the provider while a paid subscription is active', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);
 		const now = Date.now();
@@ -181,30 +129,29 @@ describe('checkout eligibility', () => {
 				status: 'active',
 				eventAt: now - 1_000,
 				dodoSubscriptionId: 'sub_1',
-				billingPeriodEnd: now + 86_400_000
+				billingPeriodStart: now - 86_400_000,
+				billingPeriodEnd: now + 86_400_000,
+				accessPhase: 'paid',
+				accessEndsAt: now + 86_400_000
 			});
 		});
 
+		const requests = stubDodo({});
 		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
 
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'active'
+		const result = await owner.action(api.billing.checkout, {
+			tier: 'pro',
+			interval: 'monthly'
 		});
 
-		await t.run(async (ctx) => {
-			const row = await ctx.db
-				.query('subscriptions')
-				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
-				.unique();
-
-			if (row) await ctx.db.patch('subscriptions', row._id, { cancelAtNextBillingDate: true });
-		});
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'active'
-		});
+		expect(result.mode).toBe('test');
+		expect(result.checkout_url).toBe('https://checkout.example/cks_1');
+		expect(
+			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
+		).toHaveLength(1);
 	});
 
-	it('reports repair_required once paid access ended but a Dodo subscription remains', async () => {
+	it('delegates a new checkout to the provider for an ended recoverable paid row', async () => {
 		const t = initConvexTest();
 		await seedProTier(t);
 		const now = Date.now();
@@ -218,42 +165,25 @@ describe('checkout eligibility', () => {
 				dodoSubscriptionId: 'sub_1',
 				billingPeriodStart: now - 2 * 86_400_000,
 				billingPeriodEnd: now - 86_400_000,
-				billingPeriodEnded: true
+				billingPeriodEnded: true,
+				accessPhase: 'none',
+				accessEndsAt: now - 86_400_000
 			});
 		});
 
+		const requests = stubDodo({});
 		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
 
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'repair_required'
-		});
-		await expect(
-			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
-		).rejects.toThrow('Repair or cancel it from the customer portal');
-	});
-
-	it('reports confirmation_pending while a provider create is ambiguous', async () => {
-		const t = initConvexTest();
-		await seedProTier(t);
-
-		await t.run(async (ctx) => {
-			await ctx.db.insert('billingCheckoutSessions', {
-				userId: 'owner',
-				attemptId: 'attempt_ambiguous',
-				tierId: 'pro',
-				interval: 'monthly',
-				productId: 'prod_monthly',
-				outcome: 'create_ambiguous',
-				idempotencyKey: 'sprocket-checkout:key_1',
-				expiresAt: Date.now() + 60_000
-			});
+		const result = await owner.action(api.billing.checkout, {
+			tier: 'pro',
+			interval: 'monthly'
 		});
 
-		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
-
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'confirmation_pending'
-		});
+		expect(result.mode).toBe('test');
+		expect(result.checkout_url).toBe('https://checkout.example/cks_1');
+		expect(
+			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
+		).toHaveLength(1);
 	});
 });
 
@@ -294,6 +224,7 @@ describe('checkout attempt recovery', () => {
 			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
 		).resolves.toEqual({
 			checkout_url: 'https://checkout.example/cks_recovered',
+			mode: 'test',
 			attemptId: expect.any(String),
 			sessionId: 'cks_recovered'
 		});
@@ -355,10 +286,98 @@ describe('checkout attempt recovery', () => {
 
 		expect(again).toMatchObject({
 			checkout_url: 'https://checkout.example/cks_same',
+			mode: 'test',
 			attemptId: first.attemptId,
 			sessionId: 'cks_same'
 		});
 		expect(createCalls).toBe(1);
+	});
+
+	it('recovers an unpaid checkout as awaiting_payment without creating a new provider session', async () => {
+		const t = initConvexTest();
+		await seedProTier(t);
+		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
+		let createCalls = 0;
+
+		const requests = stubDodo({
+			onCreateSession: () => {
+				createCalls += 1;
+
+				return Response.json({
+					session_id: 'cks_unpaid',
+					checkout_url: 'https://checkout.example/cks_unpaid'
+				});
+			},
+			onSessionStatus: (sessionId) =>
+				Response.json({
+					id: sessionId,
+					created_at: new Date().toISOString(),
+					payment_id: null,
+					payment_status: 'awaiting_payment'
+				})
+		});
+
+		const checkout = await owner.action(api.billing.checkout, {
+			tier: 'pro',
+			interval: 'monthly'
+		});
+
+		if (!checkout.attemptId) throw new Error('Missing checkout attempt.');
+		expect(checkout.checkout_url).toBe('https://checkout.example/cks_unpaid');
+		expect(createCalls).toBe(1);
+
+		// Past the local TTL the stored checkout URL is still the resume point.
+		vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1_000);
+
+		const status = await owner.action(api.billing.getCheckoutStatus, {
+			attemptId: checkout.attemptId
+		});
+
+		expect(status).toMatchObject({
+			status: 'awaiting_payment',
+			mode: 'test',
+			checkout_url: 'https://checkout.example/cks_unpaid',
+			sessionId: 'cks_unpaid'
+		});
+
+		expect(
+			requests.filter((request) => new URL(request.url).pathname === '/checkouts')
+		).toHaveLength(1);
+		expect(createCalls).toBe(1);
+	});
+
+	it('keeps a retained test-mode checkout at mode test and unknown after the config flips to live', async () => {
+		const t = initConvexTest();
+		await seedProTier(t);
+		const owner = t.withIdentity({ subject: 'owner', email: 'owner@example.com' });
+
+		const requests = stubDodo({});
+
+		const checkout = await owner.action(api.billing.checkout, {
+			tier: 'pro',
+			interval: 'monthly'
+		});
+
+		if (!checkout.attemptId) throw new Error('Missing checkout attempt.');
+		expect(checkout.mode).toBe('test');
+
+		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'live_mode');
+		vi.stubEnv('DODO_PAYMENTS_API_KEY', 'live_key');
+
+		// The attempt belongs to the test environment: no provider fetch may go
+		// out under live credentials, and the stored mode stays test.
+		await expect(
+			owner.action(api.billing.getCheckoutStatus, { attemptId: checkout.attemptId })
+		).resolves.toMatchObject({
+			mode: 'test',
+			status: 'unknown',
+			checkout_url: 'https://checkout.example/cks_1',
+			sessionId: 'cks_1'
+		});
+
+		expect(
+			requests.filter((request) => new URL(request.url).pathname.startsWith('/checkouts'))
+		).toHaveLength(1);
 	});
 });
 
@@ -413,6 +432,7 @@ describe('getCheckoutStatus', () => {
 			owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_open' })
 		).resolves.toMatchObject({
 			status: 'awaiting_payment',
+			mode: 'test',
 			checkout_url: 'https://checkout.example/cks_open',
 			sessionId: 'cks_open'
 		});
@@ -452,6 +472,7 @@ describe('getCheckoutStatus', () => {
 		});
 
 		expect(status.status).toBe('succeeded');
+		expect(status.mode).toBe('test');
 		expect(status.checkout_url).toBeUndefined();
 	});
 
@@ -477,7 +498,7 @@ describe('getCheckoutStatus', () => {
 
 		await expect(
 			owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_old' })
-		).resolves.toMatchObject({ status: 'awaiting_payment', sessionId: 'cks_old' });
+		).resolves.toMatchObject({ status: 'awaiting_payment', mode: 'test', sessionId: 'cks_old' });
 
 		// Local expiry is not provider expiry: the attached session is queried.
 		expect(
@@ -502,7 +523,11 @@ describe('getCheckoutStatus', () => {
 
 		await expect(
 			owner.action(api.billing.getCheckoutStatus, { attemptId: first.attemptId })
-		).resolves.toMatchObject({ attemptId: first.attemptId, status: 'awaiting_payment' });
+		).resolves.toMatchObject({
+			attemptId: first.attemptId,
+			status: 'awaiting_payment',
+			mode: 'test'
+		});
 	});
 
 	it('reports a locally expired uncreated reservation as expired', async () => {
@@ -527,7 +552,7 @@ describe('getCheckoutStatus', () => {
 
 		await expect(
 			owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_reserved' })
-		).resolves.toMatchObject({ status: 'expired' });
+		).resolves.toMatchObject({ status: 'expired', mode: 'test' });
 
 		expect(
 			requests.filter((request) => new URL(request.url).pathname.startsWith('/checkouts'))
@@ -588,6 +613,7 @@ describe('getCheckoutStatus', () => {
 			owner.action(api.billing.getCheckoutStatus, { attemptId: checkout.attemptId })
 		).resolves.toMatchObject({
 			status: 'unknown',
+			mode: 'test',
 			sessionId: 'cks_1',
 			checkout_url: checkout.checkout_url
 		});
@@ -629,7 +655,7 @@ describe('getCheckoutStatus', () => {
 
 		await expect(
 			owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_unresolved' })
-		).resolves.toMatchObject({ status: 'unknown' });
+		).resolves.toMatchObject({ status: 'unknown', mode: 'test' });
 	});
 
 	it('fails closed on a legacy ambiguous row without a frozen request', async () => {
@@ -652,6 +678,6 @@ describe('getCheckoutStatus', () => {
 
 		await expect(
 			owner.action(api.billing.getCheckoutStatus, { attemptId: 'attempt_legacy' })
-		).resolves.toMatchObject({ status: 'unknown' });
+		).resolves.toMatchObject({ status: 'unknown', mode: 'test' });
 	});
 });

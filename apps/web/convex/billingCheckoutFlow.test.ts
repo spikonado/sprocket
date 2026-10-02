@@ -19,7 +19,6 @@ async function billingFixture() {
 	vi.stubEnv('DODO_PAYMENTS_API_KEY', 'test_key');
 	vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'test_mode');
 	vi.stubEnv('DODO_PAYMENTS_WEBHOOK_SECRET', 'configured');
-	vi.stubEnv('DODO_CHECKOUT_ENABLED', 'true');
 	vi.stubEnv('DODO_CHECKOUT_IDEMPOTENCY_WINDOW_MS', '3600000');
 	vi.stubEnv('SPROCKET_MARKETING_ORIGIN', 'https://spikonado.com');
 	const t = initConvexTest();
@@ -71,6 +70,52 @@ async function billingFixture() {
 	return { t, requests, owner: t.withIdentity({ subject: 'owner', email: 'owner@example.com' }) };
 }
 
+type CheckoutCreateBody = { product_cart: [{ product_id: string }] };
+
+function stubDodoCheckoutCreates(
+	onCreateSession?: (body: CheckoutCreateBody) => Response | Promise<Response>
+) {
+	const requests: Request[] = [];
+
+	vi.stubGlobal('fetch', async (input: Request | string | URL, init?: RequestInit) => {
+		const request = input instanceof Request ? input : new Request(input, init);
+		const path = new URL(request.url).pathname;
+
+		if (path === '/customers') return Response.json({ customer_id: 'cus_owner' });
+
+		if (path.startsWith('/products/')) {
+			return Response.json({
+				product_id: path.split('/').at(-1),
+				name: 'Pro',
+				price: {
+					type: 'recurring_price',
+					price: 2_000,
+					currency: 'USD',
+					payment_frequency_count: 1,
+					payment_frequency_interval: path.endsWith('prod_annual') ? 'Year' : 'Month'
+				}
+			});
+		}
+
+		if (path === '/checkouts') {
+			requests.push(request.clone());
+			const body = await request.json();
+
+			return (
+				onCreateSession?.(body) ??
+				Response.json({
+					session_id: `cks_${body.product_cart[0].product_id}`,
+					checkout_url: `https://checkout.example/${body.product_cart[0].product_id}`
+				})
+			);
+		}
+
+		throw new Error(`Unexpected Dodo request: ${path}`);
+	});
+
+	return requests;
+}
+
 describe('checkout selection changes', () => {
 	it('allows a healthy selection after product validation fails before creation', async () => {
 		const { t, owner, requests } = await billingFixture();
@@ -99,7 +144,7 @@ describe('checkout selection changes', () => {
 		).toHaveLength(1);
 	});
 
-	it('reports the retained-history cap before offering another purchase', async () => {
+	it('enforces the retained-history cap before delegating another purchase', async () => {
 		const { t, owner } = await billingFixture();
 		await t.run(async (ctx) => {
 			for (let index = 0; index < 25; index++) {
@@ -113,9 +158,6 @@ describe('checkout selection changes', () => {
 					expiresAt: Date.now()
 				});
 			}
-		});
-		await expect(owner.query(api.billing.checkoutEligibility, {})).resolves.toMatchObject({
-			eligibility: 'confirmation_pending'
 		});
 		await expect(
 			owner.action(api.billing.checkout, { tier: 'pro', interval: 'annual' })
@@ -230,9 +272,13 @@ describe('checkout selection changes', () => {
 			tier: 'pro',
 			billingManaged: true
 		});
+
 		await expect(
 			owner.action(api.billing.checkout, { tier: 'pro', interval: 'annual' })
-		).rejects.toThrow('A paid plan is already active');
+		).resolves.toMatchObject({
+			checkout_url: 'https://checkout.example/prod_annual',
+			mode: 'test'
+		});
 	});
 
 	it('retains a late monthly attachment without replacing the current annual reservation', async () => {
@@ -280,7 +326,7 @@ describe('checkout selection changes', () => {
 	});
 
 	it('freezes one create request and idempotency key across concurrent ambiguous retries', async () => {
-		const { t, owner, requests } = await billingFixture();
+		const { t, owner } = await billingFixture();
 
 		// Fail the first provider create so the attempt turns ambiguous, then
 		// hold the replay requests so two retries overlap at the freeze.
@@ -291,41 +337,17 @@ describe('checkout selection changes', () => {
 			release = resolve;
 		});
 
-		vi.stubGlobal('fetch', async (input: Request | string | URL, init?: RequestInit) => {
-			const request = input instanceof Request ? input : new Request(input, init);
-			const path = new URL(request.url).pathname;
+		const requests = stubDodoCheckoutCreates(async () => {
+			createCalls += 1;
 
-			if (path === '/customers') return Response.json({ customer_id: 'cus_owner' });
+			if (createCalls === 1) return new Response(null, { status: 500 });
 
-			if (path.startsWith('/products/')) {
-				return Response.json({
-					product_id: path.split('/').at(-1),
-					name: 'Pro',
-					price: {
-						type: 'recurring_price',
-						price: 2_000,
-						currency: 'USD',
-						payment_frequency_count: 1,
-						payment_frequency_interval: 'Month'
-					}
-				});
-			}
+			await gate;
 
-			if (path === '/checkouts') {
-				createCalls += 1;
-				requests.push(request.clone());
-
-				if (createCalls === 1) return new Response(null, { status: 500 });
-
-				await gate;
-
-				return Response.json({
-					session_id: 'cks_frozen',
-					checkout_url: 'https://checkout.example/cks_frozen'
-				});
-			}
-
-			throw new Error(`Unexpected Dodo request: ${path}`);
+			return Response.json({
+				session_id: 'cks_frozen',
+				checkout_url: 'https://checkout.example/cks_frozen'
+			});
 		});
 
 		await expect(
@@ -344,10 +366,7 @@ describe('checkout selection changes', () => {
 
 		const results = await Promise.allSettled([first, second]);
 
-		const fulfilled = results.filter(
-			(result): result is PromiseFulfilledResult<{ checkout_url: string; attemptId?: string }> =>
-				result.status === 'fulfilled'
-		);
+		const fulfilled = results.filter((result) => result.status === 'fulfilled');
 
 		// Both concurrent retries may succeed on the same replayed session;
 		// the guarantee under test is one frozen key/body, not a single winner.
@@ -381,47 +400,21 @@ describe('checkout selection changes', () => {
 	});
 
 	it('retries a retained ambiguous attempt after a selection switch with its original key', async () => {
-		const { t, owner, requests } = await billingFixture();
+		const { t, owner } = await billingFixture();
 
 		let failNextMonthly = true;
 
-		vi.stubGlobal('fetch', async (input: Request | string | URL, init?: RequestInit) => {
-			const request = input instanceof Request ? input : new Request(input, init);
-			const path = new URL(request.url).pathname;
+		const requests = stubDodoCheckoutCreates((body) => {
+			if (body.product_cart[0].product_id === 'prod_monthly' && failNextMonthly) {
+				failNextMonthly = false;
 
-			if (path === '/customers') return Response.json({ customer_id: 'cus_owner' });
-
-			if (path.startsWith('/products/')) {
-				return Response.json({
-					product_id: path.split('/').at(-1),
-					name: 'Pro',
-					price: {
-						type: 'recurring_price',
-						price: 2_000,
-						currency: 'USD',
-						payment_frequency_count: 1,
-						payment_frequency_interval: path.endsWith('prod_annual') ? 'Year' : 'Month'
-					}
-				});
+				return new Response(null, { status: 500 });
 			}
 
-			if (path === '/checkouts') {
-				requests.push(request.clone());
-				const body = await request.json();
-
-				if (body.product_cart[0].product_id === 'prod_monthly' && failNextMonthly) {
-					failNextMonthly = false;
-
-					return new Response(null, { status: 500 });
-				}
-
-				return Response.json({
-					session_id: `cks_${body.product_cart[0].product_id}`,
-					checkout_url: `https://checkout.example/${body.product_cart[0].product_id}`
-				});
-			}
-
-			throw new Error(`Unexpected Dodo request: ${path}`);
+			return Response.json({
+				session_id: `cks_${body.product_cart[0].product_id}`,
+				checkout_url: `https://checkout.example/${body.product_cart[0].product_id}`
+			});
 		});
 
 		await expect(
@@ -482,5 +475,67 @@ describe('checkout selection changes', () => {
 		);
 
 		expect(monthlyCreates.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('allows a different selection while an old-environment attempt is merely archived', async () => {
+		const { t, owner } = await billingFixture();
+		await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
+
+		const monthly = await t.run(async (ctx) =>
+			ctx.db
+				.query('billingCheckoutSessions')
+				.withIndex('by_userId', (query) => query.eq('userId', 'owner'))
+				.unique()
+		);
+
+		if (!monthly) throw new Error('Missing monthly checkout reservation.');
+
+		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'live_mode');
+
+		await expect(
+			t.mutation(internal.billing.reserveCheckoutSession, {
+				userId: 'owner',
+				tierId: 'pro',
+				interval: 'annual',
+				productId: 'prod_annual',
+				now: Date.now()
+			})
+		).resolves.toMatchObject({
+			kind: 'create',
+			productId: 'prod_annual'
+		});
+
+		const retained = await t.run(async (ctx) =>
+			ctx.db
+				.query('billingCheckoutAttempts')
+				.withIndex('by_userId_and_attemptId', (query) =>
+					query.eq('userId', 'owner').eq('attemptId', monthly.attemptId)
+				)
+				.unique()
+		);
+
+		expect(retained).toMatchObject({ attemptId: monthly.attemptId, dodoEnvironment: 'test_mode' });
+	});
+
+	it('resuming a same-selection hosted link keeps its original environment after a config flip', async () => {
+		const { t, owner } = await billingFixture();
+
+		const first = await owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' });
+
+		expect(first.mode).toBe('test');
+
+		vi.stubEnv('DODO_PAYMENTS_ENVIRONMENT', 'live_mode');
+
+		await expect(
+			owner.action(api.billing.checkout, { tier: 'pro', interval: 'monthly' })
+		).rejects.toThrow('different payment environment');
+
+		await expect(
+			owner.action(api.billing.getCheckoutStatus, { attemptId: first.attemptId! })
+		).resolves.toMatchObject({
+			mode: 'test',
+			status: 'unknown',
+			checkout_url: 'https://checkout.example/prod_monthly'
+		});
 	});
 });

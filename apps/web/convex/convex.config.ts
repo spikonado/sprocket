@@ -13,7 +13,6 @@ const app = defineApp({
 		DODO_PAYMENTS_API_KEY: v.optional(v.string()),
 		DODO_PAYMENTS_ENVIRONMENT: v.optional(v.string()),
 		DODO_PAYMENTS_WEBHOOK_SECRET: v.optional(v.string()),
-		DODO_CHECKOUT_ENABLED: v.optional(v.string()),
 		DODO_CHECKOUT_IDEMPOTENCY_WINDOW_MS: v.optional(v.string()),
 		SPROCKET_MARKETING_ORIGIN: v.optional(v.string()),
 		SPROCKET_BILLING_STAGING_ORIGIN: v.optional(v.string()),

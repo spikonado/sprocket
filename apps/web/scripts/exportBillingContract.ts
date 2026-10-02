@@ -3,7 +3,6 @@ import type { RegisteredAction, RegisteredMutation, RegisteredQuery } from 'conv
 import { getClientConfig } from '../convex/authBootstrap';
 import {
 	checkout,
-	checkoutEligibility,
 	customerPortal,
 	ensureMySubscription,
 	getCheckoutStatus,
@@ -47,7 +46,6 @@ console.log(
 				'authBootstrap:getClientConfig': contract(getClientConfig),
 				'billing:getMySubscription': contract(getMySubscription),
 				'billing:ensureMySubscription': contract(ensureMySubscription),
-				'billing:checkoutEligibility': contract(checkoutEligibility),
 				'billing:checkout': contract(checkout),
 				'billing:customerPortal': contract(customerPortal),
 				'billing:getCheckoutStatus': contract(getCheckoutStatus),
