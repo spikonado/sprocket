@@ -192,10 +192,10 @@ export async function assertModelUsageAvailable(
 	const tier = await ensureSubscription(ctx, userId);
 	// Tests and unconfigured deployments have no `tiers` rows. Skip rather than
 	// fail every run create; if this user's tier (or free) exists, enforce it.
-	const limits = (await getCachedTier(ctx, tier)) ?? (await getCachedTier(ctx, 'free'));
+	const match = (await getCachedTier(ctx, tier)) ?? (await getCachedTier(ctx, 'free'));
 
-	if (!limits) return;
-	await checkMeterLimits(ctx, 'modelUsage', userId, limits.limits);
+	if (!match) return;
+	await checkMeterLimits(ctx, 'modelUsage', userId, match.limits);
 }
 
 export async function applyGatewayUsageCharge(
