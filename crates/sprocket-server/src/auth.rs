@@ -255,13 +255,11 @@ impl AuthState {
         if session_is_expired(session) {
             anyhow::bail!("authentication required");
         }
-        if session.user_id.as_deref() == Some(user_id) {
-            return Ok(());
+        match session.user_id.as_deref() {
+            Some(existing) if existing == user_id => return Ok(()),
+            Some(_) => anyhow::bail!("local session belongs to a different user"),
+            None => session.user_id = Some(user_id.to_string()),
         }
-        if session.user_id.is_some() {
-            anyhow::bail!("local session belongs to a different user");
-        }
-        session.user_id = Some(user_id.to_string());
         self.save_sessions(sessions).await
     }
 
@@ -272,16 +270,10 @@ impl AuthState {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         for session in sessions.values_mut() {
             if session.ephemeral || session.local_browser {
-                match session.user_id.as_deref() {
-                    None => session.user_id = user_id.map(str::to_owned),
-                    Some(existing) if user_id == Some(existing) => {}
-                    Some(_) => {
-                        // Already bound to someone else. Sign-out still clears;
-                        // a new owner must not inherit that cookie.
-                        if user_id.is_none() {
-                            session.user_id = None;
-                        }
-                    }
+                if user_id.is_none() {
+                    session.user_id = None;
+                } else if session.user_id.is_none() {
+                    session.user_id = user_id.map(str::to_owned);
                 }
             } else if session.user_id.as_deref() != user_id {
                 session.user_id = None;
