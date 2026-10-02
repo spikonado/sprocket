@@ -1097,9 +1097,13 @@ mod tests {
         assert!(
             prompt_context
                 .base_instructions
-                .contains(
-                    "Your name is Sprocket.\nYour model is GPT-5.6 Sol (gpt-5.6-sol).\nYou are an engineering agent"
-                )
+                .lines()
+                .any(|line| line == "Your model is GPT-5.6 Sol (gpt-5.6-sol).")
+        );
+        assert!(
+            !prompt_context
+                .base_instructions
+                .contains(super::MODEL_IDENTITY_PLACEHOLDER)
         );
     }
 
