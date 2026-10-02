@@ -294,6 +294,7 @@ mod tests {
         assert_eq!(
             indexed,
             BTreeSet::from([
+                (".", true),
                 (".gitignore", false),
                 ("src", true),
                 ("src/main.rs", false),
