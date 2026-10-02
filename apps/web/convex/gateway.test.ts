@@ -177,6 +177,7 @@ describe('gateway quota', () => {
 				)
 				.collect()
 		);
+
 		expect(runs).toHaveLength(0);
 	}, 15_000);
 
@@ -223,6 +224,7 @@ describe('gateway quota', () => {
 		await seedTiers(t);
 		const { asUser, threadId, subject } = await seedOwnedThread(t);
 		const executionSecret = 'gateway-reconcile-exhausted';
+
 		const request = {
 			submissionId: 'gateway-run-reconcile-exhausted',
 			threadId,
