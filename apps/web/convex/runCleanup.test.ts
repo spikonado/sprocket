@@ -286,6 +286,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		});
 		const next = await createQueuedRun(t, asUser, threadId, 'new-question', 'new-secret');
 		const [job] = await seedJobs(t, next.runId, 1, false);
+
 		const questionId = await t.run((ctx) =>
 			ctx.db.insert('agentQuestions', {
 				threadId,
@@ -299,9 +300,10 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				sequence: 35
 			})
 		);
-		expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toMatchObject({
-			questionId
-		});
+
+		expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toMatchObject(
+			{ questionId }
+		);
 		expect(
 			await asUser.mutation(api.agentQuestions.answer, { threadId, questionId, optionId: 'yes' })
 		).toMatchObject({ question: { status: 'answered' } });
