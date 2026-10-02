@@ -1,8 +1,8 @@
 import type { MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { isRunFinalStatus, vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
-import { reconcileTerminalRunPages } from '@convex/lib/runTerminal';
-import { cancelWebToolWork } from '@convex/lib/toolJobs';
+import { reconcileTerminalRun } from '@convex/lib/runTerminal';
+import { internal } from '@convex/_generated/api';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
@@ -81,16 +81,17 @@ export async function finalizeRunRecord(
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
 	await cancelRunLifecycleCheck(ctx, run._id);
-	await cancelWebToolWork(ctx, run._id);
+	await ctx.scheduler.runAfter(0, internal.firecrawlRequests.cancelRun, { runId: run._id });
 	await detachRunFromMachine(ctx, run);
 
 	if (alreadyFinal) {
-		await reconcileTerminalRunPages(
+		await reconcileTerminalRun(
 			ctx,
 			{ ...run, status: finalStatus, lastError, completedAt },
 			{
-				lastError,
-				completedAt
+				completedAt,
+				jobCursor: -1,
+				questionCursor: -1
 			}
 		);
 
@@ -115,9 +116,10 @@ export async function finalizeRunRecord(
 		return true;
 	}
 
-	await reconcileTerminalRunPages(ctx, latest, {
-		lastError: args.lastError,
-		completedAt
+	await reconcileTerminalRun(ctx, latest, {
+		completedAt,
+		jobCursor: -1,
+		questionCursor: -1
 	});
 
 	return true;

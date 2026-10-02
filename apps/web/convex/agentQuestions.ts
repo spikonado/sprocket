@@ -64,13 +64,30 @@ async function headPendingQuestion(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'agentQuestions'> | null> {
-	return await ctx.db
-		.query('agentQuestions')
-		.withIndex('by_threadId_status_sequence', (query) =>
-			query.eq('threadId', threadId).eq('status', 'pending')
-		)
-		.order('asc')
-		.first();
+	let afterSequence = -1;
+
+	for (;;) {
+		const head = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (query) =>
+				query.eq('threadId', threadId).eq('status', 'pending').gt('sequence', afterSequence)
+			)
+			.first();
+
+		if (!head) return null;
+
+		const run = await ctx.db.get('runs', head.runId);
+
+		if (run?.status !== 'cancelled') return head;
+
+		const last = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', head.runId))
+			.order('desc')
+			.first();
+
+		afterSequence = last?.sequence ?? head.sequence;
+	}
 }
 
 export const create = mutation({
@@ -171,6 +188,12 @@ export const answer = mutation({
 			throw new Error('Question is no longer awaiting an answer.');
 		}
 
+		const run = await ctx.db.get('runs', question.runId);
+
+		if (run?.status === 'cancelled') {
+			throw new Error('Question is no longer awaiting an answer.');
+		}
+
 		const head = await headPendingQuestion(ctx, args.threadId);
 
 		if (!head || head._id !== question._id) {
@@ -187,7 +210,9 @@ export const answer = mutation({
 		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'answered',
 			answer,
-			answeredAt
+			answeredAt,
+			requiresContinuation:
+				question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
 		});
 
 		const snapshot = toSnapshot({
@@ -198,7 +223,6 @@ export const answer = mutation({
 		});
 
 		const nextQuestion = await headPendingQuestion(ctx, args.threadId);
-		const run = await ctx.db.get('runs', question.runId);
 
 		const latestRun = await ctx.db
 			.query('runs')
@@ -210,8 +234,7 @@ export const answer = mutation({
 			nextQuestion === null &&
 			run !== null &&
 			latestRun?._id === run._id &&
-			isRunFinalStatus(run.status) &&
-			run.status !== 'cancelled'
+			isRunFinalStatus(run.status)
 				? run._id
 				: undefined;
 
@@ -252,9 +275,11 @@ export const timeout = internalMutation({
 			return null;
 		}
 
+		const run = await ctx.db.get('runs', question.runId);
+
 		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: Date.now()
+			status: run?.status === 'cancelled' ? 'cancelled' : 'timedOut',
+			answeredAt: run?.status === 'cancelled' ? (run.completedAt ?? Date.now()) : Date.now()
 		});
 
 		return null;
