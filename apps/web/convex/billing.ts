@@ -926,11 +926,7 @@ export const getCheckoutStatus = action({
 
 		if (!attempt) throw new Error('Unknown checkout attempt.');
 
-		const environment = readDodoEnvironment(env);
-		const mode = publicMode(attempt.dodoEnvironment ?? environment);
-
-		const environmentMismatch =
-			attempt.dodoEnvironment !== undefined && attempt.dodoEnvironment !== environment;
+		const mode = publicMode(attempt.dodoEnvironment ?? readDodoEnvironment(env));
 
 		const now = Date.now();
 
@@ -966,6 +962,11 @@ export const getCheckoutStatus = action({
 			// reservation is the only possible record and its expiry is final.
 			return { attemptId, mode, status: 'expired', expiresAt: attempt.expiresAt };
 		}
+
+		const environment = readDodoEnvironment(env);
+
+		const environmentMismatch =
+			attempt.dodoEnvironment !== undefined && attempt.dodoEnvironment !== environment;
 
 		if (!env.DODO_PAYMENTS_API_KEY?.trim() || environmentMismatch) {
 			return {
