@@ -700,7 +700,7 @@ mod tests {
             .into()
     }
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, Default)]
     struct HeaderlessStreamClient(SiwcHttpClient);
 
     impl HttpClientExt for HeaderlessStreamClient {
@@ -846,8 +846,10 @@ mod tests {
             let mut stream = streaming_response(response, Arc::clone(&client.connection))
                 .unwrap()
                 .into_body();
-            let error = (&mut stream)
-                .find_map(|item| async move { item.err() })
+            let error = stream
+                .by_ref()
+                .filter_map(|item| async move { item.err() })
+                .next()
                 .await
                 .expect("stream must report an error");
             let http_client::Error::Instance(error) = error else {
