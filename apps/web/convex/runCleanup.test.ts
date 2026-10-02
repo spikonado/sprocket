@@ -303,6 +303,9 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 				);
 
 				expect(deferredQuestion?.sequence).toBe(highestSequence);
+				expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toBe(
+					null
+				);
 				await expect(
 					asUser.mutation(api.agentQuestions.answer, {
 						threadId,
@@ -310,6 +313,14 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 						optionId: 'yes'
 					})
 				).rejects.toThrow('Question is no longer awaiting an answer.');
+
+				await t.mutation(internal.agentQuestions.timeout, {
+					questionId: deferredQuestion!._id
+				});
+
+				expect(
+					await t.run((ctx) => ctx.db.get('agentQuestions', deferredQuestion!._id))
+				).toMatchObject({ status: 'cancelled' });
 			}
 
 			await t.finishAllScheduledFunctions(vi.runAllTimers);

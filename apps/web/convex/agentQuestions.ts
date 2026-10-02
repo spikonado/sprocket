@@ -258,9 +258,11 @@ export const timeout = internalMutation({
 			return null;
 		}
 
+		const run = await ctx.db.get('runs', question.runId);
+
 		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: Date.now()
+			status: run?.status === 'cancelled' ? 'cancelled' : 'timedOut',
+			answeredAt: run?.status === 'cancelled' ? (run.completedAt ?? Date.now()) : Date.now()
 		});
 
 		return null;
@@ -299,6 +301,12 @@ export const headPendingForThread = query({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const head = await headPendingQuestion(ctx, args.threadId);
+
+		if (head) {
+			const run = await ctx.db.get('runs', head.runId);
+
+			if (run?.status === 'cancelled') return null;
+		}
 
 		return head ? toSnapshot(head) : null;
 	}
