@@ -258,19 +258,27 @@ impl HttpClientExt for SiwcHttpClient {
             if !response.status().is_success() {
                 return Err(inference_error(response, &token).await);
             }
-            let mut res = Response::builder()
-                .status(response.status())
-                .version(response.version());
-            if let Some(headers) = res.headers_mut() {
-                *headers = response.headers().clone();
-            }
-            let stream: rig::http_client::sse::BoxedStream = Box::pin(SiwcStreamGuard::new(
-                response.bytes_stream(),
-                Arc::clone(connection),
-            ));
-            res.body(stream).map_err(http_client::Error::Protocol)
+            streaming_response(response, Arc::clone(connection))
         }
     }
+}
+
+fn streaming_response(
+    response: reqwest::Response,
+    connection: SharedConnection,
+) -> http_client::Result<http_client::StreamingResponse> {
+    let mut res = Response::builder()
+        .status(response.status())
+        .version(response.version());
+    if let Some(headers) = res.headers_mut() {
+        *headers = response.headers().clone();
+        headers
+            .entry(http::header::CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("text/event-stream"));
+    }
+    let stream: rig::http_client::sse::BoxedStream =
+        Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
+    res.body(stream).map_err(http_client::Error::Protocol)
 }
 
 async fn read_error_body(
@@ -690,6 +698,70 @@ mod tests {
             .body(body.into())
             .unwrap()
             .into()
+    }
+
+    #[tokio::test]
+    async fn streaming_response_supplies_missing_sse_content_type_and_preserves_events() {
+        let (_, client) = stub_client("connection-1");
+        let frame = Bytes::from_static(
+            b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+        );
+        let response = http::Response::builder()
+            .status(http::StatusCode::OK)
+            .version(http::Version::HTTP_2)
+            .header("x-request-id", "req-stream")
+            .body(frame.clone())
+            .unwrap()
+            .into();
+        let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(response.version(), http::Version::HTTP_2);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        assert_eq!(response.headers()["x-request-id"], "req-stream");
+        let mut stream = response.into_body();
+        assert_eq!(stream.next().await.unwrap().unwrap(), frame);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[test]
+    fn streaming_response_preserves_explicit_content_types() {
+        let (_, client) = stub_client("connection-1");
+        for content_type in ["text/event-stream; charset=utf-8", "application/json", ""] {
+            let response = http::Response::builder()
+                .header(http::header::CONTENT_TYPE, content_type)
+                .body("")
+                .unwrap()
+                .into();
+            let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
+            assert_eq!(response.headers()[http::header::CONTENT_TYPE], content_type);
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_response_requires_terminal_events_even_without_content_type() {
+        let (_, client) = stub_client("connection-1");
+        for body in [
+            "",
+            r#"{"detail":"not an SSE response"}"#,
+            "data: {not json}\n\n",
+        ] {
+            let response = http::Response::builder().body(body).unwrap().into();
+            let mut stream = streaming_response(response, Arc::clone(&client.connection))
+                .unwrap()
+                .into_body();
+            let error = (&mut stream)
+                .find_map(|item| async move { item.err() })
+                .await
+                .expect("stream must report an error");
+            let http_client::Error::Instance(error) = error else {
+                panic!("expected terminal-event validation error");
+            };
+            assert_eq!(error.to_string(), STREAM_INTERRUPTED);
+            assert!(stream.next().await.is_none());
+        }
     }
 
     #[tokio::test]
