@@ -184,7 +184,9 @@ export class ArtifactPanel implements Store<number> {
 			setLocal: (state: ArtifactWatchState | null) => void;
 		}
 	) {
-		while (localApi && workspacePath && !state.ac.signal.aborted) {
+		if (!localApi || !workspacePath) return;
+
+		while (!state.ac.signal.aborted) {
 			await localApi
 				.watchArtifacts(request, {
 					signal: state.ac.signal,
