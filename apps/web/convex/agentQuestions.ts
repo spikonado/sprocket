@@ -64,13 +64,30 @@ async function headPendingQuestion(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'agentQuestions'> | null> {
-	return await ctx.db
-		.query('agentQuestions')
-		.withIndex('by_threadId_status_sequence', (query) =>
-			query.eq('threadId', threadId).eq('status', 'pending')
-		)
-		.order('asc')
-		.first();
+	let afterSequence = -1;
+
+	for (;;) {
+		const head = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (query) =>
+				query.eq('threadId', threadId).eq('status', 'pending').gt('sequence', afterSequence)
+			)
+			.first();
+
+		if (!head) return null;
+
+		const run = await ctx.db.get('runs', head.runId);
+
+		if (run?.status !== 'cancelled') return head;
+
+		const last = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', head.runId))
+			.order('desc')
+			.first();
+
+		afterSequence = last?.sequence ?? head.sequence;
+	}
 }
 
 export const create = mutation({
@@ -301,12 +318,6 @@ export const headPendingForThread = query({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const head = await headPendingQuestion(ctx, args.threadId);
-
-		if (head) {
-			const run = await ctx.db.get('runs', head.runId);
-
-			if (run?.status === 'cancelled') return null;
-		}
 
 		return head ? toSnapshot(head) : null;
 	}

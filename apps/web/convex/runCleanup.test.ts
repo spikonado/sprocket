@@ -258,6 +258,56 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		}
 	});
 
+	it('keeps a newer run question answerable while cancelled questions await cleanup', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'old-questions', 'old-secret');
+		const jobs = await seedJobs(t, runId, 35, false);
+		await t.run(async (ctx) => {
+			for (let sequence = 0; sequence < 35; sequence++) {
+				await ctx.db.insert('agentQuestions', {
+					threadId,
+					runId,
+					jobId: jobs[0]._id,
+					question: 'Old question?',
+					options: [{ id: 'yes', label: 'Yes' }],
+					status: 'pending',
+					createdAt: 1,
+					timeoutAt: Date.now() + 60_000,
+					sequence
+				});
+			}
+		});
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			executionSecret: 'old-secret',
+			text: '',
+			status: 'cancelled'
+		});
+		const next = await createQueuedRun(t, asUser, threadId, 'new-question', 'new-secret');
+		const [job] = await seedJobs(t, next.runId, 1, false);
+		const questionId = await t.run((ctx) =>
+			ctx.db.insert('agentQuestions', {
+				threadId,
+				runId: next.runId,
+				jobId: job._id,
+				question: 'New question?',
+				options: [{ id: 'yes', label: 'Yes' }],
+				status: 'pending',
+				createdAt: Date.now(),
+				timeoutAt: Date.now() + 60_000,
+				sequence: 35
+			})
+		);
+		expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toMatchObject({
+			questionId
+		});
+		expect(
+			await asUser.mutation(api.agentQuestions.answer, { threadId, questionId, optionId: 'yes' })
+		).toMatchObject({ question: { status: 'answered' } });
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+	});
+
 	it.each(['cancelled', 'failed', 'completed'] as const)(
 		'finishes %s jobs before processing questions across batches',
 		async (status) => {
