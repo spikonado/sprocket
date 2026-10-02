@@ -34,10 +34,6 @@ the on-disk layout.
 
 ## Tools
 
-`get_thread_id` takes no arguments and returns `{ "threadId": "..." }` with the
-current Sprocket conversation's ID. It is available in interactive and
-non-interactive runs and uses the same durable job recording as other tools.
-
 Message attachments can contain any file type, with no application size or count
 limit. The UI streams them through Rust to Convex storage. Each thread keeps its
 local copies in `attachments/` under the transcript cache. Prompts list those

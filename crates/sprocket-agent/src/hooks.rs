@@ -16,7 +16,6 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "await_question",
     "edit_artifact",
     "exec_command",
-    "get_thread_id",
     "list_artifacts",
     "mandate_charge",
     "mandate_list",
@@ -31,10 +30,6 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "web_search",
     "write_stdin",
 ];
-
-#[cfg(test)]
-#[path = "thread_tool_integration_tests.rs"]
-mod thread_tool_integration_tests;
 
 pub(crate) fn available_agent_tool_names(
     allow_interaction: bool,

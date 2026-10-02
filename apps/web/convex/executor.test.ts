@@ -87,54 +87,6 @@ const commandResult = {
 };
 
 describe('executor', () => {
-	it('records get_thread_id jobs and their result in the owning thread', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'thread-id-secret';
-		const claimId = 'claim-thread-id';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'submission-thread-id',
-			executionSecret,
-			'Get this thread ID'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
-
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			executionSecret,
-			...toolTranscriptAssignment(runId, claimId),
-			kind: 'get_thread_id',
-			callId: 'call-thread-id',
-			payload: {}
-		});
-
-		await expect(
-			asUser.mutation(api.executor.complete, {
-				runId,
-				claimId,
-				executionSecret,
-				jobId,
-				result: { threadId }
-			})
-		).resolves.toBe(true);
-
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-		expect(parts.parts[2]).toMatchObject({
-			tool: {
-				callId: 'call-thread-id',
-				name: 'get_thread_id',
-				status: 'completed',
-				output: { threadId }
-			}
-		});
-	});
-
 	it.each(['text', 'image'] as const)(
 		'persists parse_file path jobs and %s results',
 		async (mode) => {

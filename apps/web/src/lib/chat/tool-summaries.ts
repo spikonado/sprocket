@@ -36,8 +36,6 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Saved Artifacts';
 		case 'exec_command':
 			return 'Ran Commands';
-		case 'get_thread_id':
-			return 'Read Thread ID';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
 		case 'mandate_charge':
@@ -110,8 +108,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 
 		case 'get_workspace_instructions':
 			return 'Workspace instructions';
-		case 'get_thread_id':
-			return 'Current thread ID';
 		case 'mandate_charge':
 			return summarizeMandateCharge(fields);
 		case 'mandate_list':

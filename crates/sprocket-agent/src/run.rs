@@ -43,6 +43,7 @@ const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a diff
 const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
+const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
 
 fn submission_owned_by_another_executor(error: &str) -> bool {
     error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
@@ -123,6 +124,7 @@ fn build_workspace_prompt_context(
     skills: &[WorkspaceSkill],
     model_label: &str,
     model_id: &str,
+    thread_id: &str,
 ) -> WorkspacePromptContext {
     let user_instructions = workspace_instructions
         .iter()
@@ -170,7 +172,8 @@ fn build_workspace_prompt_context(
     let model_identity = format!("Your model is {model_label} ({model_id}).");
     let base_instructions = SYSTEM_PROMPT_TEMPLATE
         .trim_end()
-        .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity);
+        .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
+        .replace(THREAD_ID_PLACEHOLDER, thread_id);
     let initial_context = Message::user(
         [
             "# Thread-Scoped Workspace Context",
@@ -893,6 +896,7 @@ pub async fn run_agent(
             &skills,
             &capabilities.label,
             &context.run.selected_model,
+            &context.run.thread_id,
         );
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
@@ -1056,6 +1060,7 @@ mod tests {
             skills,
             MODEL_LABEL,
             MODEL_ID,
+            "thread-id",
         )
     }
 
@@ -1077,8 +1082,7 @@ mod tests {
 
     #[test]
     fn base_instructions_include_the_selected_model_identity() {
-        let prompt_context =
-            build_workspace_prompt_context("/tmp/project", &[], &[], MODEL_LABEL, MODEL_ID);
+        let prompt_context = build_test_prompt_context(&[], &[]);
 
         assert!(
             prompt_context
@@ -1087,6 +1091,36 @@ mod tests {
                     "Your name is Sprocket.\nYour model is GPT-5.6 Sol (gpt-5.6-sol).\nYou are an engineering agent"
                 )
         );
+    }
+
+    #[test]
+    fn identity_includes_the_current_thread_id_and_transcript_location() {
+        for thread_id in ["first-thread-id", "second-thread-id"] {
+            let prompt_context = build_workspace_prompt_context(
+                "/tmp/project",
+                &[],
+                &[],
+                MODEL_LABEL,
+                MODEL_ID,
+                thread_id,
+            );
+            let identity = prompt_context
+                .base_instructions
+                .split_once("## Identity\n")
+                .unwrap()
+                .1
+                .split_once("\n## Working on tasks")
+                .unwrap()
+                .0;
+            assert!(identity.contains(&format!(
+                "This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in ~/.sprocket/"
+            )));
+            assert!(
+                !prompt_context
+                    .base_instructions
+                    .contains(super::THREAD_ID_PLACEHOLDER)
+            );
+        }
     }
 
     #[test]
