@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 import type { ConvexTestInstance } from './test.setup';
 
@@ -145,6 +145,39 @@ describe('gateway quota', () => {
 			?.windows.find((window) => window.period === 'weekly')?.used;
 
 		expect(afterWeekly).toBe(beforeWeekly);
+	}, 15_000);
+
+	it('refuses to create a gateway run when usage is exhausted', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const { asUser, threadId, subject } = await seedOwnedThread(t);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subject,
+			count: 6 * UNITS_PER_DOLLAR
+		});
+
+		await expect(
+			asUser.action(api.agentRuntime.createGatewayRun, {
+				submissionId: 'gateway-run-exhausted',
+				threadId,
+				prompt: 'Ship it',
+				storageIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				fastMode: false,
+				executionSecret: 'gateway-exhausted'
+			})
+		).rejects.toThrow(/model usage limit reached/);
+
+		const runs = await t.run(async (ctx) =>
+			ctx.db
+				.query('runs')
+				.withIndex('by_userId_submissionId', (query) =>
+					query.eq('userId', subject).eq('submissionId', 'gateway-run-exhausted')
+				)
+				.collect()
+		);
+		expect(runs).toHaveLength(0);
 	}, 15_000);
 
 	it('snapshots the gateway protocol on new runs', async () => {

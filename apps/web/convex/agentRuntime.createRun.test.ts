@@ -620,6 +620,14 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 
 	it('resolves storageIds and stores storage-only prompt metadata', async () => {
 		const t = initConvexTest();
+		await t.run(async (ctx) => {
+			await ctx.db.insert('tiers', {
+				tierId: 'free',
+				label: 'Free',
+				weekly: 5_000_000_000,
+				monthly: 15_000_000_000
+			});
+		});
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 
 		const storageId = await t.run(async (ctx) => {

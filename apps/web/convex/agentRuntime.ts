@@ -171,6 +171,8 @@ export const createGatewayRun = action({
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
 
+		await ctx.runMutation(internal.lib.rateLimits.checkUsageLimits, { userId });
+
 		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
 			userId,
 			storageIds: args.storageIds
