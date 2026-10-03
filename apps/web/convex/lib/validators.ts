@@ -67,6 +67,15 @@ export const vWriteStdinPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vControlCommandPayload = v.object({
+	sessionId: v.string(),
+	action: v.union(v.literal('write'), v.literal('terminate')),
+	chars: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vPollCommandPayload = vWriteStdinPayload.pick('sessionId', 'yieldTimeMs');
+
 export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
 
 // Historical stored artifacts and tool results retain thread scope until migrated.
@@ -194,7 +203,7 @@ export const vAskQuestionPayload = v.object({
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
 	yieldTimeMs: v.optional(v.number()),
-	timeoutMs: v.optional(v.number())
+	timeoutMs: v.optional(v.union(v.number(), v.null()))
 });
 
 export const vAwaitQuestionPayload = v.object({
@@ -219,6 +228,8 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload,
+	vControlCommandPayload,
+	vPollCommandPayload,
 	vAddArtifactPayload,
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
@@ -436,13 +447,16 @@ export const vAskQuestionAnswer = v.object({
 	text: v.optional(v.string())
 });
 
-export const vAskQuestionResult = v.object({
-	questionId: v.id('agentQuestions'),
-	question: v.string(),
-	options: v.array(vAskQuestionOption),
+export const vPollQuestionResult = v.object({
 	pending: v.boolean(),
 	timedOut: v.boolean(),
 	answer: v.optional(vAskQuestionAnswer)
+});
+
+export const vAskQuestionResult = vPollQuestionResult.extend({
+	questionId: v.id('agentQuestions'),
+	question: v.optional(v.string()),
+	options: v.optional(v.array(vAskQuestionOption))
 });
 
 export const vArtifactResult = v.object({
@@ -504,6 +518,7 @@ export const vExecutorJobResult = v.union(
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
 	vAskQuestionResult,
+	vPollQuestionResult,
 	vCommandExecResult,
 	vCommandStdinResult,
 	vLegacyCommandResult,
@@ -545,7 +560,9 @@ export function isRunFinalStatus(
 export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
+	v.literal('poll_question'),
 	v.literal('await_question'),
+	v.literal('exec_cmd'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
@@ -559,6 +576,10 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
+	v.literal('control_cmd'),
+	v.literal('control_command'),
+	v.literal('poll_cmd'),
+	v.literal('poll_command'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
 	v.literal('edit_artifact'),

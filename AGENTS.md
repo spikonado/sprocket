@@ -8,12 +8,9 @@
 
 ## Available testing commands
 
-- `bun run build`
-- `bun run test`
-- `cargo test`
-- `prek run -a` -> This covers ALL formatting and linting
-
-If you are a subagent, don't run any of these.
+- Only run `prek run -a` and other small tests locally. Don't run any rust compilations or checks.
+- Prek covers formatting and linting.
+- Aside from these, look at the CI on GitHub when you open a PR.
 
 ### Nix environment
 

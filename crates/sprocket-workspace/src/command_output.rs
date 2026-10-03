@@ -210,6 +210,13 @@ impl CapturedOutput {
         let preview = std::mem::replace(&mut self.preview, PreviewBuffer::new(max_chars));
         OutputPreview {
             output: preview.render(),
+            ..self.preview_metadata()
+        }
+    }
+
+    pub(crate) fn preview_metadata(&self) -> OutputPreview {
+        OutputPreview {
+            output: String::new(),
             complete_log_path: self.log_path.clone(),
             events_path: self.events_path.clone(),
         }

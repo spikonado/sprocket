@@ -172,6 +172,33 @@ async function renderApp(client: ConvexTestClient, runtime: AppRuntime): Promise
 	});
 }
 
+async function renderThreadLaunch() {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Robot work');
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'idle',
+		run: null
+	});
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], runAgent }))
+	);
+	fireEvent.click(await screen.findByText('Robot work'));
+
+	return { client, thread, launch, runAgent };
+}
+
 async function flushPendingWork(): Promise<void> {
 	await act(async () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
@@ -227,6 +254,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	cleanup();
 	resetAuthRuntime();
@@ -629,6 +657,65 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
 	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
+});
+
+it('keeps a sent prompt cleared when returning to a thread before its lifecycle catches up', async () => {
+	const { client, thread, launch, runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	vi.useFakeTimers();
+	await act(async () => {
+		fireEvent.click(send);
+	});
+	fireEvent.click(screen.getByText('Other work'));
+	await act(async () => {
+		launch.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			runId: 'run-new' as Id<'runs'>,
+			threadId: thread._id
+		});
+		await vi.advanceTimersByTimeAsync(31_000);
+	});
+	fireEvent.click(screen.getByText('Robot work'));
+	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+	expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
+	expect(screen.queryByRole('alert')).toBeNull();
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
+		});
+	});
+	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+	expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
+	expect(runAgent).toHaveBeenCalledOnce();
+});
+
+it('allows retrying a prompt when its launch request remains unconfirmed past the deadline', async () => {
+	const { runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	vi.useFakeTimers();
+	await act(async () => {
+		fireEvent.click(send);
+		await vi.advanceTimersByTimeAsync(31_000);
+	});
+	expect(runAgent).toHaveBeenCalledOnce();
+	expect(composer).toHaveProperty('value', 'Fix the robot');
+	expect(screen.getByRole('alert').textContent).toContain('This request is still preparing.');
+	expect(send).toHaveProperty('disabled', false);
+	await act(async () => {
+		fireEvent.click(send);
+	});
+	expect(runAgent).toHaveBeenCalledTimes(2);
+	expect(runAgent.mock.calls[1]?.[0].submissionId).toBe(runAgent.mock.calls[0]?.[0].submissionId);
+	expect(composer).toHaveProperty('value', '');
 });
 
 it('launches ChatGPT with a gateway model and a connected local account', async () => {

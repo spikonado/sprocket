@@ -5,7 +5,6 @@ import {
 	dataForThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	resolveExpiredAgentLaunch,
 	resolveInitialDraftSelection,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
@@ -75,7 +74,6 @@ function beginLaunch(
 	extras: Partial<PendingAgentLaunch> = {}
 ): PendingAgentLaunches {
 	return beginPendingAgentLaunch(pendingLaunches, threadId, {
-		expiresAt: 100,
 		launchId,
 		previousRunId,
 		...extras
@@ -230,36 +228,6 @@ describe('project thread helpers', () => {
 		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadB, runB2, undefined, 10);
 		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadA, runA2);
 		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(false);
-	});
-
-	it('expires only the matching pending launch and recovers only when the run is unchanged', () => {
-		let pendingLaunches = beginLaunch({}, threadA, 1);
-		pendingLaunches = beginLaunch(pendingLaunches, threadB, 2);
-
-		expect(resolveExpiredAgentLaunch(pendingLaunches, threadA, 1, 99, null)).toEqual({
-			pendingLaunches,
-			shouldRecover: false
-		});
-		expect(resolveExpiredAgentLaunch(pendingLaunches, threadA, 3, 100, null)).toEqual({
-			pendingLaunches,
-			shouldRecover: false
-		});
-
-		const expired = resolveExpiredAgentLaunch(pendingLaunches, threadA, 1, 100, null);
-		expect(expired.shouldRecover).toBe(true);
-		expect(isAgentLaunchPending(expired.pendingLaunches, threadA)).toBe(false);
-		expect(isAgentLaunchPending(expired.pendingLaunches, threadB)).toBe(true);
-
-		const visibleRun = resolveExpiredAgentLaunch(
-			beginLaunch({}, threadA, 1, runA1),
-			threadA,
-			1,
-			100,
-			runA2
-		);
-
-		expect(isAgentLaunchPending(visibleRun.pendingLaunches, threadA)).toBe(false);
-		expect(visibleRun.shouldRecover).toBe(false);
 	});
 
 	it('reconciles a retry when the existing run receives a new claim lease', () => {

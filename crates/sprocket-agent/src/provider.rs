@@ -15,6 +15,7 @@ use tokio::time::sleep;
 use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
+use crate::gateway::GatewayClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
@@ -136,31 +137,20 @@ impl AgentProvider {
         }
         match self.completion_provider {
             CompletionProvider::Spikonado => {
-                let credential = match runtime
-                    .issue_gateway_credential(&request.run_id, &request.claim_id)
-                    .await
-                {
-                    Ok(credential) => credential,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error,
-                        };
-                    }
-                };
-                let completion_client = match openai::Client::builder()
-                    .api_key(credential.token)
-                    .base_url(&gateway_api_v1_url(&self.gateway_url))
-                    .build()
-                {
-                    Ok(client) => client,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error: anyhow!(error),
-                        };
-                    }
-                };
+                let completion_client = GatewayClient::new(
+                    gateway_api_v1_url(&self.gateway_url),
+                    {
+                        let runtime = runtime.clone();
+                        let run_id = request.run_id.clone();
+                        let claim_id = request.claim_id.clone();
+                        move || {
+                            let runtime = runtime.clone();
+                            let run_id = run_id.clone();
+                            let claim_id = claim_id.clone();
+                            async move { runtime.issue_gateway_credential(&run_id, &claim_id).await }
+                        }
+                    },
+                );
                 run_with_completion_client(completion_client, self.model, runtime, request).await
             }
             CompletionProvider::Openai => {
@@ -273,11 +263,12 @@ where
         .preamble(&request.base_instructions)
         .additional_params(additional_params)
         .tool(tools.apply_patch)
-        .tool(tools.exec_command)
+        .tool(tools.control_cmd)
+        .tool(tools.exec_cmd)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)
-        .tool(tools.write_stdin)
+        .tool(tools.poll_cmd)
         .tool(tools.add_artifact)
         .tool(tools.list_artifacts)
         .tool(tools.edit_artifact)
@@ -292,7 +283,7 @@ where
     let agent = if request.allow_interaction {
         agent
             .tool(tools.ask_question)
-            .tool(tools.await_question)
+            .tool(tools.poll_question)
             .tool(tools.mandate_setup)
     } else {
         agent

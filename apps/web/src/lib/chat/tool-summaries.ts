@@ -6,6 +6,7 @@ import {
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
+import { isCommandToolKind, isSessionCommandToolKind } from '$lib/chat/command-tool-kinds';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -21,6 +22,7 @@ export function toolGroupLabel(toolKey: string) {
 		case 'ask_question':
 			return 'Asked Questions';
 		case 'await_question':
+		case 'poll_question':
 			return 'Waiting for Answers';
 		case 'check_docs':
 			return 'Checked Docs';
@@ -37,7 +39,14 @@ export function toolGroupLabel(toolKey: string) {
 		case 'delete_artifact':
 			return 'Deleted Artifacts';
 		case 'exec_command':
+		case 'exec_cmd':
 			return 'Ran Commands';
+		case 'control_command':
+		case 'control_cmd':
+			return 'Controlled Commands';
+		case 'poll_command':
+		case 'poll_cmd':
+			return 'Polled Commands';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
 		case 'mandate_charge':
@@ -68,18 +77,9 @@ export function toolGroupLabel(toolKey: string) {
 }
 
 function describeExecCommandOptions(input: JsonValue | undefined) {
-	if (!isJsonObject(input)) {
-		return '';
-	}
+	const workdir = isJsonObject(input) ? jsonString(input.workdir) : undefined;
 
-	const details: string[] = [];
-	const workdir = jsonString(input.workdir);
-
-	if (workdir && workdir.trim().length > 0 && workdir !== '.') {
-		details.push(`cwd ${workdir}`);
-	}
-
-	return details.length > 0 ? ` (${details.join(', ')})` : '';
+	return workdir && workdir.trim().length > 0 && workdir !== '.' ? ` (cwd ${workdir})` : '';
 }
 
 /** Detail line for a tool row; no type prefix (that lives on the dropdown label). */
@@ -92,6 +92,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'ask_question':
 			return jsonString(fields?.question) ?? 'Question';
 		case 'await_question':
+		case 'poll_question':
 			return 'Waiting for answer';
 		case 'check_docs':
 			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
@@ -103,10 +104,27 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return summarizeArtifactTool(input);
 		case 'list_artifacts':
 			return 'Artifacts';
-		case 'exec_command': {
+		case 'exec_command':
+		case 'exec_cmd': {
 			const cmd = jsonString(fields?.cmd);
 
 			return cmd ? `${cmd}${describeExecCommandOptions(input)}` : 'Command';
+		}
+
+		case 'control_command':
+		case 'control_cmd': {
+			const sessionId = jsonString(fields?.sessionId);
+			const session = sessionId ? `Session ${sessionId}` : 'Command session';
+
+			return fields?.action === 'terminate' ? `Terminate ${session}` : `Write to ${session}`;
+		}
+
+		case 'poll_command':
+		case 'poll_cmd':
+		case 'write_stdin': {
+			const sessionId = jsonString(fields?.sessionId);
+
+			return sessionId ? `Session ${sessionId}` : 'Command session';
 		}
 
 		case 'get_workspace_instructions':
@@ -136,12 +154,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
-		case 'write_stdin': {
-			const sessionId = jsonString(fields?.sessionId);
-
-			return sessionId ? `Session ${sessionId}` : 'Command session';
-		}
-
 		default:
 			return titleizeSnakeCase(name);
 	}
@@ -322,10 +334,10 @@ export function toolItemSummary(
 ) {
 	const kind = toolLog.job?.kind ?? toolLog.name;
 
-	if (kind === 'write_stdin') {
+	if (isSessionCommandToolKind(kind)) {
 		return (
 			resolveCommandSessionLabel(toolLog, sessionCommands) ??
-			summarizeTool('write_stdin', toolLog.job?.payload ?? toolLog.input)
+			summarizeTool(kind, toolLog.job?.payload ?? toolLog.input)
 		);
 	}
 
@@ -366,9 +378,7 @@ export function commandSnapshotLabel(tool: AssistantTimelineTool): string | unde
 	const kind = tool.job?.kind ?? tool.name;
 	const output: JsonValue | undefined = tool.output ?? tool.job?.result;
 
-	return (kind === 'exec_command' || kind === 'write_stdin') &&
-		isJsonObject(output) &&
-		output.running === true
+	return isCommandToolKind(kind) && isJsonObject(output) && output.running === true
 		? 'Still running when this call returned'
 		: undefined;
 }
