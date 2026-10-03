@@ -890,17 +890,17 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	);
 });
 
-it('keeps logo and settings on a transparent collapsed rail', async () => {
+it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
 	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
 	const layout = document.querySelector('.inbox-layout');
-	const rail = document.querySelector<HTMLElement>('.inbox-collapsed-rail');
-	expect(rail).toBeTruthy();
+	const controls = document.querySelector<HTMLElement>('.inbox-floating-controls');
+	expect(controls).toBeTruthy();
 	expect(layout?.classList.contains('sidebar-hidden')).toBe(true);
-	const collapsed = within(rail!);
-	expect(collapsed.getByRole('button', { name: 'Open sidebar' })).toBeTruthy();
-	expect(collapsed.getByRole('button', { name: 'Settings' })).toBeTruthy();
-	fireEvent.click(collapsed.getByRole('button', { name: 'Open sidebar' }));
+	const floating = within(controls!);
+	expect(floating.getByRole('button', { name: 'Open sidebar' })).toBeTruthy();
+	expect(floating.getByRole('button', { name: 'Settings' })).toBeTruthy();
+	fireEvent.click(floating.getByRole('button', { name: 'Open sidebar' }));
 	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
-	expect(document.querySelector('.inbox-collapsed-rail')).toBeNull();
+	expect(document.querySelector('.inbox-floating-controls')).toBeNull();
 });

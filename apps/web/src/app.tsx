@@ -2342,7 +2342,7 @@ export default function App({
 		await Promise.resolve();
 		document
 			.querySelector<HTMLButtonElement>(
-				open ? '.inbox-sidebar-host button' : '.inbox-collapsed-rail button'
+				open ? '.inbox-sidebar-host button' : '.inbox-floating-controls button'
 			)
 			?.focus();
 	}
@@ -2362,7 +2362,7 @@ export default function App({
 		setSettingsOpen(true);
 	}
 
-	async function openSettingsFromRail() {
+	async function openSettingsFromFloatingControls() {
 		openSettings();
 
 		if (viewportWidth < 768) setSidebarOpen(true);
@@ -2492,7 +2492,7 @@ export default function App({
 				</div>
 
 				{!sidebarVisible && (
-					<div className="inbox-collapsed-rail">
+					<div className="inbox-floating-controls">
 						<BrandMark
 							size="sm"
 							class="inbox-icon"
@@ -2504,7 +2504,7 @@ export default function App({
 							type="button"
 							aria-label="Settings"
 							title="Settings"
-							onClick={() => void openSettingsFromRail()}
+							onClick={() => void openSettingsFromFloatingControls()}
 						>
 							<Settings size={16} />
 						</button>
