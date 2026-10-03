@@ -13,6 +13,7 @@ async function setup() {
 	const t = initConvexTest();
 	const { asUser, threadId } = await seedOwnedThread(t);
 	const executionSecret = 'workspace-context-secret';
+
 	const { runId } = await createQueuedRun(
 		t,
 		asUser,
@@ -20,6 +21,7 @@ async function setup() {
 		'workspace-context',
 		executionSecret
 	);
+
 	const auth = { runId, claimId: 'workspace-context-claim', executionSecret };
 	await asUser.mutation(api.agentRuntime.start, auth);
 
@@ -83,6 +85,7 @@ describe('workspace context snapshots', () => {
 			const { t, asUser, threadId, auth } = fixture;
 			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
 			await finishRun(fixture, 'completed');
+
 			if (summarized) {
 				await t.run((ctx) =>
 					ctx.db.patch('threadRecords', threadId, {
@@ -91,14 +94,17 @@ describe('workspace context snapshots', () => {
 					})
 				);
 			}
+
 			const executionSecret = 'next-workspace-context-secret';
 			const { runId } = await createQueuedRun(t, asUser, threadId, 'next-context', executionSecret);
 			const nextAuth = { runId, claimId: 'next-context-claim', executionSecret };
 			await asUser.mutation(api.agentRuntime.start, nextAuth);
+
 			const expected = [
 				{ beforePartNumber: 0, text: 'Original' },
 				...(changed ? [{ beforePartNumber: 2, text: 'Updated' }] : [])
 			];
+
 			expect(
 				await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
 					...nextAuth,
@@ -125,6 +131,7 @@ describe('workspace context snapshots', () => {
 		await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
 		await finishRun(fixture, 'failed');
 		const executionSecret = 'continued-context-secret';
+
 		const { runId } = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'continued-context',
@@ -132,6 +139,7 @@ describe('workspace context snapshots', () => {
 			prompt: '',
 			continuationOfRunId: auth.runId
 		});
+
 		const continuationAuth = { runId, claimId: 'continued-context-claim', executionSecret };
 		await asUser.mutation(api.agentRuntime.start, continuationAuth);
 		expect(
@@ -150,6 +158,7 @@ describe('workspace context snapshots', () => {
 		await finishRun(fixture, 'completed');
 
 		const executionSecret = 'handoff-context-secret';
+
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
@@ -157,6 +166,7 @@ describe('workspace context snapshots', () => {
 			'handoff-context',
 			executionSecret
 		);
+
 		const handoffAuth = { runId, claimId: 'handoff-context-claim', executionSecret };
 		await asUser.mutation(api.agentRuntime.start, handoffAuth);
 		expect(
@@ -189,6 +199,7 @@ describe('workspace context snapshots', () => {
 			beforePrompt: false,
 			workspaceContext: 'Handoff context'
 		};
+
 		await expect(asUser.mutation(api.agentRuntime.saveContextHandoff, handoff)).resolves.toBe(true);
 		await expect(asUser.mutation(api.agentRuntime.saveContextHandoff, handoff)).resolves.toBe(true);
 		await expect(
@@ -215,6 +226,7 @@ describe('workspace context snapshots', () => {
 		});
 
 		const nextSecret = 'after-handoff-secret';
+
 		const { runId: nextRunId } = await createQueuedRun(
 			t,
 			asUser,
@@ -222,11 +234,13 @@ describe('workspace context snapshots', () => {
 			'after-handoff',
 			nextSecret
 		);
+
 		const nextAuth = {
 			runId: nextRunId,
 			claimId: 'after-handoff-claim',
 			executionSecret: nextSecret
 		};
+
 		await asUser.mutation(api.agentRuntime.start, nextAuth);
 		expect(
 			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
@@ -244,6 +258,7 @@ describe('workspace context snapshots', () => {
 		const { t, asUser, auth } = await setup();
 		await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...auth, attemptSeq: 1 });
+
 		const handoff = {
 			...auth,
 			summary: 'Ready for the first request.',
@@ -251,6 +266,7 @@ describe('workspace context snapshots', () => {
 			beforePrompt: true,
 			workspaceContext: 'Latest context'
 		};
+
 		await asUser.mutation(api.agentRuntime.saveContextHandoff, handoff);
 		await asUser.mutation(api.agentRuntime.saveContextHandoff, handoff);
 		expect(
@@ -264,6 +280,7 @@ describe('workspace context snapshots', () => {
 		const { t, asUser, threadId, auth } = fixture;
 		await finishRun(fixture, 'failed');
 		const executionSecret = 'legacy-continued-context-secret';
+
 		const { runId } = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'legacy-continued-context',
@@ -271,6 +288,7 @@ describe('workspace context snapshots', () => {
 			prompt: '',
 			continuationOfRunId: auth.runId
 		});
+
 		const continuationAuth = { runId, claimId: 'legacy-context-claim', executionSecret };
 		await asUser.mutation(api.agentRuntime.start, continuationAuth);
 		expect(

@@ -403,6 +403,7 @@ export const saveWorkspaceContext = mutation({
 		if (snapshot.threadId !== run.threadId) throw new Error('Invalid workspace context thread.');
 
 		const historyFromNumber = await transcriptHistoryFromNumber(ctx, thread);
+
 		const candidates = await ctx.db
 			.query('threadWorkspaceContexts')
 			.withIndex('by_threadId_and_beforePartNumber', (q) =>
@@ -411,8 +412,11 @@ export const saveWorkspaceContext = mutation({
 			.collect();
 
 		const pinnedIndex = candidates.findIndex((entry) => entry._id === snapshot._id);
+
 		if (pinnedIndex < 0) throw new Error('Workspace context snapshot is missing.');
+
 		const all = candidates.slice(0, pinnedIndex + 1);
+
 		const prefixIndex = thread.contextSummaryWorkspaceContextSnapshotId
 			? all.findIndex((entry) => entry._id === thread.contextSummaryWorkspaceContextSnapshotId)
 			: thread.contextSummary
@@ -421,6 +425,7 @@ export const saveWorkspaceContext = mutation({
 						all.findLastIndex((entry) => entry.beforePartNumber < historyFromNumber)
 					)
 				: 0;
+
 		const prefix = all[prefixIndex];
 
 		if (!prefix) throw new Error('Workspace context snapshot is missing.');
@@ -455,6 +460,7 @@ async function pinWorkspaceContextSnapshot(
 
 	if (!latest || latest.text !== text) {
 		const prompt = await getPromptPart(ctx, run.threadId, run._id);
+
 		const completion = prompt
 			? await ctx.db
 					.query('threadTranscriptParts')
@@ -467,11 +473,13 @@ async function pinWorkspaceContextSnapshot(
 
 		if (!latest || (prompt && !completion)) {
 			if (!text.trim()) throw new Error('Invalid workspace context.');
+
 			const snapshotId = await ctx.db.insert('threadWorkspaceContexts', {
 				threadId: run.threadId,
 				beforePartNumber: latest && prompt ? prompt.number : 0,
 				text
 			});
+
 			snapshot = await ctx.db.get('threadWorkspaceContexts', snapshotId);
 		}
 	}
@@ -527,11 +535,13 @@ export const saveContextHandoff = mutation({
 			if (thread.contextSummary !== args.summary) {
 				throw new Error('Conflicting context handoff retry.');
 			}
+
 			if (args.workspaceContext !== undefined && thread.contextSummaryWorkspaceContextSnapshotId) {
 				const snapshot = await ctx.db.get(
 					'threadWorkspaceContexts',
 					thread.contextSummaryWorkspaceContextSnapshotId
 				);
+
 				if (snapshot?.text !== args.workspaceContext) {
 					throw new Error('Conflicting workspace context handoff retry.');
 				}
@@ -545,6 +555,7 @@ export const saveContextHandoff = mutation({
 		}
 
 		let handoffSnapshotId: Id<'threadWorkspaceContexts'> | undefined;
+
 		if (args.workspaceContext !== undefined) {
 			if (!args.workspaceContext.trim()) throw new Error('Invalid workspace context.');
 			handoffSnapshotId = await ctx.db.insert('threadWorkspaceContexts', {
