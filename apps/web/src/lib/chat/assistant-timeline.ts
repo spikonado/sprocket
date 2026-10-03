@@ -180,11 +180,15 @@ function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean
 function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
 	switch (assistantTimelineToolKey(tool)) {
 		case 'exec_command':
+		case 'exec_cmd':
 		case 'write_stdin':
 		case 'control_command':
+		case 'control_cmd':
 		case 'poll_command':
+		case 'poll_cmd':
 		case 'ask_question':
 		case 'await_question':
+		case 'poll_question':
 			return true;
 		default:
 			return false;
@@ -225,7 +229,8 @@ export function buildCommandSessionCommandMap(
 
 		const cmd =
 			jsonObjectString(tool.output, 'command') ??
-			(assistantTimelineToolKey(tool) === 'exec_command'
+			(assistantTimelineToolKey(tool) === 'exec_command' ||
+			assistantTimelineToolKey(tool) === 'exec_cmd'
 				? (jsonObjectString(tool.input, 'cmd') ?? jsonObjectString(tool.job?.payload, 'cmd'))
 				: undefined);
 

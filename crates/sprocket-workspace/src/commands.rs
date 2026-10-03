@@ -16,13 +16,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
-pub const MIN_COMMAND_POLL_YIELD_MS: u64 = 30_000;
+pub const MIN_COMMAND_POLL_YIELD_MS: u64 = 10_000;
 pub const MAX_COMMAND_YIELD_MS: u64 = 270_000;
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
-const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(30);
-const POLL_COOLDOWN_ERROR: &str =
-    "Please wait at least 30s between `poll_command` calls with `yieldTimeMs` set to `0`.";
+const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug)]
 pub enum CommandAction {
@@ -470,11 +468,16 @@ impl CommandSession {
         let completion = completion.or_else(|| self.completion.borrow().clone());
         if completion.is_none() && matches!(mode, ObservationMode::ZeroPoll) {
             let now = Instant::now();
-            if observation
-                .last_zero_poll
-                .is_some_and(|last| now.duration_since(last) < ZERO_POLL_COOLDOWN)
-            {
-                bail!(POLL_COOLDOWN_ERROR);
+            if let Some(last) = observation.last_zero_poll {
+                let elapsed = now.duration_since(last);
+                if elapsed < ZERO_POLL_COOLDOWN {
+                    let remaining_seconds = (ZERO_POLL_COOLDOWN - elapsed)
+                        .as_nanos()
+                        .div_ceil(1_000_000_000);
+                    bail!(
+                        "Command is still running. Check again after {remaining_seconds}s or use a higher `yieldTimeMs`."
+                    );
+                }
             }
             observation.last_zero_poll = Some(now);
         }
@@ -828,7 +831,7 @@ mod tests {
 
     use super::{
         CapturedOutput, CommandAction, CommandCompletion, CommandObservation, CommandOutput,
-        CommandSession, CommandSessionManager, ObservationMode, OutputChannel, POLL_COOLDOWN_ERROR,
+        CommandSession, CommandSessionManager, ObservationMode, OutputChannel,
         WorkspaceCancellation, default_command_shell,
     };
     use crate::test_support::temp_workspace;
@@ -882,12 +885,14 @@ mod tests {
         }
     }
 
-    fn assert_cooldown_rejected(result: anyhow::Result<CommandOutput>) {
+    fn assert_cooldown_rejected(result: anyhow::Result<CommandOutput>, remaining_seconds: u64) {
         assert_eq!(
             result
                 .expect_err("zero poll inside the cooldown must be rejected")
                 .to_string(),
-            POLL_COOLDOWN_ERROR
+            format!(
+                "Command is still running. Check again after {remaining_seconds}s or use a higher `yieldTimeMs`."
+            )
         );
     }
 
@@ -999,13 +1004,13 @@ mod tests {
             .insert(stub.session.id.clone(), stub.session.clone());
         stub.append(b"ready").await;
         tokio::time::pause();
-        let running = poll(&sessions, &stub.session.id, 30_000).await;
+        let running = poll(&sessions, &stub.session.id, 10_000).await;
         assert!(running.running);
         assert_eq!(running.output, "ready");
         tokio::time::resume();
         stub.append(b":done").await;
         stub.complete();
-        let finished = poll(&sessions, &stub.session.id, 30_000).await;
+        let finished = poll(&sessions, &stub.session.id, 10_000).await;
         assert!(finished.success);
         assert_eq!(finished.output, ":done");
         fs::remove_dir_all(root).unwrap();
@@ -1070,7 +1075,7 @@ mod tests {
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let (id, _started) = exec_running_with_timeout(&sessions, "printf done", None).await;
 
-        let finished = poll(&sessions, &id, 30_000).await;
+        let finished = poll(&sessions, &id, 10_000).await;
         assert!(finished.success);
         assert_eq!(finished.output, "done");
 
@@ -1102,7 +1107,7 @@ mod tests {
             "zero-yield controls must hide output even when the completion is already cached"
         );
         assert!(!terminated.running);
-        let revealed = poll(&sessions, &id, 30_000).await;
+        let revealed = poll(&sessions, &id, 10_000).await;
         assert_eq!(revealed.output, "done");
         fs::remove_dir_all(root).unwrap();
     }
@@ -1456,7 +1461,7 @@ mod tests {
         );
         let finished = finished.unwrap();
         assert_eq!(concurrent.unwrap().result.output, finished.result.output);
-        let repeated = poll(&sessions, &id, 30_000).await;
+        let repeated = poll(&sessions, &id, 10_000).await;
 
         assert!(!repeated.running);
         assert_eq!(repeated.output, finished.result.output);
@@ -1590,7 +1595,12 @@ mod tests {
             .await
             .insert(stub.session.id.clone(), stub.session.clone());
         tokio::time::pause();
-        for (requested_ms, expected_ms) in [(1, 30_000), (29_999, 30_000), (u64::MAX, 270_000)] {
+        for (requested_ms, expected_ms) in [
+            (1, 10_000),
+            (9_999, 10_000),
+            (10_000, 10_000),
+            (u64::MAX, 270_000),
+        ] {
             let manager = sessions.clone();
             let id = stub.session.id.clone();
             let waiting = tokio::spawn(async move {
@@ -1890,33 +1900,33 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn zero_poll_cooldown_rejects_until_exactly_30s_and_restarts_on_acceptance() {
+    async fn zero_poll_cooldown_rejects_until_exactly_10s_and_restarts_on_acceptance() {
         let root = temp_workspace();
         let stub = stub_session(&root).await;
 
         let first = stub.observe(ObservationMode::ZeroPoll).await.unwrap();
         assert!(first.running);
         let first_poll = stub.last_zero_poll().await;
-        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await, 10);
         assert_eq!(
             stub.last_zero_poll().await,
             first_poll,
             "a rejected zero poll must not move the cooldown"
         );
 
-        tokio::time::advance(Duration::from_millis(29_999)).await;
-        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+        tokio::time::advance(Duration::from_millis(9_001)).await;
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await, 1);
 
-        tokio::time::advance(Duration::from_millis(1)).await;
+        tokio::time::advance(Duration::from_millis(999)).await;
         stub.observe(ObservationMode::ZeroPoll)
             .await
-            .expect("the cooldown expires exactly 30s after the accepted poll");
+            .expect("the cooldown expires exactly 10s after the accepted poll");
         assert_ne!(
             stub.last_zero_poll().await,
             first_poll,
             "an accepted zero poll restarts the cooldown"
         );
-        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await, 10);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1934,10 +1944,10 @@ mod tests {
         );
 
         stub.append(b"more").await;
-        tokio::time::advance(Duration::from_secs(15)).await;
-        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await, 5);
 
-        tokio::time::advance(Duration::from_secs(15)).await;
+        tokio::time::advance(Duration::from_secs(5)).await;
         let allowed = stub.observe(ObservationMode::ZeroPoll).await.unwrap();
         assert!(allowed.running);
         assert_eq!(
@@ -1955,7 +1965,7 @@ mod tests {
         let last_poll = stub.last_zero_poll().await;
 
         stub.append(b"waiting").await;
-        tokio::time::advance(Duration::from_secs(15)).await;
+        tokio::time::advance(Duration::from_secs(5)).await;
         let waiting = stub.observe(ObservationMode::Output).await.unwrap();
         assert!(waiting.running);
         assert_eq!(waiting.output, "waiting");
@@ -1967,7 +1977,7 @@ mod tests {
             "nonzero and metadata reads must not move the cooldown"
         );
 
-        tokio::time::advance(Duration::from_secs(15)).await;
+        tokio::time::advance(Duration::from_secs(5)).await;
         stub.observe(ObservationMode::ZeroPoll)
             .await
             .expect("the original cooldown must still expire on schedule");
@@ -1993,7 +2003,7 @@ mod tests {
         while let Some(result) = calls.join_next().await {
             match result.unwrap() {
                 Ok(output) => admitted.push(output),
-                Err(error) => assert_eq!(error.to_string(), POLL_COOLDOWN_ERROR),
+                Err(error) => assert_cooldown_rejected(Err(error), 10),
             }
         }
         assert_eq!(

@@ -29,6 +29,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'ask_question':
 			return CircleQuestionMark;
 		case 'await_question':
+		case 'poll_question':
 			return Hourglass;
 		case 'check_docs':
 			return BookOpen;
@@ -38,9 +39,12 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'save_artifact':
 			return Save;
 		case 'exec_command':
+		case 'exec_cmd':
 			return Terminal;
 		case 'control_command':
+		case 'control_cmd':
 		case 'poll_command':
+		case 'poll_cmd':
 			return SquareTerminal;
 		case 'get_workspace_instructions':
 			return ScrollText;

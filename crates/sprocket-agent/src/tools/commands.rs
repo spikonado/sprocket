@@ -9,17 +9,17 @@ use sprocket_workspace::{
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
 
-pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = 30_000;
+pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 
 #[derive(Clone)]
-pub(crate) struct ExecCommandTool(pub(super) AgentToolContext);
+pub(crate) struct ExecCmdTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct ControlCommandTool(pub(super) AgentToolContext);
+pub(crate) struct ControlCmdTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct PollCommandTool(pub(super) AgentToolContext);
+pub(crate) struct PollCmdTool(pub(super) AgentToolContext);
 
 fn default_workdir() -> String {
     ".".to_string()
@@ -153,7 +153,7 @@ impl CommandActionArg {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ControlCommandArgs {
-    /// Session returned by exec_command.
+    /// Session returned by exec_cmd.
     #[serde(rename = "sessionId")]
     pub(crate) session_id: String,
     /// Writing targets stdin; termination targets the command and its descendants.
@@ -174,7 +174,7 @@ pub(crate) struct ControlCommandArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PollCommandArgs {
-    /// Session returned by exec_command.
+    /// Session returned by exec_cmd.
     #[serde(rename = "sessionId")]
     pub(crate) session_id: String,
     /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
@@ -187,8 +187,8 @@ pub(crate) struct PollCommandArgs {
     pub(crate) yield_time_ms: u64,
 }
 
-impl rig::tool::Tool for ExecCommandTool {
-    const NAME: &'static str = "exec_command";
+impl rig::tool::Tool for ExecCmdTool {
+    const NAME: &'static str = "exec_cmd";
     type Error = ToolExecutionError;
     type Args = ExecCommandArgs;
     type Output = serde_json::Value;
@@ -232,8 +232,8 @@ impl rig::tool::Tool for ExecCommandTool {
     }
 }
 
-impl rig::tool::Tool for ControlCommandTool {
-    const NAME: &'static str = "control_command";
+impl rig::tool::Tool for ControlCmdTool {
+    const NAME: &'static str = "control_cmd";
     type Error = ToolExecutionError;
     type Args = ControlCommandArgs;
     type Output = serde_json::Value;
@@ -277,8 +277,8 @@ impl rig::tool::Tool for ControlCommandTool {
     }
 }
 
-impl rig::tool::Tool for PollCommandTool {
-    const NAME: &'static str = "poll_command";
+impl rig::tool::Tool for PollCmdTool {
+    const NAME: &'static str = "poll_cmd";
     type Error = ToolExecutionError;
     type Args = PollCommandArgs;
     type Output = serde_json::Value;
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(schema["properties"]["sessionId"]["type"], "string");
         assert_eq!(
             schema["properties"]["sessionId"]["description"],
-            "Session returned by exec_command."
+            "Session returned by exec_cmd."
         );
         assert_eq!(
             schema["properties"]["action"]["enum"],

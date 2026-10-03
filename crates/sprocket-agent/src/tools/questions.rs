@@ -16,11 +16,9 @@ use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure
 use super::job::execute_tool_job;
 use crate::convex::RuntimeClient;
 
-pub(super) const DEFAULT_QUESTION_YIELD_MS: u64 = 30_000;
+pub(super) const DEFAULT_QUESTION_YIELD_MS: u64 = 10_000;
 const MAX_QUESTION_YIELD_MS: u64 = 270_000;
-const QUESTION_POLL_COOLDOWN: Duration = Duration::from_secs(30);
-const QUESTION_POLL_COOLDOWN_ERROR: &str =
-    "Please wait at least 30s between `await_question` calls with `yieldTimeMs` set to `0`.";
+const QUESTION_POLL_COOLDOWN: Duration = Duration::from_secs(10);
 pub(super) const MAX_QUESTION_CHARS: usize = 2000;
 pub(super) const MAX_OPTION_ID_CHARS: usize = 20;
 pub(super) const MAX_OPTION_LABEL_CHARS: usize = 200;
@@ -33,7 +31,7 @@ const GET_QUESTION_FUNCTION: &str = "agentQuestions:getForExecutor";
 pub(crate) struct AskQuestionTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct AwaitQuestionTool(pub(super) AgentToolContext);
+pub(crate) struct PollQuestionTool(pub(super) AgentToolContext);
 
 fn default_question_yield_ms() -> u64 {
     DEFAULT_QUESTION_YIELD_MS
@@ -47,7 +45,7 @@ fn normalize_ask_yield_ms(yield_time_ms: u64) -> u64 {
     yield_time_ms.min(MAX_QUESTION_YIELD_MS)
 }
 
-fn normalize_await_yield_ms(yield_time_ms: u64) -> u64 {
+fn normalize_poll_yield_ms(yield_time_ms: u64) -> u64 {
     if yield_time_ms == 0 {
         0
     } else {
@@ -72,8 +70,8 @@ fn ask_question_parameters() -> serde_json::Value {
     schema
 }
 
-fn await_question_parameters() -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(AwaitQuestionArgs));
+fn poll_question_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(PollQuestionArgs));
     schema["properties"]["yieldTimeMs"] = json!({
         "type": "integer",
         "default": DEFAULT_QUESTION_YIELD_MS,
@@ -81,7 +79,7 @@ fn await_question_parameters() -> serde_json::Value {
             { "type": "integer", "enum": [0] },
             { "type": "integer", "minimum": DEFAULT_QUESTION_YIELD_MS, "maximum": MAX_QUESTION_YIELD_MS }
         ],
-        "description": "Maximum time to wait for an answer before returning the tool call. Zero returns an immediate question/status snapshot."
+        "description": "Maximum time to wait for an answer before returning the tool call. Zero returns an immediate status/answer snapshot."
     });
     schema
 }
@@ -118,7 +116,7 @@ pub(crate) struct AskQuestionArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AwaitQuestionArgs {
+pub(crate) struct PollQuestionArgs {
     /// Question identifier returned by ask_question.
     #[serde(rename = "questionId")]
     #[schemars(length(min = 1))]
@@ -148,8 +146,6 @@ struct QuestionAnswer {
 #[serde(rename_all = "camelCase")]
 struct QuestionSnapshot {
     question_id: String,
-    question: String,
-    options: Vec<AskQuestionOption>,
     status: String,
     answer: Option<QuestionAnswer>,
 }
@@ -188,8 +184,16 @@ impl QuestionPolls {
             return question_result_from_snapshot(&snapshot);
         }
         let now = Instant::now();
-        if last_poll.is_some_and(|last| now.duration_since(last) < QUESTION_POLL_COOLDOWN) {
-            return Err(tool_failure(QUESTION_POLL_COOLDOWN_ERROR));
+        if let Some(last) = *last_poll {
+            let elapsed = now.duration_since(last);
+            if elapsed < QUESTION_POLL_COOLDOWN {
+                let remaining_seconds = (QUESTION_POLL_COOLDOWN - elapsed)
+                    .as_nanos()
+                    .div_ceil(1_000_000_000);
+                return Err(tool_failure(format!(
+                    "Question is still awaiting an answer. Check again after {remaining_seconds}s or use a higher `yieldTimeMs`."
+                )));
+            }
         }
         let result = question_result_from_snapshot(&snapshot)?;
         *last_poll = Some(now);
@@ -233,16 +237,12 @@ impl rig::tool::Tool for AskQuestionTool {
                             &prepared.options, args.timeout_ms,
                         ).await?;
                         let snapshot = fetch_question_snapshot(&runtime, &run_id, &created.question_id).await?;
-                        if yield_time_ms == 0 {
-                            return question_metadata_from_snapshot(&snapshot);
-                        }
-                        if snapshot.status != "pending" {
-                            return question_result_from_snapshot(&snapshot);
-                        }
-                        observe_question(
-                            &runtime, &run_id, &snapshot,
-                            yield_time_ms,
-                        ).await
+                        let result = if yield_time_ms == 0 || snapshot.status != "pending" {
+                            question_result_from_snapshot(&snapshot)?
+                        } else {
+                            observe_question(&runtime, &run_id, &snapshot, yield_time_ms).await?
+                        };
+                        Ok(question_creation_result(result, &created.question_id, yield_time_ms))
                     } => result,
                 }
             }
@@ -251,10 +251,10 @@ impl rig::tool::Tool for AskQuestionTool {
     }
 }
 
-impl rig::tool::Tool for AwaitQuestionTool {
-    const NAME: &'static str = "await_question";
+impl rig::tool::Tool for PollQuestionTool {
+    const NAME: &'static str = "poll_question";
     type Error = ToolExecutionError;
-    type Args = AwaitQuestionArgs;
+    type Args = PollQuestionArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
@@ -262,7 +262,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        await_question_parameters()
+        poll_question_parameters()
     }
 
     async fn call(
@@ -273,7 +273,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
         if args.question_id.trim().is_empty() {
             return Err(tool_failure("questionId cannot be empty"));
         }
-        let yield_time_ms = normalize_await_yield_ms(args.yield_time_ms);
+        let yield_time_ms = normalize_poll_yield_ms(args.yield_time_ms);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
             let runtime = self.0.runtime.clone();
@@ -411,21 +411,22 @@ async fn fetch_question_snapshot(
     snapshot.ok_or_else(|| tool_failure(format!("Unknown questionId '{question_id}'")))
 }
 
-fn question_metadata_from_snapshot(
-    snapshot: &QuestionSnapshot,
-) -> Result<serde_json::Value, ToolExecutionError> {
-    let mut result = question_result_from_snapshot(snapshot)?;
-    result.as_object_mut().unwrap().remove("answer");
-    Ok(result)
+fn question_creation_result(
+    mut result: serde_json::Value,
+    question_id: &str,
+    yield_time_ms: u64,
+) -> serde_json::Value {
+    if yield_time_ms == 0 {
+        result.as_object_mut().unwrap().remove("answer");
+    }
+    result["questionId"] = json!(question_id);
+    result
 }
 
 fn question_result_from_snapshot(
     snapshot: &QuestionSnapshot,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let mut result = json!({
-        "questionId": snapshot.question_id,
-        "question": snapshot.question,
-        "options": snapshot.options,
         "pending": snapshot.status == "pending",
         "timedOut": snapshot.status == "timedOut",
     });
@@ -519,7 +520,7 @@ mod tests {
     #[test]
     fn ask_yield_normalization_preserves_zero_and_caps_oversized_values() {
         assert_eq!(normalize_ask_yield_ms(0), 0);
-        assert_eq!(normalize_ask_yield_ms(DEFAULT_QUESTION_YIELD_MS), 30_000);
+        assert_eq!(normalize_ask_yield_ms(DEFAULT_QUESTION_YIELD_MS), 10_000);
         assert_eq!(normalize_ask_yield_ms(1), 1);
         assert_eq!(normalize_ask_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
         assert_eq!(normalize_ask_yield_ms(1_800_000), 270_000);
@@ -527,23 +528,18 @@ mod tests {
     }
 
     #[test]
-    fn await_yield_normalization_preserves_zero_and_clamps_oversized_values() {
-        assert_eq!(normalize_await_yield_ms(0), 0);
-        assert_eq!(normalize_await_yield_ms(1), 30_000);
-        assert_eq!(normalize_await_yield_ms(DEFAULT_QUESTION_YIELD_MS), 30_000);
-        assert_eq!(normalize_await_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
-        assert_eq!(normalize_await_yield_ms(1_800_000), 270_000);
-        assert_eq!(normalize_await_yield_ms(u64::MAX), 270_000);
+    fn poll_yield_normalization_preserves_zero_and_clamps_oversized_values() {
+        assert_eq!(normalize_poll_yield_ms(0), 0);
+        assert_eq!(normalize_poll_yield_ms(1), 10_000);
+        assert_eq!(normalize_poll_yield_ms(DEFAULT_QUESTION_YIELD_MS), 10_000);
+        assert_eq!(normalize_poll_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
+        assert_eq!(normalize_poll_yield_ms(1_800_000), 270_000);
+        assert_eq!(normalize_poll_yield_ms(u64::MAX), 270_000);
     }
 
     fn snapshot(question_id: &str, status: &str) -> QuestionSnapshot {
         QuestionSnapshot {
             question_id: question_id.to_string(),
-            question: "Which configuration?".to_string(),
-            options: vec![AskQuestionOption {
-                id: "safe".to_string(),
-                label: "Use the safe default".to_string(),
-            }],
             status: status.to_string(),
             answer: (status == "answered").then(|| QuestionAnswer {
                 option_id: Some("safe".to_string()),
@@ -570,7 +566,7 @@ mod tests {
         assert!(option["properties"]["label"].get("description").is_none());
         assert_eq!(option["properties"]["id"]["maxLength"], 20);
         let yield_ms = &ask["properties"]["yieldTimeMs"];
-        assert_eq!(yield_ms["default"], 30_000);
+        assert_eq!(yield_ms["default"], 10_000);
         assert_eq!(yield_ms["minimum"], 0);
         assert_eq!(yield_ms["maximum"], 270_000);
         let timeout = &ask["properties"]["timeoutMs"];
@@ -578,14 +574,14 @@ mod tests {
         assert_eq!(timeout["minimum"], 0);
         assert!(timeout.get("default").is_none());
         assert!(timeout.get("maximum").is_none());
-        let await_schema = await_question_parameters();
-        assert_eq!(await_schema["required"], json!(["questionId"]));
-        assert_eq!(await_schema["properties"]["yieldTimeMs"]["default"], 30_000);
+        let poll_schema = poll_question_parameters();
+        assert_eq!(poll_schema["required"], json!(["questionId"]));
+        assert_eq!(poll_schema["properties"]["yieldTimeMs"]["default"], 10_000);
         assert_eq!(
-            await_schema["properties"]["yieldTimeMs"]["anyOf"],
+            poll_schema["properties"]["yieldTimeMs"]["anyOf"],
             json!([
                 { "type": "integer", "enum": [0] },
-                { "type": "integer", "minimum": 30_000, "maximum": 270_000 }
+                { "type": "integer", "minimum": 10_000, "maximum": 270_000 }
             ])
         );
     }
@@ -606,26 +602,29 @@ mod tests {
                 payload["timeoutMs"] = timeout;
             }
             let args: AskQuestionArgs = serde_json::from_value(payload.clone()).unwrap();
-            assert_eq!(args.yield_time_ms, 30_000);
+            assert_eq!(args.yield_time_ms, 10_000);
             assert_eq!(args.timeout_ms, payload["timeoutMs"].as_u64());
         }
     }
 
     #[test]
-    fn zero_ask_preserves_terminal_metadata_and_durable_answer() {
-        let answered = snapshot("q1", "answered");
-        let metadata = question_metadata_from_snapshot(&answered).unwrap();
-        assert_eq!(metadata["questionId"], "q1");
-        assert_eq!(metadata["pending"], false);
-        assert_eq!(metadata["timedOut"], false);
-        assert!(metadata.get("answer").is_none());
-        for _ in 0..2 {
-            let result = question_result_from_snapshot(&answered).unwrap();
-            assert_eq!(result["answer"]["optionId"], "safe");
+    fn question_results_return_status_and_answer_with_ids_only_on_creation() {
+        for status in ["pending", "answered", "timedOut"] {
+            let observed = snapshot("q1", status);
+            let result = question_result_from_snapshot(&observed).unwrap();
+            let mut expected =
+                json!({"pending": status == "pending", "timedOut": status == "timedOut"});
+            if status == "answered" {
+                expected["answer"] =
+                    json!({"optionId": "safe", "optionLabel": "Use the safe default"});
+            }
+            assert_eq!(result, expected);
+            let creation = question_creation_result(result.clone(), "q1", 10_000);
+            expected["questionId"] = json!("q1");
+            assert_eq!(creation, expected);
+            expected.as_object_mut().unwrap().remove("answer");
+            assert_eq!(question_creation_result(result, "q1", 0), expected);
         }
-        let expired = question_metadata_from_snapshot(&snapshot("q2", "timedOut")).unwrap();
-        assert_eq!(expired["questionId"], "q2");
-        assert_eq!(expired["timedOut"], true);
     }
 
     #[tokio::test(start_paused = true)]
@@ -640,7 +639,7 @@ mod tests {
         assert!(first.is_ok());
         assert_eq!(
             second.unwrap_err().to_string(),
-            QUESTION_POLL_COOLDOWN_ERROR
+            "Question is still awaiting an answer. Check again after 10s or use a higher `yieldTimeMs`."
         );
         assert!(
             polls
@@ -648,16 +647,16 @@ mod tests {
                 .await
                 .is_ok()
         );
-        tokio::time::advance(Duration::from_secs(29)).await;
+        tokio::time::advance(Duration::from_millis(9_001)).await;
         assert_eq!(
             polls
                 .observe_pending("q1", fetch)
                 .await
                 .unwrap_err()
                 .to_string(),
-            QUESTION_POLL_COOLDOWN_ERROR
+            "Question is still awaiting an answer. Check again after 1s or use a higher `yieldTimeMs`."
         );
-        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::time::advance(Duration::from_millis(999)).await;
         assert!(polls.observe_pending("q1", fetch).await.is_ok());
     }
 
@@ -668,7 +667,7 @@ mod tests {
             .observe_pending("q1", || async { Ok(snapshot("q1", "pending")) })
             .await
             .unwrap();
-        tokio::time::advance(Duration::from_secs(29)).await;
+        tokio::time::advance(Duration::from_secs(9)).await;
         for status in ["answered", "timedOut"] {
             for _ in 0..2 {
                 let result = polls
@@ -728,7 +727,7 @@ mod tests {
         let wait = wait_for_question_updates(
             &mut rx,
             &initial,
-            Instant::now() + Duration::from_secs(30),
+            Instant::now() + Duration::from_secs(10),
             || async {
                 panic!("answer should end wait before deadline");
             },

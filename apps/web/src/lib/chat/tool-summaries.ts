@@ -21,6 +21,7 @@ export function toolGroupLabel(toolKey: string) {
 		case 'ask_question':
 			return 'Asked Questions';
 		case 'await_question':
+		case 'poll_question':
 			return 'Waiting for Answers';
 		case 'check_docs':
 			return 'Checked Docs';
@@ -35,10 +36,13 @@ export function toolGroupLabel(toolKey: string) {
 		case 'save_artifact':
 			return 'Saved Artifacts';
 		case 'exec_command':
+		case 'exec_cmd':
 			return 'Ran Commands';
 		case 'control_command':
+		case 'control_cmd':
 			return 'Controlled Commands';
 		case 'poll_command':
+		case 'poll_cmd':
 			return 'Polled Commands';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
@@ -85,6 +89,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'ask_question':
 			return jsonString(fields?.question) ?? 'Question';
 		case 'await_question':
+		case 'poll_question':
 			return 'Waiting for answer';
 		case 'check_docs':
 			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
@@ -95,13 +100,15 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return summarizeArtifactTool(input);
 		case 'list_artifacts':
 			return 'Artifacts';
-		case 'exec_command': {
+		case 'exec_command':
+		case 'exec_cmd': {
 			const cmd = jsonString(fields?.cmd);
 
 			return cmd ? `${cmd}${describeExecCommandOptions(input)}` : 'Command';
 		}
 
-		case 'control_command': {
+		case 'control_command':
+		case 'control_cmd': {
 			const sessionId = jsonString(fields?.sessionId);
 			const session = sessionId ? `Session ${sessionId}` : 'Command session';
 
@@ -109,6 +116,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		}
 
 		case 'poll_command':
+		case 'poll_cmd':
 		case 'write_stdin': {
 			const sessionId = jsonString(fields?.sessionId);
 
@@ -322,7 +330,13 @@ export function toolItemSummary(
 ) {
 	const kind = toolLog.job?.kind ?? toolLog.name;
 
-	if (kind === 'write_stdin' || kind === 'control_command' || kind === 'poll_command') {
+	if (
+		kind === 'write_stdin' ||
+		kind === 'control_command' ||
+		kind === 'control_cmd' ||
+		kind === 'poll_command' ||
+		kind === 'poll_cmd'
+	) {
 		return (
 			resolveCommandSessionLabel(toolLog, sessionCommands) ??
 			summarizeTool(kind, toolLog.job?.payload ?? toolLog.input)
@@ -362,9 +376,12 @@ export function toolItemSummary(
 }
 
 const COMMAND_SNAPSHOT_KINDS = new Set([
+	'exec_cmd',
 	'exec_command',
 	'write_stdin',
+	'control_cmd',
 	'control_command',
+	'poll_cmd',
 	'poll_command'
 ]);
 

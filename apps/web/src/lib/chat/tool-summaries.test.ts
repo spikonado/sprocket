@@ -9,11 +9,11 @@ describe('command tool summaries', () => {
 		{ workdir: ' \t ', expected: 'bun run build' },
 		{ workdir: '/repo', expected: 'bun run build (cwd /repo)' },
 		{ workdir: 'apps/web', expected: 'bun run build (cwd apps/web)' }
-	])('summarizes exec_command with workdir $workdir', ({ workdir, expected }) => {
+	])('summarizes exec_cmd with workdir $workdir', ({ workdir, expected }) => {
 		const tool: AssistantTimelineTool = {
 			type: 'tool',
 			callId: 'exec',
-			name: 'exec_command',
+			name: 'exec_cmd',
 			input: { cmd: 'bun run build' }
 		};
 
@@ -29,7 +29,7 @@ describe('command tool summaries', () => {
 		const tool: AssistantTimelineTool = {
 			type: 'tool',
 			callId: 'control',
-			name: 'control_command',
+			name: 'control_cmd',
 			input: { sessionId: '7', action: input.action, chars: input.chars ?? '' }
 		};
 
@@ -37,7 +37,7 @@ describe('command tool summaries', () => {
 		expect(toolItemSummary(tool, new Map([['7', 'bun run build']]))).toBe('bun run build');
 	});
 
-	describe.each(['poll_command', 'write_stdin'])('%s', (name) => {
+	describe.each(['poll_cmd', 'poll_command', 'write_stdin'])('%s', (name) => {
 		it('falls back to the session ID until the command label is available', () => {
 			const tool: AssistantTimelineTool = {
 				type: 'tool',
@@ -62,7 +62,7 @@ describe('command tool summaries', () => {
 		});
 	});
 
-	it.each(['control_command', 'poll_command', 'write_stdin'])(
+	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command', 'write_stdin'])(
 		'keeps a returned %s snapshot distinct from an in-flight tool call',
 		(name) => {
 			const tool: AssistantTimelineTool = {

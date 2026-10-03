@@ -341,10 +341,14 @@ describe('groupAssistantTimelineSections', () => {
 describe('partitionWorkSectionTools', () => {
 	it.each([
 		'exec_command',
+		'exec_cmd',
 		'write_stdin',
 		'control_command',
+		'control_cmd',
 		'poll_command',
+		'poll_cmd',
 		'ask_question',
+		'poll_question',
 		'await_question'
 	])('shows an unfinished %s call as running before a job attaches', (name) => {
 		const call = tool('live', name);

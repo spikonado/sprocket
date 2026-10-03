@@ -13,10 +13,9 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "add_artifact",
     "apply_patch",
     "ask_question",
-    "await_question",
-    "control_command",
+    "control_cmd",
     "edit_artifact",
-    "exec_command",
+    "exec_cmd",
     "list_artifacts",
     "mandate_charge",
     "mandate_list",
@@ -24,7 +23,8 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "mandate_setup",
     "mandate_status",
     "parse_file",
-    "poll_command",
+    "poll_cmd",
+    "poll_question",
     "read_skill",
     "save_artifact",
     "scrape_url",
@@ -41,7 +41,7 @@ pub(crate) fn available_agent_tool_names(
         .copied()
         .filter(|name| {
             (allow_interaction
-                || !matches!(*name, "ask_question" | "await_question" | "mandate_setup"))
+                || !matches!(*name, "ask_question" | "poll_question" | "mandate_setup"))
                 && (supports_images || *name != "screenshot_url")
         })
         .collect()
@@ -570,10 +570,10 @@ mod tests {
 
     #[test]
     fn repairs_near_miss_tool_names() {
-        assert_repaired("exec-command", "exec_command");
+        assert_repaired("exec-cmd", "exec_cmd");
         assert_repaired("apply-patch", "apply_patch");
-        assert_repaired("controlcommand", "control_command");
-        assert_repaired("poll-command", "poll_command");
+        assert_repaired("controlcmd", "control_cmd");
+        assert_repaired("poll-cmd", "poll_cmd");
         assert_repaired("parse-file", "parse_file");
     }
 
@@ -581,10 +581,10 @@ mod tests {
     fn available_tools_match_run_capabilities() {
         let cli = available_agent_tool_names(false, false);
         assert!(!cli.contains(&"ask_question"));
-        assert!(!cli.contains(&"await_question"));
+        assert!(!cli.contains(&"poll_question"));
         assert!(!cli.contains(&"mandate_setup"));
         assert!(!cli.contains(&"screenshot_url"));
-        assert!(cli.contains(&"exec_command"));
+        assert!(cli.contains(&"exec_cmd"));
 
         assert_eq!(available_agent_tool_names(true, true), AGENT_TOOL_NAMES);
     }
@@ -593,9 +593,9 @@ mod tests {
     fn retries_unknown_tool_names() {
         match resolve_invalid_tool_name("launch_missiles", &tools()) {
             InvalidToolCallAction::Retry { feedback } => {
-                assert!(feedback.contains("exec_command"));
-                assert!(feedback.contains("control_command"));
-                assert!(feedback.contains("poll_command"));
+                assert!(feedback.contains("exec_cmd"));
+                assert!(feedback.contains("control_cmd"));
+                assert!(feedback.contains("poll_cmd"));
                 assert!(feedback.contains("apply_patch"));
             }
             other => panic!("expected retry, got {other:?}"),

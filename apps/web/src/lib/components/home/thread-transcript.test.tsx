@@ -316,6 +316,12 @@ describe('transcript viewport paging', () => {
 	);
 
 	it.each([
+		{ kind: 'live', toolName: 'exec_cmd', group: 'Ran Commands' },
+		{ kind: 'persisted', toolName: 'exec_cmd', group: 'Ran Commands' },
+		{ kind: 'live', toolName: 'control_cmd', group: 'Controlled Commands' },
+		{ kind: 'persisted', toolName: 'control_cmd', group: 'Controlled Commands' },
+		{ kind: 'live', toolName: 'poll_cmd', group: 'Polled Commands' },
+		{ kind: 'persisted', toolName: 'poll_cmd', group: 'Polled Commands' },
 		{ kind: 'live', toolName: 'exec_command', group: 'Ran Commands' },
 		{ kind: 'persisted', toolName: 'exec_command', group: 'Ran Commands' },
 		{ kind: 'live', toolName: 'write_stdin', group: 'Monitored Commands' },
@@ -328,7 +334,7 @@ describe('transcript viewport paging', () => {
 		'shows $toolName as a settled snapshot in completed $kind work',
 		async ({ kind, toolName, group }) => {
 			const output: JsonValue =
-				toolName === 'exec_command' || toolName === 'write_stdin'
+				toolName === 'exec_cmd' || toolName === 'exec_command' || toolName === 'write_stdin'
 					? { sessionId: 'session', command: 'sleep 10', running: true }
 					: { command: 'sleep 10', workdir: '/', running: true };
 
@@ -338,9 +344,9 @@ describe('transcript viewport paging', () => {
 					callId: 'command',
 					name: toolName,
 					input:
-						toolName === 'exec_command'
+						toolName === 'exec_cmd' || toolName === 'exec_command'
 							? { cmd: 'sleep 10' }
-							: toolName === 'control_command'
+							: toolName === 'control_cmd' || toolName === 'control_command'
 								? { sessionId: 'session', action: 'terminate' }
 								: { sessionId: 'session' }
 				},

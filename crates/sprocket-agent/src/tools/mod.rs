@@ -20,14 +20,14 @@ use std::sync::Arc;
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
 use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool};
-use self::commands::{ControlCommandTool, ExecCommandTool, PollCommandTool};
+use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::AgentToolContext;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
 use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
-use self::questions::{AskQuestionTool, AwaitQuestionTool};
+use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
 use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
@@ -49,12 +49,12 @@ use self::skills::resolve_read_skill;
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) ask_question: AskQuestionTool,
-    pub(crate) await_question: AwaitQuestionTool,
+    pub(crate) poll_question: PollQuestionTool,
     pub(crate) command_sessions: CommandSessionManager,
-    pub(crate) control_command: ControlCommandTool,
-    pub(crate) exec_command: ExecCommandTool,
+    pub(crate) control_cmd: ControlCmdTool,
+    pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) parse_file: ParseFileTool,
-    pub(crate) poll_command: PollCommandTool,
+    pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) screenshot_url: ScreenshotUrlTool,
@@ -149,12 +149,12 @@ pub(crate) fn agent_tools(
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
         ask_question: AskQuestionTool(context.clone()),
-        await_question: AwaitQuestionTool(context.clone()),
+        poll_question: PollQuestionTool(context.clone()),
         command_sessions,
-        control_command: ControlCommandTool(context.clone()),
-        exec_command: ExecCommandTool(context.clone()),
+        control_cmd: ControlCmdTool(context.clone()),
+        exec_cmd: ExecCmdTool(context.clone()),
         parse_file: ParseFileTool(context.clone()),
-        poll_command: PollCommandTool(context.clone()),
+        poll_cmd: PollCmdTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),
             skills,

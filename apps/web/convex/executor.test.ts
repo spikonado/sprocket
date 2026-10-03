@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { Infer } from 'convex/values';
+import { vAskQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import {
@@ -39,7 +41,7 @@ async function seedRunWithJob(
 		const jobId = await ctx.db.insert('executorJobs', {
 			threadId,
 			runId: created.runId,
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			payload: { cmd: 'echo hi' },
 			hidden: false,
 			status: options.jobStatus ?? 'claimed',
@@ -209,7 +211,7 @@ describe('executor', () => {
 		}
 	);
 
-	it.each(['control_command', 'poll_command'] as const)(
+	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command'] as const)(
 		'persists %s jobs and flat command results without a sessionId',
 		async (kind) => {
 			const t = initConvexTest();
@@ -229,7 +231,7 @@ describe('executor', () => {
 			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
 
 			const payload =
-				kind === 'control_command'
+				kind === 'control_cmd' || kind === 'control_command'
 					? { sessionId: '1', action: 'write' as const, chars: 'yes\n' }
 					: { sessionId: '1', yieldTimeMs: 0 };
 
@@ -281,57 +283,119 @@ describe('executor', () => {
 		}
 	);
 
-	it.each(['control_command', 'poll_command'] as const)('fails %s jobs', async (kind) => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = `command-${kind}-fail-secret`;
-		const claimId = `command-${kind}-fail-claim`;
+	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command'] as const)(
+		'fails %s jobs',
+		async (kind) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = `command-${kind}-fail-secret`;
+			const claimId = `command-${kind}-fail-claim`;
 
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			`command-${kind}-fail`,
-			executionSecret,
-			'Control the command'
-		);
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				`command-${kind}-fail`,
+				executionSecret,
+				'Control the command'
+			);
 
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
 
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			...toolTranscriptAssignment(runId, claimId),
-			executionSecret,
-			kind,
-			payload:
-				kind === 'control_command'
-					? { sessionId: '1', action: 'terminate' as const }
-					: { sessionId: '1' }
-		});
-
-		await expect(
-			asUser.mutation(api.executor.fail, {
+			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				runId,
 				claimId,
+				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
-				jobId,
+				kind,
+				payload:
+					kind === 'control_cmd' || kind === 'control_command'
+						? { sessionId: '1', action: 'terminate' as const }
+						: { sessionId: '1' }
+			});
+
+			await expect(
+				asUser.mutation(api.executor.fail, {
+					runId,
+					claimId,
+					executionSecret,
+					jobId,
+					error: 'unknown command session: 1'
+				})
+			).resolves.toBe(true);
+
+			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+			expect(job).toMatchObject({
+				kind,
+				status: 'failed',
 				error: 'unknown command session: 1'
-			})
-		).resolves.toBe(true);
+			});
 
-		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(job).toMatchObject({
-			kind,
-			status: 'failed',
-			error: 'unknown command session: 1'
-		});
+			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+			expect(
+				parts.parts.some((part) => part.tool?.name === kind && part.tool.status === 'failed')
+			).toBe(true);
+		}
+	);
 
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-		expect(
-			parts.parts.some((part) => part.tool?.name === kind && part.tool.status === 'failed')
-		).toBe(true);
-	});
+	it.each(['pending', 'answered', 'timedOut'] as const)(
+		'persists compact question results for %s questions',
+		async (status) => {
+			const t = initConvexTest();
+
+			for (const kind of ['ask_question', 'poll_question'] as const) {
+				const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+					executionSecret: `compact-question-${kind}-${status}`
+				});
+
+				const questionId = await t.run(async (ctx) => {
+					const run = await ctx.db.get('runs', runId);
+
+					if (!run) throw new Error('Run not found');
+
+					return ctx.db.insert('agentQuestions', {
+						threadId: run.threadId,
+						runId,
+						jobId,
+						question: 'Which configuration?',
+						options: [{ id: 'safe', label: 'Safe' }],
+						status,
+						createdAt: Date.now(),
+						sequence: 1
+					});
+				});
+
+				await t.run(async (ctx) => {
+					await ctx.db.patch('executorJobs', jobId, {
+						kind,
+						status: 'claimed',
+						payload:
+							kind === 'ask_question'
+								? { question: 'Which configuration?', options: [{ id: 'safe', label: 'Safe' }] }
+								: { questionId }
+					});
+				});
+
+				const result: Omit<Infer<typeof vAskQuestionResult>, 'questionId'> &
+					Partial<Pick<Infer<typeof vAskQuestionResult>, 'questionId'>> = {
+					pending: status === 'pending',
+					timedOut: status === 'timedOut'
+				};
+
+				if (kind === 'ask_question') result.questionId = questionId;
+
+				if (status === 'answered') result.answer = { optionId: 'safe', optionLabel: 'Safe' };
+
+				await expect(
+					asUser.mutation(api.executor.complete, { runId, claimId, executionSecret, jobId, result })
+				).resolves.toBe(true);
+
+				const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+
+				expect(stored?.result).toEqual(result);
+			}
+		}
+	);
 
 	it('completes the active job without changing the running status', async () => {
 		const t = initConvexTest();
