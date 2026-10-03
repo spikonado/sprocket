@@ -199,6 +199,7 @@ describe('transcript viewport paging', () => {
 		expect(prompt.classList.contains('items-start')).toBe(true);
 		expect(prompt.classList.contains('items-end')).toBe(false);
 		expect(chips.classList.contains('justify-end')).toBe(false);
+		expect(agent.className).not.toMatch(/\b(items-end|justify-end|self-end|ml-auto|text-right)\b/);
 	});
 
 	it('opens every transcript link in a new tab without granting opener access', async () => {
