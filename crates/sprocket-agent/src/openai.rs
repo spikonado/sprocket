@@ -1,78 +1,74 @@
-use rig::client::CompletionClient;
-use rig::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse};
+use rig::completion::CompletionRequest;
+use rig::error::EncodeError;
 use rig::message::{AssistantContent, Message};
-use rig::providers::openai;
-use rig::streaming::StreamingCompletionResponse;
+use rig::operation::Completion;
+use rig::providers::openai::OpenAIConfig;
+use rig::providers::openai::responses_api::wire::Responses;
+use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
+use rig::{DynModel, Model};
 
 use crate::reasoning::opaque_reasoning_blob;
 
-pub(crate) struct OpenAiReplayClient(pub(crate) openai::Client);
-
-impl CompletionClient for OpenAiReplayClient {
-    type CompletionModel = OpenAiReplayModel;
-
-    fn completion_model(&self, model: impl Into<String>) -> Self::CompletionModel {
-        OpenAiReplayModel(self.0.completion_model(model))
-    }
+pub(crate) fn stateless_responses_model(
+    provider: OpenAIConfig,
+    model: impl Into<String>,
+) -> DynModel<Completion> {
+    let model = provider.client().responses(model);
+    Model::new(StatelessResponses(model.wire), model.transport).erase()
 }
 
-pub(crate) struct OpenAiReplayModel(openai::responses_api::ResponsesCompletionModel);
+/// Rig preserves and inlines Responses items, including their IDs and phases.
+/// Stateless runs additionally need opaque reasoning and explicit storage settings.
+#[derive(Clone)]
+pub(crate) struct StatelessResponses(pub(crate) Responses);
 
-pub(crate) fn replay_contents(mut request: CompletionRequest) -> CompletionRequest {
-    // Rig can omit empty reasoning items and regroup a turn's output. Replay
-    // our reconstructed contents, not references to OpenAI's original items.
-    request.chat_history.retain_mut(|message| {
-        if let Message::Assistant { id, content } = message {
-            *id = None;
-            content.retain(|part| match part {
-                AssistantContent::Reasoning(reasoning) => {
-                    opaque_reasoning_blob(reasoning).is_some()
-                }
-                _ => true,
-            });
-            for part in content.iter_mut() {
-                if let AssistantContent::ToolCall(call) = part
-                    && let Some(provider) = &mut call.provider
-                {
-                    provider.item_id = None;
-                }
+impl Wire for StatelessResponses {
+    type Op = Completion;
+    type Payload = Encoded;
+    type Frame = WireFrame;
+    type Decoder<'id> = <Responses as Wire>::Decoder<'id>;
+
+    fn describe(&self) -> Descriptor<'_> {
+        self.0.describe()
+    }
+
+    fn encode(&self, mut request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
+        // Summary-only reasoning cannot be replayed against store:false.
+        // Keep Rig's provider item identities: it now sends complete items,
+        // and dropping IDs loses message phase and other replay metadata.
+        request.chat_history.retain_mut(|message| {
+            if let Message::Assistant { content, .. } = message {
+                content.retain(|part| match part {
+                    AssistantContent::Reasoning(reasoning) => {
+                        opaque_reasoning_blob(reasoning).is_some()
+                    }
+                    _ => true,
+                });
+                return !content.is_empty();
             }
-            return !content.is_empty();
-        }
-        true
-    });
-    if let Some(params) = request
-        .additional_params
-        .get_or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-    {
+            true
+        });
+        let params = request
+            .additional_params
+            .get_or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| EncodeError::request("Responses parameters must be a JSON object."))?;
         params.insert("store".to_string(), serde_json::json!(false));
-        if let Some(include) = params
+        let include = params
             .entry("include")
             .or_insert_with(|| serde_json::json!([]))
             .as_array_mut()
-            && !include
-                .iter()
-                .any(|item| item == "reasoning.encrypted_content")
+            .ok_or_else(|| EncodeError::request("Responses include fields must be an array."))?;
+        if !include
+            .iter()
+            .any(|item| item == "reasoning.encrypted_content")
         {
             include.push(serde_json::json!("reasoning.encrypted_content"));
         }
-    }
-    request
-}
-
-impl CompletionModel for OpenAiReplayModel {
-    async fn completion(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<CompletionResponse, CompletionError> {
-        self.0.completion(replay_contents(request)).await
+        self.0.encode(request, mode)
     }
 
-    async fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse, CompletionError> {
-        self.0.stream(replay_contents(request)).await
+    fn decoder<'id>(&self) -> Self::Decoder<'id> {
+        self.0.decoder()
     }
 }

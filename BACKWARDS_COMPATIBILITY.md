@@ -37,20 +37,31 @@ service tier allowed for released clients that require them. Remove the gateway
 response fields only after clients that validate or apply them are outside the
 supported upgrade window. Model selections and Convex data need no migration.
 
-### OpenAI BYOK response item replay
+### Stateless OpenAI reasoning replay
 
-Rig 0.42 can drop contentless reasoning items and regroup streamed output before
-the next completion. OpenAI rejects the surviving message or function item IDs
-when their required reasoning items are missing. `OpenAiReplayClient` clears
-assistant message IDs and function item IDs on outgoing BYOK requests and sets
-`store: false`. It requests and replays encrypted reasoning, and keeps function
-call IDs used to pair tool results. Reasoning without encrypted content cannot
-be replayed without server storage, so the adapter omits it. Stored transcripts
-remain unchanged. Repairing older history is outside this fix's scope.
+Rig 0.43 preserves and inlines Responses message and function items with their
+native IDs, so the old `OpenAiReplayClient` ID-clearing workaround is removed.
+Sprocket's `StatelessResponses` wire sets `store: false`, requests encrypted
+reasoning, and omits reasoning without a nonempty encrypted payload. Summary-only
+reasoning cannot be replayed without server storage. Function call IDs continue
+to pair tool results; existing transcript formats remain unchanged.
 
-Remove this adapter only after the installed Rig version preserves complete
-response item relationships through streaming and replay, and the BYOK
-multi-turn regression passes with native item IDs.
+Remove this wire wrapper once Rig exposes an equivalent stateless Responses
+configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
+
+### Rig history identities
+
+Released Sprocket history records carry separate `id` and optional `callId`
+fields and omit tool names on results. The Rust history reader reconstructs
+Rig 0.43's unified `CallId`, preserving a distinct item ID when present, and
+resolves each result's required name from its preceding call. Historical
+OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
+No stored data is rewritten: local JSONL and Convex transcript formats remain
+compatible with released clients.
+
+Keep this boundary conversion while Sprocket's transcript protocol uses these
+fields. Remove it only with a versioned protocol migration that rewrites all
+supported histories and supports direct upgrades from released clients.
 
 ## Local data directory backwards compatibility
 

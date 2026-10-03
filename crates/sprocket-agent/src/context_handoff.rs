@@ -157,9 +157,9 @@ impl ContextHandoffHook {
         }
     }
 
-    pub(crate) fn record_usage(&self, usage: Usage) -> u64 {
+    pub(crate) fn record_usage(&self, usage: Usage) -> Option<u64> {
         let tokens = context_tokens(usage);
-        if tokens > 0
+        if let Some(tokens) = tokens
             && let Ok(mut state) = self.state.lock()
         {
             state.context_tokens = tokens;
@@ -214,7 +214,7 @@ impl AgentHook for ContextHandoffHook {
                 .finish_reason
                 .is_some_and(|reason| reason.truncated_output())
                 || calls.len() != 1
-                || calls[0].function.name != HandoffTool::NAME
+                || calls[0].function.name.as_str() != HandoffTool::NAME
             {
                 return ModelTurnAction::stop(
                     "Context handoff failed: the agent must submit one complete handoff document.",
@@ -233,8 +233,13 @@ impl AgentHook for ContextHandoffHook {
 }
 
 // Responses API input_tokens includes cached input; output_tokens includes reasoning.
-fn context_tokens(usage: Usage) -> u64 {
-    usage.input_tokens.saturating_add(usage.output_tokens)
+fn context_tokens(usage: Usage) -> Option<u64> {
+    usage.total_tokens.or_else(|| {
+        usage
+            .input_tokens
+            .zip(usage.output_tokens)
+            .map(|(input, output)| input.saturating_add(output))
+    })
 }
 
 #[derive(Clone)]
@@ -287,22 +292,62 @@ mod tests {
     fn counts_provider_totals_without_counting_cache_or_reasoning_twice() {
         assert_eq!(
             context_tokens(Usage {
-                input_tokens: 100,
-                output_tokens: 30,
-                cached_input_tokens: 80,
-                reasoning_tokens: 20,
+                input_tokens: Some(100),
+                output_tokens: Some(30),
+                cached_input_tokens: Some(80),
+                reasoning_tokens: Some(20),
                 ..Default::default()
             }),
-            130
+            Some(130)
         );
     }
 
     #[test]
     fn missing_usage_preserves_the_last_observation_until_restart() {
         let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
-        assert_eq!(hook.record_usage(Usage::default()), 0);
+        assert_eq!(hook.record_usage(Usage::default()), None);
         assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
         hook.restart();
+        assert_eq!(hook.state.lock().unwrap().context_tokens, 0);
+    }
+
+    #[test]
+    fn partial_usage_preserves_context_without_persisting_an_incomplete_total() {
+        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        assert_eq!(
+            hook.record_usage(Usage {
+                output_tokens: Some(30),
+                ..Default::default()
+            }),
+            None
+        );
+        assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
+    }
+
+    #[test]
+    fn reported_total_updates_context_without_individual_counters() {
+        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        assert_eq!(
+            hook.record_usage(Usage {
+                total_tokens: Some(150),
+                ..Default::default()
+            }),
+            Some(150)
+        );
+        assert_eq!(hook.state.lock().unwrap().context_tokens, 150);
+    }
+
+    #[test]
+    fn reported_zero_replaces_the_last_context_observation() {
+        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        assert_eq!(
+            hook.record_usage(Usage {
+                input_tokens: Some(0),
+                output_tokens: Some(0),
+                ..Default::default()
+            }),
+            Some(0)
+        );
         assert_eq!(hook.state.lock().unwrap().context_tokens, 0);
     }
 
