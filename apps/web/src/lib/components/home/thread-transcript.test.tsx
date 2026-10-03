@@ -465,11 +465,11 @@ describe('transcript viewport paging', () => {
 		click(work);
 		await settle();
 
-		const polls = [...viewport.querySelectorAll('button')].find((button) =>
-			button.textContent?.includes('Polled Commands')
-		);
-
-		expect(polls?.getAttribute('aria-expanded')).toBe('true');
+		expect(
+			[...viewport.querySelectorAll('button')].find((button) =>
+				button.textContent?.includes('Polled Commands')
+			)
+		).toBeUndefined();
 		expect(viewport.textContent).toContain('npm run dev');
 		expect(viewport.textContent).toContain('Still running when this call returned');
 	});
