@@ -5,6 +5,7 @@ import {
 	type AssistantToolCallPart
 } from '@convex/lib/assistantParts';
 import type { JsonValue } from '@convex/lib/json';
+import { isCommandToolKind, isExecCommandToolKind } from '$lib/chat/command-tool-kinds';
 import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 
@@ -178,21 +179,14 @@ function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean
 
 /** Tools that can yield an operation id and wait for that operation in a later call. */
 function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
-	switch (assistantTimelineToolKey(tool)) {
-		case 'exec_command':
-		case 'exec_cmd':
-		case 'write_stdin':
-		case 'control_command':
-		case 'control_cmd':
-		case 'poll_command':
-		case 'poll_cmd':
-		case 'ask_question':
-		case 'await_question':
-		case 'poll_question':
-			return true;
-		default:
-			return false;
-	}
+	const kind = assistantTimelineToolKey(tool);
+
+	return (
+		isCommandToolKind(kind) ||
+		kind === 'ask_question' ||
+		kind === 'await_question' ||
+		kind === 'poll_question'
+	);
 }
 
 /** Whether an async tool call is still in flight while the run is streaming. */
@@ -229,8 +223,7 @@ export function buildCommandSessionCommandMap(
 
 		const cmd =
 			jsonObjectString(tool.output, 'command') ??
-			(assistantTimelineToolKey(tool) === 'exec_command' ||
-			assistantTimelineToolKey(tool) === 'exec_cmd'
+			(isExecCommandToolKind(assistantTimelineToolKey(tool))
 				? (jsonObjectString(tool.input, 'cmd') ?? jsonObjectString(tool.job?.payload, 'cmd'))
 				: undefined);
 

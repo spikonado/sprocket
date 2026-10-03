@@ -198,11 +198,7 @@ impl rig::tool::Tool for AskQuestionTool {
                             &prepared.options, args.timeout_ms,
                         ).await?;
                         let snapshot = fetch_question_snapshot(&runtime, &run_id, &created.question_id).await?;
-                        let result = if yield_time_ms == 0 || snapshot.status != "pending" {
-                            question_result_from_snapshot(&snapshot)?
-                        } else {
-                            observe_question(&runtime, &run_id, &snapshot, yield_time_ms).await?
-                        };
+                        let result = observe_question(&runtime, &run_id, &snapshot, yield_time_ms).await?;
                         Ok(question_creation_result(result, &created.question_id, yield_time_ms))
                     } => result,
                 }
@@ -250,9 +246,6 @@ impl rig::tool::Tool for PollQuestionTool {
                             }).await;
                         }
                         let snapshot = fetch_question_snapshot(&runtime, &run_id, &question_id).await?;
-                        if snapshot.status != "pending" {
-                            return question_result_from_snapshot(&snapshot);
-                        }
                         observe_question(
                             &runtime, &run_id, &snapshot,
                             yield_time_ms,
@@ -409,6 +402,10 @@ async fn observe_question(
     snapshot: &QuestionSnapshot,
     yield_time_ms: u64,
 ) -> Result<serde_json::Value, ToolExecutionError> {
+    if yield_time_ms == 0 || snapshot.status != "pending" {
+        return question_result_from_snapshot(snapshot);
+    }
+
     let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
@@ -416,12 +413,12 @@ async fn observe_question(
         "questionId".to_string(),
         snapshot.question_id.clone().into(),
     );
-    let mut updates = runtime
+    let updates = runtime
         .subscribe(GET_QUESTION_FUNCTION, args)
         .await
         .map_err(tool_error)?;
 
-    let decoded = updates.by_ref().map(|update| {
+    let decoded = updates.map(|update| {
         RuntimeClient::decode_subscription_update::<Option<QuestionSnapshot>>(
             update,
             GET_QUESTION_FUNCTION,

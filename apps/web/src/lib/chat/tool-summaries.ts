@@ -6,6 +6,7 @@ import {
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
+import { isCommandToolKind, isSessionCommandToolKind } from '$lib/chat/command-tool-kinds';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -330,13 +331,7 @@ export function toolItemSummary(
 ) {
 	const kind = toolLog.job?.kind ?? toolLog.name;
 
-	if (
-		kind === 'write_stdin' ||
-		kind === 'control_command' ||
-		kind === 'control_cmd' ||
-		kind === 'poll_command' ||
-		kind === 'poll_cmd'
-	) {
+	if (isSessionCommandToolKind(kind)) {
 		return (
 			resolveCommandSessionLabel(toolLog, sessionCommands) ??
 			summarizeTool(kind, toolLog.job?.payload ?? toolLog.input)
@@ -375,21 +370,11 @@ export function toolItemSummary(
 	return summarizeTool(toolLog.name, toolLog.input);
 }
 
-const COMMAND_SNAPSHOT_KINDS = new Set([
-	'exec_cmd',
-	'exec_command',
-	'write_stdin',
-	'control_cmd',
-	'control_command',
-	'poll_cmd',
-	'poll_command'
-]);
-
 export function commandSnapshotLabel(tool: AssistantTimelineTool): string | undefined {
 	const kind = tool.job?.kind ?? tool.name;
 	const output: JsonValue | undefined = tool.output ?? tool.job?.result;
 
-	return COMMAND_SNAPSHOT_KINDS.has(kind) && isJsonObject(output) && output.running === true
+	return isCommandToolKind(kind) && isJsonObject(output) && output.running === true
 		? 'Still running when this call returned'
 		: undefined;
 }
