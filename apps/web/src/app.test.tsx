@@ -889,3 +889,18 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 		)
 	);
 });
+
+it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
+	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
+	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
+	const layout = document.querySelector('.inbox-layout');
+	const controls = document.querySelector<HTMLElement>('.inbox-floating-controls');
+	expect(controls).toBeTruthy();
+	expect(layout?.classList.contains('sidebar-hidden')).toBe(true);
+	const floating = within(controls!);
+	expect(floating.getByRole('button', { name: 'Open sidebar' })).toBeTruthy();
+	expect(floating.getByRole('button', { name: 'Settings' })).toBeTruthy();
+	fireEvent.click(floating.getByRole('button', { name: 'Open sidebar' }));
+	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
+	expect(document.querySelector('.inbox-floating-controls')).toBeNull();
+});

@@ -2338,36 +2338,41 @@ export default function App({
 		};
 	}, []);
 
+	async function focusSidebarControl(open: boolean) {
+		await Promise.resolve();
+		document
+			.querySelector<HTMLButtonElement>(
+				open ? '.inbox-sidebar-host button' : '.inbox-floating-controls button'
+			)
+			?.focus();
+	}
+
 	async function openSidebar() {
 		setSidebarOpen(true);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		await focusSidebarControl(true);
 	}
 
 	async function closeSidebar() {
 		setSidebarOpen(false);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-collapsed-rail button')?.focus();
+		await focusSidebarControl(false);
 	}
 
-	async function openSettingsFromRail() {
+	function openSettings() {
 		setSettingsPage('account');
 		setSettingsOpen(true);
+	}
+
+	async function openSettingsFromFloatingControls() {
+		openSettings();
 
 		if (viewportWidth < 768) setSidebarOpen(true);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		await focusSidebarControl(true);
 	}
 
 	async function leaveSettings() {
 		setSettingsOpen(false);
 		setSettingsPage('account');
-		await Promise.resolve();
-		document
-			.querySelector<HTMLButtonElement>(
-				sidebarOpen ? '.inbox-sidebar-host button' : '.inbox-collapsed-rail button'
-			)
-			?.focus();
+		await focusSidebarControl(sidebarOpen);
 	}
 
 	if (!desktopApiResolved) {
@@ -2479,10 +2484,7 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
-							onSettings={() => {
-								setSettingsPage('account');
-								setSettingsOpen(true);
-							}}
+							onSettings={openSettings}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
 						/>
@@ -2490,10 +2492,10 @@ export default function App({
 				</div>
 
 				{!sidebarVisible && (
-					<div className="inbox-collapsed-rail">
+					<div className="inbox-floating-controls">
 						<BrandMark
 							size="sm"
-							class="inbox-icon inbox-rail-logo"
+							class="inbox-icon"
 							label="Open sidebar"
 							onclick={() => void openSidebar()}
 						/>
@@ -2502,7 +2504,7 @@ export default function App({
 							type="button"
 							aria-label="Settings"
 							title="Settings"
-							onClick={() => void openSettingsFromRail()}
+							onClick={() => void openSettingsFromFloatingControls()}
 						>
 							<Settings size={16} />
 						</button>

@@ -370,12 +370,14 @@
 }
 
 .inbox-sidebar button:focus-visible,
-.inbox-context-menu button:focus-visible {
+.inbox-context-menu button:focus-visible,
+.inbox-floating-controls button:focus-visible {
 	outline: 2px solid var(--foreground);
 	outline-offset: 2px;
 }
 
 .inbox-layout {
+	position: relative;
 	display: grid;
 	height: 100dvh;
 	grid-template-columns: 260px minmax(0, 1fr);
@@ -387,7 +389,7 @@
 }
 
 .inbox-layout.sidebar-hidden {
-	grid-template-columns: 3.5rem minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr);
 }
 
 .inbox-sidebar-host {
@@ -406,35 +408,32 @@
 	border-right: 0;
 }
 
-.inbox-collapsed-rail {
+.inbox-floating-controls {
+	position: absolute;
+	top: 0.75rem;
+	bottom: 0.75rem;
+	left: 0.75rem;
+	z-index: 100;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
-	height: 100%;
-	min-height: 0;
-	padding: 12px 0;
-	border-right: 1px solid var(--sidebar-border);
-	background: var(--sidebar-bg);
+	pointer-events: none;
 }
 
-.inbox-collapsed-rail .inbox-icon {
+.inbox-floating-controls .inbox-icon {
+	pointer-events: auto;
 	width: 32px;
 	height: 32px;
 }
 
-.inbox-collapsed-rail .inbox-rail-logo span {
+.inbox-floating-controls .inbox-icon span {
 	display: none;
 }
 
 @media (max-width: 767px) {
 	.inbox-layout {
 		display: block;
-	}
-
-	.inbox-layout.sidebar-hidden {
-		display: grid;
 	}
 
 	.inbox-sidebar-host {

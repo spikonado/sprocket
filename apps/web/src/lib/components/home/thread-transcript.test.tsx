@@ -163,6 +163,46 @@ describe('transcript viewport paging', () => {
 		expect(viewport.classList.contains('overflow-auto')).toBe(false);
 	});
 
+	it('left-aligns user and agent messages inside a centered column', async () => {
+		const promptMessage: TranscriptDisplayRow = {
+			...message(1),
+			attachments: [
+				{
+					// SAFETY: Fixture IDs never leave the mounted component.
+					storageId: 'file' as Id<'_storage'>,
+					name: 'notes.txt',
+					mediaType: 'text/plain',
+					size: 10
+				}
+			]
+		};
+
+		const response: TranscriptDisplayRow = {
+			...message(2),
+			id: 'text:2',
+			kind: 'text',
+			text: 'Agent reply'
+		};
+
+		const { viewport } = await renderTranscript([promptMessage, response]);
+
+		const column = viewport.firstElementChild;
+		const prompt = column?.querySelector<HTMLElement>('[data-message-id="prompt:1"]');
+		const agent = column?.querySelector<HTMLElement>('[data-message-id="text:2"]');
+		const chips = prompt?.querySelector('[aria-label="Attached files"]');
+
+		if (!column || !prompt || !agent || !chips) {
+			throw new Error('Missing transcript alignment fixtures');
+		}
+
+		expect(column.classList.contains('mx-auto')).toBe(true);
+		expect(column.classList.contains('max-w-5xl')).toBe(true);
+		expect(prompt.classList.contains('items-start')).toBe(true);
+		expect(prompt.classList.contains('items-end')).toBe(false);
+		expect(chips.classList.contains('justify-end')).toBe(false);
+		expect(agent.className).not.toMatch(/\b(items-end|justify-end|self-end|ml-auto|text-right)\b/);
+	});
+
 	it('opens every transcript link in a new tab without granting opener access', async () => {
 		const prompt = { ...message(1), text: '[Prompt](https://example.com/prompt)' };
 
