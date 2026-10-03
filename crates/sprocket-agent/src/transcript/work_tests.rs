@@ -332,6 +332,8 @@ fn old_command_session_caches_migrate_without_losing_transcript_data() {
         .unwrap();
     assert_eq!(page["rows"][0]["pendingTools"], 0);
     assert_eq!(page["rows"][0]["completedAt"], 20.0);
+    assert_eq!(page["rows"][0]["closed"], before["rows"][0]["closed"]);
+    assert_eq!(page["rows"][2]["closed"], before["rows"][2]["closed"]);
     assert_eq!(page["changes"][0]["id"], "section");
     assert_eq!(
         replica

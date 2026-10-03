@@ -80,9 +80,9 @@ impl WorkReplica {
         }
         let generation = self.generation()? + 1;
         let tx = self.db.transaction()?;
-        let sections: Vec<(String, String)> = tx
-            .prepare("SELECT id,json_extract(body,'$.threadId') FROM rows WHERE kind='work'")?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        let sections: Vec<(String, String, bool)> = tx
+            .prepare("SELECT id,json_extract(body,'$.threadId'),json_extract(body,'$.closed') FROM rows WHERE kind='work'")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<Result<_, _>>()?;
         tx.execute_batch("DROP TABLE source_refs;")?;
         ReadIndex::initialize(&tx)?;
@@ -92,8 +92,8 @@ impl WorkReplica {
                 ReadIndex(&tx).insert_part(&serde_json::from_str(&body?)?)?;
             }
         }
-        for (section, thread) in sections {
-            Self::rebuild_section(&tx, &thread, &section, generation)?;
+        for (section, thread, closed) in sections {
+            Self::rebuild_section(&tx, &thread, &section, generation, Some(closed))?;
         }
         Self::put_state(&tx, "generation", &generation)?;
         tx.commit()?;
@@ -190,6 +190,7 @@ impl WorkReplica {
         thread_id: &str,
         key: &str,
         generation: i64,
+        known_closed: Option<bool>,
     ) -> anyhow::Result<()> {
         let index = ReadIndex(db);
         let items = index.page(key, -1, i64::MAX, false, u32::MAX)?;
@@ -231,36 +232,38 @@ impl WorkReplica {
                     .max_by(f64::total_cmp)
             })
             .flatten();
-        let mut closed = false;
-        let mut statement = db.prepare(
-            "SELECT body FROM parts WHERE json_extract(body,'$.runId')=? ORDER BY number",
-        )?;
-        let bodies: Vec<String> = statement
-            .query_map([&run_id], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        for body in bodies {
-            let part: TranscriptPart = serde_json::from_str(&body)?;
-            for range in &part.work_assignment().ranges {
-                let at = WorkPosition {
-                    part: part.number,
-                    item: range.start,
-                };
-                if range.section_key != key && at > first {
-                    closed = true;
-                }
-                if range.section_key == key
-                    && part
-                        .content_items()
-                        .iter()
-                        .skip(range.end as usize)
-                        .any(|item| {
-                            item["type"] == "text"
-                                && item["text"]
-                                    .as_str()
-                                    .is_some_and(|text| !text.trim().is_empty())
-                        })
-                {
-                    closed = true;
+        let mut closed = known_closed.unwrap_or(false);
+        if known_closed.is_none() {
+            let mut statement = db.prepare(
+                "SELECT body FROM parts WHERE json_extract(body,'$.runId')=? ORDER BY number",
+            )?;
+            let bodies: Vec<String> = statement
+                .query_map([&run_id], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            for body in bodies {
+                let part: TranscriptPart = serde_json::from_str(&body)?;
+                for range in &part.work_assignment().ranges {
+                    let at = WorkPosition {
+                        part: part.number,
+                        item: range.start,
+                    };
+                    if range.section_key != key && at > first {
+                        closed = true;
+                    }
+                    if range.section_key == key
+                        && part
+                            .content_items()
+                            .iter()
+                            .skip(range.end as usize)
+                            .any(|item| {
+                                item["type"] == "text"
+                                    && item["text"]
+                                        .as_str()
+                                        .is_some_and(|text| !text.trim().is_empty())
+                            })
+                    {
+                        closed = true;
+                    }
                 }
             }
         }
@@ -384,7 +387,7 @@ impl WorkReplica {
                 }
             }
             for section in affected {
-                Self::rebuild_section(&tx, thread_id, &section, generation)?;
+                Self::rebuild_section(&tx, thread_id, &section, generation, None)?;
             }
         }
         if let Some(local_total) = parts

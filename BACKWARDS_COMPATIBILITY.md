@@ -339,6 +339,9 @@ replica identity, and raw transcript results are preserved; changed rows receive
 a new generation so connected clients refresh them. Convex data and tool
 payload/result formats are unchanged.
 
+Section boundaries are unchanged by snapshot semantics, so migration reuses the
+stored `closed` flags instead of rescanning each run for every section.
+
 Remove this local migration once supported installations no longer have caches
 with the session column, or a later cache migration also rebuilds these indexes.
 
