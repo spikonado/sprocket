@@ -196,6 +196,7 @@ export default function ThreadTranscript({
 
 		return {
 			visibleBlocks,
+			lastBlock: section.blocks.at(-1),
 			runningTools,
 			workInProgress,
 			approvals: visibleBlocks.flatMap((block) =>
@@ -483,9 +484,7 @@ export default function ThreadTranscript({
 
 			if (block.type === 'reasoning') {
 				const reasoningInProgress =
-					work.workInProgress &&
-					work.runningTools.length === 0 &&
-					blockIndex === work.visibleBlocks.length - 1;
+					work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
 
 				return (
 					<ReasoningDisclosure key={renderKey} text={block.text} inProgress={reasoningInProgress} />

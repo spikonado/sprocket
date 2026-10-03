@@ -252,56 +252,67 @@ describe('transcript viewport paging', () => {
 		}
 	);
 
-	it('reveals a synchronous call only after its result arrives while async calls remain running', async () => {
-		const response: LiveTranscriptMessage = {
-			...liveMessage(),
-			runStatus: 'running',
-			parts: [
-				{ type: 'reasoning', id: 'plan', text: 'Checking the workspace.' },
-				{
-					type: 'tool-call',
-					callId: 'skill',
-					name: 'read_skill',
-					input: { name: 'hidden-skill' }
-				},
-				{
-					type: 'tool-call',
-					callId: 'command',
-					name: 'exec_command',
-					input: { cmd: 'sleep 10' }
-				}
-			]
-		};
+	it.each([false, true])(
+		'reveals a synchronous call only after its result arrives with async=%s',
+		async (withAsync) => {
+			const response: LiveTranscriptMessage = {
+				...liveMessage(),
+				runStatus: 'running',
+				parts: [
+					{ type: 'reasoning', id: 'plan', text: 'Checking the workspace.' },
+					{
+						type: 'tool-call',
+						callId: 'skill',
+						name: 'read_skill',
+						input: { name: 'hidden-skill' }
+					},
+					...(withAsync
+						? [
+								{
+									type: 'tool-call' as const,
+									callId: 'command',
+									name: 'exec_command',
+									input: { cmd: 'sleep 10' }
+								}
+							]
+						: [])
+				]
+			};
 
-		const { viewport, setProps } = await renderTranscript([response]);
-		setProps({ activeRunId: response.runId });
-		await settle();
-		click(viewport.querySelector('button[aria-expanded]'));
-		await settle();
+			const { viewport, setProps } = await renderTranscript([response]);
+			setProps({ activeRunId: response.runId });
+			await settle();
+			click(viewport.querySelector('button[aria-expanded]'));
+			await settle();
 
-		expect(viewport.textContent).toContain('Running');
-		expect(viewport.textContent).toContain('sleep 10');
-		expect(viewport.textContent).not.toContain('hidden-skill');
-		expect(viewport.textContent).not.toContain('Read Skill');
+			expect(viewport.textContent?.includes('Running')).toBe(withAsync);
+			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
+			expect(viewport.textContent).toContain('Reasoned');
+			expect(viewport.textContent).not.toContain('Reasoning');
+			expect(viewport.textContent).not.toContain('hidden-skill');
+			expect(viewport.textContent).not.toContain('Read Skill');
 
-		setProps({
-			messages: [
-				{
-					...response,
-					parts: [
-						...response.parts,
-						{ type: 'tool-result', callId: 'skill', name: 'read_skill', output: {} }
-					]
-				}
-			]
-		});
-		await settle();
+			setProps({
+				messages: [
+					{
+						...response,
+						parts: [
+							...response.parts,
+							{ type: 'tool-result', callId: 'skill', name: 'read_skill', output: {} }
+						]
+					}
+				]
+			});
+			await settle();
 
-		expect(viewport.textContent).toContain('Read Skill');
-		expect(viewport.textContent).toContain('hidden-skill');
-		expect(viewport.textContent).toContain('Running');
-		expect(viewport.textContent).toContain('sleep 10');
-	});
+			expect(viewport.textContent).toContain('Read Skill');
+			expect(viewport.textContent).toContain('hidden-skill');
+			expect(viewport.textContent?.includes('Running')).toBe(withAsync);
+			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
+			expect(viewport.textContent).toContain('Reasoned');
+			expect(viewport.textContent).not.toContain('Reasoning');
+		}
+	);
 
 	it.each([
 		{ kind: 'live', toolName: 'exec_command', group: 'Ran Commands' },
