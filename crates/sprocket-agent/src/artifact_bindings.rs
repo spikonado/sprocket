@@ -167,11 +167,41 @@ impl BindingGuard {
             .find(|binding| binding.artifact_id.as_deref() == Some(artifact_id))
     }
 
-    pub fn remove(&mut self, artifact_id: &str) -> bool {
-        let previous = self.bindings.len();
+    pub async fn delete_artifact(
+        &mut self,
+        workspace: &Path,
+        artifact_id: &str,
+    ) -> anyhow::Result<()> {
+        let paths: Vec<_> = self
+            .bindings
+            .iter()
+            .filter(|binding| binding.artifact_id.as_deref() == Some(artifact_id))
+            .map(|binding| workspace.join(&binding.local_path))
+            .collect();
+        if paths.is_empty() {
+            return Ok(());
+        }
+        // Keep the binding lock held if cancellation outlives the filesystem operation.
+        let lock = self._lock.try_clone()?;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let _lock = lock;
+            for path in paths {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("Cannot delete artifact file {}", path.display())
+                        });
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await??;
         self.bindings
             .retain(|binding| binding.artifact_id.as_deref() != Some(artifact_id));
-        previous != self.bindings.len()
+        self.persist().await
     }
 
     pub fn reserve(&mut self, path: String) -> &mut ArtifactBinding {
@@ -309,7 +339,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn removing_binding_preserves_files_and_creates_fresh_registration_on_readd() {
+    async fn deletion_removes_local_files_and_bindings_and_allows_readding() {
         let dir = tempfile::tempdir().unwrap();
         let store =
             ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
@@ -321,9 +351,9 @@ mod tests {
         binding.artifact_id = Some("deleted".into());
         let old_registration = binding.registration_id.clone();
         let pending_registration = guard.reserve("pending.md".into()).registration_id.clone();
-        assert!(guard.remove("deleted"));
-        assert!(!guard.remove("deleted"));
         guard.persist().await.unwrap();
+        guard.delete_artifact(dir.path(), "deleted").await.unwrap();
+        guard.delete_artifact(dir.path(), "deleted").await.unwrap();
         drop(guard);
         let mut guard = store.lock().await.unwrap();
         assert!(guard.get("deleted").is_none());
@@ -337,10 +367,68 @@ mod tests {
             guard.reserve("notes.md".into()).registration_id,
             old_registration
         );
+        assert!(!dir.path().join("notes.md").exists());
+    }
+
+    #[tokio::test]
+    async fn deletion_handles_absolute_paths_and_already_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().join("notes.md");
+        std::fs::write(&path, "source").unwrap();
+        let store =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        let mut guard = store.lock().await.unwrap();
+        for (id, path) in [
+            ("absolute", path.to_str().unwrap()),
+            ("missing", "missing.md"),
+        ] {
+            guard.reserve(path.into()).artifact_id = Some(id.into());
+        }
+        guard.persist().await.unwrap();
+        guard.delete_artifact(dir.path(), "absolute").await.unwrap();
+        guard.delete_artifact(dir.path(), "missing").await.unwrap();
+        drop(guard);
+        assert!(!path.exists());
+        assert!(store.snapshot().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deletion_failure_keeps_the_binding_and_does_not_remove_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.md");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep.md"), "source").unwrap();
+        let store =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        let mut guard = store.lock().await.unwrap();
+        guard.reserve("notes.md".into()).artifact_id = Some("artifact".into());
+        guard.persist().await.unwrap();
+        assert!(guard.delete_artifact(dir.path(), "artifact").await.is_err());
+        assert!(guard.get("artifact").is_some());
+        drop(guard);
+        assert_eq!(store.snapshot().await.unwrap().len(), 1);
         assert_eq!(
-            tokio::fs::read_to_string(dir.path().join("notes.md"))
-                .await
-                .unwrap(),
+            std::fs::read_to_string(path.join("keep.md")).unwrap(),
+            "source"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deletion_unlinks_a_registered_symlink_without_deleting_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("target.md"), "source").unwrap();
+        let link = dir.path().join("notes.md");
+        std::os::unix::fs::symlink("target.md", &link).unwrap();
+        let store =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        let mut guard = store.lock().await.unwrap();
+        guard.reserve("notes.md".into()).artifact_id = Some("artifact".into());
+        guard.delete_artifact(dir.path(), "artifact").await.unwrap();
+        assert!(std::fs::symlink_metadata(link).is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("target.md")).unwrap(),
             "source"
         );
     }

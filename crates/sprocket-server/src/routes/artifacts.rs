@@ -71,10 +71,13 @@ async fn delete_handler(
         std::path::Path::new(&attachment.workspace_path),
     );
     let mut bindings = store.lock().await.map_err(ApiError::internal)?;
-    // Persist the explicit local action before the cloud request can commit.
-    if bindings.remove(artifact_id) {
-        bindings.persist().await.map_err(ApiError::internal)?;
-    }
+    bindings
+        .delete_artifact(
+            std::path::Path::new(&attachment.workspace_path),
+            artifact_id,
+        )
+        .await
+        .map_err(ApiError::internal)?;
     let args = BTreeMap::from([
         ("repositoryKey".into(), Value::String(repository_key.into())),
         ("artifactId".into(), Value::String(artifact_id.into())),
@@ -192,7 +195,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn deletion_validates_scope_and_unbinds_locally_even_when_cloud_fails() {
+    async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let auth = crate::auth::AuthState::load(data.path()).unwrap();
@@ -248,6 +251,7 @@ mod tests {
             assert_eq!(response.status(), expected);
         }
         assert_eq!(bindings.snapshot().await.unwrap().len(), 1);
+        assert!(workspace.path().join("notes.md").exists());
         let attachment = state
             .project_attachments
             .attach(crate::project_attachments::AttachProjectRequest {
@@ -276,9 +280,6 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(bindings.snapshot().await.unwrap().is_empty());
-        assert_eq!(
-            std::fs::read_to_string(workspace.path().join("notes.md")).unwrap(),
-            "local source"
-        );
+        assert!(!workspace.path().join("notes.md").exists());
     }
 }

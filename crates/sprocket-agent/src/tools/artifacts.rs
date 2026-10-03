@@ -380,7 +380,7 @@ impl rig::tool::Tool for DeleteArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Delete an artifact from the current project and stop syncing its local file. The source file is preserved.".into()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -405,10 +405,10 @@ impl rig::tool::Tool for DeleteArtifactTool {
                 };
                 let mutation_args =
                     mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
-                // Local unbinding belongs to this action even if the cloud reply is lost.
-                if bindings.remove(&args.artifact_id) {
-                    bindings.persist().await.map_err(tool_error)?;
-                }
+                bindings
+                    .delete_artifact(&self.0.workspace_root, &args.artifact_id)
+                    .await
+                    .map_err(tool_error)?;
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
                     run_convex_tool_mutation(
