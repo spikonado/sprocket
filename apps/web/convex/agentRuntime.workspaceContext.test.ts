@@ -51,153 +51,256 @@ async function finishRun(
 	});
 }
 
-describe('workspace context snapshots', () => {
-	it('pins the initial snapshot and ignores changed files on a retry', async () => {
-		const { t, asUser, auth } = await setup();
-		const initial = [{ beforePartNumber: 0, text: 'Original instructions and skills' }];
+describe('workspace prompt preparation', () => {
+	it('stores the initial preamble on the prompt and freezes it on retry', async () => {
+		const { t, asUser, threadId, auth } = await setup();
+
+		const initial = {
+			prompt: {
+				text: 'Do the thing',
+				imageUploads: [],
+				workspaceContext: 'Original instructions and skills'
+			},
+			workspaceContext: 'Original instructions and skills'
+		};
+
 		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
 				...auth,
-				text: initial[0]!.text
+				text: 'Original instructions and skills'
 			})
 		).toEqual(initial);
 		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
 				...auth,
 				text: 'Edited during this run'
 			})
 		).toEqual(initial);
-		const snapshots = await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect());
-		expect(snapshots).toHaveLength(1);
-		expect(await t.run((ctx) => ctx.db.get('runs', auth.runId))).toMatchObject({
-			workspaceContextSnapshotId: snapshots[0]!._id
-		});
+
+		const prompt = await t.run((ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_kind_and_number', (q) =>
+					q.eq('threadId', threadId).eq('kind', 'prompt')
+				)
+				.first()
+		);
+
+		expect(prompt?.prompt?.workspaceContext).toBe('Original instructions and skills');
+		expect(
+			await createQueuedRun(t, asUser, threadId, 'workspace-context', auth.executionSecret)
+		).toMatchObject({ runId: auth.runId, created: false });
 	});
 
-	it.each([
-		{ changed: false, summarized: false },
-		{ changed: true, summarized: false },
-		{ changed: true, summarized: true }
-	])(
-		'preserves prompt history (changed=$changed, summarized=$summarized)',
-		async ({ changed, summarized }) => {
+	it.each([{ changed: false }, { changed: true }])(
+		'appends the preamble only when it changed (changed=$changed)',
+		async ({ changed }) => {
 			const fixture = await setup();
 			const { t, asUser, threadId, auth } = fixture;
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, { ...auth, text: 'Original' });
 			await finishRun(fixture, 'completed');
-
-			if (summarized) {
-				await t.run((ctx) =>
-					ctx.db.patch('threadRecords', threadId, {
-						contextSummary: 'Earlier work',
-						contextSummaryThroughPartNumber: 0
-					})
-				);
-			}
 
 			const executionSecret = 'next-workspace-context-secret';
 			const { runId } = await createQueuedRun(t, asUser, threadId, 'next-context', executionSecret);
 			const nextAuth = { runId, claimId: 'next-context-claim', executionSecret };
 			await asUser.mutation(api.agentRuntime.start, nextAuth);
 
-			const expected = [
-				{ beforePartNumber: 0, text: 'Original' },
-				...(changed ? [{ beforePartNumber: 2, text: 'Updated' }] : [])
-			];
+			const expected = {
+				prompt: {
+					text: 'Do the thing',
+					imageUploads: [],
+					workspaceContext: changed ? 'Updated' : null
+				},
+				workspaceContext: changed ? 'Updated' : 'Original'
+			};
 
 			expect(
-				await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
+				await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
 					...nextAuth,
 					text: changed ? 'Updated' : 'Original'
 				})
 			).toEqual(expected);
 			expect(
-				await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
+				await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
 					...nextAuth,
 					text: 'Another edit before a retry'
 				})
 			).toEqual(expected);
-			const snapshots = await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect());
-			expect(snapshots).toHaveLength(changed ? 2 : 1);
-			expect(await t.run((ctx) => ctx.db.get('runs', runId))).toMatchObject({
-				workspaceContextSnapshotId: snapshots.at(-1)!._id
-			});
 		}
 	);
 
-	it('reuses the latest snapshot for a promptless continuation', async () => {
+	it('never modifies the UI-visible prompt text', async () => {
+		const { t, asUser, threadId, auth } = await setup();
+		await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, { ...auth, text: 'Preamble' });
+
+		const prompt = await t.run((ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (q) =>
+					q.eq('threadId', threadId).eq('runId', auth.runId)
+				)
+				.first()
+		);
+
+		expect(prompt?.prompt?.text).toBe('Do the thing');
+	});
+
+	it('keeps the stored preamble for a promptless continuation', async () => {
 		const fixture = await setup();
 		const { t, asUser, threadId, auth } = fixture;
-		await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
+		await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, { ...auth, text: 'Original' });
 		await finishRun(fixture, 'failed');
-		const executionSecret = 'continued-context-secret';
 
 		const { runId } = await insertQueuedRun(t, asUser, {
 			threadId,
 			submissionId: 'continued-context',
-			executionSecret,
+			executionSecret: 'continued-context-secret',
 			prompt: '',
 			continuationOfRunId: auth.runId
 		});
 
-		const continuationAuth = { runId, claimId: 'continued-context-claim', executionSecret };
+		const continuationAuth = {
+			runId,
+			claimId: 'continued-context-claim',
+			executionSecret: 'continued-context-secret'
+		};
+
 		await asUser.mutation(api.agentRuntime.start, continuationAuth);
 		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
 				...continuationAuth,
 				text: 'Edited after failure'
 			})
-		).toEqual([{ beforePartNumber: 0, text: 'Original' }]);
-		expect(await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect())).toHaveLength(1);
+		).toEqual({ prompt: null, workspaceContext: 'Original' });
 	});
 
-	it('pins the handoff workspace context as the baseline for the resumed run', async () => {
+	it('returns an ephemeral initial context for a legacy promptless conversation', async () => {
 		const fixture = await setup();
 		const { t, asUser, threadId, auth } = fixture;
-		await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
+		await finishRun(fixture, 'failed');
+
+		const { runId } = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'legacy-continued-context',
+			executionSecret: 'legacy-continued-context-secret',
+			prompt: '',
+			continuationOfRunId: auth.runId
+		});
+
+		const continuationAuth = {
+			runId,
+			claimId: 'legacy-context-claim',
+			executionSecret: 'legacy-continued-context-secret'
+		};
+
+		await asUser.mutation(api.agentRuntime.start, continuationAuth);
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...continuationAuth,
+				text: 'Current legacy context'
+			})
+		).toEqual({
+			prompt: null,
+			workspaceContext: 'Current legacy context',
+			initialWorkspaceContext: 'Current legacy context'
+		});
+	});
+
+	it('does not append a changed preamble to a completed legacy run', async () => {
+		const fixture = await setup();
+		const { t, asUser, threadId } = fixture;
 		await finishRun(fixture, 'completed');
 
-		const executionSecret = 'handoff-context-secret';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'handoff-context',
-			executionSecret
-		);
-
-		const handoffAuth = { runId, claimId: 'handoff-context-claim', executionSecret };
-		await asUser.mutation(api.agentRuntime.start, handoffAuth);
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
-				...handoffAuth,
-				text: 'Original'
-			})
-		).toEqual([{ beforePartNumber: 0, text: 'Original' }]);
-
+		const executionSecret = 'legacy-next-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'legacy-next', executionSecret);
+		const nextAuth = { runId, claimId: 'legacy-next-claim', executionSecret };
+		await asUser.mutation(api.agentRuntime.start, nextAuth);
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
-			...handoffAuth,
+			...nextAuth,
 			attemptSeq: 1
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			...handoffAuth,
+			...nextAuth,
 			attemptSeq: 1,
-			streamId: 'handoff-completion',
-			items: [{ type: 'text', id: 'handoff-text', text: 'Step done', turnId: 'handoff-turn' }],
+			streamId: 'legacy-next-completion',
+			items: [{ type: 'text', id: 'legacy-next-text', text: 'Done', turnId: 'legacy-next-turn' }],
 			...emptyCompletionAssignments
 		});
-		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
-			...handoffAuth,
-			attemptSeq: 2
+
+		const expected = {
+			prompt: { text: 'Do the thing', imageUploads: [] },
+			workspaceContext: 'Late edit',
+			initialWorkspaceContext: 'Late edit'
+		};
+
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...nextAuth,
+				text: 'Late edit'
+			})
+		).toEqual(expected);
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...nextAuth,
+				text: 'Later edit'
+			})
+		).toEqual({
+			...expected,
+			workspaceContext: 'Later edit',
+			initialWorkspaceContext: 'Later edit'
 		});
 
+		const prompt = await t.run((ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (q) =>
+					q.eq('threadId', threadId).eq('runId', runId)
+				)
+				.first()
+		);
+
+		expect(prompt?.prompt).not.toHaveProperty('workspaceContext');
+	});
+
+	it('rejects stale and expired claims without touching the prompt', async () => {
+		const { t, asUser, threadId, auth } = await setup();
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...auth,
+				claimId: 'stale-claim',
+				text: 'Stale context'
+			})
+		).toBeNull();
+		await t.run((ctx) => patchRunExecution(ctx, auth.runId, { claimExpiresAt: Date.now() - 1 }));
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, { ...auth, text: 'Expired' })
+		).toBeNull();
+
+		const prompt = await t.run((ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (q) =>
+					q.eq('threadId', threadId).eq('runId', auth.runId)
+				)
+				.first()
+		);
+
+		expect(prompt?.prompt).not.toHaveProperty('workspaceContext');
+	});
+});
+
+describe('context handoff workspace preamble', () => {
+	it('prepends the preamble to the stored summary and rejects conflicting retries', async () => {
+		const fixture = await setup();
+		const { t, asUser, threadId, auth } = fixture;
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...auth, attemptSeq: 1 });
+
 		const handoff = {
-			...handoffAuth,
-			summary: 'First step is done.',
-			completionAttemptSeq: 2,
-			beforePrompt: false,
-			workspaceContext: 'Handoff context'
+			...auth,
+			summary: 'Ready for the next request.',
+			completionAttemptSeq: 1,
+			beforePrompt: true,
+			workspaceContext: 'Latest context'
 		};
 
 		await expect(asUser.mutation(api.agentRuntime.saveContextHandoff, handoff)).resolves.toBe(true);
@@ -207,151 +310,30 @@ describe('workspace context snapshots', () => {
 				...handoff,
 				workspaceContext: 'Conflicting retry'
 			})
-		).rejects.toThrow('Conflicting workspace context handoff retry.');
+		).rejects.toThrow('Conflicting context handoff retry.');
 
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
-				...handoffAuth,
-				text: 'Edited during the handoff'
-			})
-		).toEqual([{ beforePartNumber: 4, text: 'Handoff context' }]);
-		expect(await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect())).toHaveLength(2);
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId,
-			executionSecret,
-			expectedClaimId: handoffAuth.claimId,
-			expectedStatus: 'running',
-			text: '',
-			status: 'completed'
+		expect(await t.run((ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			contextSummary: 'Latest context\n\nReady for the next request.'
 		});
-
-		const nextSecret = 'after-handoff-secret';
-
-		const { runId: nextRunId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'after-handoff',
-			nextSecret
-		);
-
-		const nextAuth = {
-			runId: nextRunId,
-			claimId: 'after-handoff-claim',
-			executionSecret: nextSecret
-		};
-
-		await asUser.mutation(api.agentRuntime.start, nextAuth);
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
-				...nextAuth,
-				text: 'Fresh context'
-			})
-		).toEqual([
-			{ beforePartNumber: 4, text: 'Handoff context' },
-			{ beforePartNumber: 4, text: 'Fresh context' }
-		]);
-		expect(await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect())).toHaveLength(3);
 	});
 
-	it('rebuilds before the first prompt with a durable nonnegative handoff anchor', async () => {
-		const { t, asUser, auth } = await setup();
-		await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Original' });
+	it('accepts released callers without the optional preamble argument', async () => {
+		const fixture = await setup();
+		const { t, asUser, threadId, auth } = fixture;
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...auth, attemptSeq: 1 });
 
 		const handoff = {
 			...auth,
-			summary: 'Ready for the first request.',
+			summary: 'Ready for the next request.',
 			completionAttemptSeq: 1,
-			beforePrompt: true,
-			workspaceContext: 'Latest context'
+			beforePrompt: true
 		};
 
 		await asUser.mutation(api.agentRuntime.saveContextHandoff, handoff);
-		await asUser.mutation(api.agentRuntime.saveContextHandoff, handoff);
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Later edit' })
-		).toEqual([{ beforePartNumber: 0, text: 'Latest context' }]);
-		expect(await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect())).toHaveLength(2);
-	});
+		await expect(asUser.mutation(api.agentRuntime.saveContextHandoff, handoff)).resolves.toBe(true);
 
-	it('replays the pinned handoff within read limits on a long-lived thread', async () => {
-		const { t, asUser, threadId, auth } = await setup();
-		const historicalContext = 'Instructions and skills\n'.repeat(24_000);
-
-		async function seedSnapshots() {
-			for (let batch = 0; batch < 5; batch++) {
-				await t.run(async (ctx) => {
-					for (let index = 0; index < 8; index++) {
-						await ctx.db.insert('threadWorkspaceContexts', {
-							threadId,
-							beforePartNumber: 0,
-							text: historicalContext
-						});
-					}
-				});
-			}
-		}
-
-		await seedSnapshots();
-		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...auth, attemptSeq: 1 });
-		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
-			...auth,
-			summary: 'Ready for the next request.',
-			completionAttemptSeq: 1,
-			beforePrompt: true,
-			workspaceContext: 'Pinned handoff context'
+		expect(await t.run((ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
+			contextSummary: 'Ready for the next request.'
 		});
-		await seedSnapshots();
-
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
-				...auth,
-				text: 'Edited files'
-			})
-		).toEqual([{ beforePartNumber: 0, text: 'Pinned handoff context' }]);
-	});
-
-	it('initializes an older promptless conversation without a saved snapshot', async () => {
-		const fixture = await setup();
-		const { t, asUser, threadId, auth } = fixture;
-		await finishRun(fixture, 'failed');
-		const executionSecret = 'legacy-continued-context-secret';
-
-		const { runId } = await insertQueuedRun(t, asUser, {
-			threadId,
-			submissionId: 'legacy-continued-context',
-			executionSecret,
-			prompt: '',
-			continuationOfRunId: auth.runId
-		});
-
-		const continuationAuth = { runId, claimId: 'legacy-context-claim', executionSecret };
-		await asUser.mutation(api.agentRuntime.start, continuationAuth);
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
-				...continuationAuth,
-				text: 'Current legacy context'
-			})
-		).toEqual([{ beforePartNumber: 0, text: 'Current legacy context' }]);
-	});
-
-	it('rejects stale and expired claims without saving snapshots', async () => {
-		const { t, asUser, auth } = await setup();
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
-				...auth,
-				claimId: 'stale-claim',
-				text: 'Stale context'
-			})
-		).toBeNull();
-		await t.run((ctx) => patchRunExecution(ctx, auth.runId, { claimExpiresAt: Date.now() - 1 }));
-		expect(
-			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, { ...auth, text: 'Expired' })
-		).toBeNull();
-		expect(await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect())).toEqual([]);
-		expect(await t.run((ctx) => ctx.db.get('runs', auth.runId))).not.toHaveProperty(
-			'workspaceContextSnapshotId'
-		);
 	});
 });

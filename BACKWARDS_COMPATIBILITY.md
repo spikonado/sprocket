@@ -117,33 +117,33 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
-### Workspace context snapshots
+### Workspace preambles in transcript prompts
 
-Released agents do not persist workspace instruction or skill snapshots, and
-older runs omit `workspaceContextSnapshotId`. The first claimed run using the
-new mutation initializes a missing baseline from the currently loaded context
-and pins the run to it. Existing baselines are reused for promptless continuations
-and resumed runs with finished completions. New prompts append changed snapshots;
-unchanged prompts pin the existing snapshot. Retries keep the pinned context.
-A context handoff optionally carries the freshly loaded workspace context; the
-handoff then stores it as a new snapshot and re-pins the run to it so a resumed
-run rebuilds from that baseline instead of the stale pre-handoff prefix. Agents
-older than this argument omit it, leaving the run pinned to its prior snapshot.
-Historical file contents cannot be recovered from old transcripts, so this
-initialization happens during the first write rather than a fabricated backfill.
-Transcript part formats and released-agent endpoints remain unchanged.
+Released agents do not persist workspace instruction or skill preambles, so
+their prompt parts omit `prompt.workspaceContext` entirely. The
+`prepareWorkspacePrompt` mutation pins the preamble onto the run's prompt:
+`string` when the full preamble is attached to that prompt, `null` when it was
+checked and unchanged from the latest earlier recorded preamble, absent before
+preparation or for released agents. Once prepared, the stored prompt is
+returned unchanged even if the underlying files change. Promptless
+continuations and prompts that already have a finished completion never append
+a changed preamble; when no earlier preamble is recorded and nothing can be
+prepared, the mutation returns `initialWorkspaceContext` as an ephemeral
+fallback because historical file contents cannot be recovered from old
+transcripts. Transcript part formats otherwise remain unchanged, and the
+UI-visible `prompt.text` is never modified.
 
-Handoffs also store `contextSummaryWorkspaceContextSnapshotId` on the thread to
-distinguish the rebuilt baseline from a subsequent update at the same part number.
-Threads with older handoffs omit that pointer and derive a baseline from the
-snapshot history before the summary cutoff.
+The context handoff accepts an optional `workspaceContext` argument and
+prepends it to the stored `contextSummary` string, so durable and live handoff
+share one combined summary with no separate baseline store. Agents older than
+this argument omit it, leaving the handoff to store the summary alone.
 
-Keep the run and summary snapshot fields optional while released agents that omit
-them remain supported.
+Keep `prompt.workspaceContext` optional while released agents that omit it
+remain supported.
 Keep the handoff `workspaceContext` argument optional for the same window.
-Remove the missing-snapshot initialization only after those agents age out and
-every resumable legacy thread has acquired a baseline; historical runs may keep
-the absent field because their original context cannot be reconstructed.
+Remove the ephemeral `initialWorkspaceContext` fallback only after those agents
+age out; historical runs may keep the absent field because their original
+context cannot be reconstructed.
 
 ### Project-owned artifacts
 

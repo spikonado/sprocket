@@ -20,13 +20,13 @@ use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::transcript::{
-    TranscriptPart, TranscriptState, TranscriptStore,
-    agent_history_from_parts_with_workspace_context, apply_remote_state,
+    TranscriptPart, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
     current_run_has_finished_turns, fetch_missing_parts, fetch_parts_by_numbers,
     parse_remote_parts, prompt_text_with_attachments,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
-use crate::workspace_context::WORKSPACE_CONTEXT_HEADER;
+
+const WORKSPACE_CONTEXT_HEADER: &str = "# Thread-Scoped Workspace Context\n\nThe following available skills and AGENTS.md instructions supersede previous workspace context, including skills or instructions that have been removed.\n\n";
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
 // apps/web/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
@@ -784,6 +784,7 @@ async fn load_prior_history(
         }
         Ok(_) | Err(_) => local_parts,
     };
+    store.append_parts(user_id, thread_id, &parts).await?;
     cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
     Ok(PriorHistory {
         current_prompt: parts
@@ -835,7 +836,7 @@ pub async fn run_agent(
         };
 
     let prepare_history = load_prior_history(&runtime, &store, &context, &run_id);
-    let prior_history = {
+    let mut prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
             Ok(updates) => updates,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
@@ -961,22 +962,38 @@ pub async fn run_agent(
     }
 
     match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
-        let Some(workspace_contexts) = runtime
-            .save_workspace_context(&run_id, &claim_id, &prompt_context.initial_context)
+        let Some(prepared_prompt) = runtime
+            .prepare_workspace_prompt(&run_id, &claim_id, &prompt_context.initial_context)
             .await?
         else {
             acknowledge_stop(&runtime, &run_id, &claim_id).await?;
             return Ok(());
         };
-        let (initial_workspace_context, workspace_updates) = workspace_contexts
-            .split_first()
-            .context("workspace context was not persisted")?;
-        let mut history = agent_history_from_parts_with_workspace_context(
-            &prior_history.state,
-            &prior_history.parts,
-            Some(&run_id),
-            workspace_updates,
-        );
+        let mut prompt = prompt;
+        if let Some(prepared_body) = prepared_prompt.prompt {
+            if let Some(part) = prior_history
+                .parts
+                .iter_mut()
+                .find(|part| part.run_id == run_id && part.prompt.is_some())
+            {
+                let body = part.prompt.as_mut().context("prompt body is missing")?;
+                body.workspace_context = prepared_body.workspace_context;
+                if !continue_without_prompt {
+                    prompt = Message::user(prompt_text_with_attachments(body));
+                }
+                store
+                    .append_parts(
+                        &context.run.user_id,
+                        &context.run.thread_id,
+                        std::slice::from_ref(part),
+                    )
+                    .await?;
+            } else if !continue_without_prompt {
+                anyhow::bail!("prepared prompt is missing from transcript history");
+            }
+        }
+        let mut history =
+            agent_history_from_parts(&prior_history.state, &prior_history.parts, Some(&run_id));
         crate::tools::hydrate_tool_history(
             &mut history,
             &prior_history.parts,
@@ -996,8 +1013,8 @@ pub async fn run_agent(
                     live: live.clone(),
                     prompt,
                     base_instructions: prompt_context.base_instructions,
-                    initial_workspace_context: initial_workspace_context.text.clone(),
-                    current_workspace_context: prompt_context.initial_context,
+                    initial_workspace_context: prepared_prompt.initial_workspace_context,
+                    current_workspace_context: prepared_prompt.workspace_context,
                     prior_history: deserialize_agent_history(history)?,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),

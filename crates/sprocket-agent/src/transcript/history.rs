@@ -6,13 +6,16 @@ use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToo
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
-use crate::workspace_context::WorkspaceContextSnapshot;
 
 use super::types::{TranscriptPromptBody, TranscriptState};
 
 pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
+    let prompt_text = match &prompt.workspace_context {
+        Some(context) => format!("{context}\n\n{}", prompt.text),
+        None => prompt.text.clone(),
+    };
     if prompt.image_uploads.is_empty() {
-        return prompt.text.clone();
+        return prompt_text;
     }
     let attachments = prompt
         .image_uploads
@@ -27,7 +30,7 @@ pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> Str
         .collect::<Vec<_>>();
     let mut text = format!(
         "{}\n\nAttached files in the local transcript cache:\n{}",
-        prompt.text,
+        prompt_text,
         serde_json::json!(attachments)
     );
     if prompt
@@ -138,15 +141,6 @@ pub fn agent_history_from_parts(
     parts: &[TranscriptPart],
     skip_run_id: Option<&str>,
 ) -> Vec<AgentHistoryMessage> {
-    agent_history_from_parts_with_workspace_context(state, parts, skip_run_id, &[])
-}
-
-pub(crate) fn agent_history_from_parts_with_workspace_context(
-    state: &TranscriptState,
-    parts: &[TranscriptPart],
-    skip_run_id: Option<&str>,
-    workspace_updates: &[WorkspaceContextSnapshot],
-) -> Vec<AgentHistoryMessage> {
     let include_current_prompt =
         skip_run_id.is_some_and(|run_id| current_run_has_finished_turns(parts, run_id));
     let protocol_call_ids = completion_call_ids(parts);
@@ -169,16 +163,10 @@ pub(crate) fn agent_history_from_parts_with_workspace_context(
     let mut opened_call_ids = HashSet::new();
     let mut emitted_results = HashSet::new();
     let mut pending_tools: HashMap<String, &TranscriptToolBody> = HashMap::new();
-    let mut workspace_updates = workspace_updates.iter().peekable();
 
     for part in parts {
         if part.number < state.history_from_number {
             continue;
-        }
-        while let Some(update) =
-            workspace_updates.next_if(|update| update.before_part_number <= part.number)
-        {
-            history.push(workspace_update_message(update));
         }
         if skip_run_id.is_some_and(|run_id| part.run_id == run_id)
             && part.kind == TranscriptPartKind::Prompt
@@ -250,19 +238,7 @@ pub(crate) fn agent_history_from_parts_with_workspace_context(
             }
         }
     }
-    history.extend(workspace_updates.map(workspace_update_message));
     history
-}
-
-fn workspace_update_message(update: &WorkspaceContextSnapshot) -> AgentHistoryMessage {
-    AgentHistoryMessage {
-        role: AgentHistoryRole::User,
-        assistant_id: None,
-        contents: vec![AgentHistoryContent::Text {
-            text: update.update_text(),
-            additional_params_json: None,
-        }],
-    }
 }
 
 fn openai_field<'a>(item: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
@@ -340,6 +316,7 @@ mod tests {
             prompt: Some(TranscriptPromptBody {
                 text: text.to_string(),
                 image_uploads: Vec::new(),
+                workspace_context: None,
             }),
             completion: None,
             tool: None,
@@ -355,29 +332,20 @@ mod tests {
             completion_with_call(1, "call"),
         ];
         let old_history = agent_history_from_parts(&state, &old_parts, None);
-        let parts = [
+        let mut parts = [
             old_parts[0].clone(),
             old_parts[1].clone(),
             prompt(2, "new", "second request"),
         ];
-        let updates = [WorkspaceContextSnapshot {
-            before_part_number: 2,
-            text: "updated instructions and skills".into(),
-        }];
-        let before_completion =
-            agent_history_from_parts_with_workspace_context(&state, &parts, Some("new"), &updates);
+        parts[2].prompt.as_mut().unwrap().workspace_context =
+            Some("updated instructions and skills".into());
+        let before_completion = agent_history_from_parts(&state, &parts, Some("new"));
         assert_eq!(
-            serde_json::to_value(&before_completion[..old_history.len()]).unwrap(),
+            serde_json::to_value(&before_completion).unwrap(),
             serde_json::to_value(&old_history).unwrap(),
         );
-        assert_eq!(before_completion.len(), old_history.len() + 1);
-        assert_eq!(
-            serde_json::to_value(before_completion.last().unwrap()).unwrap()["contents"][0]["text"],
-            updates[0].update_text(),
-        );
 
-        let after_completion =
-            agent_history_from_parts_with_workspace_context(&state, &parts, None, &updates);
+        let after_completion = agent_history_from_parts(&state, &parts, None);
         assert_eq!(after_completion.len(), before_completion.len() + 1);
         assert_eq!(
             serde_json::to_value(&after_completion[..before_completion.len()]).unwrap(),
@@ -385,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(after_completion.last().unwrap()).unwrap()["contents"][0]["text"],
-            "second request",
+            "updated instructions and skills\n\nsecond request",
         );
     }
 
@@ -394,82 +362,40 @@ mod tests {
         let state = TranscriptState::new("user".into(), "thread".into());
         let mut completion = completion_with_call(3, "call");
         completion.run_id = "current".into();
-        let parts = [prompt(2, "current", "user request"), completion];
-        let updates = [WorkspaceContextSnapshot {
-            before_part_number: 2,
-            text: "updated instructions".into(),
-        }];
-        let resumed = agent_history_from_parts_with_workspace_context(
-            &state,
-            &parts,
-            Some("current"),
-            &updates,
-        );
-        let next_run =
-            agent_history_from_parts_with_workspace_context(&state, &parts, None, &updates);
+        let mut parts = [prompt(2, "current", "user request"), completion];
+        parts[0].prompt.as_mut().unwrap().workspace_context = Some("updated instructions".into());
+        let resumed = agent_history_from_parts(&state, &parts, Some("current"));
+        let next_run = agent_history_from_parts(&state, &parts, None);
         assert_eq!(
             serde_json::to_value(&resumed).unwrap(),
             serde_json::to_value(&next_run).unwrap(),
         );
         let messages = serde_json::to_value(&resumed).unwrap();
-        assert_eq!(messages[0]["contents"][0]["text"], updates[0].update_text());
-        assert_eq!(messages[1]["contents"][0]["text"], "user request");
-        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(
+            messages[0]["contents"][0]["text"],
+            "updated instructions\n\nuser request"
+        );
+        assert_eq!(messages[1]["role"], "assistant");
     }
 
     #[test]
-    fn workspace_updates_keep_order_when_prompts_are_skipped_or_share_an_anchor() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let updates = [
-            WorkspaceContextSnapshot {
-                before_part_number: 0,
-                text: "first change".into(),
-            },
-            WorkspaceContextSnapshot {
-                before_part_number: 0,
-                text: "second change".into(),
-            },
-        ];
-        for parts in [vec![], vec![prompt(0, "current", "user prompt")]] {
-            let history = agent_history_from_parts_with_workspace_context(
-                &state,
-                &parts,
-                Some("current"),
-                &updates,
-            );
-            assert_eq!(history.len(), 2);
-            for (message, update) in history.iter().zip(&updates) {
-                assert_eq!(
-                    serde_json::to_value(message).unwrap()["contents"][0]["text"],
-                    update.update_text(),
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn workspace_updates_missed_by_their_anchor_land_after_the_context_summary() {
+    fn workspace_preamble_stays_with_the_prompt_after_a_handoff() {
         let mut state = TranscriptState::new("user".into(), "thread".into());
         state.context_summary = Some("handoff summary".into());
         state.history_from_number = 5;
-        let parts = [prompt(5, "current", "fresh request")];
-        let updates = [WorkspaceContextSnapshot {
-            before_part_number: 3,
-            text: "changed instructions".into(),
-        }];
-        let history = agent_history_from_parts_with_workspace_context(
-            &state,
-            &parts,
-            Some("current"),
-            &updates,
-        );
+        let mut parts = [prompt(5, "current", "fresh request")];
+        parts[0].prompt.as_mut().unwrap().workspace_context = Some("changed instructions".into());
+        let history = agent_history_from_parts(&state, &parts, None);
         let messages = serde_json::to_value(&history).unwrap();
         assert_eq!(messages.as_array().unwrap().len(), 2);
         assert_eq!(
             messages[0]["contents"][0]["text"],
             context_summary_text("handoff summary"),
         );
-        assert_eq!(messages[1]["contents"][0]["text"], updates[0].update_text());
+        assert_eq!(
+            messages[1]["contents"][0]["text"],
+            "changed instructions\n\nfresh request"
+        );
     }
 
     fn tool_part(
@@ -787,6 +713,7 @@ mod tests {
                     created_at: None,
                     prompt: Some(TranscriptPromptBody {
                         text: "see this".into(),
+                        workspace_context: Some("workspace preamble".into()),
                         image_uploads: vec![TranscriptAttachmentMeta {
                             name: "shot.png".into(),
                             media_type: "image/png".into(),
@@ -830,6 +757,7 @@ mod tests {
         assert!(!serialized.contains("https://files.example/shot.png"));
         assert!(!serialized.contains("Image {"));
         assert!(serialized.contains("/cache/user/blobs/st"));
+        assert!(serialized.contains("workspace preamble\\n\\nsee this"));
         assert!(serialized.contains("rs_123"));
         assert!(serialized.contains("encrypted"));
         assert!(serialized.contains("enc"));

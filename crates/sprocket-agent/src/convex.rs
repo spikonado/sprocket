@@ -16,6 +16,15 @@ const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PreparedWorkspacePrompt {
+    pub(crate) prompt: Option<crate::transcript::types::TranscriptPromptBody>,
+    pub(crate) workspace_context: String,
+    #[serde(default)]
+    pub(crate) initial_workspace_context: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedTranscriptPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
@@ -158,15 +167,15 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn save_workspace_context(
+    pub(crate) async fn prepare_workspace_prompt(
         &self,
         run_id: &str,
         claim_id: &str,
         text: &str,
-    ) -> anyhow::Result<Option<Vec<crate::workspace_context::WorkspaceContextSnapshot>>> {
+    ) -> anyhow::Result<Option<PreparedWorkspacePrompt>> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("text".to_string(), text.to_string().into());
-        self.mutation_json("agentRuntime:saveWorkspaceContext", args)
+        self.mutation_json("agentRuntime:prepareWorkspacePrompt", args)
             .await
     }
 

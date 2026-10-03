@@ -286,6 +286,7 @@ mod tests {
             prompt: Some(TranscriptPromptBody {
                 text: String::new(),
                 image_uploads: attachments,
+                workspace_context: None,
             }),
             completion: None,
             tool: None,
@@ -424,6 +425,7 @@ mod tests {
             prompt: Some(TranscriptPromptBody {
                 text: "Continue".into(),
                 image_uploads: vec![cached, missing],
+                workspace_context: None,
             }),
             completion: None,
             tool: None,

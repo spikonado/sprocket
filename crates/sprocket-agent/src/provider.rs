@@ -83,7 +83,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
-    pub(crate) initial_workspace_context: String,
+    pub(crate) initial_workspace_context: Option<String>,
     pub(crate) current_workspace_context: String,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
@@ -336,7 +336,7 @@ where
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
-    let initial_context = Message::user(request.initial_workspace_context);
+    let initial_context = request.initial_workspace_context.map(Message::user);
     let handoff_context = request.current_workspace_context;
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
@@ -349,7 +349,8 @@ where
         }
     };
 
-    let mut history: Vec<_> = std::iter::once(initial_context)
+    let mut history: Vec<_> = initial_context
+        .into_iter()
         .chain(request.prior_history)
         .collect();
     let mut prompt = request.prompt;
@@ -494,8 +495,8 @@ where
                                     if let Err(error) = transcript.advance_attempt().await {
                                         break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                     }
-                                    history = vec![Message::user(handoff_context.clone())];
-                                    let handoff = Message::user(context_summary_text(&summary));
+                                    history = Vec::new();
+                                    let handoff = Message::user(context_summary_text(&format!("{handoff_context}\n\n{summary}")));
                                     prompt = match deferred_prompt.take() {
                                         Some(pending) => { history.push(handoff); pending }
                                         None => handoff,
