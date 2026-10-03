@@ -225,6 +225,7 @@ export default function App({
 	}, [retryPending, convexAuth.isAuthenticated, convexAuth.isLoading, sawAuthLoadingDuringRetry]);
 
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
+	const deleteArtifactRecord = useMutation(api.artifacts.deleteArtifact);
 	const renameThreadRecord = useMutation(api.threads.rename);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
@@ -841,6 +842,28 @@ export default function App({
 		convexAuth.isLoading,
 		convexAuth.isAuthenticated
 	]);
+
+	const deleteArtifact =
+		currentRepositoryKey && convexAuth.isAuthenticated && !convexAuth.isLoading
+			? async (artifactId: string) => {
+					if (desktopApi && signedInUserId && currentWorkspacePath) {
+						await desktopApi.deleteArtifact({
+							userId: signedInUserId,
+							repositoryKey: currentRepositoryKey,
+							workspacePath: currentWorkspacePath,
+							artifactId
+						});
+
+						return;
+					}
+
+					// SAFETY: artifact IDs come from the authenticated artifact registry.
+					await deleteArtifactRecord({
+						artifactId: artifactId as Id<'artifacts'>,
+						repositoryKey: currentRepositoryKey
+					});
+				}
+			: undefined;
 
 	const currentComposerScope = getComposerScope(currentThreadId, currentProjectPath);
 
@@ -2692,6 +2715,7 @@ export default function App({
 				>
 					<SidePanel
 						artifacts={artifactPanel.artifacts}
+						onDeleteArtifact={deleteArtifact}
 						selectedKey={artifactPanel.panel.selectedKey}
 						tab={artifactPanel.panel.tab}
 						liveView={browserLiveView.data}

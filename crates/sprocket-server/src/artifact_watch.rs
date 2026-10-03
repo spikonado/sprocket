@@ -98,12 +98,12 @@ impl ArtifactWatchers {
         })
     }
 
-    fn bindings(&self, key: &WatchKey) -> ArtifactBindings {
+    pub(crate) fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
         ArtifactBindings::new(
             &self.bindings_root,
             &self.deployment_url,
-            &key.user_id,
-            Path::new(&key.workspace_path),
+            user_id,
+            workspace,
         )
     }
 
@@ -127,7 +127,7 @@ impl ArtifactWatchers {
                 self.deployment_url.clone(),
                 Arc::clone(&self.native_auth),
                 key.clone(),
-                self.bindings(&key),
+                self.bindings(&key.user_id, Path::new(&key.workspace_path)),
                 events.clone(),
                 Arc::clone(&latest),
             ));
@@ -175,7 +175,9 @@ impl ArtifactWatchSession {
                 &self.key,
             )
             .await?;
-            let bindings = self.watchers.bindings(&self.key);
+            let bindings = self
+                .watchers
+                .bindings(&self.key.user_id, Path::new(&self.key.workspace_path));
             let mut feed = ArtifactFeed::new(self.key.clone(), bindings.clone());
             flush_feed(
                 &mut feed,
@@ -872,6 +874,31 @@ mod tests {
             })
             .unwrap();
         guard.persist().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cloud_deletion_preserves_local_bindings_and_files() {
+        let (dir, mut feed) = setup().await;
+        std::fs::write(dir.path().join("notes.md"), "initial").unwrap();
+        bind(&feed).await;
+        feed.refresh().await.unwrap();
+        feed.apply_registry(vec![]);
+        feed.refresh().await.unwrap();
+
+        assert!(feed.local.is_empty());
+        assert!(feed.pending.is_empty());
+        assert!(
+            feed.bindings
+                .lock()
+                .await
+                .unwrap()
+                .get("artifact")
+                .is_some()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
+            "initial"
+        );
     }
 
     #[tokio::test]

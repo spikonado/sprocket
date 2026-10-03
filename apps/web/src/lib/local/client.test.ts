@@ -346,6 +346,35 @@ describe('watchLiveCompletion', () => {
 	});
 });
 
+describe('deleteArtifact', () => {
+	const request = {
+		userId: 'alice',
+		repositoryKey: 'robot',
+		workspacePath: '/workspace',
+		artifactId: 'artifact'
+	};
+
+	it('deletes through the local server with the account and workspace scope', async () => {
+		const fetch = vi.fn(async () => Response.json(null));
+		vi.stubGlobal('fetch', fetch);
+		await createLocalClient('http://127.0.0.1:7731').deleteArtifact(request);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/artifacts/delete',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
+		);
+	});
+
+	it('reports deletion failures so the user can retry the local action', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json({ error: 'artifact deletion timed out' }, { status: 400 }))
+		);
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').deleteArtifact(request)
+		).rejects.toThrow('artifact deletion timed out');
+	});
+});
+
 describe('watchArtifacts', () => {
 	const artifact = {
 		_id: 'artifact-1',

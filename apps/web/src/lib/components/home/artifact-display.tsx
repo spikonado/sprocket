@@ -1,3 +1,4 @@
+import ArtifactMenu from '$lib/components/artifact-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -14,6 +15,7 @@ type Props = {
 	/** Enter true browser fullscreen for this artifact (content only). */
 	onOpenFullscreen?: () => void;
 	onBack?: () => void;
+	onDelete?: () => Promise<void>;
 };
 
 export default function ArtifactDisplay({
@@ -24,7 +26,8 @@ export default function ArtifactDisplay({
 	localError,
 	variant = 'card',
 	onOpenFullscreen,
-	onBack
+	onBack,
+	onDelete
 }: Props) {
 	const previewDocument = useMemo(
 		() => buildArtifactPreviewDocument(artifactType, content),
@@ -155,6 +158,7 @@ export default function ArtifactDisplay({
 						<Fullscreen className="size-4" aria-hidden="true" />
 					</button>
 				) : null}
+				{onDelete ? <ArtifactMenu title={title} trigger="button" onDelete={onDelete} /> : null}
 			</div>
 			{localError ? (
 				<p role="alert" className="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">

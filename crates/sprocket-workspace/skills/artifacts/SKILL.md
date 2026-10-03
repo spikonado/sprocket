@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Use when publishing, saving, or editing artifacts, including Markdown documents, HTML previews, and self-contained React mocks.
+description: Use when publishing, saving, editing, or deleting artifacts, including Markdown documents, HTML previews, and self-contained React mocks.
 ---
 
 # Artifacts
