@@ -12,8 +12,6 @@
 - Prek covers formatting and linting.
 - Aside from these, look at the CI on GitHub when you open a PR.
 
-If you are a subagent, don't run any of these.
-
 ### Nix environment
 
 It provides all dependencies/tools you may need. Use it through `nix develop -c <command>`.
