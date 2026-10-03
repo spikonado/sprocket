@@ -77,6 +77,19 @@ struct SessionRecord {
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
+    #[serde(skip)]
+    uncommitted: bool,
+}
+
+impl SessionRecord {
+    fn reject_foreign_user(&self, user_id: &str) -> anyhow::Result<()> {
+        match self.user_id.as_deref() {
+            Some(existing) if existing != user_id => {
+                anyhow::bail!("local session belongs to a different user")
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 pub(crate) struct SessionUserGuard<'a> {
@@ -140,6 +153,7 @@ impl AuthState {
                 role: "owner".into(),
                 created_at: crate::now_ms(),
                 user_id: None,
+                uncommitted: false,
             },
         );
     }
@@ -210,6 +224,7 @@ impl AuthState {
                 role: "owner".to_string(),
                 created_at: crate::now_ms(),
                 user_id: None,
+                uncommitted: false,
             },
         );
         self.save_sessions(sessions).await?;
@@ -247,19 +262,67 @@ impl AuthState {
         &self,
         session_token: &str,
         user_id: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
+        self.assign_session_user(session_token, user_id, true).await
+    }
+
+    pub async fn claim_session_user(
+        &self,
+        session_token: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool> {
+        self.assign_session_user(session_token, user_id, false)
+            .await
+    }
+
+    async fn assign_session_user(
+        &self,
+        session_token: &str,
+        user_id: &str,
+        persist: bool,
+    ) -> anyhow::Result<bool> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
-        let session = sessions
-            .get_mut(session_token)
-            .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
-        if session_is_expired(session) {
-            anyhow::bail!("authentication required");
+        {
+            let session = sessions
+                .get_mut(session_token)
+                .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+            if session_is_expired(session) {
+                anyhow::bail!("authentication required");
+            }
+            session.reject_foreign_user(user_id)?;
+            let already_assigned = session.user_id.as_deref() == Some(user_id);
+            if already_assigned && (!persist || !session.uncommitted) {
+                return Ok(false);
+            }
+            if !persist {
+                session.user_id = Some(user_id.to_string());
+                session.uncommitted = true;
+                return Ok(true);
+            }
         }
-        if session.user_id.as_deref() == Some(user_id) {
-            return Ok(());
+        let mut snapshot = (*sessions).clone();
+        if let Some(pending) = snapshot.get_mut(session_token) {
+            pending.user_id = Some(user_id.to_string());
+            pending.uncommitted = false;
         }
-        session.user_id = Some(user_id.to_string());
-        self.save_sessions(sessions).await
+        self.flush_sessions(&snapshot).await?;
+        if let Some(session) = sessions.get_mut(session_token) {
+            session.user_id = Some(user_id.to_string());
+            session.uncommitted = false;
+        }
+        Ok(true)
+    }
+
+    pub async fn clear_session_user_if(&self, session_token: &str, user_id: &str) {
+        let mut sessions = self.sessions.write().await;
+        let Some(session) = sessions.get_mut(session_token) else {
+            return;
+        };
+        if session.user_id.as_deref() != Some(user_id) {
+            return;
+        }
+        session.user_id = None;
+        session.uncommitted = false;
     }
 
     pub(crate) async fn sync_sessions_with_owner(
@@ -269,9 +332,18 @@ impl AuthState {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         for session in sessions.values_mut() {
             if session.ephemeral || session.local_browser {
-                session.user_id = user_id.map(str::to_owned);
+                if user_id.is_none() {
+                    session.user_id = None;
+                    session.uncommitted = false;
+                } else if session.user_id.is_none() {
+                    session.user_id = user_id.map(str::to_owned);
+                    session.uncommitted = false;
+                } else if session.user_id.as_deref() == user_id {
+                    session.uncommitted = false;
+                }
             } else if session.user_id.as_deref() != user_id {
                 session.user_id = None;
+                session.uncommitted = false;
             }
         }
         self.save_sessions(sessions).await
@@ -344,6 +416,19 @@ impl AuthState {
         if sessions.remove(token).is_some() {
             self.save_sessions(sessions).await?;
         }
+        Ok(())
+    }
+
+    async fn flush_sessions(
+        &self,
+        sessions: &HashMap<String, SessionRecord>,
+    ) -> anyhow::Result<()> {
+        let sessions_path = self.data_dir.join(SESSIONS_FILE);
+        let payload = serde_json::to_vec(&sessions_snapshot(sessions))?;
+        tokio::task::spawn_blocking(move || {
+            crate::profile::write_private_file(&sessions_path, &payload)
+        })
+        .await??;
         Ok(())
     }
 
@@ -636,9 +721,15 @@ fn sessions_snapshot(sessions: &HashMap<String, SessionRecord>) -> Vec<Persisted
     sessions
         .iter()
         .filter(|(_, session)| !session.ephemeral && !session_is_expired(session))
-        .map(|(token, session)| PersistedSessionRecord {
-            token: token.clone(),
-            session: session.clone(),
+        .map(|(token, session)| {
+            let mut session = session.clone();
+            if session.uncommitted {
+                session.user_id = None;
+            }
+            PersistedSessionRecord {
+                token: token.clone(),
+                session,
+            }
         })
         .collect()
 }
@@ -789,6 +880,7 @@ mod tests {
                         role: "owner".into(),
                         created_at: now.saturating_sub(10_000 - index as u64),
                         user_id: Some("user-1".into()),
+                        uncommitted: false,
                     },
                 );
             }
@@ -800,6 +892,7 @@ mod tests {
                     role: "owner".into(),
                     created_at: now.saturating_sub(20_000),
                     user_id: None,
+                    uncommitted: false,
                 },
             );
         }
@@ -894,6 +987,78 @@ mod tests {
             .require_session_user(&session_token, "user-1")
             .await
             .unwrap();
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn bind_and_owner_sync_do_not_steal_another_users_session() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap should succeed");
+        auth.bind_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        assert!(
+            !auth
+                .claim_session_user(&session_token, "user-1")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            auth.bind_session_user(&session_token, "user-2")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "local session belongs to a different user"
+        );
+        auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
+        auth.require_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        auth.sync_sessions_with_owner(None).await.unwrap();
+        assert!(
+            auth.require_session_user(&session_token, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn claim_session_user_stays_in_memory_until_a_later_persist() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap should succeed");
+        assert!(
+            auth.claim_session_user(&session_token, "user-1")
+                .await
+                .unwrap()
+        );
+        auth.require_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        auth.bootstrap_browser_session(true)
+            .await
+            .expect("other session persist must not write the claim");
+        let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
+        assert!(
+            reloaded
+                .require_session_user(&session_token, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+
         let _ = fs::remove_dir_all(temp_dir);
     }
 
