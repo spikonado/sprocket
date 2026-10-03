@@ -322,11 +322,6 @@ export default defineSchema({
 		revision: v.number(),
 		rekeyTo: v.optional(v.string())
 	}).index('by_userId_and_repositoryKey', ['userId', 'repositoryKey']),
-	artifactDeletions: defineTable({
-		userId: v.string(),
-		repositoryKey: v.string(),
-		registrationId: v.string()
-	}).index('by_userId_and_registrationId', ['userId', 'registrationId']),
 	artifacts: defineTable({
 		userId: v.string(),
 		scope: vArtifactScope,

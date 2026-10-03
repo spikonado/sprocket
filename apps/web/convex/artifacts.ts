@@ -219,11 +219,6 @@ async function deleteAccessibleArtifact(
 	const artifact = await findAccessibleArtifact(ctx, artifactId, userId, repositoryKey);
 
 	if (artifact) {
-		await ctx.db.insert('artifactDeletions', {
-			userId,
-			repositoryKey,
-			registrationId: artifact.registrationId
-		});
 		await ctx.db.delete('artifacts', artifactId);
 		await bumpRegistry(ctx, userId, repositoryKey);
 	}
@@ -298,18 +293,6 @@ export const addArtifact = mutation({
 				throw new Error('Invalid registration ID.');
 			const title = validateArtifactTitle(args.title);
 			validateArtifactContent(args.content);
-
-			const deletion = await ctx.db
-				.query('artifactDeletions')
-				.withIndex('by_userId_and_registrationId', (q) =>
-					q.eq('userId', run.userId).eq('registrationId', args.registrationId)
-				)
-				.unique();
-
-			if (deletion)
-				throw new Error(
-					'Artifact registration was deleted. Add it again with a new registration ID.'
-				);
 
 			const existing = await ctx.db
 				.query('artifacts')

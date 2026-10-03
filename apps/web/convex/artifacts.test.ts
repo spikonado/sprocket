@@ -576,22 +576,19 @@ describe('cloud artifacts', () => {
 		).rejects.toThrow(/no longer active/i);
 	});
 
-	it('rejects reuse of a deleted registration and allows a fresh registration', async () => {
+	it('allows registering an artifact again after deletion', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 		await asUser.mutation(api.artifacts.deleteArtifact, { repositoryKey, artifactId });
-		await expect(
-			asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields })
-		).rejects.toThrow(/registration was deleted/i);
 		expect(await t.run((ctx) => ctx.db.query('artifacts').collect())).toEqual([]);
 
 		const recreated = await asUser.mutation(api.artifacts.addArtifact, {
 			...auth,
-			...fields,
-			registrationId: 'new-registration'
+			...fields
 		});
 
 		expect(recreated.artifactId).not.toBe(artifactId);
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(3);
 	});
 
 	it('pages more than 16 MB of content', async () => {
