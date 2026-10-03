@@ -339,23 +339,27 @@ describe('groupAssistantTimelineSections', () => {
 });
 
 describe('partitionWorkSectionTools', () => {
-	it.each(['exec_command', 'write_stdin', 'ask_question', 'await_question'])(
-		'shows an unfinished %s call as running before a job attaches',
-		(name) => {
-			const call = tool('live', name);
+	it.each([
+		'exec_command',
+		'write_stdin',
+		'control_command',
+		'poll_command',
+		'ask_question',
+		'await_question'
+	])('shows an unfinished %s call as running before a job attaches', (name) => {
+		const call = tool('live', name);
 
-			const blocks: AssistantTimelineWorkBlock[] = [
-				{ type: 'tool-group', toolKey: name, tools: [call] }
-			];
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{ type: 'tool-group', toolKey: name, tools: [call] }
+		];
 
-			expect(isAssistantTimelineToolRunning(call, true)).toBe(true);
-			expect(partitionWorkSectionTools(blocks, true)).toEqual({
-				settledBlocks: [],
-				runningTools: [call]
-			});
-			expect(isAssistantTimelineToolRunning(call, false)).toBe(false);
-		}
-	);
+		expect(isAssistantTimelineToolRunning(call, true)).toBe(true);
+		expect(partitionWorkSectionTools(blocks, true)).toEqual({
+			settledBlocks: [],
+			runningTools: [call]
+		});
+		expect(isAssistantTimelineToolRunning(call, false)).toBe(false);
+	});
 
 	it.each([
 		'apply_patch',

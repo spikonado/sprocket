@@ -181,6 +181,8 @@ function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
 	switch (assistantTimelineToolKey(tool)) {
 		case 'exec_command':
 		case 'write_stdin':
+		case 'control_command':
+		case 'poll_command':
 		case 'ask_question':
 		case 'await_question':
 			return true;
