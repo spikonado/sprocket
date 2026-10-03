@@ -252,29 +252,46 @@ describe('transcript viewport paging', () => {
 		}
 	);
 
-	it.each(['live', 'persisted'] as const)(
-		'shows an open running-command group for %s tools',
-		async (kind) => {
+	it.each([
+		{ kind: 'live', toolName: 'exec_command', group: 'Ran Commands' },
+		{ kind: 'persisted', toolName: 'exec_command', group: 'Ran Commands' },
+		{ kind: 'live', toolName: 'write_stdin', group: 'Monitored Commands' },
+		{ kind: 'persisted', toolName: 'write_stdin', group: 'Monitored Commands' }
+	] as const)(
+		'shows $toolName as a settled snapshot in completed $kind work',
+		async ({ kind, toolName, group }) => {
 			const parts: LiveTranscriptMessage['parts'] = [
-				{ type: 'tool-call', callId: 'command', name: 'exec_command', input: { cmd: 'sleep 10' } },
+				{
+					type: 'tool-call',
+					callId: 'command',
+					name: toolName,
+					input: toolName === 'exec_command' ? { cmd: 'sleep 10' } : { sessionId: 'session' }
+				},
 				{
 					type: 'tool-result',
 					callId: 'command',
-					name: 'exec_command',
-					output: { sessionId: 'session', running: true }
+					name: toolName,
+					output: { sessionId: 'session', command: 'sleep 10', running: true }
 				}
 			];
 
 			const response: TranscriptMessage =
 				kind === 'live'
-					? { ...liveMessage(), runStatus: 'running', parts }
+					? {
+							...liveMessage(),
+							runStatus: 'running',
+							parts: [
+								...parts,
+								{ type: 'text', id: 'after-command', text: 'Doing something else.' }
+							]
+						}
 					: {
 							...message(3),
 							kind: 'work',
 							id: 'work-3',
 							itemCount: 1,
-							closed: false,
-							pendingTools: 1
+							closed: true,
+							pendingTools: 0
 						};
 
 			const { viewport, setProps } = await renderTranscript([response]);
@@ -287,23 +304,22 @@ describe('transcript viewport paging', () => {
 			await settle();
 
 			const work = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
-				button.textContent?.trim().startsWith('Working')
+				button.textContent?.trim().startsWith('Worked')
 			);
 
 			expect(work?.getAttribute('aria-expanded')).toBe('false');
 
-			if (kind === 'persisted') {
-				click(work);
-				await settle();
-			}
+			click(work);
+			await settle();
 
-			const running = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes('Running')
+			const commands = [...viewport.querySelectorAll('button')].find((button) =>
+				button.textContent?.includes(group)
 			);
 
-			expect(running?.getAttribute('aria-expanded')).toBe('true');
-			expect(running?.querySelector('.animate-spin')).not.toBeNull();
-			expect(viewport.querySelector('[title="sleep 10 (running)"]')).not.toBeNull();
+			expect(commands?.getAttribute('aria-expanded')).toBe('true');
+			expect(commands?.querySelector('.animate-spin')).toBeNull();
+			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
+			expect(viewport.textContent).toContain('Still running when this call returned');
 		}
 	);
 

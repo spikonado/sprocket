@@ -64,7 +64,40 @@ impl WorkReplica {
             "INSERT OR IGNORE INTO state VALUES ('replicaId',?)",
             [serde_json::to_string(&uuid::Uuid::new_v4().to_string())?],
         )?;
-        Ok(Self { db })
+        let mut replica = Self { db };
+        replica.migrate_command_session_index()?;
+        Ok(replica)
+    }
+
+    fn migrate_command_session_index(&mut self) -> anyhow::Result<()> {
+        let has_sessions: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('source_refs') WHERE name='session')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_sessions {
+            return Ok(());
+        }
+        let generation = self.generation()? + 1;
+        let tx = self.db.transaction()?;
+        let sections: Vec<(String, String, bool)> = tx
+            .prepare("SELECT id,json_extract(body,'$.threadId'),json_extract(body,'$.closed') FROM rows WHERE kind='work'")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<_, _>>()?;
+        tx.execute_batch("DROP TABLE source_refs;")?;
+        ReadIndex::initialize(&tx)?;
+        {
+            let mut statement = tx.prepare("SELECT body FROM parts ORDER BY number")?;
+            for body in statement.query_map([], |row| row.get::<_, String>(0))? {
+                ReadIndex(&tx).insert_part(&serde_json::from_str(&body?)?)?;
+            }
+        }
+        for (section, thread, closed) in sections {
+            Self::rebuild_section(&tx, &thread, &section, generation, Some(closed))?;
+        }
+        Self::put_state(&tx, "generation", &generation)?;
+        tx.commit()?;
+        Ok(())
     }
 
     fn state<T: for<'de> Deserialize<'de>>(&self, key: &str) -> anyhow::Result<Option<T>> {
@@ -157,6 +190,7 @@ impl WorkReplica {
         thread_id: &str,
         key: &str,
         generation: i64,
+        known_closed: Option<bool>,
     ) -> anyhow::Result<()> {
         let index = ReadIndex(db);
         let items = index.page(key, -1, i64::MAX, false, u32::MAX)?;
@@ -184,7 +218,7 @@ impl WorkReplica {
         );
         let pending_tools = items
             .iter()
-            .filter(|item| item.call_id.is_some() && (item.result_part.is_none() || item.running))
+            .filter(|item| item.call_id.is_some() && item.result_part.is_none())
             .count() as u32;
         let started_at = items
             .iter()
@@ -198,36 +232,38 @@ impl WorkReplica {
                     .max_by(f64::total_cmp)
             })
             .flatten();
-        let mut closed = false;
-        let mut statement = db.prepare(
-            "SELECT body FROM parts WHERE json_extract(body,'$.runId')=? ORDER BY number",
-        )?;
-        let bodies: Vec<String> = statement
-            .query_map([&run_id], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        for body in bodies {
-            let part: TranscriptPart = serde_json::from_str(&body)?;
-            for range in &part.work_assignment().ranges {
-                let at = WorkPosition {
-                    part: part.number,
-                    item: range.start,
-                };
-                if range.section_key != key && at > first {
-                    closed = true;
-                }
-                if range.section_key == key
-                    && part
-                        .content_items()
-                        .iter()
-                        .skip(range.end as usize)
-                        .any(|item| {
-                            item["type"] == "text"
-                                && item["text"]
-                                    .as_str()
-                                    .is_some_and(|text| !text.trim().is_empty())
-                        })
-                {
-                    closed = true;
+        let mut closed = known_closed.unwrap_or(false);
+        if known_closed.is_none() {
+            let mut statement = db.prepare(
+                "SELECT body FROM parts WHERE json_extract(body,'$.runId')=? ORDER BY number",
+            )?;
+            let bodies: Vec<String> = statement
+                .query_map([&run_id], |row| row.get(0))?
+                .collect::<Result<_, _>>()?;
+            for body in bodies {
+                let part: TranscriptPart = serde_json::from_str(&body)?;
+                for range in &part.work_assignment().ranges {
+                    let at = WorkPosition {
+                        part: part.number,
+                        item: range.start,
+                    };
+                    if range.section_key != key && at > first {
+                        closed = true;
+                    }
+                    if range.section_key == key
+                        && part
+                            .content_items()
+                            .iter()
+                            .skip(range.end as usize)
+                            .any(|item| {
+                                item["type"] == "text"
+                                    && item["text"]
+                                        .as_str()
+                                        .is_some_and(|text| !text.trim().is_empty())
+                            })
+                    {
+                        closed = true;
+                    }
                 }
             }
         }
@@ -351,7 +387,7 @@ impl WorkReplica {
                 }
             }
             for section in affected {
-                Self::rebuild_section(&tx, thread_id, &section, generation)?;
+                Self::rebuild_section(&tx, thread_id, &section, generation, None)?;
             }
         }
         if let Some(local_total) = parts
@@ -500,13 +536,7 @@ impl WorkReplica {
             items.reverse();
         }
         let mut parts = Vec::new();
-        for item in &mut items {
-            if row
-                .as_ref()
-                .is_some_and(|row| row.closed && row.pending_tools == 0)
-            {
-                item.running = false;
-            }
+        for item in &items {
             let source = self
                 .part(item.source.part)?
                 .context("work source not downloaded")?;

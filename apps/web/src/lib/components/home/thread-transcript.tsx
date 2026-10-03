@@ -10,7 +10,6 @@ import {
 	assistantTimelinePartKey,
 	buildAssistantTimeline,
 	buildCommandSessionCommandMap,
-	buildOpenExecCommandSessions,
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
 	isAssistantResponseStreaming,
@@ -176,8 +175,7 @@ export default function ThreadTranscript({
 			timeline,
 			sections,
 			isStreaming,
-			commands: buildCommandSessionCommandMap(tools),
-			openSessions: buildOpenExecCommandSessions(tools, isStreaming)
+			commands: buildCommandSessionCommandMap(tools)
 		};
 	}
 
@@ -188,8 +186,7 @@ export default function ThreadTranscript({
 	) {
 		const { settledBlocks, runningTools } = partitionWorkSectionTools(
 			section.blocks,
-			state.isStreaming,
-			state.openSessions
+			state.isStreaming
 		);
 
 		const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock);

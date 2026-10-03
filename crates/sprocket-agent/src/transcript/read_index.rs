@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TranscriptPart;
@@ -18,13 +16,12 @@ impl ReadIndex<'_> {
             "CREATE TABLE IF NOT EXISTS source_refs (
                 number INTEGER NOT NULL, offset INTEGER NOT NULL, sequence INTEGER NOT NULL,
                 section TEXT, run TEXT NOT NULL, call_id TEXT, identity TEXT, canonical INTEGER NOT NULL,
-                session TEXT, terminal INTEGER NOT NULL, body TEXT NOT NULL,
+                terminal INTEGER NOT NULL, body TEXT NOT NULL,
                 PRIMARY KEY(number,offset)
             );
             CREATE INDEX IF NOT EXISTS source_refs_section_sequence ON source_refs(section,sequence);
             CREATE INDEX IF NOT EXISTS source_refs_run_identity_canonical_sequence ON source_refs(run,identity,canonical,sequence);
-            CREATE INDEX IF NOT EXISTS source_refs_run_identity_terminal_sequence ON source_refs(run,identity,terminal,sequence);
-            CREATE INDEX IF NOT EXISTS source_refs_run_session_terminal_sequence ON source_refs(run,session,terminal,sequence);"
+            CREATE INDEX IF NOT EXISTS source_refs_run_identity_terminal_sequence ON source_refs(run,identity,terminal,sequence);"
         )?;
         Ok(())
     }
@@ -40,7 +37,6 @@ impl ReadIndex<'_> {
                     .iter()
                     .find(|invocation| invocation.item as usize == offset)
                     .map(|invocation| invocation.tool_invocation_id.clone());
-                let name = string(value, "name");
                 match kind {
                     Some("reasoning")
                         if value["text"]
@@ -58,17 +54,10 @@ impl ReadIndex<'_> {
                     },
                     call_id,
                     tool_invocation_id,
-                    name,
                     result_part: None,
-                    tool_parts: BTreeSet::new(),
                     canonical: true,
                     started_at: timing(value, "startedAt"),
                     completed_at: timing(value, "completedAt"),
-                    session_id: value
-                        .get("input")
-                        .and_then(|input| string(input, "sessionId")),
-                    running: false,
-                    reported_running: None,
                     approval: None,
                 };
                 self.insert(&item, false)?;
@@ -77,17 +66,13 @@ impl ReadIndex<'_> {
         if let Some(item) = WorkItem::tool_event(part) {
             self.insert(&item, item.result_part.is_some())?;
         }
-        self.0.execute("UPDATE source_refs AS result SET session=(
-            SELECT call.session FROM source_refs call WHERE call.run=result.run AND call.identity=result.identity AND call.canonical=1 LIMIT 1)
-            WHERE result.canonical=0 AND result.session IS NULL AND result.run=? AND result.identity IN (
-                SELECT identity FROM source_refs WHERE number=? AND identity IS NOT NULL)", params![part.run_id,part.number])?;
         self.link(part.number, &part.work_assignment())?;
         Ok(())
     }
 
     fn insert(&self, item: &WorkItem, terminal: bool) -> anyhow::Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO source_refs VALUES (?,?,?,NULL,?,?,?,?,?,?)",
             params![
                 item.source.part,
                 item.source.item,
@@ -96,7 +81,6 @@ impl ReadIndex<'_> {
                 item.call_id,
                 item.identity(),
                 item.canonical,
-                item.session_id,
                 terminal,
                 serde_json::to_string(item)?
             ],
@@ -149,14 +133,17 @@ impl ReadIndex<'_> {
     }
 
     pub fn affected_sections(&self, number: u32) -> anyhow::Result<Vec<String>> {
-        Ok(self.0.prepare("SELECT section FROM source_refs WHERE number=? AND section IS NOT NULL
+        Ok(self
+            .0
+            .prepare(
+                "SELECT section FROM source_refs WHERE number=? AND section IS NOT NULL
             UNION SELECT linked.section FROM source_refs changed JOIN source_refs linked
                 ON linked.run=changed.run AND (linked.identity=changed.identity OR
                 (linked.canonical=1 AND linked.identity='call:'||changed.call_id))
-                WHERE changed.number=? AND linked.section IS NOT NULL
-            UNION SELECT linked.section FROM source_refs changed JOIN source_refs linked
-                ON linked.run=changed.run AND linked.session=changed.session WHERE changed.number=? AND linked.section IS NOT NULL")?
-            .query_map([number,number,number], |row| row.get(0))?.collect::<Result<_,_>>()?)
+                WHERE changed.number=? AND linked.section IS NOT NULL",
+            )?
+            .query_map([number, number], |row| row.get(0))?
+            .collect::<Result<_, _>>()?)
     }
 
     pub fn page(
@@ -220,27 +207,6 @@ impl ReadIndex<'_> {
         );
         if let Some(result) = self.event(item, true)? {
             item.merge_event(result);
-        }
-        if matches!(item.name.as_deref(), Some("exec_command" | "write_stdin")) {
-            if let Some(session) = &item.session_id {
-                let body: Option<String> = self.0.query_row(
-                    "SELECT body FROM source_refs s WHERE run=? AND session=? AND terminal=1
-                    AND json_extract(body,'$.name') IN ('exec_command','write_stdin')
-                    AND json_extract(body,'$.reported_running') IS NOT NULL
-                    AND NOT EXISTS (SELECT 1 FROM source_refs earlier WHERE earlier.run=s.run AND earlier.identity=s.identity AND earlier.terminal=1 AND earlier.sequence<s.sequence)
-                    ORDER BY sequence DESC LIMIT 1",
-                    params![item.run_id,session], |row| row.get(0)).optional()?;
-                if let Some(body) = body {
-                    let latest: WorkItem = serde_json::from_str(&body)?;
-                    item.reported_running = latest.reported_running;
-                    item.running = latest.running;
-                    if let Some(session) = latest.session_update() {
-                        item.apply_command_session(&session);
-                    }
-                }
-            }
-        } else {
-            item.running = false;
         }
         Ok(())
     }

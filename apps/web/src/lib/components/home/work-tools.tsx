@@ -6,6 +6,7 @@ import {
 } from '$lib/chat/assistant-timeline';
 import {
 	changedFileCount,
+	commandSnapshotLabel,
 	fullToolSummary,
 	toolGroupLabel,
 	toolItemSummary,
@@ -43,6 +44,7 @@ export default function WorkTools({
 			}
 			toolRow={(tool) => {
 				const summary = toolItemSummary(tool, commands);
+				const snapshot = commandSnapshotLabel(tool);
 
 				if (running) {
 					const ToolIcon = toolLogIcon(tool);
@@ -85,12 +87,15 @@ export default function WorkTools({
 				}
 
 				return (
-					<p
-						className={`min-w-0 ${toolSummaryClass(tool)}`}
-						title={fullToolSummary(tool, inProgress, commands)}
-					>
-						{summary}
-					</p>
+					<div>
+						<p
+							className={`min-w-0 ${toolSummaryClass(tool)}`}
+							title={fullToolSummary(tool, inProgress, commands)}
+						>
+							{summary}
+						</p>
+						{snapshot ? <p className="text-xs">{snapshot}</p> : null}
+					</div>
 				);
 			}}
 		/>

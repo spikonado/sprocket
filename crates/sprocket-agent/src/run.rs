@@ -1098,7 +1098,7 @@ mod tests {
             prompt_context
                 .base_instructions
                 .lines()
-                .any(|line| line == "Your model is GPT-5.6 Sol (gpt-5.6-sol).")
+                .any(|line| line == "- Your model is GPT-5.6 Sol (gpt-5.6-sol).")
         );
         assert!(
             !prompt_context
@@ -1131,11 +1131,11 @@ mod tests {
                 .split_once("## Identity\n")
                 .unwrap()
                 .1
-                .split_once("\n## Working on tasks")
+                .split_once("\n## Basic instructions")
                 .unwrap()
                 .0;
             assert!(identity.contains(&format!(
-                "This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.",
+                "- This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.",
                 transcript_dir.display()
             )));
             assert!(
