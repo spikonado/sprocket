@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import type { JsonObject, JsonValue } from '@convex/lib/json';
 import {
 	createQueuedRun,
@@ -9,8 +10,17 @@ import {
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
-async function startRun(t: ConvexTestInstance, subject: string) {
+async function startRun(
+	t: ConvexTestInstance,
+	subject: string,
+	parentThreadId?: Id<'threadRecords'>
+) {
 	const { asUser, threadId } = await seedOwnedThread(t, subject);
+
+	if (parentThreadId) {
+		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { parentThreadId }));
+	}
+
 	// What the client's page-load bootstrap leaves behind: a users row whose
 	// email ensureCurrentUser synced from the WorkOS identity.
 	await t
@@ -35,6 +45,7 @@ async function startRun(t: ConvexTestInstance, subject: string) {
 
 	return {
 		asUser: t.withIdentity({ subject, email: `${subject}@example.com` }),
+		threadId,
 		runId: created.runId,
 		claimId,
 		executionSecret
@@ -182,6 +193,59 @@ afterEach(() => {
 });
 
 describe('payments mandates', () => {
+	it('enforces root-only payment actions for human-continued children at every depth', async () => {
+		const t = initConvexTest();
+		const root = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, root);
+
+		const chargeId = await t.run((ctx) =>
+			ctx.db.insert('mandateCharges', {
+				mandateId: setup.mandateId,
+				runId: root.runId,
+				userId: 'user_alice',
+				pravaTransactionId: 'root-transaction',
+				amount: 100,
+				currency: 'USD',
+				description: 'Root purchase',
+				status: 'awaiting_result',
+				createdAt: Date.now(),
+				updatedAt: Date.now()
+			})
+		);
+
+		let parentThreadId = root.threadId;
+		fetchMock.mockClear();
+
+		for (let depth = 1; depth <= 2; depth += 1) {
+			const child = await startRun(t, 'user_alice', parentThreadId);
+			const caller = auth(child);
+			await expect(t.action(api.payments.mandateSetup, setupArgs(child))).rejects.toThrow(
+				/Payment tools are unavailable to subagents/
+			);
+			await expect(t.action(api.payments.mandateList, caller)).rejects.toThrow(
+				/Payment tools are unavailable to subagents/
+			);
+			await expect(
+				t.action(api.payments.mandateStatus, { ...caller, mandateId: setup.mandateId })
+			).rejects.toThrow(/Payment tools are unavailable to subagents/);
+			await expect(
+				t.action(api.payments.mandateCharge, {
+					...caller,
+					mandateId: setup.mandateId,
+					amount: '1.00',
+					currency: 'USD',
+					description: 'Child purchase'
+				})
+			).rejects.toThrow(/Payment tools are unavailable to subagents/);
+			await expect(
+				t.action(api.payments.mandateReport, { ...caller, chargeId, outcome: 'approved' })
+			).rejects.toThrow(/Payment tools are unavailable to subagents/);
+			parentThreadId = child.threadId;
+		}
+
+		expect(fetchMock).toHaveBeenCalledTimes(0);
+	});
+
 	it('creates a mandate setup session and stores non-sensitive state', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({

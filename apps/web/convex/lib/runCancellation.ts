@@ -1,6 +1,11 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
-import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	vThreadLifecyclePhase as vSelectedThreadLifecyclePhase,
+	type vRunFinalStatus,
+	type vRunStatus
+} from '@convex/lib/validators';
 
 export const CANCELLATION_FORCE_AFTER_MS = 10_000;
 
@@ -15,16 +20,7 @@ export const selectedThreadLifecyclePhases = [
 	'cancelled'
 ] as const;
 
-export const vSelectedThreadLifecyclePhase = v.union(
-	v.literal('idle'),
-	v.literal('queued'),
-	v.literal('running'),
-	v.literal('waiting_for_input'),
-	v.literal('cancellation_requested'),
-	v.literal('completed'),
-	v.literal('failed'),
-	v.literal('cancelled')
-);
+export { vThreadLifecyclePhase as vSelectedThreadLifecyclePhase } from '@convex/lib/validators';
 
 export type SelectedThreadLifecyclePhase = Infer<typeof vSelectedThreadLifecyclePhase>;
 
@@ -105,12 +101,12 @@ export function selectedThreadLifecyclePhase(args: {
 		return 'queued';
 	}
 
-	if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-		return run.status;
+	if (args.waitingForInput && run.status !== 'cancelled') {
+		return 'waiting_for_input';
 	}
 
-	if (args.waitingForInput) {
-		return 'waiting_for_input';
+	if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+		return run.status;
 	}
 
 	return 'running';

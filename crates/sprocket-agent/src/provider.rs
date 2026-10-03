@@ -76,10 +76,14 @@ pub(crate) struct AgentProvider {
 
 pub(crate) struct AgentProviderRequest {
     pub(crate) allow_interaction: bool,
+    /// The run's thread is a child: question tools stay available, payment
+    /// tools disappear, delegation tools stay.
+    pub(crate) is_child: bool,
     pub(crate) cancellation: sprocket_workspace::WorkspaceCancellation,
     pub(crate) command_sessions: CommandSessionManager,
     pub(crate) run_id: String,
     pub(crate) claim_id: String,
+    pub(crate) user_id: String,
     pub(crate) thread_id: String,
     pub(crate) run_started_at: u64,
     pub(crate) live: Arc<LiveCompletionHub>,
@@ -98,6 +102,9 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
     pub(crate) defer_prompt_for_context_handoff: bool,
+    pub(crate) gateway_url: String,
+    pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
+    pub(crate) transcript_store: Option<Arc<crate::TranscriptStore>>,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -244,19 +251,27 @@ where
         runtime.clone(),
         request.run_id.clone(),
         request.claim_id.clone(),
+        request.user_id.clone(),
         request.workspace_root.clone(),
         request.transcript_dir.clone(),
+        request.gateway_url.clone(),
+        request.transcript_store.clone(),
         request.artifact_bindings.clone(),
         request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),
         request.command_sessions.clone(),
+        request.subagent_launcher.clone(),
     );
     let context_handoff_hook = ContextHandoffHook::new(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
-        available_agent_tool_names(request.allow_interaction, request.supports_images),
+        available_agent_tool_names(
+            request.allow_interaction,
+            request.supports_images,
+            request.is_child,
+        ),
         request.supports_required_tool_choice,
     );
     let agent = completion_client
@@ -275,19 +290,32 @@ where
         .tool(tools.edit_artifact)
         .tool(tools.save_artifact)
         .tool(tools.delete_artifact)
-        .tool(tools.mandate_status)
-        .tool(tools.mandate_list)
-        .tool(tools.mandate_charge)
-        .tool(tools.mandate_report)
         .tool(tools.parse_file)
+        .tool(tools.subagent)
+        .tool(tools.control_subagent)
+        .tool(tools.poll_subagent)
+        .tool(tools.list_subagents)
+        .tool(tools.list_models)
         .tool(context_handoff_hook.tool());
-    let agent = if request.allow_interaction {
-        agent
+    // Payment tools are excluded for children at every depth; question tools
+    // stay available to children even under a noninteractive CLI root.
+    let questions_allowed = request.allow_interaction || request.is_child;
+    let agent = match (questions_allowed, request.is_child) {
+        (true, true) => agent.tool(tools.ask_question).tool(tools.poll_question),
+        (true, false) => agent
             .tool(tools.ask_question)
             .tool(tools.poll_question)
             .tool(tools.mandate_setup)
-    } else {
-        agent
+            .tool(tools.mandate_status)
+            .tool(tools.mandate_list)
+            .tool(tools.mandate_charge)
+            .tool(tools.mandate_report),
+        (false, false) => agent
+            .tool(tools.mandate_status)
+            .tool(tools.mandate_list)
+            .tool(tools.mandate_charge)
+            .tool(tools.mandate_report),
+        (false, true) => agent,
     };
     let agent = if request.supports_images {
         agent.tool(tools.screenshot_url)

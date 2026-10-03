@@ -69,6 +69,11 @@ pub struct RunAgentRequest {
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
+    /// Server-owned native subagent launch service. The HTTP executor installs
+    /// it; without it the delegation tools fail closed.
+    pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
+    /// Transcript store backing local monitor reads for descendant threads.
+    pub transcript_store: Option<Arc<crate::TranscriptStore>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -233,6 +238,11 @@ pub struct RunSnapshot {
     pub started_at: u64,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
+    /// Immediate parent thread when this run's thread is a subagent. Drives
+    /// payment-tool exclusion and child question availability; absent for
+    /// roots and for threads recorded before the hierarchy existed.
+    #[serde(default)]
+    pub parent_thread_id: Option<String>,
 }
 
 fn require_non_empty<T>(items: Vec<T>, what: &str) -> anyhow::Result<Vec<T>> {

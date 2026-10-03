@@ -2,6 +2,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
+import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
 
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
@@ -35,4 +36,6 @@ export async function setRunAndThreadStatus(
 	if (thread.status !== latestRun.status) {
 		await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
 	}
+
+	await refreshThreadHierarchyActivity(ctx, run.threadId);
 }

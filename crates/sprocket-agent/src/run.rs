@@ -19,6 +19,7 @@ use crate::catalog::catalog_capabilities_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
+use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
     TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
     fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
@@ -601,10 +602,45 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
         None
     };
     let claim_id = Uuid::new_v4().to_string();
-    let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
+    let runtime = timeout(
+        SUBMISSION_ATTEMPT_TIMEOUT,
+        RuntimeClient::from_request(&request),
+    )
+    .await
+    .context("timed out initializing agent submission")??;
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
-    let created_run = runtime.create_run(&request).await?;
+    let created_run = loop {
+        if request.cancellation.is_cancelled() {
+            return Err(sprocket_workspace::WorkspaceOperationCancelled.into());
+        }
+        match timeout(SUBMISSION_ATTEMPT_TIMEOUT, runtime.create_run(&request))
+            .await
+            .context("timed out submitting agent run")?
+        {
+            Ok(created) => break created,
+            Err(error) if submission_is_waiting(&error) && !request.thread_id.is_empty() => {
+                wait_until_ready(&request.cancellation, || async {
+                    let result = runtime
+                        .client
+                        .mutation(
+                            "agentRuntime:prepareSubmission",
+                            std::collections::BTreeMap::from([(
+                                "threadId".to_string(),
+                                request.thread_id.clone().into(),
+                            )]),
+                        )
+                        .await?;
+                    sprocket_convex::decode_function_result(
+                        result,
+                        "agentRuntime:prepareSubmission",
+                    )
+                })
+                .await?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
     let mut request = request;
     request.thread_id = created_run.thread_id.clone();
     // The browser token is only needed to create and bind the run. Every later
@@ -974,9 +1010,11 @@ pub async fn run_agent(
                 runtime.clone(),
                 AgentProviderRequest {
                     allow_interaction: request.allow_interaction,
+                    is_child: context.run.parent_thread_id.is_some(),
                     cancellation: request.cancellation,
                     run_id: run_id.clone(),
                     claim_id: claim_id.clone(),
+                    user_id: context.run.user_id.clone(),
                     thread_id: request.thread_id.clone(),
                     run_started_at: context.run.started_at,
                     live: live.clone(),
@@ -1001,6 +1039,9 @@ pub async fn run_agent(
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
+                    gateway_url: gateway_url.clone(),
+                    subagent_launcher: request.subagent_launcher.clone(),
+                    transcript_store: request.transcript_store.clone(),
                 },
             )
             .await;

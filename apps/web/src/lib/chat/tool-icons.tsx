@@ -1,5 +1,6 @@
 import {
 	BookOpen,
+	Bot,
 	Camera,
 	CircleDollarSign,
 	CircleQuestionMark,
@@ -32,6 +33,13 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'await_question':
 		case 'poll_question':
 			return Hourglass;
+		case 'subagent':
+		case 'control_subagent':
+		case 'poll_subagent':
+			return Bot;
+		case 'list_subagents':
+		case 'list_models':
+			return ListChecks;
 		case 'check_docs':
 			return BookOpen;
 		case 'add_artifact':

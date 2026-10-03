@@ -11,6 +11,9 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	finalizeQuestionOptions,
+	actionablePendingQuestionsForThread,
+	headActionablePendingQuestion,
+	isPendingQuestionActionable,
 	formatQuestionContinuationPrompt,
 	MAX_QUESTION_TIMEOUT_MS,
 	normalizeQuestionAnswer,
@@ -23,6 +26,7 @@ import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
+import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
 
 const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -30,7 +34,7 @@ const MIN_QUESTION_TIMEOUT_MS = 1_000;
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
-function toSnapshot(question: Doc<'agentQuestions'>): AgentQuestionSnapshot {
+export function toAgentQuestionSnapshot(question: Doc<'agentQuestions'>): AgentQuestionSnapshot {
 	const snapshot: AgentQuestionSnapshot = {
 		threadId: question.threadId,
 		questionId: question._id,
@@ -63,34 +67,20 @@ async function nextThreadSequence(
 	return (latest?.sequence ?? 0) + 1;
 }
 
-async function headPendingQuestion(
+export async function headPendingQuestion(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'agentQuestions'> | null> {
-	let afterSequence = -1;
+	return await headActionablePendingQuestion(ctx.db, threadId);
+}
 
-	for (;;) {
-		const head = await ctx.db
-			.query('agentQuestions')
-			.withIndex('by_threadId_status_sequence', (query) =>
-				query.eq('threadId', threadId).eq('status', 'pending').gt('sequence', afterSequence)
-			)
-			.first();
-
-		if (!head) return null;
-
-		const run = await ctx.db.get('runs', head.runId);
-
-		if (run?.status !== 'cancelled') return head;
-
-		const last = await ctx.db
-			.query('agentQuestions')
-			.withIndex('by_runId_sequence', (query) => query.eq('runId', head.runId))
-			.order('desc')
-			.first();
-
-		afterSequence = last?.sequence ?? head.sequence;
-	}
+/** All of a thread's pending questions in answer order. UI, lifecycle, and
+ * subagent monitoring must observe exactly this set. */
+export async function pendingQuestionsForThread(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'agentQuestions'>[]> {
+	return await actionablePendingQuestionsForThread(ctx.db, threadId);
 }
 
 type CreateQuestionArgs = {
@@ -150,6 +140,8 @@ async function createQuestion(
 	if (timeoutAt !== undefined && timeoutMs !== 0) {
 		await scheduleDeadlineCheck(ctx, questionId, createdAt, timeoutAt);
 	}
+
+	await refreshThreadHierarchyActivity(ctx, run.threadId);
 
 	return {
 		questionId,
@@ -247,90 +239,148 @@ export const answer = mutation({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
-		const question = await ctx.db.get('agentQuestions', args.questionId);
+		const result = await answerPendingQuestion(ctx, args);
 
-		if (!question || question.threadId !== args.threadId) {
-			throw new Error('Question not found.');
-		}
+		const outcome: QuestionAnswerOutcome = { question: result.question };
 
-		if (question.status !== 'pending') {
-			throw new Error('Question is no longer awaiting an answer.');
-		}
+		if (result.kind === 'answered' && result.continuation)
+			outcome.continuation = result.continuation;
 
-		const run = await ctx.db.get('runs', question.runId);
-
-		if (run?.status === 'cancelled') {
-			throw new Error('Question is no longer awaiting an answer.');
-		}
-
-		const head = await headPendingQuestion(ctx, args.threadId);
-
-		if (!head || head._id !== question._id) {
-			throw new Error('Answer the earliest pending question first.');
-		}
-
-		const answer = normalizeQuestionAnswer({
-			options: question.options,
-			optionId: args.optionId,
-			text: args.text
-		});
-
-		const answeredAt = Date.now();
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'answered',
-			answer,
-			answeredAt,
-			requiresContinuation:
-				question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
-		});
-
-		const snapshot = toSnapshot({
-			...question,
-			status: 'answered',
-			answer,
-			answeredAt
-		});
-
-		const nextQuestion = await headPendingQuestion(ctx, args.threadId);
-
-		const latestRun = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
-			.order('desc')
-			.first();
-
-		const continuationOfRunId =
-			nextQuestion === null &&
-			run !== null &&
-			latestRun?._id === run._id &&
-			isRunFinalStatus(run.status)
-				? run._id
-				: undefined;
-
-		if (!continuationOfRunId) {
-			return { question: snapshot };
-		}
-
-		const runQuestions = await ctx.db
-			.query('agentQuestions')
-			.withIndex('by_runId_sequence', (query) => query.eq('runId', continuationOfRunId))
-			.order('asc')
-			.collect();
-
-		const prompt = formatQuestionContinuationPrompt(
-			runQuestions.flatMap((entry) =>
-				entry.requiresContinuation && entry.answer
-					? [{ question: entry.question, answer: entry.answer }]
-					: []
-			)
-		);
-
-		return {
-			question: snapshot,
-			continuation: { runId: continuationOfRunId, prompt }
-		};
+		return outcome;
 	}
 });
+
+export type QuestionAnswerOutcome = {
+	question: AgentQuestionSnapshot;
+	continuation?: { runId: Id<'runs'>; prompt: string };
+};
+
+export type QuestionAnswerResult =
+	| ({ kind: 'answered' } & QuestionAnswerOutcome)
+	| {
+			kind: 'alreadyAnswered';
+			question: AgentQuestionSnapshot;
+			answer: NonNullable<Doc<'agentQuestions'>['answer']>;
+	  };
+
+/** Shared first-answer-wins transaction used by the authenticated UI path
+ * and the executor-authorized subagent control path. Callers authorize before
+ * invoking; this helper owns validation and atomicity. A question answered by
+ * another actor reports the committed answer without overwriting it;
+ * cancelled/expired questions stay unanswerable. */
+export async function answerPendingQuestion(
+	ctx: MutationCtx,
+	args: {
+		threadId: Id<'threadRecords'>;
+		questionId: Id<'agentQuestions'>;
+		optionId?: string;
+		text?: string;
+	}
+): Promise<QuestionAnswerResult> {
+	const question = await ctx.db.get('agentQuestions', args.questionId);
+
+	if (!question || question.threadId !== args.threadId) {
+		throw new Error('Question not found.');
+	}
+
+	if (question.status === 'answered') {
+		if (!question.answer) {
+			throw new Error('Question is no longer awaiting an answer.');
+		}
+
+		return {
+			kind: 'alreadyAnswered',
+			question: toAgentQuestionSnapshot(question),
+			answer: question.answer
+		};
+	}
+
+	if (!(await isPendingQuestionActionable(ctx.db, question))) {
+		throw new Error('Question is no longer awaiting an answer.');
+	}
+
+	const head = await headPendingQuestion(ctx, args.threadId);
+
+	if (!head || head._id !== question._id) {
+		throw new Error('Answer the earliest pending question first.');
+	}
+
+	const answer = normalizeQuestionAnswer({
+		options: question.options,
+		optionId: args.optionId,
+		text: args.text
+	});
+
+	const answeredAt = Date.now();
+	const run = await ctx.db.get('runs', question.runId);
+	await ctx.db.patch('agentQuestions', question._id, {
+		status: 'answered',
+		answer,
+		answeredAt,
+		requiresContinuation:
+			question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
+	});
+	await refreshThreadHierarchyActivity(ctx, args.threadId);
+
+	const snapshot = toAgentQuestionSnapshot({
+		...question,
+		status: 'answered',
+		answer,
+		answeredAt
+	});
+
+	return {
+		kind: 'answered',
+		question: snapshot,
+		continuation: await questionContinuation(ctx, question, { run })
+	};
+}
+
+export async function questionContinuation(
+	ctx: QueryCtx | MutationCtx,
+	question: Pick<Doc<'agentQuestions'>, 'threadId' | 'runId'>,
+	known?: { run?: Doc<'runs'> | null; latestRun?: Doc<'runs'> | null }
+) {
+	const [nextQuestion, run, latestRun] = await Promise.all([
+		headPendingQuestion(ctx, question.threadId),
+		known?.run !== undefined ? Promise.resolve(known.run) : ctx.db.get('runs', question.runId),
+		known?.latestRun !== undefined
+			? Promise.resolve(known.latestRun)
+			: ctx.db
+					.query('runs')
+					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', question.threadId))
+					.order('desc')
+					.first()
+	]);
+
+	const continuationOfRunId =
+		nextQuestion === null &&
+		run !== null &&
+		latestRun?._id === run._id &&
+		isRunFinalStatus(run.status) &&
+		run.status !== 'cancelled' &&
+		run.cancellationRequestedAt === undefined
+			? run._id
+			: undefined;
+
+	if (!continuationOfRunId) return undefined;
+
+	const runQuestions = await ctx.db
+		.query('agentQuestions')
+		.withIndex('by_runId_sequence', (query) => query.eq('runId', continuationOfRunId))
+		.order('asc')
+		.collect();
+
+	const prompt = formatQuestionContinuationPrompt(
+		runQuestions.flatMap((entry) =>
+			entry.requiresContinuation && entry.answer
+				? [{ question: entry.question, answer: entry.answer }]
+				: []
+		)
+	);
+
+	return { runId: continuationOfRunId, prompt };
+}
 
 export const timeout = internalMutation({
 	args: {
@@ -370,6 +420,7 @@ export const timeout = internalMutation({
 			status: 'timedOut',
 			answeredAt: now
 		});
+		await refreshThreadHierarchyActivity(ctx, question.threadId);
 
 		return null;
 	}
@@ -391,7 +442,7 @@ export const getForExecutor = query({
 				return null;
 			}
 
-			return toSnapshot(question);
+			return toAgentQuestionSnapshot(question);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -408,6 +459,58 @@ export const headPendingForThread = query({
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const head = await headPendingQuestion(ctx, args.threadId);
 
-		return head ? toSnapshot(head) : null;
+		return head ? toAgentQuestionSnapshot(head) : null;
 	}
 });
+
+/** Cancel a thread's pending questions. Called synchronously from the manual
+ * cancellation path so stopped threads reject answers immediately, before the
+ * run reaches its eventual cancelled terminal state. */
+export async function cancelPendingQuestionsForThread(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<boolean> {
+	const now = Date.now();
+	let cancelledAny = false;
+	let afterSequence = -1;
+
+	const latest = await ctx.db
+		.query('runs')
+		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+		.order('desc')
+		.first();
+
+	if (latest) {
+		for await (const question of ctx.db
+			.query('agentQuestions')
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', latest._id))) {
+			if (question.continuationClaim) {
+				await ctx.db.patch('agentQuestions', question._id, { continuationClaim: undefined });
+				cancelledAny = true;
+			}
+		}
+	}
+
+	for (;;) {
+		const pending = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (query) =>
+				query.eq('threadId', threadId).eq('status', 'pending').gt('sequence', afterSequence)
+			)
+			.take(32);
+
+		if (pending.length === 0) return cancelledAny;
+
+		for (const question of pending) {
+			await ctx.db.patch('agentQuestions', question._id, {
+				status: 'cancelled',
+				answeredAt: now
+			});
+		}
+
+		cancelledAny = true;
+		afterSequence = pending.at(-1)!.sequence;
+
+		if (pending.length < 32) return cancelledAny;
+	}
+}

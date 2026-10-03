@@ -1,4 +1,10 @@
-import { action, internalMutation, mutation, query } from '@convex/_generated/server';
+import {
+	action,
+	internalMutation,
+	mutation,
+	query,
+	type ActionCtx
+} from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
@@ -34,6 +40,7 @@ import {
 } from '@convex/lib/transcriptWrites';
 import {
 	COMPLETION_STREAM_SUPERSEDED,
+	SPROCKET_SUBMISSION_WAITING,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
@@ -42,6 +49,7 @@ import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
+	submissionReadiness,
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
@@ -73,6 +81,14 @@ type RunClaimPatch = {
 	claimExpiresAt: number;
 	completionAttemptSeq?: number;
 };
+
+const paymentToolJobKinds: ReadonlySet<string> = new Set([
+	'mandate_setup',
+	'mandate_status',
+	'mandate_list',
+	'mandate_charge',
+	'mandate_report'
+]);
 
 function isExpectedSectionKey(
 	runId: Doc<'runs'>['_id'],
@@ -107,12 +123,24 @@ const vCreateGatewayRunResult = vCreatedGatewayRun.extend({
 	protocolVersion: v.number()
 });
 
+export const prepareSubmission = mutation({
+	args: { threadId: v.id('threadRecords') },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		return await submissionReadiness(ctx, thread._id);
+	}
+});
+
 export const insertGatewayRun = internalMutation({
 	args: {
 		userId: v.string(),
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
+		parentThreadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
@@ -131,62 +159,79 @@ export const insertGatewayRun = internalMutation({
 	}
 });
 
+const vCreateGatewayRunArgs = v.object({
+	submissionId: v.string(),
+	threadId: v.optional(v.id('threadRecords')),
+	repositoryKey: v.optional(v.string()),
+	prompt: v.string(),
+	storageIds: v.array(v.id('_storage')),
+	selectedModel: v.string(),
+	completionProvider: v.optional(vCompletionProvider),
+	reasoningEffort: vReasoningEffort,
+	fastMode: v.boolean(),
+	executionSecret: v.string(),
+	agentVersion: v.optional(v.string()),
+	machineId: v.optional(v.string()),
+	continuationOfRunId: v.optional(v.id('runs'))
+});
+
+async function createGatewayRunResult(
+	ctx: ActionCtx,
+	args: Infer<typeof vCreateGatewayRunArgs>
+): Promise<Infer<typeof vCreateGatewayRunResult>> {
+	const userId = await getUserId(ctx);
+
+	const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
+		userId,
+		storageIds: args.storageIds
+	});
+
+	const gatewayUrl = modelGatewayUrl();
+
+	const request: QueuedRunRequest = {
+		userId,
+		submissionId: args.submissionId,
+		threadId: args.threadId,
+		repositoryKey: args.repositoryKey,
+		prompt: args.prompt,
+		imageUploadIds,
+		selectedModel: args.selectedModel,
+		completionProvider: args.completionProvider,
+		reasoningEffort: args.reasoningEffort,
+		fastMode: args.fastMode,
+		executionSecret: args.executionSecret,
+		protocolVersion: GATEWAY_PROTOCOL_VERSION,
+		agentVersion: args.agentVersion,
+		machineId: args.machineId
+	};
+
+	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+	const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+
+	if (created.promptPart) {
+		created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
+	}
+
+	return {
+		...created,
+		gatewayUrl,
+		protocolVersion: GATEWAY_PROTOCOL_VERSION
+	};
+}
+
 export const createGatewayRun = action({
-	args: {
-		submissionId: v.string(),
-		threadId: v.optional(v.id('threadRecords')),
-		repositoryKey: v.optional(v.string()),
-		prompt: v.string(),
-		storageIds: v.array(v.id('_storage')),
-		selectedModel: v.string(),
-		completionProvider: v.optional(vCompletionProvider),
-		reasoningEffort: vReasoningEffort,
-		fastMode: v.boolean(),
-		executionSecret: v.string(),
-		agentVersion: v.optional(v.string()),
-		machineId: v.optional(v.string()),
-		continuationOfRunId: v.optional(v.id('runs'))
-	},
+	args: vCreateGatewayRunArgs.fields,
 	returns: vCreateGatewayRunResult,
-	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
-		const userId = await getUserId(ctx);
+	handler: async (ctx, args) => {
+		try {
+			return await createGatewayRunResult(ctx, args);
+		} catch (error) {
+			if (error instanceof ConvexError && error.data === SPROCKET_SUBMISSION_WAITING) {
+				throw new ConvexError(SPROCKET_SUBMISSION_WAITING);
+			}
 
-		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
-			userId,
-			storageIds: args.storageIds
-		});
-
-		const gatewayUrl = modelGatewayUrl();
-
-		const request: QueuedRunRequest = {
-			userId,
-			submissionId: args.submissionId,
-			threadId: args.threadId,
-			repositoryKey: args.repositoryKey,
-			prompt: args.prompt,
-			imageUploadIds,
-			selectedModel: args.selectedModel,
-			completionProvider: args.completionProvider,
-			reasoningEffort: args.reasoningEffort,
-			fastMode: args.fastMode,
-			executionSecret: args.executionSecret,
-			protocolVersion: GATEWAY_PROTOCOL_VERSION,
-			agentVersion: args.agentVersion,
-			machineId: args.machineId
-		};
-
-		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
-		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
-
-		if (created.promptPart) {
-			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
+			throw error;
 		}
-
-		return {
-			...created,
-			gatewayUrl,
-			protocolVersion: GATEWAY_PROTOCOL_VERSION
-		};
 	}
 });
 
@@ -285,6 +330,7 @@ export const renewClaim = mutation({
 
 function getContextResult(args: {
 	run: Doc<'runs'>;
+	parentThreadId?: Doc<'threadRecords'>['_id'];
 	prompt: string;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
@@ -298,7 +344,8 @@ function getContextResult(args: {
 			reasoningEffort: args.run.reasoningEffort,
 			fastMode: args.run.fastMode,
 			startedAt: args.run.startedAt,
-			continuationOfRunId: args.run.continuationOfRunId
+			continuationOfRunId: args.run.continuationOfRunId,
+			parentThreadId: args.parentThreadId
 		},
 		prompt: args.prompt
 	};
@@ -320,6 +367,8 @@ export const getContext = query({
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+		const thread = await ctx.db.get('threadRecords', run.threadId);
+		const parentThreadId = thread?.parentThreadId;
 
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
@@ -328,6 +377,7 @@ export const getContext = query({
 
 			return getContextResult({
 				run,
+				parentThreadId,
 				prompt: '',
 				contextTokens
 			});
@@ -335,6 +385,7 @@ export const getContext = query({
 
 		return getContextResult({
 			run,
+			parentThreadId,
 			prompt: promptPart.prompt.text,
 			contextTokens
 		});
@@ -798,6 +849,14 @@ export const beginToolJob = mutation({
 
 			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+			}
+
+			if (paymentToolJobKinds.has(args.kind)) {
+				const thread = await ctx.db.get('threadRecords', run.threadId);
+
+				if (thread?.parentThreadId !== undefined) {
+					throw new Error('Payment tools are not available to subagents.');
+				}
 			}
 
 			if (!args.sectionKey && args.hidden !== true) {

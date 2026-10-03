@@ -433,6 +433,7 @@ async fn prepare_run(
         fast_mode: settings.fast,
         workspace_path: attachment.workspace_path,
         continuation_of_run_id: None,
+        execution_secret: None,
     })
 }
 

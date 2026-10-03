@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import { commandSnapshotLabel, fullToolSummary, toolItemSummary } from '$lib/chat/tool-summaries';
+import type { JsonValue } from '@convex/lib/json';
 
 describe('command tool summaries', () => {
 	it.each([
@@ -77,4 +78,33 @@ describe('command tool summaries', () => {
 			expect(fullToolSummary(tool, true, new Map())).toBe('bun run build');
 		}
 	);
+});
+
+describe('subagent summaries', () => {
+	it.each<{ name: string; input: JsonValue; expected: string }>([
+		{
+			name: 'subagent',
+			input: { prompt: 'Research the circuit' },
+			expected: 'Research the circuit'
+		},
+		{
+			name: 'subagent',
+			input: { threadId: 'child', prompt: 'Implement the design' },
+			expected: 'Implement the design'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'stop', threadId: 'child' },
+			expected: 'Stop child agent'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'answer_question', threadId: 'child', questionId: 'q', text: 'Yes' },
+			expected: 'Answer child question'
+		},
+		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' }
+	])('describes $expected', ({ name, input, expected }) => {
+		const tool: AssistantTimelineTool = { type: 'tool', callId: 'call', name, input };
+		expect(toolItemSummary(tool, new Map())).toBe(expected);
+	});
 });

@@ -46,7 +46,6 @@ impl Connection {
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(20))
             .build()?;
         validate_local_url(&config.listen_url())?;
         let discovered = if let Some(url) = discover(&http, &config).await? {
@@ -184,12 +183,16 @@ async fn post<T: DeserializeOwned>(
     operation: &str,
     request: &impl Serialize,
 ) -> anyhow::Result<T> {
-    let response = http
+    let request = http
         .post(format!("{base_url}/api/cli/{operation}"))
         .bearer_auth(token)
-        .json(request)
-        .send()
-        .await?;
+        .json(request);
+    let request = if operation == "run" {
+        request
+    } else {
+        request.timeout(Duration::from_secs(20))
+    };
+    let response = request.send().await?;
     let status = response.status();
     if !status.is_success() {
         let message = response
