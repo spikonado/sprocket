@@ -43,17 +43,21 @@ impl ThreadCommandSessions {
     }
 
     pub async fn prune(&self) {
-        let mut threads = self.threads.lock().await;
-        let mut unused = Vec::new();
-        for (scope, sessions) in threads.iter() {
-            sessions.prune_completed().await;
-            if sessions.is_unused().await {
-                unused.push(scope.clone());
-            }
-        }
-        for scope in unused {
-            threads.remove(&scope);
-        }
+        let snapshot = self
+            .threads
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        futures::future::join_all(snapshot.iter().map(CommandSessionManager::prune_completed))
+            .await;
+        // Clones inflate Arc::strong_count, so try_is_unused would keep every manager.
+        drop(snapshot);
+        self.threads
+            .lock()
+            .await
+            .retain(|_, sessions| !sessions.try_is_unused());
     }
 
     pub async fn stop_all(&self) {
@@ -66,10 +70,83 @@ impl ThreadCommandSessions {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use sprocket_workspace::{WorkspaceCancellation, default_command_shell};
 
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pruning_busy_thread_does_not_block_unrelated_commands() {
+        let root =
+            std::env::temp_dir().join(format!("sprocket-thread-commands-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let registry = ThreadCommandSessions::default();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (release, released) = std::sync::mpsc::channel();
+        let released = std::sync::Mutex::new(released);
+        let busy = registry
+            .for_run("user", "busy-thread", root.clone(), root.join("logs"))
+            .await
+            .with_lifetime_guard_factory({
+                let entered = entered.clone();
+                move || {
+                    // Hold the manager lock while acquiring the process guard.
+                    entered.notify_one();
+                    released
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))?;
+                    Err::<(), _>(std::io::Error::other("blocked spawn released").into())
+                }
+            });
+        let spawn = tokio::spawn(async move {
+            busy.exec_command(
+                WorkspaceCancellation::new(),
+                "echo unreachable",
+                ".",
+                &default_command_shell(),
+                None,
+                0,
+                20_000,
+            )
+            .await
+        });
+        entered.notified().await;
+
+        let mut pruning = Box::pin(registry.prune());
+        assert!(futures::poll!(pruning.as_mut()).is_pending());
+        let access = tokio::time::timeout(Duration::from_secs(1), async {
+            let other = registry
+                .for_run("user", "other-thread", root.clone(), root.join("logs"))
+                .await;
+            assert!(registry.get("user", "other-thread").await.is_some());
+            assert!(other.running_commands().await.is_empty());
+            assert!(!other.terminate_command("unknown").await);
+            other
+        })
+        .await;
+
+        // Unblock the worker even when the access check times out.
+        release.send(()).unwrap();
+        assert!(
+            spawn
+                .await
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("blocked spawn released")
+        );
+        pruning.await;
+        let other = access.expect("cleanup blocked access to an unrelated thread");
+        registry.prune().await;
+        assert!(registry.get("user", "other-thread").await.is_some());
+        drop(other);
+        registry.prune().await;
+        assert!(registry.get("user", "other-thread").await.is_none());
+        registry.stop_all().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn registry_keeps_commands_after_run_drop_and_isolates_thread_scopes() {

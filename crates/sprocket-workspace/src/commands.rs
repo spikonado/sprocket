@@ -362,9 +362,12 @@ impl CommandSessionManager {
         }
     }
 
-    /// The server can release an empty manager once no run still holds it.
-    pub async fn is_unused(&self) -> bool {
-        self.sessions.lock().await.is_empty() && Arc::strong_count(&self.sessions) == 1
+    /// True when no sessions remain and no clone still holds this manager.
+    /// Returns false without waiting if another task holds the session lock.
+    pub fn try_is_unused(&self) -> bool {
+        self.sessions
+            .try_lock()
+            .is_ok_and(|sessions| sessions.is_empty() && Arc::strong_count(&self.sessions) == 1)
     }
 
     async fn session(&self, session_id: &str) -> Result<Arc<CommandSession>> {
