@@ -66,6 +66,32 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
     }
 }
 
+fn strip_workspace_preamble(prompt: Message, workspace_context: &str) -> Message {
+    match prompt {
+        Message::User { content } => Message::User {
+            content: content
+                .into_iter()
+                .enumerate()
+                .map(|(index, content)| match content {
+                    rig::message::UserContent::Text(text) if index == 0 => {
+                        let stripped = text
+                            .text
+                            .strip_prefix(workspace_context)
+                            .and_then(|rest| rest.strip_prefix("\n\n"))
+                            .unwrap_or(&text.text);
+                        rig::message::UserContent::Text(rig::message::Text {
+                            text: stripped.to_string(),
+                            additional_params: text.additional_params,
+                        })
+                    }
+                    other => other,
+                })
+                .collect(),
+        },
+        other => other,
+    }
+}
+
 pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     gateway_url: String,
@@ -85,6 +111,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) base_instructions: String,
     pub(crate) initial_workspace_context: Option<String>,
     pub(crate) current_workspace_context: String,
+    pub(crate) prompt_includes_workspace_context: bool,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
@@ -338,6 +365,7 @@ where
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
     let initial_context = request.initial_workspace_context.map(Message::user);
     let handoff_context = request.current_workspace_context;
+    let mut prompt_includes_workspace_context = request.prompt_includes_workspace_context;
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -524,7 +552,14 @@ where
                                     handoff_processed_tokens = 0;
                                     history = handoff.history;
                                     prompt = Message::user(HANDOFF_PROMPT);
-                                    deferred_prompt = handoff.deferred_prompt;
+                                    deferred_prompt = handoff.deferred_prompt.map(|pending| {
+                                        if prompt_includes_workspace_context {
+                                            strip_workspace_preamble(pending, &handoff_context)
+                                        } else {
+                                            pending
+                                        }
+                                    });
+                                    prompt_includes_workspace_context = false;
                                     before_prompt = handoff.before_prompt;
                                     context_handoff_hook.start_handoff();
                                     continue 'generations;
@@ -914,13 +949,87 @@ impl Drop for CommandSessionShutdown {
 mod tests {
     use std::collections::HashMap;
 
-    use rig::completion::FinishReason;
+    use rig::completion::{FinishReason, Message};
 
     use super::{
         ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error,
-        contiguous_text_id, durable_items_json, incomplete_completion_error, visible_live_parts,
+        contiguous_text_id, durable_items_json, incomplete_completion_error,
+        strip_workspace_preamble, visible_live_parts,
     };
     use crate::live::LiveAssistantPart;
+
+    const PREAMBLE: &str = "# Thread-Scoped Workspace Context\n\npreamble body";
+
+    fn user_text(message: &Message) -> &str {
+        match message {
+            Message::User { content } => match &content[0] {
+                rig::message::UserContent::Text(text) => &text.text,
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected a user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deferred_prompt_drops_only_an_exact_preamble_prefix() {
+        let deferred = strip_workspace_preamble(
+            Message::user(format!("{PREAMBLE}\n\nfinish the board")),
+            PREAMBLE,
+        );
+        assert_eq!(user_text(&deferred), "finish the board");
+
+        let quoted = format!("the preamble says:\n{PREAMBLE}");
+        let kept = strip_workspace_preamble(Message::user(quoted.clone()), PREAMBLE);
+        assert_eq!(
+            user_text(&kept),
+            quoted,
+            "a preamble that is not the exact prefix is user content"
+        );
+
+        let missing_separator = strip_workspace_preamble(
+            Message::user(format!("{PREAMBLE} finish the board")),
+            PREAMBLE,
+        );
+        assert_eq!(
+            user_text(&missing_separator),
+            format!("{PREAMBLE} finish the board")
+        );
+    }
+
+    #[test]
+    fn deferred_prompt_keeps_attachments_and_other_content() {
+        let image =
+            rig::message::UserContent::image_url("https://files.example/shot.png", None, None);
+        let stripped = strip_workspace_preamble(
+            Message::User {
+                content: vec![
+                    rig::message::UserContent::text(format!("{PREAMBLE}\n\nlook at this")),
+                    image.clone(),
+                    rig::message::UserContent::text(format!("{PREAMBLE}\n\nquoted by the user")),
+                ],
+            },
+            PREAMBLE,
+        );
+        match stripped {
+            Message::User { content } => {
+                assert_eq!(content.len(), 3);
+                assert_eq!(
+                    user_text(&Message::User {
+                        content: content.clone()
+                    }),
+                    "look at this"
+                );
+                assert!(matches!(&content[1], rig::message::UserContent::Image(_)));
+                match &content[2] {
+                    rig::message::UserContent::Text(text) => {
+                        assert_eq!(text.text, format!("{PREAMBLE}\n\nquoted by the user"));
+                    }
+                    other => panic!("expected user text, got {other:?}"),
+                }
+            }
+            other => panic!("expected a user message, got {other:?}"),
+        }
+    }
 
     #[test]
     fn live_projection_omits_empty_reasoning_without_removing_durable_state() {

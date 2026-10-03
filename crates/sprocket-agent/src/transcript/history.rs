@@ -9,8 +9,31 @@ use crate::types::{
 
 use super::types::{TranscriptPromptBody, TranscriptState};
 
+pub(crate) fn prompt_text_after_handoff(
+    prompt: &TranscriptPromptBody,
+    number: u32,
+    state: &TranscriptState,
+) -> String {
+    let context = prompt.workspace_context.as_deref().filter(|context| {
+        number != state.history_from_number
+            || !state.context_summary.as_deref().is_some_and(|summary| {
+                summary
+                    .strip_prefix(context)
+                    .is_some_and(|rest| rest.starts_with("\n\n"))
+            })
+    });
+    prompt_text_with_context(prompt, context)
+}
+
 pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
-    let prompt_text = match &prompt.workspace_context {
+    prompt_text_with_context(prompt, prompt.workspace_context.as_deref())
+}
+
+fn prompt_text_with_context(
+    prompt: &TranscriptPromptBody,
+    workspace_context: Option<&str>,
+) -> String {
+    let prompt_text = match workspace_context {
         Some(context) => format!("{context}\n\n{}", prompt.text),
         None => prompt.text.clone(),
     };
@@ -178,7 +201,7 @@ pub fn agent_history_from_parts(
             TranscriptPartKind::Prompt => {
                 if let Some(prompt) = &part.prompt {
                     let mut contents = Vec::new();
-                    let text = prompt_text_with_attachments(prompt);
+                    let text = prompt_text_after_handoff(prompt, part.number, state);
                     if !text.trim().is_empty() {
                         contents.push(AgentHistoryContent::Text {
                             text,
@@ -395,6 +418,49 @@ mod tests {
         assert_eq!(
             messages[1]["contents"][0]["text"],
             "changed instructions\n\nfresh request"
+        );
+    }
+
+    #[test]
+    fn before_prompt_handoff_reload_shows_the_preamble_once() {
+        let preamble = "# Thread-Scoped Workspace Context\n\nsame instructions";
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some(format!("{preamble}\n\nhandoff summary"));
+        state.history_from_number = 1;
+        let mut parts = [prompt(1, "current", "fresh request")];
+        parts[0].prompt.as_mut().unwrap().workspace_context = Some(preamble.to_string());
+        let history = agent_history_from_parts(&state, &parts, None);
+        let messages = serde_json::to_value(&history).unwrap();
+        assert_eq!(messages.as_array().unwrap().len(), 2);
+        assert_eq!(
+            messages[0]["contents"][0]["text"],
+            context_summary_text(&format!("{preamble}\n\nhandoff summary"))
+        );
+        assert_eq!(messages[1]["contents"][0]["text"], "fresh request");
+        assert_eq!(
+            prompt_text_after_handoff(parts[0].prompt.as_ref().unwrap(), 1, &state),
+            "fresh request"
+        );
+    }
+
+    #[test]
+    fn later_preambles_and_user_text_remain_verbatim_after_a_handoff() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("preamble\n\nhandoff summary".into());
+        state.history_from_number = 1;
+        let mut first = prompt(1, "current", "preamble\n\nquoted by the user");
+        first.prompt.as_mut().unwrap().workspace_context = Some("preamble".into());
+        let mut later = prompt(2, "later", "next request");
+        later.prompt.as_mut().unwrap().workspace_context = Some("updated preamble".into());
+        let history = agent_history_from_parts(&state, &[first, later], None);
+        let messages = serde_json::to_value(&history).unwrap();
+        assert_eq!(
+            messages[1]["contents"][0]["text"],
+            "preamble\n\nquoted by the user"
+        );
+        assert_eq!(
+            messages[2]["contents"][0]["text"],
+            "updated preamble\n\nnext request"
         );
     }
 

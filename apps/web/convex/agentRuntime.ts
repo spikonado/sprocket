@@ -2,7 +2,7 @@ import { action, internalMutation, mutation, query } from '@convex/_generated/se
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, getDocumentSize, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { patchRunExecution } from '@convex/lib/runExecution';
@@ -460,12 +460,20 @@ export const prepareWorkspacePrompt = mutation({
 		if (changed && !args.text.trim()) throw new Error('Invalid workspace context.');
 
 		const workspaceContext = changed ? args.text : null;
+		const preparedPrompt = { ...prompt.prompt!, workspaceContext };
+
+		if (getDocumentSize({ ...prompt, prompt: preparedPrompt }) > 1024 * 1024) {
+			throw new ConvexError(
+				'User prompt and workspace context exceed the 1 MiB transcript limit. Shorten the prompt or AGENTS.md/skills preamble and retry.'
+			);
+		}
+
 		await ctx.db.patch('threadTranscriptParts', prompt._id, {
-			prompt: { ...prompt.prompt!, workspaceContext }
+			prompt: preparedPrompt
 		});
 
 		return {
-			prompt: { ...prompt.prompt!, workspaceContext },
+			prompt: preparedPrompt,
 			workspaceContext: args.text
 		};
 	}

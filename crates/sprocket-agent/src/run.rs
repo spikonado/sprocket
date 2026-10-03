@@ -22,7 +22,7 @@ use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::transcript::{
     TranscriptPart, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
     current_run_has_finished_turns, fetch_missing_parts, fetch_parts_by_numbers,
-    parse_remote_parts, prompt_text_with_attachments,
+    parse_remote_parts, prompt_text_after_handoff, prompt_text_with_attachments,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
@@ -970,6 +970,7 @@ pub async fn run_agent(
             return Ok(());
         };
         let mut prompt = prompt;
+        let mut prompt_includes_workspace_context = false;
         if let Some(prepared_body) = prepared_prompt.prompt {
             if let Some(part) = prior_history
                 .parts
@@ -979,7 +980,11 @@ pub async fn run_agent(
                 let body = part.prompt.as_mut().context("prompt body is missing")?;
                 body.workspace_context = prepared_body.workspace_context;
                 if !continue_without_prompt {
-                    prompt = Message::user(prompt_text_with_attachments(body));
+                    let prompt_text =
+                        prompt_text_after_handoff(body, part.number, &prior_history.state);
+                    prompt_includes_workspace_context = body.workspace_context.is_some()
+                        && prompt_text == prompt_text_with_attachments(body);
+                    prompt = Message::user(prompt_text);
                 }
                 store
                     .append_parts(
@@ -1015,6 +1020,7 @@ pub async fn run_agent(
                     base_instructions: prompt_context.base_instructions,
                     initial_workspace_context: prepared_prompt.initial_workspace_context,
                     current_workspace_context: prepared_prompt.workspace_context,
+                    prompt_includes_workspace_context,
                     prior_history: deserialize_agent_history(history)?,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),

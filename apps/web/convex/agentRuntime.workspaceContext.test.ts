@@ -145,6 +145,40 @@ describe('workspace prompt preparation', () => {
 		expect(prompt?.prompt?.text).toBe('Do the thing');
 	});
 
+	it('reports oversized combined prompts and allows retry after reducing the preamble', async () => {
+		const { t, asUser, threadId, auth } = await setup();
+		const text = 'é'.repeat(400 * 1024);
+		await t.run(async (ctx) => {
+			const part = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_kind_and_number', (q) =>
+					q.eq('threadId', threadId).eq('kind', 'prompt')
+				)
+				.first();
+
+			await ctx.db.patch('threadTranscriptParts', part!._id, {
+				prompt: { ...part!.prompt!, text }
+			});
+		});
+
+		await expect(
+			asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...auth,
+				text: 'é'.repeat(200 * 1024)
+			})
+		).rejects.toThrow('User prompt and workspace context exceed the 1 MiB transcript limit');
+
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...auth,
+				text: 'Reduced preamble'
+			})
+		).toEqual({
+			prompt: { text, imageUploads: [], workspaceContext: 'Reduced preamble' },
+			workspaceContext: 'Reduced preamble'
+		});
+	});
+
 	it('keeps the stored preamble for a promptless continuation', async () => {
 		const fixture = await setup();
 		const { t, asUser, threadId, auth } = fixture;
