@@ -12,7 +12,7 @@ import {
 	toolItemSummary,
 	toolSummaryClass
 } from '$lib/chat/tool-summaries';
-import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
+import { toolKindIcon } from '$lib/chat/tool-icons';
 import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure';
 
 type Props = {
@@ -47,14 +47,13 @@ export default function WorkTools({
 				const snapshot = commandSnapshotLabel(tool);
 
 				if (running) {
-					const ToolIcon = toolLogIcon(tool);
-
 					return (
 						<p className="flex min-w-0 items-start gap-1.5" title={`${summary} (running)`}>
-							<ToolIcon
-								className="text-muted-foreground mt-1.5 size-3 shrink-0"
+							<LoaderCircle
+								className="text-muted-foreground mt-1.5 size-3 shrink-0 animate-spin"
 								aria-hidden="true"
 							/>
+							<span className="sr-only">Running</span>
 							<span className={toolSummaryClass(tool)}>{summary}</span>
 						</p>
 					);

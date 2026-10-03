@@ -289,6 +289,12 @@ describe('transcript viewport paging', () => {
 			await settle();
 
 			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"] .animate-spin') !== null).toBe(
+				withAsync
+			);
+			expect(viewport.querySelector('[title="sleep 10 (running)"] .sr-only')?.textContent).toBe(
+				withAsync ? 'Running' : undefined
+			);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
