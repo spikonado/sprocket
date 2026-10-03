@@ -339,6 +339,76 @@ describe('groupAssistantTimelineSections', () => {
 });
 
 describe('partitionWorkSectionTools', () => {
+	it.each(['exec_command', 'write_stdin', 'ask_question', 'await_question'])(
+		'shows an unfinished %s call as running before a job attaches',
+		(name) => {
+			const call = tool('live', name);
+
+			const blocks: AssistantTimelineWorkBlock[] = [
+				{ type: 'tool-group', toolKey: name, tools: [call] }
+			];
+
+			expect(isAssistantTimelineToolRunning(call, true)).toBe(true);
+			expect(partitionWorkSectionTools(blocks, true)).toEqual({
+				settledBlocks: [],
+				runningTools: [call]
+			});
+			expect(isAssistantTimelineToolRunning(call, false)).toBe(false);
+		}
+	);
+
+	it.each([
+		'apply_patch',
+		'get_workspace_instructions',
+		'mandate_setup',
+		'mandate_status',
+		'mandate_list',
+		'mandate_charge',
+		'mandate_report',
+		'read_skill',
+		'parse_file',
+		'scrape_url',
+		'screenshot_url',
+		'web_search',
+		'add_artifact',
+		'list_artifacts',
+		'edit_artifact',
+		'save_artifact',
+		'unknown_tool'
+	])('hides unfinished %s calls while preserving settled calls', (name) => {
+		const unfinished = tool('unfinished', name);
+		const returned = tool('returned', name, { output: null });
+
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{ type: 'tool-group', toolKey: name, tools: [unfinished, returned] }
+		];
+
+		expect(isAssistantTimelineToolRunning(unfinished, true)).toBe(false);
+		expect(partitionWorkSectionTools(blocks, true)).toEqual({
+			settledBlocks: [{ type: 'tool-group', toolKey: name, tools: [returned] }],
+			runningTools: []
+		});
+	});
+
+	it.each(['pending', 'claimed', 'completed', 'failed', 'cancelled'] as const)(
+		'only reveals synchronous jobs when terminal: %s',
+		(status) => {
+			const call = tool('patch', 'apply_patch', {
+				job: executorJob('job-patch', 1, { kind: 'apply_patch', status })
+			});
+
+			const blocks: AssistantTimelineWorkBlock[] = [
+				{ type: 'tool-group', toolKey: 'apply_patch', tools: [call] }
+			];
+
+			expect(isAssistantTimelineToolRunning(call, true)).toBe(false);
+			expect(partitionWorkSectionTools(blocks, true)).toEqual({
+				settledBlocks: status === 'pending' || status === 'claimed' ? [] : blocks,
+				runningTools: []
+			});
+		}
+	);
+
 	it('pulls running tools out and leaves settled reasoning/tools behind', () => {
 		const blocks: AssistantTimelineWorkBlock[] = [
 			{ type: 'reasoning', id: 'r1', text: 'plan' },
