@@ -290,6 +290,39 @@
 	visibility: visible;
 }
 
+.inbox-subagents {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	width: calc(100% - 4px);
+	margin: -2px 2px 2px;
+	padding: 3px 10px;
+	border: 1px solid transparent;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.inbox-subagents:hover {
+	background: var(--hover-fill);
+}
+
+.inbox-subagents svg {
+	flex-shrink: 0;
+}
+
+.inbox-subagents-working {
+	color: var(--accent-strong);
+}
+
+.inbox-children .inbox-load-more {
+	padding: 4px 10px;
+	text-align: left;
+}
+
 .inbox-working {
 	color: var(--accent-strong);
 }

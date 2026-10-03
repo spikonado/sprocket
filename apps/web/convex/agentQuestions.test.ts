@@ -774,4 +774,88 @@ describe('agentQuestions', () => {
 		});
 		vi.useRealTimers();
 	});
+
+	it('returns the committed answer instead of overwriting when already answered', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const question = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Choose?',
+			options: [
+				{ id: 'a', label: 'A' },
+				{ id: 'b', label: 'B' }
+			],
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: question.questionId,
+			optionId: 'a'
+		});
+
+		// A repeated UI answer returns the committed answer and never overwrites.
+		const repeat = await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: question.questionId,
+			optionId: 'b'
+		});
+
+		expect(repeat.question.answer).toMatchObject({ optionId: 'a', optionLabel: 'A' });
+
+		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', question.questionId));
+		expect(stored?.answer).toMatchObject({ optionId: 'a' });
+	});
+
+	it('rejects answers once cancellation is requested, before terminal cleanup', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const question = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Still open?',
+			options: [{ id: 'yes', label: 'Yes' }],
+			executionSecret
+		});
+
+		// Manual stop requests cancellation; pending questions are retired in the
+		// same transaction, well before the run reaches its terminal state.
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: question.questionId,
+				optionId: 'yes'
+			})
+		).rejects.toThrow(/no longer awaiting an answer/);
+
+		expect(await asUser.query(api.agentQuestions.headPendingForThread, { threadId })).toBeNull();
+
+		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', question.questionId));
+		expect(stored?.status).toBe('cancelled');
+	});
+
+	it('rejects creating a question in the gap between stop and terminal cleanup', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(
+			t.mutation(api.agentQuestions.create, {
+				runId,
+				claimId,
+				question: 'Too late?',
+				options: [{ id: 'yes', label: 'Yes' }],
+				executionSecret
+			})
+		).rejects.toThrow(/cancelled/);
+	});
 });

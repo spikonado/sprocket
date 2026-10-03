@@ -211,9 +211,44 @@ export const vParseFilePayload = v.union(
 	v.object({ url: v.string() })
 );
 
+export const vSubagentPayload = v.object({
+	threadId: v.optional(v.id('threadRecords')),
+	prompt: v.string(),
+	model: v.optional(v.string()),
+	reasoning: v.optional(v.string()),
+	fast: v.optional(v.boolean()),
+	yieldTimeMs: v.optional(v.number()),
+	timeoutMs: v.optional(v.number())
+});
+
+export const vControlSubagentPayload = v.object({
+	threadId: v.id('threadRecords'),
+	action: v.union(v.literal('stop'), v.literal('answer_question')),
+	questionId: v.optional(v.id('agentQuestions')),
+	optionId: v.optional(v.string()),
+	text: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vPollSubagentPayload = v.object({
+	threadId: v.id('threadRecords'),
+	cursor: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vListSubagentsPayload = v.object({
+	parentThreadId: v.optional(v.id('threadRecords')),
+	cursor: v.optional(v.string()),
+	limit: v.optional(v.number())
+});
+
 export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
 	vParseFilePayload,
+	vSubagentPayload,
+	vControlSubagentPayload,
+	vPollSubagentPayload,
+	vListSubagentsPayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
@@ -245,6 +280,7 @@ export const vApplyPatchResult = v.object({
 	changes: v.array(
 		v.object({
 			path: v.string(),
+			source: v.optional(v.string()),
 			operation: v.union(
 				v.literal('created'),
 				v.literal('updated'),
@@ -454,6 +490,94 @@ export const vAskQuestionResult = vPollQuestionResult.extend({
 	options: v.optional(v.array(vAskQuestionOption))
 });
 
+export const vThreadLifecyclePhase = v.union(
+	v.literal('idle'),
+	v.literal('queued'),
+	v.literal('running'),
+	v.literal('waiting_for_input'),
+	v.literal('cancellation_requested'),
+	v.literal('completed'),
+	v.literal('failed'),
+	v.literal('cancelled')
+);
+
+const vSubagentSettings = v.object({
+	model: v.string(),
+	reasoning: v.string(),
+	fast: v.boolean(),
+	completionProvider: vCompletionProvider
+});
+
+const vSubagentPendingQuestion = v.object({
+	questionId: v.id('agentQuestions'),
+	question: v.string(),
+	options: v.array(vAskQuestionOption),
+	timeoutAt: v.union(v.number(), v.null())
+});
+
+const vSubagentMonitorEntry = v.union(
+	v.object({ type: v.literal('prompt'), id: v.string(), text: v.string() }),
+	v.object({ type: v.literal('text'), id: v.string(), text: v.string() }),
+	v.object({
+		type: v.literal('patch'),
+		id: v.string(),
+		ok: v.boolean(),
+		changes: v.array(
+			v.object({ operation: v.string(), path: v.string(), sourcePath: v.optional(v.string()) })
+		)
+	})
+);
+
+export const vSubagentActionResult = v.object({
+	threadId: v.id('threadRecords'),
+	status: vThreadLifecyclePhase,
+	lastError: v.optional(v.union(v.string(), v.null())),
+	active: v.optional(v.boolean()),
+	created: v.optional(v.boolean()),
+	settings: v.optional(vSubagentSettings),
+	answer: v.optional(vAskQuestionAnswer),
+	alreadyAnswered: v.optional(v.boolean()),
+	pendingQuestions: v.array(vSubagentPendingQuestion)
+});
+
+export const vSubagentSnapshotResult = vSubagentActionResult.extend({
+	transcriptDir: v.string(),
+	entries: v.array(vSubagentMonitorEntry),
+	nextCursor: v.string(),
+	hasMore: v.boolean()
+});
+
+export const vListSubagentsResult = v.object({
+	children: v.array(
+		v.object({
+			threadId: v.id('threadRecords'),
+			parentThreadId: v.id('threadRecords'),
+			title: v.optional(v.union(v.string(), v.null())),
+			status: vThreadLifecyclePhase,
+			lastError: v.optional(v.union(v.string(), v.null())),
+			settings: vSubagentSettings,
+			transcriptDir: v.string()
+		})
+	),
+	nextCursor: v.union(v.string(), v.null()),
+	hasMore: v.boolean()
+});
+
+export const vListModelsResult = v.object({
+	defaultModelId: v.string(),
+	defaultFast: v.boolean(),
+	models: v.array(
+		v.object({
+			id: v.string(),
+			label: v.string(),
+			reasoningEfforts: v.array(v.string()),
+			defaultReasoningEffort: v.string(),
+			serviceTiers: v.array(v.string()),
+			supportsImages: v.boolean()
+		})
+	)
+});
+
 export const vArtifactResult = v.object({
 	artifactId: v.string(),
 	revision: v.optional(v.number()),
@@ -514,6 +638,10 @@ export const vExecutorJobResult = v.union(
 	vApplyPatchResult,
 	vAskQuestionResult,
 	vPollQuestionResult,
+	vSubagentActionResult,
+	vSubagentSnapshotResult,
+	vListSubagentsResult,
+	vListModelsResult,
 	vCommandExecResult,
 	vCommandStdinResult,
 	vLegacyCommandResult,
@@ -577,8 +705,13 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('poll_command'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
+	v.literal('list_models'),
+	v.literal('list_subagents'),
 	v.literal('edit_artifact'),
-	v.literal('save_artifact')
+	v.literal('save_artifact'),
+	v.literal('subagent'),
+	v.literal('control_subagent'),
+	v.literal('poll_subagent')
 );
 
 export const vExecutorJobKind = v.union(

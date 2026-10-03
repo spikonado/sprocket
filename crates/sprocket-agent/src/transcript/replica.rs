@@ -10,7 +10,7 @@ use super::sections::{POSITION_STRIDE, WorkItem, WorkPosition, WorkSection};
 use super::{TranscriptPart, TranscriptStore};
 
 pub struct WorkReplica {
-    db: Connection,
+    pub(crate) db: Connection,
 }
 
 impl WorkReplica {
@@ -100,7 +100,10 @@ impl WorkReplica {
         Ok(())
     }
 
-    fn state<T: for<'de> Deserialize<'de>>(&self, key: &str) -> anyhow::Result<Option<T>> {
+    pub(crate) fn state<T: for<'de> Deserialize<'de>>(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<Option<T>> {
         let value: Option<String> = self
             .db
             .query_row("SELECT value FROM state WHERE key=?", [key], |row| {
@@ -139,7 +142,7 @@ impl WorkReplica {
             .transpose()
     }
 
-    fn generation(&self) -> anyhow::Result<i64> {
+    pub(crate) fn generation(&self) -> anyhow::Result<i64> {
         Ok(self.state("generation")?.unwrap_or(0))
     }
 

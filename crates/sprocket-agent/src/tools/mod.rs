@@ -13,6 +13,7 @@ mod patch;
 mod questions;
 mod scrape_files;
 mod skills;
+mod subagents;
 mod web;
 
 use std::path::PathBuf;
@@ -30,6 +31,9 @@ use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
+use self::subagents::{
+    ControlSubagentTool, ListModelsTool, ListSubagentsTool, PollSubagentTool, SubagentTool,
+};
 use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -55,11 +59,16 @@ pub(crate) struct AgentToolSet {
     pub(crate) poll_question: PollQuestionTool,
     pub(crate) control_cmd: ControlCmdTool,
     pub(crate) exec_cmd: ExecCmdTool,
+    pub(crate) control_subagent: ControlSubagentTool,
+    pub(crate) list_models: ListModelsTool,
+    pub(crate) list_subagents: ListSubagentsTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) screenshot_url: ScreenshotUrlTool,
+    pub(crate) subagent: SubagentTool,
+    pub(crate) poll_subagent: PollSubagentTool,
     pub(crate) web_search: WebSearchTool,
     pub(crate) add_artifact: AddArtifactTool,
     pub(crate) list_artifacts: ListArtifactsTool,
@@ -128,24 +137,32 @@ pub(crate) fn agent_tools(
     runtime: RuntimeClient,
     run_id: String,
     claim_id: String,
+    user_id: String,
     workspace_root: PathBuf,
     transcript_dir: PathBuf,
+    gateway_url: String,
+    transcript_store: Option<Arc<crate::TranscriptStore>>,
     artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
     command_sessions: CommandSessionManager,
+    subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 ) -> AgentToolSet {
     let context = AgentToolContext::new(
         runtime,
         run_id,
         claim_id,
+        user_id.clone(),
         workspace_root,
         transcript_dir,
+        gateway_url,
+        transcript_store,
         artifact_bindings,
         supports_images,
         tool_call_tracker,
         command_sessions.clone(),
+        subagent_launcher.clone(),
     );
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
@@ -153,6 +170,13 @@ pub(crate) fn agent_tools(
         poll_question: PollQuestionTool(context.clone()),
         control_cmd: ControlCmdTool(context.clone()),
         exec_cmd: ExecCmdTool(context.clone()),
+        control_subagent: ControlSubagentTool {
+            context: context.clone(),
+        },
+        list_models: ListModelsTool(context.clone()),
+        list_subagents: ListSubagentsTool {
+            context: context.clone(),
+        },
         parse_file: ParseFileTool(context.clone()),
         poll_cmd: PollCmdTool(context.clone()),
         read_skill: ReadSkillTool {
@@ -161,6 +185,12 @@ pub(crate) fn agent_tools(
         },
         scrape_url: ScrapeUrlTool(context.clone()),
         screenshot_url: ScreenshotUrlTool(context.clone()),
+        subagent: SubagentTool {
+            context: context.clone(),
+        },
+        poll_subagent: PollSubagentTool {
+            context: context.clone(),
+        },
         web_search: WebSearchTool(context.clone()),
         add_artifact: AddArtifactTool(context.clone()),
         list_artifacts: ListArtifactsTool(context.clone()),
