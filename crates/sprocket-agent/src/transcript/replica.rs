@@ -64,7 +64,40 @@ impl WorkReplica {
             "INSERT OR IGNORE INTO state VALUES ('replicaId',?)",
             [serde_json::to_string(&uuid::Uuid::new_v4().to_string())?],
         )?;
-        Ok(Self { db })
+        let mut replica = Self { db };
+        replica.migrate_command_session_index()?;
+        Ok(replica)
+    }
+
+    fn migrate_command_session_index(&mut self) -> anyhow::Result<()> {
+        let has_sessions: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('source_refs') WHERE name='session')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_sessions {
+            return Ok(());
+        }
+        let generation = self.generation()? + 1;
+        let tx = self.db.transaction()?;
+        let sections: Vec<(String, String)> = tx
+            .prepare("SELECT id,json_extract(body,'$.threadId') FROM rows WHERE kind='work'")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        tx.execute_batch("DROP TABLE source_refs;")?;
+        ReadIndex::initialize(&tx)?;
+        {
+            let mut statement = tx.prepare("SELECT body FROM parts ORDER BY number")?;
+            for body in statement.query_map([], |row| row.get::<_, String>(0))? {
+                ReadIndex(&tx).insert_part(&serde_json::from_str(&body?)?)?;
+            }
+        }
+        for (section, thread) in sections {
+            Self::rebuild_section(&tx, &thread, &section, generation)?;
+        }
+        Self::put_state(&tx, "generation", &generation)?;
+        tx.commit()?;
+        Ok(())
     }
 
     fn state<T: for<'de> Deserialize<'de>>(&self, key: &str) -> anyhow::Result<Option<T>> {
@@ -184,7 +217,7 @@ impl WorkReplica {
         );
         let pending_tools = items
             .iter()
-            .filter(|item| item.call_id.is_some() && (item.result_part.is_none() || item.running))
+            .filter(|item| item.call_id.is_some() && item.result_part.is_none())
             .count() as u32;
         let started_at = items
             .iter()
@@ -500,13 +533,7 @@ impl WorkReplica {
             items.reverse();
         }
         let mut parts = Vec::new();
-        for item in &mut items {
-            if row
-                .as_ref()
-                .is_some_and(|row| row.closed && row.pending_tools == 0)
-            {
-                item.running = false;
-            }
+        for item in &items {
             let source = self
                 .part(item.source.part)?
                 .context("work source not downloaded")?;

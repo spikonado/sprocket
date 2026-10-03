@@ -4,7 +4,6 @@ import {
 	assistantTimelineToolFailureKind,
 	buildAssistantTimeline,
 	buildCommandSessionCommandMap,
-	buildOpenExecCommandSessions,
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
 	isAssistantTimelineToolRunning,
@@ -329,11 +328,7 @@ describe('groupAssistantTimelineSections', () => {
 
 		if (work?.type !== 'work') throw new Error('Expected a work section.');
 
-		const { settledBlocks } = partitionWorkSectionTools(
-			work.blocks,
-			true,
-			buildOpenExecCommandSessions([running, done], true)
-		);
+		const { settledBlocks } = partitionWorkSectionTools(work.blocks, true);
 
 		expect(work.key).toBe('c1');
 		expect(settledBlocks[0]).toMatchObject({
@@ -344,16 +339,6 @@ describe('groupAssistantTimelineSections', () => {
 });
 
 describe('partitionWorkSectionTools', () => {
-	function partition(blocks: AssistantTimelineWorkBlock[], isStreaming: boolean) {
-		const tools = blocks.flatMap((block) => (block.type === 'tool-group' ? block.tools : []));
-
-		return partitionWorkSectionTools(
-			blocks,
-			isStreaming,
-			buildOpenExecCommandSessions(tools, isStreaming)
-		);
-	}
-
 	it('pulls running tools out and leaves settled reasoning/tools behind', () => {
 		const blocks: AssistantTimelineWorkBlock[] = [
 			{ type: 'reasoning', id: 'r1', text: 'plan' },
@@ -373,7 +358,7 @@ describe('partitionWorkSectionTools', () => {
 			}
 		];
 
-		const { settledBlocks, runningTools } = partition(blocks, true);
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
 
 		expect(runningTools.map((item) => item.callId)).toEqual(['live']);
 		expect(settledBlocks).toEqual([
@@ -387,7 +372,7 @@ describe('partitionWorkSectionTools', () => {
 		expect(isAssistantTimelineToolRunning(runningTools[0], true)).toBe(true);
 	});
 
-	it('keeps yielded command sessions in Running across write_stdin monitor polls', () => {
+	it('settles yielded calls and shows an in-flight poll as its own running call', () => {
 		const blocks: AssistantTimelineWorkBlock[] = [
 			{
 				type: 'tool-group',
@@ -416,13 +401,13 @@ describe('partitionWorkSectionTools', () => {
 			}
 		];
 
-		const { settledBlocks, runningTools } = partition(blocks, true);
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
 
-		expect(runningTools.map((item) => item.callId)).toEqual(['exec-1']);
-		expect(settledBlocks).toEqual([]);
+		expect(runningTools.map((item) => item.callId)).toEqual(['monitor-1']);
+		expect(settledBlocks).toEqual([blocks[0]]);
 	});
 
-	it('moves finished command sessions out of Running after the final monitor', () => {
+	it.each([true, false])('keeps each returned poll snapshot settled with running=%s', (running) => {
 		const blocks: AssistantTimelineWorkBlock[] = [
 			{
 				type: 'tool-group',
@@ -441,7 +426,7 @@ describe('partitionWorkSectionTools', () => {
 				tools: [
 					tool('monitor-1', 'write_stdin', {
 						input: { sessionId: '3' },
-						output: { running: false },
+						output: { running },
 						job: executorJob('job-monitor', 2, {
 							status: 'completed',
 							kind: 'write_stdin',
@@ -452,7 +437,7 @@ describe('partitionWorkSectionTools', () => {
 			}
 		];
 
-		const { settledBlocks, runningTools } = partition(blocks, true);
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
 
 		expect(runningTools).toEqual([]);
 		expect(settledBlocks).toEqual([
@@ -469,36 +454,22 @@ describe('partitionWorkSectionTools', () => {
 		]);
 	});
 
-	it('closes sessions using message-wide open state across text section breaks', () => {
-		const exec = tool('exec-1', 'exec_command', {
-			input: { cmd: 'npm run dev' },
-			output: { sessionId: '7', running: true },
-			job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
-		});
-
-		const monitor = tool('monitor-1', 'write_stdin', {
-			input: { sessionId: '7' },
-			output: { running: false },
-			job: executorJob('job-monitor', 2, {
-				status: 'completed',
-				kind: 'write_stdin',
-				payload: { sessionId: '7' }
-			})
-		});
-
-		const openSessions = buildOpenExecCommandSessions([exec, monitor], true);
-
-		const earlierSection: AssistantTimelineWorkBlock[] = [
-			{ type: 'tool-group', toolKey: 'exec_command', tools: [exec] }
+	it('settles yielded calls without any later poll or shared session state', () => {
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [
+					tool('exec-1', 'exec_command', {
+						input: { cmd: 'npm run dev' },
+						output: { sessionId: '7', running: true },
+						job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+					})
+				]
+			}
 		];
 
-		const { settledBlocks, runningTools } = partitionWorkSectionTools(
-			earlierSection,
-			true,
-			openSessions
-		);
-
-		expect(openSessions.size).toBe(0);
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
 		expect(runningTools).toEqual([]);
 		expect(settledBlocks).toEqual([
 			expect.objectContaining({
@@ -529,7 +500,7 @@ describe('partitionWorkSectionTools', () => {
 			{ type: 'tool-group', toolKey: 'exec_command', tools: [yieldedCommand] }
 		];
 
-		const { settledBlocks, runningTools } = partition(blocks, false);
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, false);
 
 		expect(runningTools).toEqual([]);
 		expect(settledBlocks).toEqual(blocks);

@@ -4,8 +4,8 @@ import {
 	type AssistantPart,
 	type AssistantToolCallPart
 } from '@convex/lib/assistantParts';
-import { isJsonObject, type JsonValue } from '@convex/lib/json';
-import { jsonBoolean, jsonObjectString } from '$lib/chat/json-fields';
+import type { JsonValue } from '@convex/lib/json';
+import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 
 export type AssistantTimelineTool = {
@@ -220,7 +220,7 @@ export function buildCommandSessionCommandMap(
 	return sessionCommands;
 }
 
-/** User-facing command label for write_stdin / open sessions. */
+/** User-facing command label for write_stdin. */
 export function resolveCommandSessionLabel(
 	tool: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
@@ -234,50 +234,8 @@ export function resolveCommandSessionLabel(
 }
 
 /**
- * Sessions still running that also have an exec_command row.
- * Returns empty when the run is not streaming so yielded commands settle after a crash/stop.
- * Later tool outputs win on the running flag (write_stdin completion clears the session).
- * Pass the full message tool list so monitors after text section breaks still close sessions.
- */
-export function buildOpenExecCommandSessions(
-	tools: readonly AssistantTimelineTool[],
-	isStreaming: boolean
-): Set<string> {
-	if (!isStreaming) {
-		return new Set();
-	}
-
-	const sessionRunning = new Map<string, boolean>();
-	const execSessions = new Set<string>();
-
-	for (const tool of tools) {
-		const sessionId = commandSessionIdFromTool(tool);
-
-		if (!sessionId) {
-			continue;
-		}
-
-		if (assistantTimelineToolKey(tool) === 'exec_command') {
-			execSessions.add(sessionId);
-		}
-
-		const running = isJsonObject(tool.output) ? jsonBoolean(tool.output.running) : undefined;
-
-		if (running !== undefined) {
-			sessionRunning.set(sessionId, running);
-		}
-	}
-
-	return new Set([...execSessions].filter((sessionId) => sessionRunning.get(sessionId) === true));
-}
-
-/**
  * Split a work section's blocks into settled content (reasoning + finished tools) and
  * currently running tools pulled out for a separate Running dropdown.
- *
- * Open command sessions stay in Running across write_stdin monitor polls until a later
- * monitor reports running:false. Prefer message-wide `openSessions` so text-separated
- * sections share the same session lifecycle.
  */
 export type PartitionedWorkSectionTools = {
 	settledBlocks: AssistantTimelineWorkBlock[];
@@ -286,8 +244,7 @@ export type PartitionedWorkSectionTools = {
 
 export function partitionWorkSectionTools(
 	blocks: AssistantTimelineWorkBlock[],
-	isStreaming: boolean,
-	openSessions: ReadonlySet<string>
+	isStreaming: boolean
 ): PartitionedWorkSectionTools {
 	const settledBlocks: AssistantTimelineWorkBlock[] = [];
 	const runningTools: AssistantTimelineTool[] = [];
@@ -301,31 +258,7 @@ export function partitionWorkSectionTools(
 		const settledTools: AssistantTimelineTool[] = [];
 
 		for (const tool of block.tools) {
-			const kind = assistantTimelineToolKey(tool);
-			const sessionId = commandSessionIdFromTool(tool);
-			const sessionOpen = sessionId !== undefined && openSessions.has(sessionId);
-			const traditionallyRunning = isAssistantTimelineToolRunning(tool, isStreaming);
-
-			if (kind === 'exec_command' && sessionOpen) {
-				runningTools.push(tool);
-				continue;
-			}
-
-			if (kind === 'write_stdin') {
-				if (traditionallyRunning) {
-					// Prefer the open exec_command row over in-flight monitor polls.
-					if (!sessionOpen) {
-						runningTools.push(tool);
-					}
-
-					continue;
-				}
-
-				settledTools.push(tool);
-				continue;
-			}
-
-			if (traditionallyRunning) {
+			if (isAssistantTimelineToolRunning(tool, isStreaming)) {
 				runningTools.push(tool);
 			} else {
 				settledTools.push(tool);

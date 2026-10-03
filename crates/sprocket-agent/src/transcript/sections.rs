@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -64,15 +62,10 @@ pub struct WorkItem {
     pub source: WorkPosition,
     pub call_id: Option<String>,
     pub tool_invocation_id: Option<String>,
-    pub name: Option<String>,
     pub result_part: Option<u32>,
-    pub tool_parts: BTreeSet<u32>,
     pub canonical: bool,
     pub started_at: Option<f64>,
     pub completed_at: Option<f64>,
-    pub session_id: Option<String>,
-    pub reported_running: Option<bool>,
-    pub running: bool,
     pub approval: Option<(String, String)>,
 }
 
@@ -88,7 +81,6 @@ impl WorkItem {
         let tool = part.tool.as_ref()?;
         let terminal = tool.status != "started";
         let output = tool.output.as_ref();
-        let reported_running = output.and_then(|output| output["running"].as_bool());
         Some(Self {
             run_id: part.run_id.clone(),
             section: String::new(),
@@ -98,9 +90,7 @@ impl WorkItem {
             },
             call_id: Some(tool.call_id.clone()),
             tool_invocation_id: tool.tool_invocation_id.clone(),
-            name: Some(tool.name.clone()),
             result_part: terminal.then_some(part.number),
-            tool_parts: BTreeSet::new(),
             canonical: false,
             started_at: (!terminal)
                 .then_some(part.created_at)
@@ -110,9 +100,6 @@ impl WorkItem {
                 .then_some(part.created_at)
                 .flatten()
                 .map(|n| n as f64),
-            session_id: output.and_then(|output| string(output, "sessionId")),
-            reported_running,
-            running: reported_running.unwrap_or(false),
             approval: output
                 .filter(|_| tool.name == "mandate_setup")
                 .and_then(|output| string(output, "mandateId").zip(string(output, "approvalUrl"))),
@@ -124,28 +111,7 @@ impl WorkItem {
         if self.result_part.is_none() && event.result_part.is_some() {
             self.result_part = event.result_part;
             self.completed_at = event.completed_at;
-            self.running = event.running;
-            self.reported_running = event.reported_running;
-            self.session_id = event.session_id.or(self.session_id.take());
             self.approval = event.approval;
-        }
-    }
-
-    pub(super) fn session_update(&self) -> Option<WorkSession> {
-        let (result_part, running) = self.result_part.zip(self.reported_running)?;
-        Some(WorkSession {
-            result_part,
-            running,
-            completed_at: self.completed_at,
-        })
-    }
-
-    pub(super) fn apply_command_session(&mut self, session: &WorkSession) {
-        if self.name.as_deref() == Some("exec_command") {
-            self.running = session.running;
-            if !session.running {
-                self.completed_at = session.completed_at.or(self.completed_at);
-            }
         }
     }
 
@@ -153,13 +119,6 @@ impl WorkItem {
         self.completed_at
             .filter(|completed| self.started_at.is_none_or(|started| *completed >= started))
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct WorkSession {
-    pub result_part: u32,
-    pub running: bool,
-    pub completed_at: Option<f64>,
 }
 
 pub(super) fn string(value: &Value, key: &str) -> Option<String> {
@@ -222,15 +181,7 @@ pub(super) fn detail(
         parts.push(json!({"type":"tool-call", "callId":tool.call_id, "name":tool.name, "input":null, "startedAt":item.started_at}));
     }
     if let Some(tool) = result.and_then(|part| part.tool.as_ref()) {
-        let mut output = tool.output.clone().unwrap_or(Value::Null);
-        let running = match item.name.as_deref() {
-            Some("exec_command") => Some(item.running),
-            Some("write_stdin") => item.reported_running,
-            _ => None,
-        };
-        if let Some((object, running)) = output.as_object_mut().zip(running) {
-            object.insert("running".into(), running.into());
-        }
+        let output = tool.output.as_ref().unwrap_or(&Value::Null);
         parts.push(json!({"type":"tool-result", "callId":tool.call_id, "name":tool.name, "output":output, "completedAt":item.known_completion()}));
     }
     parts

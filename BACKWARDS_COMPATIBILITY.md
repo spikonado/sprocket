@@ -329,6 +329,19 @@ optional for old jobs. `backfillExecutorJobToolInvocationId` fills the job
 field from the job document id, and `migrateToolPartJobIds` resolves each
 part's `jobId` through its job and then drops it.
 
+#### Command result snapshots
+
+Local `replica/history.sqlite3` caches previously indexed command sessions and
+kept yielded calls pending until a later poll observed process completion. On
+open, caches with the old `source_refs.session` column rebuild their read index
+and work summaries transactionally from retained transcript parts. Coverage,
+replica identity, and raw transcript results are preserved; changed rows receive
+a new generation so connected clients refresh them. Convex data and tool
+payload/result formats are unchanged.
+
+Remove this local migration once supported installations no longer have caches
+with the session column, or a later cache migration also rebuilds these indexes.
+
 #### Context handoff cutoffs
 
 Historical summaries may use `contextSummaryThroughRunId`. Current writes use
