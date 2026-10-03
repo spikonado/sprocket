@@ -409,7 +409,7 @@ impl rig::tool::Tool for DeleteArtifactTool {
                     .delete_artifact(&self.0.workspace_root, &args.artifact_id)
                     .await
                     .map_err(tool_error)?;
-                let result = tokio::time::timeout(
+                tokio::time::timeout(
                     std::time::Duration::from_secs(10),
                     run_convex_tool_mutation(
                         &self.0.runtime,
@@ -419,8 +419,7 @@ impl rig::tool::Tool for DeleteArtifactTool {
                     ),
                 )
                 .await
-                .map_err(|error| tool_error(error.into()))??;
-                Ok(result)
+                .map_err(|error| tool_error(error.into()))?
             },
         )
         .await

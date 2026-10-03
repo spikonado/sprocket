@@ -1,5 +1,21 @@
 import type { ArtifactType } from '@convex/lib/validators';
 import { z } from 'zod';
+import { defaultTreeAdapter, parse } from 'parse5';
+
+// Sandboxed previews have an opaque origin. Forward only menu-opening gestures;
+// the parent still requires the user to choose the deletion action.
+const previewMenuBridge = `<script>
+window.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  parent.postMessage({ type: 'sprocket-artifact-menu', x: event.clientX, y: event.clientY }, '*');
+}, true);
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+  event.preventDefault();
+  const bounds = event.target.getBoundingClientRect();
+  parent.postMessage({ type: 'sprocket-artifact-menu', x: bounds.left, y: bounds.bottom }, '*');
+}, true);
+</script>`;
 
 const artifactTypeSchema = z.enum(['markdown', 'html', 'react']);
 
@@ -89,18 +105,41 @@ export function buildHtmlPreviewDocument(source: string): string {
 	return previewDocumentShell('', trimmed);
 }
 
+/** Insert the gesture bridge before artifact scripts without rewriting their source. */
+function addContextMenuBridge(document: string): string {
+	const parsed = parse(document, { sourceCodeLocationInfo: true });
+
+	const root = parsed.childNodes
+		.filter(defaultTreeAdapter.isElementNode)
+		.find((node) => node.tagName === 'html');
+
+	const head = root?.childNodes
+		.filter(defaultTreeAdapter.isElementNode)
+		.find((node) => node.tagName === 'head');
+
+	const doctype = parsed.childNodes.find((node) => node.nodeName === '#documentType');
+
+	const offset =
+		head?.sourceCodeLocation?.startTag?.endOffset ??
+		root?.sourceCodeLocation?.startTag?.endOffset ??
+		doctype?.sourceCodeLocation?.endOffset ??
+		0;
+
+	return document.slice(0, offset) + previewMenuBridge + document.slice(offset);
+}
+
 /** Returns null for artifact types that render as text rather than a live preview. */
 export function buildArtifactPreviewDocument(
 	artifactType: ArtifactType,
-	content: string
+	content: string,
+	{ contextMenu = false }: { contextMenu?: boolean } = {}
 ): string | null {
-	if (artifactType === 'react') {
-		return buildReactPreviewDocument(content);
-	}
+	if (artifactType === 'markdown') return null;
 
-	if (artifactType === 'html') {
-		return buildHtmlPreviewDocument(content);
-	}
+	const document =
+		artifactType === 'react'
+			? buildReactPreviewDocument(content)
+			: buildHtmlPreviewDocument(content);
 
-	return null;
+	return contextMenu ? addContextMenuBridge(document) : document;
 }

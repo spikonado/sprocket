@@ -172,17 +172,13 @@ impl BindingGuard {
         workspace: &Path,
         artifact_id: &str,
     ) -> anyhow::Result<()> {
+        let mut paths = Vec::new();
         for binding in &self.bindings {
             if binding.artifact_id.as_deref() == Some(artifact_id) {
                 self.validate_destination(workspace, binding).await?;
+                paths.push(workspace.join(&binding.local_path));
             }
         }
-        let paths: Vec<_> = self
-            .bindings
-            .iter()
-            .filter(|binding| binding.artifact_id.as_deref() == Some(artifact_id))
-            .map(|binding| workspace.join(&binding.local_path))
-            .collect();
         if paths.is_empty() {
             return Ok(());
         }

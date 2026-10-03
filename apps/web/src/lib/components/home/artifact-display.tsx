@@ -2,7 +2,6 @@ import ArtifactContextMenu from '$lib/components/artifact-context-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
-import { defaultTreeAdapter, parse } from 'parse5';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import type { ArtifactType } from '@convex/lib/validators';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
@@ -19,21 +18,6 @@ type Props = {
 	onBack?: () => void;
 	onDelete?: () => Promise<void>;
 };
-
-// Sandboxed previews have an opaque origin. Forward only menu-opening gestures;
-// the parent still requires the user to choose the deletion action.
-const previewMenuBridge = `<script>
-window.addEventListener('contextmenu', (event) => {
-  event.preventDefault();
-  parent.postMessage({ type: 'sprocket-artifact-menu', x: event.clientX, y: event.clientY }, '*');
-}, true);
-window.addEventListener('keydown', (event) => {
-  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
-  event.preventDefault();
-  const bounds = event.target.getBoundingClientRect();
-  parent.postMessage({ type: 'sprocket-artifact-menu', x: bounds.left, y: bounds.bottom }, '*');
-}, true);
-</script>`;
 
 const previewMenuMessage = z.object({
 	type: z.literal('sprocket-artifact-menu'),
@@ -54,32 +38,10 @@ export default function ArtifactDisplay({
 }: Props) {
 	const hasDeleteAction = Boolean(onDelete);
 
-	const previewDocument = useMemo(() => {
-		const document = buildArtifactPreviewDocument(artifactType, content);
-
-		if (!document || !hasDeleteAction) return document;
-
-		// Locate real HTML tokens without rewriting source or loading artifact resources.
-		const parsed = parse(document, { sourceCodeLocationInfo: true });
-
-		const root = parsed.childNodes
-			.filter(defaultTreeAdapter.isElementNode)
-			.find((node) => node.tagName === 'html');
-
-		const head = root?.childNodes
-			.filter(defaultTreeAdapter.isElementNode)
-			.find((node) => node.tagName === 'head');
-
-		const doctype = parsed.childNodes.find((node) => node.nodeName === '#documentType');
-
-		const offset =
-			head?.sourceCodeLocation?.startTag?.endOffset ??
-			root?.sourceCodeLocation?.startTag?.endOffset ??
-			doctype?.sourceCodeLocation?.endOffset ??
-			0;
-
-		return document.slice(0, offset) + previewMenuBridge + document.slice(offset);
-	}, [artifactType, content, hasDeleteAction]);
+	const previewDocument = useMemo(
+		() => buildArtifactPreviewDocument(artifactType, content, { contextMenu: hasDeleteAction }),
+		[artifactType, content, hasDeleteAction]
+	);
 
 	const [showSource, setShowSource] = useState(false);
 	const [copied, setCopied] = useState(false);
