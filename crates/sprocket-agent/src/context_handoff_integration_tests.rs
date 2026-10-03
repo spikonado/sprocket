@@ -8,11 +8,10 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use rig::agent::{MultiTurnStreamItem, StreamingError};
-use rig::client::AgentClientExt;
 use rig::completion::{Message, PromptError};
 use rig::message::{AssistantContent, ToolResultContent, UserContent};
 use rig::providers::openai;
-use rig::streaming::StreamingPrompt;
+use rig::streaming::{Item, StreamEvent};
 use rig::tool::{DynamicTool, Tool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
@@ -351,7 +350,7 @@ fn stub_tool(name: &'static str) -> DynamicTool {
         name,
         format!("stub {name}"),
         json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
-        |_context, _args| Box::pin(async { Ok(ToolOutput::text(TOOL_RESULT)) }),
+        |_args| Box::pin(async { Ok(ToolOutput::text(TOOL_RESULT)) }),
     )
 }
 
@@ -364,13 +363,11 @@ fn test_agent_with_tools(
     hook: &ContextHandoffHook,
     tool_names: &[&'static str],
 ) -> rig::Agent {
-    let client = openai::Client::builder()
-        .api_key("test-key")
-        .base_url(base_url)
-        .build()
-        .expect("openai responses client");
-    let mut builder = client
-        .agent(MODEL)
+    let model = openai::OpenAIConfig::new("test-key")
+        .with_base_url(base_url)
+        .client()
+        .responses(MODEL);
+    let mut builder = rig::AgentBuilder::new(model)
         .preamble("context handoff fixture")
         .tool(hook.tool());
     for name in tool_names {
@@ -489,7 +486,7 @@ fn message_contains(message: &Message, needle: &str) -> bool {
 
 fn cancelled_reason(error: StreamingError) -> String {
     match error {
-        StreamingError::Prompt(error) => match *error {
+        StreamingError::Prompt(error) => match error {
             PromptError::PromptCancelled { reason, .. } => reason,
             other => other.to_string(),
         },
@@ -504,11 +501,11 @@ async fn drive(
     history: Vec<Message>,
 ) -> DriveEnd {
     let mut stream = agent
-        .stream_prompt(prompt)
+        .prompt(prompt)
         .history(history)
         .max_turns(8)
         .add_hook(hook.clone())
-        .await;
+        .stream();
     let mut final_text = String::new();
     let run = async {
         while let Some(item) = stream.next().await {
@@ -555,19 +552,20 @@ async fn unsolicited_handoff_is_not_executed_or_emitted_as_a_tool_call() {
     let agent = test_agent(&base_url, &hook);
     tokio::time::timeout(DRIVE_TIMEOUT, async {
         let mut stream = agent
-            .stream_prompt("normal work")
+            .prompt("normal work")
             .add_hook(crate::hooks::AgentPromptHook::new(
                 crate::hooks::ToolCallTracker::new("test-run", "test-claim"),
             ))
             .add_hook(hook.clone())
             .max_invalid_tool_call_retries(0)
-            .await;
+            .stream();
         let mut rejected = false;
         while let Some(item) = stream.next().await {
             match item {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    rig::streaming::StreamedAssistantContent::ToolCall { .. },
-                ))
+                Ok(MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
+                    content: AssistantContent::ToolCall(_),
+                    ..
+                })))
                 | Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. }) => {
                     panic!("a disallowed handoff must not become a visible or executed tool call");
                 }

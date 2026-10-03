@@ -7,20 +7,19 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use rig::client::{AgentClientExt, CompletionClient};
-use rig::completion::{CompletionModel, Message};
+use rig::completion::{CompletionRequest, Message};
 use rig::message::{
-    AssistantContent, ProviderCallId, Reasoning, ReasoningContent, ToolCall, ToolCallId,
-    ToolFunction, ToolResult, ToolResultContent, UserContent,
+    AssistantContent, CallId, Reasoning, ReasoningContent, Sealed, ToolCall, ToolFunction,
+    ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use rig::providers::openai;
-use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+use rig::streaming::{Item, StreamEvent};
 use rig::tool::{DynamicTool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
-use super::{contiguous_text_id, durable_items_json};
+use super::{apply_completed_text, durable_items_json};
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
-use crate::openai::OpenAiReplayClient;
+use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{AgentHistoryMessage, deserialize_agent_history};
@@ -74,6 +73,19 @@ fn responses_api_params(fast_mode: bool) -> JsonValue {
         ..Default::default()
     }
     .to_json()
+}
+
+fn responses_wire(request: CompletionRequest) -> JsonValue {
+    let wire = openai::responses_api::CompletionRequest::try_from(
+        openai::responses_api::ResponsesRequestParams {
+            model: "gateway-model".to_string(),
+            request,
+            system_instructions_placement: Default::default(),
+            issuers: vec!["openai".into()],
+        },
+    )
+    .expect("native responses request");
+    serde_json::to_value(wire).expect("serialize responses request")
 }
 
 /// Gateway wire order: empty encrypted reasoning item, summary delta, then
@@ -318,26 +330,15 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
     const BASE_INSTRUCTIONS: &str = "stable base instructions";
     const INITIAL_CONTEXT: &str = "unique initial workspace context";
 
-    let client = openai::Client::builder()
-        .api_key("test-key")
-        .base_url("http://127.0.0.1:1")
-        .build()
-        .expect("openai responses client");
-    let model = client.completion_model("gateway-model");
-    let request = model
-        .completion_request(Message::user("current request"))
+    let request = CompletionRequest::new("current request")
         .preamble(BASE_INSTRUCTIONS.to_string())
         .messages([
             Message::user(INITIAL_CONTEXT),
             Message::user("earlier request"),
             Message::assistant("earlier response"),
         ])
-        .additional_params(responses_api_params(false))
-        .build();
-    let wire =
-        openai::responses_api::CompletionRequest::try_from(("gateway-model".to_string(), request))
-            .expect("native responses request");
-    let wire = serde_json::to_value(wire).expect("serialize responses request");
+        .additional_params(responses_api_params(false));
+    let wire = responses_wire(request);
 
     assert_eq!(wire["instructions"], BASE_INSTRUCTIONS);
     assert!(wire.get("service_tier").is_none());
@@ -370,18 +371,20 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     let native_assistant = Message::Assistant {
         id: None,
         content: vec![
-            AssistantContent::Reasoning(Reasoning {
-                id: Some(ITEM_ID.to_string()),
-                content: vec![
-                    ReasoningContent::Summary(DONE_SUMMARY.to_string()),
-                    ReasoningContent::Encrypted(CIPHERTEXT.to_string()),
-                ],
-            }),
+            AssistantContent::Reasoning(
+                Reasoning {
+                    id: Some(ITEM_ID.to_string()),
+                    content: vec![
+                        ReasoningContent::Summary(DONE_SUMMARY.to_string()),
+                        ReasoningContent::Encrypted(CIPHERTEXT.to_string()),
+                    ],
+                }
+                .sealed("openai"),
+            ),
             AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint(TOOL_CALL_ID.to_string()),
-                provider: ProviderCallId::new(TOOL_CALL_ID.to_string()),
+                id: CallId::from_wire(TOOL_CALL_ID),
                 function: ToolFunction {
-                    name: TOOL_NAME.to_string(),
+                    name: ToolName::new(TOOL_NAME).expect("fixture tool name"),
                     arguments: json!({ "cmd": "pwd" }),
                 },
                 signature: None,
@@ -391,12 +394,9 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     };
     let native_tool_result = Message::User {
         content: vec![UserContent::ToolResult(ToolResult {
-            call: ToolCallId::new_or_mint(TOOL_CALL_ID.to_string()),
-            provider: ProviderCallId::new(TOOL_CALL_ID.to_string()),
-            name: TOOL_NAME.to_string(),
-            content: vec![ToolResultContent::text(json!("/workspace").to_string())]
-                .try_into()
-                .expect("nonempty tool result"),
+            call: CallId::from_wire(TOOL_CALL_ID),
+            name: ToolName::new(TOOL_NAME).expect("fixture tool name"),
+            content: vec![ToolResultContent::text(json!("/workspace").to_string())],
         })],
     };
     let live = vec![
@@ -456,26 +456,12 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
         .unwrap();
     let reloaded = deserialize_agent_history(agent_history_from_parts(&state, &loaded, None))
         .expect("reconstructed history");
-    let client = openai::Client::builder()
-        .api_key("test-key")
-        .base_url("http://127.0.0.1:1")
-        .build()
-        .expect("openai responses client");
-    let model = client.completion_model("gateway-model");
     let wire = |history| {
-        let request = model
-            .completion_request(Message::user("next request"))
-            .messages(history)
-            .additional_params(responses_api_params(false))
-            .build();
-        serde_json::to_value(
-            openai::responses_api::CompletionRequest::try_from((
-                "gateway-model".to_string(),
-                crate::openai::replay_contents(request),
-            ))
-            .expect("responses request"),
+        responses_wire(
+            CompletionRequest::new("next request")
+                .messages(history)
+                .additional_params(responses_api_params(false)),
         )
-        .expect("responses request JSON")
     };
     let live_wire = wire(live);
     let reloaded_wire = wire(reloaded);
@@ -485,30 +471,29 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
 #[tokio::test]
 async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let (base_url, server) = spawn_responses_sse(vec![gateway_sse_body()]);
-    let client = openai::Client::builder()
-        .api_key("test-key")
-        .base_url(&base_url)
-        .build()
-        .expect("openai responses client");
-    let model = client.completion_model("gateway-model");
-    let request = model.completion_request("hello").build();
+    let model = openai::OpenAIConfig::new("test-key")
+        .with_base_url(&base_url)
+        .client()
+        .responses("gateway-model");
     let mut stream = model
-        .stream(request)
-        .await
+        .stream(CompletionRequest::new("hello"))
         .expect("mocked responses stream");
 
     let mut parts = LiveAssistantParts::default();
     let mut provider_metadata = HashMap::new();
     let mut observed = Vec::new();
-    let mut completed: Option<Reasoning> = None;
+    let mut completed: Option<Sealed<Reasoning>> = None;
 
     while let Some(item) = stream.next().await {
         match item.expect("stream item") {
-            StreamedAssistantContent::ReasoningDelta { id, reasoning, .. } => {
+            Item::Event(StreamEvent::Reasoning {
+                part,
+                text: reasoning,
+            }) => {
                 observed.push(Observed::ReasoningDelta);
                 parts.apply_text_delta(
                     "reasoning",
-                    format!("{STREAM_ID}:{id}"),
+                    format!("{STREAM_ID}:reasoning:{}", part.index()),
                     &reasoning,
                     Some(STREAM_ID.to_string()),
                     now_ms(),
@@ -520,48 +505,67 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
                     "deltas must not surface ciphertext"
                 );
             }
-            StreamedAssistantContent::Reasoning { reasoning, id } => {
+            Item::Event(StreamEvent::End {
+                part,
+                content: AssistantContent::Reasoning(reasoning),
+            }) => {
                 observed.push(Observed::ReasoningDone);
-                assert_eq!(reasoning.id.as_deref(), Some(ITEM_ID));
-                assert_eq!(reasoning.display_text(), DONE_SUMMARY);
-                assert_eq!(reasoning.encrypted_content(), Some(ENVELOPE));
+                let value = reasoning
+                    .open(reasoning.issuer())
+                    .expect("issued reasoning");
+                assert_eq!(value.id.as_deref(), Some(ITEM_ID));
+                assert_eq!(value.display_text(), DONE_SUMMARY);
+                assert_eq!(value.encrypted_content(), Some(ENVELOPE));
                 assert!(
-                    !reasoning.display_text().contains(ENVELOPE),
+                    !value.display_text().contains(ENVELOPE),
                     "completed live summary must not include envelope bytes"
                 );
                 apply_completed_reasoning(
                     &mut parts,
                     &mut provider_metadata,
                     STREAM_ID,
-                    &id,
+                    &format!("reasoning:{}", part.index()),
                     &reasoning,
                 );
                 completed = Some(reasoning);
             }
-            StreamedAssistantContent::Text(text) => {
+            Item::Event(StreamEvent::Text { part, text }) => {
                 observed.push(Observed::Text);
                 parts.apply_text_delta(
                     "text",
-                    contiguous_text_id(&parts.parts, STREAM_ID),
-                    &text.text,
+                    format!("{STREAM_ID}:text:{}", part.index()),
+                    &text,
                     Some(STREAM_ID.to_string()),
                     now_ms(),
                 );
             }
-            StreamedAssistantContent::ToolCall { tool_call, .. } => {
+            Item::Event(StreamEvent::End {
+                part,
+                content: AssistantContent::Text(text),
+            }) => {
+                apply_completed_text(
+                    &mut parts,
+                    &mut provider_metadata,
+                    STREAM_ID,
+                    part.index(),
+                    &text,
+                );
+            }
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::ToolCall(tool_call),
+                ..
+            }) => {
                 observed.push(Observed::ToolCall);
                 parts.apply_tool_call(
-                    Some(tool_call.id.as_str().to_string()),
-                    tool_call.wire_call_id().to_string(),
-                    tool_call.function.name,
+                    Some(tool_call.id.to_string()),
+                    tool_call.id.wire().into_owned(),
+                    tool_call.function.name.into(),
                     tool_call.function.arguments,
                     Some(STREAM_ID.to_string()),
                     now_ms(),
                 );
             }
-            StreamedAssistantContent::ToolCallDelta { .. }
-            | StreamedAssistantContent::Final(_)
-            | StreamedAssistantContent::Unknown(_) => {}
+            Item::Event(_) | Item::Unknown(_) => {}
         }
     }
 
@@ -644,7 +648,13 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         durable["providerMetadata"]["openai"]["reasoningEncryptedContent"],
         ENVELOPE
     );
-    assert_eq!(completed.encrypted_content(), Some(ENVELOPE));
+    assert_eq!(
+        completed
+            .open(completed.issuer())
+            .unwrap()
+            .encrypted_content(),
+        Some(ENVELOPE)
+    );
 
     let history = deserialize_agent_history(
         durable_history_from_parts(&parts.parts, &provider_metadata).await,
@@ -657,6 +667,8 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
                 _ => None,
             });
             let reasoning = reasoning.expect("durable reasoning");
+            assert_eq!(reasoning.issuer().as_str(), "openai");
+            let reasoning = reasoning.open(reasoning.issuer()).unwrap();
             assert_eq!(reasoning.id.as_deref(), Some(ITEM_ID));
             assert_eq!(reasoning.display_text(), DONE_SUMMARY);
             assert_eq!(reasoning.encrypted_content(), Some(ENVELOPE));
@@ -664,7 +676,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
             assert!(content.iter().any(|part| matches!(
                 part,
                 AssistantContent::ToolCall(call)
-                    if call.wire_call_id() == TOOL_CALL_ID
+                    if call.id.wire() == TOOL_CALL_ID
                         && call.function.name == TOOL_NAME
                         && call.function.arguments == json!({ "cmd": "pwd" })
             )));
@@ -675,16 +687,11 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         other => panic!("expected assistant history, got {other:?}"),
     }
 
-    let replay = openai::responses_api::CompletionRequest::try_from((
-        "gateway-model".to_string(),
-        model
-            .completion_request(Message::user("next"))
+    let replay = responses_wire(
+        CompletionRequest::new("next")
             .messages(std::iter::once(Message::user("hello")).chain(history))
-            .additional_params(responses_api_params(false))
-            .build(),
-    ))
-    .expect("native responses replay request");
-    let replay = serde_json::to_value(&replay).expect("serialize replay");
+            .additional_params(responses_api_params(false)),
+    );
     let reasoning_input = replay["input"]
         .as_array()
         .expect("replay input")
@@ -796,21 +803,17 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
         ]),
         output_items_sse(vec![message("msg_final", "The workspace is /workspace.")]),
     ]);
-    let client = OpenAiReplayClient(
-        openai::Client::builder()
-            .api_key("test-key")
-            .base_url(&base_url)
-            .build()
-            .unwrap(),
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        "gateway-model",
     );
-    let agent = client
-        .agent("gateway-model")
+    let agent = rig::AgentBuilder::new(model)
         .additional_params(responses_api_params(false))
         .dynamic_tool(DynamicTool::new(
             TOOL_NAME,
             "Read the workspace path",
             json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
-            |_context, args| {
+            |args| {
                 Box::pin(async move {
                     assert_eq!(args, json!({ "cmd": "pwd" }));
                     Ok(ToolOutput::text("/workspace"))
@@ -819,9 +822,9 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
         ))
         .build();
     let mut stream = agent
-        .stream_prompt("Where is the workspace?")
+        .prompt("Where is the workspace?")
         .max_turns(2)
-        .await;
+        .stream();
     let mut answer = None;
     while let Some(item) = stream.next().await {
         if let rig::agent::MultiTurnStreamItem::FinalResponse(response) = item.unwrap() {
@@ -849,14 +852,12 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
     assert_eq!(input[1]["encrypted_content"], ENVELOPE);
     assert_eq!(
         input[2],
-        json!({
-            "type": "message", "role": "assistant", "content": "Checking the workspace.",
-        })
+        message("msg_commentary", "Checking the workspace.")
     );
     assert_eq!(
         input[3],
         json!({
-            "type": "function_call", "call_id": TOOL_CALL_ID,
+            "type": "function_call", "id": "fc_1", "call_id": TOOL_CALL_ID,
             "name": TOOL_NAME, "arguments": "{\"cmd\":\"pwd\"}", "status": "completed",
         })
     );
