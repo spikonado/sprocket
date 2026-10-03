@@ -179,6 +179,7 @@ export default defineSchema({
 		beforePartNumber: v.number(),
 		text: v.string()
 	})
+		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Replay bounds use creation time, not part number, to exclude retired handoffs sharing an anchor.
 		.index('by_threadId', ['threadId'])
 		.index('by_threadId_and_beforePartNumber', ['threadId', 'beforePartNumber']),
 	threadTranscriptParts: defineTable({
