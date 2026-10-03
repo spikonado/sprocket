@@ -64,6 +64,10 @@ pub struct AgentRun {
 }
 
 impl AgentRun {
+    pub fn set_command_sessions(&mut self, sessions: sprocket_workspace::CommandSessionManager) {
+        self.request.command_sessions = Some(sessions);
+    }
+
     pub async fn observe_output(
         &mut self,
         output: Arc<crate::RunOutput>,
@@ -989,6 +993,12 @@ pub async fn run_agent(
                         &context.run.user_id,
                         &workspace_root,
                     ),
+                    command_sessions: request.command_sessions.clone().unwrap_or_else(|| {
+                        sprocket_workspace::CommandSessionManager::new(
+                            workspace_root.clone(),
+                            transcript_dir.join("command-logs"),
+                        )
+                    }),
                     workspace_root,
                     skills,
                     reasoning_effort,

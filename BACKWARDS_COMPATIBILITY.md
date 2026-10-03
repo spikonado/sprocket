@@ -160,7 +160,8 @@ instead of `write_stdin`. Convex still accepts `write_stdin` jobs from released
 agents, and the UI still renders their stored input, command results, session
 labels, and log previews. New agents do not dispatch historical `write_stdin`
 calls, so that name cannot bypass the new poll cooldown. Command sessions are
-local to an agent run; no live-session or stored-data migration is needed.
+in-memory server resources scoped to the user and thread; no live-session or
+stored-data migration is needed.
 
 Remove `write_stdin` from the current Convex job-kind validator after agents
 that advertise it are outside the supported upgrade window. Keep acceptance
@@ -171,8 +172,8 @@ in stored-history validators and historical UI rendering permanently.
 Current agents advertise `exec_cmd`, `control_cmd`, `poll_cmd`, and
 `poll_question`, replacing `exec_command`, `control_command`, `poll_command`,
 and `await_question`. Convex accepts the former names for released agents and
-the UI renders both names. Current agents do not dispatch the former names;
-command sessions remain local to a run. No stored-history rewrite is needed.
+the UI renders both names. Current agents do not dispatch the former names.
+No stored-history rewrite is needed.
 
 All five command/question tools default to 10-second execution waits. Positive
 poll waits clamp to 10–270 seconds, and pending zero-wait polls have a 10-second

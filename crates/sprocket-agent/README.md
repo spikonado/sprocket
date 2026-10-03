@@ -154,8 +154,15 @@ Async tools share their timing policy through
 with `YieldMode::Action`; poll tools use `YieldMode::Poll`. Use
 `tools/async_tools.rs` for the matching provider schema and serde defaults, and
 `execute_serialized_tool_job` for typed arguments and results in the existing
-job lifecycle. Resource operations must observe the supplied cancellation token;
-commands also terminate their process tree during cancellation.
+job lifecycle. Resource operations must observe the supplied cancellation token.
+Cancelling a command operation stops waiting for input or output; the process stays available
+through its thread session. Commands keep running after agent completion or
+cancellation until they exit, reach an explicit timeout, are terminated, or the
+server shuts down. Subsequent runs in the same thread reuse the sessions.
+Completed results remain pollable for up to 30 minutes, with the newest 128
+retained per thread; an active observation keeps its result until it finishes.
+The transcript dashboard lists live commands without consuming output and offers
+per-command termination.
 
 For immediate polls, keep `ZeroPollCooldown` under the resource's observation
 lock. Fetch current state before checking the cooldown so terminal results remain

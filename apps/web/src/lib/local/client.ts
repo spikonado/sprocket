@@ -49,6 +49,17 @@ const projectAttachmentSchema = z.object({
 	unavailableReason: z.string().optional()
 });
 
+const runningCommandsSchema = z.object({
+	commands: z.array(
+		z.object({
+			sessionId: z.string(),
+			command: z.string(),
+			workdir: z.string(),
+			startedAt: z.number()
+		})
+	)
+});
+
 const agentRunStartSchema = z.object({
 	runId: z.string(),
 	threadId: z.string()
@@ -401,6 +412,17 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					body: JSON.stringify(attachment)
 				})
 			),
+		listRunningCommands: (input, signal) =>
+			request('/api/agent/commands', runningCommandsSchema, {
+				method: 'POST',
+				body: JSON.stringify(input),
+				signal
+			}),
+		terminateCommand: (input) =>
+			request('/api/agent/commands/terminate', z.object({ terminated: z.boolean() }), {
+				method: 'POST',
+				body: JSON.stringify(input)
+			}),
 		runAgent: async (requestBody) => {
 			const result = await request('/api/agent/run', agentRunStartSchema, {
 				method: 'POST',

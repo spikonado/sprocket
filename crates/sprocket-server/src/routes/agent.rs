@@ -71,6 +71,67 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/agent/run", post(run_agent_handler))
         .route("/agent/live", post(live_handler))
+        .route("/agent/commands", post(commands_handler))
+        .route("/agent/commands/terminate", post(terminate_command_handler))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommandsRequest {
+    user_id: String,
+    thread_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TerminateCommandRequest {
+    user_id: String,
+    thread_id: String,
+    session_id: String,
+}
+
+async fn commands_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<CommandsRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
+    let commands = match state
+        .command_sessions
+        .get(&payload.user_id, &payload.thread_id)
+        .await
+    {
+        Some(sessions) => sessions.running_commands().await,
+        None => Vec::new(),
+    };
+    Ok(super::api_error::no_store(Json(
+        serde_json::json!({ "commands": commands }),
+    )))
+}
+
+async fn terminate_command_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<TerminateCommandRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
+    let terminated = match state
+        .command_sessions
+        .get(&payload.user_id, &payload.thread_id)
+        .await
+    {
+        Some(sessions) => sessions.terminate_command(&payload.session_id).await,
+        None => false,
+    };
+    Ok(super::api_error::no_store(Json(
+        serde_json::json!({ "terminated": terminated }),
+    )))
 }
 
 async fn run_agent_handler(
@@ -126,6 +187,7 @@ pub(crate) async fn launch_agent(
     .map_err(ApiError::bad_request)?;
     let workspace_path = attachment.workspace_path.clone();
     let artifact_workspace_path = workspace_path.clone();
+    let command_workspace_root = std::path::PathBuf::from(&workspace_path);
     let artifact_repository_key = payload
         .repository_key
         .as_deref()
@@ -154,6 +216,7 @@ pub(crate) async fn launch_agent(
         chatgpt_credentials: Some(state.chatgpt_credentials.for_user(payload.user_id.clone())),
         allow_interaction,
         cancellation,
+        command_sessions: None,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
         execution_secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
@@ -172,6 +235,8 @@ pub(crate) async fn launch_agent(
     };
 
     let cleanup_request = request.clone();
+    let command_sessions = Arc::clone(&state.command_sessions);
+    let command_lifetime = Arc::clone(&state.lifetime);
     let live = Arc::clone(&state.live_completions);
     let transcript = Arc::clone(&state.transcript);
     let transcript_watchers = Arc::clone(&state.transcript_watchers);
@@ -205,6 +270,18 @@ pub(crate) async fn launch_agent(
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
+                let sessions = command_sessions
+                    .for_run(
+                        &user_id,
+                        &thread_id,
+                        command_workspace_root,
+                        transcript
+                            .thread_dir(&user_id, &thread_id)
+                            .join("command-logs"),
+                    )
+                    .await
+                    .with_lifetime_guard_factory(move || command_lifetime.run_guard());
+                run.set_command_sessions(sessions);
                 let prompt_part = run.prompt_part().cloned();
                 let sent_at = prompt_part
                     .as_ref()
@@ -403,6 +480,134 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+
+    #[tokio::test]
+    async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
+        use axum::body::Body;
+        use axum::http::{Request, header};
+        use sprocket_workspace::{WorkspaceCancellation, default_command_shell};
+        use tower::ServiceExt;
+
+        let root = std::env::temp_dir().join(format!("sprocket-command-routes-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let auth = crate::auth::AuthState::load(&root).unwrap();
+        let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
+        auth.bind_session_user(&token, "user").await.unwrap();
+        let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".into(),
+            },
+            crate::auth::desktop_login_callback_url(7731),
+        );
+        native_auth.authenticate_for_test("user").await;
+        let state = AppState::for_test(
+            auth,
+            native_auth,
+            root.clone(),
+            true,
+            crate::package_update::PackageUpdateManager::from_env(),
+        );
+        let sessions = state
+            .command_sessions
+            .for_run("user", "thread", root.clone(), root.join("logs"))
+            .await;
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "sleep 5",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                0,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let session_id = started.session_id.unwrap();
+        let router = crate::build_router(state.clone(), None);
+        let make_request = |path: &str, user: &str, thread: &str, authenticated: bool| {
+            let mut body = serde_json::json!({ "userId": user, "threadId": thread });
+            if path.ends_with("terminate") {
+                body["sessionId"] = session_id.clone().into();
+            }
+            let mut builder = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(header::HOST, "127.0.0.1:7731")
+                .header(header::ORIGIN, "http://127.0.0.1:7731")
+                .header(header::CONTENT_TYPE, "application/json");
+            if authenticated {
+                builder = builder.header(
+                    header::COOKIE,
+                    format!("{}={token}", crate::SESSION_COOKIE_NAME),
+                );
+            }
+            builder.body(Body::from(body.to_string())).unwrap()
+        };
+        for path in ["/api/agent/commands", "/api/agent/commands/terminate"] {
+            let response = router
+                .clone()
+                .oneshot(make_request(path, "user", "thread", false))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            let response = router
+                .clone()
+                .oneshot(make_request(path, "other-user", "thread", true))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        let other_thread = router
+            .clone()
+            .oneshot(make_request(
+                "/api/agent/commands/terminate",
+                "user",
+                "other-thread",
+                true,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(other_thread.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(other_thread.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            serde_json::json!({ "terminated": false })
+        );
+        let listed = router
+            .clone()
+            .oneshot(make_request("/api/agent/commands", "user", "thread", true))
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        assert_eq!(listed.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["commands"][0]["sessionId"], session_id);
+        let terminated = router
+            .oneshot(make_request(
+                "/api/agent/commands/terminate",
+                "user",
+                "thread",
+                true,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(terminated.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(terminated.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            serde_json::json!({ "terminated": true })
+        );
+        state.command_sessions.stop_all().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn request(json: serde_json::Value) -> RunAgentApiRequest {
         serde_json::from_value(json).expect("valid agent request")

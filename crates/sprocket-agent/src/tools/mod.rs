@@ -53,7 +53,6 @@ pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) ask_question: AskQuestionTool,
     pub(crate) poll_question: PollQuestionTool,
-    pub(crate) command_sessions: CommandSessionManager,
     pub(crate) control_cmd: ControlCmdTool,
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) parse_file: ParseFileTool,
@@ -135,9 +134,8 @@ pub(crate) fn agent_tools(
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
+    command_sessions: CommandSessionManager,
 ) -> AgentToolSet {
-    let command_sessions =
-        CommandSessionManager::new(workspace_root.clone(), transcript_dir.join("command-logs"));
     let context = AgentToolContext::new(
         runtime,
         run_id,
@@ -153,7 +151,6 @@ pub(crate) fn agent_tools(
         apply_patch: ApplyPatchTool(context.clone()),
         ask_question: AskQuestionTool(context.clone()),
         poll_question: PollQuestionTool(context.clone()),
-        command_sessions,
         control_cmd: ControlCmdTool(context.clone()),
         exec_cmd: ExecCmdTool(context.clone()),
         parse_file: ParseFileTool(context.clone()),
