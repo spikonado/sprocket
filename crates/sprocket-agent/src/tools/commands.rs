@@ -2,14 +2,12 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::{
-    CommandAction, MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, default_command_shell,
-};
+use sprocket_workspace::{CommandAction, async_tools::YieldMode, default_command_shell};
 
+use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, tool_error};
-use super::job::execute_tool_job;
+use super::job::execute_serialized_tool_job;
 
-pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 
 #[derive(Clone)]
@@ -25,10 +23,6 @@ fn default_workdir() -> String {
     ".".to_string()
 }
 
-fn default_command_yield_ms() -> u64 {
-    DEFAULT_COMMAND_YIELD_MS
-}
-
 fn is_default_workdir(workdir: &String) -> bool {
     workdir == "."
 }
@@ -37,14 +31,13 @@ fn is_default_shell(shell: &String) -> bool {
     shell == &default_command_shell()
 }
 
-fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
-    *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
-}
-
 pub(super) fn exec_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
     schema["properties"]["workdir"]["default"] = json!(default_workdir());
-    schema["properties"]["yieldTimeMs"] = yield_time_schema();
+    schema["properties"]["yieldTimeMs"] = yield_time_schema(
+        YieldMode::Action,
+        "Maximum time to wait for completion before returning the tool call.",
+    );
     schema["additionalProperties"] = json!(false);
     schema
 }
@@ -60,7 +53,10 @@ pub(super) fn control_command_parameters() -> serde_json::Value {
         definitions.remove("CommandActionArg");
     }
     schema["properties"]["chars"]["default"] = json!("");
-    schema["properties"]["yieldTimeMs"] = yield_time_schema();
+    schema["properties"]["yieldTimeMs"] = yield_time_schema(
+        YieldMode::Action,
+        "Maximum time to wait for completion before returning the tool call.",
+    );
     schema["anyOf"] = json!([
         {
             "properties": {
@@ -81,26 +77,11 @@ pub(super) fn control_command_parameters() -> serde_json::Value {
 
 pub(super) fn poll_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollCommandArgs));
-    schema["properties"]["yieldTimeMs"] = json!({
-        "type": "integer",
-        "default": DEFAULT_COMMAND_YIELD_MS,
-        "anyOf": [
-            { "type": "integer", "enum": [0] },
-            { "type": "integer", "minimum": MIN_COMMAND_POLL_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
-        ],
-        "description": "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot."
-    });
+    schema["properties"]["yieldTimeMs"] = yield_time_schema(
+        YieldMode::Poll,
+        "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.",
+    );
     schema
-}
-
-fn yield_time_schema() -> serde_json::Value {
-    json!({
-        "type": "integer",
-        "default": DEFAULT_COMMAND_YIELD_MS,
-        "minimum": 0,
-        "maximum": MAX_COMMAND_YIELD_MS,
-        "description": "Maximum time to wait for completion before returning the tool call."
-    })
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -127,10 +108,10 @@ pub(crate) struct ExecCommandArgs {
     /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_command_yield_ms",
-        skip_serializing_if = "is_default_command_yield_ms"
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
     )]
-    #[schemars(default = "default_command_yield_ms")]
+    #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -164,10 +145,10 @@ pub(crate) struct ControlCommandArgs {
     /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_command_yield_ms",
-        skip_serializing_if = "is_default_command_yield_ms"
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
     )]
-    #[schemars(default = "default_command_yield_ms")]
+    #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -180,10 +161,10 @@ pub(crate) struct PollCommandArgs {
     /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_command_yield_ms",
-        skip_serializing_if = "is_default_command_yield_ms"
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
     )]
-    #[schemars(default = "default_command_yield_ms")]
+    #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -206,28 +187,21 @@ impl rig::tool::Tool for ExecCmdTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        execute_tool_job(
-            &self.0,
-            Self::NAME,
-            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
-            |cancellation| async {
-                let output = self
-                    .0
-                    .command_sessions
-                    .exec_command(
-                        cancellation,
-                        &args.cmd,
-                        &args.workdir,
-                        &args.shell,
-                        args.timeout_ms,
-                        args.yield_time_ms,
-                        DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
-                    )
-                    .await
-                    .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
-            },
-        )
+        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
+            self.0
+                .command_sessions
+                .exec_command(
+                    cancellation,
+                    &args.cmd,
+                    &args.workdir,
+                    &args.shell,
+                    args.timeout_ms,
+                    args.yield_time_ms,
+                    DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
+                )
+                .await
+                .map_err(tool_error)
+        })
         .await
     }
 }
@@ -253,26 +227,19 @@ impl rig::tool::Tool for ControlCmdTool {
     ) -> Result<Self::Output, Self::Error> {
         let action = args.action.action();
         action.validate(&args.chars).map_err(tool_error)?;
-        execute_tool_job(
-            &self.0,
-            Self::NAME,
-            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
-            |cancellation| async {
-                let output = self
-                    .0
-                    .command_sessions
-                    .control_command(
-                        cancellation,
-                        &args.session_id,
-                        action,
-                        &args.chars,
-                        args.yield_time_ms,
-                    )
-                    .await
-                    .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
-            },
-        )
+        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
+            self.0
+                .command_sessions
+                .control_command(
+                    cancellation,
+                    &args.session_id,
+                    action,
+                    &args.chars,
+                    args.yield_time_ms,
+                )
+                .await
+                .map_err(tool_error)
+        })
         .await
     }
 }
@@ -296,20 +263,13 @@ impl rig::tool::Tool for PollCmdTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        execute_tool_job(
-            &self.0,
-            Self::NAME,
-            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
-            |cancellation| async {
-                let output = self
-                    .0
-                    .command_sessions
-                    .poll_command(cancellation, &args.session_id, args.yield_time_ms)
-                    .await
-                    .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
-            },
-        )
+        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
+            self.0
+                .command_sessions
+                .poll_command(cancellation, &args.session_id, args.yield_time_ms)
+                .await
+                .map_err(tool_error)
+        })
         .await
     }
 }
@@ -317,6 +277,7 @@ impl rig::tool::Tool for PollCmdTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sprocket_workspace::async_tools::{DEFAULT_YIELD_MS, MAX_YIELD_MS, MIN_POLL_YIELD_MS};
 
     #[test]
     fn exec_command_schema_does_not_expose_the_preview_limit() {
@@ -466,12 +427,12 @@ mod tests {
         let properties = schema["properties"].as_object().unwrap();
         assert_eq!(properties.len(), 2);
         let yield_time = &properties["yieldTimeMs"];
-        assert_eq!(yield_time["default"], json!(DEFAULT_COMMAND_YIELD_MS));
+        assert_eq!(yield_time["default"], json!(DEFAULT_YIELD_MS));
         assert_eq!(
             yield_time["anyOf"],
             json!([
                 { "type": "integer", "enum": [0] },
-                { "type": "integer", "minimum": MIN_COMMAND_POLL_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
+                { "type": "integer", "minimum": MIN_POLL_YIELD_MS, "maximum": MAX_YIELD_MS }
             ])
         );
         assert_eq!(
@@ -483,7 +444,7 @@ mod tests {
     #[test]
     fn poll_args_deserialize_strictly() {
         let poll: PollCommandArgs = serde_json::from_value(json!({"sessionId": "42"})).unwrap();
-        assert_eq!(poll.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
+        assert_eq!(poll.yield_time_ms, DEFAULT_YIELD_MS);
 
         assert!(
             serde_json::from_value::<PollCommandArgs>(json!({"sessionId": "42", "chars": "x"}))
@@ -496,10 +457,10 @@ mod tests {
     fn exec_and_control_advertise_the_same_yield_window() {
         for schema in [exec_command_parameters(), control_command_parameters()] {
             let yield_time = &schema["properties"]["yieldTimeMs"];
-            assert_eq!(yield_time["default"], json!(DEFAULT_COMMAND_YIELD_MS));
+            assert_eq!(yield_time["default"], json!(DEFAULT_YIELD_MS));
             assert_eq!(yield_time["type"], "integer");
             assert_eq!(yield_time["minimum"], 0);
-            assert_eq!(yield_time["maximum"], MAX_COMMAND_YIELD_MS);
+            assert_eq!(yield_time["maximum"], MAX_YIELD_MS);
             assert!(yield_time.get("anyOf").is_none());
             assert_eq!(
                 yield_time["description"],
@@ -511,11 +472,11 @@ mod tests {
     #[test]
     fn yield_time_defaults_apply_and_zero_is_preserved() {
         let exec_default: ExecCommandArgs = serde_json::from_value(json!({"cmd": "pwd"})).unwrap();
-        assert_eq!(exec_default.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
+        assert_eq!(exec_default.yield_time_ms, DEFAULT_YIELD_MS);
 
         let control_default: ControlCommandArgs =
             serde_json::from_value(json!({"sessionId": "abc", "action": "terminate"})).unwrap();
-        assert_eq!(control_default.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
+        assert_eq!(control_default.yield_time_ms, DEFAULT_YIELD_MS);
 
         let exec_zero: ExecCommandArgs =
             serde_json::from_value(json!({"cmd": "pwd", "yieldTimeMs": 0})).unwrap();

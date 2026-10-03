@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use convex::Value;
 use futures::StreamExt;
 use rig::tool::{ToolErrorKind, ToolExecutionError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
@@ -219,6 +219,27 @@ pub(super) async fn execute_cloud_tool_job(
             }
         }
     }
+}
+
+/// Adapts typed tool arguments and results to the persisted job lifecycle.
+pub(super) async fn execute_serialized_tool_job<A, O, F, Fut>(
+    context: &AgentToolContext,
+    kind: &str,
+    args: &A,
+    operation: F,
+) -> Result<serde_json::Value, ToolExecutionError>
+where
+    A: Serialize,
+    O: Serialize,
+    F: FnOnce(WorkspaceCancellation) -> Fut,
+    Fut: std::future::Future<Output = Result<O, ToolExecutionError>>,
+{
+    let payload = serde_json::to_value(args).map_err(|error| tool_error(error.into()))?;
+    execute_tool_job(context, kind, payload, |cancellation| async move {
+        let output = operation(cancellation).await?;
+        serde_json::to_value(output).map_err(|error| tool_error(error.into()))
+    })
+    .await
 }
 
 pub(super) async fn execute_tool_job<F, Fut>(

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::async_tools::{YieldMode, ZeroPollCooldown};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
 use crate::paths::expand_home;
 use anyhow::{Context, Result, anyhow, bail};
@@ -12,15 +13,14 @@ use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
-pub const MIN_COMMAND_POLL_YIELD_MS: u64 = 10_000;
-pub const MAX_COMMAND_YIELD_MS: u64 = 270_000;
+pub use crate::async_tools::{
+    MAX_YIELD_MS as MAX_COMMAND_YIELD_MS, MIN_POLL_YIELD_MS as MIN_COMMAND_POLL_YIELD_MS,
+};
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
-const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug)]
 pub enum CommandAction {
@@ -60,7 +60,7 @@ impl ObservationMode {
 #[derive(Default)]
 struct CommandObservation {
     final_output: Option<CommandOutput>,
-    last_zero_poll: Option<Instant>,
+    zero_poll_cooldown: ZeroPollCooldown,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -239,11 +239,7 @@ impl CommandSessionManager {
         yield_time_ms: u64,
     ) -> Result<CommandStdinOutput> {
         let session = self.session(session_id).await?;
-        let yield_time_ms = if yield_time_ms == 0 {
-            0
-        } else {
-            yield_time_ms.clamp(MIN_COMMAND_POLL_YIELD_MS, MAX_COMMAND_YIELD_MS)
-        };
+        let yield_time_ms = YieldMode::Poll.normalize(yield_time_ms);
         let mode = if yield_time_ms == 0 {
             ObservationMode::ZeroPoll
         } else {
@@ -466,26 +462,21 @@ impl CommandSession {
         let mut capture = self.output.lock().await;
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
-        if completion.is_none() && matches!(mode, ObservationMode::ZeroPoll) {
-            let now = Instant::now();
-            if let Some(last) = observation.last_zero_poll {
-                let elapsed = now.duration_since(last);
-                if elapsed < ZERO_POLL_COOLDOWN {
-                    let remaining_seconds = (ZERO_POLL_COOLDOWN - elapsed)
-                        .as_nanos()
-                        .div_ceil(1_000_000_000);
-                    bail!(
-                        "Command is still running. Check again after {remaining_seconds}s or use a higher `yieldTimeMs`."
-                    );
-                }
-            }
-            observation.last_zero_poll = Some(now);
+        let pending_zero_poll = completion.is_none() && matches!(mode, ObservationMode::ZeroPoll);
+        if pending_zero_poll {
+            observation
+                .zero_poll_cooldown
+                .check()
+                .map_err(|error| anyhow!(error.message("Command is still running.")))?;
         }
         let preview = if !matches!(mode, ObservationMode::Metadata) || completion.is_some() {
             capture.take_preview()
         } else {
             capture.preview_metadata()
         };
+        if pending_zero_poll {
+            observation.zero_poll_cooldown.record_success();
+        }
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 
@@ -536,7 +527,7 @@ async fn wait_for_completion(
     tokio::select! {
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
         result = tokio::time::timeout(
-            Duration::from_millis(yield_time_ms.min(MAX_COMMAND_YIELD_MS)),
+            Duration::from_millis(YieldMode::Action.normalize(yield_time_ms)),
             completion.changed(),
         ) => {
             match result {
@@ -872,7 +863,12 @@ mod tests {
         }
 
         async fn last_zero_poll(&self) -> Option<tokio::time::Instant> {
-            self.session.observation.lock().await.last_zero_poll
+            self.session
+                .observation
+                .lock()
+                .await
+                .zero_poll_cooldown
+                .last_success()
         }
     }
 

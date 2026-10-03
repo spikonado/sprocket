@@ -9,16 +9,15 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sprocket_workspace::async_tools::{YieldMode, ZeroPollCooldown};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep_until};
 
+use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schema};
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
-use super::job::execute_tool_job;
+use super::job::execute_serialized_tool_job;
 use crate::convex::RuntimeClient;
 
-pub(super) const DEFAULT_QUESTION_YIELD_MS: u64 = 10_000;
-const MAX_QUESTION_YIELD_MS: u64 = 270_000;
-const QUESTION_POLL_COOLDOWN: Duration = Duration::from_secs(10);
 pub(super) const MAX_QUESTION_CHARS: usize = 2000;
 pub(super) const MAX_OPTION_ID_CHARS: usize = 20;
 pub(super) const MAX_OPTION_LABEL_CHARS: usize = 200;
@@ -33,35 +32,12 @@ pub(crate) struct AskQuestionTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PollQuestionTool(pub(super) AgentToolContext);
 
-fn default_question_yield_ms() -> u64 {
-    DEFAULT_QUESTION_YIELD_MS
-}
-
-fn is_default_question_yield_ms(yield_time_ms: &u64) -> bool {
-    *yield_time_ms == DEFAULT_QUESTION_YIELD_MS
-}
-
-fn normalize_ask_yield_ms(yield_time_ms: u64) -> u64 {
-    yield_time_ms.min(MAX_QUESTION_YIELD_MS)
-}
-
-fn normalize_poll_yield_ms(yield_time_ms: u64) -> u64 {
-    if yield_time_ms == 0 {
-        0
-    } else {
-        yield_time_ms.clamp(DEFAULT_QUESTION_YIELD_MS, MAX_QUESTION_YIELD_MS)
-    }
-}
-
 fn ask_question_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(AskQuestionArgs));
-    schema["properties"]["yieldTimeMs"] = json!({
-        "type": "integer",
-        "default": DEFAULT_QUESTION_YIELD_MS,
-        "minimum": 0,
-        "maximum": MAX_QUESTION_YIELD_MS,
-        "description": "Maximum time to wait for completion before returning the tool call."
-    });
+    schema["properties"]["yieldTimeMs"] = yield_time_schema(
+        YieldMode::Action,
+        "Maximum time to wait for completion before returning the tool call.",
+    );
     schema["properties"]["timeoutMs"] = json!({
         "type": ["integer", "null"],
         "minimum": 0,
@@ -72,15 +48,10 @@ fn ask_question_parameters() -> serde_json::Value {
 
 fn poll_question_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollQuestionArgs));
-    schema["properties"]["yieldTimeMs"] = json!({
-        "type": "integer",
-        "default": DEFAULT_QUESTION_YIELD_MS,
-        "anyOf": [
-            { "type": "integer", "enum": [0] },
-            { "type": "integer", "minimum": DEFAULT_QUESTION_YIELD_MS, "maximum": MAX_QUESTION_YIELD_MS }
-        ],
-        "description": "Maximum time to wait for an answer before returning the tool call. Zero returns an immediate status/answer snapshot."
-    });
+    schema["properties"]["yieldTimeMs"] = yield_time_schema(
+        YieldMode::Poll,
+        "Maximum time to wait for an answer before returning the tool call. Zero returns an immediate status/answer snapshot.",
+    );
     schema
 }
 
@@ -105,10 +76,10 @@ pub(crate) struct AskQuestionArgs {
     /// Maximum time to wait for an answer before returning, in milliseconds. Use 0 to return immediately.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_question_yield_ms",
-        skip_serializing_if = "is_default_question_yield_ms"
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
     )]
-    #[schemars(default = "default_question_yield_ms")]
+    #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
@@ -124,10 +95,10 @@ pub(crate) struct PollQuestionArgs {
     /// Maximum time to wait for an answer or expiry before returning, in milliseconds. Use 0 for an immediate snapshot.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_question_yield_ms",
-        skip_serializing_if = "is_default_question_yield_ms"
+        default = "default_yield_ms",
+        skip_serializing_if = "is_default_yield_ms"
     )]
-    #[schemars(default = "default_question_yield_ms")]
+    #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -158,7 +129,7 @@ struct CreateQuestionResponse {
 
 #[derive(Clone, Default)]
 pub(super) struct QuestionPolls {
-    questions: Arc<Mutex<HashMap<String, Arc<Mutex<Option<Instant>>>>>>,
+    questions: Arc<Mutex<HashMap<String, Arc<Mutex<ZeroPollCooldown>>>>>,
 }
 
 impl QuestionPolls {
@@ -178,25 +149,16 @@ impl QuestionPolls {
             .entry(question_id.to_string())
             .or_default()
             .clone();
-        let mut last_poll = poll.lock().await;
+        let mut cooldown = poll.lock().await;
         let snapshot = fetch().await?;
         if snapshot.status != "pending" {
             return question_result_from_snapshot(&snapshot);
         }
-        let now = Instant::now();
-        if let Some(last) = *last_poll {
-            let elapsed = now.duration_since(last);
-            if elapsed < QUESTION_POLL_COOLDOWN {
-                let remaining_seconds = (QUESTION_POLL_COOLDOWN - elapsed)
-                    .as_nanos()
-                    .div_ceil(1_000_000_000);
-                return Err(tool_failure(format!(
-                    "Question is still awaiting an answer. Check again after {remaining_seconds}s or use a higher `yieldTimeMs`."
-                )));
-            }
-        }
+        cooldown.check().map_err(|error| {
+            tool_failure(error.message("Question is still awaiting an answer."))
+        })?;
         let result = question_result_from_snapshot(&snapshot)?;
-        *last_poll = Some(now);
+        cooldown.record_success();
         Ok(result)
     }
 }
@@ -221,9 +183,8 @@ impl rig::tool::Tool for AskQuestionTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
-        let yield_time_ms = normalize_ask_yield_ms(args.yield_time_ms);
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
+        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms);
+        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| {
             let runtime = self.0.runtime.clone();
             let run_id = self.0.run_id.clone();
             let claim_id = self.0.claim_id.clone();
@@ -273,9 +234,8 @@ impl rig::tool::Tool for PollQuestionTool {
         if args.question_id.trim().is_empty() {
             return Err(tool_failure("questionId cannot be empty"));
         }
-        let yield_time_ms = normalize_poll_yield_ms(args.yield_time_ms);
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
+        let yield_time_ms = YieldMode::Poll.normalize(args.yield_time_ms);
+        execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| {
             let runtime = self.0.runtime.clone();
             let run_id = self.0.run_id.clone();
             let question_id = args.question_id.clone();
@@ -517,26 +477,6 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn ask_yield_normalization_preserves_zero_and_caps_oversized_values() {
-        assert_eq!(normalize_ask_yield_ms(0), 0);
-        assert_eq!(normalize_ask_yield_ms(DEFAULT_QUESTION_YIELD_MS), 10_000);
-        assert_eq!(normalize_ask_yield_ms(1), 1);
-        assert_eq!(normalize_ask_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
-        assert_eq!(normalize_ask_yield_ms(1_800_000), 270_000);
-        assert_eq!(normalize_ask_yield_ms(u64::MAX), 270_000);
-    }
-
-    #[test]
-    fn poll_yield_normalization_preserves_zero_and_clamps_oversized_values() {
-        assert_eq!(normalize_poll_yield_ms(0), 0);
-        assert_eq!(normalize_poll_yield_ms(1), 10_000);
-        assert_eq!(normalize_poll_yield_ms(DEFAULT_QUESTION_YIELD_MS), 10_000);
-        assert_eq!(normalize_poll_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
-        assert_eq!(normalize_poll_yield_ms(1_800_000), 270_000);
-        assert_eq!(normalize_poll_yield_ms(u64::MAX), 270_000);
-    }
-
     fn snapshot(question_id: &str, status: &str) -> QuestionSnapshot {
         QuestionSnapshot {
             question_id: question_id.to_string(),
@@ -584,6 +524,24 @@ mod tests {
                 { "type": "integer", "minimum": 10_000, "maximum": 270_000 }
             ])
         );
+    }
+
+    #[test]
+    fn commands_and_questions_advertise_the_same_wait_policy() {
+        use super::super::commands::{
+            control_command_parameters, exec_command_parameters, poll_command_parameters,
+        };
+
+        let ask_wait = ask_question_parameters()["properties"]["yieldTimeMs"].clone();
+        for schema in [exec_command_parameters(), control_command_parameters()] {
+            assert_eq!(schema["properties"]["yieldTimeMs"], ask_wait);
+        }
+
+        let mut command_wait = poll_command_parameters()["properties"]["yieldTimeMs"].clone();
+        let mut question_wait = poll_question_parameters()["properties"]["yieldTimeMs"].clone();
+        command_wait.as_object_mut().unwrap().remove("description");
+        question_wait.as_object_mut().unwrap().remove("description");
+        assert_eq!(command_wait, question_wait);
     }
 
     #[test]

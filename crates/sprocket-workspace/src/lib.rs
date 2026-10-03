@@ -1,6 +1,7 @@
 mod agents;
 mod apply_patch_format;
 mod artifacts;
+pub mod async_tools;
 mod browse;
 mod builtin_skills;
 mod command_output;
