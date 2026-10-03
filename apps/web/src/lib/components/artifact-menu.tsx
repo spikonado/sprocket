@@ -1,16 +1,14 @@
-import { Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Ellipsis, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-export default function ArtifactContextMenu({
-	title,
-	onDelete,
-	children
-}: {
+type Props = {
 	title: string;
 	onDelete?: () => Promise<void>;
-	children: ReactNode;
-}) {
+} & ({ trigger: 'context'; children: ReactNode } | { trigger: 'button'; children?: never });
+
+export default function ArtifactMenu({ title, onDelete, trigger, children }: Props) {
+	const menuId = useId();
 	const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -39,7 +37,12 @@ export default function ArtifactContextMenu({
 		if (!position) return;
 
 		function outside(event: MouseEvent) {
-			if (event.target instanceof Node && !menuRef.current?.contains(event.target)) close();
+			if (!(event.target instanceof Node)) return;
+
+			if (menuRef.current?.contains(event.target)) return;
+
+			if (trigger === 'button' && triggerRef.current?.contains(event.target)) return;
+			close();
 		}
 
 		function keydown(event: KeyboardEvent) {
@@ -52,18 +55,26 @@ export default function ArtifactContextMenu({
 			}
 		}
 
+		function blur() {
+			// Entering a preview iframe blurs the parent window. Do not restore focus
+			// to the trigger while the user is interacting with that preview.
+			setPosition(null);
+		}
+
 		document.addEventListener('mousedown', outside);
+		window.addEventListener('blur', blur);
 		window.addEventListener('keydown', keydown, true);
 		window.addEventListener('resize', close);
 		window.addEventListener('scroll', close, true);
 
 		return () => {
 			document.removeEventListener('mousedown', outside);
+			window.removeEventListener('blur', blur);
 			window.removeEventListener('keydown', keydown, true);
 			window.removeEventListener('resize', close);
 			window.removeEventListener('scroll', close, true);
 		};
-	}, [position, close]);
+	}, [position, close, trigger]);
 
 	function open(target: EventTarget, container: HTMLElement, x: number, y: number) {
 		if (!(target instanceof Element)) return;
@@ -103,13 +114,17 @@ export default function ArtifactContextMenu({
 		<div
 			className="contents"
 			onContextMenu={(event) => {
-				if (!onDelete) return;
+				if (!onDelete || trigger !== 'context') return;
 				event.preventDefault();
 				event.stopPropagation();
 				open(event.target, event.currentTarget, event.clientX, event.clientY);
 			}}
 			onKeyDown={(event) => {
-				if (!onDelete || !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')))
+				if (
+					!onDelete ||
+					trigger !== 'context' ||
+					!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
+				)
 					return;
 				event.preventDefault();
 				event.stopPropagation();
@@ -120,10 +135,41 @@ export default function ArtifactContextMenu({
 				if (bounds) open(event.target, event.currentTarget, bounds.left, bounds.bottom);
 			}}
 		>
-			{children}
+			{trigger === 'context' ? (
+				children
+			) : (
+				<button
+					type="button"
+					aria-label={`${title} actions`}
+					title="Artifact actions"
+					aria-haspopup="menu"
+					aria-expanded={Boolean(position)}
+					aria-controls={position ? menuId : undefined}
+					className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring shrink-0 rounded-md p-1.5 transition outline-none focus-visible:ring-2"
+					onClick={(event) => {
+						if (position) {
+							close();
+
+							return;
+						}
+
+						const bounds = event.currentTarget.getBoundingClientRect();
+						open(event.currentTarget, event.currentTarget, bounds.right - 224, bounds.bottom + 4);
+					}}
+					onKeyDown={(event) => {
+						if (event.key !== 'ArrowDown') return;
+						event.preventDefault();
+						const bounds = event.currentTarget.getBoundingClientRect();
+						open(event.currentTarget, event.currentTarget, bounds.right - 224, bounds.bottom + 4);
+					}}
+				>
+					<Ellipsis className="size-4" aria-hidden="true" />
+				</button>
+			)}
 			{position &&
 				createPortal(
 					<div
+						id={menuId}
 						ref={menuRef}
 						role="menu"
 						tabIndex={-1}

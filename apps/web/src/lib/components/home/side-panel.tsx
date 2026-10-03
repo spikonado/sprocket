@@ -1,4 +1,4 @@
-import ArtifactContextMenu from '$lib/components/artifact-context-menu';
+import ArtifactMenu from '$lib/components/artifact-menu';
 import { Expand, FileCode, FileText, Fullscreen, Globe, Shrink, X } from 'lucide-react';
 import { useEffect, type KeyboardEvent } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
@@ -209,14 +209,17 @@ export default function SidePanel({
 										const TypeIcon = TYPE_ICONS[artifact.artifactType];
 
 										return (
-											<ArtifactContextMenu
+											<div
 												key={artifact.key}
-												title={artifact.title}
-												onDelete={
-													onDeleteArtifact ? () => onDeleteArtifact(artifact.key) : undefined
-												}
+												className="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
 											>
-												<div className="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5">
+												<ArtifactMenu
+													trigger="context"
+													title={artifact.title}
+													onDelete={
+														onDeleteArtifact ? () => onDeleteArtifact(artifact.key) : undefined
+													}
+												>
 													<button
 														type="button"
 														className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -245,17 +248,17 @@ export default function SidePanel({
 															) : null}
 														</span>
 													</button>
-													<button
-														type="button"
-														className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
-														onClick={() => onOpenFullscreen(artifact.key)}
-														aria-label={`Open ${artifact.title} fullscreen`}
-														title="Open fullscreen"
-													>
-														<Fullscreen className="size-3.5" aria-hidden="true" />
-													</button>
-												</div>
-											</ArtifactContextMenu>
+												</ArtifactMenu>
+												<button
+													type="button"
+													className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+													onClick={() => onOpenFullscreen(artifact.key)}
+													aria-label={`Open ${artifact.title} fullscreen`}
+													title="Open fullscreen"
+												>
+													<Fullscreen className="size-3.5" aria-hidden="true" />
+												</button>
+											</div>
 										);
 									})
 								)}

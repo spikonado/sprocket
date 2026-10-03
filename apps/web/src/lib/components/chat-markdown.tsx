@@ -11,14 +11,12 @@ export default function ChatMarkdown({
 	className = '',
 	artifacts = [],
 	onOpenArtifact,
-	onDeleteArtifact,
 	openLinksInNewTab = false
 }: {
 	content: string;
 	className?: string;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
-	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 	openLinksInNewTab?: boolean;
 }) {
 	const artifactById = useMemo(
@@ -48,7 +46,6 @@ export default function ChatMarkdown({
 								key={`${block.type}-${index}`}
 								artifact={artifact}
 								onOpen={() => onOpenArtifact(block.artifactId)}
-								onDelete={onDeleteArtifact ? () => onDeleteArtifact(block.artifactId) : undefined}
 							/>
 						);
 					}

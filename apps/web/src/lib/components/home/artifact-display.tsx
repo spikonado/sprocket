@@ -1,7 +1,6 @@
-import ArtifactContextMenu from '$lib/components/artifact-context-menu';
+import ArtifactMenu from '$lib/components/artifact-menu';
 import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { z } from 'zod';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import type { ArtifactType } from '@convex/lib/validators';
 import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
@@ -19,12 +18,6 @@ type Props = {
 	onDelete?: () => Promise<void>;
 };
 
-const previewMenuMessage = z.object({
-	type: z.literal('sprocket-artifact-menu'),
-	x: z.number().finite(),
-	y: z.number().finite()
-});
-
 export default function ArtifactDisplay({
 	title,
 	artifactType,
@@ -36,44 +29,14 @@ export default function ArtifactDisplay({
 	onBack,
 	onDelete
 }: Props) {
-	const hasDeleteAction = Boolean(onDelete);
-
 	const previewDocument = useMemo(
-		() => buildArtifactPreviewDocument(artifactType, content, { contextMenu: hasDeleteAction }),
-		[artifactType, content, hasDeleteAction]
+		() => buildArtifactPreviewDocument(artifactType, content),
+		[artifactType, content]
 	);
 
 	const [showSource, setShowSource] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const frameRef = useRef<HTMLIFrameElement>(null);
-
-	useEffect(() => {
-		if (!onDelete) return;
-
-		function openPreviewMenu(event: MessageEvent) {
-			const frame = frameRef.current;
-
-			if (!frame || event.source !== frame.contentWindow) return;
-			const parsed = previewMenuMessage.safeParse(event.data);
-
-			if (!parsed.success) return;
-			const data = parsed.data;
-			const bounds = frame.getBoundingClientRect();
-			frame.dispatchEvent(
-				new MouseEvent('contextmenu', {
-					bubbles: true,
-					cancelable: true,
-					clientX: bounds.left + Math.max(0, Math.min(data.x, bounds.width)),
-					clientY: bounds.top + Math.max(0, Math.min(data.y, bounds.height))
-				})
-			);
-		}
-
-		window.addEventListener('message', openPreviewMenu);
-
-		return () => window.removeEventListener('message', openPreviewMenu);
-	}, [onDelete]);
 
 	async function copyContent() {
 		try {
@@ -106,7 +69,6 @@ export default function ArtifactDisplay({
 			<div className="relative min-h-0 flex-1 border-t">
 				{previewDocument && !showSource ? (
 					<iframe
-						ref={frameRef}
 						title={`${title} preview`}
 						srcDoc={previewDocument}
 						sandbox="allow-scripts"
@@ -138,75 +100,72 @@ export default function ArtifactDisplay({
 	}
 
 	return (
-		<ArtifactContextMenu title={title} onDelete={onDelete}>
-			<div
-				className={
-					variant === 'full'
-						? 'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border'
-						: 'bg-card rounded-lg border'
-				}
-			>
-				<div className="flex items-center gap-2 px-3 py-2">
-					{onBack ? (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground shrink-0 transition"
-							onClick={onBack}
-							aria-label="Back to artifacts"
-						>
-							<ArrowLeft className="size-4" aria-hidden="true" />
-						</button>
-					) : null}
-					<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-						<div className="flex min-w-0 items-center gap-2">
-							<span className="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
-							<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
-						</div>
-						{localPath ? (
-							<span className="text-muted-foreground min-w-0 truncate text-[11px]">
-								{localPath}
-							</span>
-						) : null}
+		<div
+			className={
+				variant === 'full'
+					? 'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border'
+					: 'bg-card rounded-lg border'
+			}
+		>
+			<div className="flex items-center gap-2 px-3 py-2">
+				{onBack ? (
+					<button
+						type="button"
+						className="text-muted-foreground hover:text-foreground shrink-0 transition"
+						onClick={onBack}
+						aria-label="Back to artifacts"
+					>
+						<ArrowLeft className="size-4" aria-hidden="true" />
+					</button>
+				) : null}
+				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+					<div className="flex min-w-0 items-center gap-2">
+						<span className="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
+						<span className="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
 					</div>
-					{previewDocument ? (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition"
-							onClick={() => setShowSource((value) => !value)}
-							aria-label={showSource ? 'Show preview' : 'Show source'}
-						>
-							{showSource ? (
-								<>
-									<Eye className="size-3.5" aria-hidden="true" />
-									Preview
-								</>
-							) : (
-								<>
-									<Code2 className="size-3.5" aria-hidden="true" />
-									Source
-								</>
-							)}
-						</button>
-					) : null}
-					{onOpenFullscreen ? (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground shrink-0 transition"
-							onClick={onOpenFullscreen}
-							aria-label="Open fullscreen"
-							title="Open fullscreen"
-						>
-							<Fullscreen className="size-4" aria-hidden="true" />
-						</button>
+					{localPath ? (
+						<span className="text-muted-foreground min-w-0 truncate text-[11px]">{localPath}</span>
 					) : null}
 				</div>
-				{localError ? (
-					<p role="alert" className="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">
-						{localError}
-					</p>
+				{previewDocument ? (
+					<button
+						type="button"
+						className="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition"
+						onClick={() => setShowSource((value) => !value)}
+						aria-label={showSource ? 'Show preview' : 'Show source'}
+					>
+						{showSource ? (
+							<>
+								<Eye className="size-3.5" aria-hidden="true" />
+								Preview
+							</>
+						) : (
+							<>
+								<Code2 className="size-3.5" aria-hidden="true" />
+								Source
+							</>
+						)}
+					</button>
 				) : null}
-				{renderBody(variant === 'full' ? 'h-full' : 'h-64')}
+				{onOpenFullscreen ? (
+					<button
+						type="button"
+						className="text-muted-foreground hover:text-foreground shrink-0 transition"
+						onClick={onOpenFullscreen}
+						aria-label="Open fullscreen"
+						title="Open fullscreen"
+					>
+						<Fullscreen className="size-4" aria-hidden="true" />
+					</button>
+				) : null}
+				{onDelete ? <ArtifactMenu title={title} trigger="button" onDelete={onDelete} /> : null}
 			</div>
-		</ArtifactContextMenu>
+			{localError ? (
+				<p role="alert" className="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">
+					{localError}
+				</p>
+			) : null}
+			{renderBody(variant === 'full' ? 'h-full' : 'h-64')}
+		</div>
 	);
 }

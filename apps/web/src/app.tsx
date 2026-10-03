@@ -2610,7 +2610,6 @@ export default function App({
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 									project={currentProject}
 									artifacts={artifactPanel.artifacts}
-									onDeleteArtifact={deleteArtifact}
 									onOpenArtifact={(artifactId) => {
 										artifactPanel.update({
 											open: true,
