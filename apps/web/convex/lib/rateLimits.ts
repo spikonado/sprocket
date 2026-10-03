@@ -6,9 +6,9 @@ import {
 	SECOND,
 	WEEK,
 	calculateRateLimit,
-	type RateLimitConfig,
-	type RunMutationCtx,
-	type RunQueryCtx
+	type MutationCtx,
+	type QueryCtx,
+	type RateLimitConfig
 } from '@convex-dev/rate-limiter';
 import { components } from '@convex/_generated/api';
 import type { DataModel } from '@convex/_generated/dataModel';
@@ -82,7 +82,7 @@ function formatRetryAfter(milliseconds: number): string {
 }
 
 async function blockedMeterLimit(
-	ctx: RunMutationCtx,
+	ctx: MutationCtx,
 	meterId: UsageMeterId,
 	key: string,
 	limits: TierLimits
@@ -109,7 +109,7 @@ async function blockedMeterLimit(
 }
 
 async function checkMeterLimits(
-	ctx: RunMutationCtx,
+	ctx: MutationCtx,
 	meterId: UsageMeterId,
 	key: string,
 	limits: TierLimits
@@ -142,7 +142,7 @@ export async function gatewayQuotaStatus(
 }
 
 async function chargeMeterLimits(
-	ctx: RunMutationCtx,
+	ctx: MutationCtx,
 	meterId: UsageMeterId,
 	key: string,
 	limits: TierLimits,
@@ -159,7 +159,7 @@ async function chargeMeterLimits(
 }
 
 export async function getMeterWindow(
-	ctx: RunQueryCtx,
+	ctx: QueryCtx,
 	meterId: UsageMeterId,
 	period: UsagePeriod,
 	userId: string,
