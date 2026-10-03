@@ -355,11 +355,12 @@ Older clients that require run-ID cutoffs are no longer supported.
 The optional `contextSummaryThroughRunId` schema field remains solely so deployed
 rows can be validated and converted by `convertContextHandoffCutoffs`. The migration
 resolves each run-ID cutoff to the last covered part number, preserves any existing
-part-number cutoff, and deletes the run-ID field. Run this migration to completion
-before resuming affected threads; a summary lacking a part-number cutoff fails
-explicitly instead of replaying history that the summary replaced. The migration
-already ships in the automatic legacy backfill sequence.
+part-number cutoff, and deletes the run-ID field. New and retried run creation applies
+the same stored-data conversion atomically before the agent can prepare history,
+so resuming a thread does not race the automatic legacy backfill. Reads still fail
+explicitly for a summary lacking a part-number cutoff instead of replaying covered
+history.
 
-Remove the old schema field, migration, tests, and sequence entry once production
-scans confirm no row retains `contextSummaryThroughRunId`. This gate concerns
+Remove the old schema field, migration helper and run-creation hooks, tests, and sequence
+entry once production scans confirm no row retains `contextSummaryThroughRunId`. This gate concerns
 stored data only, not older clients.

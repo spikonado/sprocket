@@ -32,6 +32,7 @@ import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
+import type * as lib_contextHandoffMigration from "../lib/contextHandoffMigration.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
 import type * as lib_firecrawlPools from "../lib/firecrawlPools.js";
@@ -115,6 +116,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/claimedWebJob": typeof lib_claimedWebJob;
   "lib/contextHandoff": typeof lib_contextHandoff;
+  "lib/contextHandoffMigration": typeof lib_contextHandoffMigration;
   "lib/docs": typeof lib_docs;
   "lib/executorJobs": typeof lib_executorJobs;
   "lib/firecrawlPools": typeof lib_firecrawlPools;

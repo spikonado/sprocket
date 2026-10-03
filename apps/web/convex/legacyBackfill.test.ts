@@ -309,6 +309,57 @@ describe('legacy compat backfill migrations', () => {
 		).toBeUndefined();
 	});
 
+	it.each(['new', 'retried'] as const)(
+		'converts the cutoff before a %s run prepares history',
+		async (kind) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const run = await createQueuedRun(t, asUser, threadId, 'claim-handoff', 'secret', 'Hi');
+
+			const cutoff = await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', threadId, {
+					contextSummary: 'Old summary',
+					contextSummaryThroughRunId: run.runId
+				});
+
+				const lastCovered = await ctx.db
+					.query('threadTranscriptParts')
+					.withIndex('by_threadId_and_runId_and_number', (query) =>
+						query.eq('threadId', threadId).eq('runId', run.runId)
+					)
+					.order('desc')
+					.first();
+
+				if (!lastCovered) throw new Error('Missing prompt part.');
+
+				return lastCovered.number;
+			});
+
+			if (kind === 'new') {
+				await t.run((ctx) => ctx.db.patch('runs', run.runId, { status: 'completed' }));
+			}
+
+			const prepared = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				kind === 'new' ? 'next-handoff' : 'claim-handoff',
+				'secret',
+				'Hi'
+			);
+
+			expect(
+				await asUser.query(api.transcript.getStateForRun, {
+					runId: prepared.runId,
+					executionSecret: 'secret'
+				})
+			).toMatchObject({ historyFromNumber: cutoff + 1, contextSummary: 'Old summary' });
+			expect(
+				(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.contextSummaryThroughRunId
+			).toBeUndefined();
+		}
+	);
+
 	it('keeps a precise handoff cutoff when clearing a stale run-ID field', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -343,7 +394,9 @@ describe('legacy compat backfill migrations', () => {
 					query.eq('threadId', threadId).eq('runId', run.runId)
 				)
 				.collect();
+
 			for (const part of parts) await ctx.db.delete('threadTranscriptParts', part._id);
+
 			await ctx.db.patch('threadRecords', threadId, {
 				contextSummary: 'Empty summary',
 				contextSummaryThroughRunId: run.runId

@@ -6,7 +6,7 @@ import type { FunctionReference } from 'convex/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER } from '@convex/lib/contextHandoff';
+import { migrateContextHandoffCutoff } from '@convex/lib/contextHandoffMigration';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -156,29 +156,7 @@ export const stripStoredAttachmentImageUploadIds = migrations.define({
 
 export const convertContextHandoffCutoffs = migrations.define({
 	table: 'threadRecords',
-	migrateOne: async (ctx, thread) => {
-		const throughRunId = thread.contextSummaryThroughRunId;
-
-		if (throughRunId === undefined) return;
-
-		if (thread.contextSummaryThroughPartNumber !== undefined) {
-			return { contextSummaryThroughRunId: undefined };
-		}
-
-		const lastCovered = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_runId_and_number', (query) =>
-				query.eq('threadId', thread._id).eq('runId', throughRunId)
-			)
-			.order('desc')
-			.first();
-
-		return {
-			contextSummaryThroughPartNumber:
-				lastCovered?.number ?? EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER,
-			contextSummaryThroughRunId: undefined
-		};
-	}
+	migrateOne: migrateContextHandoffCutoff
 });
 
 export const removeSectionLinkedParts = migrations.define({

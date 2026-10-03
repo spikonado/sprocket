@@ -3,6 +3,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
+import { migrateContextHandoffCutoff } from '@convex/lib/contextHandoffMigration';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
 	getOwnedImageUploads,
@@ -171,6 +172,8 @@ export async function createQueuedRunRecord(
 		throw new Error('Machine has too many active runs.');
 	}
 
+	await migrateContextHandoffCutoff(ctx, threadRecord);
+
 	const gatewayFields: GatewayRunTelemetry = {
 		gatewayProtocolVersion: args.protocolVersion
 	};
@@ -268,6 +271,8 @@ async function reconcileExistingQueuedRun(
 	) {
 		throw new ConvexError('Submission belongs to a different or incomplete run.');
 	}
+
+	await migrateContextHandoffCutoff(ctx, existingThread);
 
 	if (!isRunFinalStatus(existingRun.status)) {
 		await startRunLifecycle(ctx, existingRun._id);
