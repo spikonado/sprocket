@@ -7,7 +7,7 @@ import {
 	useRef,
 	useState
 } from 'react';
-import { PanelRight, Settings } from 'lucide-react';
+import { PanelLeft, PanelRight } from 'lucide-react';
 import {
 	useAction,
 	useConvex,
@@ -40,7 +40,6 @@ import PromptComposer from '$lib/components/home/prompt-composer';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
-import BrandMark from '$lib/components/brand-mark';
 import InboxSidebar from '$lib/components/home/inbox-sidebar';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsPayments from '$lib/components/home/settings-payments';
@@ -2338,36 +2337,29 @@ export default function App({
 		};
 	}, []);
 
+	async function focusSidebarControl(open: boolean) {
+		await Promise.resolve();
+		document
+			.querySelector<HTMLButtonElement>(
+				open ? '.inbox-sidebar-host button' : '[aria-label="Open sidebar"]'
+			)
+			?.focus();
+	}
+
 	async function openSidebar() {
 		setSidebarOpen(true);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		await focusSidebarControl(true);
 	}
 
 	async function closeSidebar() {
 		setSidebarOpen(false);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-collapsed-rail button')?.focus();
-	}
-
-	async function openSettingsFromRail() {
-		setSettingsPage('account');
-		setSettingsOpen(true);
-
-		if (viewportWidth < 768) setSidebarOpen(true);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		await focusSidebarControl(false);
 	}
 
 	async function leaveSettings() {
 		setSettingsOpen(false);
 		setSettingsPage('account');
-		await Promise.resolve();
-		document
-			.querySelector<HTMLButtonElement>(
-				sidebarOpen ? '.inbox-sidebar-host button' : '.inbox-collapsed-rail button'
-			)
-			?.focus();
+		await focusSidebarControl(sidebarOpen);
 	}
 
 	if (!desktopApiResolved) {
@@ -2489,30 +2481,21 @@ export default function App({
 					)}
 				</div>
 
-				{!sidebarVisible && (
-					<div className="inbox-collapsed-rail">
-						<BrandMark
-							size="sm"
-							class="inbox-icon inbox-rail-logo"
-							label="Open sidebar"
-							onclick={() => void openSidebar()}
-						/>
-						<button
-							className="inbox-icon"
-							type="button"
-							aria-label="Settings"
-							title="Settings"
-							onClick={() => void openSettingsFromRail()}
-						>
-							<Settings size={16} />
-						</button>
-					</div>
-				)}
-
 				<main
 					className="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
 					inert={sidebarOpen && viewportWidth < 768}
 				>
+					{!sidebarVisible && (
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 left-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
+							onClick={() => void openSidebar()}
+							aria-label="Open sidebar"
+							title="Open sidebar"
+						>
+							<PanelLeft className="size-4" aria-hidden="true" />
+						</button>
+					)}
 					{!settingsOpen && !artifactPanel.panel.open && (
 						<button
 							type="button"

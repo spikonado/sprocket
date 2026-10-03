@@ -889,3 +889,14 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 		)
 	);
 });
+
+it('closes the left sidebar without leaving a collapsed rail', async () => {
+	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
+	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
+	const layout = document.querySelector('.inbox-layout');
+	expect(document.querySelector('.inbox-collapsed-rail')).toBeNull();
+	expect(layout?.classList.contains('sidebar-hidden')).toBe(true);
+	fireEvent.click(await screen.findByRole('button', { name: 'Open sidebar' }));
+	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
+	expect(screen.queryByRole('button', { name: 'Open sidebar' })).toBeNull();
+});
