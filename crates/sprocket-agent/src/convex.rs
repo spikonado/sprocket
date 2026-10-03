@@ -16,6 +16,15 @@ const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PreparedWorkspacePrompt {
+    pub(crate) prompt: Option<crate::transcript::types::TranscriptPromptBody>,
+    pub(crate) workspace_context: String,
+    #[serde(default)]
+    pub(crate) initial_workspace_context: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedTranscriptPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
@@ -155,6 +164,18 @@ impl RuntimeClient {
         run_id: &str,
     ) -> anyhow::Result<crate::transcript::RemoteTranscriptState> {
         self.query_json("transcript:getStateForRun", self.run_args(run_id))
+            .await
+    }
+
+    pub(crate) async fn prepare_workspace_prompt(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        text: &str,
+    ) -> anyhow::Result<Option<PreparedWorkspacePrompt>> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("text".to_string(), text.to_string().into());
+        self.mutation_json("agentRuntime:prepareWorkspacePrompt", args)
             .await
     }
 
@@ -426,9 +447,14 @@ impl RuntimeClient {
         completion_attempt_seq: u64,
         before_prompt: bool,
         processed_tokens: u64,
+        workspace_context: &str,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("summary".to_string(), summary.to_string().into());
+        args.insert(
+            "workspaceContext".to_string(),
+            workspace_context.to_string().into(),
+        );
         args.insert(
             "completionAttemptSeq".to_string(),
             Value::Float64(completion_attempt_seq as f64),

@@ -163,6 +163,8 @@ pub enum TranscriptPartKind {
 pub struct TranscriptPromptBody {
     pub text: String,
     pub image_uploads: Vec<TranscriptAttachmentMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_context: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

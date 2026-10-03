@@ -303,13 +303,7 @@ async function reconcileExistingQueuedRun(
 	};
 
 	if (recordsPrompt) {
-		reconciled.promptPart = await recordPromptTranscript(ctx, {
-			threadId: existingRun.threadId,
-			userId: args.userId,
-			runId: existingRun._id,
-			text: prompt,
-			imageUploadIds: args.imageUploadIds
-		});
+		reconciled.promptPart = existingPrompt!;
 	}
 
 	return reconciled;

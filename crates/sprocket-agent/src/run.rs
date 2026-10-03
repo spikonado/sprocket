@@ -20,10 +20,13 @@ use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::transcript::{
-    TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
+    TranscriptPart, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
+    current_run_has_finished_turns, fetch_missing_parts, fetch_parts_by_numbers,
+    parse_remote_parts, prompt_text_after_handoff, prompt_text_with_attachments,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
+
+const WORKSPACE_CONTEXT_HEADER: &str = "# Thread-Scoped Workspace Context\n\nThe following available skills and AGENTS.md instructions supersede previous workspace context, including skills or instructions that have been removed.\n\n";
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
 // apps/web/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
@@ -117,7 +120,7 @@ impl RunFinalStatus {
 
 struct WorkspacePromptContext {
     base_instructions: String,
-    initial_context: Message,
+    initial_context: String,
 }
 
 fn build_workspace_prompt_context(
@@ -181,12 +184,9 @@ fn build_workspace_prompt_context(
             TRANSCRIPT_DIR_PLACEHOLDER,
             &transcript_dir.display().to_string(),
         );
-    let initial_context = Message::user(
+    let initial_context = format!(
+        "{WORKSPACE_CONTEXT_HEADER}{}",
         [
-            "# Thread-Scoped Workspace Context",
-            "",
-            "The following workspace context was loaded when this conversation began.",
-            "",
             "## Available Skills",
             "",
             &skills_block,
@@ -707,7 +707,8 @@ pub async fn finalize_failed_start(
 }
 
 struct PriorHistory {
-    messages: Vec<Message>,
+    state: TranscriptState,
+    parts: Vec<TranscriptPart>,
     continue_from_finished_turns: bool,
     current_prompt: Option<String>,
 }
@@ -725,7 +726,6 @@ async fn load_prior_history(
     store: &TranscriptStore,
     context: &RunContextResponse,
     run_id: &str,
-    supports_images: bool,
 ) -> anyhow::Result<PriorHistory> {
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
@@ -784,18 +784,18 @@ async fn load_prior_history(
         }
         Ok(_) | Err(_) => local_parts,
     };
+    store.append_parts(user_id, thread_id, &parts).await?;
     cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
-    let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
-    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
         current_prompt: parts
             .iter()
             .find(|part| part.run_id == run_id && part.prompt.is_some())
             .and_then(|part| part.prompt.as_ref())
             .map(prompt_text_with_attachments),
-        messages: deserialize_agent_history(history)?,
+        state,
         continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
+        parts,
     })
 }
 
@@ -835,14 +835,8 @@ pub async fn run_agent(
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
 
-    let prepare_history = load_prior_history(
-        &runtime,
-        &store,
-        &context,
-        &run_id,
-        capabilities.supports_images,
-    );
-    let prior_history = {
+    let prepare_history = load_prior_history(&runtime, &store, &context, &run_id);
+    let mut prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
             Ok(updates) => updates,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
@@ -968,6 +962,49 @@ pub async fn run_agent(
     }
 
     match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
+        let Some(prepared_prompt) = runtime
+            .prepare_workspace_prompt(&run_id, &claim_id, &prompt_context.initial_context)
+            .await?
+        else {
+            acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+            return Ok(());
+        };
+        let mut prompt = prompt;
+        let mut prompt_includes_workspace_context = false;
+        if let Some(prepared_body) = prepared_prompt.prompt {
+            if let Some(part) = prior_history
+                .parts
+                .iter_mut()
+                .find(|part| part.run_id == run_id && part.prompt.is_some())
+            {
+                let body = part.prompt.as_mut().context("prompt body is missing")?;
+                body.workspace_context = prepared_body.workspace_context;
+                if !continue_without_prompt {
+                    let prompt_text =
+                        prompt_text_after_handoff(body, part.number, &prior_history.state);
+                    prompt_includes_workspace_context = body.workspace_context.is_some()
+                        && prompt_text == prompt_text_with_attachments(body);
+                    prompt = Message::user(prompt_text);
+                }
+                store
+                    .append_parts(
+                        &context.run.user_id,
+                        &context.run.thread_id,
+                        std::slice::from_ref(part),
+                    )
+                    .await?;
+            } else if !continue_without_prompt {
+                anyhow::bail!("prepared prompt is missing from transcript history");
+            }
+        }
+        let mut history =
+            agent_history_from_parts(&prior_history.state, &prior_history.parts, Some(&run_id));
+        crate::tools::hydrate_tool_history(
+            &mut history,
+            &prior_history.parts,
+            capabilities.supports_images,
+        )
+        .await;
         let provider_result = provider
             .run(
                 runtime.clone(),
@@ -981,8 +1018,10 @@ pub async fn run_agent(
                     live: live.clone(),
                     prompt,
                     base_instructions: prompt_context.base_instructions,
-                    initial_context: vec![prompt_context.initial_context],
-                    prior_history: prior_history.messages,
+                    initial_workspace_context: prepared_prompt.initial_workspace_context,
+                    current_workspace_context: prepared_prompt.workspace_context,
+                    prompt_includes_workspace_context,
+                    prior_history: deserialize_agent_history(history)?,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),
                         &request.deployment_url,
@@ -1028,8 +1067,6 @@ fn collapse_whitespace(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use rig::completion::Message;
-    use rig::message::UserContent;
     use sprocket_workspace::{
         SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     };
@@ -1047,16 +1084,6 @@ mod tests {
         assert!(!should_continue_without_prompt(false, true, "Ship it"));
         assert!(should_continue_without_prompt(false, true, ""));
         assert!(should_continue_without_prompt(true, true, "Ship it"));
-    }
-
-    fn initial_context_text(message: &Message) -> &str {
-        match message {
-            Message::User { content } => match content.first() {
-                Some(UserContent::Text(text)) => &text.text,
-                other => panic!("expected initial context text, got {other:?}"),
-            },
-            other => panic!("expected initial context user message, got {other:?}"),
-        }
     }
 
     fn build_test_prompt_context(
@@ -1162,7 +1189,7 @@ mod tests {
             },
         }];
         let prompt_context = build_test_prompt_context(&[], &skills);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
+        let initial_context = prompt_context.initial_context.as_str();
         assert!(initial_context.starts_with("# Thread-Scoped Workspace Context\n"));
         assert!(initial_context.contains("## Available Skills"));
         assert!(initial_context.contains("<SKILLS>"));
@@ -1175,7 +1202,7 @@ mod tests {
     #[test]
     fn initial_context_renders_empty_skills_line() {
         let prompt_context = build_test_prompt_context(&[], &[]);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
+        let initial_context = prompt_context.initial_context.as_str();
         assert!(initial_context.contains("## Available Skills"));
         assert!(initial_context.contains("No skills are installed."));
         assert!(!initial_context.contains("<SKILLS>"));
@@ -1191,7 +1218,7 @@ mod tests {
             },
         }];
         let prompt_context = build_test_prompt_context(&[], &skills);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
+        let initial_context = prompt_context.initial_context.as_str();
         assert!(initial_context.contains("description: Line one line two"));
         assert!(!initial_context.contains("description: Line one\n"));
     }
@@ -1216,7 +1243,7 @@ mod tests {
         ];
 
         let prompt_context = build_test_prompt_context(&instructions, &[]);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
+        let initial_context = prompt_context.initial_context.as_str();
 
         let user_heading = "### The user's AGENTS.md";
         let workspace_heading = "### AGENTS.md instructions for /tmp/project";

@@ -117,6 +117,34 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Workspace preambles in transcript prompts
+
+Released agents do not persist workspace instruction or skill preambles, so
+their prompt parts omit `prompt.workspaceContext` entirely. The
+`prepareWorkspacePrompt` mutation pins the preamble onto the run's prompt:
+`string` when the full preamble is attached to that prompt, `null` when it was
+checked and unchanged from the latest earlier recorded preamble, absent before
+preparation or for released agents. Once prepared, the stored prompt is
+returned unchanged even if the underlying files change. Promptless
+continuations and prompts that already have a finished completion never append
+a changed preamble; when no earlier preamble is recorded and nothing can be
+prepared, the mutation returns `initialWorkspaceContext` as an ephemeral
+fallback because historical file contents cannot be recovered from old
+transcripts. Transcript part formats otherwise remain unchanged, and the
+UI-visible `prompt.text` is never modified.
+
+The context handoff accepts an optional `workspaceContext` argument and
+prepends it to the stored `contextSummary` string, so durable and live handoff
+share one combined summary with no separate baseline store. Agents older than
+this argument omit it, leaving the handoff to store the summary alone.
+
+Keep `prompt.workspaceContext` optional while released agents that omit it
+remain supported.
+Keep the handoff `workspaceContext` argument optional for the same window.
+Remove the ephemeral `initialWorkspaceContext` fallback only after those agents
+age out; historical runs may keep the absent field because their original
+context cannot be reconstructed.
+
 ### Project-owned artifacts
 
 Released agents may send `scope: 'thread'` to `artifacts.addArtifact` or include
