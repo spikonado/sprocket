@@ -4,6 +4,7 @@ mod catalog;
 mod chatgpt;
 mod context_handoff;
 mod convex;
+mod gateway;
 mod hooks;
 mod live;
 mod openai;
