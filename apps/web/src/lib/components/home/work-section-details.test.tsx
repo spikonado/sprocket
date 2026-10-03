@@ -148,7 +148,7 @@ describe('scrolling work details', () => {
 		expect(restore).toHaveBeenCalledTimes(2);
 	});
 
-	it('opens active work at the oldest page and preserves a tool group when newer calls join it', async () => {
+	it('opens active work at the oldest page and preserves tool rows and expansion when its group gains a disclosure', async () => {
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce({ ...tools([2, 3]), nextAfter: 3 })
@@ -158,15 +158,15 @@ describe('scrolling work details', () => {
 		const { viewport, edges, props, setProps } = await render(load, true);
 		expect(load.mock.calls[0][1]).toEqual({});
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
-		const group = viewport.querySelector<HTMLButtonElement>('button');
 		const originalTool = viewport.querySelector('[title="echo 2"]');
 		expect(originalTool).not.toBeNull();
-		expect(group?.getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.querySelector('button')).toBeNull();
 		edges.newer = 1_500;
 		act(() => intersection());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 3 });
-		expect(viewport.querySelector('button')).toBe(group);
+		const group = viewport.querySelector<HTMLButtonElement>('button');
+		expect(group).not.toBeNull();
 		expect(group?.getAttribute('aria-expanded')).toBe('true');
 		expect(viewport.querySelector('[title="echo 2"]')).toBe(originalTool);
 		expect(viewport.textContent).toContain('echo 6');
