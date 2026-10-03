@@ -172,6 +172,11 @@ impl BindingGuard {
         workspace: &Path,
         artifact_id: &str,
     ) -> anyhow::Result<()> {
+        for binding in &self.bindings {
+            if binding.artifact_id.as_deref() == Some(artifact_id) {
+                self.validate_destination(workspace, binding).await?;
+            }
+        }
         let paths: Vec<_> = self
             .bindings
             .iter()
@@ -468,6 +473,13 @@ mod tests {
             2
         );
         assert!(guard.at_path(dir.path(), "notes.md").await.is_err());
+        assert!(guard.delete_artifact(dir.path(), "first").await.is_err());
+        assert!(guard.get("first").is_some());
+        assert!(guard.get("second").is_some());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
+            "untouched"
+        );
         assert!(
             guard
                 .validate_destination(dir.path(), guard.get("second").unwrap())
@@ -487,6 +499,9 @@ mod tests {
         );
         let mut rebound = guard.get("second").unwrap().clone();
         rebound.local_path = "second.md".into();
+        save_new_file(dir.path(), &rebound.local_path, "second artifact")
+            .await
+            .unwrap();
         guard
             .validate_destination(dir.path(), &rebound)
             .await
@@ -499,11 +514,18 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            tokio::fs::read_to_string(dir.path().join("notes.md"))
-                .await
-                .unwrap(),
+            std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
             "untouched"
         );
+        guard.delete_artifact(dir.path(), "first").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("second.md")).unwrap(),
+            "second artifact"
+        );
+        drop(guard);
+        let guard = store.lock().await.unwrap();
+        assert_eq!(guard.bindings.len(), 1);
+        assert_eq!(guard.get("second").unwrap().local_path, "second.md");
     }
 
     #[tokio::test]
