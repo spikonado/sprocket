@@ -27,7 +27,7 @@ async function transcriptStateResult(
 }> {
 	const state = await getTranscriptState(ctx, threadId);
 	const thread = await ctx.db.get('threadRecords', threadId);
-	const historyFromNumber = await transcriptHistoryFromNumber(ctx, thread);
+	const historyFromNumber = transcriptHistoryFromNumber(thread);
 
 	if (thread?.contextSummary) {
 		return {

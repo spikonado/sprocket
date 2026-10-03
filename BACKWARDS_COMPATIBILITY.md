@@ -212,7 +212,7 @@ the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
 `summary`/`images` on scrape results; require `toolInvocationId` on executor
 jobs and transcript tool parts and drop `jobId` and its pairing fallback;
 normalize or require stored completion timing; drop stored `imageUploadId`; drop
-`contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
+`contextSummaryThroughRunId` after its data migration. That PR may also
 drop `artifactRegistries.rekeyTo`. The optional field remains in the schema
 until the migration has completed and production scans find no rows that use
 it. At that point, also remove `removeArtifactRegistryRekeyTargets`, its test,
@@ -347,13 +347,19 @@ with the session column, or a later cache migration also rebuilds these indexes.
 
 #### Context handoff cutoffs
 
-Historical summaries may use `contextSummaryThroughRunId`. Current writes use
-the more precise `contextSummaryThroughPartNumber`; transcript reads retain the
-run-ID fallback so old summaries still skip their covered prefix.
-`convertContextHandoffCutoffs` resolves each run-ID cutoff to the last covered
-part number.
+The run-ID runtime fallback and the blanket reasoning reload filter have been
+removed. History reload uses only `contextSummaryThroughPartNumber` and preserves
+all reasoning after that cutoff, including encrypted provider envelopes unchanged.
+Older clients that require run-ID cutoffs are no longer supported.
 
-When any summary exists, history reload also omits stored encrypted reasoning.
-Old run-level summaries can replace context that the reasoning depended on, so
-replaying that ciphertext is unsafe. The reasoning filter can be removed once
-no row retains only `contextSummaryThroughRunId`.
+The optional `contextSummaryThroughRunId` schema field remains solely so deployed
+rows can be validated and converted by `convertContextHandoffCutoffs`. The migration
+resolves each run-ID cutoff to the last covered part number, preserves any existing
+part-number cutoff, and deletes the run-ID field. Run this migration to completion
+before resuming affected threads; a summary lacking a part-number cutoff fails
+explicitly instead of replaying history that the summary replaced. The migration
+already ships in the automatic legacy backfill sequence.
+
+Remove the old schema field, migration, tests, and sequence entry once production
+scans confirm no row retains `contextSummaryThroughRunId`. This gate concerns
+stored data only, not older clients.

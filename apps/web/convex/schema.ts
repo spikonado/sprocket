@@ -100,8 +100,8 @@ export default defineSchema({
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		contextSummary: v.optional(v.string()),
-		// Legacy previous-run cutoff for released agents. Transcript reads use
-		// contextSummaryThroughPartNumber when that field is present.
+		// Migration-only field: convertContextHandoffCutoffs removes deployed values.
+		// Drop this validator after the migration completes and no rows retain it.
 		contextSummaryThroughRunId: v.optional(v.id('runs')),
 		// Inclusive last covered part. -1 means the handoff covers an empty prefix.
 		contextSummaryThroughPartNumber: v.optional(v.number()),

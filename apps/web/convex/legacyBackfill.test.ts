@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 const oneBatch = { cursor: null, dryRun: false, oneBatchOnly: true } as const;
@@ -291,7 +291,14 @@ describe('legacy compat backfill migrations', () => {
 			return Math.max(...parts.map((part) => part.number));
 		});
 
+		await expect(asUser.query(api.transcript.getState, { threadId })).rejects.toThrow(
+			'Conversation context is missing its history cutoff.'
+		);
 		await t.mutation(internal.migrations.convertContextHandoffCutoffs, oneBatch);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			historyFromNumber: expected + 1,
+			contextSummary: 'Old summary'
+		});
 
 		expect(await t.run((ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
 			contextSummary: 'Old summary',
@@ -300,6 +307,58 @@ describe('legacy compat backfill migrations', () => {
 		expect(
 			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.contextSummaryThroughRunId
 		).toBeUndefined();
+	});
+
+	it('keeps a precise handoff cutoff when clearing a stale run-ID field', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const run = await createQueuedRun(t, asUser, threadId, 'precise-handoff', 'secret', 'Hi');
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, {
+				contextSummary: 'Precise summary',
+				contextSummaryThroughPartNumber: -1,
+				contextSummaryThroughRunId: run.runId
+			})
+		);
+
+		await t.mutation(internal.migrations.convertContextHandoffCutoffs, oneBatch);
+
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			historyFromNumber: 0,
+			contextSummary: 'Precise summary'
+		});
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.contextSummaryThroughRunId
+		).toBeUndefined();
+	});
+
+	it('converts a run-ID cutoff without transcript parts to an empty prefix', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const run = await createQueuedRun(t, asUser, threadId, 'empty-handoff', 'secret', 'Hi');
+		await t.run(async (ctx) => {
+			const parts = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (query) =>
+					query.eq('threadId', threadId).eq('runId', run.runId)
+				)
+				.collect();
+			for (const part of parts) await ctx.db.delete('threadTranscriptParts', part._id);
+			await ctx.db.patch('threadRecords', threadId, {
+				contextSummary: 'Empty summary',
+				contextSummaryThroughRunId: run.runId
+			});
+		});
+
+		await t.mutation(internal.migrations.convertContextHandoffCutoffs, oneBatch);
+
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.contextSummaryThroughPartNumber
+		).toBe(-1);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			historyFromNumber: 0,
+			contextSummary: 'Empty summary'
+		});
 	});
 
 	it('unsets section linkedParts', async () => {
