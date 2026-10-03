@@ -178,7 +178,9 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		beforePartNumber: v.number(),
 		text: v.string()
-	}).index('by_threadId_and_beforePartNumber', ['threadId', 'beforePartNumber']),
+	})
+		.index('by_threadId', ['threadId'])
+		.index('by_threadId_and_beforePartNumber', ['threadId', 'beforePartNumber']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

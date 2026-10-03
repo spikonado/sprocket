@@ -404,33 +404,46 @@ export const saveWorkspaceContext = mutation({
 
 		const historyFromNumber = await transcriptHistoryFromNumber(ctx, thread);
 
-		const candidates = await ctx.db
-			.query('threadWorkspaceContexts')
-			.withIndex('by_threadId_and_beforePartNumber', (q) =>
-				q.eq('threadId', run.threadId).lte('beforePartNumber', snapshot.beforePartNumber)
-			)
-			.collect();
-
-		const pinnedIndex = candidates.findIndex((entry) => entry._id === snapshot._id);
-
-		if (pinnedIndex < 0) throw new Error('Workspace context snapshot is missing.');
-
-		const all = candidates.slice(0, pinnedIndex + 1);
-
-		const prefixIndex = thread.contextSummaryWorkspaceContextSnapshotId
-			? all.findIndex((entry) => entry._id === thread.contextSummaryWorkspaceContextSnapshotId)
+		let prefix = thread.contextSummaryWorkspaceContextSnapshotId
+			? await ctx.db.get('threadWorkspaceContexts', thread.contextSummaryWorkspaceContextSnapshotId)
 			: thread.contextSummary
-				? Math.max(
-						0,
-						all.findLastIndex((entry) => entry.beforePartNumber < historyFromNumber)
-					)
-				: 0;
+				? await ctx.db
+						.query('threadWorkspaceContexts')
+						.withIndex('by_threadId_and_beforePartNumber', (q) =>
+							q.eq('threadId', run.threadId).lt('beforePartNumber', historyFromNumber)
+						)
+						.filter((q) => q.lte(q.field('_creationTime'), snapshot._creationTime))
+						.order('desc')
+						.first()
+				: null;
 
-		const prefix = all[prefixIndex];
+		prefix ??= await ctx.db
+			.query('threadWorkspaceContexts')
+			.withIndex('by_threadId_and_beforePartNumber', (q) => q.eq('threadId', run.threadId))
+			.first();
 
 		if (!prefix) throw new Error('Workspace context snapshot is missing.');
 
-		const updates = all.slice(prefixIndex + 1);
+		if (prefix.threadId !== run.threadId) throw new Error('Invalid workspace context thread.');
+
+		const candidates = await ctx.db
+			.query('threadWorkspaceContexts')
+			.withIndex('by_threadId', (q) =>
+				q
+					.eq('threadId', run.threadId)
+					.gte('_creationTime', prefix._creationTime)
+					.lte('_creationTime', snapshot._creationTime)
+			)
+			.collect();
+
+		const prefixIndex = candidates.findIndex((entry) => entry._id === prefix._id);
+		const pinnedIndex = candidates.findIndex((entry) => entry._id === snapshot._id);
+
+		if (prefixIndex < 0 || pinnedIndex < prefixIndex) {
+			throw new Error('Workspace context snapshot is missing.');
+		}
+
+		const updates = candidates.slice(prefixIndex + 1, pinnedIndex + 1);
 
 		return [prefix, ...updates].map(({ beforePartNumber, text }) => ({
 			beforePartNumber,

@@ -275,6 +275,43 @@ describe('workspace context snapshots', () => {
 		expect(await t.run((ctx) => ctx.db.query('threadWorkspaceContexts').collect())).toHaveLength(2);
 	});
 
+	it('replays the pinned handoff within read limits on a long-lived thread', async () => {
+		const { t, asUser, threadId, auth } = await setup();
+		const historicalContext = 'Instructions and skills\n'.repeat(24_000);
+
+		async function seedSnapshots() {
+			for (let batch = 0; batch < 5; batch++) {
+				await t.run(async (ctx) => {
+					for (let index = 0; index < 8; index++) {
+						await ctx.db.insert('threadWorkspaceContexts', {
+							threadId,
+							beforePartNumber: 0,
+							text: historicalContext
+						});
+					}
+				});
+			}
+		}
+
+		await seedSnapshots();
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...auth, attemptSeq: 1 });
+		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
+			...auth,
+			summary: 'Ready for the next request.',
+			completionAttemptSeq: 1,
+			beforePrompt: true,
+			workspaceContext: 'Pinned handoff context'
+		});
+		await seedSnapshots();
+
+		expect(
+			await asUser.mutation(api.agentRuntime.saveWorkspaceContext, {
+				...auth,
+				text: 'Edited files'
+			})
+		).toEqual([{ beforePartNumber: 0, text: 'Pinned handoff context' }]);
+	});
+
 	it('initializes an older promptless conversation without a saved snapshot', async () => {
 		const fixture = await setup();
 		const { t, asUser, threadId, auth } = fixture;
