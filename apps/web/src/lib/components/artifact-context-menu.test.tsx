@@ -200,6 +200,7 @@ it('opens a preview menu only for gestures from its own sandboxed frame', async 
 it('preserves scripts and comments containing head tags in a complete HTML preview', () => {
 	const source =
 		'<!DOCTYPE html><html><!-- <head> --><body><script>window.title = "<head>";</script><p>App</p></body></html>';
+
 	render(
 		<ArtifactDisplay
 			title="Complete"
