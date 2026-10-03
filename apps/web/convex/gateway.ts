@@ -2,7 +2,11 @@ import { v, ConvexError, type Infer } from 'convex/values';
 import { mutation } from '@convex/_generated/server';
 import { modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { verifyGatewayToken } from '@convex/lib/gatewayToken';
-import { applyGatewayUsageCharge, gatewayQuotaStatus } from '@convex/lib/rateLimits';
+import {
+	MAX_QUOTA_CHARGE_UNITS,
+	applyGatewayUsageCharge,
+	gatewayQuotaStatus
+} from '@convex/lib/rateLimits';
 import { vSubscriptionTier } from '@convex/lib/validators';
 
 const vQuota = v.object({
@@ -12,9 +16,8 @@ const vQuota = v.object({
 	message: v.optional(v.string())
 });
 
-// A single model call charges a small multiple of UNITS_PER_DOLLAR; anything
-// above this is a caller bug or a replayed token, not real usage.
-const MAX_QUOTA_CHARGE_UNITS = 1_000_000_000_000;
+// The per-call cap lives in lib/rateLimits so the edge and the shared charge
+// path cannot drift apart.
 
 async function userFromGatewayToken(token: string) {
 	try {
