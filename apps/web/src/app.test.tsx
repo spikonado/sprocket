@@ -600,76 +600,63 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
 });
 
-it.each(['before', 'after'] as const)(
-	'keeps a sent prompt out of the composer when its launch succeeds %s switching threads',
-	async (acknowledgement) => {
-		const { client, thread, launch, runAgent } = await renderThreadLaunch();
-		const composer = screen.getByRole('combobox');
-		fireEvent.change(composer, { target: { value: 'Fix the robot' } });
-		const send = screen.getByRole('button', { name: 'Send message' });
-		await waitFor(() => expect(send).toHaveProperty('disabled', false));
-		vi.useFakeTimers();
-		await act(async () => {
-			fireEvent.click(send);
-		});
-		expect(runAgent).toHaveBeenCalledOnce();
-		expect(composer).toHaveProperty('value', '');
-
-		if (acknowledgement === 'after') fireEvent.click(screen.getByText('Other work'));
-		await act(async () => {
-			launch.resolve({
-				// SAFETY: fixture strings are only compared as opaque Convex document ids.
-				runId: 'run-new' as Id<'runs'>,
-				threadId: thread._id
-			});
-		});
-
-		if (acknowledgement === 'before') {
-			// Keep sends blocked until the lifecycle subscription catches up with the acknowledgement.
-			expect(send).toHaveProperty('disabled', true);
-			fireEvent.click(screen.getByText('Other work'));
-		}
-
-		await act(async () => {
-			await vi.advanceTimersByTimeAsync(31_000);
-		});
-		fireEvent.click(screen.getByText('Robot work'));
-		expect(screen.getByRole('combobox')).toHaveProperty('value', '');
-		expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
-		expect(screen.queryByRole('alert')).toBeNull();
-		await act(async () => {
-			client.registerQuery(api.chat.selectedThreadLifecycle, {
-				threadId: thread._id,
-				phase: 'running',
-				// SAFETY: fixture strings are only compared as opaque Convex document ids.
-				run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
-			});
-		});
-		expect(screen.getByRole('combobox')).toHaveProperty('value', '');
-		expect(screen.queryByRole('alert')).toBeNull();
-		expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
-		expect(runAgent).toHaveBeenCalledOnce();
-	}
-);
-
-it('recovers a failed launch only when returning to its originating thread', async () => {
-	const { launch, runAgent } = await renderThreadLaunch();
-	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+it('keeps a sent prompt cleared when returning to a thread before its lifecycle catches up', async () => {
+	const { client, thread, launch, runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
 	await waitFor(() => expect(send).toHaveProperty('disabled', false));
-	fireEvent.click(send);
-	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	vi.useFakeTimers();
+	await act(async () => {
+		fireEvent.click(send);
+	});
 	fireEvent.click(screen.getByText('Other work'));
 	await act(async () => {
-		launch.reject(new Error('Local agent unavailable.'));
+		launch.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			runId: 'run-new' as Id<'runs'>,
+			threadId: thread._id
+		});
+		await vi.advanceTimersByTimeAsync(31_000);
+	});
+	fireEvent.click(screen.getByText('Robot work'));
+	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+	expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
+	expect(screen.queryByRole('alert')).toBeNull();
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
+		});
 	});
 	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
-	expect(screen.queryByRole('alert')).toBeNull();
-	fireEvent.click(screen.getByText('Robot work'));
-	await waitFor(() =>
-		expect(screen.getByRole('combobox')).toHaveProperty('value', 'Fix the robot')
-	);
-	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
+	expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
+	expect(runAgent).toHaveBeenCalledOnce();
+});
+
+it('allows retrying a prompt when its launch request remains unconfirmed past the deadline', async () => {
+	const { runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	vi.useFakeTimers();
+	await act(async () => {
+		fireEvent.click(send);
+		await vi.advanceTimersByTimeAsync(31_000);
+	});
+	expect(runAgent).toHaveBeenCalledOnce();
+	expect(composer).toHaveProperty('value', 'Fix the robot');
+	expect(screen.getByRole('alert').textContent).toContain('This request is still preparing.');
+	expect(send).toHaveProperty('disabled', false);
+	await act(async () => {
+		fireEvent.click(send);
+	});
+	expect(runAgent).toHaveBeenCalledTimes(2);
+	expect(runAgent.mock.calls[1]?.[0].submissionId).toBe(runAgent.mock.calls[0]?.[0].submissionId);
+	expect(composer).toHaveProperty('value', '');
 });
 
 it('launches ChatGPT with a gateway model and a connected local account', async () => {

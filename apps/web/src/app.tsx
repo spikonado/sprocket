@@ -88,7 +88,6 @@ import {
 	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	resolveExpiredAgentLaunch,
 	resolveInitialDraftSelection,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
@@ -1604,7 +1603,6 @@ export default function App({
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
-		let agentLaunchAcknowledged = false;
 		const submissionSequence = ++nextSubmissionSequence.current;
 		let submissionTrackingKey = getComposerRecoveryKey(submittedUserId, originatingRecoveryScope);
 		latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
@@ -1653,6 +1651,15 @@ export default function App({
 			}
 
 			recoverSubmission(submissionDelayMessage);
+			const pendingThreadId = launchedThreadId;
+			const pendingLaunchId = agentLaunchId;
+
+			if (pendingThreadId && pendingLaunchId !== null) {
+				setPendingAgentLaunches((launches) =>
+					clearPendingAgentLaunch(launches, pendingThreadId, pendingLaunchId)
+				);
+			}
+
 			clearSubmittingPrompt(submissionScope, submissionSequence);
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, agentLaunchTimeoutMs);
@@ -1713,7 +1720,6 @@ export default function App({
 			agentLaunchId = launchId;
 
 			const launch: PendingAgentLaunch = {
-				expiresAt: Date.now() + agentLaunchTimeoutMs,
 				launchId,
 				previousRunId
 			};
@@ -1722,39 +1728,6 @@ export default function App({
 
 			if (threadId) {
 				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
-			}
-
-			if (threadId) {
-				window.setTimeout(() => {
-					if (agentLaunchAcknowledged) return;
-
-					const selectedRunId =
-						currentThreadIdRef.current === threadId ? (runStateRef.current?.runId ?? null) : null;
-
-					const latestRunId = selectedRunId;
-
-					const latestStartedAt =
-						currentThreadIdRef.current === threadId && runStateRef.current?.runId === latestRunId
-							? runStateRef.current?.startedAt
-							: undefined;
-
-					const recovery = resolveExpiredAgentLaunch(
-						pendingAgentLaunchesRef.current,
-						threadId,
-						launchId,
-						Date.now(),
-						latestRunId,
-						undefined,
-						latestStartedAt
-					);
-
-					if (recovery.pendingLaunches === pendingAgentLaunchesRef.current) return;
-					setPendingAgentLaunches(recovery.pendingLaunches);
-
-					if (recovery.shouldRecover) {
-						recoverSubmission('The local agent did not start. Please try again.');
-					}
-				}, agentLaunchTimeoutMs);
 			}
 
 			await launchAgentRun({
@@ -1785,7 +1758,6 @@ export default function App({
 					}
 
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
-					agentLaunchAcknowledged = true;
 					launchedThreadId = createdThreadId;
 
 					if (
@@ -1929,7 +1901,6 @@ export default function App({
 		const launchId = ++nextAgentLaunchId.current;
 
 		const launch: PendingAgentLaunch = {
-			expiresAt: Date.now() + agentLaunchTimeoutMs,
 			launchId,
 			previousRunId,
 			previousStartedAt
