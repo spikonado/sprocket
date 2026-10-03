@@ -70,20 +70,20 @@ async fn delete_handler(
         &payload.user_id,
         std::path::Path::new(&attachment.workspace_path),
     );
-    {
-        let mut bindings = store.lock().await.map_err(ApiError::internal)?;
-        bindings
-            .delete_artifact(
-                std::path::Path::new(&attachment.workspace_path),
-                artifact_id,
-            )
-            .await
-            .map_err(ApiError::internal)?;
-    }
+    let mut bindings = store.lock().await.map_err(ApiError::internal)?;
+    bindings
+        .delete_artifact(
+            std::path::Path::new(&attachment.workspace_path),
+            artifact_id,
+        )
+        .await
+        .map_err(ApiError::internal)?;
     let args = BTreeMap::from([
         ("repositoryKey".into(), Value::String(repository_key.into())),
         ("artifactId".into(), Value::String(artifact_id.into())),
     ]);
+    // Keep the store exclusive until Convex removes the artifact so a
+    // concurrent save cannot recreate the file from the still-visible record.
     let result = timeout(AUTHORIZE_TIMEOUT, async {
         let client = state.convex_client_for(&payload.user_id).await?;
         client

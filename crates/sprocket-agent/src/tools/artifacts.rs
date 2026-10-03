@@ -395,17 +395,17 @@ impl rig::tool::Tool for DeleteArtifactTool {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
         let mutation_args = mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
-            {
-                let mut bindings = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return Err(cancelled_error()),
-                    result = self.0.artifact_bindings.lock() => result.map_err(tool_error)?,
-                };
-                bindings
-                    .delete_artifact(&self.0.workspace_root, &args.artifact_id)
-                    .await
-                    .map_err(tool_error)?;
-            }
+            let mut bindings = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                result = self.0.artifact_bindings.lock() => result.map_err(tool_error)?,
+            };
+            bindings
+                .delete_artifact(&self.0.workspace_root, &args.artifact_id)
+                .await
+                .map_err(tool_error)?;
+            // Keep the store exclusive until Convex removes the artifact so a
+            // concurrent save cannot recreate the file from the still-visible record.
             tokio::time::timeout(
                 std::time::Duration::from_secs(10),
                 run_convex_tool_mutation(
