@@ -67,6 +67,15 @@ export const vWriteStdinPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vControlCommandPayload = v.object({
+	sessionId: v.string(),
+	action: v.union(v.literal('write'), v.literal('terminate')),
+	chars: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vPollCommandPayload = vWriteStdinPayload.pick('sessionId', 'yieldTimeMs');
+
 export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
 
 // Historical stored artifacts and tool results retain thread scope until migrated.
@@ -214,6 +223,8 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload,
+	vControlCommandPayload,
+	vPollCommandPayload,
 	vAddArtifactPayload,
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
@@ -554,6 +565,8 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
+	v.literal('control_command'),
+	v.literal('poll_command'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
 	v.literal('edit_artifact'),

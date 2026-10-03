@@ -39,6 +39,9 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Save;
 		case 'exec_command':
 			return Terminal;
+		case 'control_command':
+		case 'poll_command':
+			return SquareTerminal;
 		case 'get_workspace_instructions':
 			return ScrollText;
 		case 'mandate_charge':

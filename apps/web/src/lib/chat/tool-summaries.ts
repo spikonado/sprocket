@@ -36,6 +36,10 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Saved Artifacts';
 		case 'exec_command':
 			return 'Ran Commands';
+		case 'control_command':
+			return 'Controlled Commands';
+		case 'poll_command':
+			return 'Polled Commands';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
 		case 'mandate_charge':
@@ -104,6 +108,19 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			const cmd = jsonString(fields?.cmd);
 
 			return cmd ? `${cmd}${describeExecCommandOptions(input)}` : 'Command';
+		}
+
+		case 'control_command': {
+			const sessionId = jsonString(fields?.sessionId);
+			const session = sessionId ? `Session ${sessionId}` : 'Command session';
+
+			return fields?.action === 'terminate' ? `Terminate ${session}` : `Write to ${session}`;
+		}
+
+		case 'poll_command': {
+			const sessionId = jsonString(fields?.sessionId);
+
+			return sessionId ? `Session ${sessionId}` : 'Command session';
 		}
 
 		case 'get_workspace_instructions':
@@ -319,10 +336,10 @@ export function toolItemSummary(
 ) {
 	const kind = toolLog.job?.kind ?? toolLog.name;
 
-	if (kind === 'write_stdin') {
+	if (kind === 'write_stdin' || kind === 'control_command' || kind === 'poll_command') {
 		return (
 			resolveCommandSessionLabel(toolLog, sessionCommands) ??
-			summarizeTool('write_stdin', toolLog.job?.payload ?? toolLog.input)
+			summarizeTool(kind, toolLog.job?.payload ?? toolLog.input)
 		);
 	}
 
@@ -358,13 +375,18 @@ export function toolItemSummary(
 	return summarizeTool(toolLog.name, toolLog.input);
 }
 
+const COMMAND_SNAPSHOT_KINDS = new Set([
+	'exec_command',
+	'write_stdin',
+	'control_command',
+	'poll_command'
+]);
+
 export function commandSnapshotLabel(tool: AssistantTimelineTool): string | undefined {
 	const kind = tool.job?.kind ?? tool.name;
 	const output: JsonValue | undefined = tool.output ?? tool.job?.result;
 
-	return (kind === 'exec_command' || kind === 'write_stdin') &&
-		isJsonObject(output) &&
-		output.running === true
+	return COMMAND_SNAPSHOT_KINDS.has(kind) && isJsonObject(output) && output.running === true
 		? 'Still running when this call returned'
 		: undefined;
 }

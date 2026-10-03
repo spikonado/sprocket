@@ -12,6 +12,7 @@ use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
@@ -19,6 +20,50 @@ pub const MIN_COMMAND_YIELD_MS: u64 = 30_000;
 pub const MAX_COMMAND_YIELD_MS: u64 = 270_000;
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
+const ZERO_POLL_COOLDOWN: Duration = Duration::from_secs(30);
+const POLL_COOLDOWN_ERROR: &str =
+    "Please wait at least 30s between `poll_command` calls with `yieldTimeMs` set to `0`.";
+
+#[derive(Clone, Copy, Debug)]
+pub enum CommandAction {
+    Write,
+    Terminate,
+}
+
+impl CommandAction {
+    pub fn validate(self, chars: &str) -> Result<()> {
+        match self {
+            Self::Write if chars.is_empty() => bail!("a write action requires nonempty chars"),
+            Self::Terminate if !chars.is_empty() => {
+                bail!("a terminate action requires empty chars")
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ObservationMode {
+    Metadata,
+    Output,
+    ZeroPoll,
+}
+
+impl ObservationMode {
+    fn after_action(yield_time_ms: u64) -> Self {
+        if yield_time_ms == 0 {
+            Self::Metadata
+        } else {
+            Self::Output
+        }
+    }
+}
+
+#[derive(Default)]
+struct CommandObservation {
+    final_output: Option<CommandOutput>,
+    last_zero_poll: Option<Instant>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceCancellation(CancellationToken);
@@ -148,7 +193,7 @@ impl CommandSessionManager {
             stdin,
             completion,
             output,
-            final_output: Mutex::new(None),
+            observation: Mutex::new(CommandObservation::default()),
         });
         self.sessions
             .lock()
@@ -156,7 +201,12 @@ impl CommandSessionManager {
             .insert(session_id.clone(), session.clone());
 
         let result = self
-            .observe_session(session, cancellation, yield_time_ms)
+            .observe_session(
+                session,
+                cancellation,
+                yield_time_ms,
+                ObservationMode::after_action(yield_time_ms),
+            )
             .await?;
         Ok(CommandExecOutput {
             session_id: (result.running || yield_time_ms == 0).then_some(session_id),
@@ -164,30 +214,18 @@ impl CommandSessionManager {
         })
     }
 
-    pub async fn write_stdin(
+    pub async fn control_command(
         &self,
         cancellation: WorkspaceCancellation,
         session_id: &str,
+        action: CommandAction,
         chars: &str,
-        terminate: bool,
         yield_time_ms: u64,
     ) -> Result<CommandStdinOutput> {
-        let session = self
-            .sessions
-            .lock()
-            .await
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("unknown command session: {session_id}"))?;
-
+        action.validate(chars)?;
+        let session = self.session(session_id).await?;
         let result = self
-            .write_session(
-                session.clone(),
-                cancellation,
-                chars,
-                terminate,
-                yield_time_ms,
-            )
+            .write_session(session.clone(), cancellation, action, chars, yield_time_ms)
             .await?;
         Ok(CommandStdinOutput {
             command: session.command.clone(),
@@ -196,12 +234,43 @@ impl CommandSessionManager {
         })
     }
 
+    pub async fn poll_command(
+        &self,
+        cancellation: WorkspaceCancellation,
+        session_id: &str,
+        yield_time_ms: u64,
+    ) -> Result<CommandStdinOutput> {
+        let session = self.session(session_id).await?;
+        let mode = if yield_time_ms == 0 {
+            ObservationMode::ZeroPoll
+        } else {
+            ObservationMode::Output
+        };
+        let result = self
+            .observe_session(session.clone(), cancellation, yield_time_ms, mode)
+            .await?;
+        Ok(CommandStdinOutput {
+            command: session.command.clone(),
+            workdir: session.workdir.clone(),
+            result,
+        })
+    }
+
+    async fn session(&self, session_id: &str) -> Result<Arc<CommandSession>> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown command session: {session_id}"))
+    }
+
     async fn write_session(
         &self,
         session: Arc<CommandSession>,
         cancellation: WorkspaceCancellation,
+        action: CommandAction,
         chars: &str,
-        terminate: bool,
         yield_time_ms: u64,
     ) -> Result<CommandOutput> {
         if let Err(error) = cancellation.ensure_active() {
@@ -210,7 +279,7 @@ impl CommandSessionManager {
             return Err(error);
         }
 
-        if session.completion.borrow().is_none() && !chars.is_empty() {
+        if session.completion.borrow().is_none() && matches!(action, CommandAction::Write) {
             if let Err(error) = session
                 .write(chars.as_bytes().to_vec(), &cancellation)
                 .await
@@ -220,12 +289,17 @@ impl CommandSessionManager {
                     .await;
             }
         }
-        if session.completion.borrow().is_none() && terminate {
+        if session.completion.borrow().is_none() && matches!(action, CommandAction::Terminate) {
             session.terminate()?;
         }
 
-        self.observe_session(session, cancellation, yield_time_ms)
-            .await
+        self.observe_session(
+            session,
+            cancellation,
+            yield_time_ms,
+            ObservationMode::after_action(yield_time_ms),
+        )
+        .await
     }
 
     pub async fn stop_all(&self) {
@@ -268,6 +342,7 @@ impl CommandSessionManager {
         session: Arc<CommandSession>,
         cancellation: WorkspaceCancellation,
         yield_time_ms: u64,
+        mode: ObservationMode,
     ) -> Result<CommandOutput> {
         let completion = match wait_for_completion(&session, &cancellation, yield_time_ms).await {
             Ok(completion) => completion,
@@ -277,9 +352,7 @@ impl CommandSessionManager {
                 return Err(error);
             }
         };
-        Ok(session
-            .output_after_write(completion, None, yield_time_ms != 0)
-            .await)
+        session.output_snapshot(completion, None, mode).await
     }
 
     async fn observe_after_write_error(
@@ -292,9 +365,13 @@ impl CommandSessionManager {
         match wait_for_completion(&session, &cancellation, yield_time_ms).await {
             Ok(Some(completion)) => {
                 let write_error = format!("failed to write command stdin: {write_error:#}");
-                Ok(session
-                    .output_after_write(Some(completion), Some(write_error), yield_time_ms != 0)
-                    .await)
+                session
+                    .output_snapshot(
+                        Some(completion),
+                        Some(write_error),
+                        ObservationMode::after_action(yield_time_ms),
+                    )
+                    .await
             }
             Ok(None) => {
                 let _ = session.terminate();
@@ -318,7 +395,7 @@ struct CommandSession {
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,
-    final_output: Mutex<Option<CommandOutput>>,
+    observation: Mutex<CommandObservation>,
 }
 
 impl CommandSession {
@@ -345,16 +422,19 @@ impl CommandSession {
             .map_err(|_| anyhow!("command session {} is no longer running", self.id))
     }
 
-    async fn output_after_write(
+    async fn output_snapshot(
         &self,
         completion: Option<CommandCompletion>,
         write_error: Option<String>,
-        include_output: bool,
-    ) -> CommandOutput {
-        let mut final_output = self.final_output.lock().await;
-        let mut output = match final_output.as_ref() {
+        mode: ObservationMode,
+    ) -> Result<CommandOutput> {
+        let mut observation = self.observation.lock().await;
+        let mut output = match observation.final_output.as_ref() {
             Some(output) => output.clone(),
-            None => self.snapshot_output(completion, include_output).await,
+            None => {
+                self.snapshot_output(completion, mode, &mut observation)
+                    .await?
+            }
         };
         if let Some(write_error) = write_error {
             output.success = false;
@@ -364,23 +444,34 @@ impl CommandSession {
             });
         }
         if !output.running {
-            *final_output = Some(output.clone());
+            observation.final_output = Some(output.clone());
         }
-        if !include_output {
+        if matches!(mode, ObservationMode::Metadata) {
             output.output.clear();
         }
-        output
+        Ok(output)
     }
 
     async fn snapshot_output(
         &self,
         completion: Option<CommandCompletion>,
-        include_output: bool,
-    ) -> CommandOutput {
+        mode: ObservationMode,
+        observation: &mut CommandObservation,
+    ) -> Result<CommandOutput> {
         let mut capture = self.output.lock().await;
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
-        let preview = if include_output || completion.is_some() {
+        if completion.is_none() && matches!(mode, ObservationMode::ZeroPoll) {
+            let now = Instant::now();
+            if observation
+                .last_zero_poll
+                .is_some_and(|last| now.duration_since(last) < ZERO_POLL_COOLDOWN)
+            {
+                bail!(POLL_COOLDOWN_ERROR);
+            }
+            observation.last_zero_poll = Some(now);
+        }
+        let preview = if !matches!(mode, ObservationMode::Metadata) || completion.is_some() {
             capture.take_preview()
         } else {
             capture.preview_metadata()
@@ -388,7 +479,7 @@ impl CommandSession {
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 
-        CommandOutput {
+        Ok(CommandOutput {
             exit_code: completion.exit_code,
             success: completion.success,
             running,
@@ -397,7 +488,7 @@ impl CommandSession {
             complete_log_path: preview.complete_log_path,
             events_path: preview.events_path,
             error: completion.error,
-        }
+        })
     }
 }
 
@@ -423,6 +514,7 @@ async fn wait_for_completion(
     cancellation: &WorkspaceCancellation,
     yield_time_ms: u64,
 ) -> Result<Option<CommandCompletion>> {
+    cancellation.ensure_active()?;
     let mut completion = session.completion.clone();
     if let Some(completion) = completion.borrow().clone() {
         return Ok(Some(completion));
@@ -723,10 +815,17 @@ pub struct CommandOutput {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
     use std::time::Duration;
 
-    use super::{CommandSessionManager, WorkspaceCancellation, default_command_shell};
+    use super::{
+        CapturedOutput, CommandAction, CommandCompletion, CommandObservation, CommandOutput,
+        CommandSession, CommandSessionManager, ObservationMode, OutputChannel, POLL_COOLDOWN_ERROR,
+        WorkspaceCancellation, default_command_shell,
+    };
     use crate::test_support::temp_workspace;
+    use tokio::sync::{Mutex, mpsc, watch};
 
     async fn wait_for_log(path: &str, expected: &[u8]) {
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -738,73 +837,175 @@ mod tests {
         .unwrap();
     }
 
+    struct StubSession {
+        session: Arc<CommandSession>,
+        completion: watch::Sender<Option<CommandCompletion>>,
+        output: Arc<Mutex<CapturedOutput>>,
+    }
+
+    impl StubSession {
+        async fn append(&self, bytes: &[u8]) {
+            self.output
+                .lock()
+                .await
+                .append(OutputChannel::Stdout, bytes)
+                .await
+                .unwrap();
+        }
+
+        fn complete(&self) {
+            self.completion.send(Some(completed_ok())).unwrap();
+        }
+
+        async fn observe(&self, mode: ObservationMode) -> anyhow::Result<CommandOutput> {
+            self.session.output_snapshot(None, None, mode).await
+        }
+
+        async fn last_zero_poll(&self) -> Option<tokio::time::Instant> {
+            self.session.observation.lock().await.last_zero_poll
+        }
+    }
+
+    fn completed_ok() -> CommandCompletion {
+        CommandCompletion {
+            exit_code: Some(0),
+            success: true,
+            timed_out: false,
+            error: None,
+        }
+    }
+
+    fn assert_cooldown_rejected(result: anyhow::Result<CommandOutput>) {
+        assert_eq!(
+            result
+                .expect_err("zero poll inside the cooldown must be rejected")
+                .to_string(),
+            POLL_COOLDOWN_ERROR
+        );
+    }
+
+    async fn stub_session(root: &Path) -> StubSession {
+        let output = CapturedOutput::create(&root.join("logs"), 20_000)
+            .await
+            .unwrap();
+        let (completion, completion_rx) = watch::channel(None);
+        let (control, _controls) = mpsc::unbounded_channel();
+        let (stdin, _requests) = mpsc::channel(1);
+        let output = Arc::new(Mutex::new(output));
+        StubSession {
+            session: Arc::new(CommandSession {
+                id: "test".into(),
+                command: "test".into(),
+                workdir: root.to_string_lossy().into_owned(),
+                control,
+                stdin,
+                completion: completion_rx,
+                output: output.clone(),
+                observation: Mutex::new(CommandObservation::default()),
+            }),
+            completion,
+            output,
+        }
+    }
+
+    async fn exec_running_with_timeout(
+        sessions: &CommandSessionManager,
+        command: &str,
+        timeout_ms: Option<u64>,
+    ) -> (String, CommandOutput) {
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                command,
+                ".",
+                &default_command_shell(),
+                timeout_ms,
+                0,
+                20_000,
+            )
+            .await
+            .expect("command should start");
+        (started.session_id.unwrap(), started.result)
+    }
+
+    async fn exec_running(
+        sessions: &CommandSessionManager,
+        command: &str,
+    ) -> (String, CommandOutput) {
+        exec_running_with_timeout(sessions, command, Some(10_000)).await
+    }
+
+    async fn write(
+        sessions: &CommandSessionManager,
+        id: &str,
+        chars: &str,
+        yield_time_ms: u64,
+    ) -> CommandOutput {
+        sessions
+            .control_command(
+                WorkspaceCancellation::new(),
+                id,
+                CommandAction::Write,
+                chars,
+                yield_time_ms,
+            )
+            .await
+            .unwrap()
+            .result
+    }
+
+    async fn terminate(
+        sessions: &CommandSessionManager,
+        id: &str,
+        yield_time_ms: u64,
+    ) -> CommandOutput {
+        sessions
+            .control_command(
+                WorkspaceCancellation::new(),
+                id,
+                CommandAction::Terminate,
+                "",
+                yield_time_ms,
+            )
+            .await
+            .unwrap()
+            .result
+    }
+
+    async fn poll(sessions: &CommandSessionManager, id: &str, yield_time_ms: u64) -> CommandOutput {
+        sessions
+            .poll_command(WorkspaceCancellation::new(), id, yield_time_ms)
+            .await
+            .unwrap()
+            .result
+    }
+
     #[tokio::test]
     async fn waiting_poll_returns_incremental_output_while_command_is_running() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-        let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "printf ready; read value; printf ':%s' \"$value\"",
-                ".",
-                &default_command_shell(),
-                None,
-                0,
-                20_000,
-            )
+        let stub = stub_session(&root).await;
+        sessions
+            .sessions
+            .lock()
             .await
-            .unwrap();
-        let id = started.session_id.unwrap();
-        wait_for_log(&started.result.complete_log_path, b"ready").await;
+            .insert(stub.session.id.clone(), stub.session.clone());
+        stub.append(b"ready").await;
         tokio::time::pause();
-        let running = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 30_000)
-            .await
-            .unwrap();
+        let running = poll(&sessions, &stub.session.id, 30_000).await;
+        assert!(running.running);
+        assert_eq!(running.output, "ready");
         tokio::time::resume();
-        assert!(running.result.running);
-        assert_eq!(running.result.output, "ready");
-        let finished = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "done\n", false, 30_000)
-            .await
-            .unwrap();
-        assert!(finished.result.success);
-        assert_eq!(finished.result.output, ":done");
+        stub.append(b":done").await;
+        stub.complete();
+        let finished = poll(&sessions, &stub.session.id, 30_000).await;
+        assert!(finished.success);
+        assert_eq!(finished.output, ":done");
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[tokio::test]
-    async fn zero_wait_preserves_output_for_running_and_completed_sessions() {
-        let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-        let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "printf ready; read value; printf ':%s' \"$value\" >&2",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                0,
-                20_000,
-            )
-            .await
-            .unwrap();
-        assert!(started.result.output.is_empty());
-        let id = started.session_id.unwrap();
-        wait_for_log(&started.result.complete_log_path, b"ready").await;
-        let running = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
-            .await
-            .unwrap();
-        assert!(running.result.running);
-        assert!(running.result.output.is_empty());
-
-        let sent = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "done\n", false, 0)
-            .await
-            .unwrap();
-        assert!(sent.result.output.is_empty());
-        let mut completion = sessions.sessions.lock().await[&id].completion.clone();
+    async fn await_completion(sessions: &CommandSessionManager, id: &str) {
+        let mut completion = sessions.sessions.lock().await[id].completion.clone();
         tokio::time::timeout(Duration::from_secs(2), async {
             while completion.borrow().is_none() {
                 completion.changed().await.unwrap();
@@ -812,34 +1013,90 @@ mod tests {
         })
         .await
         .unwrap();
+    }
 
-        let hidden = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
-            .await
-            .unwrap();
-        assert!(hidden.result.success);
-        assert!(!hidden.result.running);
-        assert!(hidden.result.output.is_empty());
-        let finished = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 30_000)
-            .await
-            .unwrap();
-        assert_eq!(finished.result.output, "ready:done");
-        let hidden_cached = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
-            .await
-            .unwrap();
-        assert!(hidden_cached.result.success);
-        assert!(hidden_cached.result.output.is_empty());
-        let replay = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 30_000)
-            .await
-            .unwrap();
-        assert_eq!(replay.result.output, finished.result.output);
+    #[tokio::test]
+    async fn zero_yield_poll_reveals_output_zero_yield_controls_hide_it() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, started) = exec_running(
+            &sessions,
+            "printf ready; read value; printf ':%s' \"$value\" >&2",
+        )
+        .await;
+        assert!(
+            started.output.is_empty(),
+            "exec with zero yieldTimeMs hides output"
+        );
+        wait_for_log(&started.complete_log_path, b"ready").await;
+        let running = poll(&sessions, &id, 0).await;
+        assert!(running.running);
         assert_eq!(
-            fs::read(&replay.result.complete_log_path).unwrap(),
+            running.output, "ready",
+            "poll with zero yieldTimeMs shows output"
+        );
+
+        let sent = write(&sessions, &id, "done\n", 0).await;
+        assert!(
+            sent.output.is_empty(),
+            "control with zero yieldTimeMs hides output"
+        );
+        await_completion(&sessions, &id).await;
+
+        let finished = poll(&sessions, &id, 0).await;
+        assert!(finished.success);
+        assert!(!finished.running);
+        assert_eq!(
+            finished.output, ":done",
+            "output preview is incremental across calls"
+        );
+        assert_eq!(
+            fs::read(&finished.complete_log_path).unwrap(),
             b"ready:done"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_session_replays_cached_output_and_skips_yield_waits() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, _started) = exec_running_with_timeout(&sessions, "printf done", None).await;
+
+        let finished = poll(&sessions, &id, 30_000).await;
+        assert!(finished.success);
+        assert_eq!(finished.output, "done");
+
+        for _ in 0..2 {
+            let replay = poll(&sessions, &id, 0).await;
+            assert!(!replay.running);
+            assert_eq!(replay.output, "done");
+            assert_eq!(replay.exit_code, Some(0));
+        }
+        let replay = poll(&sessions, &id, 270_000).await;
+        assert_eq!(
+            replay.output, "done",
+            "a waiting poll on a completed session must return immediately, not wait for new output"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn zero_yield_controls_hide_output_even_after_completion_is_cached() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, _started) = exec_running(&sessions, "read value; printf done").await;
+        write(&sessions, &id, "go\n", 0).await;
+        await_completion(&sessions, &id).await;
+
+        let terminated = terminate(&sessions, &id, 0).await;
+        assert!(
+            terminated.output.is_empty(),
+            "zero-yield controls must hide output even when the completion is already cached"
+        );
+        assert!(!terminated.running);
+        let revealed = poll(&sessions, &id, 30_000).await;
+        assert_eq!(revealed.output, "done");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -877,7 +1134,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exec_and_stdin_have_distinct_flat_output_contracts() {
+    async fn exec_and_control_have_distinct_flat_output_contracts() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let command = "read value; printf '%s' \"$value\"";
@@ -909,7 +1166,7 @@ mod tests {
             })
         );
         let running = sessions
-            .write_stdin(WorkspaceCancellation::new(), id, "", false, 0)
+            .poll_command(WorkspaceCancellation::new(), id, 0)
             .await
             .unwrap();
         assert_eq!(
@@ -926,7 +1183,13 @@ mod tests {
             })
         );
         let finished = sessions
-            .write_stdin(WorkspaceCancellation::new(), id, "done\n", false, 5_000)
+            .control_command(
+                WorkspaceCancellation::new(),
+                id,
+                CommandAction::Write,
+                "done\n",
+                5_000,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -1017,22 +1280,16 @@ mod tests {
             .await
             .unwrap();
         let id = started.session_id.unwrap();
-        sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "start\n", false, 0)
-            .await
-            .unwrap();
+        write(&sessions, &id, "start\n", 0).await;
         wait_for_log(&started.result.complete_log_path, b"abcdefghij").await;
-        let session = sessions.sessions.lock().await[&id].clone();
-        let first = session.output_after_write(None, None, true).await;
+        let first = poll(&sessions, &id, 0).await;
+        assert!(first.running);
         assert_eq!(first.output, "\n<1 line omitted>\n");
-        let finished = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "go\n", false, 5_000)
-            .await
-            .unwrap();
-        assert_eq!(finished.result.output, "\n<1 line omitted>\n");
-        assert_eq!(finished.result.complete_log_path, first.complete_log_path);
+        let finished = write(&sessions, &id, "go\n", 5_000).await;
+        assert_eq!(finished.output, "\n<1 line omitted>\n");
+        assert_eq!(finished.complete_log_path, first.complete_log_path);
         assert_eq!(
-            fs::read(&finished.result.complete_log_path).unwrap(),
+            fs::read(&finished.complete_log_path).unwrap(),
             b"abcdefghijklmnopqrst"
         );
         fs::remove_dir_all(root).unwrap();
@@ -1181,19 +1438,22 @@ mod tests {
             .unwrap();
         let id = started.session_id.unwrap();
         let (finished, concurrent) = tokio::join!(
-            sessions.write_stdin(WorkspaceCancellation::new(), &id, "done\n", false, 5_000),
-            sessions.write_stdin(WorkspaceCancellation::new(), &id, "", false, 5_000),
+            sessions.control_command(
+                WorkspaceCancellation::new(),
+                &id,
+                CommandAction::Write,
+                "done\n",
+                5_000,
+            ),
+            sessions.poll_command(WorkspaceCancellation::new(), &id, 5_000),
         );
         let finished = finished.unwrap();
         assert_eq!(concurrent.unwrap().result.output, finished.result.output);
-        let repeated = sessions
-            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 30_000)
-            .await
-            .expect("completed results must remain available to later observers");
+        let repeated = poll(&sessions, &id, 30_000).await;
 
-        assert!(!repeated.result.running);
-        assert_eq!(repeated.result.output, finished.result.output);
-        assert_eq!(repeated.result.exit_code, finished.result.exit_code);
+        assert!(!repeated.running);
+        assert_eq!(repeated.output, finished.result.output);
+        assert_eq!(repeated.exit_code, finished.result.exit_code);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1277,22 +1537,8 @@ mod tests {
     #[tokio::test]
     async fn command_waits_are_clamped_to_the_supported_range() {
         let root = temp_workspace();
-        let output = super::CapturedOutput::create(&root.join("logs"), 100)
-            .await
-            .unwrap();
-        let (_completion, completion) = tokio::sync::watch::channel(None);
-        let (control, _controls) = tokio::sync::mpsc::unbounded_channel();
-        let (stdin, _requests) = tokio::sync::mpsc::channel(1);
-        let session = std::sync::Arc::new(super::CommandSession {
-            id: "test".into(),
-            command: "test".into(),
-            workdir: root.to_string_lossy().into_owned(),
-            control,
-            stdin,
-            completion,
-            output: std::sync::Arc::new(tokio::sync::Mutex::new(output)),
-            final_output: tokio::sync::Mutex::new(None),
-        });
+        let stub = stub_session(&root).await;
+        stub.append(b"new").await;
         tokio::time::pause();
         for (requested_ms, expected_ms) in [
             (1, 30_000),
@@ -1302,7 +1548,7 @@ mod tests {
             (270_000, 270_000),
             (u64::MAX, 270_000),
         ] {
-            let session = session.clone();
+            let session = stub.session.clone();
             let waiting = tokio::spawn(async move {
                 super::wait_for_completion(&session, &WorkspaceCancellation::new(), requested_ms)
                     .await
@@ -1314,14 +1560,15 @@ mod tests {
             tokio::time::advance(Duration::from_millis(1)).await;
             assert!(waiting.await.unwrap().is_none());
         }
-        assert!(
-            super::wait_for_completion(&session, &WorkspaceCancellation::new(), 0)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        // Boundary waits still surface unconsumed output, while zero waits hide it.
+        let boundary = stub.observe(ObservationMode::Output).await.unwrap();
+        assert!(boundary.running);
+        assert_eq!(boundary.output, "new");
+        stub.append(b"hidden").await;
+        let zero = stub.observe(ObservationMode::Metadata).await.unwrap();
+        assert!(zero.running);
+        assert!(zero.output.is_empty());
         tokio::time::resume();
-        drop(session);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1343,54 +1590,26 @@ mod tests {
             .expect("command should start");
 
         assert!(started.result.running);
-        let finished = sessions
-            .write_stdin(
-                WorkspaceCancellation::new(),
-                started.session_id.as_deref().unwrap(),
-                "",
-                false,
-                2_000,
-            )
-            .await
-            .expect("command should finish without a timeout");
+        let finished = poll(&sessions, started.session_id.as_deref().unwrap(), 2_000).await;
 
-        assert!(finished.result.success);
-        assert!(!finished.result.running);
-        assert!(!finished.result.timed_out);
-        assert_eq!(finished.result.output, "finished");
+        assert!(finished.success);
+        assert!(!finished.running);
+        assert!(!finished.timed_out);
+        assert_eq!(finished.output, "finished");
         fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
-    async fn write_stdin_sends_input_to_running_command() {
+    async fn write_sends_input_to_running_command() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-        let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "read value; printf 'got:%s' \"$value\"",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                0,
-                20_000,
-            )
-            .await
-            .expect("command should start");
+        let (id, _started) =
+            exec_running(&sessions, "read value; printf 'got:%s' \"$value\"").await;
 
-        let finished = sessions
-            .write_stdin(
-                WorkspaceCancellation::new(),
-                started.session_id.as_deref().unwrap(),
-                "hello\n",
-                false,
-                5_000,
-            )
-            .await
-            .expect("input should be delivered");
+        let finished = write(&sessions, &id, "hello\n", 5_000).await;
 
-        assert!(finished.result.success);
-        assert_eq!(finished.result.output, "got:hello");
+        assert!(finished.success);
+        assert_eq!(finished.output, "got:hello");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1413,11 +1632,11 @@ mod tests {
 
         let finished = tokio::time::timeout(
             Duration::from_secs(2),
-            sessions.write_stdin(
+            sessions.control_command(
                 WorkspaceCancellation::new(),
                 started.session_id.as_deref().unwrap(),
+                CommandAction::Write,
                 &"input".repeat(500_000),
-                false,
                 5_000,
             ),
         )
@@ -1457,11 +1676,11 @@ mod tests {
         fs::write(root.join("release"), "").unwrap();
 
         let finished = sessions
-            .write_stdin(
+            .control_command(
                 WorkspaceCancellation::new(),
                 started.session_id.as_deref().unwrap(),
+                CommandAction::Write,
                 &"input".repeat(500_000),
-                false,
                 5_000,
             )
             .await
@@ -1478,11 +1697,9 @@ mod tests {
                 .is_some_and(|error| error.contains("failed to write command stdin"))
         );
         let replay = sessions
-            .write_stdin(
+            .poll_command(
                 WorkspaceCancellation::new(),
                 started.session_id.as_deref().unwrap(),
-                "",
-                false,
                 0,
             )
             .await
@@ -1515,9 +1732,18 @@ mod tests {
         cancellation.cancel();
 
         sessions
-            .write_stdin(cancellation, session_id, "", false, 5_000)
+            .poll_command(cancellation.clone(), session_id, 5_000)
             .await
             .expect_err("cancelled poll should fail");
+        let cancelled_write = sessions
+            .control_command(cancellation, session_id, CommandAction::Write, "x", 5_000)
+            .await;
+        assert!(
+            cancelled_write
+                .expect_err("cancelled write should fail")
+                .to_string()
+                .contains("unknown command session")
+        );
 
         assert!(!sessions.sessions.lock().await.contains_key(session_id));
         sessions.stop_all().await;
@@ -1541,19 +1767,10 @@ mod tests {
             .await
             .expect("command should start");
 
-        let finished = sessions
-            .write_stdin(
-                WorkspaceCancellation::new(),
-                started.session_id.as_deref().unwrap(),
-                "",
-                true,
-                5_000,
-            )
-            .await
-            .expect("command should terminate");
+        let finished = terminate(&sessions, started.session_id.as_deref().unwrap(), 5_000).await;
 
-        assert!(!finished.result.running);
-        assert!(!finished.result.success);
+        assert!(!finished.running);
+        assert!(!finished.success);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!root.join("leaked.txt").exists());
         fs::remove_dir_all(root).unwrap();
@@ -1606,6 +1823,311 @@ mod tests {
         assert!(output.result.timed_out);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!root.join("leaked.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_poll_cooldown_rejects_until_exactly_30s_and_restarts_on_acceptance() {
+        let root = temp_workspace();
+        let stub = stub_session(&root).await;
+
+        let first = stub.observe(ObservationMode::ZeroPoll).await.unwrap();
+        assert!(first.running);
+        let first_poll = stub.last_zero_poll().await;
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+        assert_eq!(
+            stub.last_zero_poll().await,
+            first_poll,
+            "a rejected zero poll must not move the cooldown"
+        );
+
+        tokio::time::advance(Duration::from_millis(29_999)).await;
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        stub.observe(ObservationMode::ZeroPoll)
+            .await
+            .expect("the cooldown expires exactly 30s after the accepted poll");
+        assert_ne!(
+            stub.last_zero_poll().await,
+            first_poll,
+            "an accepted zero poll restarts the cooldown"
+        );
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rejected_zero_poll_keeps_pending_output_and_cooldown() {
+        let root = temp_workspace();
+        let stub = stub_session(&root).await;
+        stub.append(b"ready").await;
+        assert_eq!(
+            stub.observe(ObservationMode::ZeroPoll)
+                .await
+                .unwrap()
+                .output,
+            "ready"
+        );
+
+        stub.append(b"more").await;
+        tokio::time::advance(Duration::from_secs(15)).await;
+        assert_cooldown_rejected(stub.observe(ObservationMode::ZeroPoll).await);
+
+        tokio::time::advance(Duration::from_secs(15)).await;
+        let allowed = stub.observe(ObservationMode::ZeroPoll).await.unwrap();
+        assert!(allowed.running);
+        assert_eq!(
+            allowed.output, "more",
+            "the rejected poll must not consume output that arrived during the cooldown"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nonzero_and_metadata_reads_do_not_touch_zero_poll_cooldown() {
+        let root = temp_workspace();
+        let stub = stub_session(&root).await;
+        stub.observe(ObservationMode::ZeroPoll).await.unwrap();
+        let last_poll = stub.last_zero_poll().await;
+
+        stub.append(b"waiting").await;
+        tokio::time::advance(Duration::from_secs(15)).await;
+        let waiting = stub.observe(ObservationMode::Output).await.unwrap();
+        assert!(waiting.running);
+        assert_eq!(waiting.output, "waiting");
+        let metadata = stub.observe(ObservationMode::Metadata).await.unwrap();
+        assert!(metadata.output.is_empty());
+        assert_eq!(
+            stub.last_zero_poll().await,
+            last_poll,
+            "nonzero and metadata reads must not move the cooldown"
+        );
+
+        tokio::time::advance(Duration::from_secs(15)).await;
+        stub.observe(ObservationMode::ZeroPoll)
+            .await
+            .expect("the original cooldown must still expire on schedule");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_zero_polls_admit_exactly_one_running_caller() {
+        let root = temp_workspace();
+        let stub = stub_session(&root).await;
+        stub.append(b"ready").await;
+
+        let mut calls = tokio::task::JoinSet::new();
+        for _ in 0..5 {
+            let session = stub.session.clone();
+            calls.spawn(async move {
+                session
+                    .output_snapshot(None, None, ObservationMode::ZeroPoll)
+                    .await
+            });
+        }
+        let mut admitted = Vec::new();
+        while let Some(result) = calls.join_next().await {
+            match result.unwrap() {
+                Ok(output) => admitted.push(output),
+                Err(error) => assert_eq!(error.to_string(), POLL_COOLDOWN_ERROR),
+            }
+        }
+        assert_eq!(
+            admitted.len(),
+            1,
+            "only one concurrent zero poll may be admitted"
+        );
+        assert!(admitted[0].running);
+        assert_eq!(admitted[0].output, "ready");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_seen_after_capture_lock_bypasses_zero_poll_cooldown() {
+        let root = temp_workspace();
+        let stub = stub_session(&root).await;
+        stub.observe(ObservationMode::ZeroPoll).await.unwrap();
+        let last_poll = stub.last_zero_poll().await;
+
+        stub.append(b"late").await;
+        let observation = stub.session.observation.lock().await;
+        let capture = stub.output.lock().await;
+        let session = stub.session.clone();
+        let blocked = tokio::spawn(async move {
+            session
+                .output_snapshot(None, None, ObservationMode::ZeroPoll)
+                .await
+        });
+        tokio::task::yield_now().await;
+        drop(observation);
+        tokio::task::yield_now().await;
+        assert!(stub.session.observation.try_lock().is_err());
+        stub.complete();
+        drop(capture);
+
+        let raced = blocked
+            .await
+            .unwrap()
+            .expect("a completion observed after the capture lock must bypass the cooldown");
+        assert!(!raced.running);
+        assert!(raced.success);
+        assert_eq!(raced.output, "late");
+
+        let metadata = stub.observe(ObservationMode::Metadata).await.unwrap();
+        assert!(
+            metadata.output.is_empty(),
+            "metadata mode clears output even from the cached completion"
+        );
+        assert_eq!(metadata.exit_code, Some(0));
+        let replay = stub
+            .observe(ObservationMode::ZeroPoll)
+            .await
+            .expect("cached completions bypass the cooldown");
+        assert_eq!(replay.output, "late");
+        assert_eq!(replay.exit_code, Some(0));
+        assert_eq!(stub.last_zero_poll().await, last_poll);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_reads_do_not_touch_zero_poll_cooldown() {
+        let root = temp_workspace();
+        let stub = stub_session(&root).await;
+        stub.append(b"done").await;
+        stub.complete();
+
+        let finished = stub.observe(ObservationMode::ZeroPoll).await.unwrap();
+        assert!(!finished.running);
+        assert_eq!(finished.output, "done");
+        assert_eq!(
+            stub.last_zero_poll().await,
+            None,
+            "completed reads bypass the cooldown instead of starting it"
+        );
+
+        let waiting = stub.observe(ObservationMode::Output).await.unwrap();
+        assert_eq!(waiting.output, "done");
+        let metadata = stub.observe(ObservationMode::Metadata).await.unwrap();
+        assert!(metadata.output.is_empty());
+        assert_eq!(metadata.exit_code, Some(0));
+        assert_eq!(stub.last_zero_poll().await, None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn waiting_poll_finishes_on_completion_not_new_output() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let stub = stub_session(&root).await;
+        sessions
+            .sessions
+            .lock()
+            .await
+            .insert(stub.session.id.clone(), stub.session.clone());
+        let manager = sessions.clone();
+        let id = stub.session.id.clone();
+        let waiting = tokio::spawn(async move {
+            manager
+                .poll_command(WorkspaceCancellation::new(), &id, 270_000)
+                .await
+                .unwrap()
+        });
+        tokio::task::yield_now().await;
+        stub.append(b"progress").await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(!waiting.is_finished());
+        let completed_at = tokio::time::Instant::now();
+        stub.complete();
+        let finished = waiting.await.unwrap();
+        assert_eq!(tokio::time::Instant::now(), completed_at);
+        assert!(finished.result.success);
+        assert_eq!(finished.result.output, "progress");
+        tokio::time::resume();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn command_action_validation_rejects_mismatched_chars() {
+        assert!(
+            super::CommandAction::Write
+                .validate("")
+                .unwrap_err()
+                .to_string()
+                .contains("nonempty chars")
+        );
+        assert!(
+            super::CommandAction::Terminate
+                .validate("x")
+                .unwrap_err()
+                .to_string()
+                .contains("empty chars")
+        );
+        super::CommandAction::Write.validate("x").unwrap();
+        super::CommandAction::Terminate.validate("").unwrap();
+
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, _started) = exec_running_with_timeout(&sessions, "sleep 30", None).await;
+        let error = sessions
+            .control_command(
+                WorkspaceCancellation::new(),
+                &id,
+                CommandAction::Terminate,
+                "x",
+                0,
+            )
+            .await
+            .expect_err("validation must fail before the action runs");
+        assert!(error.to_string().contains("empty chars"));
+        assert!(
+            poll(&sessions, &id, 0).await.running,
+            "a rejected terminate must not stop the command"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminate_kills_the_whole_process_tree() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, _started) =
+            exec_running_with_timeout(&sessions, "(sleep 30; touch leaked.txt) & sleep 30", None)
+                .await;
+
+        let finished = terminate(&sessions, &id, 5_000).await;
+        assert!(!finished.running);
+        assert!(!finished.success);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !root.join("leaked.txt").exists(),
+            "background children must not outlive a terminated session"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_session_ids_are_rejected() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let error = sessions
+            .poll_command(WorkspaceCancellation::new(), "missing", 0)
+            .await
+            .expect_err("unknown sessions must be rejected");
+        assert!(error.to_string().contains("unknown command session"));
+        let error = sessions
+            .control_command(
+                WorkspaceCancellation::new(),
+                "missing",
+                CommandAction::Write,
+                "x",
+                0,
+            )
+            .await
+            .expect_err("unknown sessions must be rejected");
+        assert!(error.to_string().contains("unknown command session"));
         fs::remove_dir_all(root).unwrap();
     }
 }

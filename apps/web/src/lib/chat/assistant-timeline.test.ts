@@ -581,6 +581,95 @@ describe('partitionWorkSectionTools', () => {
 		expect(assistantTimelineToolFailureKind(claimedToolWithResult, false)).toBeUndefined();
 		expect(assistantTimelineToolFailureKind(yieldedCommand, false)).toBeUndefined();
 	});
+
+	it.each([true, false])(
+		'settles returned control_command and poll_command snapshots with running=%s',
+		(running) => {
+			const blocks: AssistantTimelineWorkBlock[] = [
+				{
+					type: 'tool-group',
+					toolKey: 'exec_command',
+					tools: [
+						tool('exec-1', 'exec_command', {
+							input: { cmd: 'sleep 1' },
+							output: { sessionId: '3', running: true, success: false },
+							job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+						})
+					]
+				},
+				{
+					type: 'tool-group',
+					toolKey: 'control_command',
+					tools: [
+						tool('control-1', 'control_command', {
+							input: { sessionId: '3', action: 'terminate' },
+							output: { running, success: !running },
+							job: executorJob('job-control', 2, {
+								status: 'completed',
+								kind: 'control_command',
+								payload: { sessionId: '3', action: 'terminate' as const }
+							})
+						})
+					]
+				},
+				{
+					type: 'tool-group',
+					toolKey: 'poll_command',
+					tools: [
+						tool('poll-1', 'poll_command', {
+							input: { sessionId: '3' },
+							output: { running, success: !running },
+							job: executorJob('job-poll', 3, {
+								status: 'completed',
+								kind: 'poll_command',
+								payload: { sessionId: '3' }
+							})
+						})
+					]
+				}
+			];
+
+			const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+
+			expect(runningTools).toEqual([]);
+			expect(settledBlocks).toEqual(blocks);
+		}
+	);
+
+	it('shows an in-flight poll_command as its own running call', () => {
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [
+					tool('exec-1', 'exec_command', {
+						input: { cmd: 'npm run dev' },
+						output: { sessionId: '7', running: true, success: false },
+						job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+					})
+				]
+			},
+			{
+				type: 'tool-group',
+				toolKey: 'poll_command',
+				tools: [
+					tool('poll-1', 'poll_command', {
+						input: { sessionId: '7' },
+						job: executorJob('job-poll', 2, {
+							status: 'claimed',
+							kind: 'poll_command',
+							payload: { sessionId: '7' }
+						})
+					})
+				]
+			}
+		];
+
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+
+		expect(runningTools.map((item) => item.callId)).toEqual(['poll-1']);
+		expect(settledBlocks).toEqual([blocks[0]]);
+	});
 });
 
 describe('command session labels', () => {
@@ -595,6 +684,82 @@ describe('command session labels', () => {
 
 		expect(resolveCommandSessionLabel(tools[1], buildCommandSessionCommandMap(tools))).toBe(
 			'cargo test'
+		);
+	});
+
+	it('maps sessions from exec_command outputs and input sessions for control/poll', () => {
+		const tools = [
+			tool('exec-1', 'exec_command', {
+				input: { cmd: 'cargo test' },
+				output: { sessionId: '9', running: true, success: false }
+			}),
+			tool('control-1', 'control_command', {
+				input: { sessionId: '9', action: 'write', chars: 'y\n' }
+			}),
+			tool('poll-1', 'poll_command', { input: { sessionId: '9' } })
+		];
+
+		const map = buildCommandSessionCommandMap(tools);
+
+		expect(map.get('9')).toBe('cargo test');
+		expect(resolveCommandSessionLabel(tools[1], map)).toBe('cargo test');
+		expect(resolveCommandSessionLabel(tools[2], map)).toBe('cargo test');
+	});
+
+	it('prefers the command in control/poll output over the session map', () => {
+		const tools = [
+			tool('exec-1', 'exec_command', {
+				input: { cmd: 'cargo test' },
+				output: { sessionId: '9', running: true, success: false }
+			}),
+			tool('poll-1', 'poll_command', {
+				input: { sessionId: '9' },
+				output: {
+					command: 'cargo test',
+					workdir: '/repo',
+					running: false,
+					success: true,
+					exitCode: 0
+				}
+			}),
+			tool('control-1', 'control_command', {
+				input: { sessionId: '9', action: 'terminate' },
+				output: { command: 'cargo test', workdir: '/repo', running: false, success: true }
+			})
+		];
+
+		const map = buildCommandSessionCommandMap(tools);
+
+		expect(resolveCommandSessionLabel(tools[1], map)).toBe('cargo test');
+		expect(resolveCommandSessionLabel(tools[2], map)).toBe('cargo test');
+	});
+
+	it('labels later polls from a prior result and its input sessionId', () => {
+		const tools = [
+			tool('poll-1', 'poll_command', {
+				input: { sessionId: '9' },
+				output: { command: 'cargo test', workdir: '/repo', running: true, success: false }
+			}),
+			tool('poll-2', 'poll_command', { input: { sessionId: '9' } })
+		];
+
+		const map = buildCommandSessionCommandMap(tools);
+
+		expect(map.get('9')).toBe('cargo test');
+		expect(resolveCommandSessionLabel(tools[0], map)).toBe('cargo test');
+		expect(resolveCommandSessionLabel(tools[1], map)).toBe('cargo test');
+	});
+
+	it('keeps legacy write_stdin labels from output command without a sessionId', () => {
+		const tools = [
+			tool('stdin-1', 'write_stdin', {
+				input: { sessionId: '3' },
+				output: { command: 'npm run dev', workdir: '/app', running: false, success: true }
+			})
+		];
+
+		expect(resolveCommandSessionLabel(tools[0], buildCommandSessionCommandMap(tools))).toBe(
+			'npm run dev'
 		);
 	});
 });

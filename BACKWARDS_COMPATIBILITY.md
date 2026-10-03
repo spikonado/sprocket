@@ -122,9 +122,24 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 Stored `exec_command` and `write_stdin` payloads keep accepting historical
 `yieldTimeMs` values, including the former 10-second and 5-second defaults.
 Current tools advertise zero or 30–270 seconds and clamp nonzero values at
-execution; zero returns metadata without returning or losing command output.
+execution. Zero returns metadata without returning or losing command output
+for `exec_command` and `control_command`; `poll_command` returns output in both
+modes, subject to its running-session zero-wait cooldown.
 Keep the permissive historical payload validators permanently because transcript
 history records the original calls. No stored-data rewrite is needed.
+
+### Retired command control tool
+
+New Rust agents advertise and execute `control_command` and `poll_command`
+instead of `write_stdin`. Convex still accepts `write_stdin` jobs from released
+agents, and the UI still renders their stored input, command results, session
+labels, and log previews. New agents do not dispatch historical `write_stdin`
+calls, so that name cannot bypass the new poll cooldown. Command sessions are
+local to an agent run; no live-session or stored-data migration is needed.
+
+Remove `write_stdin` from the current Convex job-kind validator after agents
+that advertise it are outside the supported upgrade window. Keep acceptance
+in stored-history validators and historical UI rendering permanently.
 
 ### Project-owned artifacts
 

@@ -30,7 +30,7 @@ pub use browse::{
 pub use builtin_skills::BUILTIN_SKILLS;
 pub use command_output::CommandOutputLimits;
 pub use commands::{
-    CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
+    CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
     MAX_COMMAND_YIELD_MS, MIN_COMMAND_YIELD_MS, WorkspaceCancellation, WorkspaceOperationCancelled,
     default_command_shell,
 };

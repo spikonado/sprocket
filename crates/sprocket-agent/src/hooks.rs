@@ -14,6 +14,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "apply_patch",
     "ask_question",
     "await_question",
+    "control_command",
     "edit_artifact",
     "exec_command",
     "list_artifacts",
@@ -23,12 +24,12 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "mandate_setup",
     "mandate_status",
     "parse_file",
+    "poll_command",
     "read_skill",
     "save_artifact",
     "scrape_url",
     "screenshot_url",
     "web_search",
-    "write_stdin",
 ];
 
 pub(crate) fn available_agent_tool_names(
@@ -571,7 +572,8 @@ mod tests {
     fn repairs_near_miss_tool_names() {
         assert_repaired("exec-command", "exec_command");
         assert_repaired("apply-patch", "apply_patch");
-        assert_repaired("writestdin", "write_stdin");
+        assert_repaired("controlcommand", "control_command");
+        assert_repaired("poll-command", "poll_command");
         assert_repaired("parse-file", "parse_file");
     }
 
@@ -592,7 +594,8 @@ mod tests {
         match resolve_invalid_tool_name("launch_missiles", &tools()) {
             InvalidToolCallAction::Retry { feedback } => {
                 assert!(feedback.contains("exec_command"));
-                assert!(feedback.contains("write_stdin"));
+                assert!(feedback.contains("control_command"));
+                assert!(feedback.contains("poll_command"));
                 assert!(feedback.contains("apply_patch"));
             }
             other => panic!("expected retry, got {other:?}"),

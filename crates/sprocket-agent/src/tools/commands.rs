@@ -2,7 +2,9 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::{MAX_COMMAND_YIELD_MS, MIN_COMMAND_YIELD_MS, default_command_shell};
+use sprocket_workspace::{
+    CommandAction, MAX_COMMAND_YIELD_MS, MIN_COMMAND_YIELD_MS, default_command_shell,
+};
 
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
@@ -14,7 +16,10 @@ pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 pub(crate) struct ExecCommandTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct WriteStdinTool(pub(super) AgentToolContext);
+pub(crate) struct ControlCommandTool(pub(super) AgentToolContext);
+
+#[derive(Clone)]
+pub(crate) struct PollCommandTool(pub(super) AgentToolContext);
 
 fn default_workdir() -> String {
     ".".to_string()
@@ -36,23 +41,54 @@ fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 pub(super) fn exec_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
     schema["properties"]["workdir"]["default"] = json!(default_workdir());
-    schema["properties"]["shell"]["default"] = json!(default_command_shell());
     schema["properties"]["yieldTimeMs"] = yield_time_schema();
+    schema["additionalProperties"] = json!(false);
     schema
 }
 
-pub(super) fn write_stdin_parameters() -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(WriteStdinArgs));
+pub(super) fn control_command_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(ControlCommandArgs));
+    schema["properties"]["action"] = json!({
+        "type": "string",
+        "enum": ["write", "terminate"],
+        "description": "Writing targets stdin; termination targets the command and its descendants."
+    });
+    if let Some(definitions) = schema["$defs"].as_object_mut() {
+        definitions.remove("CommandActionArg");
+    }
     schema["properties"]["chars"]["default"] = json!("");
-    schema["properties"]["terminate"]["default"] = json!(false);
     schema["properties"]["yieldTimeMs"] = yield_time_schema();
+    schema["anyOf"] = json!([
+        {
+            "properties": {
+                "action": { "type": "string", "enum": ["write"] },
+                "chars": { "type": "string", "minLength": 1 }
+            },
+            "required": ["chars"]
+        },
+        {
+            "properties": {
+                "action": { "type": "string", "enum": ["terminate"] },
+                "chars": { "type": "string", "enum": [""] }
+            }
+        }
+    ]);
+    schema
+}
+
+pub(super) fn poll_command_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(PollCommandArgs));
+    let mut yield_time = yield_time_schema();
+    yield_time["description"] = json!(
+        "Maximum completion wait in milliseconds; returns early on completion, not new output. \
+         Zero returns an immediate status/output snapshot; while running, zero-wait calls for \
+         the same session must be at least 30 seconds apart. Ignored after completion. \
+         Out-of-range nonzero execution values are clamped."
+    );
+    schema["properties"]["yieldTimeMs"] = yield_time;
     schema
 }
 
@@ -64,12 +100,7 @@ fn yield_time_schema() -> serde_json::Value {
             { "type": "integer", "enum": [0] },
             { "type": "integer", "minimum": MIN_COMMAND_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
         ],
-        "description": format!(
-            "Wait for completion, in milliseconds. Defaults to {DEFAULT_COMMAND_YIELD_MS}. \
-             Use 0 to skip waiting and return status/session/log metadata without stdout/stderr; \
-             output remains available through later waiting write_stdin polls. Nonzero values \
-             are clamped to {MIN_COMMAND_YIELD_MS}–{MAX_COMMAND_YIELD_MS}; completion can return earlier."
-        )
+        "description": "Maximum time to wait for completion before returning the tool call"
     })
 }
 
@@ -77,24 +108,61 @@ fn yield_time_schema() -> serde_json::Value {
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     pub(crate) cmd: String,
-    /// Working directory for this cmd. Absolute paths and `~` may be anywhere on the machine; relative paths resolve from the project root. Defaults to `.`.
+    /// Working directory for this command. Absolute paths and ~ may be anywhere on the machine; relative paths resolve from the project root.
     #[serde(
         default = "default_workdir",
         skip_serializing_if = "is_default_workdir"
     )]
     #[schemars(default = "default_workdir")]
     pub(crate) workdir: String,
-    /// Shell binary to launch. Defaults to the user's shell.
+    /// Shell binary to launch; resolved to the user's shell when omitted.
     #[serde(
         default = "default_command_shell",
         skip_serializing_if = "is_default_shell"
     )]
     #[schemars(default = "default_command_shell")]
     pub(crate) shell: String,
-    /// Maximum process runtime in milliseconds. Omit to allow the command to run until it exits or is terminated.
+    /// Maximum process runtime. Without a limit, the command runs until it exits or is terminated
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
-    /// Wait before yielding a running session, in milliseconds. 0 returns immediately without output.
+    /// Maximum time to wait for completion before returning the tool call
+    #[serde(
+        rename = "yieldTimeMs",
+        default = "default_command_yield_ms",
+        skip_serializing_if = "is_default_command_yield_ms"
+    )]
+    #[schemars(default = "default_command_yield_ms")]
+    pub(crate) yield_time_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CommandActionArg {
+    Write,
+    Terminate,
+}
+
+impl CommandActionArg {
+    fn action(self) -> CommandAction {
+        match self {
+            Self::Write => CommandAction::Write,
+            Self::Terminate => CommandAction::Terminate,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControlCommandArgs {
+    /// Session returned by exec_command.
+    #[serde(rename = "sessionId")]
+    pub(crate) session_id: String,
+    /// Writing targets stdin; termination targets the command and its descendants.
+    pub(crate) action: CommandActionArg,
+    /// Text written to stdin. No newline is added.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) chars: String,
+    /// Maximum time to wait for completion before returning the tool call
     #[serde(
         rename = "yieldTimeMs",
         default = "default_command_yield_ms",
@@ -105,17 +173,12 @@ pub(crate) struct ExecCommandArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct WriteStdinArgs {
-    /// Command session identifier returned by exec_command. Completed results remain available until this agent run ends.
+#[serde(deny_unknown_fields)]
+pub(crate) struct PollCommandArgs {
+    /// Session returned by exec_command.
     #[serde(rename = "sessionId")]
     pub(crate) session_id: String,
-    /// Characters to write to the command's standard input.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) chars: String,
-    /// Terminate the command and its descendants.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub(crate) terminate: bool,
-    /// Wait for more output or completion, in milliseconds. 0 returns immediately without output.
+    /// Maximum completion wait in milliseconds; returns early on completion, not new output.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_command_yield_ms",
@@ -132,7 +195,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Long-running commands yield a sessionId after yieldTimeMs. Set yieldTimeMs to 0 to return without command output. The process keeps running unless timeoutMs sets a runtime limit."
+        "Run a shell command with full machine access. With yieldTimeMs set to 0, launch and return session/status/log metadata without command output. Nonzero waits for completion or the wait budget, then returns captured output. The process keeps running unless timeoutMs sets a runtime limit."
             .to_string()
     }
 
@@ -171,19 +234,67 @@ impl rig::tool::Tool for ExecCommandTool {
     }
 }
 
-impl rig::tool::Tool for WriteStdinTool {
-    const NAME: &'static str = "write_stdin";
+impl rig::tool::Tool for ControlCommandTool {
+    const NAME: &'static str = "control_command";
     type Error = ToolExecutionError;
-    type Args = WriteStdinArgs;
+    type Args = ControlCommandArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write input to an exec_command session, poll incremental output, wait for completion, or terminate the process tree. Set yieldTimeMs to 0 to skip waiting and return without command output."
+        "Write text to a command's stdin or request termination of its process tree. With yieldTimeMs set to 0, send the action and return metadata without command output. Nonzero sends the action, waits for completion or the wait budget, then returns captured output."
             .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        write_stdin_parameters()
+        control_command_parameters()
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        args.action
+            .action()
+            .validate(&args.chars)
+            .map_err(tool_error)?;
+        execute_tool_job(
+            &self.0,
+            Self::NAME,
+            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
+            |cancellation| async {
+                let output = self
+                    .0
+                    .command_sessions
+                    .control_command(
+                        cancellation,
+                        &args.session_id,
+                        args.action.action(),
+                        &args.chars,
+                        args.yield_time_ms,
+                    )
+                    .await
+                    .map_err(tool_error)?;
+                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for PollCommandTool {
+    const NAME: &'static str = "poll_command";
+    type Error = ToolExecutionError;
+    type Args = PollCommandArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Read command status and captured output. Check completion first: a completed session returns its cached result immediately, ignoring yieldTimeMs and the 30-second rule. For running sessions, 0 requests an immediate snapshot; zero-wait calls for the same session must be at least 30 seconds apart, and early calls are rejected. Nonzero values wait up to 30-270 seconds for completion, returning early on completion but not on new output."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        poll_command_parameters()
     }
 
     async fn call(
@@ -199,13 +310,7 @@ impl rig::tool::Tool for WriteStdinTool {
                 let output = self
                     .0
                     .command_sessions
-                    .write_stdin(
-                        cancellation,
-                        &args.session_id,
-                        &args.chars,
-                        args.terminate,
-                        args.yield_time_ms,
-                    )
+                    .poll_command(cancellation, &args.session_id, args.yield_time_ms)
                     .await
                     .map_err(tool_error)?;
                 serde_json::to_value(output).map_err(|e| tool_error(e.into()))
@@ -229,23 +334,175 @@ mod tests {
             properties["workdir"]["description"]
                 .as_str()
                 .unwrap()
-                .starts_with("Working directory for this cmd")
+                .starts_with("Working directory for this command")
         );
         assert_eq!(schema["required"], json!(["cmd"]));
         assert!(properties["timeoutMs"].get("default").is_none());
     }
 
     #[test]
-    fn stdin_schema_still_requires_the_session_id() {
-        let schema = write_stdin_parameters();
-        assert_eq!(schema["required"], json!(["sessionId"]));
-        assert_eq!(schema["properties"]["sessionId"]["type"], "string");
-        assert!(serde_json::from_value::<WriteStdinArgs>(json!({})).is_err());
+    fn exec_command_schema_shell_default_is_runtime_dependent() {
+        let schema = exec_command_parameters();
+        let shell = &schema["properties"]["shell"];
+        assert_eq!(
+            shell["description"],
+            "Shell binary to launch; resolved to the user's shell when omitted."
+        );
+        assert!(shell.get("default").is_none());
     }
 
     #[test]
-    fn both_tools_advertise_the_same_yield_window() {
-        for schema in [exec_command_parameters(), write_stdin_parameters()] {
+    fn control_schema_requires_session_and_action_with_action_constraints() {
+        let schema = control_command_parameters();
+        assert_eq!(schema["required"], json!(["sessionId", "action"]));
+        assert_eq!(schema["additionalProperties"], json!(false));
+        assert_eq!(schema["properties"]["sessionId"]["type"], "string");
+        assert_eq!(
+            schema["properties"]["sessionId"]["description"],
+            "Session returned by exec_command."
+        );
+        assert_eq!(
+            schema["properties"]["action"]["enum"],
+            json!(["write", "terminate"])
+        );
+        assert_eq!(schema["properties"]["chars"]["default"], json!(""));
+        assert_eq!(
+            schema["anyOf"],
+            json!([
+                {
+                    "properties": {
+                        "action": { "type": "string", "enum": ["write"] },
+                        "chars": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["chars"]
+                },
+                {
+                    "properties": {
+                        "action": { "type": "string", "enum": ["terminate"] },
+                        "chars": { "type": "string", "enum": [""] }
+                    }
+                }
+            ])
+        );
+        assert!(serde_json::from_value::<ControlCommandArgs>(json!({})).is_err());
+        assert!(
+            serde_json::from_value::<ControlCommandArgs>(json!({"sessionId": "42"})).is_err(),
+            "action is required"
+        );
+    }
+
+    #[test]
+    fn control_args_deserialize_strictly() {
+        let write: ControlCommandArgs = serde_json::from_value(json!({
+            "sessionId": "42",
+            "action": "write",
+            "chars": "yes\n",
+        }))
+        .unwrap();
+        assert_eq!(write.action, CommandActionArg::Write);
+        assert_eq!(write.chars, "yes\n");
+
+        let terminate: ControlCommandArgs =
+            serde_json::from_value(json!({"sessionId": "42", "action": "terminate"})).unwrap();
+        assert_eq!(terminate.action, CommandActionArg::Terminate);
+        assert!(terminate.chars.is_empty());
+
+        assert!(
+            serde_json::from_value::<ControlCommandArgs>(
+                json!({"sessionId": "42", "action": "write", "terminate": true})
+            )
+            .is_err(),
+            "legacy write_stdin fields are rejected"
+        );
+        assert!(
+            serde_json::from_value::<ControlCommandArgs>(
+                json!({"sessionId": "42", "action": "signal"})
+            )
+            .is_err(),
+            "unknown actions are rejected"
+        );
+    }
+
+    #[test]
+    fn control_action_and_chars_are_validated_before_dispatch() {
+        let write_without_chars: ControlCommandArgs =
+            serde_json::from_value(json!({"sessionId": "42", "action": "write"})).unwrap();
+        assert!(write_without_chars.chars.is_empty());
+        let error = write_without_chars
+            .action
+            .action()
+            .validate(&write_without_chars.chars)
+            .expect_err("write requires nonempty chars");
+        assert!(error.to_string().contains("nonempty chars"));
+
+        let write: ControlCommandArgs = serde_json::from_value(
+            json!({"sessionId": "42", "action": "write", "chars": "input\n"}),
+        )
+        .unwrap();
+        write
+            .action
+            .action()
+            .validate(&write.chars)
+            .expect("nonempty write is valid");
+
+        let terminate: ControlCommandArgs =
+            serde_json::from_value(json!({"sessionId": "42", "action": "terminate"})).unwrap();
+        terminate
+            .action
+            .action()
+            .validate(&terminate.chars)
+            .expect("terminate defaults to empty chars");
+
+        let terminate_with_chars: ControlCommandArgs = serde_json::from_value(
+            json!({"sessionId": "42", "action": "terminate", "chars": "leftover"}),
+        )
+        .unwrap();
+        terminate_with_chars
+            .action
+            .action()
+            .validate(&terminate_with_chars.chars)
+            .expect_err("terminate requires empty chars");
+    }
+
+    #[test]
+    fn poll_schema_only_takes_a_session_and_a_yield_window() {
+        let schema = poll_command_parameters();
+        assert_eq!(schema["required"], json!(["sessionId"]));
+        assert_eq!(schema["additionalProperties"], json!(false));
+        let properties = schema["properties"].as_object().unwrap();
+        assert_eq!(properties.len(), 2);
+        let yield_time = &properties["yieldTimeMs"];
+        assert_eq!(yield_time["default"], json!(DEFAULT_COMMAND_YIELD_MS));
+        assert_eq!(
+            yield_time["anyOf"],
+            json!([
+                { "type": "integer", "enum": [0] },
+                { "type": "integer", "minimum": MIN_COMMAND_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
+            ])
+        );
+        assert!(
+            yield_time["description"]
+                .as_str()
+                .unwrap()
+                .contains("at least 30 seconds apart")
+        );
+    }
+
+    #[test]
+    fn poll_args_deserialize_strictly() {
+        let poll: PollCommandArgs = serde_json::from_value(json!({"sessionId": "42"})).unwrap();
+        assert_eq!(poll.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
+
+        assert!(
+            serde_json::from_value::<PollCommandArgs>(json!({"sessionId": "42", "chars": "x"}))
+                .is_err(),
+            "poll takes no action fields"
+        );
+    }
+
+    #[test]
+    fn exec_and_control_advertise_the_same_yield_window() {
+        for schema in [exec_command_parameters(), control_command_parameters()] {
             let yield_time = &schema["properties"]["yieldTimeMs"];
             assert_eq!(yield_time["default"], json!(DEFAULT_COMMAND_YIELD_MS));
             assert_eq!(yield_time["type"], "integer");
@@ -256,6 +513,10 @@ mod tests {
                     { "type": "integer", "minimum": MIN_COMMAND_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
                 ])
             );
+            assert_eq!(
+                yield_time["description"],
+                "Maximum time to wait for completion before returning the tool call"
+            );
         }
     }
 
@@ -264,9 +525,9 @@ mod tests {
         let exec_default: ExecCommandArgs = serde_json::from_value(json!({"cmd": "pwd"})).unwrap();
         assert_eq!(exec_default.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
 
-        let stdin_default: WriteStdinArgs =
-            serde_json::from_value(json!({"sessionId": "abc"})).unwrap();
-        assert_eq!(stdin_default.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
+        let control_default: ControlCommandArgs =
+            serde_json::from_value(json!({"sessionId": "abc", "action": "terminate"})).unwrap();
+        assert_eq!(control_default.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
 
         let exec_zero: ExecCommandArgs =
             serde_json::from_value(json!({"cmd": "pwd", "yieldTimeMs": 0})).unwrap();
@@ -276,12 +537,14 @@ mod tests {
             json!({"cmd": "pwd", "yieldTimeMs": 0})
         );
 
-        let stdin_zero: WriteStdinArgs =
-            serde_json::from_value(json!({"sessionId": "abc", "yieldTimeMs": 0})).unwrap();
-        assert_eq!(stdin_zero.yield_time_ms, 0);
+        let control_zero: ControlCommandArgs = serde_json::from_value(
+            json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 0}),
+        )
+        .unwrap();
+        assert_eq!(control_zero.yield_time_ms, 0);
         assert_eq!(
-            serde_json::to_value(stdin_zero).unwrap(),
-            json!({"sessionId": "abc", "yieldTimeMs": 0})
+            serde_json::to_value(control_zero).unwrap(),
+            json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 0})
         );
     }
 
@@ -295,12 +558,14 @@ mod tests {
             json!({"cmd": "pwd", "yieldTimeMs": 10_000})
         );
 
-        let stdin_legacy: WriteStdinArgs =
-            serde_json::from_value(json!({"sessionId": "abc", "yieldTimeMs": 5_000})).unwrap();
-        assert_eq!(stdin_legacy.yield_time_ms, 5_000);
+        let control_legacy: ControlCommandArgs = serde_json::from_value(
+            json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 5_000}),
+        )
+        .unwrap();
+        assert_eq!(control_legacy.yield_time_ms, 5_000);
         assert_eq!(
-            serde_json::to_value(&stdin_legacy).unwrap(),
-            json!({"sessionId": "abc", "yieldTimeMs": 5_000})
+            serde_json::to_value(&control_legacy).unwrap(),
+            json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 5_000})
         );
     }
 

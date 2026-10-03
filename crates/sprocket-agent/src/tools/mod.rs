@@ -20,7 +20,7 @@ use std::sync::Arc;
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
 use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool};
-use self::commands::{ExecCommandTool, WriteStdinTool};
+use self::commands::{ControlCommandTool, ExecCommandTool, PollCommandTool};
 use self::context::AgentToolContext;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
@@ -51,13 +51,14 @@ pub(crate) struct AgentToolSet {
     pub(crate) ask_question: AskQuestionTool,
     pub(crate) await_question: AwaitQuestionTool,
     pub(crate) command_sessions: CommandSessionManager,
+    pub(crate) control_command: ControlCommandTool,
     pub(crate) exec_command: ExecCommandTool,
     pub(crate) parse_file: ParseFileTool,
+    pub(crate) poll_command: PollCommandTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) screenshot_url: ScreenshotUrlTool,
     pub(crate) web_search: WebSearchTool,
-    pub(crate) write_stdin: WriteStdinTool,
     pub(crate) add_artifact: AddArtifactTool,
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) edit_artifact: EditArtifactTool,
@@ -150,8 +151,10 @@ pub(crate) fn agent_tools(
         ask_question: AskQuestionTool(context.clone()),
         await_question: AwaitQuestionTool(context.clone()),
         command_sessions,
+        control_command: ControlCommandTool(context.clone()),
         exec_command: ExecCommandTool(context.clone()),
         parse_file: ParseFileTool(context.clone()),
+        poll_command: PollCommandTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),
             skills,
@@ -159,7 +162,6 @@ pub(crate) fn agent_tools(
         scrape_url: ScrapeUrlTool(context.clone()),
         screenshot_url: ScreenshotUrlTool(context.clone()),
         web_search: WebSearchTool(context.clone()),
-        write_stdin: WriteStdinTool(context.clone()),
         add_artifact: AddArtifactTool(context.clone()),
         list_artifacts: ListArtifactsTool(context.clone()),
         edit_artifact: EditArtifactTool(context.clone()),

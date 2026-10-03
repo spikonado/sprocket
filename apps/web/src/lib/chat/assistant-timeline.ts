@@ -199,7 +199,7 @@ export function isAssistantTimelineToolRunning(
 	);
 }
 
-/** Session id from command tool output, else input/payload (write_stdin completion omits it). */
+/** Session id from a launch result or a session-bound tool's input. */
 function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
 	return (
 		jsonObjectString(tool.output, 'sessionId') ??
@@ -208,7 +208,7 @@ function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefin
 	);
 }
 
-/** Map session id → shell command from exec_command / write_stdin results. */
+/** Map session id → shell command from command tool calls and results. */
 export function buildCommandSessionCommandMap(
 	tools: readonly AssistantTimelineTool[]
 ): Map<string, string> {
@@ -235,7 +235,7 @@ export function buildCommandSessionCommandMap(
 	return sessionCommands;
 }
 
-/** User-facing command label for write_stdin. */
+/** User-facing command label for session-bound command tools. */
 export function resolveCommandSessionLabel(
 	tool: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
