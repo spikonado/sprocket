@@ -14,8 +14,10 @@ describe('command tool summaries', () => {
 			type: 'tool',
 			callId: 'exec',
 			name: 'exec_command',
-			input: { cmd: 'bun run build', ...(workdir === undefined ? {} : { workdir }) }
+			input: { cmd: 'bun run build' }
 		};
+
+		if (workdir !== undefined) tool.input = { cmd: 'bun run build', workdir };
 
 		expect(toolItemSummary(tool, new Map())).toBe(expected);
 	});
