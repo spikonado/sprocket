@@ -7,7 +7,7 @@ import {
 	useRef,
 	useState
 } from 'react';
-import { PanelLeft, PanelRight } from 'lucide-react';
+import { PanelRight, Settings } from 'lucide-react';
 import {
 	useAction,
 	useConvex,
@@ -40,6 +40,7 @@ import PromptComposer from '$lib/components/home/prompt-composer';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
+import BrandMark from '$lib/components/brand-mark';
 import InboxSidebar from '$lib/components/home/inbox-sidebar';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsPayments from '$lib/components/home/settings-payments';
@@ -2341,7 +2342,7 @@ export default function App({
 		await Promise.resolve();
 		document
 			.querySelector<HTMLButtonElement>(
-				open ? '.inbox-sidebar-host button' : '[aria-label="Open sidebar"]'
+				open ? '.inbox-sidebar-host button' : '.inbox-collapsed-rail button'
 			)
 			?.focus();
 	}
@@ -2354,6 +2355,18 @@ export default function App({
 	async function closeSidebar() {
 		setSidebarOpen(false);
 		await focusSidebarControl(false);
+	}
+
+	function openSettings() {
+		setSettingsPage('account');
+		setSettingsOpen(true);
+	}
+
+	async function openSettingsFromRail() {
+		openSettings();
+
+		if (viewportWidth < 768) setSidebarOpen(true);
+		await focusSidebarControl(true);
 	}
 
 	async function leaveSettings() {
@@ -2471,31 +2484,37 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
-							onSettings={() => {
-								setSettingsPage('account');
-								setSettingsOpen(true);
-							}}
+							onSettings={openSettings}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
 						/>
 					)}
 				</div>
 
+				{!sidebarVisible && (
+					<div className="inbox-collapsed-rail">
+						<BrandMark
+							size="sm"
+							class="inbox-icon"
+							label="Open sidebar"
+							onclick={() => void openSidebar()}
+						/>
+						<button
+							className="inbox-icon"
+							type="button"
+							aria-label="Settings"
+							title="Settings"
+							onClick={() => void openSettingsFromRail()}
+						>
+							<Settings size={16} />
+						</button>
+					</div>
+				)}
+
 				<main
 					className="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
 					inert={sidebarOpen && viewportWidth < 768}
 				>
-					{!sidebarVisible && (
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 left-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
-							onClick={() => void openSidebar()}
-							aria-label="Open sidebar"
-							title="Open sidebar"
-						>
-							<PanelLeft className="size-4" aria-hidden="true" />
-						</button>
-					)}
 					{!settingsOpen && !artifactPanel.panel.open && (
 						<button
 							type="button"

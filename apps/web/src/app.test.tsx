@@ -890,13 +890,17 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	);
 });
 
-it('closes the left sidebar without leaving a collapsed rail', async () => {
+it('keeps logo and settings on a transparent collapsed rail', async () => {
 	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
 	const layout = document.querySelector('.inbox-layout');
-	expect(document.querySelector('.inbox-collapsed-rail')).toBeNull();
+	const rail = document.querySelector<HTMLElement>('.inbox-collapsed-rail');
+	expect(rail).toBeTruthy();
 	expect(layout?.classList.contains('sidebar-hidden')).toBe(true);
-	fireEvent.click(await screen.findByRole('button', { name: 'Open sidebar' }));
+	const collapsed = within(rail!);
+	expect(collapsed.getByRole('button', { name: 'Open sidebar' })).toBeTruthy();
+	expect(collapsed.getByRole('button', { name: 'Settings' })).toBeTruthy();
+	fireEvent.click(collapsed.getByRole('button', { name: 'Open sidebar' }));
 	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
-	expect(screen.queryByRole('button', { name: 'Open sidebar' })).toBeNull();
+	expect(document.querySelector('.inbox-collapsed-rail')).toBeNull();
 });
