@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render } from '@testing-library/react';
+import { render, within } from '@testing-library/react';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import type {
@@ -439,7 +439,7 @@ describe('transcript viewport paging', () => {
 				type: 'tool-result',
 				callId: 'poll',
 				name: 'poll_command',
-				output: { command: 'npm run dev', workdir: '/app', running: true, success: false }
+				output: { workdir: '/app', running: true, success: false }
 			}
 		];
 
@@ -458,20 +458,13 @@ describe('transcript viewport paging', () => {
 		});
 		await settle();
 
-		const work = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
-			button.textContent?.trim().startsWith('Worked')
-		);
+		const transcript = within(viewport);
 
-		click(work);
+		click(transcript.getByRole('button', { name: /^Worked/ }));
 		await settle();
 
-		expect(
-			[...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes('Polled Commands')
-			)
-		).toBeUndefined();
-		expect(viewport.textContent).toContain('npm run dev');
-		expect(viewport.textContent).toContain('Still running when this call returned');
+		expect(transcript.getAllByTitle('npm run dev')).toHaveLength(2);
+		expect(transcript.getAllByText('Still running when this call returned')).toHaveLength(2);
 	});
 
 	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
