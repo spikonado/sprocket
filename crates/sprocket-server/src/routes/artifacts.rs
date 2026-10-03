@@ -192,7 +192,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn deletion_requires_the_session_account_and_an_attached_workspace() {
+    async fn deletion_validates_scope_and_unbinds_locally_even_when_cloud_fails() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let auth = crate::auth::AuthState::load(data.path()).unwrap();
@@ -205,14 +205,30 @@ mod tests {
             crate::auth::desktop_login_callback_url(7731),
         );
         native_auth.authenticate_for_test("alice").await;
-        let state = AppState::for_test(
+        let mut state = AppState::for_test(
             auth,
             native_auth,
             data.path().to_path_buf(),
             true,
             crate::package_update::PackageUpdateManager::disabled(),
         );
-        let app = routes().with_state(state);
+        // Fail cloud initialization immediately without using the network.
+        state.convex_deployment_url.clear();
+        let bindings = state.artifact_watchers.bindings("alice", workspace.path());
+        std::fs::write(workspace.path().join("notes.md"), "local source").unwrap();
+        {
+            let mut guard = bindings.lock().await.unwrap();
+            guard
+                .bind(sprocket_agent::artifact_bindings::ArtifactBinding {
+                    registration_id: "registration".into(),
+                    artifact_id: Some("artifact".into()),
+                    local_path: "notes.md".into(),
+                    content_hash: sprocket_agent::artifact_bindings::content_hash("local source"),
+                })
+                .unwrap();
+            guard.persist().await.unwrap();
+        }
+        let app = routes().with_state(state.clone());
         for (user_id, session, expected) in [
             ("alice", None, StatusCode::UNAUTHORIZED),
             ("bob", Some(token.as_str()), StatusCode::UNAUTHORIZED),
@@ -231,5 +247,38 @@ mod tests {
             }).to_string())).unwrap()).await.unwrap();
             assert_eq!(response.status(), expected);
         }
+        assert_eq!(bindings.snapshot().await.unwrap().len(), 1);
+        let attachment = state
+            .project_attachments
+            .attach(crate::project_attachments::AttachProjectRequest {
+                workspace_path: workspace.path().to_str().unwrap().into(),
+                replace_workspace_path: None,
+            })
+            .await
+            .unwrap();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/artifacts/delete")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "userId": "alice", "repositoryKey": attachment.repository_key,
+                            "workspacePath": attachment.workspace_path, "artifactId": "artifact",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(bindings.snapshot().await.unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("notes.md")).unwrap(),
+            "local source"
+        );
     }
 }
