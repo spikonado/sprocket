@@ -238,7 +238,10 @@ describe('transcript viewport paging', () => {
 				button.textContent?.includes('Changed Files')
 			);
 
-			expect(patch?.getAttribute('aria-expanded')).toBe('false');
+			expect(patch).toBeUndefined();
+			expect(viewport.textContent).toContain('a.txt');
+			expect(viewport.textContent).toContain('b.txt');
+			expect(viewport.textContent).toContain('c.txt');
 			const failures = [...viewport.querySelectorAll('details summary')];
 			expect(failures.map((summary) => summary.textContent)).toEqual([
 				expect.stringContaining('(cancelled)'),
@@ -285,7 +288,13 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector('button[aria-expanded]'));
 			await settle();
 
-			expect(viewport.textContent?.includes('Running')).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"] .animate-spin') !== null).toBe(
+				withAsync
+			);
+			expect(viewport.querySelector('[title="sleep 10 (running)"] .sr-only')?.textContent).toBe(
+				withAsync ? 'Running' : undefined
+			);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -305,9 +314,9 @@ describe('transcript viewport paging', () => {
 			});
 			await settle();
 
-			expect(viewport.textContent).toContain('Read Skill');
+			expect(viewport.textContent).not.toContain('Read Skill');
 			expect(viewport.textContent).toContain('hidden-skill');
-			expect(viewport.textContent?.includes('Running')).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -378,8 +387,8 @@ describe('transcript viewport paging', () => {
 				button.textContent?.includes(group)
 			);
 
-			expect(commands?.getAttribute('aria-expanded')).toBe('true');
-			expect(commands?.querySelector('.animate-spin')).toBeNull();
+			expect(commands).toBeUndefined();
+			expect(viewport.querySelector('.animate-spin')).toBeNull();
 			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
 			expect(viewport.textContent).toContain('Still running when this call returned');
 		}
