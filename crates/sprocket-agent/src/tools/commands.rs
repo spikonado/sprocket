@@ -3,13 +3,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{
-    CommandAction, MAX_COMMAND_YIELD_MS, MIN_COMMAND_YIELD_MS, default_command_shell,
+    CommandAction, MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, default_command_shell,
 };
 
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
 
-pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = MIN_COMMAND_YIELD_MS;
+pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = 30_000;
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 
 #[derive(Clone)]
@@ -81,14 +81,15 @@ pub(super) fn control_command_parameters() -> serde_json::Value {
 
 pub(super) fn poll_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollCommandArgs));
-    let mut yield_time = yield_time_schema();
-    yield_time["description"] = json!(
-        "Maximum completion wait in milliseconds; returns early on completion, not new output. \
-         Zero returns an immediate status/output snapshot; while running, zero-wait calls for \
-         the same session must be at least 30 seconds apart. Ignored after completion. \
-         Out-of-range nonzero execution values are clamped."
-    );
-    schema["properties"]["yieldTimeMs"] = yield_time;
+    schema["properties"]["yieldTimeMs"] = json!({
+        "type": "integer",
+        "default": DEFAULT_COMMAND_YIELD_MS,
+        "anyOf": [
+            { "type": "integer", "enum": [0] },
+            { "type": "integer", "minimum": MIN_COMMAND_POLL_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
+        ],
+        "description": "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot."
+    });
     schema
 }
 
@@ -96,11 +97,9 @@ fn yield_time_schema() -> serde_json::Value {
     json!({
         "type": "integer",
         "default": DEFAULT_COMMAND_YIELD_MS,
-        "anyOf": [
-            { "type": "integer", "enum": [0] },
-            { "type": "integer", "minimum": MIN_COMMAND_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
-        ],
-        "description": "Maximum time to wait for completion before returning the tool call"
+        "minimum": 0,
+        "maximum": MAX_COMMAND_YIELD_MS,
+        "description": "Maximum time to wait for completion before returning the tool call."
     })
 }
 
@@ -122,10 +121,10 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_command_shell")]
     pub(crate) shell: String,
-    /// Maximum process runtime. Without a limit, the command runs until it exits or is terminated
+    /// Maximum process runtime. Without a limit, the command runs until it exits or is terminated.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
-    /// Maximum time to wait for completion before returning the tool call
+    /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_command_yield_ms",
@@ -162,7 +161,7 @@ pub(crate) struct ControlCommandArgs {
     /// Text written to stdin. No newline is added.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) chars: String,
-    /// Maximum time to wait for completion before returning the tool call
+    /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_command_yield_ms",
@@ -178,7 +177,7 @@ pub(crate) struct PollCommandArgs {
     /// Session returned by exec_command.
     #[serde(rename = "sessionId")]
     pub(crate) session_id: String,
-    /// Maximum completion wait in milliseconds; returns early on completion, not new output.
+    /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_command_yield_ms",
@@ -477,14 +476,12 @@ mod tests {
             yield_time["anyOf"],
             json!([
                 { "type": "integer", "enum": [0] },
-                { "type": "integer", "minimum": MIN_COMMAND_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
+                { "type": "integer", "minimum": MIN_COMMAND_POLL_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
             ])
         );
-        assert!(
-            yield_time["description"]
-                .as_str()
-                .unwrap()
-                .contains("at least 30 seconds apart")
+        assert_eq!(
+            yield_time["description"],
+            "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot."
         );
     }
 
@@ -506,16 +503,12 @@ mod tests {
             let yield_time = &schema["properties"]["yieldTimeMs"];
             assert_eq!(yield_time["default"], json!(DEFAULT_COMMAND_YIELD_MS));
             assert_eq!(yield_time["type"], "integer");
-            assert_eq!(
-                yield_time["anyOf"],
-                json!([
-                    { "type": "integer", "enum": [0] },
-                    { "type": "integer", "minimum": MIN_COMMAND_YIELD_MS, "maximum": MAX_COMMAND_YIELD_MS }
-                ])
-            );
+            assert_eq!(yield_time["minimum"], 0);
+            assert_eq!(yield_time["maximum"], MAX_COMMAND_YIELD_MS);
+            assert!(yield_time.get("anyOf").is_none());
             assert_eq!(
                 yield_time["description"],
-                "Maximum time to wait for completion before returning the tool call"
+                "Maximum time to wait for completion before returning the tool call."
             );
         }
     }

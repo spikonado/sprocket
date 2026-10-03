@@ -121,8 +121,9 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 Stored `exec_command` and `write_stdin` payloads keep accepting historical
 `yieldTimeMs` values, including the former 10-second and 5-second defaults.
-Current tools advertise zero or 30–270 seconds and clamp nonzero values at
-execution. Zero returns metadata without returning or losing command output
+Exec and control accept zero or any positive wait up to 270 seconds; poll
+advertises zero or 30–270 seconds and clamps nonzero values at execution.
+Zero returns metadata without returning or losing command output
 for `exec_command` and `control_command`; `poll_command` returns output in both
 modes, subject to its running-session zero-wait cooldown.
 Keep the permissive historical payload validators permanently because transcript

@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
-pub const MIN_COMMAND_YIELD_MS: u64 = 30_000;
+pub const MIN_COMMAND_POLL_YIELD_MS: u64 = 30_000;
 pub const MAX_COMMAND_YIELD_MS: u64 = 270_000;
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
@@ -241,6 +241,11 @@ impl CommandSessionManager {
         yield_time_ms: u64,
     ) -> Result<CommandStdinOutput> {
         let session = self.session(session_id).await?;
+        let yield_time_ms = if yield_time_ms == 0 {
+            0
+        } else {
+            yield_time_ms.clamp(MIN_COMMAND_POLL_YIELD_MS, MAX_COMMAND_YIELD_MS)
+        };
         let mode = if yield_time_ms == 0 {
             ObservationMode::ZeroPoll
         } else {
@@ -526,7 +531,7 @@ async fn wait_for_completion(
     tokio::select! {
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
         result = tokio::time::timeout(
-            Duration::from_millis(yield_time_ms.clamp(MIN_COMMAND_YIELD_MS, MAX_COMMAND_YIELD_MS)),
+            Duration::from_millis(yield_time_ms.min(MAX_COMMAND_YIELD_MS)),
             completion.changed(),
         ) => {
             match result {
@@ -1535,14 +1540,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn command_waits_are_clamped_to_the_supported_range() {
+    async fn action_waits_honor_short_budgets_and_cap_long_budgets() {
         let root = temp_workspace();
         let stub = stub_session(&root).await;
         stub.append(b"new").await;
         tokio::time::pause();
         for (requested_ms, expected_ms) in [
-            (1, 30_000),
-            (29_999, 30_000),
+            (1, 1),
+            (5_000, 5_000),
+            (29_999, 29_999),
             (30_000, 30_000),
             (90_000, 90_000),
             (270_000, 270_000),
@@ -1560,7 +1566,6 @@ mod tests {
             tokio::time::advance(Duration::from_millis(1)).await;
             assert!(waiting.await.unwrap().is_none());
         }
-        // Boundary waits still surface unconsumed output, while zero waits hide it.
         let boundary = stub.observe(ObservationMode::Output).await.unwrap();
         assert!(boundary.running);
         assert_eq!(boundary.output, "new");
@@ -1569,6 +1574,62 @@ mod tests {
         assert!(zero.running);
         assert!(zero.output.is_empty());
         tokio::time::resume();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn polling_keeps_its_minimum_and_maximum_wait_budgets() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let stub = stub_session(&root).await;
+        sessions
+            .sessions
+            .lock()
+            .await
+            .insert(stub.session.id.clone(), stub.session.clone());
+        tokio::time::pause();
+        for (requested_ms, expected_ms) in [(1, 30_000), (29_999, 30_000), (u64::MAX, 270_000)] {
+            let manager = sessions.clone();
+            let id = stub.session.id.clone();
+            let waiting = tokio::spawn(async move {
+                manager
+                    .poll_command(WorkspaceCancellation::new(), &id, requested_ms)
+                    .await
+                    .unwrap()
+            });
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_millis(expected_ms - 1)).await;
+            assert!(!waiting.is_finished(), "yieldTimeMs: {requested_ms}");
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert!(waiting.await.unwrap().result.running);
+        }
+        tokio::time::resume();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn exec_and_control_return_running_snapshots_after_short_waits() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "read first; printf ready; read last",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                1,
+                20_000,
+            )
+            .await
+            .unwrap();
+        assert!(started.result.running);
+        let id = started.session_id.unwrap();
+        let controlled = write(&sessions, &id, "go\n", 10).await;
+        assert!(controlled.running);
+        wait_for_log(&controlled.complete_log_path, b"ready").await;
+        let finished = write(&sessions, &id, "done\n", 5_000).await;
+        assert!(finished.success);
         fs::remove_dir_all(root).unwrap();
     }
 
