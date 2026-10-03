@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import { initConvexTest, seedOwnedThread } from './test.setup';
 
 const oneBatch = { cursor: null, dryRun: false, oneBatchOnly: true } as const;
 
@@ -266,40 +266,6 @@ describe('legacy compat backfill migrations', () => {
 		const part = await t.run((ctx) => ctx.db.get('threadTranscriptParts', ids.partId));
 		expect(part?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		expect(part?.prompt?.imageUploads[0]).toMatchObject({ name: 'file.txt' });
-	});
-
-	it('converts run-ID handoff cutoffs to part numbers', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const firstSecret = 'handoff-convert-first';
-		const first = await createQueuedRun(t, asUser, threadId, 'handoff-convert', firstSecret, 'Hi');
-		await t.run(async (ctx) => {
-			await ctx.db.patch('threadRecords', threadId, {
-				contextSummary: 'Old summary',
-				contextSummaryThroughRunId: first.runId
-			});
-		});
-
-		const expected = await t.run(async (ctx) => {
-			const parts = await ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_runId_and_number', (query) =>
-					query.eq('threadId', threadId).eq('runId', first.runId)
-				)
-				.collect();
-
-			return Math.max(...parts.map((part) => part.number));
-		});
-
-		await t.mutation(internal.migrations.convertContextHandoffCutoffs, oneBatch);
-
-		expect(await t.run((ctx) => ctx.db.get('threadRecords', threadId))).toMatchObject({
-			contextSummary: 'Old summary',
-			contextSummaryThroughPartNumber: expected
-		});
-		expect(
-			(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.contextSummaryThroughRunId
-		).toBeUndefined();
 	});
 
 	it('unsets section linkedParts', async () => {

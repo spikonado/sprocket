@@ -26,16 +26,6 @@ async function partNumberForRun(
 	return part?.number;
 }
 
-export async function throughPartNumberForRunId(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>,
-	runId: Id<'runs'>
-): Promise<number> {
-	const lastCovered = await partNumberForRun(ctx, threadId, runId, 'desc');
-
-	return lastCovered ?? EMPTY_CONTEXT_PREFIX_THROUGH_PART_NUMBER;
-}
-
 async function lastTranscriptPartNumber(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
@@ -68,27 +58,19 @@ export async function throughPartNumberForHandoff(
 	return await lastTranscriptPartNumber(ctx, args.threadId);
 }
 
-export async function existingThroughPartNumber(
-	ctx: QueryCtx | MutationCtx,
-	thread: Doc<'threadRecords'>
-): Promise<number | undefined> {
-	if (thread.contextSummaryThroughPartNumber !== undefined) {
-		return thread.contextSummaryThroughPartNumber;
+export function existingThroughPartNumber(thread: Doc<'threadRecords'>): number | undefined {
+	const cutoff = thread.contextSummaryThroughPartNumber;
+
+	if (thread.contextSummary !== undefined && cutoff === undefined) {
+		throw new Error('Conversation context is missing its history cutoff.');
 	}
 
-	if (!thread.contextSummaryThroughRunId) return undefined;
-
-	return await throughPartNumberForRunId(ctx, thread._id, thread.contextSummaryThroughRunId);
+	return cutoff;
 }
 
-export async function transcriptHistoryFromNumber(
-	ctx: QueryCtx | MutationCtx,
-	thread: Doc<'threadRecords'> | null
-): Promise<number> {
+export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null): number {
 	if (!thread) return 0;
-	const throughPartNumber = await existingThroughPartNumber(ctx, thread);
+	const throughPartNumber = existingThroughPartNumber(thread);
 
-	if (throughPartNumber === undefined) return 0;
-
-	return throughPartNumber + 1;
+	return throughPartNumber === undefined ? 0 : throughPartNumber + 1;
 }
