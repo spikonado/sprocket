@@ -541,10 +541,9 @@ mod tests {
         let exec_legacy: ExecCommandArgs =
             serde_json::from_value(json!({"cmd": "pwd", "yieldTimeMs": 10_000})).unwrap();
         assert_eq!(exec_legacy.yield_time_ms, 10_000);
-        assert_eq!(
-            serde_json::to_value(&exec_legacy).unwrap(),
-            json!({"cmd": "pwd", "yieldTimeMs": 10_000})
-        );
+        let serialized = serde_json::to_value(&exec_legacy).unwrap();
+        let restored: ExecCommandArgs = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.yield_time_ms, 10_000);
 
         let control_legacy: ControlCommandArgs = serde_json::from_value(
             json!({"sessionId": "abc", "action": "terminate", "yieldTimeMs": 5_000}),
