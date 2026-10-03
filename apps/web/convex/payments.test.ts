@@ -58,6 +58,7 @@ async function settleMandateReport(
 	args: {
 		chargeId: import('@convex/_generated/dataModel').Id<'mandateCharges'>;
 		outcome: 'approved' | 'declined';
+		amountPaid?: string;
 	}
 ) {
 	const startedFake = !vi.isFakeTimers();
@@ -822,6 +823,55 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
 		const stored = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(stored?.reportedAt).toBeUndefined();
+	});
+
+	it('rejects an invalid amountPaid without claiming the report', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
+		});
+
+		fetchMock.mockClear();
+
+		await expect(
+			run.asUser.action(api.payments.mandateReport, {
+				chargeId: charge.chargeId,
+				outcome: 'approved',
+				amountPaid: 'not-money',
+				...auth(run)
+			})
+		).rejects.toThrow(/Amount paid must be a non-negative decimal amount/);
+
+		const afterInvalid = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
+		expect(afterInvalid?.reportingStartedAt).toBeUndefined();
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
+
+		fetchMock.mockResolvedValue(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+
+		const retry = await settleMandateReport(t, run, {
+			chargeId: charge.chargeId,
+			outcome: 'approved',
+			amountPaid: '40'
+		});
+
+		expect(retry).toMatchObject({ reported: true });
+		expect(JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body))).toMatchObject({
+			amount_paid: '40.00'
+		});
 	});
 
 	it('rejects a recurring frequency for an any-merchant mandate', async () => {
