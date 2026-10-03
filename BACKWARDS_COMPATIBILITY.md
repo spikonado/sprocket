@@ -126,6 +126,10 @@ where omitted or `null` `timeoutMs` means no expiry and any finite non-negative
 integer is honored without a floor or cap; zero commits an already timed-out
 question atomically. Both endpoints share one implementation.
 
+Positive deadlines retain the existing scheduled-mutation semantics: an overdue
+pending question remains answerable until its timeout mutation commits. Zero
+lifetimes are terminal at creation, without a scheduler race.
+
 `agentQuestions.timeoutAt` and its snapshot field are now optional; questions
 without an expiry omit the field. The widening is the entire migration:
 existing rows, deadlines, and answers are untouched and no backfill rewrites
