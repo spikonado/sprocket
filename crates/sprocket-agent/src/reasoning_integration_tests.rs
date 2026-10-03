@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use rig::client::{AgentClientExt, CompletionClient};
 use rig::completion::{CompletionModel, Message};
-use rig::message::{AssistantContent, Reasoning};
+use rig::message::{
+    AssistantContent, ProviderCallId, Reasoning, ReasoningContent, ToolCall, ToolCallId,
+    ToolFunction, ToolResult, ToolResultContent, UserContent,
+};
 use rig::providers::openai;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use rig::tool::{DynamicTool, ToolOutput};
@@ -357,6 +360,126 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
+    const SUMMARY: &str = "completed pre-handoff work";
+    const CIPHERTEXT: &str = "  encrypted+state/=\n  ";
+    let summary = crate::context_handoff::context_summary_text(SUMMARY);
+    let native_assistant = Message::Assistant {
+        id: None,
+        content: vec![
+            AssistantContent::Reasoning(Reasoning {
+                id: Some(ITEM_ID.to_string()),
+                content: vec![
+                    ReasoningContent::Summary(DONE_SUMMARY.to_string()),
+                    ReasoningContent::Encrypted(CIPHERTEXT.to_string()),
+                ],
+            }),
+            AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint(TOOL_CALL_ID.to_string()),
+                provider: ProviderCallId::new(TOOL_CALL_ID.to_string()),
+                function: ToolFunction {
+                    name: TOOL_NAME.to_string(),
+                    arguments: json!({ "cmd": "pwd" }),
+                },
+                signature: None,
+                additional_params: None,
+            }),
+        ],
+    };
+    let native_tool_result = Message::User {
+        content: vec![UserContent::ToolResult(ToolResult {
+            call: ToolCallId::new_or_mint(TOOL_CALL_ID.to_string()),
+            provider: ProviderCallId::new(TOOL_CALL_ID.to_string()),
+            name: TOOL_NAME.to_string(),
+            content: vec![ToolResultContent::text(json!("/workspace").to_string())]
+                .try_into()
+                .expect("nonempty tool result"),
+        })],
+    };
+    let live = vec![
+        Message::user(summary),
+        Message::user("continue after handoff"),
+        native_assistant,
+        native_tool_result,
+    ];
+    let parts: Vec<TranscriptPart> = serde_json::from_value(json!([
+        {
+            "number": 0, "sourceKey": "completion:covered", "kind": "completion",
+            "runId": "run",
+            "completion": { "items": [
+                { "type": "reasoning", "text": "covered reasoning", "providerMetadata": {
+                    "openai": { "itemId": "rs_covered", "reasoningEncryptedContent": "covered-ciphertext" }
+                } },
+                { "type": "tool-call", "callId": "covered-call", "name": TOOL_NAME, "input": {} }
+            ] }
+        },
+        {
+            "number": 1, "sourceKey": "tool:covered", "kind": "tool", "runId": "run",
+            "tool": { "callId": "covered-call", "name": TOOL_NAME, "output": "covered output", "status": "completed" }
+        },
+        {
+            "number": 2, "sourceKey": "prompt:retained", "kind": "prompt", "runId": "run",
+            "prompt": { "text": "continue after handoff", "imageUploads": [] }
+        },
+        {
+            "number": 3, "sourceKey": "completion:retained", "kind": "completion", "runId": "run",
+            "completion": { "streamId": STREAM_ID, "items": [
+                { "type": "reasoning", "text": DONE_SUMMARY, "providerMetadata": {
+                    "openai": { "itemId": ITEM_ID, "reasoningEncryptedContent": CIPHERTEXT }
+                } },
+                { "type": "tool-call", "callId": TOOL_CALL_ID, "name": TOOL_NAME, "input": { "cmd": "pwd" } }
+            ] }
+        },
+        {
+            "number": 4, "sourceKey": "tool:retained", "kind": "tool", "runId": "run",
+            "tool": { "callId": TOOL_CALL_ID, "name": TOOL_NAME, "output": "/workspace", "status": "completed" }
+        }
+    ])).expect("handoff transcript fixture");
+    let dir = tempfile::tempdir().expect("handoff replay cache directory");
+    let store = TranscriptStore::new(dir.path().to_path_buf());
+    store.append_parts("user", "thread", &parts).await.unwrap();
+    let mut state = store.load_state("user", "thread").await.unwrap();
+    state.context_summary = Some(SUMMARY.to_string());
+    state.history_from_number = 2;
+    state.remote_total_parts = 5;
+    store.save_state("user", "thread", &state).await.unwrap();
+
+    // Reopen the cache just as the next run does, including covered cached parts.
+    let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
+    let state = reloaded_store.load_state("user", "thread").await.unwrap();
+    let loaded = reloaded_store
+        .read_parts("user", "thread", &[0, 1, 2, 3, 4])
+        .await
+        .unwrap();
+    let reloaded = deserialize_agent_history(agent_history_from_parts(&state, &loaded, None))
+        .expect("reconstructed history");
+    let client = openai::Client::builder()
+        .api_key("test-key")
+        .base_url("http://127.0.0.1:1")
+        .build()
+        .expect("openai responses client");
+    let model = client.completion_model("gateway-model");
+    let wire = |history| {
+        let request = model
+            .completion_request(Message::user("next request"))
+            .messages(history)
+            .additional_params(responses_api_params(false))
+            .build();
+        serde_json::to_value(
+            openai::responses_api::CompletionRequest::try_from((
+                "gateway-model".to_string(),
+                crate::openai::replay_contents(request),
+            ))
+            .expect("responses request"),
+        )
+        .expect("responses request JSON")
+    };
+    let live_wire = wire(live);
+    let reloaded_wire = wire(reloaded);
+    assert_eq!(reloaded_wire["input"], live_wire["input"]);
 }
 
 #[tokio::test]

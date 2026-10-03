@@ -176,12 +176,27 @@ function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean
 	return true;
 }
 
-/** Whether a tool call is still in flight while the run is streaming. */
+/** Tools that can yield an operation id and wait for that operation in a later call. */
+function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
+	switch (assistantTimelineToolKey(tool)) {
+		case 'exec_command':
+		case 'write_stdin':
+		case 'ask_question':
+		case 'await_question':
+			return true;
+		default:
+			return false;
+	}
+}
+
+/** Whether an async tool call is still in flight while the run is streaming. */
 export function isAssistantTimelineToolRunning(
 	tool: AssistantTimelineTool,
 	isStreaming: boolean
 ): boolean {
-	return isStreaming && isAssistantTimelineToolUnresolved(tool);
+	return (
+		isStreaming && isAsyncAssistantTimelineTool(tool) && isAssistantTimelineToolUnresolved(tool)
+	);
 }
 
 /** Session id from command tool output, else input/payload (write_stdin completion omits it). */
@@ -235,7 +250,8 @@ export function resolveCommandSessionLabel(
 
 /**
  * Split a work section's blocks into settled content (reasoning + finished tools) and
- * currently running tools pulled out for a separate Running dropdown.
+ * currently running async tools pulled out for a separate Running dropdown.
+ * Unfinished synchronous calls stay hidden until they settle or the run stops.
  */
 export type PartitionedWorkSectionTools = {
 	settledBlocks: AssistantTimelineWorkBlock[];
@@ -260,7 +276,7 @@ export function partitionWorkSectionTools(
 		for (const tool of block.tools) {
 			if (isAssistantTimelineToolRunning(tool, isStreaming)) {
 				runningTools.push(tool);
-			} else {
+			} else if (!isStreaming || !isAssistantTimelineToolUnresolved(tool)) {
 				settledTools.push(tool);
 			}
 		}
