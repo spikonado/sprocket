@@ -523,7 +523,7 @@ export const saveContextHandoff = mutation({
 		});
 
 		const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
-		const existingCutoff = await existingThroughPartNumber(ctx, thread);
+		const existingCutoff = existingThroughPartNumber(thread);
 
 		if (thread.contextSummaryHandoffKey === handoffKey) {
 			if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
@@ -544,7 +544,6 @@ export const saveContextHandoff = mutation({
 		await ctx.db.patch('threadRecords', thread._id, {
 			contextSummary: summary,
 			contextSummaryThroughPartNumber: throughPartNumber,
-			contextSummaryThroughRunId: undefined,
 			contextSummaryHandoffKey: handoffKey
 		});
 

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::context_handoff::context_summary_text;
-use crate::reasoning::{opaque_encrypted, skip_reasoning_on_reload};
+use crate::reasoning::opaque_encrypted;
 use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
@@ -219,17 +219,11 @@ pub fn agent_history_from_parts(
             }
             TranscriptPartKind::Completion => {
                 if let Some(completion) = &part.completion {
-                    let mut contents = Vec::new();
-                    for item in &completion.items {
-                        if let Some(content) = completion_item_to_history(item) {
-                            if matches!(content, AgentHistoryContent::Reasoning { .. })
-                                && skip_reasoning_on_reload(state.context_summary.as_deref())
-                            {
-                                continue;
-                            }
-                            contents.push(content);
-                        }
-                    }
+                    let contents: Vec<_> = completion
+                        .items
+                        .iter()
+                        .filter_map(completion_item_to_history)
+                        .collect();
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
                             role: AgentHistoryRole::Assistant,
@@ -877,93 +871,48 @@ mod tests {
     }
 
     #[test]
-    fn context_handoff_reload_drops_all_loaded_reasoning_regardless_of_part_number() {
-        // A context summary is not proof the retained prefix is unchanged.
-        // In-flight old generations can commit later, and in-memory context handoff
-        // can replace current-run text while historyFromNumber only drops the
-        // prior run. Fail closed: drop every loaded reasoning item.
+    fn context_handoff_reload_only_excludes_reasoning_covered_by_the_cutoff() {
         let mut state = TranscriptState::new("user".into(), "thread".into());
         state.context_summary = Some("Prior work is done.".into());
-        state.history_from_number = 1;
+        state.history_from_number = 2;
+        let reasoning = |number, id, encrypted| {
+            reasoning_completion(
+                number,
+                serde_json::json!({
+                    "type": "reasoning",
+                    "text": "",
+                    "providerMetadata": {
+                        "openai": { "itemId": id, "reasoningEncryptedContent": encrypted }
+                    }
+                }),
+            )
+        };
+        let ciphertext = "  opaque\n+/=  ";
         let history = agent_history_from_parts(
             &state,
             &[
                 prompt(0, "old", "covered"),
-                reasoning_completion(
-                    1,
-                    serde_json::json!({
-                        "type": "reasoning",
-                        "text": "stale-tail",
-                        "providerMetadata": {
-                            "openai": {
-                                "itemId": "rs_tail",
-                                "reasoningEncryptedContent": "tail-envelope"
-                            }
-                        }
-                    }),
-                ),
-                reasoning_completion(
-                    3,
-                    serde_json::json!({
-                        "type": "reasoning",
-                        "text": "also-stale",
-                        "providerMetadata": {
-                            "openai": {
-                                "itemId": "rs_later",
-                                "reasoningEncryptedContent": "later-envelope"
-                            }
-                        }
-                    }),
-                ),
+                reasoning(1, "rs_covered", "covered-envelope"),
+                reasoning(2, "rs_retained", ciphertext),
             ],
             None,
         );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("Prior work is done."));
-        assert!(!serialized.contains("rs_tail"));
-        assert!(!serialized.contains("tail-envelope"));
-        assert!(!serialized.contains("rs_later"));
-        assert!(!serialized.contains("later-envelope"));
-    }
-
-    #[test]
-    fn context_handoff_reload_keeps_text_while_dropping_reasoning() {
-        let mut state = TranscriptState::new("user".into(), "thread".into());
-        state.context_summary = Some("Prior work is done.".into());
-        state.history_from_number = 1;
-        let history = agent_history_from_parts(
-            &state,
-            &[TranscriptPart {
-                number: 1,
-                source_key: "completion:1".into(),
-                kind: TranscriptPartKind::Completion,
-                created_at: None,
-                run_id: "run".into(),
-                prompt: None,
-                completion: Some(TranscriptCompletionBody {
-                    stream_id: Some("s".into()),
-                    items: vec![
-                        serde_json::json!({
-                            "type": "reasoning",
-                            "text": "stale",
-                            "providerMetadata": {
-                                "openai": {
-                                    "itemId": "rs_old",
-                                    "reasoningEncryptedContent": "old-envelope"
-                                }
-                            }
-                        }),
-                        serde_json::json!({ "type": "text", "text": "kept answer" }),
-                    ],
-                }),
-                tool: None,
-                work: Default::default(),
-            }],
-            None,
-        );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("kept answer"));
-        assert!(!serialized.contains("rs_old"));
-        assert!(!serialized.contains("old-envelope"));
+        assert_eq!(history.len(), 2);
+        match &history[0].contents[0] {
+            AgentHistoryContent::Text { text, .. } => {
+                assert_eq!(text, &context_summary_text("Prior work is done."));
+            }
+            other => panic!("expected handoff summary, got {other:?}"),
+        }
+        match &history[1].contents[0] {
+            AgentHistoryContent::Reasoning { id, blocks_json } => {
+                assert_eq!(id.as_deref(), Some("rs_retained"));
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(blocks_json).unwrap(),
+                    serde_json::json!([{ "type": "encrypted", "content": ciphertext }]),
+                );
+            }
+            other => panic!("expected post-handoff reasoning, got {other:?}"),
+        }
     }
 }

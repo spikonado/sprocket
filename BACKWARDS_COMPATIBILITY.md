@@ -230,8 +230,7 @@ In serial order: `removeTranscriptStateWorkThrough`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
-`convertContextHandoffCutoffs` (resolves each run-ID cutoff to the last
-covered part number), `removeSectionLinkedParts`, and
+`removeSectionLinkedParts`, and
 `removeArtifactRegistryRekeyTargets`.
 
 After the runner reports completion and production scans confirm no row carries
@@ -239,14 +238,13 @@ the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
 `userEmail`, scrape `truncated` from the schema and validators; require
 `summary`/`images` on scrape results; require `toolInvocationId` on executor
 jobs and transcript tool parts and drop `jobId` and its pairing fallback;
-normalize or require stored completion timing; drop stored `imageUploadId`; drop
-`contextSummaryThroughRunId` and the reasoning reload filter. That PR may also
-drop `artifactRegistries.rekeyTo`. The optional field remains in the schema
-until the migration has completed and production scans find no rows that use
-it. At that point, also remove `removeArtifactRegistryRekeyTargets`, its test,
-and its entry in the migration sequence. After every migration in the sequence
-meets its removal gate, remove the backfill cron, runner, tests, and the
-`migrationSchedules` row and table.
+normalize or require stored completion timing; drop stored `imageUploadId`.
+That PR may also drop `artifactRegistries.rekeyTo`. The optional field remains
+in the schema until the migration has completed and production scans find no
+rows that use it. At that point, also remove `removeArtifactRegistryRekeyTargets`,
+its test, and its entry in the migration sequence. After every migration in
+the sequence meets its removal gate, remove the backfill cron, runner, tests,
+and the `migrationSchedules` row and table.
 
 ### Outdated Executor jobs
 
@@ -372,16 +370,3 @@ stored `closed` flags instead of rescanning each run for every section.
 
 Remove this local migration once supported installations no longer have caches
 with the session column, or a later cache migration also rebuilds these indexes.
-
-#### Context handoff cutoffs
-
-Historical summaries may use `contextSummaryThroughRunId`. Current writes use
-the more precise `contextSummaryThroughPartNumber`; transcript reads retain the
-run-ID fallback so old summaries still skip their covered prefix.
-`convertContextHandoffCutoffs` resolves each run-ID cutoff to the last covered
-part number.
-
-When any summary exists, history reload also omits stored encrypted reasoning.
-Old run-level summaries can replace context that the reasoning depended on, so
-replaying that ciphertext is unsafe. The reasoning filter can be removed once
-no row retains only `contextSummaryThroughRunId`.
