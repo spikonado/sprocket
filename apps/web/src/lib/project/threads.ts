@@ -136,7 +136,6 @@ export function isLatestRunReadyForThread(args: {
 }
 
 export type PendingAgentLaunch = {
-	expiresAt: number;
 	launchId: number;
 	previousClaimExpiresAt?: number;
 	previousStartedAt?: number;
@@ -214,37 +213,6 @@ export function resolvePendingAgentLaunch(
 	}
 
 	return clearPendingAgentLaunch(pendingLaunches, threadId, pendingLaunch.launchId);
-}
-
-export type ExpiredAgentLaunchResolution = {
-	pendingLaunches: PendingAgentLaunches;
-	shouldRecover: boolean;
-};
-
-export function resolveExpiredAgentLaunch(
-	pendingLaunches: PendingAgentLaunches,
-	threadId: Id<'threadRecords'>,
-	launchId: number,
-	now: number,
-	latestRunId: Id<'runs'> | null,
-	latestClaimExpiresAt?: number,
-	latestStartedAt?: number
-): ExpiredAgentLaunchResolution {
-	const pendingLaunch = pendingLaunches[threadId];
-
-	if (!pendingLaunch || pendingLaunch.launchId !== launchId || pendingLaunch.expiresAt > now) {
-		return { pendingLaunches, shouldRecover: false };
-	}
-
-	return {
-		pendingLaunches: clearPendingAgentLaunch(pendingLaunches, threadId, launchId),
-		shouldRecover: !hasAgentLaunchProgressed(
-			pendingLaunch,
-			latestRunId,
-			latestClaimExpiresAt,
-			latestStartedAt
-		)
-	};
 }
 
 export function resolveProjectThreadSelection(args: {
