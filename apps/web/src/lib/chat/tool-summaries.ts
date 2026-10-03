@@ -358,6 +358,17 @@ export function toolItemSummary(
 	return summarizeTool(toolLog.name, toolLog.input);
 }
 
+export function commandSnapshotLabel(tool: AssistantTimelineTool): string | undefined {
+	const kind = tool.job?.kind ?? tool.name;
+	const output: JsonValue | undefined = tool.output ?? tool.job?.result;
+
+	return (kind === 'exec_command' || kind === 'write_stdin') &&
+		isJsonObject(output) &&
+		output.running === true
+		? 'Still running when this call returned'
+		: undefined;
+}
+
 export function fullToolSummary(
 	toolLog: AssistantTimelineTool,
 	isStreaming: boolean,

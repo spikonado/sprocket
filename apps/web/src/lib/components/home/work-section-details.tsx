@@ -8,7 +8,6 @@ import type {
 import {
 	buildAssistantTimeline,
 	buildCommandSessionCommandMap,
-	buildOpenExecCommandSessions,
 	partitionWorkSectionTools,
 	groupAssistantTimeline
 } from '$lib/chat/assistant-timeline';
@@ -120,11 +119,7 @@ export default function WorkSectionDetails({
 	const tools = timeline.filter((item) => item.type === 'tool');
 	const grouped = groupAssistantTimeline(timeline).filter((block) => block.type !== 'text');
 
-	const partitioned = partitionWorkSectionTools(
-		grouped,
-		inProgress,
-		buildOpenExecCommandSessions(tools, inProgress)
-	);
+	const partitioned = partitionWorkSectionTools(grouped, inProgress);
 
 	const commands = buildCommandSessionCommandMap(tools);
 	const blockKeysRef = useRef<TranscriptSectionKeys | null>(null);
