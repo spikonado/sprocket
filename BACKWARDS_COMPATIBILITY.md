@@ -117,6 +117,26 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Legacy agent question expiry
+
+Released agents call `agentQuestions:create`, which keeps its original
+contract: an omitted `timeoutMs` defaults to 30 minutes and numeric values are
+clamped to [1s, 24h]. Current agents call `agentQuestions:createWithOptionalExpiry`,
+where omitted or `null` `timeoutMs` means no expiry and any finite non-negative
+integer is honored without a floor or cap; zero commits an already timed-out
+question atomically. Both endpoints share one implementation.
+
+`agentQuestions.timeoutAt` and its snapshot field are now optional; questions
+without an expiry omit the field. The widening is the entire migration:
+existing rows, deadlines, and answers are untouched and no backfill rewrites
+deadlines. Stored `ask_question` job payloads now also accept `timeoutMs: null`
+alongside historical numbers; that permissive payload validator stays
+permanently because transcript history records the original calls.
+
+Remove `agentQuestions:create` and its clamping resolver after agents that call
+it are outside the supported upgrade window. `timeoutAt` stays optional as long
+as no-expiry questions exist.
+
 ### Historical command wait values
 
 Stored `exec_command` and `write_stdin` payloads keep accepting historical

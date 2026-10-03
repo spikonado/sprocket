@@ -40,8 +40,8 @@ use self::context::tool_error;
 use self::job::mutation_args_from_payload;
 #[cfg(test)]
 use self::questions::{
-    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, DEFAULT_ASK_QUESTION_TIMEOUT_MS,
-    DEFAULT_ASK_QUESTION_YIELD_MS, MAX_QUESTION_CHARS, prepare_ask_question,
+    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, DEFAULT_ASK_QUESTION_YIELD_MS,
+    MAX_QUESTION_CHARS, prepare_ask_question,
 };
 #[cfg(test)]
 use self::skills::resolve_read_skill;
@@ -250,7 +250,7 @@ mod tests {
                 },
             ],
             yield_time_ms: DEFAULT_ASK_QUESTION_YIELD_MS,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect("valid question");
 
@@ -266,7 +266,7 @@ mod tests {
                 label: "A".to_string(),
             }],
             yield_time_ms: 0,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect_err("overlong question");
         assert!(error.to_string().contains("2000"));
@@ -280,7 +280,7 @@ mod tests {
                 label: "café".to_string(),
             }],
             yield_time_ms: 0,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect("unicode within character limits");
 
@@ -291,7 +291,7 @@ mod tests {
                 label: "Nope".to_string(),
             }],
             yield_time_ms: 0,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect_err("reserved id");
         assert!(reserved.to_string().contains("reserved"));

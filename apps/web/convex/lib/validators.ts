@@ -198,7 +198,7 @@ export const vAskQuestionPayload = v.object({
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
 	yieldTimeMs: v.optional(v.number()),
-	timeoutMs: v.optional(v.number())
+	timeoutMs: v.optional(v.union(v.number(), v.null()))
 });
 
 export const vAwaitQuestionPayload = v.object({

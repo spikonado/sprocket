@@ -28,6 +28,7 @@ pub(super) struct AgentToolContext {
     pub(super) supports_images: bool,
     pub(super) tool_call_tracker: ToolCallTracker,
     pub(super) command_sessions: CommandSessionManager,
+    pub(super) question_polls: super::questions::QuestionPolls,
 }
 
 impl AgentToolContext {
@@ -52,6 +53,7 @@ impl AgentToolContext {
             supports_images,
             tool_call_tracker,
             command_sessions,
+            question_polls: super::questions::QuestionPolls::default(),
         }
     }
 }
