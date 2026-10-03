@@ -15,7 +15,8 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
-const MAX_COMMAND_YIELD_MS: u64 = 300_000;
+pub const MIN_COMMAND_YIELD_MS: u64 = 30_000;
+pub const MAX_COMMAND_YIELD_MS: u64 = 270_000;
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
 
@@ -86,6 +87,35 @@ impl CommandSessionManager {
         yield_time_ms: u64,
         max_output_chars: usize,
     ) -> Result<CommandExecOutput> {
+        let session = self
+            .spawn_command(
+                cancellation.clone(),
+                command,
+                workdir,
+                shell,
+                timeout_ms,
+                max_output_chars,
+            )
+            .await?;
+        let session_id = session.id.clone();
+        let result = self
+            .observe_session(session, cancellation, yield_time_ms)
+            .await?;
+        Ok(CommandExecOutput {
+            session_id: result.running.then_some(session_id),
+            result,
+        })
+    }
+
+    async fn spawn_command(
+        &self,
+        cancellation: WorkspaceCancellation,
+        command: &str,
+        workdir: &str,
+        shell: &str,
+        timeout_ms: Option<u64>,
+        max_output_chars: usize,
+    ) -> Result<Arc<CommandSession>> {
         cancellation.ensure_active()?;
         if command.trim().is_empty() {
             bail!("command cannot be empty");
@@ -154,13 +184,7 @@ impl CommandSessionManager {
             .await
             .insert(session_id.clone(), session.clone());
 
-        let result = self
-            .observe_session(session, cancellation, yield_time_ms)
-            .await?;
-        Ok(CommandExecOutput {
-            session_id: result.running.then_some(session_id),
-            result,
-        })
+        Ok(session)
     }
 
     pub async fn write_stdin(
@@ -268,13 +292,7 @@ impl CommandSessionManager {
         cancellation: WorkspaceCancellation,
         yield_time_ms: u64,
     ) -> Result<CommandOutput> {
-        let completion = match wait_for_completion(
-            &session,
-            &cancellation,
-            yield_time_ms.min(MAX_COMMAND_YIELD_MS),
-        )
-        .await
-        {
+        let completion = match wait_for_completion(&session, &cancellation, yield_time_ms).await {
             Ok(completion) => completion,
             Err(error) => {
                 let _ = session.terminate();
@@ -292,13 +310,7 @@ impl CommandSessionManager {
         yield_time_ms: u64,
         write_error: anyhow::Error,
     ) -> Result<CommandOutput> {
-        match wait_for_completion(
-            &session,
-            &cancellation,
-            yield_time_ms.min(MAX_COMMAND_YIELD_MS),
-        )
-        .await
-        {
+        match wait_for_completion(&session, &cancellation, yield_time_ms).await {
             Ok(Some(completion)) => {
                 let write_error = format!("failed to write command stdin: {write_error:#}");
                 Ok(session
@@ -428,9 +440,7 @@ async fn wait_for_completion(
     if let Some(completion) = completion.borrow().clone() {
         return Ok(Some(completion));
     }
-    if yield_time_ms == 0 {
-        return Ok(None);
-    }
+    let yield_time_ms = yield_time_ms.clamp(MIN_COMMAND_YIELD_MS, MAX_COMMAND_YIELD_MS);
 
     tokio::select! {
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
@@ -729,6 +739,189 @@ mod tests {
     use super::{CommandSessionManager, WorkspaceCancellation, default_command_shell};
     use crate::test_support::temp_workspace;
 
+    impl CommandSessionManager {
+        // Start real supervised processes without spending the polling interval
+        // on tests whose subject is input, output, or process cleanup.
+        async fn start_running_command(
+            &self,
+            command: &str,
+            timeout_ms: Option<u64>,
+            max_output_chars: usize,
+        ) -> anyhow::Result<super::CommandExecOutput> {
+            let session = self
+                .spawn_command(
+                    WorkspaceCancellation::new(),
+                    command,
+                    ".",
+                    &default_command_shell(),
+                    timeout_ms,
+                    max_output_chars,
+                )
+                .await?;
+            Ok(super::CommandExecOutput {
+                session_id: Some(session.id.clone()),
+                result: session.output(None).await,
+            })
+        }
+    }
+
+    async fn pending_session(
+        sessions: &CommandSessionManager,
+    ) -> tokio::sync::watch::Sender<Option<super::CommandCompletion>> {
+        let (control, _) = tokio::sync::mpsc::unbounded_channel();
+        let (stdin, _) = tokio::sync::mpsc::channel(1);
+        let (completion_sender, completion) = tokio::sync::watch::channel(None);
+        let output = super::CapturedOutput::create(&sessions.log_directory, 100)
+            .await
+            .unwrap();
+        let session = std::sync::Arc::new(super::CommandSession {
+            id: "pending".into(),
+            command: "pending command".into(),
+            workdir: sessions.workspace_root.to_string_lossy().into(),
+            control,
+            stdin,
+            completion,
+            output: std::sync::Arc::new(tokio::sync::Mutex::new(output)),
+            final_output: tokio::sync::Mutex::new(None),
+        });
+        sessions
+            .sessions
+            .lock()
+            .await
+            .insert(session.id.clone(), session);
+        completion_sender
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn command_polling_clamps_waits_to_thirty_seconds_through_four_and_a_half_minutes() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let _completion = pending_session(&sessions).await;
+        for (requested_ms, expected_ms) in [
+            (0, 30_000),
+            (1, 30_000),
+            (29_999, 30_000),
+            (30_000, 30_000),
+            (120_000, 120_000),
+            (270_000, 270_000),
+            (270_001, 270_000),
+            (u64::MAX, 270_000),
+        ] {
+            let poll = sessions.write_stdin(
+                WorkspaceCancellation::new(),
+                "pending",
+                "",
+                false,
+                requested_ms,
+            );
+            tokio::pin!(poll);
+            let started = tokio::time::Instant::now();
+            tokio::select! {
+                biased;
+                _ = &mut poll => panic!("poll returned before waiting for {requested_ms} ms"),
+                _ = tokio::task::yield_now() => {}
+            }
+            tokio::time::advance(Duration::from_millis(expected_ms - 1)).await;
+            tokio::select! {
+                biased;
+                _ = &mut poll => panic!("poll returned before the clamped interval"),
+                _ = tokio::task::yield_now() => {}
+            }
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert!(poll.await.unwrap().result.running);
+            assert_eq!(
+                started.elapsed(),
+                Duration::from_millis(expected_ms),
+                "poll wait for {requested_ms} ms must stop at the clamped interval"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn polling_returns_on_completion_before_the_minimum_wait() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let completion = pending_session(&sessions).await;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            completion
+                .send(Some(super::CommandCompletion {
+                    exit_code: Some(0),
+                    success: true,
+                    ..Default::default()
+                }))
+                .unwrap();
+        });
+        let started = tokio::time::Instant::now();
+        let output = sessions
+            .write_stdin(WorkspaceCancellation::new(), "pending", "", false, 0)
+            .await
+            .unwrap();
+        assert!(output.result.success);
+        assert!(!output.result.running);
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
+        let replay_started = tokio::time::Instant::now();
+        let replay = sessions
+            .write_stdin(WorkspaceCancellation::new(), "pending", "", false, u64::MAX)
+            .await
+            .unwrap();
+        assert!(replay.result.success);
+        assert_eq!(replay_started.elapsed(), Duration::ZERO);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn polling_returns_on_cancellation_before_the_minimum_wait() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let _completion = pending_session(&sessions).await;
+        let cancellation = WorkspaceCancellation::new();
+        let trigger = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            trigger.cancel();
+        });
+        let started = tokio::time::Instant::now();
+        let error = sessions
+            .write_stdin(cancellation, "pending", "", false, u64::MAX)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<super::WorkspaceOperationCancelled>()
+                .is_some()
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
+        assert!(sessions.sessions.lock().await.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn short_commands_complete_without_waiting_for_the_minimum_polling_interval() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let output = tokio::time::timeout(
+            Duration::from_secs(2),
+            sessions.exec_command(
+                WorkspaceCancellation::new(),
+                "sleep 0.1; printf finished",
+                ".",
+                &default_command_shell(),
+                None,
+                0,
+                100,
+            ),
+        )
+        .await
+        .expect("command completion must return before the minimum polling wait")
+        .unwrap();
+        assert!(output.result.success);
+        assert_eq!(output.result.output, "finished");
+        assert!(output.session_id.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn output_preserves_observed_stream_order() {
         let root = temp_workspace();
@@ -768,15 +961,7 @@ mod tests {
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let command = "read value; printf '%s' \"$value\"";
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                command,
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                0,
-                20_000,
-            )
+            .start_running_command(command, None, 20_000)
             .await
             .unwrap();
         let id = started.session_id.as_deref().unwrap();
@@ -794,10 +979,12 @@ mod tests {
                 "eventsPath": events_path,
             })
         );
+        tokio::time::pause();
         let running = sessions
             .write_stdin(WorkspaceCancellation::new(), id, "", false, 0)
             .await
             .unwrap();
+        tokio::time::resume();
         assert_eq!(
             serde_json::to_value(running).unwrap(),
             serde_json::json!({
@@ -891,50 +1078,35 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
+            .start_running_command(
                 "read start; printf abcdefghij; read value; printf klmnopqrst",
-                ".",
-                &default_command_shell(),
                 Some(5_000),
-                0,
                 4,
             )
             .await
             .unwrap();
         let id = started.session_id.unwrap();
+        let session = sessions.sessions.lock().await.get(&id).unwrap().clone();
+        session
+            .write(b"start\n".to_vec(), &WorkspaceCancellation::new())
+            .await
+            .unwrap();
         let first = tokio::time::timeout(Duration::from_secs(2), async {
-            let mut output = sessions
-                .write_stdin(WorkspaceCancellation::new(), &id, "start\n", false, 0)
-                .await
-                .unwrap();
-            loop {
-                if !output.result.output.is_empty() {
-                    break output;
-                }
+            while fs::read(&started.result.complete_log_path).unwrap().len() < 10 {
                 tokio::time::sleep(Duration::from_millis(5)).await;
-                output = sessions
-                    .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
-                    .await
-                    .unwrap();
             }
+            session.output(None).await
         })
         .await
         .unwrap();
-        assert_eq!(first.result.output, "\n<1 line omitted>\n");
-        assert_eq!(
-            fs::read(&first.result.complete_log_path).unwrap(),
-            b"abcdefghij"
-        );
+        assert_eq!(first.output, "\n<1 line omitted>\n");
+        assert_eq!(fs::read(&first.complete_log_path).unwrap(), b"abcdefghij");
         let finished = sessions
             .write_stdin(WorkspaceCancellation::new(), &id, "go\n", false, 5_000)
             .await
             .unwrap();
         assert_eq!(finished.result.output, "\n<1 line omitted>\n");
-        assert_eq!(
-            finished.result.complete_log_path,
-            first.result.complete_log_path
-        );
+        assert_eq!(finished.result.complete_log_path, first.complete_log_path);
         assert_eq!(
             fs::read(&finished.result.complete_log_path).unwrap(),
             b"abcdefghijklmnopqrst"
@@ -1072,15 +1244,7 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "read value; printf '%s' \"$value\"",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                0,
-                20_000,
-            )
+            .start_running_command("read value; printf '%s' \"$value\"", Some(5_000), 20_000)
             .await
             .unwrap();
         let id = started.session_id.unwrap();
@@ -1179,19 +1343,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn long_command_yields_and_can_be_polled() {
+    async fn running_command_can_be_polled_to_completion() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "printf start; sleep 0.1; printf end",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                10,
-                20_000,
-            )
+            .start_running_command("printf start; sleep 0.1; printf end", Some(5_000), 20_000)
             .await
             .expect("command should start");
 
@@ -1217,19 +1373,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn command_without_timeout_continues_after_yield() {
+    async fn command_without_timeout_continues_after_start() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "sleep 0.1; printf finished",
-                ".",
-                &default_command_shell(),
-                None,
-                5,
-                20_000,
-            )
+            .start_running_command("sleep 0.1; printf finished", None, 20_000)
             .await
             .expect("command should start");
 
@@ -1257,13 +1405,9 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
+            .start_running_command(
                 "read value; printf 'got:%s' \"$value\"",
-                ".",
-                &default_command_shell(),
                 Some(5_000),
-                10,
                 20_000,
             )
             .await
@@ -1290,15 +1434,7 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "sleep 5",
-                ".",
-                &default_command_shell(),
-                Some(100),
-                10,
-                20_000,
-            )
+            .start_running_command("sleep 5", Some(100), 20_000)
             .await
             .expect("command should start");
 
@@ -1334,13 +1470,9 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
+            .start_running_command(
                 "while [ ! -f release ]; do sleep 0.01; done",
-                ".",
-                &default_command_shell(),
                 Some(5_000),
-                10,
                 20_000,
             )
             .await
@@ -1390,15 +1522,7 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "sleep 5",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                10,
-                20_000,
-            )
+            .start_running_command("sleep 5", Some(5_000), 20_000)
             .await
             .expect("command should start");
         let session_id = started.session_id.as_deref().unwrap();
@@ -1420,15 +1544,7 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "sleep 0.2; touch leaked.txt",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                10,
-                20_000,
-            )
+            .start_running_command("sleep 0.2; touch leaked.txt", Some(5_000), 20_000)
             .await
             .expect("command should start");
 
@@ -1455,15 +1571,7 @@ mod tests {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "sleep 5",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                10,
-                20_000,
-            )
+            .start_running_command("sleep 5", Some(5_000), 20_000)
             .await
             .expect("command should start");
         let session_id = started.session_id.expect("session id");

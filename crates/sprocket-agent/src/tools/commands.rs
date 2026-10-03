@@ -2,14 +2,12 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::default_command_shell;
+use sprocket_workspace::{MAX_COMMAND_YIELD_MS, MIN_COMMAND_YIELD_MS, default_command_shell};
 
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
 
-pub(super) const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
 pub(super) const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
-pub(super) const DEFAULT_STDIN_YIELD_MS: u64 = 5_000;
 
 #[derive(Clone)]
 pub(crate) struct ExecCommandTool(pub(super) AgentToolContext);
@@ -21,12 +19,8 @@ fn default_workdir() -> String {
     ".".to_string()
 }
 
-fn default_command_yield_ms() -> u64 {
-    DEFAULT_COMMAND_YIELD_MS
-}
-
-fn default_stdin_yield_ms() -> u64 {
-    DEFAULT_STDIN_YIELD_MS
+fn default_yield_time_ms() -> u64 {
+    MIN_COMMAND_YIELD_MS
 }
 
 fn is_default_workdir(workdir: &String) -> bool {
@@ -37,12 +31,8 @@ fn is_default_shell(shell: &String) -> bool {
     shell == &default_command_shell()
 }
 
-fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
-    *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
-}
-
-fn is_default_stdin_yield_ms(yield_time_ms: &u64) -> bool {
-    *yield_time_ms == DEFAULT_STDIN_YIELD_MS
+fn is_default_yield_time_ms(yield_time_ms: &u64) -> bool {
+    *yield_time_ms == MIN_COMMAND_YIELD_MS
 }
 
 fn is_false(value: &bool) -> bool {
@@ -53,7 +43,9 @@ pub(super) fn exec_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
     schema["properties"]["workdir"]["default"] = json!(default_workdir());
     schema["properties"]["shell"]["default"] = json!(default_command_shell());
-    schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_COMMAND_YIELD_MS);
+    schema["properties"]["yieldTimeMs"]["default"] = json!(default_yield_time_ms());
+    schema["properties"]["yieldTimeMs"]["minimum"] = json!(MIN_COMMAND_YIELD_MS);
+    schema["properties"]["yieldTimeMs"]["maximum"] = json!(MAX_COMMAND_YIELD_MS);
     schema
 }
 
@@ -61,7 +53,9 @@ pub(super) fn write_stdin_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(WriteStdinArgs));
     schema["properties"]["chars"]["default"] = json!("");
     schema["properties"]["terminate"]["default"] = json!(false);
-    schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_STDIN_YIELD_MS);
+    schema["properties"]["yieldTimeMs"]["default"] = json!(default_yield_time_ms());
+    schema["properties"]["yieldTimeMs"]["minimum"] = json!(MIN_COMMAND_YIELD_MS);
+    schema["properties"]["yieldTimeMs"]["maximum"] = json!(MAX_COMMAND_YIELD_MS);
     schema
 }
 
@@ -86,13 +80,13 @@ pub(crate) struct ExecCommandArgs {
     /// Maximum process runtime in milliseconds. Omit to allow the command to run until it exits or is terminated.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
-    /// Wait before yielding a running session, in milliseconds. Defaults to 10000.
+    /// Wait before yielding a running session, in milliseconds. Defaults to 30000; clamped to 30000–270000 (30 seconds–4.5 minutes). Returns as soon as the command completes or the wait is cancelled.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_command_yield_ms",
-        skip_serializing_if = "is_default_command_yield_ms"
+        default = "default_yield_time_ms",
+        skip_serializing_if = "is_default_yield_time_ms"
     )]
-    #[schemars(default = "default_command_yield_ms")]
+    #[schemars(default = "default_yield_time_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -107,13 +101,13 @@ pub(crate) struct WriteStdinArgs {
     /// Terminate the command and its descendants.
     #[serde(default, skip_serializing_if = "is_false")]
     pub(crate) terminate: bool,
-    /// Wait for more output or completion, in milliseconds. Defaults to 5000.
+    /// Wait before yielding a running session with incremental output, in milliseconds. Defaults to 30000; clamped to 30000–270000 (30 seconds–4.5 minutes). Returns as soon as the command completes or the wait is cancelled.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_stdin_yield_ms",
-        skip_serializing_if = "is_default_stdin_yield_ms"
+        default = "default_yield_time_ms",
+        skip_serializing_if = "is_default_yield_time_ms"
     )]
-    #[schemars(default = "default_stdin_yield_ms")]
+    #[schemars(default = "default_yield_time_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -210,6 +204,34 @@ impl rig::tool::Tool for WriteStdinTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_schemas_publish_the_enforced_wait_bounds_and_defaults() {
+        for schema in [exec_command_parameters(), write_stdin_parameters()] {
+            let wait = &schema["properties"]["yieldTimeMs"];
+            assert_eq!(wait["default"], MIN_COMMAND_YIELD_MS);
+            assert_eq!(wait["minimum"], MIN_COMMAND_YIELD_MS);
+            assert_eq!(wait["maximum"], MAX_COMMAND_YIELD_MS);
+            assert!(wait["description"].as_str().unwrap().contains("clamped"));
+        }
+        let exec: ExecCommandArgs = serde_json::from_value(json!({"cmd": "pwd"})).unwrap();
+        let stdin: WriteStdinArgs = serde_json::from_value(json!({"sessionId": "1"})).unwrap();
+        assert_eq!(exec.yield_time_ms, MIN_COMMAND_YIELD_MS);
+        assert_eq!(stdin.yield_time_ms, MIN_COMMAND_YIELD_MS);
+    }
+
+    #[test]
+    fn legacy_wait_values_remain_deserializable_for_runtime_clamping() {
+        let exec: ExecCommandArgs =
+            serde_json::from_value(json!({"cmd": "pwd", "yieldTimeMs": 0})).unwrap();
+        let stdin: WriteStdinArgs = serde_json::from_value(json!({
+            "sessionId": "1",
+            "yieldTimeMs": 300_000,
+        }))
+        .unwrap();
+        assert_eq!(exec.yield_time_ms, 0);
+        assert_eq!(stdin.yield_time_ms, 300_000);
+    }
 
     #[test]
     fn exec_command_schema_does_not_expose_the_preview_limit() {
