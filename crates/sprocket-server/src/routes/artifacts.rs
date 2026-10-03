@@ -70,14 +70,16 @@ async fn delete_handler(
         &payload.user_id,
         std::path::Path::new(&attachment.workspace_path),
     );
-    let mut bindings = store.lock().await.map_err(ApiError::internal)?;
-    bindings
-        .delete_artifact(
-            std::path::Path::new(&attachment.workspace_path),
-            artifact_id,
-        )
-        .await
-        .map_err(ApiError::internal)?;
+    {
+        let mut bindings = store.lock().await.map_err(ApiError::internal)?;
+        bindings
+            .delete_artifact(
+                std::path::Path::new(&attachment.workspace_path),
+                artifact_id,
+            )
+            .await
+            .map_err(ApiError::internal)?;
+    }
     let args = BTreeMap::from([
         ("repositoryKey".into(), Value::String(repository_key.into())),
         ("artifactId".into(), Value::String(artifact_id.into())),
@@ -90,18 +92,13 @@ async fn delete_handler(
     })
     .await;
     match result {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) if is_native_account_revoked(&error) => {
-            return Err(ApiError::unauthorized(error));
-        }
-        Ok(Err(error)) => return Err(ApiError::bad_request(error)),
-        Err(_) => {
-            return Err(ApiError::bad_request(anyhow!(
-                "artifact deletion timed out"
-            )));
-        }
+        Ok(Ok(_)) => Ok(Json(())),
+        Ok(Err(error)) if is_native_account_revoked(&error) => Err(ApiError::unauthorized(error)),
+        Ok(Err(error)) => Err(ApiError::bad_request(error)),
+        Err(_) => Err(ApiError::bad_request(anyhow!(
+            "artifact deletion timed out"
+        ))),
     }
-    Ok(Json(()))
 }
 
 async fn watch_handler(

@@ -14,7 +14,7 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 	const [error, setError] = useState<string | null>(null);
 	const busyRef = useRef(false);
 	const menuRef = useRef<HTMLDivElement>(null);
-	const triggerRef = useRef<HTMLElement | null>(null);
+	const triggerRef = useRef<HTMLButtonElement | null>(null);
 
 	const close = useCallback(() => {
 		const hadFocus = menuRef.current?.contains(document.activeElement);
@@ -76,18 +76,17 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 		};
 	}, [position, close, trigger]);
 
-	function open(target: EventTarget, container: HTMLElement, x: number, y: number) {
-		if (!(target instanceof Element)) return;
-		const focusable = 'button, a[href], [tabindex]';
-		const control = target.closest<HTMLElement>(focusable);
-		triggerRef.current =
-			(control && container.contains(control) ? control : null) ??
-			container.querySelector<HTMLElement>(focusable) ??
-			(target instanceof HTMLElement ? target : null);
+	function open(button: HTMLButtonElement, x: number, y: number) {
+		triggerRef.current = button;
 		setPosition({
 			x: Math.max(8, Math.min(x, window.innerWidth - 240)),
 			y: Math.max(8, Math.min(y, window.innerHeight - 140))
 		});
+	}
+
+	function openButton(button: HTMLButtonElement) {
+		const bounds = button.getBoundingClientRect();
+		open(button, bounds.right - 224, bounds.bottom + 4);
 	}
 
 	async function remove() {
@@ -114,9 +113,13 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 			className="contents"
 			onContextMenu={(event) => {
 				if (!onDelete || trigger !== 'context') return;
+				const button = event.currentTarget.querySelector('button');
+
+				if (!button) return;
+
 				event.preventDefault();
 				event.stopPropagation();
-				open(event.target, event.currentTarget, event.clientX, event.clientY);
+				open(button, event.clientX, event.clientY);
 			}}
 			onKeyDown={(event) => {
 				if (
@@ -125,13 +128,14 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 					!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
 				)
 					return;
+				const button = event.currentTarget.querySelector('button');
+
+				if (!button) return;
+
 				event.preventDefault();
 				event.stopPropagation();
-
-				const bounds =
-					event.target instanceof Element ? event.target.getBoundingClientRect() : null;
-
-				if (bounds) open(event.target, event.currentTarget, bounds.left, bounds.bottom);
+				const bounds = button.getBoundingClientRect();
+				open(button, bounds.left, bounds.bottom);
 			}}
 		>
 			{trigger === 'context' ? (
@@ -152,14 +156,12 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 							return;
 						}
 
-						const bounds = event.currentTarget.getBoundingClientRect();
-						open(event.currentTarget, event.currentTarget, bounds.right - 224, bounds.bottom + 4);
+						openButton(event.currentTarget);
 					}}
 					onKeyDown={(event) => {
 						if (event.key !== 'ArrowDown') return;
 						event.preventDefault();
-						const bounds = event.currentTarget.getBoundingClientRect();
-						open(event.currentTarget, event.currentTarget, bounds.right - 224, bounds.bottom + 4);
+						openButton(event.currentTarget);
 					}}
 				>
 					<Ellipsis className="size-4" aria-hidden="true" />

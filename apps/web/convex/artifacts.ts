@@ -13,7 +13,6 @@ import {
 	MAX_FILE_NAME_LENGTH,
 	vArtifactScope,
 	vArtifactType,
-	vDeleteArtifactResult,
 	vListArtifactsResult
 } from '@convex/lib/validators';
 import schema from '@convex/schema';
@@ -33,7 +32,7 @@ const vArtifactMutationResult = v.object({
 	scope: v.literal('project')
 });
 
-const vDeleteArtifactMutationResult = vDeleteArtifactResult.extend({
+const vDeleteArtifactMutationResult = v.object({
 	artifactId: v.id('artifacts')
 });
 
