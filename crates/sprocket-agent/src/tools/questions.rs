@@ -213,7 +213,7 @@ impl rig::tool::Tool for AskQuestionTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Ask the user a multiple-choice question above the composer. With yieldTimeMs set to 0, create the question and return question/status metadata without an answer. Nonzero waits for an answer, expiry, or the wait budget, then returns the result including any answer. The question stays open unless timeoutMs sets a lifetime limit or the agent run is cancelled.".to_string()
+        "Ask the user a question.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -266,8 +266,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Read the current result of a question created by ask_question. Answered or expired questions return immediately. For pending questions, zero returns a snapshot subject to a per-question 30-second cooldown; nonzero waits for an answer or expiry, up to the wait budget."
-            .to_string()
+        "Read the current result of a question.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {

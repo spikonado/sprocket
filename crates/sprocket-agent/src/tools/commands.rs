@@ -194,8 +194,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. With yieldTimeMs set to 0, launch and return session/status/log metadata without command output. Nonzero waits for completion or the wait budget, then returns captured output. The process keeps running unless timeoutMs sets a runtime limit."
-            .to_string()
+        "Run a shell command.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -240,8 +239,7 @@ impl rig::tool::Tool for ControlCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write text to a command's stdin or request termination of its process tree. With yieldTimeMs set to 0, send the action and return metadata without command output. Nonzero sends the action, waits for completion or the wait budget, then returns captured output."
-            .to_string()
+        "Write text to a command's stdin or request termination of its process tree.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -288,8 +286,7 @@ impl rig::tool::Tool for PollCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Read command status and captured output. Check completion first: a completed session returns its cached result immediately, ignoring yieldTimeMs and the 30-second rule. For running sessions, 0 requests an immediate snapshot; zero-wait calls for the same session must be at least 30 seconds apart, and early calls are rejected. Nonzero values wait up to 30-270 seconds for completion, returning early on completion but not on new output."
-            .to_string()
+        "Read command status and current output.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
