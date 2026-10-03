@@ -4,6 +4,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import { cancelCloudToolJob } from '@convex/lib/toolJobs';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
+import { getRunExecutionState } from '@convex/lib/runExecution';
 
 const TERMINAL_CLEANUP_BATCH_SIZE = 16;
 
@@ -31,6 +32,11 @@ export async function reconcileTerminalRun(
 ): Promise<void> {
 	let { jobCursor, questionCursor } = args;
 	let processed = 0;
+	const state = await getRunExecutionState(ctx.db, run._id);
+
+	if (state && state.terminalJobsReconciled === undefined) {
+		await ctx.db.patch('runExecutionStates', state._id, { terminalJobsReconciled: false });
+	}
 
 	async function scheduleContinuation() {
 		await ctx.scheduler.runAfter(0, internal.runCleanup.continueCleanup, {
@@ -85,6 +91,10 @@ export async function reconcileTerminalRun(
 
 			return;
 		}
+	}
+
+	if (state && state.terminalJobsReconciled !== true) {
+		await ctx.db.patch('runExecutionStates', state._id, { terminalJobsReconciled: true });
 	}
 
 	if (questionCursor === null) return;

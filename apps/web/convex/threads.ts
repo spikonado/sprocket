@@ -1,11 +1,19 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vCompletionProvider } from '@convex/lib/validators';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
+import schema from '@convex/schema';
+import {
+	listDirectChildrenPage,
+	subtreeSummary,
+	threadAncestryIds,
+	threadDescendantsActive
+} from '@convex/lib/threadHierarchy';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -25,8 +33,12 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-	if (record.status === 'running') {
-		throw new Error('Cannot settle a running thread.');
+	if (record.parentThreadId !== undefined) {
+		throw new Error('Only root threads can be settled.');
+	}
+
+	if ((await subtreeSummary(ctx.db, record)).anyActive) {
+		throw new Error('Cannot settle a thread with active work.');
 	}
 
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
@@ -37,6 +49,11 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
+
+	if (record.parentThreadId !== undefined) {
+		throw new Error('Only root threads can be settled.');
+	}
+
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
 
 	return { userId, record };
@@ -137,6 +154,61 @@ export const unsettle = mutation({
 		await unsettleOwnedThread(ctx, args.threadId);
 
 		return null;
+	}
+});
+
+export const listChildren = query({
+	args: {
+		threadId: v.id('threadRecords'),
+		paginationOpts: paginationOptsValidator
+	},
+	returns: paginationResultValidator(schema.doc('threadRecords')),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		return await listDirectChildrenPage(ctx, userId, args.threadId, args.paginationOpts);
+	}
+});
+
+export const vSubtreeSummary = v.object({
+	descendantCount: v.number(),
+	anyActive: v.boolean(),
+	descendantsActive: v.boolean()
+});
+
+/** All-descendant count and aggregate activity for the sidebar expansion
+ * row. The caller may pass any owned thread; counts cover its full subtree. */
+export const subtreeSummaryForThread = query({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: vSubtreeSummary,
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		return {
+			...(await subtreeSummary(ctx.db, thread)),
+			descendantsActive: await threadDescendantsActive(ctx.db, thread._id)
+		};
+	}
+});
+
+/** Ancestor chain from the root down to (and excluding) the given thread, so
+ * selecting a child can reveal its ancestors in the sidebar. */
+export const ancestorChain = query({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.array(v.id('threadRecords')),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		if (thread.parentThreadId === undefined) return [];
+
+		return await threadAncestryIds(ctx.db, thread);
 	}
 });
 

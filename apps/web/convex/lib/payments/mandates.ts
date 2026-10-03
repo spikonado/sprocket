@@ -1,8 +1,7 @@
 import { v, type Infer } from 'convex/values';
 import type { ActionCtx } from '@convex/_generated/server';
-import { api, internal } from '@convex/_generated/api';
+import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
 	isMandateStatus,
 	vMandateFrequency,
@@ -24,16 +23,11 @@ export async function activeActor(
 	ctx: ActionCtx,
 	args: { runId: Doc<'runs'>['_id']; claimId: string; executionSecret: string }
 ) {
-	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+	return await ctx.runQuery(internal.payments.paymentActor, {
 		runId: args.runId,
+		claimId: args.claimId,
 		executionSecret: args.executionSecret
 	});
-
-	if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
-		throw new Error('Run is no longer active.');
-	}
-
-	return actor;
 }
 
 /** Any-scope (generic) mandates are one-time only. Prava rejects a recurring

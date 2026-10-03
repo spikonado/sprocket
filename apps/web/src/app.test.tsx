@@ -571,6 +571,69 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	);
 });
 
+it('keeps a local submission Starting beyond the old timeout until it starts', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Existing robot work');
+	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
+	const priorRunId = 'prior-run' as Id<'runs'>;
+	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
+	const nextRunId = 'run-new' as Id<'runs'>;
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: 0,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'completed',
+		run: { runId: priorRunId, startedAt: 1 }
+	});
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				runAgent
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Existing robot work'));
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	vi.useFakeTimers();
+
+	try {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(60_000);
+		});
+		expect(composer).toHaveProperty('value', '');
+		expect(screen.getByText('Starting agent…')).toBeTruthy();
+		expect(send).toHaveProperty('disabled', true);
+		expect(runAgent).toHaveBeenCalledOnce();
+		await act(async () => {
+			launch.resolve({ runId: nextRunId, threadId: thread._id });
+			client.registerQuery(api.chat.selectedThreadLifecycle, {
+				threadId: thread._id,
+				phase: 'running',
+				run: { runId: nextRunId, startedAt: Date.now() }
+			});
+		});
+		expect(screen.queryByText('Starting agent…')).toBeNull();
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
 it('restores the submitted prompt and error when an agent launch fails', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const listProjectAttachments = vi.fn(async () => [alpha]);
@@ -638,8 +701,8 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 	expect(runAgent).toHaveBeenCalledOnce();
 });
 
-it('allows retrying a prompt when its launch request remains unconfirmed past the deadline', async () => {
-	const { runAgent } = await renderThreadLaunch();
+it('keeps an in-flight launch pending while prior thread cleanup takes longer than 30 seconds', async () => {
+	const { client, thread, launch, runAgent } = await renderThreadLaunch();
 	const composer = screen.getByRole('combobox');
 	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
 	const send = screen.getByRole('button', { name: 'Send message' });
@@ -650,14 +713,24 @@ it('allows retrying a prompt when its launch request remains unconfirmed past th
 		await vi.advanceTimersByTimeAsync(31_000);
 	});
 	expect(runAgent).toHaveBeenCalledOnce();
-	expect(composer).toHaveProperty('value', 'Fix the robot');
-	expect(screen.getByRole('alert').textContent).toContain('This request is still preparing.');
-	expect(send).toHaveProperty('disabled', false);
+	expect(composer).toHaveProperty('value', '');
+	expect(screen.queryByRole('alert')).toBeNull();
+	expect(send).toHaveProperty('disabled', true);
 	await act(async () => {
-		fireEvent.click(send);
+		launch.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			runId: 'run-new' as Id<'runs'>,
+			threadId: thread._id
+		});
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
+		});
 	});
-	expect(runAgent).toHaveBeenCalledTimes(2);
-	expect(runAgent.mock.calls[1]?.[0].submissionId).toBe(runAgent.mock.calls[0]?.[0].submissionId);
+	expect(runAgent).toHaveBeenCalledOnce();
+	expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
 	expect(composer).toHaveProperty('value', '');
 });
 
@@ -707,6 +780,60 @@ it('launches ChatGPT with a gateway model and a connected local account', async 
 				prompt: 'Fix the robot'
 			})
 		)
+	);
+});
+
+it('enables run-bound Stop after the lifecycle arrives behind a pending question', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+
+	const question: AgentQuestionSnapshot = {
+		threadId: thread._id,
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		questionId: 'question-1' as Id<'agentQuestions'>,
+		question: 'Which board should I target?',
+		options: [{ id: 'option-a', label: 'Option A' }],
+		status: 'pending',
+		sequence: 1,
+		createdAt: 1,
+		timeoutAt: 1_000_000
+	};
+
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const runId = 'run-1' as Id<'runs'>;
+
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.agentQuestions.headPendingForThread, question);
+	client.registerMutation(api.agentRuntime.requestCancellation, true);
+
+	const mutation = vi.spyOn(client, 'mutation');
+
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha] }))
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	expect(await screen.findByText(question.question)).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Submit answer' })).toHaveProperty('disabled', true);
+	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
+
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'waiting_for_input',
+			run: { runId, startedAt: 1 }
+		});
+	});
+	fireEvent.click(await screen.findByRole('button', { name: 'Stop generation' }));
+	await waitFor(() =>
+		expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId })
 	);
 });
 

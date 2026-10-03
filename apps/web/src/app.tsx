@@ -1,9 +1,11 @@
 import {
 	useCallback,
+	type ComponentProps,
 	useEffect,
 	useEffectEvent,
 	useLayoutEffect,
 	useMemo,
+	type ReactElement,
 	useRef,
 	useState
 } from 'react';
@@ -42,6 +44,7 @@ import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
 import BrandMark from '$lib/components/brand-mark';
 import InboxSidebar from '$lib/components/home/inbox-sidebar';
+import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsProviders from '$lib/components/home/settings-providers';
@@ -97,7 +100,15 @@ import {
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
-import { useThreadInbox } from '$lib/project/inbox';
+import { mergeSelectedThreadSummary } from '$lib/project/subagents';
+import { useRevealInboxThread, useThreadInbox } from '$lib/project/inbox';
+import {
+	useExpandedThreads,
+	useRevealPaginatedThread,
+	useSelectedThreadAncestryReveal,
+	useThreadChildren,
+	type UseExpandedThreads
+} from '$lib/project/useThreadTree';
 import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
@@ -128,6 +139,104 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
 const agentLaunchTimeoutMs = 30_000;
+
+type SidebarProps = ComponentProps<typeof InboxSidebar>;
+
+type SidebarChildrenRenderer = (rows: Doc<'threadRecords'>[], depth: number) => ReactElement;
+
+function InboxSidebarContainer(
+	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
+		signedInUserId: string | null;
+		repositoryKeys: string[];
+	}
+) {
+	const expansion = useExpandedThreads(props.signedInUserId);
+	const { currentThreadId, onSettledOpenChange } = props;
+
+	const selectedPath = useSelectedThreadAncestryReveal({
+		currentThreadId: props.currentThreadId,
+		enabled: props.mutationsEnabled,
+		expansion
+	});
+
+	const rootId = selectedPath[0] ?? null;
+
+	const rootQuery = useConvexQueryResult({
+		query: api.threads.getByThreadId,
+		args: props.mutationsEnabled && rootId ? { threadId: rootId } : 'skip'
+	});
+
+	const root = useRevealInboxThread(
+		rootQuery.status === 'success' ? rootQuery.data : null,
+		props.repositoryKeys,
+		props.sections
+	);
+
+	const revealedSettledRef = useRef<Id<'threadRecords'> | null>(null);
+
+	useEffect(() => {
+		if (!root || root.archivedAt === undefined) {
+			revealedSettledRef.current = null;
+
+			return;
+		}
+
+		if (revealedSettledRef.current === currentThreadId) return;
+		revealedSettledRef.current = currentThreadId;
+		onSettledOpenChange(true);
+	}, [root, currentThreadId, onSettledOpenChange]);
+
+	const resolveChildren = useCallback(
+		(args: {
+			thread: Doc<'threadRecords'>;
+			renderRows: SidebarChildrenRenderer;
+			depth: number;
+		}) => (
+			<ExpandedThreadChildren
+				expansion={expansion}
+				parent={args.thread}
+				renderRows={args.renderRows}
+				depth={args.depth}
+				selectedPath={selectedPath}
+			/>
+		),
+		[expansion, selectedPath]
+	);
+
+	return <InboxSidebar {...props} expansion={expansion} resolveChildren={resolveChildren} />;
+}
+
+function ExpandedThreadChildren({
+	expansion,
+	parent,
+	renderRows,
+	depth,
+	selectedPath
+}: {
+	expansion: UseExpandedThreads;
+	parent: Doc<'threadRecords'>;
+	renderRows: SidebarChildrenRenderer;
+	depth: number;
+	selectedPath: readonly Id<'threadRecords'>[];
+}) {
+	const children = useThreadChildren(parent._id, true);
+	const parentIndex = selectedPath.indexOf(parent._id);
+	useRevealPaginatedThread(
+		parentIndex >= 0 ? (selectedPath[parentIndex + 1] ?? null) : null,
+		children
+	);
+
+	useEffect(() => {
+		expansion.registerChildren(parent._id, children.rows);
+	}, [expansion, parent._id, children.rows]);
+
+	return (
+		<>
+			{renderRows(children.rows, depth)}
+			<InboxLoadMore section={children} />
+		</>
+	);
+}
 
 export type AppRuntime = {
 	resolveDesktopApi: () => Promise<DesktopApi>;
@@ -676,19 +785,13 @@ export default function App({
 	const currentActiveThread = dataForThread(activeThreadQuery.data, currentThreadId);
 
 	const threads = useMemo<ThreadSummary[]>(() => {
-		const summaries =
+		return mergeSelectedThreadSummary(
 			inbox.sections
 				.find((section) => section.state === 'unsettled')
-				?.rows.map(threadRecordToSummary) ?? [];
-
-		if (
-			!currentActiveThread ||
-			summaries.some((thread) => thread.threadId === currentActiveThread._id)
-		) {
-			return summaries;
-		}
-
-		return [threadRecordToSummary(currentActiveThread), ...summaries];
+				?.rows.map(threadRecordToSummary) ?? [],
+			currentActiveThread,
+			threadRecordToSummary
+		);
 	}, [inbox.sections, currentActiveThread]);
 
 	const currentLifecycle = dataForThread(lifecycleQuery.data, currentThreadId);
@@ -861,7 +964,11 @@ export default function App({
 		isLifecycleInProgress(currentLifecycle.phase) &&
 		!isRetryableQueuedRun;
 
-	const isRunning = isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested';
+	const isStopAvailable =
+		runState != null &&
+		((isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested') ||
+			(!isRunInProgress && pendingAgentQuestion != null));
+
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 
 	const latestRunResumeKind =
@@ -968,17 +1075,6 @@ export default function App({
 		}
 
 		return nextAttachments;
-	}
-
-	function localThreadCommandContext() {
-		const api = desktopApi;
-		const userId = signedInUserIdRef.current;
-
-		if (!api || !userId) {
-			throw new Error('The local Sprocket service is not ready.');
-		}
-
-		return { api, userId };
 	}
 
 	async function signOut() {
@@ -1717,6 +1813,7 @@ export default function App({
 
 			launchedThreadId = threadId;
 			clearSubmissionDelay();
+			window.clearTimeout(submissionTimeoutId);
 			const launchId = ++nextAgentLaunchId.current;
 			agentLaunchId = launchId;
 
@@ -1855,19 +1952,22 @@ export default function App({
 	]);
 
 	async function cancelRun() {
-		if (!runState?.runId || !isRunInProgress) return;
+		if (!isStopAvailable) return;
 		const expectedUserId = signedInUserIdRef.current;
 		const expectedThreadId = currentThreadId;
-		const expectedRunId = runState.runId;
+		const expectedRunId = runState?.runId;
+
+		if (!expectedThreadId || !expectedRunId) return;
 
 		try {
-			const { api, userId } = localThreadCommandContext();
-			await api.requestRunCancellation({ userId, runId: expectedRunId });
+			await convexClient.mutation(api.agentRuntime.requestCancellation, {
+				runId: expectedRunId
+			});
 		} catch (error) {
 			if (
 				signedInUserIdRef.current !== expectedUserId ||
 				currentThreadIdRef.current !== expectedThreadId ||
-				runStateRef.current?.runId !== expectedRunId
+				(expectedRunId && runStateRef.current?.runId !== expectedRunId)
 			)
 				return;
 			setCurrentError(error instanceof Error ? error.message : 'Failed to cancel run.');
@@ -2464,7 +2564,9 @@ export default function App({
 							}}
 						/>
 					) : (
-						<InboxSidebar
+						<InboxSidebarContainer
+							signedInUserId={signedInUserId}
+							repositoryKeys={inboxProjectKeys}
 							sections={inbox.sections}
 							projects={inboxProjects}
 							models={modelCatalog?.models ?? []}
@@ -2675,7 +2777,7 @@ export default function App({
 											isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion
 										}
 										isStarting={hasPendingAgentLaunch}
-										isRunning={isRunning}
+										isRunning={!hasPendingAgentLaunch && isStopAvailable}
 										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}

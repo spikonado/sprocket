@@ -92,6 +92,7 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
+		parentThreadId: v.optional(v.id('threadRecords')),
 		status: vRunStatus,
 		repositoryKey: v.string(),
 		title: v.optional(v.string()),
@@ -109,12 +110,26 @@ export default defineSchema({
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
-		.index('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', [
+		.index('by_userId_and_parentThreadId_and_lastMessageAt', [
 			'userId',
+			'parentThreadId',
+			'lastMessageAt'
+		])
+		.index('by_userId_parentThreadId_repositoryKey_archivedAt_lastMessageAt', [
+			'userId',
+			'parentThreadId',
 			'repositoryKey',
 			'archivedAt',
 			'lastMessageAt'
 		]),
+	threadHierarchyStates: defineTable({
+		threadId: v.id('threadRecords'),
+		ownActive: v.boolean(),
+		descendantCount: v.number(),
+		activeDescendantCount: v.number(),
+		registered: v.boolean()
+	}).index('by_threadId', ['threadId']),
+
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
@@ -158,7 +173,8 @@ export default defineSchema({
 		completionAttemptSeq: v.number(),
 		activeJobId: v.optional(v.id('executorJobs')),
 		lifecycleCheckId: v.optional(v.id('_scheduled_functions')),
-		lifecycleGeneration: v.optional(v.number())
+		lifecycleGeneration: v.optional(v.number()),
+		terminalJobsReconciled: v.optional(v.boolean())
 	}).index('by_runId', ['runId']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
@@ -305,6 +321,12 @@ export default defineSchema({
 		status: vAgentQuestionStatus,
 		answer: v.optional(vAskQuestionAnswer),
 		requiresContinuation: v.optional(v.boolean()),
+		continuationClaim: v.optional(
+			v.object({
+				toolJobId: v.id('executorJobs'),
+				claimId: v.string()
+			})
+		),
 		createdAt: v.number(),
 		timeoutAt: v.optional(v.number()),
 		answeredAt: v.optional(v.number()),

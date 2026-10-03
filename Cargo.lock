@@ -8626,6 +8626,7 @@ dependencies = [
  "convex",
  "futures",
  "hex",
+ "hmac 0.13.0",
  "http",
  "image",
  "percent-encoding",

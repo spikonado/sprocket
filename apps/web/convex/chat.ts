@@ -5,6 +5,7 @@ import { getUserId } from '@convex/lib/auth';
 import { getOwnedMachine, runMachineId } from '@convex/lib/machineRuns';
 import { vSelectedThreadLifecycle } from '@convex/lib/docs';
 import { projectSelectedThreadLifecycle } from '@convex/lib/runCancellation';
+import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 
 export const selectedThreadLifecycle = query({
 	args: {
@@ -29,12 +30,7 @@ export const selectedThreadLifecycle = query({
 			});
 		}
 
-		const pendingQuestion = await ctx.db
-			.query('agentQuestions')
-			.withIndex('by_threadId_status_sequence', (query) =>
-				query.eq('threadId', args.threadId).eq('status', 'pending')
-			)
-			.first();
+		const pendingQuestion = await headActionablePendingQuestion(ctx.db, args.threadId);
 
 		let executorFriendlyName: string | undefined;
 		const machineId = runMachineId(latestRun);
