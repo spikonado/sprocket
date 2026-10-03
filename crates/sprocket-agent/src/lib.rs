@@ -14,6 +14,7 @@ mod run;
 mod tools;
 mod transcript;
 mod types;
+mod workspace_context;
 
 pub use attachments::{AttachmentUnavailable, cache_attachment, download_attachment_to_file};
 pub use live::{

@@ -158,6 +158,18 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn save_workspace_context(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        text: &str,
+    ) -> anyhow::Result<Option<Vec<crate::workspace_context::WorkspaceContextSnapshot>>> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("text".to_string(), text.to_string().into());
+        self.mutation_json("agentRuntime:saveWorkspaceContext", args)
+            .await
+    }
+
     pub(crate) async fn transcript_parts_for_run(
         &self,
         run_id: &str,
@@ -426,9 +438,14 @@ impl RuntimeClient {
         completion_attempt_seq: u64,
         before_prompt: bool,
         processed_tokens: u64,
+        workspace_context: &str,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("summary".to_string(), summary.to_string().into());
+        args.insert(
+            "workspaceContext".to_string(),
+            workspace_context.to_string().into(),
+        );
         args.insert(
             "completionAttemptSeq".to_string(),
             Value::Float64(completion_attempt_seq as f64),

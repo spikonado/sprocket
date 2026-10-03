@@ -1,5 +1,6 @@
 import { action, internalMutation, mutation, query } from '@convex/_generated/server';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { MutationCtx } from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
@@ -13,6 +14,7 @@ import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
 	existingThroughPartNumber,
+	transcriptHistoryFromNumber,
 	throughPartNumberForHandoff
 } from '@convex/lib/contextHandoff';
 import {
@@ -378,6 +380,108 @@ export const completionActor = query({
 	}
 });
 
+/** Pin workspace instructions once per run, appending changes only with a new prompt. */
+export const saveWorkspaceContext = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		text: v.string()
+	},
+	returns: v.union(
+		v.array(schema.doc('threadWorkspaceContexts').pick('beforePartNumber', 'text')),
+		v.null()
+	),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return null;
+
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		const snapshot = await pinWorkspaceContextSnapshot(ctx, run, args.text);
+
+		if (snapshot.threadId !== run.threadId) throw new Error('Invalid workspace context thread.');
+
+		const historyFromNumber = await transcriptHistoryFromNumber(ctx, thread);
+		const candidates = await ctx.db
+			.query('threadWorkspaceContexts')
+			.withIndex('by_threadId_and_beforePartNumber', (q) =>
+				q.eq('threadId', run.threadId).lte('beforePartNumber', snapshot.beforePartNumber)
+			)
+			.collect();
+
+		const pinnedIndex = candidates.findIndex((entry) => entry._id === snapshot._id);
+		if (pinnedIndex < 0) throw new Error('Workspace context snapshot is missing.');
+		const all = candidates.slice(0, pinnedIndex + 1);
+		const prefixIndex = thread.contextSummaryWorkspaceContextSnapshotId
+			? all.findIndex((entry) => entry._id === thread.contextSummaryWorkspaceContextSnapshotId)
+			: thread.contextSummary
+				? Math.max(
+						0,
+						all.findLastIndex((entry) => entry.beforePartNumber < historyFromNumber)
+					)
+				: 0;
+		const prefix = all[prefixIndex];
+
+		if (!prefix) throw new Error('Workspace context snapshot is missing.');
+
+		const updates = all.slice(prefixIndex + 1);
+
+		return [prefix, ...updates].map(({ beforePartNumber, text }) => ({
+			beforePartNumber,
+			text
+		}));
+	}
+});
+
+async function pinWorkspaceContextSnapshot(
+	ctx: MutationCtx,
+	run: Doc<'runs'>,
+	text: string
+): Promise<Doc<'threadWorkspaceContexts'>> {
+	const pinned = run.workspaceContextSnapshotId
+		? await ctx.db.get('threadWorkspaceContexts', run.workspaceContextSnapshotId)
+		: null;
+
+	if (pinned) return pinned;
+
+	const latest = await ctx.db
+		.query('threadWorkspaceContexts')
+		.withIndex('by_threadId_and_beforePartNumber', (q) => q.eq('threadId', run.threadId))
+		.order('desc')
+		.first();
+
+	let snapshot = latest;
+
+	if (!latest || latest.text !== text) {
+		const prompt = await getPromptPart(ctx, run.threadId, run._id);
+		const completion = prompt
+			? await ctx.db
+					.query('threadTranscriptParts')
+					.withIndex('by_threadId_and_runId_and_number', (q) =>
+						q.eq('threadId', run.threadId).eq('runId', run._id)
+					)
+					.filter((q) => q.eq(q.field('kind'), 'completion'))
+					.first()
+			: null;
+
+		if (!latest || (prompt && !completion)) {
+			if (!text.trim()) throw new Error('Invalid workspace context.');
+			const snapshotId = await ctx.db.insert('threadWorkspaceContexts', {
+				threadId: run.threadId,
+				beforePartNumber: latest && prompt ? prompt.number : 0,
+				text
+			});
+			snapshot = await ctx.db.get('threadWorkspaceContexts', snapshotId);
+		}
+	}
+
+	if (!snapshot) throw new Error('Workspace context snapshot is missing.');
+	await ctx.db.patch('runs', run._id, { workspaceContextSnapshotId: snapshot._id });
+
+	return snapshot;
+}
+
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
 export const saveContextHandoff = mutation({
 	args: {
@@ -387,6 +491,7 @@ export const saveContextHandoff = mutation({
 		summary: v.string(),
 		completionAttemptSeq: v.number(),
 		beforePrompt: v.boolean(),
+		workspaceContext: v.optional(v.string()),
 		processedTokens: v.optional(v.number())
 	},
 	returns: v.boolean(),
@@ -422,6 +527,15 @@ export const saveContextHandoff = mutation({
 			if (thread.contextSummary !== args.summary) {
 				throw new Error('Conflicting context handoff retry.');
 			}
+			if (args.workspaceContext !== undefined && thread.contextSummaryWorkspaceContextSnapshotId) {
+				const snapshot = await ctx.db.get(
+					'threadWorkspaceContexts',
+					thread.contextSummaryWorkspaceContextSnapshotId
+				);
+				if (snapshot?.text !== args.workspaceContext) {
+					throw new Error('Conflicting workspace context handoff retry.');
+				}
+			}
 
 			return true;
 		}
@@ -430,8 +544,20 @@ export const saveContextHandoff = mutation({
 			throw new Error('Invalid context handoff cutoff.');
 		}
 
+		let handoffSnapshotId: Id<'threadWorkspaceContexts'> | undefined;
+		if (args.workspaceContext !== undefined) {
+			if (!args.workspaceContext.trim()) throw new Error('Invalid workspace context.');
+			handoffSnapshotId = await ctx.db.insert('threadWorkspaceContexts', {
+				threadId: run.threadId,
+				beforePartNumber: throughPartNumber + 1,
+				text: args.workspaceContext
+			});
+			await ctx.db.patch('runs', run._id, { workspaceContextSnapshotId: handoffSnapshotId });
+		}
+
 		await ctx.db.patch('threadRecords', thread._id, {
 			contextSummary: args.summary,
+			contextSummaryWorkspaceContextSnapshotId: handoffSnapshotId,
 			contextSummaryThroughPartNumber: throughPartNumber,
 			contextSummaryThroughRunId: undefined,
 			contextSummaryHandoffKey: handoffKey

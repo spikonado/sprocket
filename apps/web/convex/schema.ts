@@ -100,6 +100,7 @@ export default defineSchema({
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		contextSummary: v.optional(v.string()),
+		contextSummaryWorkspaceContextSnapshotId: v.optional(v.id('threadWorkspaceContexts')),
 		// Legacy previous-run cutoff for released agents. Transcript reads use
 		// contextSummaryThroughPartNumber when that field is present.
 		contextSummaryThroughRunId: v.optional(v.id('runs')),
@@ -139,6 +140,7 @@ export default defineSchema({
 		executionSecretHash: v.string(),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
+		workspaceContextSnapshotId: v.optional(v.id('threadWorkspaceContexts')),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
@@ -171,6 +173,12 @@ export default defineSchema({
 		totalParts: v.number(),
 		workThrough: v.optional(workPosition)
 	}).index('by_threadId', ['threadId']),
+	// Hidden prompt snapshots preserve conversation prefixes across executor changes.
+	threadWorkspaceContexts: defineTable({
+		threadId: v.id('threadRecords'),
+		beforePartNumber: v.number(),
+		text: v.string()
+	}).index('by_threadId_and_beforePartNumber', ['threadId', 'beforePartNumber']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

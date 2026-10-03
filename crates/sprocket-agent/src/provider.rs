@@ -83,7 +83,8 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
-    pub(crate) initial_context: Vec<Message>,
+    pub(crate) initial_workspace_context: String,
+    pub(crate) current_workspace_context: String,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
@@ -335,7 +336,8 @@ where
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
-    let initial_context: Arc<[Message]> = request.initial_context.into();
+    let initial_context = Message::user(request.initial_workspace_context);
+    let handoff_context = request.current_workspace_context;
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -347,9 +349,7 @@ where
         }
     };
 
-    let mut history: Vec<_> = initial_context
-        .iter()
-        .cloned()
+    let mut history: Vec<_> = std::iter::once(initial_context)
         .chain(request.prior_history)
         .collect();
     let mut prompt = request.prompt;
@@ -485,7 +485,7 @@ where
                                     match runtime.save_context_handoff(
                                         &request.run_id, &request.claim_id, &summary,
                                         transcript.attempt_seq, before_prompt,
-                                        handoff_processed_tokens,
+                                        handoff_processed_tokens, &handoff_context,
                                     ).await {
                                         Ok(true) => {}
                                         Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
@@ -494,7 +494,7 @@ where
                                     if let Err(error) = transcript.advance_attempt().await {
                                         break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                     }
-                                    history = initial_context.to_vec();
+                                    history = vec![Message::user(handoff_context.clone())];
                                     let handoff = Message::user(context_summary_text(&summary));
                                     prompt = match deferred_prompt.take() {
                                         Some(pending) => { history.push(handoff); pending }
