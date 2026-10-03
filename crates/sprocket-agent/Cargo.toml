@@ -30,4 +30,4 @@ tokio = { version = "1.52.1", features = ["macros", "sync", "time", "fs", "io-ut
 uuid = { version = "1.21.0", features = ["v4"] }
 
 [dev-dependencies]
-tokio = { version = "1.52.1", features = ["rt", "test-util"] }
+tokio = { version = "1.52.1", features = ["net", "rt", "test-util"] }
