@@ -1604,6 +1604,7 @@ export default function App({
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
+		let agentLaunchAcknowledged = false;
 		const submissionSequence = ++nextSubmissionSequence.current;
 		let submissionTrackingKey = getComposerRecoveryKey(submittedUserId, originatingRecoveryScope);
 		latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
@@ -1748,7 +1749,7 @@ export default function App({
 					if (recovery.pendingLaunches === pendingAgentLaunchesRef.current) return;
 					setPendingAgentLaunches(recovery.pendingLaunches);
 
-					if (recovery.shouldRecover) {
+					if (recovery.shouldRecover && !agentLaunchAcknowledged) {
 						recoverSubmission('The local agent did not start. Please try again.');
 					}
 				}, agentLaunchTimeoutMs);
@@ -1782,6 +1783,7 @@ export default function App({
 					}
 
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					agentLaunchAcknowledged = true;
 					launchedThreadId = createdThreadId;
 
 					if (

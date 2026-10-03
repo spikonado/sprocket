@@ -171,6 +171,33 @@ async function renderApp(client: ConvexTestClient, runtime: AppRuntime): Promise
 	});
 }
 
+async function renderThreadLaunch() {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Robot work');
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'idle',
+		run: null
+	});
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], runAgent }))
+	);
+	fireEvent.click(await screen.findByText('Robot work'));
+
+	return { client, thread, launch, runAgent };
+}
+
 async function flushPendingWork(): Promise<void> {
 	await act(async () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
@@ -226,6 +253,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	cleanup();
 	resetAuthRuntime();
@@ -569,6 +597,75 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 		launch.reject(new Error('Local agent unavailable.'));
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
+	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
+});
+
+it.each(['before', 'after'] as const)(
+	'keeps a sent prompt out of the composer when its launch succeeds %s switching threads',
+	async (acknowledgement) => {
+		const { client, thread, launch, runAgent } = await renderThreadLaunch();
+		const composer = screen.getByRole('combobox');
+		fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+		const send = screen.getByRole('button', { name: 'Send message' });
+		await waitFor(() => expect(send).toHaveProperty('disabled', false));
+		vi.useFakeTimers();
+		await act(async () => {
+			fireEvent.click(send);
+		});
+		expect(runAgent).toHaveBeenCalledOnce();
+		expect(composer).toHaveProperty('value', '');
+
+		if (acknowledgement === 'after') fireEvent.click(screen.getByText('Other work'));
+		await act(async () => {
+			launch.resolve({
+				// SAFETY: fixture strings are only compared as opaque Convex document ids.
+				runId: 'run-new' as Id<'runs'>,
+				threadId: thread._id
+			});
+		});
+
+		if (acknowledgement === 'before') {
+			// Keep sends blocked until the lifecycle subscription catches up with the acknowledgement.
+			expect(send).toHaveProperty('disabled', true);
+			fireEvent.click(screen.getByText('Other work'));
+		}
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(31_000);
+		});
+		await act(async () => {
+			client.registerQuery(api.chat.selectedThreadLifecycle, {
+				threadId: thread._id,
+				phase: 'running',
+				// SAFETY: fixture strings are only compared as opaque Convex document ids.
+				run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
+			});
+			fireEvent.click(screen.getByText('Robot work'));
+		});
+		expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+		expect(screen.queryByRole('alert')).toBeNull();
+		expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
+		expect(runAgent).toHaveBeenCalledOnce();
+	}
+);
+
+it('recovers a failed launch only when returning to its originating thread', async () => {
+	const { launch, runAgent } = await renderThreadLaunch();
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	fireEvent.click(screen.getByText('Other work'));
+	await act(async () => {
+		launch.reject(new Error('Local agent unavailable.'));
+	});
+	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+	expect(screen.queryByRole('alert')).toBeNull();
+	fireEvent.click(screen.getByText('Robot work'));
+	await waitFor(() =>
+		expect(screen.getByRole('combobox')).toHaveProperty('value', 'Fix the robot')
+	);
 	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
 });
 
