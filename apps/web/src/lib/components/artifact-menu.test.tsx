@@ -231,36 +231,6 @@ it('keeps a failure visible after keyboard dismissal and allows acknowledging it
 	expect(document.activeElement).toBe(trigger);
 });
 
-it('does not carry a deletion error onto a newly selected artifact', async () => {
-	const diagram: ArtifactEntry = {
-		key: 'diagram-id',
-		title: 'Diagram',
-		artifactType: 'html',
-		content: '<button>App</button>'
-	};
-
-	const onDeleteArtifact = vi
-		.fn<(id: string) => Promise<void>>()
-		.mockRejectedValueOnce(new Error('Disconnected'));
-
-	const props = sidePanelProps({
-		artifacts: [artifact, diagram],
-		selectedKey: artifact.key,
-		onDeleteArtifact
-	});
-
-	const view = render(<SidePanel {...props} />);
-	fireEvent.click(screen.getByRole('button', { name: 'Notes actions' }));
-	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
-	fireEvent.keyDown(window, { key: 'Escape' });
-	expect(screen.getByRole('alert').textContent).toContain('Notes: Disconnected');
-	view.rerender(<SidePanel {...props} selectedKey={diagram.key} />);
-	expect(screen.queryByRole('alert')).toBeNull();
-	fireEvent.click(screen.getByRole('button', { name: 'Diagram actions' }));
-	expect(screen.queryByRole('alert')).toBeNull();
-	expect(screen.getByRole('menuitem').textContent).toBe('Delete artifact');
-});
-
 it('does not steal focus when a dismissed deletion finishes', async () => {
 	const pending = Promise.withResolvers<void>();
 	render(

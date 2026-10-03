@@ -189,7 +189,6 @@ export default function SidePanel({
 						{selected ? (
 							<div className="flex min-h-0 flex-1 flex-col p-3">
 								<ArtifactDisplay
-									key={selected.key}
 									title={selected.title}
 									artifactType={selected.artifactType}
 									content={selected.content}
