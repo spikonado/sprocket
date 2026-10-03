@@ -117,6 +117,15 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Historical command wait values
+
+Stored `exec_command` and `write_stdin` payloads keep accepting historical
+`yieldTimeMs` values, including the former 10-second and 5-second defaults.
+Current tools advertise zero or 30–270 seconds and clamp nonzero values at
+execution; zero returns metadata without returning or losing command output.
+Keep the permissive historical payload validators permanently because transcript
+history records the original calls. No stored-data rewrite is needed.
+
 ### Project-owned artifacts
 
 Released agents may send `scope: 'thread'` to `artifacts.addArtifact` or include
