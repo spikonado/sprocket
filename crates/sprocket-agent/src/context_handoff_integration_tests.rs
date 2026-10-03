@@ -249,7 +249,7 @@ fn handoff_document_sse(document: &str) -> String {
 fn exec_command_sse(input_tokens: u64, output_tokens: u64) -> String {
     tool_call_sse(
         "call_exec",
-        "exec_command",
+        "exec_cmd",
         json!({ "cmd": "pwd" }),
         input_tokens,
         output_tokens,
@@ -395,7 +395,7 @@ async fn noninteractive_turn_only_activates_registered_tools() {
     assert_eq!(captured.len(), 1);
     let advertised = advertised_tools(&parse_request(&captured[0]));
     assert!(!advertised.contains(&"ask_question".to_string()));
-    assert!(!advertised.contains(&"await_question".to_string()));
+    assert!(!advertised.contains(&"poll_question".to_string()));
     assert!(!advertised.contains(&"mandate_setup".to_string()));
 }
 
@@ -691,7 +691,7 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
     );
     let resume_tools = advertised_tools(&resume);
     assert!(
-        resume_tools.contains(&"exec_command".to_string()),
+        resume_tools.contains(&"exec_cmd".to_string()),
         "fresh runner should advertise agent tools again, got {resume_tools:?}"
     );
     assert!(
@@ -758,8 +758,8 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
     let tool_turn = parse_request(&captured[0]);
     let tool_turn_tools = advertised_tools(&tool_turn);
     assert!(
-        tool_turn_tools.contains(&"exec_command".to_string()),
-        "pre-handoff completion should advertise exec_command, got {tool_turn_tools:?}"
+        tool_turn_tools.contains(&"exec_cmd".to_string()),
+        "pre-handoff completion should advertise exec_cmd, got {tool_turn_tools:?}"
     );
     assert!(
         !tool_turn_tools.contains(&HandoffTool::NAME.to_string()),

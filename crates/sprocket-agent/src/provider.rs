@@ -263,11 +263,12 @@ where
         .preamble(&request.base_instructions)
         .additional_params(additional_params)
         .tool(tools.apply_patch)
-        .tool(tools.exec_command)
+        .tool(tools.control_cmd)
+        .tool(tools.exec_cmd)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)
-        .tool(tools.write_stdin)
+        .tool(tools.poll_cmd)
         .tool(tools.add_artifact)
         .tool(tools.list_artifacts)
         .tool(tools.edit_artifact)
@@ -281,7 +282,7 @@ where
     let agent = if request.allow_interaction {
         agent
             .tool(tools.ask_question)
-            .tool(tools.await_question)
+            .tool(tools.poll_question)
             .tool(tools.mandate_setup)
     } else {
         agent

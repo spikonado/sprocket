@@ -117,6 +117,73 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Legacy agent question expiry
+
+Released agents call `agentQuestions:create`, which keeps its original
+contract: an omitted `timeoutMs` defaults to 30 minutes and numeric values are
+clamped to [1s, 24h]. Current agents call `agentQuestions:createWithOptionalExpiry`,
+where omitted or `null` `timeoutMs` means no expiry and any finite non-negative
+integer is honored without a floor or cap; zero commits an already timed-out
+question atomically. Both endpoints share one implementation.
+
+Positive deadlines retain the existing scheduled-mutation semantics: an overdue
+pending question remains answerable until its timeout mutation commits. Zero
+lifetimes are terminal at creation, without a scheduler race.
+
+`agentQuestions.timeoutAt` and its snapshot field are now optional; questions
+without an expiry omit the field. The widening is the entire migration:
+existing rows, deadlines, and answers are untouched and no backfill rewrites
+deadlines. Stored `ask_question` job payloads now also accept `timeoutMs: null`
+alongside historical numbers; that permissive payload validator stays
+permanently because transcript history records the original calls.
+
+Remove `agentQuestions:create` and its clamping resolver after agents that call
+it are outside the supported upgrade window. `timeoutAt` stays optional as long
+as no-expiry questions exist.
+
+### Historical command wait values
+
+Stored `exec_command` and `write_stdin` payloads keep accepting historical
+`yieldTimeMs` values, including the former 10-second and 5-second defaults.
+Exec and control accept zero or any positive wait up to 270 seconds; poll
+advertises zero or 10–270 seconds and clamps nonzero values at execution.
+Zero returns metadata without returning or losing command output
+for `exec_cmd` and `control_cmd`; `poll_cmd` returns output in both
+modes, subject to its running-session zero-wait cooldown.
+Keep the permissive historical payload validators permanently because transcript
+history records the original calls. No stored-data rewrite is needed.
+
+### Retired command control tool
+
+New Rust agents advertise and execute `control_cmd` and `poll_cmd`
+instead of `write_stdin`. Convex still accepts `write_stdin` jobs from released
+agents, and the UI still renders their stored input, command results, session
+labels, and log previews. New agents do not dispatch historical `write_stdin`
+calls, so that name cannot bypass the new poll cooldown. Command sessions are
+local to an agent run; no live-session or stored-data migration is needed.
+
+Remove `write_stdin` from the current Convex job-kind validator after agents
+that advertise it are outside the supported upgrade window. Keep acceptance
+in stored-history validators and historical UI rendering permanently.
+
+### Renamed command and question tools
+
+Current agents advertise `exec_cmd`, `control_cmd`, `poll_cmd`, and
+`poll_question`, replacing `exec_command`, `control_command`, `poll_command`,
+and `await_question`. Convex accepts the former names for released agents and
+the UI renders both names. Current agents do not dispatch the former names;
+command sessions remain local to a run. No stored-history rewrite is needed.
+
+All five command/question tools default to 10-second execution waits. Positive
+poll waits clamp to 10–270 seconds, and pending zero-wait polls have a 10-second
+cooldown. Current question results omit question text/options; only
+`ask_question` returns `questionId`. Result validators also retain historical
+question text/options and poll IDs for released agents and transcript history.
+
+Remove former names from the current job-kind validator once agents advertising
+them age out of the supported upgrade window. Keep stored-history acceptance
+and UI rendering permanently.
+
 ### Project-owned artifacts
 
 Released agents may send `scope: 'thread'` to `artifacts.addArtifact` or include

@@ -5,6 +5,7 @@ import {
 	type AssistantToolCallPart
 } from '@convex/lib/assistantParts';
 import type { JsonValue } from '@convex/lib/json';
+import { isCommandToolKind, isExecCommandToolKind } from '$lib/chat/command-tool-kinds';
 import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 
@@ -178,15 +179,14 @@ function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean
 
 /** Tools that can yield an operation id and wait for that operation in a later call. */
 function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
-	switch (assistantTimelineToolKey(tool)) {
-		case 'exec_command':
-		case 'write_stdin':
-		case 'ask_question':
-		case 'await_question':
-			return true;
-		default:
-			return false;
-	}
+	const kind = assistantTimelineToolKey(tool);
+
+	return (
+		isCommandToolKind(kind) ||
+		kind === 'ask_question' ||
+		kind === 'await_question' ||
+		kind === 'poll_question'
+	);
 }
 
 /** Whether an async tool call is still in flight while the run is streaming. */
@@ -199,7 +199,7 @@ export function isAssistantTimelineToolRunning(
 	);
 }
 
-/** Session id from command tool output, else input/payload (write_stdin completion omits it). */
+/** Session id from a launch result or a session-bound tool's input. */
 function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
 	return (
 		jsonObjectString(tool.output, 'sessionId') ??
@@ -208,7 +208,7 @@ function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefin
 	);
 }
 
-/** Map session id → shell command from exec_command / write_stdin results. */
+/** Map session id → shell command from command tool calls and results. */
 export function buildCommandSessionCommandMap(
 	tools: readonly AssistantTimelineTool[]
 ): Map<string, string> {
@@ -223,7 +223,7 @@ export function buildCommandSessionCommandMap(
 
 		const cmd =
 			jsonObjectString(tool.output, 'command') ??
-			(assistantTimelineToolKey(tool) === 'exec_command'
+			(isExecCommandToolKind(assistantTimelineToolKey(tool))
 				? (jsonObjectString(tool.input, 'cmd') ?? jsonObjectString(tool.job?.payload, 'cmd'))
 				: undefined);
 
@@ -235,7 +235,7 @@ export function buildCommandSessionCommandMap(
 	return sessionCommands;
 }
 
-/** User-facing command label for write_stdin. */
+/** User-facing command label for session-bound command tools. */
 export function resolveCommandSessionLabel(
 	tool: AssistantTimelineTool,
 	sessionCommands: ReadonlyMap<string, string>
