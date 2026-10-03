@@ -24,6 +24,7 @@ const config = {
 		}
 	],
 	rules: {
+		'typescript/no-confusing-non-null-assertion': 'error',
 		'oxc/no-accumulating-spread': 'error',
 		'anti-slop/no-array-filter-map': 'error',
 		'anti-slop/no-reduce-accumulator-copy': 'error',
