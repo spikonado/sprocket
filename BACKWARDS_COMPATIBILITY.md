@@ -342,15 +342,3 @@ stored `closed` flags instead of rescanning each run for every section.
 
 Remove this local migration once supported installations no longer have caches
 with the session column, or a later cache migration also rebuilds these indexes.
-
-#### Context handoff cutoffs
-
-Production migration status confirms the run-ID cutoff conversion completed.
-The legacy `contextSummaryThroughRunId` schema field, conversion migration and
-run-creation hooks, runtime fallback, and blanket reasoning reload filter have
-been removed. Older clients that require run-ID cutoffs are no longer supported.
-
-History reload uses only `contextSummaryThroughPartNumber` and preserves all
-reasoning after that cutoff, including encrypted provider envelopes unchanged.
-Reads fail explicitly for a summary lacking a part-number cutoff instead of
-replaying covered history. No context-handoff compatibility shim remains.
