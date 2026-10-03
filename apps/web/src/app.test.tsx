@@ -633,6 +633,10 @@ it.each(['before', 'after'] as const)(
 		await act(async () => {
 			await vi.advanceTimersByTimeAsync(31_000);
 		});
+		fireEvent.click(screen.getByText('Robot work'));
+		expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+		expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
+		expect(screen.queryByRole('alert')).toBeNull();
 		await act(async () => {
 			client.registerQuery(api.chat.selectedThreadLifecycle, {
 				threadId: thread._id,
@@ -640,7 +644,6 @@ it.each(['before', 'after'] as const)(
 				// SAFETY: fixture strings are only compared as opaque Convex document ids.
 				run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
 			});
-			fireEvent.click(screen.getByText('Robot work'));
 		});
 		expect(screen.getByRole('combobox')).toHaveProperty('value', '');
 		expect(screen.queryByRole('alert')).toBeNull();

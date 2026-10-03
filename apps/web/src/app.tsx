@@ -1726,6 +1726,8 @@ export default function App({
 
 			if (threadId) {
 				window.setTimeout(() => {
+					if (agentLaunchAcknowledged) return;
+
 					const selectedRunId =
 						currentThreadIdRef.current === threadId ? (runStateRef.current?.runId ?? null) : null;
 
@@ -1749,7 +1751,7 @@ export default function App({
 					if (recovery.pendingLaunches === pendingAgentLaunchesRef.current) return;
 					setPendingAgentLaunches(recovery.pendingLaunches);
 
-					if (recovery.shouldRecover && !agentLaunchAcknowledged) {
+					if (recovery.shouldRecover) {
 						recoverSubmission('The local agent did not start. Please try again.');
 					}
 				}, agentLaunchTimeoutMs);
