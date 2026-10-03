@@ -61,7 +61,11 @@ describe('run execution state', () => {
 		{ kind: 'exec_command' as const, running: false },
 		{ kind: 'exec_command' as const, running: true },
 		{ kind: 'write_stdin' as const, running: false },
-		{ kind: 'write_stdin' as const, running: true }
+		{ kind: 'write_stdin' as const, running: true },
+		{ kind: 'control_command' as const, running: false },
+		{ kind: 'control_command' as const, running: true },
+		{ kind: 'poll_command' as const, running: false },
+		{ kind: 'poll_command' as const, running: true }
 	])('records $kind results with running=$running', async ({ kind, running }) => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		const callId = 'command-call';
@@ -71,7 +75,12 @@ describe('run execution state', () => {
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind,
 			callId,
-			payload: kind === 'exec_command' ? { cmd: 'echo ok' } : { sessionId: '1' }
+			payload:
+				kind === 'exec_command'
+					? { cmd: 'echo ok' }
+					: kind === 'control_command'
+						? { sessionId: '1', action: 'write' as const, chars: 'yes\n' }
+						: { sessionId: '1' }
 		});
 
 		const output: Infer<typeof vCommandExecResult> = {
@@ -88,7 +97,7 @@ describe('run execution state', () => {
 		if (kind === 'exec_command' && running) output.sessionId = '1';
 
 		const result =
-			kind === 'write_stdin' ? { ...output, command: 'echo ok', workdir: '/' } : output;
+			kind === 'exec_command' ? output : { ...output, command: 'echo ok', workdir: '/' };
 
 		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
 		expect(

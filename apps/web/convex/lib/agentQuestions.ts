@@ -10,6 +10,20 @@ export const MAX_OPTION_LABEL_CHARS = 200;
 
 export const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
+export const QUESTION_TIMEOUT_CHECKPOINT_MS = 365 * 24 * 60 * 60 * 1000;
+
+export function validateQuestionTimeoutMs(
+	timeoutMs: number | null | undefined
+): number | undefined {
+	if (timeoutMs === undefined || timeoutMs === null) return undefined;
+
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 0) {
+		throw new Error('timeoutMs must be a finite non-negative integer, null, or omitted.');
+	}
+
+	return timeoutMs;
+}
+
 const MIN_AGENT_OPTIONS = 1;
 
 const MAX_AGENT_OPTIONS = 4;

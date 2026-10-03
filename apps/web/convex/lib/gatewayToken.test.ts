@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_QUESTION_TIMEOUT_MS } from '@convex/lib/agentQuestions';
 import { GATEWAY_TOKEN_PRIOR_WORK_MS, GATEWAY_TOKEN_TTL_MS } from '@convex/lib/gatewayProtocol';
 import { mintGatewayToken, verifyGatewayToken } from '@convex/lib/gatewayToken';
 
 const secret = 'test-gateway-token-secret';
+
+const MAX_GATEWAY_WAIT_MS = 270_000;
 
 describe('gateway token', () => {
 	it('round-trips a valid token and rejects expiry and tampering', async () => {
@@ -23,9 +24,9 @@ describe('gateway token', () => {
 		);
 	});
 
-	it('outlives a max-length ask wait after prior work', () => {
+	it('outlives a maximum-length wait after prior work', () => {
 		expect(GATEWAY_TOKEN_TTL_MS).toBeGreaterThanOrEqual(
-			MAX_QUESTION_TIMEOUT_MS + GATEWAY_TOKEN_PRIOR_WORK_MS
+			MAX_GATEWAY_WAIT_MS + GATEWAY_TOKEN_PRIOR_WORK_MS
 		);
 	});
 });

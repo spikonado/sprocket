@@ -149,6 +149,21 @@ patching, skill loading (`read_skill`), web search, and web-page scraping. Every
 tool call is wrapped in a durable executor-job record and observes run
 cancellation while work is active.
 
+Async tools share their timing policy through
+`sprocket_workspace::async_tools`. New action tools should normalize their wait
+with `YieldMode::Action`; poll tools use `YieldMode::Poll`. Use
+`tools/async_tools.rs` for the matching provider schema and serde defaults, and
+`execute_serialized_tool_job` for typed arguments and results in the existing
+job lifecycle. Resource operations must observe the supplied cancellation token;
+commands also terminate their process tree during cancellation.
+
+For immediate polls, keep `ZeroPollCooldown` under the resource's observation
+lock. Fetch current state before checking the cooldown so terminal results remain
+available. Check before consuming pending output, and record success only after
+the read succeeds. Failed, rejected, terminal, and positive-wait reads leave the
+cooldown unchanged. Process I/O and question subscriptions retain their own wait
+implementations.
+
 Command execution and patch operations both run with the local Sprocket
 process's permissions. Web search runs Exa through a Convex Workpool job.
 Current agents orchestrate scraping locally and call an authenticated Firecrawl

@@ -50,7 +50,7 @@ export const vAgentQuestionSnapshot = v.object({
 	answer: v.optional(vAskQuestionAnswer),
 	sequence: v.number(),
 	createdAt: v.number(),
-	timeoutAt: v.number(),
+	timeoutAt: v.optional(v.number()),
 	answeredAt: v.optional(v.number())
 });
 

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render } from '@testing-library/react';
+import { render, within } from '@testing-library/react';
 import type { Id } from '@convex/_generated/dataModel';
+import type { JsonValue } from '@convex/lib/json';
 import type {
 	TranscriptMessage,
 	TranscriptDisplayDetails,
@@ -278,7 +279,10 @@ describe('transcript viewport paging', () => {
 				button.textContent?.includes('Changed Files')
 			);
 
-			expect(patch?.getAttribute('aria-expanded')).toBe('false');
+			expect(patch).toBeUndefined();
+			expect(viewport.textContent).toContain('a.txt');
+			expect(viewport.textContent).toContain('b.txt');
+			expect(viewport.textContent).toContain('c.txt');
 			const failures = [...viewport.querySelectorAll('details summary')];
 			expect(failures.map((summary) => summary.textContent)).toEqual([
 				expect.stringContaining('(cancelled)'),
@@ -325,7 +329,13 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector('button[aria-expanded]'));
 			await settle();
 
-			expect(viewport.textContent?.includes('Running')).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"] .animate-spin') !== null).toBe(
+				withAsync
+			);
+			expect(viewport.querySelector('[title="sleep 10 (running)"] .sr-only')?.textContent).toBe(
+				withAsync ? 'Running' : undefined
+			);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -345,9 +355,9 @@ describe('transcript viewport paging', () => {
 			});
 			await settle();
 
-			expect(viewport.textContent).toContain('Read Skill');
+			expect(viewport.textContent).not.toContain('Read Skill');
 			expect(viewport.textContent).toContain('hidden-skill');
-			expect(viewport.textContent?.includes('Running')).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -355,25 +365,45 @@ describe('transcript viewport paging', () => {
 	);
 
 	it.each([
+		{ kind: 'live', toolName: 'exec_cmd', group: 'Ran Commands' },
+		{ kind: 'persisted', toolName: 'exec_cmd', group: 'Ran Commands' },
+		{ kind: 'live', toolName: 'control_cmd', group: 'Controlled Commands' },
+		{ kind: 'persisted', toolName: 'control_cmd', group: 'Controlled Commands' },
+		{ kind: 'live', toolName: 'poll_cmd', group: 'Polled Commands' },
+		{ kind: 'persisted', toolName: 'poll_cmd', group: 'Polled Commands' },
 		{ kind: 'live', toolName: 'exec_command', group: 'Ran Commands' },
 		{ kind: 'persisted', toolName: 'exec_command', group: 'Ran Commands' },
 		{ kind: 'live', toolName: 'write_stdin', group: 'Monitored Commands' },
-		{ kind: 'persisted', toolName: 'write_stdin', group: 'Monitored Commands' }
+		{ kind: 'persisted', toolName: 'write_stdin', group: 'Monitored Commands' },
+		{ kind: 'live', toolName: 'control_command', group: 'Controlled Commands' },
+		{ kind: 'persisted', toolName: 'control_command', group: 'Controlled Commands' },
+		{ kind: 'live', toolName: 'poll_command', group: 'Polled Commands' },
+		{ kind: 'persisted', toolName: 'poll_command', group: 'Polled Commands' }
 	] as const)(
 		'shows $toolName as a settled snapshot in completed $kind work',
 		async ({ kind, toolName, group }) => {
+			const output: JsonValue =
+				toolName === 'exec_cmd' || toolName === 'exec_command' || toolName === 'write_stdin'
+					? { sessionId: 'session', command: 'sleep 10', running: true }
+					: { command: 'sleep 10', workdir: '/', running: true };
+
 			const parts: LiveTranscriptMessage['parts'] = [
 				{
 					type: 'tool-call',
 					callId: 'command',
 					name: toolName,
-					input: toolName === 'exec_command' ? { cmd: 'sleep 10' } : { sessionId: 'session' }
+					input:
+						toolName === 'exec_cmd' || toolName === 'exec_command'
+							? { cmd: 'sleep 10' }
+							: toolName === 'control_cmd' || toolName === 'control_command'
+								? { sessionId: 'session', action: 'terminate' }
+								: { sessionId: 'session' }
 				},
 				{
 					type: 'tool-result',
 					callId: 'command',
 					name: toolName,
-					output: { sessionId: 'session', command: 'sleep 10', running: true }
+					output
 				}
 			];
 
@@ -418,12 +448,64 @@ describe('transcript viewport paging', () => {
 				button.textContent?.includes(group)
 			);
 
-			expect(commands?.getAttribute('aria-expanded')).toBe('true');
-			expect(commands?.querySelector('.animate-spin')).toBeNull();
+			expect(commands).toBeUndefined();
+			expect(viewport.querySelector('.animate-spin')).toBeNull();
 			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
 			expect(viewport.textContent).toContain('Still running when this call returned');
 		}
 	);
+
+	it('labels a poll_command row with the command from the originating exec_command session', async () => {
+		const parts: LiveTranscriptMessage['parts'] = [
+			{
+				type: 'tool-call',
+				callId: 'launch',
+				name: 'exec_command',
+				input: { cmd: 'npm run dev', yieldTimeMs: 0 }
+			},
+			{
+				type: 'tool-result',
+				callId: 'launch',
+				name: 'exec_command',
+				output: { sessionId: '7', running: true, success: false, output: '' }
+			},
+			{
+				type: 'tool-call',
+				callId: 'poll',
+				name: 'poll_command',
+				input: { sessionId: '7' }
+			},
+			{
+				type: 'tool-result',
+				callId: 'poll',
+				name: 'poll_command',
+				output: { workdir: '/app', running: true, success: false }
+			}
+		];
+
+		const response: TranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [...parts, { type: 'text', id: 'after', text: 'Doing something else.' }]
+		};
+
+		const { viewport, setProps } = await renderTranscript([response]);
+		setProps({
+			activeRunId: response.runId,
+			loadSectionDetails: vi
+				.fn()
+				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+		});
+		await settle();
+
+		const transcript = within(viewport);
+
+		click(transcript.getByRole('button', { name: /^Worked/ }));
+		await settle();
+
+		expect(transcript.getAllByTitle('npm run dev')).toHaveLength(2);
+		expect(transcript.getAllByText('Still running when this call returned')).toHaveLength(2);
+	});
 
 	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
 		const work: TranscriptDisplayRow = {

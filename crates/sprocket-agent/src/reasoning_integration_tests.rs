@@ -31,7 +31,7 @@ const ENVELOPE: &str = "gway-envelope-v1";
 const DELTA_SUMMARY: &str = "partial";
 const DONE_SUMMARY: &str = "full gateway summary";
 const TOOL_CALL_ID: &str = "call_1";
-const TOOL_NAME: &str = "exec_command";
+const TOOL_NAME: &str = "exec_cmd";
 const TEXT: &str = "done.";
 
 #[derive(Debug, PartialEq, Eq)]

@@ -14,6 +14,8 @@ import {
 	formatQuestionContinuationPrompt,
 	MAX_QUESTION_TIMEOUT_MS,
 	normalizeQuestionAnswer,
+	QUESTION_TIMEOUT_CHECKPOINT_MS,
+	validateQuestionTimeoutMs,
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
@@ -36,9 +38,10 @@ function toSnapshot(question: Doc<'agentQuestions'>): AgentQuestionSnapshot {
 		options: question.options,
 		status: question.status,
 		sequence: question.sequence,
-		createdAt: question.createdAt,
-		timeoutAt: question.timeoutAt
+		createdAt: question.createdAt
 	};
+
+	if (question.timeoutAt !== undefined) snapshot.timeoutAt = question.timeoutAt;
 
 	if (question.answer) snapshot.answer = question.answer;
 
@@ -90,68 +93,134 @@ async function headPendingQuestion(
 	}
 }
 
+type CreateQuestionArgs = {
+	runId: Id<'runs'>;
+	claimId: string;
+	question: string;
+	options: Infer<typeof vAskQuestionOption>[];
+	timeoutMs?: number | null;
+	executionSecret: string;
+};
+
+type CreatedQuestion = {
+	questionId: Id<'agentQuestions'>;
+	question: string;
+	options: Infer<typeof vAskQuestionOption>[];
+	timeoutAt?: number;
+	sequence: number;
+};
+
+async function createQuestion(
+	ctx: MutationCtx,
+	args: CreateQuestionArgs,
+	resolveTimeoutMs: (timeoutMs: number | null | undefined) => number | undefined
+): Promise<CreatedQuestion> {
+	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+	assertRunAcceptsModelCompletion(run);
+
+	if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+		throw new Error('Run is no longer active.');
+	}
+
+	if (!run.activeJobId) {
+		throw new Error('Ask question requires an active tool job.');
+	}
+
+	const question = validateQuestionText(args.question);
+	const options = finalizeQuestionOptions(args.options);
+
+	const timeoutMs = resolveTimeoutMs(args.timeoutMs);
+	const createdAt = Date.now();
+	const timeoutAt = timeoutMs === undefined ? undefined : createdAt + timeoutMs;
+	const sequence = await nextThreadSequence(ctx, run.threadId);
+
+	const questionId = await ctx.db.insert('agentQuestions', {
+		threadId: run.threadId,
+		runId: run._id,
+		jobId: run.activeJobId,
+		question,
+		options,
+		status: timeoutMs === 0 ? 'timedOut' : 'pending',
+		createdAt,
+		timeoutAt,
+		answeredAt: timeoutMs === 0 ? createdAt : undefined,
+		sequence
+	});
+
+	if (timeoutAt !== undefined && timeoutMs !== 0) {
+		await scheduleDeadlineCheck(ctx, questionId, createdAt, timeoutAt);
+	}
+
+	return {
+		questionId,
+		question,
+		options,
+		timeoutAt,
+		sequence
+	};
+}
+
+async function scheduleDeadlineCheck(
+	ctx: MutationCtx,
+	questionId: Id<'agentQuestions'>,
+	now: number,
+	timeoutAt: number
+): Promise<void> {
+	const remaining = timeoutAt - now;
+	// Convex caps scheduled timestamps about five years out; checkpoint distant
+	// deadlines at a bounded interval so the durable deadline never changes.
+	const delay = Math.min(Math.max(remaining, 0), QUESTION_TIMEOUT_CHECKPOINT_MS);
+
+	await ctx.scheduler.runAfter(delay, internal.agentQuestions.timeout, { questionId });
+}
+
+const vCreatedQuestion = v.object({
+	questionId: v.id('agentQuestions'),
+	question: v.string(),
+	options: v.array(vAskQuestionOption),
+	timeoutAt: v.optional(v.number()),
+	sequence: v.number()
+});
+
+const vCreateQuestionArgs = {
+	runId: v.id('runs'),
+	claimId: v.string(),
+	question: v.string(),
+	options: v.array(vAskQuestionOption),
+	executionSecret: v.string()
+};
+
+// Legacy create kept for released clients: omitted timeout defaults to 30m and
+// numeric values are clamped to [1s, 24h].
 export const create = mutation({
 	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		question: v.string(),
-		options: v.array(vAskQuestionOption),
-		timeoutMs: v.optional(v.number()),
-		executionSecret: v.string()
+		...vCreateQuestionArgs,
+		timeoutMs: v.optional(v.number())
 	},
-	returns: v.object({
-		questionId: v.id('agentQuestions'),
-		question: v.string(),
-		options: v.array(vAskQuestionOption),
-		timeoutAt: v.number(),
-		sequence: v.number()
-	}),
+	returns: vCreatedQuestion,
 	handler: async (ctx, args) => {
 		try {
-			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-			assertRunAcceptsModelCompletion(run);
-
-			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-				throw new Error('Run is no longer active.');
-			}
-
-			if (!run.activeJobId) {
-				throw new Error('Ask question requires an active tool job.');
-			}
-
-			const question = validateQuestionText(args.question);
-			const options = finalizeQuestionOptions(args.options);
-
-			const timeoutMs = Math.min(
-				MAX_QUESTION_TIMEOUT_MS,
-				Math.max(MIN_QUESTION_TIMEOUT_MS, Math.floor(args.timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS))
+			return await createQuestion(ctx, args, (timeoutMs) =>
+				Math.min(
+					MAX_QUESTION_TIMEOUT_MS,
+					Math.max(MIN_QUESTION_TIMEOUT_MS, Math.floor(timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS))
+				)
 			);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
 
-			const createdAt = Date.now();
-			const timeoutAt = createdAt + timeoutMs;
-			const sequence = await nextThreadSequence(ctx, run.threadId);
-
-			const questionId = await ctx.db.insert('agentQuestions', {
-				threadId: run.threadId,
-				runId: run._id,
-				jobId: run.activeJobId,
-				question,
-				options,
-				status: 'pending',
-				createdAt,
-				timeoutAt,
-				sequence
-			});
-
-			await ctx.scheduler.runAfter(timeoutMs, internal.agentQuestions.timeout, { questionId });
-
-			return {
-				questionId,
-				question,
-				options,
-				timeoutAt,
-				sequence
-			};
+export const createWithOptionalExpiry = mutation({
+	args: {
+		...vCreateQuestionArgs,
+		timeoutMs: v.optional(v.union(v.number(), v.null()))
+	},
+	returns: vCreatedQuestion,
+	handler: async (ctx, args) => {
+		try {
+			return await createQuestion(ctx, args, validateQuestionTimeoutMs);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -276,10 +345,30 @@ export const timeout = internalMutation({
 		}
 
 		const run = await ctx.db.get('runs', question.runId);
+		const now = Date.now();
+
+		if (run?.status === 'cancelled') {
+			await ctx.db.patch('agentQuestions', question._id, {
+				status: 'cancelled',
+				answeredAt: run.completedAt ?? now
+			});
+
+			return null;
+		}
+
+		if (question.timeoutAt === undefined) {
+			return null;
+		}
+
+		if (question.timeoutAt > now) {
+			await scheduleDeadlineCheck(ctx, question._id, now, question.timeoutAt);
+
+			return null;
+		}
 
 		await ctx.db.patch('agentQuestions', question._id, {
-			status: run?.status === 'cancelled' ? 'cancelled' : 'timedOut',
-			answeredAt: run?.status === 'cancelled' ? (run.completedAt ?? Date.now()) : Date.now()
+			status: 'timedOut',
+			answeredAt: now
 		});
 
 		return null;

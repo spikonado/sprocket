@@ -306,7 +306,7 @@ export default defineSchema({
 		answer: v.optional(vAskQuestionAnswer),
 		requiresContinuation: v.optional(v.boolean()),
 		createdAt: v.number(),
-		timeoutAt: v.number(),
+		timeoutAt: v.optional(v.number()),
 		answeredAt: v.optional(v.number()),
 		sequence: v.number()
 	})
