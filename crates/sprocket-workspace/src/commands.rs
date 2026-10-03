@@ -898,6 +898,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exec_command_yields_a_running_session_that_accepts_input() {
+        let root = temp_workspace();
+        let sessions =
+            std::sync::Arc::new(CommandSessionManager::new(root.clone(), root.join("logs")));
+        let executor = sessions.clone();
+        let execution = tokio::spawn(async move {
+            executor
+                .exec_command(
+                    WorkspaceCancellation::new(),
+                    "read value; printf 'got:%s' \"$value\"",
+                    ".",
+                    &default_command_shell(),
+                    None,
+                    0,
+                    100,
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while sessions.sessions.lock().await.is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("command should reach its observation wait");
+
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(30)).await;
+        tokio::time::resume();
+
+        let started = execution.await.unwrap().unwrap();
+        assert!(started.result.running);
+        let session_id = started.session_id.expect("running command session");
+        let completed = tokio::time::timeout(
+            Duration::from_secs(2),
+            sessions.write_stdin(
+                WorkspaceCancellation::new(),
+                &session_id,
+                "hello\n",
+                false,
+                0,
+            ),
+        )
+        .await
+        .expect("input should complete the command promptly")
+        .unwrap();
+        assert!(completed.result.success);
+        assert!(!completed.result.running);
+        assert_eq!(completed.result.output, "got:hello");
+        sessions.stop_all().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn short_commands_complete_without_waiting_for_the_minimum_polling_interval() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
