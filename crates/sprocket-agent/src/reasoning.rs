@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rig::message::{Reasoning, ReasoningContent};
+use rig::message::{Reasoning, ReasoningContent, Sealed};
 use serde_json::Value as JsonValue;
 
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
@@ -33,13 +33,23 @@ pub(crate) fn opaque_encrypted(value: Option<&str>) -> Option<&str> {
     value.filter(|content| !content.is_empty())
 }
 
-pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
-    opaque_encrypted(reasoning.encrypted_content())
+fn opened_reasoning(reasoning: &Sealed<Reasoning>) -> Option<&Reasoning> {
+    reasoning.open(reasoning.issuer())
+}
+
+pub(crate) fn opaque_reasoning_blob(reasoning: &Sealed<Reasoning>) -> Option<&str> {
+    opaque_encrypted(opened_reasoning(reasoning)?.encrypted_content())
 }
 
 /// Live display is summary blocks only. Rig's `display_text` also joins
 /// `Text` and `Redacted`, which must not become transcript text.
-pub(crate) fn reasoning_summary_text(reasoning: &Reasoning) -> String {
+pub(crate) fn reasoning_summary_text(reasoning: &Sealed<Reasoning>) -> String {
+    opened_reasoning(reasoning)
+        .map(summary_text)
+        .unwrap_or_default()
+}
+
+fn summary_text(reasoning: &Reasoning) -> String {
     reasoning
         .content
         .iter()
@@ -56,13 +66,16 @@ pub(crate) fn apply_completed_reasoning(
     provider_metadata: &mut HashMap<String, JsonValue>,
     stream_id: &str,
     correlator: &str,
-    reasoning: &Reasoning,
+    reasoning: &Sealed<Reasoning>,
 ) {
     let id = format!("{stream_id}:{correlator}");
     let key = format!("reasoning:{id}");
-    let text = reasoning_summary_text(reasoning);
-    let metadata =
-        openai_reasoning_metadata(reasoning.id.as_deref(), opaque_reasoning_blob(reasoning));
+    let inner = opened_reasoning(reasoning);
+    let text = inner.map(summary_text).unwrap_or_default();
+    let metadata = openai_reasoning_metadata(
+        inner.and_then(|value| value.id.as_deref()),
+        opaque_encrypted(inner.and_then(Reasoning::encrypted_content)),
+    );
     if let Some(metadata) = metadata {
         provider_metadata.insert(key, metadata);
     } else {
@@ -90,11 +103,12 @@ mod tests {
     use super::*;
     use rig::message::ReasoningContent;
 
-    fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Reasoning {
+    fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Sealed<Reasoning> {
         Reasoning {
             id: id.map(str::to_string),
             content,
         }
+        .sealed("openai")
     }
 
     #[test]

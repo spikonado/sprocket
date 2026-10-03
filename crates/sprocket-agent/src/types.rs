@@ -1,13 +1,15 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use anyhow::{Context, anyhow};
 use futures::future::BoxFuture;
 use rig::completion::Message;
 use rig::message::{
-    AdditionalParams, AssistantContent, ProviderCallId, ReasoningContent, Text, ToolCall,
-    ToolCallId, ToolFunction, ToolResult, ToolResultContent, UserContent,
+    AdditionalParams, AssistantContent, CallId, Issuer, Reasoning, ReasoningContent, Text,
+    ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
-use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -259,25 +261,36 @@ fn additional_params_from_json(
         .map_err(|value| anyhow!("{what} must be a JSON object, got {value}"))
 }
 
+#[derive(Clone)]
+struct IndexedToolCall {
+    name: ToolName,
+    call: CallId,
+}
+
 impl AgentHistoryContent {
-    fn into_user_content(self) -> anyhow::Result<UserContent> {
+    fn into_user_content(
+        self,
+        tool_calls: &HashMap<String, IndexedToolCall>,
+    ) -> anyhow::Result<UserContent> {
         match self {
             Self::Text { text, .. } => Ok(UserContent::Text(Text::new(text))),
-            Self::ToolResult { id, call_id, items } => Ok(UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint(id),
-                provider: call_id.and_then(ProviderCallId::new),
-                // The Convex history format does not record the executed tool's
-                // name on results; the provider's message serializer resolves
-                // it from the matching call instead.
-                name: String::new(),
-                content: require_non_empty(
-                    items
-                        .into_iter()
-                        .map(AgentHistoryToolResultItem::into_tool_result_content)
-                        .collect::<anyhow::Result<Vec<_>>>()?,
-                    "tool result items",
-                )?,
-            })),
+            Self::ToolResult { id, call_id, items } => {
+                let indexed = tool_calls
+                    .get(&id)
+                    .or_else(|| call_id.as_ref().and_then(|call| tool_calls.get(call)))
+                    .ok_or_else(|| anyhow!("history tool result has no matching call: {id}"))?;
+                Ok(UserContent::ToolResult(ToolResult {
+                    call: indexed.call.clone(),
+                    name: indexed.name.clone(),
+                    content: require_non_empty(
+                        items
+                            .into_iter()
+                            .map(AgentHistoryToolResultItem::into_tool_result_content)
+                            .collect::<anyhow::Result<Vec<_>>>()?,
+                        "tool result items",
+                    )?,
+                }))
+            }
             Self::Image { image_json } => Ok(UserContent::Image(from_json_string(
                 &image_json,
                 "history image",
@@ -313,14 +326,14 @@ impl AgentHistoryContent {
                 )?,
             })),
             Self::Reasoning { id, blocks_json } => Ok(AssistantContent::Reasoning(
-                serde_json::from_value(serde_json::json!({
-                    "id": id,
-                    "content": from_json_string::<Vec<ReasoningContent>>(
-                    &blocks_json,
-                    "reasoning blocks",
-                )?,
-                }))
-                .context("failed to reconstruct reasoning history content")?,
+                Reasoning {
+                    id,
+                    content: from_json_string::<Vec<ReasoningContent>>(
+                        &blocks_json,
+                        "reasoning blocks",
+                    )?,
+                }
+                .sealed(Issuer::from("openai")),
             )),
             Self::ToolCall {
                 id,
@@ -330,10 +343,9 @@ impl AgentHistoryContent {
                 signature,
                 additional_params_json,
             } => Ok(AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint(id),
-                provider: call_id.and_then(ProviderCallId::new),
+                id: history_call_id(id, call_id),
                 function: ToolFunction {
-                    name,
+                    name: ToolName::new(name)?,
                     arguments: from_json_string(&arguments_json, "tool call arguments")?,
                 },
                 signature,
@@ -368,51 +380,79 @@ impl AgentHistoryToolResultItem {
     }
 }
 
-impl TryFrom<AgentHistoryMessage> for Message {
-    type Error = anyhow::Error;
-
-    fn try_from(message: AgentHistoryMessage) -> Result<Self, Self::Error> {
-        match message.role {
-            AgentHistoryRole::System => {
-                let text = message
+fn history_message(
+    message: AgentHistoryMessage,
+    tool_calls: &HashMap<String, IndexedToolCall>,
+) -> anyhow::Result<Message> {
+    match message.role {
+        AgentHistoryRole::System => {
+            let text = message
+                .contents
+                .into_iter()
+                .find_map(|content| match content {
+                    AgentHistoryContent::Text { text, .. } => Some(text),
+                    _ => None,
+                })
+                .ok_or_else(|| anyhow!("system history message is missing text content"))?;
+            Ok(Message::System { content: text })
+        }
+        AgentHistoryRole::User => Ok(Message::User {
+            content: require_non_empty(
+                message
                     .contents
                     .into_iter()
-                    .find_map(|content| match content {
-                        AgentHistoryContent::Text { text, .. } => Some(text),
-                        _ => None,
-                    })
-                    .ok_or_else(|| anyhow!("system history message is missing text content"))?;
-                Ok(Message::System { content: text })
-            }
-            AgentHistoryRole::User => Ok(Message::User {
-                content: require_non_empty(
-                    message
-                        .contents
-                        .into_iter()
-                        .map(AgentHistoryContent::into_user_content)
-                        .collect::<anyhow::Result<Vec<_>>>()?,
-                    "user history contents",
-                )?,
-            }),
-            AgentHistoryRole::Assistant => Ok(Message::Assistant {
-                id: message.assistant_id,
-                content: require_non_empty(
-                    message
-                        .contents
-                        .into_iter()
-                        .map(AgentHistoryContent::into_assistant_content)
-                        .collect::<anyhow::Result<Vec<_>>>()?,
-                    "assistant history contents",
-                )?,
-            }),
-        }
+                    .map(|content| content.into_user_content(tool_calls))
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                "user history contents",
+            )?,
+        }),
+        AgentHistoryRole::Assistant => Ok(Message::Assistant {
+            id: message.assistant_id,
+            content: require_non_empty(
+                message
+                    .contents
+                    .into_iter()
+                    .map(AgentHistoryContent::into_assistant_content)
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                "assistant history contents",
+            )?,
+        }),
+    }
+}
+
+fn history_call_id(id: String, call_id: Option<String>) -> CallId {
+    match call_id.filter(|call| !call.is_empty()) {
+        Some(call) if call != id => CallId::from_dual_wire(id, call),
+        Some(call) => CallId::from_wire(call),
+        None => CallId::from_wire(id),
     }
 }
 
 pub(crate) fn deserialize_agent_history(
     history: Vec<AgentHistoryMessage>,
 ) -> anyhow::Result<Vec<Message>> {
-    history.into_iter().map(Message::try_from).collect()
+    let mut tool_calls = HashMap::new();
+    history
+        .into_iter()
+        .map(|message| {
+            for content in &message.contents {
+                if let AgentHistoryContent::ToolCall {
+                    id, call_id, name, ..
+                } = content
+                {
+                    let indexed = IndexedToolCall {
+                        name: ToolName::new(name.clone())?,
+                        call: history_call_id(id.clone(), call_id.clone()),
+                    };
+                    tool_calls.insert(id.clone(), indexed.clone());
+                    if let Some(call_id) = call_id.as_ref().filter(|call| !call.is_empty()) {
+                        tool_calls.insert(call_id.clone(), indexed);
+                    }
+                }
+            }
+            history_message(message, &tool_calls)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -458,9 +498,13 @@ mod tests {
         match &messages[0] {
             Message::Assistant { content, .. } => match content.iter().next() {
                 Some(AssistantContent::ToolCall(tool_call)) => {
-                    assert_eq!(tool_call.id, "tool_call_1");
+                    assert_eq!(tool_call.id.wire(), "call_1");
                     assert_eq!(
-                        tool_call.provider.as_ref().map(|id| id.call_id.as_str()),
+                        tool_call.id.provider().unwrap().item_id.as_deref(),
+                        Some("tool_call_1")
+                    );
+                    assert_eq!(
+                        tool_call.id.provider().map(|id| id.call_id.as_str()),
                         Some("call_1")
                     );
                 }
@@ -472,9 +516,10 @@ mod tests {
         match &messages[1] {
             Message::User { content } => match content.iter().next() {
                 Some(UserContent::ToolResult(tool_result)) => {
-                    assert_eq!(tool_result.call, "tool_call_1");
+                    assert_eq!(tool_result.call.wire(), "call_1");
+                    assert_eq!(tool_result.name, "exec_command");
                     assert_eq!(
-                        tool_result.provider.as_ref().map(|id| id.call_id.as_str()),
+                        tool_result.call.provider().map(|id| id.call_id.as_str()),
                         Some("call_1")
                     );
                 }
@@ -482,6 +527,68 @@ mod tests {
             },
             other => panic!("expected user message, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolves_tool_result_name_from_call_id_when_result_id_differs() {
+        let history = vec![
+            AgentHistoryMessage {
+                role: AgentHistoryRole::Assistant,
+                assistant_id: None,
+                contents: vec![AgentHistoryContent::ToolCall {
+                    id: "fc_1".to_string(),
+                    call_id: Some("call_1".to_string()),
+                    name: "exec_command".to_string(),
+                    arguments_json: "{\"cmd\":\"pwd\"}".to_string(),
+                    signature: None,
+                    additional_params_json: None,
+                }],
+            },
+            AgentHistoryMessage {
+                role: AgentHistoryRole::User,
+                assistant_id: None,
+                contents: vec![AgentHistoryContent::ToolResult {
+                    id: "fr_1".to_string(),
+                    call_id: Some("call_1".to_string()),
+                    items: vec![AgentHistoryToolResultItem::Text {
+                        text: "ok".to_string(),
+                    }],
+                }],
+            },
+        ];
+
+        let messages = deserialize_agent_history(history).expect("messages");
+        match &messages[1] {
+            Message::User { content } => match content.iter().next() {
+                Some(UserContent::ToolResult(tool_result)) => {
+                    assert_eq!(tool_result.name, "exec_command");
+                    assert_eq!(tool_result.call.wire(), "call_1");
+                    assert_eq!(
+                        tool_result.call.provider().unwrap().item_id.as_deref(),
+                        Some("fc_1")
+                    );
+                }
+                other => panic!("expected user tool result, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_orphaned_tool_results_before_provider_replay() {
+        let history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::User,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::ToolResult {
+                id: "missing-call".to_string(),
+                call_id: None,
+                items: vec![AgentHistoryToolResultItem::Text {
+                    text: "output".to_string(),
+                }],
+            }],
+        }];
+        let error = deserialize_agent_history(history).unwrap_err();
+        assert!(error.to_string().contains("no matching call: missing-call"));
     }
 
     #[test]
@@ -654,7 +761,8 @@ mod tests {
         let messages = deserialize_agent_history(history).expect("messages");
         match &messages[0] {
             Message::Assistant { content, .. } => match content.iter().next() {
-                Some(AssistantContent::Reasoning(reasoning)) => {
+                Some(AssistantContent::Reasoning(sealed)) => {
+                    let reasoning = sealed.open(&rig::message::Issuer::from("openai")).unwrap();
                     assert_eq!(reasoning.id.as_deref(), Some("rs_123"));
                     assert_eq!(reasoning.display_text(), "think");
                     assert_eq!(reasoning.encrypted_content(), Some("envelope"));
@@ -679,7 +787,8 @@ mod tests {
         let messages = deserialize_agent_history(history).expect("messages");
         match &messages[0] {
             Message::Assistant { content, .. } => match content.iter().next() {
-                Some(AssistantContent::Reasoning(reasoning)) => {
+                Some(AssistantContent::Reasoning(sealed)) => {
+                    let reasoning = sealed.open(&rig::message::Issuer::from("openai")).unwrap();
                     assert_eq!(reasoning.id.as_deref(), Some("rs_empty"));
                     assert!(reasoning.content.is_empty());
                     assert!(reasoning.encrypted_content().is_none());

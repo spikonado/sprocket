@@ -479,12 +479,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "as-any"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0f477b951e452a0b6b4a10b53ccd569042d1d01729b519e02074a9c0958a063"
-
-[[package]]
 name = "as-slice"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2878,17 +2872,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
- "pin-project-lite",
-]
-
-[[package]]
-name = "eventsource-stream"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
-dependencies = [
- "futures-core",
- "nom 7.1.3",
  "pin-project-lite",
 ]
 
@@ -7769,92 +7752,101 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
 name = "rig"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b989f4060e5f3c1ea4b8b6999f6759949d820704286cc6976b7a688cc0133029"
+checksum = "959c8db2d18e7e641684a38ab3c79413cebcba4d0f2045784f7dcea29ec40516"
 dependencies = [
  "rig-agent",
+ "rig-cassette",
  "rig-core",
  "rig-fastembed",
  "rig-helixdb",
  "rig-lancedb",
  "rig-milvus",
+ "rig-reqwest",
+ "rig-tungstenite",
+ "rig-typesafeai",
+ "rig-vectorize",
 ]
 
 [[package]]
 name = "rig-agent"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66477c0d0a786358d078e7e3541a73089dd9009100d6e2b3fe3b0d730e8550f"
+checksum = "eb11364e7ec4cb4cc20b7dda77a1963652baab01070f0ef2ac275aea3a6081f8"
 dependencies = [
  "async-stream",
- "fastrand",
  "futures",
  "http",
  "indexmap 2.14.2",
+ "loom",
  "rig-core",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokio",
  "tracing",
  "tracing-futures",
 ]
 
 [[package]]
-name = "rig-core"
-version = "0.42.0"
+name = "rig-cassette"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "432d83e0facf16749f91fe729cbffca84437e8062d2f4e92f4f12e903693922d"
+checksum = "e882a511528a27a30b216ec9bad584728cc91815523d49742186107f420c338c"
 dependencies = [
- "as-any",
+ "futures",
+ "rig-agent",
+ "rig-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "rig-core"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82919b6bebd878efc3dae97093e313584ebc7c46518514b0e26bde2e838271fd"
+dependencies = [
  "async-stream",
  "base64 0.22.1",
  "bytes",
- "eventsource-stream",
  "fastrand",
  "futures",
- "futures-timer",
  "glob",
  "http",
- "indexmap 2.14.2",
  "mime",
  "mime_guess",
  "ordered-float",
- "pin-project-lite",
- "reqwest 0.13.5",
+ "rig-http",
+ "rig-reqwest",
+ "rig-tungstenite",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.29.0",
  "tracing",
- "tracing-futures",
  "url",
+ "uuid",
 ]
 
 [[package]]
 name = "rig-fastembed"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1dff99f9bea13108bb14df5431b6fc0738beb87f1fe5ebfcf26ae9fe54a188d"
+checksum = "74d45d33d480ab6507e24f7ad5db2a05950823319d0e0e0c187a9c9a0c9040fc"
 dependencies = [
  "fastembed",
+ "futures",
  "rig-core",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
 name = "rig-helixdb"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5fa2b188a1e9e65d29c34738c97465f0822c57540d6d45fd4f04dad906c966a"
+checksum = "e0176524c2282918325c47aecde68aaef3fdb8fb4efcd8aa337d01586dbb7cb5"
 dependencies = [
  "reqwest 0.13.5",
  "rig-core",
@@ -7864,10 +7856,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "rig-lancedb"
-version = "0.42.0"
+name = "rig-http"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5fe3555202c5bd4e30948414c2e234fddd9260d4520046733fcf0d58718f3a1"
+checksum = "8359e3dbb4ba32c5d9ea08d59fa74819deb71915c86ebfc93ad9b30abebeaa27"
+dependencies = [
+ "bytes",
+ "futures",
+ "futures-timer",
+ "http",
+ "mime",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
+name = "rig-lancedb"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7d875dd0f9c7580ff48ec2546ff1126064f745f8e37f253ee6686466997abc"
 dependencies = [
  "arrow-array",
  "futures",
@@ -7879,14 +7886,71 @@ dependencies = [
 
 [[package]]
 name = "rig-milvus"
-version = "0.42.0"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af9c7b7ff7ed9c16da983a21f1e81f425c9805355427a92f4d2d97ba1fe2aa12"
+checksum = "895cf1b1f093e0f5b4f079424ed381fc368ed18baa4aa343f546404f4d1e1bc1"
+dependencies = [
+ "reqwest 0.13.5",
+ "rig-core",
+ "rig-reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "rig-reqwest"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80774c44c501b8283d1a385a0a72b7ffbeedd68106f81fcbb24a6db9cf6c1be6"
+dependencies = [
+ "bytes",
+ "futures",
+ "http",
+ "reqwest 0.13.5",
+ "rig-http",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "rig-tungstenite"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5466d96648810fe94747d48e1e952c9bc4fe1f6bb7baa46a9af16bfe5d1e8214"
+dependencies = [
+ "futures",
+ "rig-http",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+]
+
+[[package]]
+name = "rig-typesafeai"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a09f5aa650a26f4aa7893ef4e9fa5afa5a875b67f391fae7277521bb8f028774"
+dependencies = [
+ "http",
+ "rig-core",
+ "rig-reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "rig-vectorize"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce4405172443272cc91ed58788b49fc63bcbea2510d06142e24bc9dd3b85abe5"
 dependencies = [
  "reqwest 0.13.5",
  "rig-core",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
  "uuid",
 ]
 

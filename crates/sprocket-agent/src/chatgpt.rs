@@ -3,28 +3,28 @@ use std::sync::Arc;
 use anyhow::Context;
 use bytes::Bytes;
 use futures::StreamExt;
-use rig::client::CompletionClient;
-use rig::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse};
-use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
-use rig::providers::openai;
-use rig::providers::openai::responses_api::SystemInstructionsPlacement;
+use rig::ProviderError;
 #[cfg(test)]
-use rig::providers::openai::responses_api::{
-    CompletionRequest as ResponsesCompletionRequest, ResponsesRequestParams,
-    ResponsesToolDefinition,
-};
-use rig::streaming::StreamingCompletionResponse;
+use rig::completion::CompletionRequest;
+use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
+use rig::operation::Completion;
+use rig::providers::openai;
+#[cfg(test)]
+use rig::providers::openai::responses_api::ResponsesToolDefinition;
+use rig::providers::openai::responses_api::SystemInstructionsPlacement;
 use rig::wasm_compat::WasmCompatSend;
+#[cfg(test)]
+use rig::wire::{Mode, Wire};
+use rig::{DynModel, Model};
 
 use crate::live::now_ms;
-use crate::openai::replay_contents;
+use crate::openai::StatelessResponses;
 use crate::types::ChatGptCredentials;
 
 const CONNECTION_CHANGED: &str =
     "ChatGPT connection changed or became unavailable. Start a new run.";
 const STREAM_REQUIRED: &str =
     "ChatGPT inference requires streaming; non-streaming completion is not supported.";
-const STREAM_INTERRUPTED: &str = "ChatGPT response stream ended before a terminal response event.";
 const SIWC_TOOL_NAMESPACE: &str = "sprocket";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -51,8 +51,13 @@ fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     let usage_limit = error.chain().any(|cause| {
         cause
-            .downcast_ref::<CompletionError>()
+            .downcast_ref::<ProviderError>()
             .and_then(|error| error.provider_response_json().ok().flatten())
+            .or_else(|| {
+                cause
+                    .downcast_ref::<rig::ErrorReport>()
+                    .and_then(|report| report.provider_response_json().ok().flatten())
+            })
             .is_some_and(|body| is_subscription_usage_limit(&body))
     });
     if usage_limit {
@@ -182,27 +187,10 @@ impl ChatGptClient {
     }
 }
 
-impl CompletionClient for ChatGptClient {
-    type CompletionModel = ChatGptModel;
-
-    fn completion_model(&self, model: impl Into<String>) -> Self::CompletionModel {
-        ChatGptModel {
-            client: self.clone(),
-            model: model.into(),
-        }
-    }
-}
-
-pub(crate) struct ChatGptModel {
-    client: ChatGptClient,
-    model: String,
-}
-
 #[derive(Clone, Default)]
 struct SiwcHttpClient {
     inner: reqwest::Client,
     authorization: Option<(Arc<dyn ChatGptCredentials>, SharedConnection)>,
-    sent: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for SiwcHttpClient {
@@ -249,11 +237,6 @@ impl HttpClientExt for SiwcHttpClient {
     {
         let this = self.clone();
         async move {
-            if this.sent.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                return Err(stream_error(
-                    "ChatGPT inference cannot replay an interrupted request. Start a new run.",
-                ));
-            }
             let (credentials, connection) = this
                 .authorization
                 .as_ref()
@@ -309,7 +292,7 @@ fn streaming_response(
             .entry(http::header::CONTENT_TYPE)
             .or_insert(HeaderValue::from_static("text/event-stream"));
     }
-    let stream: rig::http_client::sse::BoxedStream =
+    let stream: rig::http_client::BoxedStream =
         Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
     res.body(stream).map_err(http_client::Error::Protocol)
 }
@@ -353,6 +336,17 @@ fn diagnostic_text(value: &str, access_token: &str) -> String {
 
 async fn inference_error(response: reqwest::Response, access_token: &str) -> http_client::Error {
     let status = response.status();
+    let mut headers = response.headers().clone();
+    if !access_token.is_empty() {
+        for value in headers.values_mut() {
+            if let Ok(text) = value.to_str()
+                && text.contains(access_token)
+            {
+                *value = HeaderValue::from_str(&text.replace(access_token, "[redacted]"))
+                    .expect("redacting a valid header leaves it valid");
+            }
+        }
+    }
     let request_id = response
         .headers()
         .get("x-request-id")
@@ -399,14 +393,13 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
         })
         .to_string();
     }
-    http_client::Error::InvalidStatusCodeWithMessage(status, message)
+    http_client::Error::non_success_with_details(status, headers, message)
 }
 
 struct SiwcStreamGuard<S> {
     inner: S,
     connection: SharedConnection,
-    buffered: Vec<u8>,
-    terminal: bool,
+    framing: rig::http_client::framing::SseFramer,
     ended: bool,
     connection_changed: futures::future::BoxFuture<'static, ()>,
 }
@@ -431,78 +424,11 @@ impl<S> SiwcStreamGuard<S> {
         Self {
             inner,
             connection,
-            buffered: Vec::new(),
-            terminal: false,
+            framing: rig::http_client::framing::SseFramer::new(),
             ended: false,
             connection_changed,
         }
     }
-
-    fn absorb(&mut self, chunk: &[u8]) -> http_client::Result<()> {
-        const FRAME_LIMIT: usize = 4 * 1024 * 1024;
-        if self.buffered.len().saturating_add(chunk.len()) > FRAME_LIMIT {
-            return Err(stream_error("ChatGPT returned an oversized stream frame."));
-        }
-        self.buffered.extend_from_slice(chunk);
-        while let Some(frame_end) = find_frame_end(&self.buffered) {
-            let frame: Vec<u8> = self.buffered.drain(..frame_end).collect();
-            if !self.terminal && frame_is_terminal(&frame) {
-                self.terminal = true;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn find_frame_end(buffered: &[u8]) -> Option<usize> {
-    let crlf = buffered
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|position| position + 4);
-    let lf = buffered
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .map(|position| position + 2);
-    match (crlf, lf) {
-        (Some(crlf), Some(lf)) => Some(crlf.min(lf)),
-        (crlf, lf) => crlf.or(lf),
-    }
-}
-
-const TERMINAL_EVENTS: [&str; 3] = [
-    "response.completed",
-    "response.failed",
-    "response.incomplete",
-];
-
-fn frame_is_terminal(frame: &[u8]) -> bool {
-    let Ok(frame) = std::str::from_utf8(frame) else {
-        return false;
-    };
-    let mut event = None;
-    let mut data = String::new();
-    for line in frame.lines() {
-        if let Some(value) = line.strip_prefix("event:") {
-            event = Some(value.trim().to_string());
-        } else if let Some(value) = line.strip_prefix("data:") {
-            if !data.is_empty() {
-                data.push('\n');
-            }
-            data.push_str(value.strip_prefix(' ').unwrap_or(value));
-        }
-    }
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) else {
-        return false;
-    };
-    let Some(kind) = payload.get("type").and_then(serde_json::Value::as_str) else {
-        return false;
-    };
-    if !TERMINAL_EVENTS.contains(&kind) {
-        return false;
-    }
-    // A named event frame counts only when its payload agrees; a data-only
-    // frame stands on its payload alone.
-    event.is_none_or(|event| event == kind)
 }
 
 impl<S, E> futures::Stream for SiwcStreamGuard<S>
@@ -529,10 +455,14 @@ where
         }
         match self.inner.poll_next_unpin(cx) {
             std::task::Poll::Ready(Some(Ok(chunk))) => {
-                if let Err(error) = self.absorb(&chunk) {
+                const FRAME_LIMIT: usize = 4 * 1024 * 1024;
+                if self.framing.pending().saturating_add(chunk.len()) > FRAME_LIMIT {
                     self.ended = true;
-                    return std::task::Poll::Ready(Some(Err(error)));
+                    return std::task::Poll::Ready(Some(Err(stream_error(
+                        "ChatGPT returned an oversized stream frame.",
+                    ))));
                 }
+                self.framing.push(&chunk).for_each(drop);
                 std::task::Poll::Ready(Some(Ok(chunk)))
             }
             std::task::Poll::Ready(Some(Err(error))) => {
@@ -541,11 +471,7 @@ where
             }
             std::task::Poll::Ready(None) => {
                 self.ended = true;
-                if self.terminal {
-                    std::task::Poll::Ready(None)
-                } else {
-                    std::task::Poll::Ready(Some(Err(stream_error(STREAM_INTERRUPTED))))
-                }
+                std::task::Poll::Ready(None)
             }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
@@ -634,40 +560,21 @@ fn namespace_function_tools(
     Ok(())
 }
 
-impl ChatGptModel {
-    fn responses_model(&self) -> openai::responses_api::ResponsesCompletionModel<SiwcHttpClient> {
-        let client = openai::Client::builder()
-            .api_key("siwc-managed-by-transport")
-            .base_url("https://api.openai.com/v1")
-            .http_client(SiwcHttpClient {
-                inner: self.client.http.clone(),
-                authorization: Some((
-                    Arc::clone(&self.client.credentials),
-                    Arc::clone(&self.client.connection),
-                )),
-                sent: Arc::default(),
-            })
-            .build()
-            .expect("SIWC client construction cannot fail");
-        client
-            .completion_model(&self.model)
-            .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions)
-    }
-}
-
-impl CompletionModel for ChatGptModel {
-    async fn completion(
-        &self,
-        _request: CompletionRequest,
-    ) -> Result<CompletionResponse, CompletionError> {
-        Err(CompletionError::RequestError(STREAM_REQUIRED.into()))
-    }
-
-    async fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse, CompletionError> {
-        CompletionModel::stream(&self.responses_model(), replay_contents(request)).await
+impl ChatGptClient {
+    pub(crate) fn completion_model(&self, model: impl Into<String>) -> DynModel<Completion> {
+        let wire = openai::responses_api::wire::Responses::new(
+            openai::OpenAIConfig::new("siwc-managed-by-transport"),
+            model,
+        )
+        .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions);
+        Model::new(
+            StatelessResponses(wire),
+            SiwcHttpClient {
+                inner: self.http.clone(),
+                authorization: Some((Arc::clone(&self.credentials), Arc::clone(&self.connection))),
+            },
+        )
+        .erase()
     }
 }
 
@@ -685,8 +592,8 @@ mod tests {
     use futures::future::BoxFuture;
     use rig::completion::Message;
     use rig::message::{
-        AssistantContent, ProviderCallId, Reasoning, ReasoningContent, ToolCall, ToolFunction,
-        ToolResult, ToolResultContent, UserContent,
+        AssistantContent, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolResult,
+        ToolResultContent, UserContent,
     };
     use serde_json::json;
 
@@ -825,7 +732,7 @@ mod tests {
 
     fn stub_model(
         response: Option<(http::StatusCode, String)>,
-    ) -> openai::responses_api::ResponsesCompletionModel<StubResponseClient> {
+    ) -> Model<StatelessResponses, StubResponseClient> {
         let (credentials, client) = stub_client("connection-1");
         let (status, body) = response.unzip();
         let http = StubResponseClient {
@@ -836,27 +743,24 @@ mod tests {
             status,
             body,
         };
-        openai::Client::builder()
-            .api_key("test-token")
-            .http_client(http)
-            .build()
-            .unwrap()
-            .completion_model("gpt-6.1-sol")
+        Model::new(
+            StatelessResponses(openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("test-token"),
+                "gpt-6.1-sol",
+            )),
+            http,
+        )
     }
 
-    async fn first_stream_error(model: impl CompletionModel) -> CompletionError {
-        match model
+    async fn first_stream_error(
+        model: Model<StatelessResponses, StubResponseClient>,
+    ) -> ProviderError {
+        model
             .stream(test_request(vec![Message::user("hello")]))
+            .unwrap()
+            .finish()
             .await
-        {
-            Err(error) => error,
-            Ok(mut stream) => stream
-                .by_ref()
-                .filter_map(|item| std::future::ready(item.err()))
-                .next()
-                .await
-                .expect("provider error must fail the stream"),
-        }
+            .expect_err("provider error must fail the stream")
     }
 
     #[tokio::test]
@@ -864,13 +768,12 @@ mod tests {
         let model = stub_model(None);
         let mut stream = model
             .stream(test_request(vec![Message::user("hello")]))
-            .await
             .unwrap();
         while let Some(item) = stream.next().await {
             item.expect("Rig must accept the headerless SIWC handshake and parse its events");
         }
-        let response = stream.response.expect("parsed terminal response");
-        assert_eq!(response.usage.total_tokens, 2);
+        let response = stream.finish().await.expect("parsed terminal response");
+        assert_eq!(response.usage.total_tokens, Some(2));
         assert_eq!(response.response_id.as_deref(), Some("resp-test"));
         assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
     }
@@ -922,8 +825,14 @@ mod tests {
         ] {
             let raw_error = first_stream_error(stub_model(Some((status, body)))).await;
             let raw_diagnostic = raw_error.to_string();
+            let report_error = user_facing_error(anyhow::Error::new(raw_error.report()));
+            assert!(
+                report_error
+                    .downcast_ref::<SubscriptionUsageLimit>()
+                    .is_some()
+            );
             let error = user_facing_error(
-                anyhow::Error::new(rig::completion::PromptError::from(raw_error))
+                anyhow::Error::new(raw_error)
                     .context("Context handoff failed. Retry to continue the conversation."),
             );
             assert_eq!(
@@ -945,7 +854,7 @@ mod tests {
             json!({"error": {"code": "invalid_api_key", "message": "subscription_sharing_usage_limit_exceeded"}}).to_string(),
             "not JSON".to_string(),
         ] {
-            let error = anyhow::Error::new(CompletionError::from_provider_body(body));
+            let error = anyhow::Error::new(ProviderError::from_provider_body(body));
             let diagnostic = format!("{error:#}");
             assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
         }
@@ -992,28 +901,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn streaming_response_requires_terminal_events_even_without_content_type() {
-        let (_, client) = stub_client("connection-1");
+    async fn responses_model_rejects_premature_eof_and_unparseable_streams() {
         for body in [
             "",
             r#"{"detail":"not an SSE response"}"#,
+            "data: [DONE]\n\n",
             "data: {not json}\n\n",
+            "event: response.completed\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
         ] {
-            let response = http::Response::builder().body(body).unwrap().into();
-            let mut stream = streaming_response(response, Arc::clone(&client.connection))
-                .unwrap()
-                .into_body();
-            let error = stream
-                .by_ref()
-                .filter_map(|item| std::future::ready(item.err()))
-                .next()
-                .await
-                .expect("stream must report an error");
-            let http_client::Error::Instance(error) = error else {
-                panic!("expected terminal-event validation error");
-            };
-            assert_eq!(error.to_string(), STREAM_INTERRUPTED);
-            assert!(stream.next().await.is_none());
+            let error =
+                first_stream_error(stub_model(Some((http::StatusCode::OK, body.to_string()))))
+                    .await;
+            assert!(
+                matches!(error, ProviderError::Truncated | ProviderError::Json(_)),
+                "unexpected error: {error}"
+            );
         }
     }
 
@@ -1028,8 +931,11 @@ mod tests {
             }})
             .to_string(),
         );
-        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            status,
+            body: message,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
@@ -1046,8 +952,11 @@ mod tests {
             http::StatusCode::SERVICE_UNAVAILABLE,
             json!({"detail": "Direct routing is unavailable."}).to_string(),
         );
-        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            status,
+            body: message,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
@@ -1066,11 +975,15 @@ mod tests {
             .body(json!({"detail": format!("Bearer test-token\n{}", "é".repeat(2048))}).to_string())
             .unwrap()
             .into();
-        let http_client::Error::InvalidStatusCodeWithMessage(_, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            body: message,
+            headers,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
+        assert_eq!(headers["x-request-id"], "[redacted]");
         assert!(message.contains("Bearer [redacted]\\n"));
         assert!(message.ends_with("...\" request_id=\"[redacted]\""));
         assert!(message.len() < 2300);
@@ -1097,8 +1010,11 @@ mod tests {
             (unreadable, "Could not read provider error response."),
         ] {
             let response = error_response(http::StatusCode::BAD_GATEWAY, body);
-            let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-                inference_error(response, "test-token").await
+            let http_client::Error::InvalidStatusCodeWithDetails {
+                status,
+                body: message,
+                ..
+            } = inference_error(response, "test-token").await
             else {
                 panic!("expected HTTP status and diagnostics");
             };
@@ -1117,8 +1033,11 @@ mod tests {
         let body =
             reqwest::Body::wrap_stream(futures::stream::pending::<Result<Bytes, std::io::Error>>());
         let response = error_response(http::StatusCode::BAD_GATEWAY, body);
-        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            status,
+            body: message,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
@@ -1226,20 +1145,21 @@ mod tests {
         Message::Assistant {
             id: None,
             content: vec![
-                AssistantContent::Reasoning(Reasoning {
-                    id: Some("rs_1".to_string()),
-                    content: vec![
-                        ReasoningContent::Summary("plan".to_string()),
-                        ReasoningContent::Encrypted("envelope".to_string()),
-                    ],
-                }),
-                AssistantContent::Text(rig::message::Text::new("working on it".to_string())),
+                AssistantContent::Reasoning(
+                    Reasoning {
+                        id: Some("rs_1".to_string()),
+                        content: vec![
+                            ReasoningContent::Summary("plan".to_string()),
+                            ReasoningContent::Encrypted("envelope".to_string()),
+                        ],
+                    }
+                    .sealed("openai"),
+                ),
+                AssistantContent::text("working on it"),
                 AssistantContent::ToolCall(ToolCall {
-                    id: rig::message::ToolCallId::new_or_mint("call-1".to_string()),
-                    provider: ProviderCallId::new("call_1".to_string())
-                        .map(|id| id.with_item_id("fc_1".to_string())),
+                    id: rig::message::CallId::from_dual_wire("fc_1", "call_1"),
                     function: ToolFunction {
-                        name: "exec_command".to_string(),
+                        name: "exec_command".try_into().unwrap(),
                         arguments: json!({"cmd": "pwd"}),
                     },
                     signature: None,
@@ -1252,12 +1172,9 @@ mod tests {
     fn tool_result_turn() -> Message {
         Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: rig::message::ToolCallId::new_or_mint("call-1".to_string()),
-                provider: ProviderCallId::new("call_1".to_string()),
-                name: "exec_command".to_string(),
-                content: vec![ToolResultContent::text("done")]
-                    .try_into()
-                    .expect("non-empty tool result"),
+                call: rig::message::CallId::from_wire("call_1"),
+                name: "exec_command".try_into().unwrap(),
+                content: vec![ToolResultContent::Text("done".into())],
             })],
         }
     }
@@ -1266,9 +1183,10 @@ mod tests {
         chat_history: Vec<Message>,
         additional_params: serde_json::Value,
     ) -> CompletionRequest {
+        let mut chat_history = chat_history;
+        chat_history.insert(0, Message::system("Base instructions."));
         CompletionRequest {
             model: None,
-            preamble: Some("Base instructions.".to_string()),
             chat_history,
             documents: Vec::new(),
             tools: vec![rig::completion::ToolDefinition {
@@ -1293,13 +1211,20 @@ mod tests {
     }
 
     fn wire_body(request: CompletionRequest) -> serde_json::Value {
-        let request = ResponsesCompletionRequest::try_from(ResponsesRequestParams {
-            model: "gpt-5.3-codex".to_string(),
-            request: replay_contents(request),
-            system_instructions_placement: SystemInstructionsPlacement::AllInstructions,
-        })
-        .expect("request converts");
-        serde_json::to_value(request).expect("request serializes")
+        let wire = StatelessResponses(
+            openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("test-token"),
+                "gpt-5.3-codex",
+            )
+            .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions),
+        );
+        let encoded = wire
+            .encode(request, Mode::Streaming)
+            .expect("request converts");
+        let rig::wire::Body::Bytes(bytes) = encoded.request.into_body() else {
+            panic!("Responses uses a JSON body");
+        };
+        serde_json::from_slice(&bytes).expect("request serializes")
     }
 
     fn shaped_body(request: CompletionRequest) -> serde_json::Value {
@@ -1371,6 +1296,7 @@ mod tests {
             .iter()
             .find(|item| item["type"] == "function_call")
             .expect("function call replay item");
+        assert_eq!(call["id"], json!("fc_1"));
         assert_eq!(call["call_id"], json!("call_1"));
         assert_eq!(call["name"], json!("exec_command"));
         assert_eq!(call["arguments"], json!(r#"{"cmd":"pwd"}"#));
@@ -1429,11 +1355,14 @@ mod tests {
         let mut request = test_request(vec![Message::Assistant {
             id: None,
             content: vec![
-                AssistantContent::Reasoning(Reasoning {
-                    id: None,
-                    content: vec![ReasoningContent::Summary("summary only".to_string())],
-                }),
-                AssistantContent::Text(rig::message::Text::new("answer".to_string())),
+                AssistantContent::Reasoning(
+                    Reasoning {
+                        id: Some("rs_summary_only".to_string()),
+                        content: vec![ReasoningContent::Summary("summary only".to_string())],
+                    }
+                    .sealed("openai"),
+                ),
+                AssistantContent::text("answer"),
             ],
         }]);
         request.chat_history.push(Message::user("next"));
@@ -1446,73 +1375,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_guard_fails_a_stream_without_a_terminal_event() {
+    async fn stream_guard_bounds_unterminated_sse_frames() {
         let (_, client) = stub_client("connection-1");
-        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
-            Ok(Bytes::from_static(
-                b"event: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\"}\n\n",
-            )),
-            Ok(Bytes::from_static(b"data: [DONE]\n\n")),
-        ];
-        let mut stream = SiwcStreamGuard::new(
-            futures::stream::iter(chunks),
-            Arc::clone(&client.connection),
-        );
-        assert!(stream.next().await.unwrap().is_ok());
+        let chunks = futures::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from(vec![b'x'; 4 * 1024 * 1024])),
+            Ok(Bytes::from_static(b"x")),
+        ]);
+        let mut stream = SiwcStreamGuard::new(chunks, Arc::clone(&client.connection));
         assert!(stream.next().await.unwrap().is_ok());
         let error = stream.next().await.unwrap().unwrap_err();
-        assert!(error.to_string().contains("terminal response event"));
-
-        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
-            Ok(Bytes::from_static(
-                b"event: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\"}\n\n",
-            )),
-            Ok(Bytes::from_static(
-                b"event: response.completed\ndata: {\"type\": \"response.completed\"}\n\ndata: [DONE]\n\n",
-            )),
-        ];
-        let mut stream = SiwcStreamGuard::new(
-            futures::stream::iter(chunks),
-            Arc::clone(&client.connection),
-        );
-        assert!(stream.next().await.unwrap().is_ok());
-        assert!(stream.next().await.unwrap().is_ok());
-        assert!(stream.next().await.is_none());
-    }
-
-    #[test]
-    fn terminal_frames_require_a_parsed_payload_matching_the_event() {
-        assert!(frame_is_terminal(
-            b"event: response.completed\ndata: {\"type\": \"response.completed\", \"response\": {}}\n\n"
-        ));
-        // An event line without its data payload does not count.
-        assert!(!frame_is_terminal(b"event: response.completed\n\n"));
-        assert!(!frame_is_terminal(
-            b"event: response.completed\ndata: {\"type\": \"response.\n\n"
-        ));
-        assert!(frame_is_terminal(
-            b"data: {\"type\": \"response.failed\", \"response\": {}}\n\n"
-        ));
-        assert!(!frame_is_terminal(
-            b"data: {\"type\": \"response.output_text.delta\"}\n\n"
-        ));
-    }
-
-    #[tokio::test]
-    async fn stream_guard_accepts_a_terminal_frame_split_across_chunks() {
-        let (_, client) = stub_client("connection-1");
-        let frame = "event: response.completed\ndata: {\"type\": \"response.completed\"}\n\n";
-        let split = frame.len() / 2;
-        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
-            Ok(Bytes::from(frame.as_bytes()[..split].to_vec())),
-            Ok(Bytes::from(frame.as_bytes()[split..].to_vec())),
-        ];
-        let mut stream = SiwcStreamGuard::new(
-            futures::stream::iter(chunks),
-            Arc::clone(&client.connection),
-        );
-        assert!(stream.next().await.unwrap().is_ok());
-        assert!(stream.next().await.unwrap().is_ok());
+        assert!(error.to_string().contains("oversized stream frame"));
         assert!(stream.next().await.is_none());
     }
 
@@ -1561,7 +1433,7 @@ mod tests {
         let (_, client) = stub_client("connection-1");
         let model = client.completion_model("gpt-5.3-codex");
         let error = model
-            .completion(test_request(vec![Message::user("hello")]))
+            .call(test_request(vec![Message::user("hello")]))
             .await
             .unwrap_err();
         assert!(error.to_string().contains("requires streaming"));
