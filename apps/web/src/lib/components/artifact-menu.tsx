@@ -1,4 +1,4 @@
-import { Ellipsis, Trash2 } from 'lucide-react';
+import { Ellipsis, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -84,7 +84,6 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 			(control && container.contains(control) ? control : null) ??
 			container.querySelector<HTMLElement>(focusable) ??
 			(target instanceof HTMLElement ? target : null);
-		setError(null);
 		setPosition({
 			x: Math.max(8, Math.min(x, window.innerWidth - 240)),
 			y: Math.max(8, Math.min(y, window.innerHeight - 140))
@@ -166,6 +165,36 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 					<Ellipsis className="size-4" aria-hidden="true" />
 				</button>
 			)}
+			{error &&
+				!position &&
+				createPortal(
+					<div
+						role="alert"
+						className="bg-popover text-popover-foreground fixed right-4 bottom-4 z-250 w-80 max-w-[calc(100vw-2rem)] rounded-md border p-3 shadow-md"
+					>
+						<div className="flex items-center justify-between gap-2">
+							<p className="text-destructive text-sm font-medium">Artifact deletion failed</p>
+							<button
+								type="button"
+								aria-label="Dismiss deletion error"
+								className="text-muted-foreground hover:text-foreground focus-visible:ring-ring rounded-sm p-1 outline-none focus-visible:ring-2"
+								onClick={() => {
+									setError(null);
+									triggerRef.current?.focus({ preventScroll: true });
+								}}
+							>
+								<X className="size-3.5" aria-hidden="true" />
+							</button>
+						</div>
+						<p className="mt-1 text-sm wrap-break-word">
+							{title}: {error}
+						</p>
+						<p className="text-muted-foreground mt-2 text-xs">
+							Open the artifact menu to try again.
+						</p>
+					</div>,
+					document.body
+				)}
 			{position &&
 				createPortal(
 					<div

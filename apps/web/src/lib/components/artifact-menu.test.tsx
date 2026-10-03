@@ -184,6 +184,53 @@ it('dismisses the top-bar menu when the preview receives focus without taking fo
 	expect(onDelete).not.toHaveBeenCalled();
 });
 
+it('keeps a failed pending deletion visible after the preview dismisses its menu', async () => {
+	const pending = Promise.withResolvers<void>();
+
+	const onDelete = vi
+		.fn<() => Promise<void>>()
+		.mockReturnValueOnce(pending.promise)
+		.mockResolvedValue(undefined);
+
+	render(
+		<ArtifactDisplay
+			title="Interactive"
+			artifactType="html"
+			content="<button>App</button>"
+			onDelete={onDelete}
+		/>
+	);
+	const trigger = screen.getByRole('button', { name: 'Interactive actions' });
+	fireEvent.click(trigger);
+	fireEvent.click(screen.getByRole('menuitem'));
+	const preview = screen.getByTitle('Interactive preview');
+	preview.focus();
+	fireEvent.blur(window);
+	expect(screen.queryByRole('menu')).toBeNull();
+	await act(async () => pending.reject(new Error('Disconnected')));
+	expect(screen.getByRole('alert').textContent).toContain('Interactive: Disconnected');
+	expect(document.activeElement).toBe(preview);
+	fireEvent.click(trigger);
+	expect(screen.getByRole('alert').textContent).toBe('Disconnected');
+	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
+	expect(onDelete).toHaveBeenCalledTimes(2);
+	expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('keeps a failure visible after keyboard dismissal and allows acknowledging it', async () => {
+	const pending = Promise.withResolvers<void>();
+	render(<ArtifactMenu trigger="button" title="Notes" onDelete={() => pending.promise} />);
+	const trigger = screen.getByRole('button', { name: 'Notes actions' });
+	fireEvent.click(trigger);
+	fireEvent.click(screen.getByRole('menuitem'));
+	fireEvent.keyDown(window, { key: 'Escape' });
+	await act(async () => pending.reject(new Error('Disconnected')));
+	expect(screen.getByRole('alert').textContent).toContain('Notes: Disconnected');
+	fireEvent.click(screen.getByRole('button', { name: 'Dismiss deletion error' }));
+	expect(screen.queryByRole('alert')).toBeNull();
+	expect(document.activeElement).toBe(trigger);
+});
+
 it('does not steal focus when a dismissed deletion finishes', async () => {
 	const pending = Promise.withResolvers<void>();
 	render(
