@@ -71,6 +71,10 @@ async fn delete_handler(
         std::path::Path::new(&attachment.workspace_path),
     );
     let mut bindings = store.lock().await.map_err(ApiError::internal)?;
+    // Persist the explicit local action before the cloud request can commit.
+    if bindings.remove(artifact_id) {
+        bindings.persist().await.map_err(ApiError::internal)?;
+    }
     let args = BTreeMap::from([
         ("repositoryKey".into(), Value::String(repository_key.into())),
         ("artifactId".into(), Value::String(artifact_id.into())),
@@ -93,9 +97,6 @@ async fn delete_handler(
                 "artifact deletion timed out"
             )));
         }
-    }
-    if bindings.remove(artifact_id) {
-        bindings.persist().await.map_err(ApiError::internal)?;
     }
     Ok(Json(()))
 }

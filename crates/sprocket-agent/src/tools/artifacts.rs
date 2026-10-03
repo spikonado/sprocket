@@ -405,6 +405,10 @@ impl rig::tool::Tool for DeleteArtifactTool {
                 };
                 let mutation_args =
                     mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
+                // Local unbinding belongs to this action even if the cloud reply is lost.
+                if bindings.remove(&args.artifact_id) {
+                    bindings.persist().await.map_err(tool_error)?;
+                }
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
                     run_convex_tool_mutation(
@@ -416,9 +420,6 @@ impl rig::tool::Tool for DeleteArtifactTool {
                 )
                 .await
                 .map_err(|error| tool_error(error.into()))??;
-                if bindings.remove(&args.artifact_id) {
-                    bindings.persist().await.map_err(tool_error)?;
-                }
                 Ok(result)
             },
         )

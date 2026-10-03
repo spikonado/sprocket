@@ -196,3 +196,26 @@ it('opens a preview menu only for gestures from its own sandboxed frame', async 
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
 	expect(onDelete).toHaveBeenCalledOnce();
 });
+
+it('preserves scripts and comments containing head tags in a complete HTML preview', () => {
+	const source =
+		'<!DOCTYPE html><html><!-- <head> --><body><script>window.title = "<head>";</script><p>App</p></body></html>';
+	render(
+		<ArtifactDisplay
+			title="Complete"
+			artifactType="html"
+			content={source}
+			onDelete={vi.fn(async () => {})}
+		/>
+	);
+	const frame = screen.getByTitle('Complete preview');
+
+	if (!(frame instanceof HTMLIFrameElement)) throw new Error('Expected a preview frame.');
+	const parsed = new DOMParser().parseFromString(frame.srcdoc, 'text/html');
+
+	expect(parsed.doctype?.name).toBe('html');
+	expect(parsed.querySelector('p')?.textContent).toBe('App');
+	expect(parsed.scripts).toHaveLength(2);
+	expect(parsed.scripts[0]?.textContent).toBe('window.title = "<head>";');
+	expect(parsed.scripts[1]?.textContent).toContain('sprocket-artifact-menu');
+});

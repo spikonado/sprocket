@@ -56,9 +56,8 @@ export default function ArtifactDisplay({
 
 		if (!document || !onDelete) return document;
 
-		return /<head(?:\s[^>]*)?>/i.test(document)
-			? document.replace(/<head(?:\s[^>]*)?>/i, (head) => head + previewMenuBridge)
-			: document + previewMenuBridge;
+		// Append outside the content so tag text in scripts and comments stays intact.
+		return document + previewMenuBridge;
 	}, [artifactType, content, onDelete]);
 
 	const [showSource, setShowSource] = useState(false);
