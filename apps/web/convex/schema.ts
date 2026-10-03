@@ -100,9 +100,6 @@ export default defineSchema({
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		contextSummary: v.optional(v.string()),
-		// Migration-only field: convertContextHandoffCutoffs removes deployed values.
-		// Drop this validator after the migration completes and no rows retain it.
-		contextSummaryThroughRunId: v.optional(v.id('runs')),
 		// Inclusive last covered part. -1 means the handoff covers an empty prefix.
 		contextSummaryThroughPartNumber: v.optional(v.number()),
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.

@@ -6,7 +6,6 @@ import type { FunctionReference } from 'convex/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { migrateContextHandoffCutoff } from '@convex/lib/contextHandoffMigration';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -154,11 +153,6 @@ export const stripStoredAttachmentImageUploadIds = migrations.define({
 	}
 });
 
-export const convertContextHandoffCutoffs = migrations.define({
-	table: 'threadRecords',
-	migrateOne: migrateContextHandoffCutoff
-});
-
 export const removeSectionLinkedParts = migrations.define({
 	table: 'threadTranscriptWorkSections',
 	migrateOne: async (_ctx, section) => {
@@ -200,7 +194,6 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 	internal.migrations.migrateToolPartJobIds,
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
-	internal.migrations.convertContextHandoffCutoffs,
 	internal.migrations.removeSectionLinkedParts,
 	internal.migrations.removeArtifactRegistryRekeyTargets
 ];
