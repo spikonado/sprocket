@@ -54,6 +54,8 @@ pub struct RunAgentRequest {
     pub chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     pub allow_interaction: bool,
     pub cancellation: sprocket_workspace::WorkspaceCancellation,
+    /// Filled by the server after authenticated run creation resolves the thread.
+    pub command_sessions: Option<sprocket_workspace::CommandSessionManager>,
     pub deployment_url: String,
     pub auth_token_fetcher: AuthTokenFetcher,
     pub execution_secret: String,

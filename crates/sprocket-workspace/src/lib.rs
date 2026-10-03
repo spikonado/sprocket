@@ -32,7 +32,7 @@ pub use builtin_skills::BUILTIN_SKILLS;
 pub use command_output::CommandOutputLimits;
 pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
-    MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, WorkspaceCancellation,
+    MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, RunningCommand, WorkspaceCancellation,
     WorkspaceOperationCancelled, default_command_shell,
 };
 pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};

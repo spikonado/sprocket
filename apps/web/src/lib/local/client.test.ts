@@ -789,3 +789,40 @@ describe('chatgpt local sign-in', () => {
 		);
 	});
 });
+
+describe('running command controls', () => {
+	it('lists live commands without reading output and terminates a scoped session', async () => {
+		const commands = [{ sessionId: '7', command: 'bun run dev', workdir: '/work', startedAt: 100 }];
+
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(Response.json({ commands }))
+			.mockResolvedValueOnce(Response.json({ terminated: true }));
+
+		vi.stubGlobal('fetch', fetch);
+		const api = createLocalClient('http://localhost:17731');
+		const scope = { userId: 'user', threadId: threadRecordId('thread') };
+		const controller = new AbortController();
+		await expect(api.listRunningCommands(scope, controller.signal)).resolves.toEqual({ commands });
+		await expect(api.terminateCommand({ ...scope, sessionId: '7' })).resolves.toEqual({
+			terminated: true
+		});
+		expect(fetch).toHaveBeenNthCalledWith(
+			1,
+			'http://localhost:17731/api/agent/commands',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify(scope),
+				signal: controller.signal
+			})
+		);
+		expect(fetch).toHaveBeenNthCalledWith(
+			2,
+			'http://localhost:17731/api/agent/commands/terminate',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ ...scope, sessionId: '7' })
+			})
+		);
+	});
+});

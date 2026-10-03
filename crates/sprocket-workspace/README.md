@@ -10,7 +10,7 @@ See [ARCHITECTURE.md](../../ARCHITECTURE.md) for its role in the complete system
 
 - Resolve and browse workspace paths.
 - Load scoped workspace instructions and skills.
-- Run cancellable shell commands and manage long-running sessions.
+- Manage shell command sessions whose processes outlive cancelled observations and agent runs.
 - Apply multi-file patches, including paths outside the workspace.
 
 ## Design

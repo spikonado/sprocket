@@ -77,6 +77,7 @@ pub(crate) struct AgentProvider {
 pub(crate) struct AgentProviderRequest {
     pub(crate) allow_interaction: bool,
     pub(crate) cancellation: sprocket_workspace::WorkspaceCancellation,
+    pub(crate) command_sessions: CommandSessionManager,
     pub(crate) run_id: String,
     pub(crate) claim_id: String,
     pub(crate) thread_id: String,
@@ -249,8 +250,8 @@ where
         request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),
+        request.command_sessions.clone(),
     );
-    let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
     let context_handoff_hook = ContextHandoffHook::new(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
@@ -310,7 +311,6 @@ where
     {
         Ok(sink) => sink,
         Err(error) => {
-            session_shutdown.finish().await;
             let result = match classify_provider_error(&error) {
                 ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded { error },
                 ProviderErrorDisposition::Cancelled => AgentProviderResult::Cancelled {
@@ -330,7 +330,6 @@ where
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
-            session_shutdown.finish().await;
             return AgentProviderResult::Failed {
                 text: String::new(),
                 error,
@@ -353,7 +352,7 @@ where
     let mut completed_attempt = None;
     let mut handoff_processed_tokens = 0_u64;
 
-    let result = 'agent_run: {
+    'agent_run: {
         'generations: loop {
             let mut stream = agent
                 .stream_prompt(prompt)
@@ -574,10 +573,7 @@ where
                 }
             }
         }
-    };
-
-    session_shutdown.finish().await;
-    result
+    }
 }
 
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
@@ -868,35 +864,6 @@ fn contiguous_text_id(parts: &[LiveAssistantPart], stream_id: &str) -> String {
     match parts.last() {
         Some(LiveAssistantPart::Text { id, .. }) => id.clone(),
         _ => format!("{stream_id}:text:{}", parts.len()),
-    }
-}
-
-/// Stops persistent command sessions on the normal path and if this future is
-/// dropped early (for example when claim lease renewal fails).
-struct CommandSessionShutdown {
-    sessions: Option<CommandSessionManager>,
-}
-
-impl CommandSessionShutdown {
-    fn new(sessions: CommandSessionManager) -> Self {
-        Self {
-            sessions: Some(sessions),
-        }
-    }
-
-    async fn finish(mut self) {
-        if let Some(sessions) = self.sessions.as_ref() {
-            sessions.stop_all().await;
-        }
-        self.sessions = None;
-    }
-}
-
-impl Drop for CommandSessionShutdown {
-    fn drop(&mut self) {
-        if let Some(sessions) = self.sessions.take() {
-            sessions.terminate_all();
-        }
     }
 }
 
