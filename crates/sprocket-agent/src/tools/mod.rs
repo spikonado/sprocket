@@ -40,7 +40,7 @@ use self::context::tool_error;
 use self::job::mutation_args_from_payload;
 #[cfg(test)]
 use self::questions::{
-    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, DEFAULT_ASK_QUESTION_YIELD_MS,
+    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, DEFAULT_QUESTION_YIELD_MS,
     MAX_QUESTION_CHARS, prepare_ask_question,
 };
 #[cfg(test)]
@@ -249,7 +249,7 @@ mod tests {
                     label: "SQLite".to_string(),
                 },
             ],
-            yield_time_ms: DEFAULT_ASK_QUESTION_YIELD_MS,
+            yield_time_ms: DEFAULT_QUESTION_YIELD_MS,
             timeout_ms: None,
         })
         .expect("valid question");

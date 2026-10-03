@@ -16,8 +16,7 @@ use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure
 use super::job::execute_tool_job;
 use crate::convex::RuntimeClient;
 
-pub(super) const DEFAULT_ASK_QUESTION_YIELD_MS: u64 = 30_000;
-pub(super) const DEFAULT_AWAIT_QUESTION_YIELD_MS: u64 = 30_000;
+pub(super) const DEFAULT_QUESTION_YIELD_MS: u64 = 30_000;
 const MAX_QUESTION_YIELD_MS: u64 = 270_000;
 const QUESTION_POLL_COOLDOWN: Duration = Duration::from_secs(30);
 const QUESTION_POLL_COOLDOWN_ERROR: &str =
@@ -36,20 +35,12 @@ pub(crate) struct AskQuestionTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct AwaitQuestionTool(pub(super) AgentToolContext);
 
-fn default_ask_question_yield_ms() -> u64 {
-    DEFAULT_ASK_QUESTION_YIELD_MS
+fn default_question_yield_ms() -> u64 {
+    DEFAULT_QUESTION_YIELD_MS
 }
 
-fn default_await_question_yield_ms() -> u64 {
-    DEFAULT_AWAIT_QUESTION_YIELD_MS
-}
-
-fn is_default_ask_question_yield_ms(yield_time_ms: &u64) -> bool {
-    *yield_time_ms == DEFAULT_ASK_QUESTION_YIELD_MS
-}
-
-fn is_default_await_question_yield_ms(yield_time_ms: &u64) -> bool {
-    *yield_time_ms == DEFAULT_AWAIT_QUESTION_YIELD_MS
+fn is_default_question_yield_ms(yield_time_ms: &u64) -> bool {
+    *yield_time_ms == DEFAULT_QUESTION_YIELD_MS
 }
 
 fn normalize_ask_yield_ms(yield_time_ms: u64) -> u64 {
@@ -60,7 +51,7 @@ fn normalize_await_yield_ms(yield_time_ms: u64) -> u64 {
     if yield_time_ms == 0 {
         0
     } else {
-        yield_time_ms.clamp(DEFAULT_AWAIT_QUESTION_YIELD_MS, MAX_QUESTION_YIELD_MS)
+        yield_time_ms.clamp(DEFAULT_QUESTION_YIELD_MS, MAX_QUESTION_YIELD_MS)
     }
 }
 
@@ -68,7 +59,7 @@ fn ask_question_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(AskQuestionArgs));
     schema["properties"]["yieldTimeMs"] = json!({
         "type": "integer",
-        "default": DEFAULT_ASK_QUESTION_YIELD_MS,
+        "default": DEFAULT_QUESTION_YIELD_MS,
         "minimum": 0,
         "maximum": MAX_QUESTION_YIELD_MS,
         "description": "Maximum time to wait for completion before returning the tool call."
@@ -85,10 +76,10 @@ fn await_question_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(AwaitQuestionArgs));
     schema["properties"]["yieldTimeMs"] = json!({
         "type": "integer",
-        "default": DEFAULT_AWAIT_QUESTION_YIELD_MS,
+        "default": DEFAULT_QUESTION_YIELD_MS,
         "anyOf": [
             { "type": "integer", "enum": [0] },
-            { "type": "integer", "minimum": DEFAULT_AWAIT_QUESTION_YIELD_MS, "maximum": MAX_QUESTION_YIELD_MS }
+            { "type": "integer", "minimum": DEFAULT_QUESTION_YIELD_MS, "maximum": MAX_QUESTION_YIELD_MS }
         ],
         "description": "Maximum time to wait for an answer before returning the tool call. Zero returns an immediate question/status snapshot."
     });
@@ -116,10 +107,10 @@ pub(crate) struct AskQuestionArgs {
     /// Maximum time to wait for an answer before returning, in milliseconds. Use 0 to return immediately.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_ask_question_yield_ms",
-        skip_serializing_if = "is_default_ask_question_yield_ms"
+        default = "default_question_yield_ms",
+        skip_serializing_if = "is_default_question_yield_ms"
     )]
-    #[schemars(default = "default_ask_question_yield_ms")]
+    #[schemars(default = "default_question_yield_ms")]
     pub(crate) yield_time_ms: u64,
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
@@ -135,10 +126,10 @@ pub(crate) struct AwaitQuestionArgs {
     /// Maximum time to wait for an answer or expiry before returning, in milliseconds. Use 0 for an immediate snapshot.
     #[serde(
         rename = "yieldTimeMs",
-        default = "default_await_question_yield_ms",
-        skip_serializing_if = "is_default_await_question_yield_ms"
+        default = "default_question_yield_ms",
+        skip_serializing_if = "is_default_question_yield_ms"
     )]
-    #[schemars(default = "default_await_question_yield_ms")]
+    #[schemars(default = "default_question_yield_ms")]
     pub(crate) yield_time_ms: u64,
 }
 
@@ -226,6 +217,7 @@ impl rig::tool::Tool for AskQuestionTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
+        let yield_time_ms = normalize_ask_yield_ms(args.yield_time_ms);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
             let runtime = self.0.runtime.clone();
@@ -241,7 +233,7 @@ impl rig::tool::Tool for AskQuestionTool {
                             &prepared.options, args.timeout_ms,
                         ).await?;
                         let snapshot = fetch_question_snapshot(&runtime, &run_id, &created.question_id).await?;
-                        if normalize_ask_yield_ms(args.yield_time_ms) == 0 {
+                        if yield_time_ms == 0 {
                             return question_metadata_from_snapshot(&snapshot);
                         }
                         if snapshot.status != "pending" {
@@ -249,7 +241,7 @@ impl rig::tool::Tool for AskQuestionTool {
                         }
                         observe_question(
                             &runtime, &run_id, &snapshot,
-                            normalize_ask_yield_ms(args.yield_time_ms),
+                            yield_time_ms,
                         ).await
                     } => result,
                 }
@@ -281,6 +273,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
         if args.question_id.trim().is_empty() {
             return Err(tool_failure("questionId cannot be empty"));
         }
+        let yield_time_ms = normalize_await_yield_ms(args.yield_time_ms);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| {
             let runtime = self.0.runtime.clone();
@@ -291,18 +284,18 @@ impl rig::tool::Tool for AwaitQuestionTool {
                     biased;
                     _ = cancellation.cancelled() => Err(cancelled_error()),
                     result = async {
-                        let snapshot = fetch_question_snapshot(&runtime, &run_id, &question_id).await?;
-                        if snapshot.status != "pending" {
-                            return question_result_from_snapshot(&snapshot);
-                        }
-                        if normalize_await_yield_ms(args.yield_time_ms) == 0 {
+                        if yield_time_ms == 0 {
                             return self.0.question_polls.observe_pending(&question_id, || {
                                 fetch_question_snapshot(&runtime, &run_id, &question_id)
                             }).await;
                         }
+                        let snapshot = fetch_question_snapshot(&runtime, &run_id, &question_id).await?;
+                        if snapshot.status != "pending" {
+                            return question_result_from_snapshot(&snapshot);
+                        }
                         observe_question(
                             &runtime, &run_id, &snapshot,
-                            normalize_await_yield_ms(args.yield_time_ms),
+                            yield_time_ms,
                         ).await
                     } => result,
                 }
@@ -526,10 +519,7 @@ mod tests {
     #[test]
     fn ask_yield_normalization_preserves_zero_and_caps_oversized_values() {
         assert_eq!(normalize_ask_yield_ms(0), 0);
-        assert_eq!(
-            normalize_ask_yield_ms(DEFAULT_ASK_QUESTION_YIELD_MS),
-            30_000
-        );
+        assert_eq!(normalize_ask_yield_ms(DEFAULT_QUESTION_YIELD_MS), 30_000);
         assert_eq!(normalize_ask_yield_ms(1), 1);
         assert_eq!(normalize_ask_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
         assert_eq!(normalize_ask_yield_ms(1_800_000), 270_000);
@@ -540,10 +530,7 @@ mod tests {
     fn await_yield_normalization_preserves_zero_and_clamps_oversized_values() {
         assert_eq!(normalize_await_yield_ms(0), 0);
         assert_eq!(normalize_await_yield_ms(1), 30_000);
-        assert_eq!(
-            normalize_await_yield_ms(DEFAULT_AWAIT_QUESTION_YIELD_MS),
-            30_000
-        );
+        assert_eq!(normalize_await_yield_ms(DEFAULT_QUESTION_YIELD_MS), 30_000);
         assert_eq!(normalize_await_yield_ms(MAX_QUESTION_YIELD_MS), 270_000);
         assert_eq!(normalize_await_yield_ms(1_800_000), 270_000);
         assert_eq!(normalize_await_yield_ms(u64::MAX), 270_000);

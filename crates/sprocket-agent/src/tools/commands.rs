@@ -251,10 +251,8 @@ impl rig::tool::Tool for ControlCommandTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        args.action
-            .action()
-            .validate(&args.chars)
-            .map_err(tool_error)?;
+        let action = args.action.action();
+        action.validate(&args.chars).map_err(tool_error)?;
         execute_tool_job(
             &self.0,
             Self::NAME,
@@ -266,7 +264,7 @@ impl rig::tool::Tool for ControlCommandTool {
                     .control_command(
                         cancellation,
                         &args.session_id,
-                        args.action.action(),
+                        action,
                         &args.chars,
                         args.yield_time_ms,
                     )

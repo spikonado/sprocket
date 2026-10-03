@@ -70,18 +70,9 @@ export function toolGroupLabel(toolKey: string) {
 }
 
 function describeExecCommandOptions(input: JsonValue | undefined) {
-	if (!isJsonObject(input)) {
-		return '';
-	}
+	const workdir = isJsonObject(input) ? jsonString(input.workdir) : undefined;
 
-	const details: string[] = [];
-	const workdir = jsonString(input.workdir);
-
-	if (workdir && workdir.trim().length > 0 && workdir !== '.') {
-		details.push(`cwd ${workdir}`);
-	}
-
-	return details.length > 0 ? ` (${details.join(', ')})` : '';
+	return workdir && workdir.trim().length > 0 && workdir !== '.' ? ` (cwd ${workdir})` : '';
 }
 
 /** Detail line for a tool row; no type prefix (that lives on the dropdown label). */
@@ -117,7 +108,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return fields?.action === 'terminate' ? `Terminate ${session}` : `Write to ${session}`;
 		}
 
-		case 'poll_command': {
+		case 'poll_command':
+		case 'write_stdin': {
 			const sessionId = jsonString(fields?.sessionId);
 
 			return sessionId ? `Session ${sessionId}` : 'Command session';
@@ -150,12 +142,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
-		case 'write_stdin': {
-			const sessionId = jsonString(fields?.sessionId);
-
-			return sessionId ? `Session ${sessionId}` : 'Command session';
-		}
-
 		default:
 			return titleizeSnakeCase(name);
 	}

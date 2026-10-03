@@ -4,6 +4,23 @@ import { commandSnapshotLabel, fullToolSummary, toolItemSummary } from '$lib/cha
 
 describe('command tool summaries', () => {
 	it.each([
+		{ workdir: undefined, expected: 'bun run build' },
+		{ workdir: '.', expected: 'bun run build' },
+		{ workdir: ' \t ', expected: 'bun run build' },
+		{ workdir: '/repo', expected: 'bun run build (cwd /repo)' },
+		{ workdir: 'apps/web', expected: 'bun run build (cwd apps/web)' }
+	])('summarizes exec_command with workdir $workdir', ({ workdir, expected }) => {
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'exec',
+			name: 'exec_command',
+			input: { cmd: 'bun run build', ...(workdir === undefined ? {} : { workdir }) }
+		};
+
+		expect(toolItemSummary(tool, new Map())).toBe(expected);
+	});
+
+	it.each([
 		{ action: 'write', chars: 'yes\n', expected: 'Write to Session 7' },
 		{ action: 'terminate', expected: 'Terminate Session 7' }
 	])('describes control action $action before a command label is available', (input) => {
@@ -16,6 +33,31 @@ describe('command tool summaries', () => {
 
 		expect(toolItemSummary(tool, new Map())).toBe(input.expected);
 		expect(toolItemSummary(tool, new Map([['7', 'bun run build']]))).toBe('bun run build');
+	});
+
+	describe.each(['poll_command', 'write_stdin'])('%s', (name) => {
+		it('falls back to the session ID until the command label is available', () => {
+			const tool: AssistantTimelineTool = {
+				type: 'tool',
+				callId: 'monitor',
+				name,
+				input: { sessionId: '7' }
+			};
+
+			expect(toolItemSummary(tool, new Map())).toBe('Session 7');
+			expect(toolItemSummary(tool, new Map([['7', 'bun run build']]))).toBe('bun run build');
+		});
+
+		it('uses a generic session label when no session ID is available', () => {
+			const tool: AssistantTimelineTool = {
+				type: 'tool',
+				callId: 'monitor',
+				name,
+				input: {}
+			};
+
+			expect(toolItemSummary(tool, new Map())).toBe('Command session');
+		});
 	});
 
 	it.each(['control_command', 'poll_command', 'write_stdin'])(

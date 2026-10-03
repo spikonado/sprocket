@@ -284,18 +284,20 @@ impl CommandSessionManager {
             return Err(error);
         }
 
-        if session.completion.borrow().is_none() && matches!(action, CommandAction::Write) {
-            if let Err(error) = session
-                .write(chars.as_bytes().to_vec(), &cancellation)
-                .await
-            {
-                return self
-                    .observe_after_write_error(session, cancellation, yield_time_ms, error)
-                    .await;
+        if session.completion.borrow().is_none() {
+            match action {
+                CommandAction::Write => {
+                    if let Err(error) = session
+                        .write(chars.as_bytes().to_vec(), &cancellation)
+                        .await
+                    {
+                        return self
+                            .observe_after_write_error(session, cancellation, yield_time_ms, error)
+                            .await;
+                    }
+                }
+                CommandAction::Terminate => session.terminate()?,
             }
-        }
-        if session.completion.borrow().is_none() && matches!(action, CommandAction::Terminate) {
-            session.terminate()?;
         }
 
         self.observe_session(
