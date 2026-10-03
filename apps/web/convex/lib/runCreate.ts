@@ -28,6 +28,7 @@ import {
 	type CompletionProvider,
 	type vReasoningEffort
 } from '@convex/lib/validators';
+import { assertModelUsageAvailable } from '@convex/lib/rateLimits';
 import { withRunExecution } from '@convex/lib/runExecution';
 
 export type QueuedRunRequest = {
@@ -105,6 +106,8 @@ export async function createQueuedRunRecord(
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
+
+	await assertModelUsageAvailable(ctx, args.userId);
 
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
 	let threadRecord: Doc<'threadRecords'>;
