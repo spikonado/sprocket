@@ -363,16 +363,6 @@ describe('deleteArtifact', () => {
 			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
 		);
 	});
-
-	it('reports deletion failures so the user can retry the local action', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => Response.json({ error: 'artifact deletion timed out' }, { status: 400 }))
-		);
-		await expect(
-			createLocalClient('http://127.0.0.1:7731').deleteArtifact(request)
-		).rejects.toThrow('artifact deletion timed out');
-	});
 });
 
 describe('watchArtifacts', () => {

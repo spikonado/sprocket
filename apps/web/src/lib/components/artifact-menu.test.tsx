@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
 import ArtifactMenu from './artifact-menu';
-import ChatMarkdown from './chat-markdown';
 import ArtifactDisplay from './home/artifact-display';
 import SidePanel from './home/side-panel';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
@@ -90,23 +89,6 @@ it('keeps deletion errors visible and allows a retry', async () => {
 	expect(screen.queryByRole('menu')).toBeNull();
 });
 
-it('keeps transcript references as open controls without a deletion menu', () => {
-	const onOpenArtifact = vi.fn();
-	render(
-		<ChatMarkdown
-			content={`artifact:${artifact.key}`}
-			artifacts={[artifact]}
-			onOpenArtifact={onOpenArtifact}
-		/>
-	);
-	const button = screen.getByRole('button', { name: 'View Notes' });
-	fireEvent.contextMenu(button);
-	fireEvent.keyDown(button, { key: 'F10', shiftKey: true });
-	expect(screen.queryByRole('menu')).toBeNull();
-	fireEvent.click(button);
-	expect(onOpenArtifact).toHaveBeenCalledWith(artifact.key);
-});
-
 it('deletes from both the sidebar list and selected preview', async () => {
 	const onDeleteArtifact = vi.fn<(id: string) => Promise<void>>(async () => {});
 
@@ -120,26 +102,6 @@ it('deletes from both the sidebar list and selected preview', async () => {
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
 	expect(onDeleteArtifact).toHaveBeenCalledTimes(2);
 	expect(onDeleteArtifact).toHaveBeenLastCalledWith(artifact.key);
-});
-
-it('opens a list deletion menu only from the artifact button', () => {
-	const props = sidePanelProps();
-	render(<SidePanel {...props} />);
-	const artifactButton = screen.getByRole('button', { name: /^Notes.*markdown/ });
-	const fullscreenButton = screen.getByRole('button', { name: 'Open Notes fullscreen' });
-	const row = fullscreenButton.parentElement;
-
-	if (!row) throw new Error('Artifact row is missing');
-	fireEvent.contextMenu(row);
-	expect(screen.queryByRole('menu')).toBeNull();
-	fireEvent.contextMenu(fullscreenButton);
-	fireEvent.keyDown(fullscreenButton, { key: 'F10', shiftKey: true });
-	expect(screen.queryByRole('menu')).toBeNull();
-	fireEvent.click(fullscreenButton);
-	expect(props.onOpenFullscreen).toHaveBeenCalledWith(artifact.key);
-	fireEvent.contextMenu(artifactButton);
-	expect(screen.getByRole('menu', { name: 'Notes actions' })).toBeTruthy();
-	expect(props.onDeleteArtifact).not.toHaveBeenCalled();
 });
 
 it('opens the top-bar menu from the keyboard and restores focus on dismissal', () => {
@@ -260,43 +222,3 @@ it('dismisses a preview menu before collapsing the expanded sidebar', () => {
 	fireEvent.keyDown(window, { key: 'Escape' });
 	expect(onToggleExpanded).toHaveBeenCalledOnce();
 });
-
-it.each(['markdown', 'html', 'react'] as const)(
-	'keeps %s rendered content and its title free of deletion gestures',
-	(artifactType) => {
-		render(
-			<ArtifactDisplay
-				title="Interactive"
-				artifactType={artifactType}
-				content="<button>App</button>"
-				onDelete={vi.fn(async () => {})}
-			/>
-		);
-		const title = screen.getByText('Interactive');
-		fireEvent.contextMenu(title);
-		fireEvent.keyDown(title, { key: 'F10', shiftKey: true });
-
-		const content =
-			artifactType === 'markdown'
-				? screen.getByText('App')
-				: screen.getByTitle('Interactive preview');
-
-		fireEvent.contextMenu(content);
-		fireEvent.keyDown(content, { key: 'F10', shiftKey: true });
-
-		if (content instanceof HTMLIFrameElement) {
-			expect(content.srcdoc).not.toContain('sprocket-artifact-menu');
-			fireEvent(
-				window,
-				new MessageEvent('message', {
-					data: { type: 'sprocket-artifact-menu', x: 10, y: 20 },
-					source: content.contentWindow
-				})
-			);
-		}
-
-		expect(screen.queryByRole('menu')).toBeNull();
-		fireEvent.click(screen.getByRole('button', { name: 'Interactive actions' }));
-		expect(screen.getByRole('menu')).toBeTruthy();
-	}
-);

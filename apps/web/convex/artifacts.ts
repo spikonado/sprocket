@@ -32,9 +32,7 @@ const vArtifactMutationResult = v.object({
 	scope: v.literal('project')
 });
 
-const vDeleteArtifactMutationResult = v.object({
-	artifactId: v.id('artifacts')
-});
+const vDeleteArtifactMutationResult = vArtifactMutationResult.pick('artifactId');
 
 const vProjectArtifact = schema
 	.doc('artifacts')

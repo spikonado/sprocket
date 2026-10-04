@@ -94,8 +94,6 @@ export default function ArtifactMenu({ title, onDelete, trigger, children }: Pro
 		busyRef.current = true;
 		setBusy(true);
 		setError(null);
-		// Keep focus inside the menu while its action is disabled during deletion.
-		menuRef.current?.focus({ preventScroll: true });
 
 		try {
 			await onDelete();

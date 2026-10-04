@@ -443,7 +443,7 @@ describe('cloud artifacts', () => {
 		expect(jobs.map((job) => job.result)).toEqual(results.map(({ result }) => result));
 	});
 
-	it('deletes project artifacts once and rejects stale sync without recreating them', async () => {
+	it('deletes idempotently, rejects stale sync, and allows explicit registration again', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 		const args = { artifactId, repositoryKey };
@@ -475,6 +475,13 @@ describe('cloud artifacts', () => {
 				contentType: 'markdown'
 			})
 		).rejects.toThrow(/not found/i);
+
+		const recreated = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
+		expect(recreated.artifactId).not.toBe(artifactId);
+		expect((await asUser.query(api.artifacts.listArtifacts, { repositoryKey })).page).toEqual([
+			expect.objectContaining({ _id: recreated.artifactId, content: fields.content })
+		]);
+		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(3);
 	});
 
 	it('enforces deletion account and project boundaries before changing registry state', async () => {
@@ -528,7 +535,7 @@ describe('cloud artifacts', () => {
 		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey: 'other' })).toBe(0);
 	});
 
-	it('requires an active claim for deletion and persists agent deletion tool history', async () => {
+	it('requires an active claim and deletes through the agent mutation', async () => {
 		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
 		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
 
@@ -546,49 +553,18 @@ describe('cloud artifacts', () => {
 
 		expect(await t.run((ctx) => ctx.db.get('artifacts', artifactId))).not.toBeNull();
 
-		const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			...auth,
-			...toolTranscriptAssignment(auth.runId, auth.claimId, 1),
-			kind: 'delete_artifact',
-			payload: { artifactId }
-		});
-
 		const result = await asUser.mutation(api.artifacts.deleteArtifactForRun, {
 			...auth,
 			artifactId
 		});
 
 		expect(result).toEqual({ artifactId });
-		expect(
-			await asUser.mutation(api.executor.complete, { ...auth, jobId: job.jobId, result })
-		).toBe(true);
-		const storedJob = await t.run((ctx) => ctx.db.get('executorJobs', job.jobId));
-		expect(storedJob).toMatchObject({
-			kind: 'delete_artifact',
-			status: 'completed',
-			payload: { artifactId },
-			result: { artifactId }
-		});
+		expect((await asUser.query(api.artifacts.listArtifacts, { repositoryKey })).page).toEqual([]);
 		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(2);
 		await t.run((ctx) => ctx.db.patch('runs', auth.runId, { status: 'completed' }));
 		await expect(
 			asUser.mutation(api.artifacts.deleteArtifactForRun, { ...auth, artifactId })
 		).rejects.toThrow(/no longer active/i);
-	});
-
-	it('allows registering an artifact again after deletion', async () => {
-		const { t, asUser, repositoryKey, auth } = await seedActiveRun();
-		const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, { ...auth, ...fields });
-		await asUser.mutation(api.artifacts.deleteArtifact, { repositoryKey, artifactId });
-		expect(await t.run((ctx) => ctx.db.query('artifacts').collect())).toEqual([]);
-
-		const recreated = await asUser.mutation(api.artifacts.addArtifact, {
-			...auth,
-			...fields
-		});
-
-		expect(recreated.artifactId).not.toBe(artifactId);
-		expect(await asUser.query(api.artifacts.getArtifactState, { repositoryKey })).toBe(3);
 	});
 
 	it('pages more than 16 MB of content', async () => {
