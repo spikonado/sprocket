@@ -26,7 +26,7 @@ export default function ReasoningDisclosure({ text, inProgress }: Props) {
 				/>
 			</button>
 			{disclosure.expanded ? (
-				<div className="text-muted-foreground mt-1.5 text-[13px] leading-6 whitespace-pre-wrap">
+				<div className="text-muted-foreground mt-1.5 text-[13px] leading-6 [overflow-wrap:anywhere] whitespace-pre-wrap">
 					{text}
 				</div>
 			) : null}

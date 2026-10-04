@@ -227,7 +227,7 @@ describe('transcript viewport paging', () => {
 	});
 
 	it.each(['live', 'persisted'] as const)(
-		'uses the same patch and failure disclosures for %s tools',
+		'shows patch paths and failure details inline for %s tools',
 		async (kind) => {
 			const parts: LiveTranscriptMessage['parts'] = [
 				{
@@ -275,26 +275,141 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 
-			const patch = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes('Changed Files')
-			);
-
-			expect(patch).toBeUndefined();
+			const files = [...viewport.querySelectorAll('[data-tool-kind="apply_patch"] p[title]')];
+			expect(files.map((row) => row.textContent)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+			expect(files.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
 			expect(viewport.textContent).toContain('a.txt');
 			expect(viewport.textContent).toContain('b.txt');
 			expect(viewport.textContent).toContain('c.txt');
-			const failures = [...viewport.querySelectorAll('details summary')];
-			expect(failures.map((summary) => summary.textContent)).toEqual([
+
+			const failures = [...viewport.querySelectorAll('[data-tool-kind] p[title]')].filter(
+				(row) =>
+					row.textContent?.includes('(cancelled)') || row.textContent?.includes('(interrupted)')
+			);
+
+			expect(failures.map((row) => row.textContent)).toEqual([
 				expect.stringContaining('(cancelled)'),
 				expect.stringContaining('(interrupted)')
 			]);
 			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
-			expect(viewport.querySelector('details [role="status"]')?.textContent).toBe(
+			expect(viewport.querySelector('[data-tool-kind] [role="status"]')?.textContent).toBe(
 				'stopped by user'
 			);
 			expect(props.loadSectionDetails).toBeDefined();
 		}
 	);
+
+	it.each(['live', 'persisted'] as const)(
+		'lists repeated tools, artifacts, and reasoning directly inside %s work',
+		async (kind) => {
+			const calls: { name: string; input: JsonValue }[] = [
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'exec_cmd',
+					input: { cmd: `echo command-${index}` }
+				})),
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'read_skill',
+					input: { name: `skill-${index}` }
+				})),
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'apply_patch',
+					input: { patch: `*** Begin Patch\n*** Add File: file-${index}.txt\n+text\n*** End Patch` }
+				})),
+				{ name: 'add_artifact', input: { path: 'notes.md' } },
+				{ name: 'list_artifacts', input: {} },
+				{ name: 'edit_artifact', input: { path: 'notes.md' } }
+			];
+
+			const parts: LiveTranscriptMessage['parts'] = [
+				{ type: 'reasoning', id: 'plan', text: 'Inspect, edit, and validate.' },
+				...calls.flatMap((call, index): LiveTranscriptMessage['parts'] => [
+					{ type: 'tool-call', callId: `tool-${index}`, ...call },
+					{ type: 'tool-result', callId: `tool-${index}`, name: call.name, output: {} }
+				])
+			];
+
+			const response: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), parts }
+					: { ...message(3), kind: 'work', id: 'work-3', itemCount: calls.length };
+
+			const { viewport, setProps } = await renderTranscript([response]);
+			setProps({
+				loadSectionDetails: vi
+					.fn()
+					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+			});
+			click(within(viewport).getByRole('button', { name: /^Worked/ }));
+			await settle();
+
+			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
+			expect(rows).toHaveLength(calls.length);
+			expect(
+				rows.every((row) => row.querySelector('p[title]')?.firstElementChild?.tagName === 'svg')
+			).toBe(true);
+			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(2);
+			expect(viewport.querySelector('details')).toBeNull();
+
+			for (let index = 0; index < 3; index += 1) {
+				expect(viewport.textContent).toContain(`echo command-${index}`);
+				expect(viewport.textContent).toContain(`$skill-${index}`);
+				expect(viewport.textContent).toContain(`file-${index}.txt`);
+			}
+
+			expect(viewport.textContent).toContain('Created Artifact:notes.md');
+			expect(viewport.textContent).toContain('Listed Artifacts');
+			expect(viewport.textContent).toContain('Updated Artifact:notes.md');
+			click(within(viewport).getByRole('button', { name: 'Reasoned' }));
+			expect(viewport.textContent).toContain('Inspect, edit, and validate.');
+		}
+	);
+
+	it('keeps running calls inside Working as they settle and the run completes', async () => {
+		const response: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: Array.from({ length: 3 }, (_, index) => ({
+				type: 'tool-call',
+				callId: `command-${index}`,
+				name: 'exec_cmd',
+				input: { cmd: `sleep ${index + 1}` }
+			}))
+		};
+
+		const { viewport, setProps } = await renderTranscript([response]);
+		setProps({ activeRunId: response.runId });
+		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
+		const work = within(viewport).getByRole('button', { name: /^Working/ });
+		click(work);
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-kind] p[title]')].map((row) => row.textContent)
+		).toEqual(['sleep 1', 'sleep 2', 'sleep 3']);
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
+
+		const settled: LiveTranscriptMessage = {
+			...response,
+			runStatus: 'completed',
+			parts: [
+				...response.parts,
+				...response.parts
+					.filter((part) => part.type === 'tool-call')
+					.map((part) => ({
+						type: 'tool-result' as const,
+						callId: part.callId,
+						name: part.name,
+						output: { exitCode: 0 }
+					}))
+			]
+		};
+
+		setProps({ messages: [settled], activeRunId: null });
+		await settle();
+		expect(within(viewport).getByRole('button', { name: /^Worked/ })).toBe(work);
+		expect(work.getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
+		expect(viewport.querySelector('.animate-spin')).toBeNull();
+	});
 
 	it.each([false, true])(
 		'reveals a synchronous call only after its result arrives with async=%s',
@@ -329,13 +444,7 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector('button[aria-expanded]'));
 			await settle();
 
-			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
-			expect(viewport.querySelector('[title="sleep 10 (running)"] .animate-spin') !== null).toBe(
-				withAsync
-			);
-			expect(viewport.querySelector('[title="sleep 10 (running)"] .sr-only')?.textContent).toBe(
-				withAsync ? 'Running' : undefined
-			);
+			expect(viewport.querySelector('[title="sleep 10"]') !== null).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -355,9 +464,8 @@ describe('transcript viewport paging', () => {
 			});
 			await settle();
 
-			expect(viewport.textContent).not.toContain('Read Skill');
 			expect(viewport.textContent).toContain('hidden-skill');
-			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
+			expect(viewport.querySelector('[title="sleep 10"]') !== null).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -444,14 +552,9 @@ describe('transcript viewport paging', () => {
 			click(work);
 			await settle();
 
-			const commands = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes(group)
-			);
-
-			expect(commands).toBeUndefined();
+			expect(viewport.textContent).not.toContain(group);
 			expect(viewport.querySelector('.animate-spin')).toBeNull();
 			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
-			expect(viewport.textContent).toContain('Still running when this call returned');
 		}
 	);
 
@@ -504,7 +607,6 @@ describe('transcript viewport paging', () => {
 		await settle();
 
 		expect(transcript.getAllByTitle('npm run dev')).toHaveLength(2);
-		expect(transcript.getAllByText('Still running when this call returned')).toHaveLength(2);
 	});
 
 	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
@@ -563,15 +665,11 @@ describe('transcript viewport paging', () => {
 		await settle();
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 
-		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
-			(button) => {
-				const label = button.textContent?.trim();
-
-				return label === 'Reasoned' || label === 'Reasoning' ? [label] : [];
-			}
-		);
-
-		expect(reasoningLabels).toEqual(['Reasoned', 'Reasoning']);
+		expect(viewport.textContent).toContain('Reasoned');
+		expect(viewport.textContent).toContain('Reasoning');
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(3);
+		click(within(viewport).getByRole('button', { name: 'Reasoned' }));
+		expect(viewport.textContent).toContain('Saved reasoning');
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
 
@@ -699,9 +797,16 @@ describe('transcript viewport paging', () => {
 		expect(viewport.textContent).not.toContain('Next details');
 	});
 
-	it.each([false, true])(
-		'anchors the visible tool after prepending, including movement during the request: %s',
-		async (moveWhileLoading) => {
+	it.each([
+		{ visibleDetail: 'tool', moveWhileLoading: false },
+		{ visibleDetail: 'tool', moveWhileLoading: true },
+		{ visibleDetail: 'final patch error', moveWhileLoading: false },
+		{ visibleDetail: 'final patch error', moveWhileLoading: true }
+	])(
+		'anchors the visible $visibleDetail after prepending, movement during the request: $moveWhileLoading',
+		async ({ visibleDetail, moveWhileLoading }) => {
+			const viewingError = visibleDetail === 'final patch error';
+
 			const work: TranscriptDisplayRow = {
 				...message(2),
 				id: 'work',
@@ -714,17 +819,24 @@ describe('transcript viewport paging', () => {
 				message(0),
 				message(1),
 				work,
-				message(3)
+				...(viewingError ? [] : [message(3)])
 			]);
 
 			setProps({ nextBefore: undefined });
 
 			const rows = () =>
-				[...viewport.querySelectorAll<HTMLElement>('[data-work-detail]')].filter(
-					(element) => !element.querySelector('[data-work-detail]')
-				);
+				[
+					...viewport.querySelectorAll<HTMLElement>(
+						'[data-work-detail], [data-tool-kind] > [role="status"]'
+					)
+				].filter((element) => !element.querySelector('[data-work-detail]'));
 
-			Object.defineProperty(viewport, 'scrollHeight', { get: () => 1200 + rows().length * 100 });
+			const rowHeight = (element: HTMLElement) =>
+				element.getAttribute('role') === 'status' ? 600 : 100;
+
+			Object.defineProperty(viewport, 'scrollHeight', {
+				get: () => 1200 + rows().reduce((height, element) => height + rowHeight(element), 0)
+			});
 			let olderVisible = false;
 			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 				this: HTMLElement
@@ -742,7 +854,16 @@ describe('transcript viewport paging', () => {
 				const detailIndex = details.indexOf(this);
 
 				if (detailIndex >= 0)
-					return new DOMRect(0, 650 + detailIndex * 100 - viewport.scrollTop, 800, 100);
+					return new DOMRect(
+						0,
+						650 +
+							details
+								.slice(0, detailIndex)
+								.reduce((height, element) => height + rowHeight(element), 0) -
+							viewport.scrollTop,
+						800,
+						rowHeight(this)
+					);
 				const index = [...viewport.querySelectorAll('[data-transcript-anchor]')].indexOf(this);
 
 				return new DOMRect(
@@ -755,15 +876,30 @@ describe('transcript viewport paging', () => {
 
 			function page(ids: number[], previousBefore?: number): TranscriptDisplayDetails {
 				return {
-					parts: ids.flatMap((id) => [
-						{
-							type: 'tool-call' as const,
-							callId: String(id),
-							name: 'exec_command',
-							input: { cmd: `echo ${id}` }
-						},
-						{ type: 'tool-result' as const, callId: String(id), name: 'exec_command', output: {} }
-					]),
+					parts: ids.flatMap((id): TranscriptDisplayDetails['parts'] => {
+						const failedPatch = viewingError && id === 7;
+						const name = failedPatch ? 'apply_patch' : 'exec_command';
+
+						return [
+							{
+								type: 'tool-call' as const,
+								callId: String(id),
+								name,
+								input: failedPatch
+									? {
+											patch:
+												'*** Begin Patch\n*** Update File: a.ts\n*** Update File: b.ts\n*** End Patch'
+										}
+									: { cmd: `echo ${id}` }
+							},
+							{
+								type: 'tool-result' as const,
+								callId: String(id),
+								name,
+								output: failedPatch ? { status: 'failed', error: 'The patch did not apply.' } : {}
+							}
+						];
+					}),
 					previousBefore,
 					revision: 1,
 					indexing: false,
@@ -794,14 +930,21 @@ describe('transcript viewport paging', () => {
 			click(disclosure);
 			await settle();
 			expect(load).toHaveBeenCalledTimes(1);
-			scrollTo(700);
-			const anchor = rows()[0];
+
+			const anchor = viewingError
+				? within(viewport).getByText('The patch did not apply.')
+				: rows()[0];
+
+			const initialTop = viewingError ? 1000 : 699;
+			scrollTo(initialTop + 1);
 			olderVisible = true;
-			scrollTo(699);
+			scrollTo(initialTop);
 			await settle();
 			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
 
-			if (moveWhileLoading) scrollTo(660);
+			const top = moveWhileLoading ? initialTop - 39 : initialTop;
+
+			if (moveWhileLoading) scrollTo(top);
 			const offset = anchor.getBoundingClientRect().top;
 			await act(async () => {
 				resolve(page([4, 5]));
@@ -809,9 +952,9 @@ describe('transcript viewport paging', () => {
 			await settle();
 			expect(anchor.isConnected).toBe(true);
 			expect(anchor.getBoundingClientRect().top).toBe(offset);
-			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
+			expect(viewport.scrollTop).toBe(top + 200);
 			act(() => resize());
-			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
+			expect(viewport.scrollTop).toBe(top + 200);
 		}
 	);
 
