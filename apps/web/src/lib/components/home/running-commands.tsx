@@ -3,10 +3,23 @@ import { ChevronDown, Trash2 } from 'lucide-react';
 import type { TranscriptScopeRequest } from '$lib/types/sprocket';
 import { useRunningCommands, type CommandApi } from '$lib/home/running-commands';
 
-function ScopedRunningCommands({ api, scope }: { api: CommandApi; scope: TranscriptScopeRequest }) {
+type RunningCommandsProps = {
+	api: CommandApi;
+	scope: TranscriptScopeRequest;
+	collapseWhen?: boolean;
+};
+
+function ScopedRunningCommands({ api, scope, collapseWhen = false }: RunningCommandsProps) {
 	const { commands, stopping, error, terminate } = useRunningCommands(api, scope);
-	const [expanded, setExpanded] = useState(true);
+	const [expanded, setExpanded] = useState(false);
+	const [previousCollapseWhen, setPreviousCollapseWhen] = useState(collapseWhen);
 	const contentId = useId();
+
+	if (collapseWhen !== previousCollapseWhen) {
+		setPreviousCollapseWhen(collapseWhen);
+
+		if (collapseWhen) setExpanded(false);
+	}
 
 	if (commands.length === 0) return null;
 
@@ -86,6 +99,6 @@ function ScopedRunningCommands({ api, scope }: { api: CommandApi; scope: Transcr
 	);
 }
 
-export default function RunningCommands(props: { api: CommandApi; scope: TranscriptScopeRequest }) {
+export default function RunningCommands(props: RunningCommandsProps) {
 	return <ScopedRunningCommands key={`${props.scope.userId}:${props.scope.threadId}`} {...props} />;
 }

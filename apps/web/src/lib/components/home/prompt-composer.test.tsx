@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
-import type { WorkspaceSearchResult } from '$lib/types/sprocket';
+import type { TranscriptScopeRequest, WorkspaceSearchResult } from '$lib/types/sprocket';
 
 const modelCatalog: ModelCatalog = {
 	defaultModelId: 'model-one',
@@ -152,6 +152,42 @@ function dispatchDrag(
 
 	return event;
 }
+
+describe('PromptComposer running commands', () => {
+	it('places commands inside the footer and collapses them when Continue working appears', async () => {
+		const { props, composer, rerender } = renderComposer({
+			runningCommands: {
+				api: {
+					listRunningCommands: vi.fn(async () => ({
+						commands: [{ sessionId: '1', command: 'bun run dev', workdir: '/work', startedAt: 1 }]
+					})),
+					terminateCommand: vi.fn()
+				},
+				// SAFETY: fixture strings are only compared as opaque Convex document ids.
+				scope: { userId: 'user', threadId: 'thread' as TranscriptScopeRequest['threadId'] }
+			},
+			onContinueWorking: vi.fn()
+		});
+
+		const toggle = await screen.findByRole('button', { name: 'Running commands' });
+		const dashboard = screen.getByRole('region', { name: 'Running commands' });
+		expect(dashboard.closest('footer')).toBe(composer.closest('footer'));
+		expect(dashboard.nextElementSibling).toBe(composer);
+		expect(toggle.getAttribute('aria-expanded')).toBe('false');
+		await click(toggle);
+		expect(screen.getByRole('button', { name: 'Stop command: bun run dev' })).toBeTruthy();
+
+		rerender({ ...props, showContinueWorking: true });
+		const continueButton = screen.getByRole('button', { name: 'Continue working' });
+		expect(dashboard.nextElementSibling).toBe(continueButton.parentElement);
+		expect(continueButton.parentElement?.nextElementSibling).toBe(composer);
+		expect(toggle.getAttribute('aria-expanded')).toBe('false');
+		await click(continueButton);
+		expect(props.onContinueWorking).toHaveBeenCalledOnce();
+		await click(toggle);
+		expect(screen.getByRole('button', { name: 'Stop command: bun run dev' })).toBeTruthy();
+	});
+});
 
 describe('PromptComposer file drag and drop', () => {
 	it('shows a drop target and attaches dropped files', () => {
