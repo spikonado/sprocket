@@ -27,7 +27,7 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('running commands dashboard', () => {
-	it('collapses to the heading and restores command controls when expanded', async () => {
+	it('starts collapsed and toggles command controls', async () => {
 		const api: CommandApi = {
 			listRunningCommands: vi.fn(async () => ({ commands: [command] })),
 			terminateCommand: vi.fn()
@@ -36,13 +36,14 @@ describe('running commands dashboard', () => {
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
 		const toggle = screen.getByRole('button', { name: 'Running commands' });
-		expect(toggle.getAttribute('aria-expanded')).toBe('true');
-		fireEvent.click(toggle);
 		expect(toggle.getAttribute('aria-expanded')).toBe('false');
 		expect(screen.queryByRole('button', { name: 'Stop command: bun run dev' })).toBeNull();
 		expect(screen.getByText('1')).toBeTruthy();
 		fireEvent.click(toggle);
+		expect(toggle.getAttribute('aria-expanded')).toBe('true');
 		expect(screen.getByRole('button', { name: 'Stop command: bun run dev' })).toBeTruthy();
+		fireEvent.click(toggle);
+		expect(toggle.getAttribute('aria-expanded')).toBe('false');
 	});
 
 	it('tracks commands after a run and disappears when the last process exits', async () => {
@@ -57,6 +58,7 @@ describe('running commands dashboard', () => {
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
 		expect(screen.getByRole('region', { name: 'Running commands' })).toBeTruthy();
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(screen.getByText('/workspace/sprocket')).toBeTruthy();
 		await flush(1_000);
 		expect(screen.queryByRole('region', { name: 'Running commands' })).toBeNull();
@@ -77,6 +79,7 @@ describe('running commands dashboard', () => {
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		const stop = screen.getByRole('button', { name: 'Stop command: bun run dev' });
 		fireEvent.click(stop);
 		expect(api.terminateCommand).toHaveBeenCalledWith({ ...scope('thread'), sessionId: '1' });
@@ -133,9 +136,12 @@ describe('running commands dashboard', () => {
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush();
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Stop command: bun run dev' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		await flush();
 		expect(screen.getByRole('alert').textContent).toBe('Server offline');
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(
 			screen.getByRole('button', { name: 'Stop command: bun run dev' }).hasAttribute('disabled')
 		).toBe(false);
@@ -160,6 +166,7 @@ describe('running commands dashboard', () => {
 
 			const view = render(<RunningCommands api={api} scope={scope('old')} />);
 			await flush();
+			fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 			fireEvent.click(screen.getByRole('button', { name: 'Stop command: bun run dev' }));
 			expect(
 				screen.getByRole('button', { name: 'Stop command: bun run dev' }).hasAttribute('disabled')
@@ -171,6 +178,14 @@ describe('running commands dashboard', () => {
 				/>
 			);
 			await flush();
+
+			if (change === 'thread') {
+				expect(
+					screen.getByRole('button', { name: 'Running commands' }).getAttribute('aria-expanded')
+				).toBe('false');
+				fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
+			}
+
 			expect(
 				screen.getByRole('button', { name: 'Stop command: bun run dev' }).hasAttribute('disabled')
 			).toBe(false);
@@ -184,7 +199,7 @@ describe('running commands dashboard', () => {
 		}
 	);
 
-	it('recovers from a polling failure without hiding known running commands', async () => {
+	it('shows polling failures while collapsed and recovers without losing known commands', async () => {
 		const api: CommandApi = {
 			listRunningCommands: vi
 				.fn()
@@ -196,6 +211,12 @@ describe('running commands dashboard', () => {
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush(1_000);
+		expect(screen.getByRole('region', { name: 'Running commands' })).toBeTruthy();
+		expect(
+			screen.getByRole('button', { name: 'Running commands' }).getAttribute('aria-expanded')
+		).toBe('false');
+		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(screen.getByText('bun run dev')).toBeTruthy();
 		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
 		await flush(1_000);

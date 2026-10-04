@@ -10,6 +10,7 @@ type Props = {
 	artifactType: ArtifactType;
 	content: string;
 	localPath?: string;
+	workspacePath?: string;
 	localError?: string;
 	variant?: 'card' | 'full';
 	/** Enter true browser fullscreen for this artifact (content only). */
@@ -23,6 +24,7 @@ export default function ArtifactDisplay({
 	artifactType,
 	content,
 	localPath,
+	workspacePath,
 	localError,
 	variant = 'card',
 	onOpenFullscreen,
@@ -80,7 +82,11 @@ export default function ArtifactDisplay({
 					</pre>
 				) : (
 					<div className="h-full overflow-auto p-3 pr-10">
-						<ChatMarkdown content={content} className="text-foreground text-sm" />
+						<ChatMarkdown
+							content={content}
+							className="text-foreground text-sm"
+							imageScope={{ workspacePath, documentPath: localPath }}
+						/>
 					</div>
 				)}
 				<button

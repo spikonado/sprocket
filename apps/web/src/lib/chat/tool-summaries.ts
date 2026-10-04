@@ -1,7 +1,6 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
 	assistantTimelineToolError,
-	isAssistantTimelineToolRunning,
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
@@ -15,15 +14,18 @@ function titleizeSnakeCase(value: string) {
 		.join(' ');
 }
 
-export function toolGroupLabel(toolKey: string) {
+export function toolItemLabel(toolKey: string): string | undefined {
+	if (isCommandToolKind(toolKey)) return undefined;
+
 	switch (toolKey) {
 		case 'apply_patch':
-			return 'Changed Files';
 		case 'ask_question':
-			return 'Asked Questions';
 		case 'await_question':
 		case 'poll_question':
-			return 'Waiting for Answers';
+		case 'read_skill':
+		case 'scrape_url':
+		case 'web_search':
+			return undefined;
 		case 'spawn_subagent':
 			return 'Delegated Tasks';
 		case 'control_subagent':
@@ -38,25 +40,16 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Checked Docs';
 		case 'add_artifact':
 		case 'create_artifact':
-			return 'Created Artifacts';
+			return 'Created Artifact';
 		case 'edit_artifact':
 		case 'update_artifact':
-			return 'Updated Artifacts';
+			return 'Updated Artifact';
 		case 'list_artifacts':
 			return 'Listed Artifacts';
 		case 'save_artifact':
-			return 'Saved Artifacts';
+			return 'Saved Artifact';
 		case 'delete_artifact':
-			return 'Deleted Artifacts';
-		case 'exec_command':
-		case 'exec_cmd':
-			return 'Ran Commands';
-		case 'control_command':
-		case 'control_cmd':
-			return 'Controlled Commands';
-		case 'poll_command':
-		case 'poll_cmd':
-			return 'Polled Commands';
+			return 'Deleted Artifact';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
 		case 'mandate_charge':
@@ -64,23 +57,15 @@ export function toolGroupLabel(toolKey: string) {
 		case 'mandate_list':
 			return 'Listed Mandates';
 		case 'mandate_report':
-			return 'Settled Charges';
+			return 'Settled Charge';
 		case 'mandate_setup':
 			return 'Set Up Mandate';
 		case 'mandate_status':
 			return 'Checked Mandate';
-		case 'read_skill':
-			return 'Read Skill';
 		case 'parse_file':
-			return 'Parsed Files';
-		case 'scrape_url':
-			return 'Read URLs';
+			return 'Parsed File';
 		case 'screenshot_url':
-			return 'Captured Screenshots';
-		case 'web_search':
-			return 'Searched Web';
-		case 'write_stdin':
-			return 'Monitored Commands';
+			return 'Captured Screenshot';
 		default:
 			return titleizeSnakeCase(toolKey);
 	}
@@ -92,7 +77,6 @@ function describeExecCommandOptions(input: JsonValue | undefined) {
 	return workdir && workdir.trim().length > 0 && workdir !== '.' ? ` (cwd ${workdir})` : '';
 }
 
-/** Detail line for a tool row; no type prefix (that lives on the dropdown label). */
 function summarizeTool(name: string, input: JsonValue | undefined) {
 	const fields = isJsonObject(input) ? input : undefined;
 
@@ -338,10 +322,6 @@ function patchSummary(toolLog: AssistantTimelineTool) {
 	return toolLog.name === 'apply_patch' ? summarizePatchInput(toolLog.input) : null;
 }
 
-export function changedFileCount(tools: AssistantTimelineTool[]) {
-	return new Set(tools.flatMap((tool) => patchSummary(tool)?.split('\n') ?? [])).size;
-}
-
 function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
 	if (kind === 'web_search' && isJsonObject(result) && Array.isArray(result.results)) {
 		const count = result.results.length;
@@ -398,25 +378,12 @@ export function toolItemSummary(
 	return summarizeTool(toolLog.name, toolLog.input);
 }
 
-export function commandSnapshotLabel(tool: AssistantTimelineTool): string | undefined {
-	const kind = tool.job?.kind ?? tool.name;
-	const output: JsonValue | undefined = tool.output ?? tool.job?.result;
-
-	return isCommandToolKind(kind) && isJsonObject(output) && output.running === true
-		? 'Still running when this call returned'
-		: undefined;
-}
-
 export function fullToolSummary(
 	toolLog: AssistantTimelineTool,
 	isStreaming: boolean,
 	sessionCommands: ReadonlyMap<string, string>
 ) {
 	const summary = toolItemSummary(toolLog, sessionCommands);
-
-	if (isAssistantTimelineToolRunning(toolLog, isStreaming)) {
-		return `${summary} (running)`;
-	}
 
 	const error = assistantTimelineToolError(toolLog, isStreaming);
 

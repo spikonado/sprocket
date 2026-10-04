@@ -15,8 +15,7 @@ import {
 	isAssistantResponseStreaming,
 	partitionWorkSectionTools,
 	workSectionTimingAnchor,
-	type AssistantTimelineTool,
-	type AssistantTimelineWorkBlock
+	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -79,21 +78,6 @@ type ScrollAnchor = {
 	scrollHeight: number;
 };
 
-function isArtifactToolGroup(block: AssistantTimelineWorkBlock) {
-	return (
-		block.type === 'tool-group' &&
-		(block.toolKey === 'add_artifact' ||
-			block.toolKey === 'list_artifacts' ||
-			block.toolKey === 'edit_artifact' ||
-			block.toolKey === 'create_artifact' ||
-			block.toolKey === 'update_artifact')
-	);
-}
-
-function isVisibleWorkBlock(block: AssistantTimelineWorkBlock) {
-	return !isArtifactToolGroup(block);
-}
-
 function earlierTimestamp(left: number | undefined, right: number | undefined) {
 	if (left === undefined) return right;
 
@@ -140,6 +124,7 @@ export default function ThreadTranscript({
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
 	const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const imageScope = project ? { workspacePath: project.workspacePath } : undefined;
 
 	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
 
@@ -187,19 +172,17 @@ export default function ThreadTranscript({
 			state.isStreaming
 		);
 
-		const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock);
-
 		const workInProgress =
 			state.isStreaming && (sectionIndex === state.sections.length - 1 || runningTools.length > 0);
 
 		const nextSection = state.sections[sectionIndex + 1];
 
 		return {
-			visibleBlocks,
+			settledBlocks,
 			lastBlock: section.blocks.at(-1),
 			runningTools,
 			workInProgress,
-			approvals: visibleBlocks.flatMap((block) =>
+			approvals: settledBlocks.flatMap((block) =>
 				block.type === 'tool-group' ? mandateApprovals(block.tools) : []
 			),
 			timing: workSectionTimingAnchor(section, {
@@ -477,30 +460,46 @@ export default function ThreadTranscript({
 	}, []);
 
 	function renderWorkBlocks(work: LiveWorkState, state: LiveRenderState) {
-		return work.visibleBlocks.map((block, blockIndex) => {
-			const renderKey = `${block.type}-${
-				block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id
-			}-${blockIndex}`;
+		return (
+			<>
+				{work.settledBlocks.map((block, blockIndex) => {
+					const renderKey = `${block.type}-${
+						block.type === 'tool-group'
+							? block.tools.map((tool) => tool.callId).join(',')
+							: block.id
+					}-${blockIndex}`;
 
-			if (block.type === 'reasoning') {
-				const reasoningInProgress =
-					work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
+					if (block.type === 'reasoning') {
+						const reasoningInProgress =
+							work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
 
-				return (
-					<ReasoningDisclosure key={renderKey} text={block.text} inProgress={reasoningInProgress} />
-				);
-			}
+						return (
+							<ReasoningDisclosure
+								key={renderKey}
+								text={block.text}
+								inProgress={reasoningInProgress}
+							/>
+						);
+					}
 
-			return (
-				<WorkTools
-					key={renderKey}
-					tools={block.tools}
-					toolKey={block.toolKey}
-					inProgress={state.isStreaming}
-					commands={state.commands}
-				/>
-			);
-		});
+					return (
+						<WorkTools
+							key={renderKey}
+							tools={block.tools}
+							inProgress={state.isStreaming}
+							commands={state.commands}
+						/>
+					);
+				})}
+				{work.runningTools.length > 0 ? (
+					<WorkTools
+						tools={work.runningTools}
+						inProgress={state.isStreaming}
+						commands={state.commands}
+					/>
+				) : null}
+			</>
+		);
 	}
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
@@ -509,6 +508,7 @@ export default function ThreadTranscript({
 				<TranscriptPromptMessage
 					key={message.id}
 					message={message}
+					imageScope={imageScope}
 					copied={copiedMessageId === message.id}
 					loadAttachment={loadAttachment}
 					onCopy={() => void copyUserMessage(message.id, message.text ?? '')}
@@ -591,6 +591,7 @@ export default function ThreadTranscript({
 					data-message-kind="text"
 				>
 					<ChatMarkdown
+						imageScope={imageScope}
 						content={message.text || ' '}
 						className="text-foreground"
 						artifacts={artifacts}
@@ -624,6 +625,7 @@ export default function ThreadTranscript({
 					{!hasPersistedAssistantContent &&
 					(message.text || (live.isStreaming && live.timeline.length === 0)) ? (
 						<ChatMarkdown
+							imageScope={imageScope}
 							content={message.text || '...'}
 							className="text-foreground"
 							artifacts={artifacts}
@@ -639,6 +641,7 @@ export default function ThreadTranscript({
 									data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
 								>
 									<ChatMarkdown
+										imageScope={imageScope}
 										content={section.text || ' '}
 										className="text-foreground"
 										artifacts={artifacts}
@@ -652,7 +655,7 @@ export default function ThreadTranscript({
 						const work = liveWorkState(live, section, sectionIndex);
 
 						if (
-							work.visibleBlocks.length === 0 &&
+							work.settledBlocks.length === 0 &&
 							!work.workInProgress &&
 							work.runningTools.length === 0
 						) {
@@ -677,14 +680,6 @@ export default function ThreadTranscript({
 								{work.approvals.map((approval) => (
 									<MandateApprovalForm key={approval.mandateId} approval={approval} />
 								))}
-								{work.runningTools.length > 0 ? (
-									<WorkTools
-										tools={work.runningTools}
-										running
-										inProgress={live.isStreaming}
-										commands={live.commands}
-									/>
-								) : null}
 							</div>
 						);
 					})}

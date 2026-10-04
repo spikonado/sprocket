@@ -253,7 +253,7 @@ export function resolveCommandSessionLabel(
 
 /**
  * Split a work section's blocks into settled content (reasoning + finished tools) and
- * currently running async tools pulled out for a separate Running dropdown.
+ * currently running async tools displayed after the settled content.
  * Unfinished synchronous calls stay hidden until they settle or the run stops.
  */
 export type PartitionedWorkSectionTools = {

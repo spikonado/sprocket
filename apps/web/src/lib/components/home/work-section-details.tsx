@@ -231,13 +231,7 @@ export default function WorkSectionDetails({
 						{block.type === 'reasoning' ? (
 							<ReasoningDisclosure text={block.text} inProgress={false} />
 						) : (
-							<WorkTools
-								tools={block.tools}
-								toolKey={block.toolKey}
-								preserveExpansion
-								inProgress={inProgress}
-								commands={commands}
-							/>
+							<WorkTools tools={block.tools} inProgress={inProgress} commands={commands} />
 						)}
 					</div>
 				))}
@@ -245,7 +239,6 @@ export default function WorkSectionDetails({
 					<div data-work-detail>
 						<WorkTools
 							tools={partitioned.runningTools}
-							running
 							inProgress={inProgress}
 							commands={commands}
 						/>

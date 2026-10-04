@@ -1,4 +1,5 @@
 import { Check, Copy } from 'lucide-react';
+import type { MarkdownImageScope } from '$lib/chat/markdown-images';
 import ChatMarkdown from '$lib/components/chat-markdown';
 import TranscriptAttachment from '$lib/components/home/transcript-attachment';
 import type { ViewerImage } from '$lib/components/image-viewer';
@@ -8,6 +9,7 @@ type PromptMessage = Pick<TranscriptDisplayRow, 'id' | 'text' | 'attachments'>;
 
 type Props = {
 	message: PromptMessage;
+	imageScope?: MarkdownImageScope;
 	copied: boolean;
 	loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
 	onCopy: () => void;
@@ -19,6 +21,7 @@ const userMessageClass =
 
 export default function TranscriptPromptMessage({
 	message,
+	imageScope,
 	copied,
 	loadAttachment,
 	onCopy,
@@ -48,6 +51,7 @@ export default function TranscriptPromptMessage({
 			{message.text || attachments.length === 0 ? (
 				<div className={userMessageClass}>
 					<ChatMarkdown
+						imageScope={imageScope}
 						content={message.text || ' '}
 						className="text-foreground"
 						openLinksInNewTab

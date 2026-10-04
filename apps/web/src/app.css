@@ -399,6 +399,32 @@ body::after {
 	color: var(--muted-foreground);
 }
 
+.chat-markdown img {
+	display: inline-block;
+	max-width: 100%;
+	max-height: 32rem;
+	height: auto;
+	object-fit: contain;
+	border-radius: 0.75rem;
+	vertical-align: middle;
+}
+
+.chat-markdown img[role='button'] {
+	cursor: zoom-in;
+}
+
+.chat-markdown img:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 3px;
+}
+
+.chat-markdown .markdown-image-error,
+.chat-markdown img:not([src]) {
+	border: 1px solid var(--border);
+	padding: 0.5rem 0.75rem;
+	color: var(--muted-foreground);
+}
+
 .chat-markdown :not(pre) > code {
 	border: 1px solid var(--hairline);
 	border-radius: 0.5rem;
@@ -417,6 +443,43 @@ body::after {
 	border-radius: 1rem;
 	background: var(--panel-elevated);
 	padding: 0.95rem 1rem;
+}
+
+.chat-markdown .markdown-code-block {
+	position: relative;
+	margin: 0.8rem 0;
+}
+
+.chat-markdown .markdown-code-block pre {
+	margin: 0;
+	padding-top: 2.6rem;
+}
+
+.markdown-code-copy {
+	position: absolute;
+	top: 0.55rem;
+	right: 0.7rem;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	border-radius: 0.35rem;
+	padding: 0.2rem 0.4rem;
+	color: var(--muted-foreground);
+	background: var(--panel-elevated);
+	font-family: var(--font-sans);
+	font-size: 0.75rem;
+	line-height: 1.4;
+	cursor: pointer;
+}
+
+.markdown-code-copy:hover {
+	color: var(--foreground);
+	background: var(--hover-fill);
+}
+
+.markdown-code-copy:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
 }
 
 [data-theme='light'] .chat-markdown pre {
