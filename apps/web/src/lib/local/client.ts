@@ -532,6 +532,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					threadId: requestBody.threadId
 				})
 			}),
+		deleteArtifact: async (requestBody) => {
+			await request('/api/artifacts/delete', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
 		watchArtifacts: async (requestBody, handlers) => {
 			await transport.postEventStream(
 				'/api/artifacts/watch',

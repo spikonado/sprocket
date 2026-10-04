@@ -16,9 +16,12 @@ describe('artifact-preview', () => {
 	});
 
 	it('passes through full html documents and wraps fragments', () => {
-		const full = '<!DOCTYPE html><html><body>ok</body></html>';
+		const full =
+			'<!DOCTYPE html><html data-label="<head>"><!-- <head> --><head data-label=">"><script>window.title = "<head>";</script></head><body><p>App</p></body></html>';
+
 		expect(buildHtmlPreviewDocument(full)).toBe(full);
-		expect(buildHtmlPreviewDocument('<p>hi</p>')).toContain('<p>hi</p>');
-		expect(buildHtmlPreviewDocument('<p>hi</p>')).toContain('<!DOCTYPE html>');
+		const fragment = buildHtmlPreviewDocument('<p>hi</p>');
+		expect(fragment).toContain('<p>hi</p>');
+		expect(fragment).toContain('<!DOCTYPE html>');
 	});
 });

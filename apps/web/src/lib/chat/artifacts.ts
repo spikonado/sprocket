@@ -70,6 +70,10 @@ export function mergeArtifactSources(
 	const artifacts = new Map(cloud.artifacts.map((artifact) => [artifact._id, artifact]));
 
 	for (const artifact of local?.artifacts ?? []) {
+		// A fresh cloud registry owns membership; late local snapshots must not
+		// bring back deleted artifacts while their watcher catches up.
+		if (!cloud.stale && !artifacts.has(artifact._id)) continue;
+
 		if (artifact.localPath || !artifacts.has(artifact._id)) artifacts.set(artifact._id, artifact);
 	}
 

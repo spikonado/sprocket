@@ -48,11 +48,13 @@ multi-turn regression passes with native item IDs.
 Existing local `bindings.json` rows accept `scope` and `thread_id`; the first
 locked load atomically drops those fields while retaining every
 registration/artifact ID, path, and content baseline. Bindings from different
-former scopes can resolve to the same file; synchronization pauses for all
-colliding bindings until artifacts are saved or rebound to distinct paths.
-Migration never writes artifact files. Remove legacy-field detection once all
-supported clients have upgraded and their data directories have been migrated;
-collision protection remains a general safety rule.
+former scopes can resolve to the same file; synchronization pauses and explicit
+deletion rejects colliding bindings until artifacts are saved or rebound to
+distinct paths. Rejected deletion leaves the shared file and bindings intact
+and does not request cloud deletion. Migration never writes artifact files.
+Remove legacy-field detection once all supported clients have upgraded and
+their data directories have been migrated; collision protection remains a
+general safety rule, not a removable compatibility shim.
 
 ### Local project message recency
 

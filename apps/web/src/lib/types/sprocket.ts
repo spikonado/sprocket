@@ -341,6 +341,7 @@ export type DesktopApi = {
 	) => Promise<Blob | null>;
 	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
 	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
+	deleteArtifact: (request: ArtifactsWatchRequest & { artifactId: string }) => Promise<void>;
 	watchArtifacts: (
 		request: ArtifactsWatchRequest,
 		handlers: {

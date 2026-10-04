@@ -192,4 +192,31 @@ describe('cloud artifact subscriptions', () => {
 		expect(mergeArtifactSources(cloud, local).artifacts[0]?.content).toBe('unsynced');
 		expect(mergeArtifactSources(cloud, null).artifacts[0]?.content).toBe('cloud');
 	});
+	it('does not resurrect cloud deletions from late local snapshots', () => {
+		const local: ArtifactWatchState = {
+			artifacts: [
+				{
+					_id: 'deleted',
+					userId: 'alice',
+					repositoryKey: 'repo',
+					localPath: 'notes.md',
+					content: 'local edit',
+					title: 'Notes',
+					type: 'markdown',
+					revision: 1,
+					createdAt: 1,
+					updatedAt: 1
+				}
+			],
+			stale: false,
+			error: null
+		};
+
+		expect(
+			mergeArtifactSources({ artifacts: [], stale: false, error: null }, local).artifacts
+		).toEqual([]);
+		expect(
+			mergeArtifactSources({ artifacts: [], stale: true, error: null }, local).artifacts
+		).toEqual(local.artifacts);
+	});
 });
