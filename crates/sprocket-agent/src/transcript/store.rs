@@ -340,6 +340,15 @@ impl TranscriptStore {
                     tokio::fs::remove_file(entry.path()).await?;
                 }
             }
+            match tokio::fs::remove_dir(&dir).await {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         Ok(())
     }
