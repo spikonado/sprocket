@@ -78,9 +78,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pruning_busy_thread_does_not_block_unrelated_commands() {
-        let root =
-            std::env::temp_dir().join(format!("sprocket-thread-commands-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
         let registry = ThreadCommandSessions::default();
         let entered = Arc::new(tokio::sync::Notify::new());
         let (release, released) = std::sync::mpsc::channel();
@@ -151,14 +150,12 @@ mod tests {
         registry.prune().await;
         assert!(registry.get("user", "other-thread").await.is_none());
         registry.stop_all().await;
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
     async fn registry_keeps_commands_after_run_drop_and_isolates_thread_scopes() {
-        let root =
-            std::env::temp_dir().join(format!("sprocket-thread-commands-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
         let registry = Arc::new(ThreadCommandSessions::default());
         let run = registry
             .for_run("user", "thread", root.clone(), root.join("logs"))
@@ -214,6 +211,5 @@ mod tests {
                 .contains("shutting down")
         );
         assert!(!root.join("leaked").exists());
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -38,41 +38,38 @@ export const sync = mutation({
 
 		if (new TextEncoder().encode(args.snapshot.result.output).length > 320_000)
 			throw new Error('Command preview is too large.');
-		let session = await findSession(ctx, args.threadId, args.sessionId);
+		const session = await findSession(ctx, args.threadId, args.sessionId);
 
-		if (!session) {
-			const id = await ctx.db.insert('commandSessions', {
+		const commandId =
+			session?._id ??
+			(await ctx.db.insert('commandSessions', {
 				threadId: args.threadId,
 				userId,
 				sessionId: args.sessionId,
 				...args.snapshot,
-				result: { ...args.snapshot.result, running: true, success: false },
 				eventsBytes: 0
-			});
-
-			session = (await ctx.db.get('commandSessions', id))!;
-		}
+			}));
 
 		if (
-			session.machineId !== args.snapshot.machineId ||
-			session.command !== args.snapshot.command ||
-			session.workdir !== args.snapshot.workdir
+			session &&
+			(session.machineId !== args.snapshot.machineId ||
+				session.command !== args.snapshot.command ||
+				session.workdir !== args.snapshot.workdir)
 		)
 			throw new Error('Command session identity cannot change.');
-		let eventsBytes = session.eventsBytes;
+		let eventsBytes = session?.eventsBytes ?? 0;
 
 		for (const chunk of args.chunks) {
 			validateOffset(chunk.offset);
 
 			if (chunk.bytes.byteLength === 0 || chunk.bytes.byteLength > 128 * 1024)
 				throw new Error('Invalid command log chunk size.');
-			const offset = eventsBytes;
 
-			if (chunk.offset < offset) {
+			if (chunk.offset < eventsBytes) {
 				const previous = await ctx.db
 					.query('commandLogChunks')
 					.withIndex('by_commandId_offset', (q) =>
-						q.eq('commandId', session._id).eq('offset', chunk.offset)
+						q.eq('commandId', commandId).eq('offset', chunk.offset)
 					)
 					.unique();
 
@@ -87,18 +84,19 @@ export const sync = mutation({
 				continue;
 			}
 
-			if (chunk.offset !== offset) throw new Error('Command log chunk is out of order.');
+			if (chunk.offset !== eventsBytes) throw new Error('Command log chunk is out of order.');
 
-			if (!session.result.running) throw new Error('Completed command logs cannot change.');
-			await ctx.db.insert('commandLogChunks', { commandId: session._id, ...chunk });
+			if (session && !session.result.running)
+				throw new Error('Completed command logs cannot change.');
+			await ctx.db.insert('commandLogChunks', { commandId, ...chunk });
 
 			eventsBytes += chunk.bytes.byteLength;
 		}
 
 		if (eventsBytes > 64 * 1024 * 1024) throw new Error('Command log quota exceeded.');
 
-		if (session.result.running)
-			await ctx.db.patch('commandSessions', session._id, {
+		if (!session || session.result.running)
+			await ctx.db.patch('commandSessions', commandId, {
 				result: args.snapshot.result,
 				eventsBytes
 			});

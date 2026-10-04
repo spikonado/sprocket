@@ -500,6 +500,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let events = directory.path().join("events.jsonl");
         let output = directory.path().join("output.log");
+        tokio::fs::write(&events, b"").await.unwrap();
+        rebuild_output(&events, &output, false).await.unwrap();
+        assert_eq!(tokio::fs::read(&output).await.unwrap(), b"");
         let first = event(0, "stdout", b"\x1b[32mready\x00\xff\n");
         let second = event(1, "stderr", b"warning\n");
         let third = event(2, "stdout", "done \u{1f680}\n".as_bytes());
@@ -543,16 +546,6 @@ mod tests {
             assert!(rebuild_output(&events, &output, false).await.is_err());
             assert_eq!(tokio::fs::read(&output).await.unwrap(), b"previous output");
         }
-    }
-
-    #[tokio::test]
-    async fn empty_events_produce_an_empty_output_file() {
-        let directory = tempfile::tempdir().unwrap();
-        let events = directory.path().join("events.jsonl");
-        let output = directory.path().join("output.log");
-        tokio::fs::write(&events, b"").await.unwrap();
-        rebuild_output(&events, &output, false).await.unwrap();
-        assert_eq!(tokio::fs::read(output).await.unwrap(), b"");
     }
 
     async fn running_history(directory: &Path) -> CommandHistory {

@@ -217,16 +217,18 @@ impl CommandSessionManager {
                 }
             }
         }
-        if let Some(history) = local {
-            if history.machine_id != self.history_scope.2 && history.result.running {
-                return Ok(CommandStdinOutput {
-                    command: history.command,
-                    workdir: history.workdir,
-                    result: history.result,
-                });
-            }
+        let Some(history) = local else {
+            bail!("unknown command session: {session_id}");
+        };
+        if history.machine_id == self.history_scope.2 && history.result.running {
+            // The supervisor may have archived this session since the initial read.
+            return CommandHistory::load(&self.log_directory, session_id).await;
         }
-        CommandHistory::load(&self.log_directory, session_id).await
+        Ok(CommandStdinOutput {
+            command: history.command,
+            workdir: history.workdir,
+            result: history.result,
+        })
     }
 
     /// Keeps the process's host alive independently of the initiating run.
@@ -2300,29 +2302,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn immediately_completed_exec_returns_a_reusable_session_id() {
-        let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-        let finished = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "printf done",
-                ".",
-                &default_command_shell(),
-                None,
-                5_000,
-                20_000,
-            )
-            .await
-            .unwrap();
-        assert!(!finished.result.running);
-        let id = finished.session_id.unwrap();
-        sessions.prune_completed().await;
-        assert_eq!(poll(&sessions, &id, 0).await.output, "done");
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
     async fn another_machine_resolves_the_same_session_and_keeps_a_local_replica() {
         let origin = temp_workspace();
         let sessions = CommandSessionManager::new(origin.clone(), origin.join("logs"))
@@ -2394,6 +2373,7 @@ mod tests {
             )
             .await
             .unwrap();
+        assert!(completed.result.success);
         let completed_id = completed.session_id.unwrap();
         sessions.prune_completed().await;
         let mut remote: super::CommandHistory = serde_json::from_slice(

@@ -173,33 +173,13 @@ in stored-history validators and historical UI rendering permanently.
 
 New `exec_cmd` results always include a string `sessionId`, even when the command
 finishes during its initial wait. Completed polls return a bounded preview of the
-full output rather than only its previously unread tail. Existing result shapes
-and log files remain valid. Each new command writes a session record under its
-thread's `command-logs/sessions/` directory before spawn and atomically replaces
-it with the completed result before releasing the live handle. These records do
-not expire. A record without final status is recovered as interrupted, with a
-preview read from the existing log.
+full output rather than only its previously unread tail. Existing result shapes,
+saved transcript results, and log paths remain valid. Thread-local session records
+and the `commandSessions` and `commandLogChunks` Convex tables are additive;
+released servers stored no such records, so no migration is needed.
 
-The additive `commandSessions` and `commandLogChunks` Convex tables hold the same
-thread-scoped records and ordered event-log bytes. The origin machine retries
-unsynced local records, and another machine downloads remote logs into its own
-data directory, reconstructs `output.log` from the captured event bytes, and
-returns local paths to both files. Downloaded logs use
-`command-logs/command-<sessionId>/`; there is no separate remote hierarchy.
-Completed cloud results are immutable; late running snapshots cannot regress
-them. Cloud reads authorize the thread owner. Live processes and their controls
-remain on the origin machine.
-Clearing a local transcript replica preserves its command history and logs.
-Remote history fetches have a ten-second deadline, including waiting for another
-fetch. Completed local records bypass remote fetches; cached running replicas
-remain readable as last-synced observations when a refresh fails or times out.
-Downloaded log directories use private permissions on Unix.
-Older servers have no cloud session records; no existing Convex rows require a
-schema migration.
-
-Released servers did not persist a mapping from session IDs to logs. Their saved
-transcript results and log paths remain readable, but session IDs already lost
-on restart or pruning cannot be reconstructed reliably; no numeric-ID guess or
+Released servers did not persist a mapping from session IDs to logs. Session IDs
+already lost on restart or pruning cannot be reconstructed reliably; no numeric-ID guess or
 log retargeting is attempted. Session IDs for newly launched commands remain
 UUIDs, preventing old IDs from controlling replacement processes. No compatibility
 shim or migration is introduced for data that was never stored.

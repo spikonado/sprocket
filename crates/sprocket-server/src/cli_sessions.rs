@@ -195,11 +195,8 @@ mod tests {
         use sprocket_workspace::{CommandSessionManager, default_command_shell};
 
         for terminate in [false, true] {
-            let root = std::env::temp_dir().join(format!(
-                "sprocket-command-lifetime-{}",
-                uuid::Uuid::new_v4()
-            ));
-            std::fs::create_dir_all(&root).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().to_path_buf();
             let lifetime = ServerLifetime::new(true);
             let client_id = uuid::Uuid::new_v4().to_string();
             lifetime.connect(&client_id, "client").unwrap();
@@ -240,7 +237,6 @@ mod tests {
             assert!(lifetime.tick(Instant::now()).0);
             assert!(lifetime.shutdown.is_cancelled());
             sessions.stop_all().await;
-            std::fs::remove_dir_all(root).unwrap();
         }
     }
 
@@ -255,9 +251,8 @@ mod tests {
     async fn failed_command_spawn_releases_temporary_server_guard() {
         use sprocket_workspace::CommandSessionManager;
 
-        let root =
-            std::env::temp_dir().join(format!("sprocket-command-spawn-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
         let lifetime = ServerLifetime::new(true);
         let client_id = uuid::Uuid::new_v4().to_string();
         lifetime.connect(&client_id, "client").unwrap();
@@ -282,7 +277,6 @@ mod tests {
         assert!(sessions.running_commands().await.is_empty());
         lifetime.release(&client_id, "client").unwrap();
         assert!(lifetime.tick(Instant::now()).0);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

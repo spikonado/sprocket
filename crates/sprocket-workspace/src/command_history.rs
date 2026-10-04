@@ -9,11 +9,8 @@ use crate::commands::{CommandOutput, CommandStdinOutput};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct CommandHistory {
-    #[serde(default)]
     pub user_id: String,
-    #[serde(default)]
     pub thread_id: String,
-    #[serde(default)]
     pub machine_id: String,
     pub command: String,
     pub workdir: String,

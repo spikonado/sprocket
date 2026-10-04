@@ -1,19 +1,10 @@
 import { useId, useState } from 'react';
 import { ChevronDown, Trash2 } from 'lucide-react';
-import type { RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
+import type { TranscriptScopeRequest } from '$lib/types/sprocket';
 import { useRunningCommands, type CommandApi } from '$lib/home/running-commands';
 
-export function RunningCommandsView({
-	commands,
-	stopping,
-	error,
-	onTerminate
-}: {
-	commands: RunningCommand[];
-	stopping: string[];
-	error: string | null;
-	onTerminate: (sessionId: string) => void;
-}) {
+function ScopedRunningCommands({ api, scope }: { api: CommandApi; scope: TranscriptScopeRequest }) {
+	const { commands, stopping, error, terminate } = useRunningCommands(api, scope);
 	const [expanded, setExpanded] = useState(true);
 	const contentId = useId();
 
@@ -71,7 +62,7 @@ export function RunningCommandsView({
 											aria-label={`Stop command: ${command.command}`}
 											title="Stop command"
 											disabled={stopping.includes(command.sessionId)}
-											onClick={() => onTerminate(command.sessionId)}
+											onClick={() => void terminate(command.sessionId)}
 											className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-ring flex size-8 shrink-0 items-center justify-center rounded-md transition focus-visible:ring-2 focus-visible:outline-none disabled:opacity-40"
 										>
 											<Trash2 className="size-3.5" aria-hidden="true" />
@@ -92,17 +83,6 @@ export function RunningCommandsView({
 				</div>
 			</div>
 		</section>
-	);
-}
-
-function ScopedRunningCommands({ api, scope }: { api: CommandApi; scope: TranscriptScopeRequest }) {
-	const commands = useRunningCommands(api, scope);
-
-	return (
-		<RunningCommandsView
-			{...commands}
-			onTerminate={(sessionId) => void commands.terminate(sessionId)}
-		/>
 	);
 }
 

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import RunningCommands, { RunningCommandsView } from './running-commands';
+import RunningCommands from './running-commands';
 import type { CommandApi } from '$lib/home/running-commands';
 import type { RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
 
@@ -27,15 +27,14 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('running commands dashboard', () => {
-	it('collapses to the heading and restores command controls when expanded', () => {
-		render(
-			<RunningCommandsView
-				commands={[command]}
-				stopping={[]}
-				error="Server offline"
-				onTerminate={vi.fn()}
-			/>
-		);
+	it('collapses to the heading and restores command controls when expanded', async () => {
+		const api: CommandApi = {
+			listRunningCommands: vi.fn(async () => ({ commands: [command] })),
+			terminateCommand: vi.fn()
+		};
+
+		render(<RunningCommands api={api} scope={scope('thread')} />);
+		await flush();
 		const toggle = screen.getByRole('button', { name: 'Running commands' });
 		expect(toggle.getAttribute('aria-expanded')).toBe('true');
 		fireEvent.click(toggle);

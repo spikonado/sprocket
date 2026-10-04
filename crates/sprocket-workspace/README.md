@@ -26,8 +26,8 @@ machine with the permissions of the Sprocket process. Output is bounded.
 Cancelling an observation leaves the process running; explicit termination,
 timeout, or server shutdown stops its process tree. Completed session results
 remain queryable from thread-local disk history after live handles are released.
-The server replicates those records and raw logs to Convex and downloads them
-when a later run queries the session on a different machine.
+The server replicates those records and event logs to Convex. On another machine,
+it downloads the events and reconstructs the raw output log locally.
 
 Workspace instruction loading follows the project hierarchy so deeper
 instructions can refine root-level guidance without coupling that behavior to
