@@ -5,6 +5,7 @@ mod chatgpt_oauth;
 pub mod cli_protocol;
 mod cli_sessions;
 mod command_sessions;
+mod command_sync;
 mod config;
 mod machine_identity;
 mod machines;
@@ -350,6 +351,17 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     });
     let command_sessions = Arc::clone(&state.command_sessions);
+    let command_sync_store = Arc::clone(&state.transcript);
+    let command_sync_auth = Arc::clone(&state.native_auth);
+    let command_sync_deployment = state.convex_deployment_url.clone();
+    let command_sync_machine = state.machine_identity.installation_id.clone();
+    let command_sync = command_sync::spawn(
+        Arc::clone(&state.transcript),
+        Arc::clone(&state.command_sessions),
+        Arc::clone(&state.native_auth),
+        state.convex_deployment_url.clone(),
+        state.machine_identity.installation_id.clone(),
+    );
     let command_cleanup_sessions = Arc::clone(&command_sessions);
     let command_cleanup = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -399,6 +411,23 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     command_cleanup.abort();
     let _ = command_cleanup.await;
     command_sessions.stop_all().await;
+    command_sync.abort();
+    let _ = command_sync.await;
+    if let Err(error) = tokio::time::timeout(
+        Duration::from_secs(10),
+        command_sync::flush(
+            &command_sync_store,
+            &command_sessions,
+            &command_sync_auth,
+            &command_sync_deployment,
+            &command_sync_machine,
+        ),
+    )
+    .await
+    .unwrap_or_else(|error| Err(error.into()))
+    {
+        tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
+    }
     chatgpt_oauth::shutdown(&pending_chatgpt_oauth).await;
     machines.shutdown().await;
     result?;

@@ -160,12 +160,39 @@ instead of `write_stdin`. Convex still accepts `write_stdin` jobs from released
 agents, and the UI still renders their stored input, command results, session
 labels, and log previews. New agents do not dispatch historical `write_stdin`
 calls, so that name cannot bypass the new poll cooldown. Command sessions are
-in-memory server resources scoped to the user and thread; no live-session or
-stored-data migration is needed.
+server resources scoped to the user and thread. New commands save thread-local
+session records beside their logs; no stored transcript rewrite is needed.
 
 Remove `write_stdin` from the current Convex job-kind validator after agents
 that advertise it are outside the supported upgrade window. Keep acceptance
 in stored-history validators and historical UI rendering permanently.
+
+### Durable command sessions
+
+New `exec_cmd` results always include a string `sessionId`, even when the command
+finishes during its initial wait. Completed polls return a bounded preview of the
+full output rather than only its previously unread tail. Existing result shapes
+and log files remain valid. Each new command writes a session record under its
+thread's `command-logs/sessions/` directory before spawn and atomically replaces
+it with the completed result before releasing the live handle. These records do
+not expire. A record without final status is recovered as interrupted, with a
+preview read from the existing log.
+
+The additive `commandSessions` and `commandLogChunks` Convex tables hold the same
+thread-scoped records and ordered raw log bytes. The origin machine retries
+unsynced local records, and another machine downloads remote logs into its own
+data directory before returning local log paths. Completed cloud results are
+immutable; late running snapshots cannot regress them. Cloud reads authorize
+the thread owner. Live processes and their controls remain on the origin machine.
+Older servers have no cloud session records; no existing Convex rows require a
+schema migration.
+
+Released servers did not persist a mapping from session IDs to logs. Their saved
+transcript results and log paths remain readable, but session IDs already lost
+on restart or pruning cannot be reconstructed reliably; no numeric-ID guess or
+log retargeting is attempted. Session IDs for newly launched commands remain
+UUIDs, preventing old IDs from controlling replacement processes. No compatibility
+shim or migration is introduced for data that was never stored.
 
 ### Renamed command and question tools
 

@@ -1,0 +1,18 @@
+import { v } from 'convex/values';
+import { vCommandStdinResult } from '@convex/lib/validators';
+
+export const commandResult = vCommandStdinResult.omit(
+	'command',
+	'workdir',
+	'completeLogPath',
+	'eventsPath'
+);
+
+export const commandStream = v.union(v.literal('output'), v.literal('events'));
+
+export const commandSnapshot = v.object({
+	command: v.string(),
+	workdir: v.string(),
+	machineId: v.string(),
+	result: commandResult
+});

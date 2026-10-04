@@ -236,6 +236,9 @@ pub(crate) async fn launch_agent(
     let cleanup_request = request.clone();
     let command_sessions = Arc::clone(&state.command_sessions);
     let command_lifetime = Arc::clone(&state.lifetime);
+    let command_machine_id = state.machine_identity.installation_id.clone();
+    let command_auth = Arc::clone(&state.native_auth);
+    let command_deployment = state.convex_deployment_url.clone();
     let live = Arc::clone(&state.live_completions);
     let transcript = Arc::clone(&state.transcript);
     let transcript_watchers = Arc::clone(&state.transcript_watchers);
@@ -279,6 +282,28 @@ pub(crate) async fn launch_agent(
                             .join("command-logs"),
                     )
                     .await
+                    .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
+                    .with_history_resolver({
+                        let user_id = user_id.clone();
+                        let thread_id = thread_id.clone();
+                        move |session_id, directory| {
+                            let auth = Arc::clone(&command_auth);
+                            let deployment = command_deployment.clone();
+                            let user_id = user_id.clone();
+                            let thread_id = thread_id.clone();
+                            async move {
+                                crate::command_sync::fetch(
+                                    &deployment,
+                                    &auth,
+                                    &user_id,
+                                    &thread_id,
+                                    &session_id,
+                                    &directory,
+                                )
+                                .await
+                            }
+                        }
+                    })
                     .with_lifetime_guard_factory(move || command_lifetime.run_guard());
                 let prompt_part = run.prompt_part().cloned();
                 let sent_at = prompt_part

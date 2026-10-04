@@ -159,8 +159,17 @@ Cancelling a command operation stops waiting for input or output; the process st
 through its thread session. Commands keep running after agent completion or
 cancellation until they exit, reach an explicit timeout, are terminated, or the
 server shuts down. Subsequent runs in the same thread reuse the sessions.
-Completed results remain pollable for up to 30 minutes, with the newest 128
-retained per thread; an active observation keeps its result until it finishes.
+Every command returns a thread-scoped session ID, including commands that finish
+within the initial wait. Session records and both log streams are stored under
+the Sprocket data directory and replicated to Convex in ordered, retryable chunks.
+Completed results remain pollable without an age or count limit after restarts
+or from another machine. Remote queries download logs into the local data directory;
+live command control requires the originating machine. Network outages leave
+local records pending for retry, so another machine sees only previously synced data.
+Running polls return incremental output; completed polls replay a bounded preview
+of the full output, including bytes read by earlier runs, with full log paths.
+If shutdown interrupts a command before its final status is saved, later polls
+recover the log and report an interrupted, potentially incomplete result.
 The transcript dashboard lists live commands without consuming output and offers
 per-command termination.
 
