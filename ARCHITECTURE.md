@@ -235,6 +235,11 @@ sequenceDiagram
 
 The submission identifier makes thread and run creation safe to retry after an
 ambiguous network failure. Continue-working always inserts a linked new run.
+Run creation waits for the prior run's terminal tool outcomes to be committed.
+If cleanup is still pending, creation returns `SPROCKET_SUBMISSION_WAITING`
+without accepting a run or prompt. The executor polls `prepareSubmission`
+and retries creation, while the UI shows Starting. The waiting prompt lives
+only in the local process and disappears if that process dies.
 Once started, a worker must hold a renewable claim; stale workers cannot
 continue tool execution or overwrite a newer result.
 
@@ -252,6 +257,57 @@ live-completion stream. Convex assigns durable part numbers; React renders
 that order and keeps no cross-thread transcript cache.
 
 ## Authentication and trust boundaries
+
+### Native subagent threads
+
+The `spawn_subagent` tool requires a nonempty prompt for delegation: no `threadId`
+creates a child, while a supplied `threadId` sends a follow-up.
+`control_subagent` stops a descendant or answers its pending question, while
+`poll_subagent` observes its lifecycle and pages its transcript. Discovery uses
+`list_subagents`, with 32 children per page. `list_subagent_models` exposes
+provider-compatible model settings. Actions and polls share the timing policy of `exec_cmd`,
+`control_cmd`, and `poll_cmd`: a 10-second default, a 270-second cap, and a
+10-second minimum for positive poll waits. Pending immediate polls have a
+10-second cooldown; completed reads and waiting polls bypass it. Subagents use
+the existing sidebar thread tree, not a separate dashboard.
+
+Stop waits for confirmed termination of the run it targeted, even with a zero
+yield time. A replacement run cannot extend that wait. Tool outputs report run
+status rather than the UI lifecycle phase, with pending questions separately.
+Only spawn and child listings return thread IDs. Activity flags, question
+deadlines, creation flags, and transcript directories remain internal.
+
+Delegation creates ordinary persistent threads linked by an immutable optional
+`parentThreadId`. Only agents create children; humans can select and control
+them normally. A live executing claim authorizes agent control of strict
+same-user descendants, not siblings, ancestors, or the caller itself.
+
+The local server launches children through the ordinary native execution path,
+with independent claims and cancellation lifetimes. They share the spawning
+execution's actual workspace and load ordinary instructions and skills, but
+start with only their explicit task, not the parent's conversation. Stopping
+or finishing any thread leaves descendants running. A submission deadline is
+bound to its execution, never to later work in the same thread.
+
+Creation inherits the immediate execution's completion provider and resolves
+provider-compatible catalog defaults. Follow-ups retain the child's saved
+settings unless explicitly overridden. Children can ask delegated questions
+even below noninteractive CLI roots. Payment tools are excluded at every depth,
+including direct human continuations; this is not shell or network isolation.
+
+Monitoring projects the ordinary committed transcript into prompts, completed
+assistant text, and actual patch-operation paths. It excludes reasoning, other
+tool output, patch bodies, and live overlays. Observer-specific opaque cursors
+preserve ordering and resumable paging. Pending questions are reported
+separately for the selected thread. Humans and ancestor agents share atomic
+first-answer validation and ordinary question continuation. Manual Stop cancels
+only that thread's pending questions immediately.
+
+The sidebar queries indexed roots and expands paginated immediate children
+recursively. Expansion counts and Working activity cover all descendants;
+descendant activity does not reorder roots. Only roots settle, and durable
+writes reject settling active trees and unsettle a root when descendant work
+starts.
 
 Cloud and local authorization solve different problems:
 

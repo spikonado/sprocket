@@ -9,7 +9,7 @@ use super::types::{
     TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteTranscriptState {
     pub thread_id: String,

@@ -1,3 +1,76 @@
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { DatabaseReader } from '@convex/_generated/server';
+
+export async function isPendingQuestionActionable(
+	db: DatabaseReader,
+	question: Doc<'agentQuestions'>
+): Promise<boolean> {
+	if (question.status !== 'pending') return false;
+	const run = await db.get('runs', question.runId);
+
+	return run !== null && run.status !== 'cancelled' && run.cancellationRequestedAt === undefined;
+}
+
+async function* actionablePendingQuestions(db: DatabaseReader, threadId: Id<'threadRecords'>) {
+	let afterSequence = -1;
+
+	for (;;) {
+		const pending = db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (query) =>
+				query.eq('threadId', threadId).eq('status', 'pending').gt('sequence', afterSequence)
+			)
+			.order('asc');
+
+		let skippedRun = false;
+
+		for await (const question of pending) {
+			if (await isPendingQuestionActionable(db, question)) {
+				yield question;
+
+				continue;
+			}
+
+			const last = await db
+				.query('agentQuestions')
+				.withIndex('by_runId_sequence', (query) => query.eq('runId', question.runId))
+				.order('desc')
+				.first();
+
+			afterSequence = last?.sequence ?? question.sequence;
+			skippedRun = true;
+
+			break;
+		}
+
+		if (!skippedRun) return;
+	}
+}
+
+export async function headActionablePendingQuestion(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'agentQuestions'> | null> {
+	for await (const question of actionablePendingQuestions(db, threadId)) {
+		return question;
+	}
+
+	return null;
+}
+
+export async function actionablePendingQuestionsForThread(
+	db: DatabaseReader,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'agentQuestions'>[]> {
+	const questions: Doc<'agentQuestions'>[] = [];
+
+	for await (const question of actionablePendingQuestions(db, threadId)) {
+		questions.push(question);
+	}
+
+	return questions;
+}
+
 export const AGENT_DECIDE_OPTION_ID = 'agent_decide';
 
 export const AGENT_DECIDE_OPTION_LABEL = 'Let me (the agent) decide';

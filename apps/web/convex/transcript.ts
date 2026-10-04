@@ -1,6 +1,6 @@
-import { query, type QueryCtx } from '@convex/_generated/server';
-import { v } from 'convex/values';
-import type { Id } from '@convex/_generated/dataModel';
+import { query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import { v, type Infer } from 'convex/values';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { imageUploadByStorageId } from '@convex/lib/imageUploads';
@@ -16,37 +16,19 @@ import {
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
-async function transcriptStateResult(
-	ctx: QueryCtx,
-	threadId: Id<'threadRecords'>
-): Promise<{
-	threadId: Id<'threadRecords'>;
-	totalParts: number;
-	historyFromNumber: number;
-	contextSummary?: string;
-}> {
+export async function transcriptStateResult(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>,
+	thread: Doc<'threadRecords'> | null
+): Promise<Infer<typeof vTranscriptStateResult>> {
 	const state = await getTranscriptState(ctx, threadId);
-	const thread = await ctx.db.get('threadRecords', threadId);
-	const historyFromNumber = transcriptHistoryFromNumber(thread);
-
-	if (thread?.contextSummary) {
-		return {
-			threadId,
-			totalParts: state?.totalParts ?? 0,
-			historyFromNumber,
-			contextSummary: thread.contextSummary
-		};
-	}
 
 	return {
 		threadId,
 		totalParts: state?.totalParts ?? 0,
-		historyFromNumber
+		historyFromNumber: transcriptHistoryFromNumber(thread),
+		contextSummary: thread?.contextSummary || undefined
 	};
-}
-
-async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>) {
-	await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
 }
 
 export const getState = query({
@@ -55,9 +37,9 @@ export const getState = query({
 	},
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
-		await requireOwnedThread(ctx, args.threadId);
+		const thread = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
 
-		return await transcriptStateResult(ctx, args.threadId);
+		return await transcriptStateResult(ctx, args.threadId, thread);
 	}
 });
 
@@ -68,7 +50,7 @@ export const getParts = query({
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
-		await requireOwnedThread(ctx, args.threadId);
+		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
 
 		const parts = await transcriptPartsForClient(
 			ctx,
@@ -87,8 +69,9 @@ export const getStateForRun = query({
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+		const thread = await ctx.db.get('threadRecords', run.threadId);
 
-		return await transcriptStateResult(ctx, run.threadId);
+		return await transcriptStateResult(ctx, run.threadId, thread);
 	}
 });
 

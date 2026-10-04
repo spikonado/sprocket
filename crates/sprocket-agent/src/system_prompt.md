@@ -72,7 +72,7 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 - The available skills are listed in the initial conversation context.
 - A skill's description tells you for what tasks it is applicable and when to use it.
 - If the user writes $skill-name in their message (for example, $code-review), they want you to use that skill.
-- Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_command when needed.
+- Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_cmd when needed.
 
 ## AGENTS.md spec
 

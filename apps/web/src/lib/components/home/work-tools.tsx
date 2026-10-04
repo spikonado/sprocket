@@ -42,8 +42,13 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 								title={fullToolSummary(tool, inProgress, commands)}
 							>
 								<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
-								{label ? <span className="shrink-0">{label}:</span> : null}
-								<span className={`min-w-0 ${toolSummaryClass(tool)}`}>{item}</span>
+								{label ? (
+									<span className="shrink-0">
+										{label}
+										{item ? ':' : ''}
+									</span>
+								) : null}
+								{item ? <span className={`min-w-0 ${toolSummaryClass(tool)}`}>{item}</span> : null}
 								{error && failure && index === summaries.length - 1 ? (
 									<span className={`shrink-0 ${errorClass}`}>({failure})</span>
 								) : null}

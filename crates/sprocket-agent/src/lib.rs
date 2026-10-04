@@ -12,6 +12,8 @@ mod output;
 mod provider;
 mod reasoning;
 mod run;
+pub mod subagents;
+mod submission;
 mod tools;
 mod transcript;
 mod types;

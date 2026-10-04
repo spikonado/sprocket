@@ -79,7 +79,20 @@ pub(crate) struct RuntimeClient {
     execution_secret: String,
 }
 
+#[derive(Debug)]
+pub(crate) enum MutationFailure {
+    Transport(anyhow::Error),
+    Functional(anyhow::Error),
+}
+
 impl RuntimeClient {
+    pub(crate) fn with_execution_secret(&self, execution_secret: String) -> Self {
+        Self {
+            execution_secret,
+            ..self.clone()
+        }
+    }
+
     pub(crate) async fn from_request(request: &RunAgentRequest) -> anyhow::Result<Self> {
         eprintln!(
             "sprocket-agent: initializing Convex client for thread {}",
@@ -115,13 +128,29 @@ impl RuntimeClient {
     pub(crate) async fn mutation_json<T: for<'de> Deserialize<'de>>(
         &self,
         function: &str,
-        mut args: BTreeMap<String, Value>,
+        args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
+        self.mutation_checked(function, args)
+            .await
+            .map_err(|failure| match failure {
+                MutationFailure::Transport(error) | MutationFailure::Functional(error) => error,
+            })
+    }
+
+    pub(crate) async fn mutation_checked<T: for<'de> Deserialize<'de>>(
+        &self,
+        function: &str,
+        mut args: BTreeMap<String, Value>,
+    ) -> Result<T, MutationFailure> {
         self.add_execution_secret(&mut args);
         eprintln!("sprocket-agent: mutation start {function}");
-        let result = self.client.mutation(function, args).await?;
+        let result = self
+            .client
+            .mutation(function, args)
+            .await
+            .map_err(MutationFailure::Transport)?;
         eprintln!("sprocket-agent: mutation done {function}");
-        decode_function_result(result, function)
+        decode_function_result(result, function).map_err(MutationFailure::Functional)
     }
 
     pub(crate) async fn action_json<T: for<'de> Deserialize<'de>>(
@@ -553,6 +582,12 @@ impl RuntimeClient {
         let mut args = BTreeMap::new();
         args.insert("runId".to_string(), run_id.to_string().into());
         args
+    }
+
+    /// The run-scoped execution capability. Used to key derived child
+    /// secrets; never reused as a child secret itself.
+    pub(crate) fn execution_secret(&self) -> &str {
+        &self.execution_secret
     }
 
     fn add_execution_secret(&self, args: &mut BTreeMap<String, Value>) {

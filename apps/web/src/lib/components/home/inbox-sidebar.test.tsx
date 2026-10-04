@@ -4,7 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { INBOX_STATES } from '@convex/lib/inboxState';
-import InboxSidebar from './inbox-sidebar';
+import InboxSidebar, { type SidebarChildrenResolver } from './inbox-sidebar';
+import type {
+	ThreadTreeSummary,
+	ThreadTreeSummaryRead,
+	UseExpandedThreads
+} from '$lib/project/useThreadTree';
+
+const treeSummaries = new Map<string, ThreadTreeSummary>();
+
+const readTreeSummary: ThreadTreeSummaryRead = ({ threadId }) =>
+	threadId ? treeSummaries.get(threadId) : undefined;
 
 type SidebarProps = Omit<
 	ComponentProps<typeof InboxSidebar>,
@@ -13,10 +23,33 @@ type SidebarProps = Omit<
 
 type Thread = Doc<'threadRecords'>;
 
+function expansionStub(initial: string[] = []): UseExpandedThreads {
+	const expanded = new Set(initial);
+
+	return {
+		isExpanded: (threadId: Id<'threadRecords'>) => expanded.has(threadId),
+		expand: vi.fn((threadId: Id<'threadRecords'>) => {
+			expanded.add(threadId);
+		}),
+		revealAncestors: vi.fn(),
+		registerChildren: vi.fn(),
+		collapse: vi.fn((threadId: Id<'threadRecords'>) => {
+			expanded.delete(threadId);
+		})
+	};
+}
+
+function childrenResolverStub(childrenByParent: Record<string, Thread[]> = {}) {
+	return vi.fn<SidebarChildrenResolver>(({ threadId, renderRows }) =>
+		renderRows(childrenByParent[threadId] ?? [])
+	);
+}
+
 beforeEach(() => {
 	vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
 	localStorage.clear();
+	treeSummaries.clear();
 });
 
 afterEach(() => {
@@ -72,7 +105,10 @@ function props(records: Thread[]) {
 		onSettings: vi.fn(),
 		onClose: vi.fn(),
 		onChange: vi.fn().mockResolvedValue(undefined),
-		onRename: vi.fn().mockResolvedValue(undefined)
+		onRename: vi.fn().mockResolvedValue(undefined),
+		expansion: expansionStub(),
+		resolveChildren: childrenResolverStub(),
+		readTreeSummary
 	};
 }
 
@@ -402,18 +438,6 @@ it('renames a thread inline', async () => {
 	);
 });
 
-it('does not allow a running thread to settle', async () => {
-	const input = await render([thread(false, 'running')]);
-	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
-
-	expect(settleButton.disabled).toBe(true);
-	act(() => {
-		settleButton.click();
-	});
-	await flush();
-	expect(input.onChange).not.toHaveBeenCalled();
-});
-
 it('unsettles a settled thread', async () => {
 	localStorage.setItem('sprocket.inbox.settled-open', 'true');
 	const input = await render([thread(true)]);
@@ -446,3 +470,208 @@ it('shows a failed settle', async () => {
 
 	expect(document.querySelector('.inbox-notice')?.textContent).toContain('Changed elsewhere');
 });
+
+function childThread(id: string, title: string, status: ThreadStatus = 'completed'): Thread {
+	return {
+		...thread(false, status),
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		_id: id as Id<'threadRecords'>,
+		title,
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		parentThreadId: 'thread' as Id<'threadRecords'>
+	};
+}
+
+it('shows descendant activity inside the thread button with a separate expansion control', async () => {
+	treeSummaries.set('thread', { descendantCount: 5, anyActive: true, descendantsActive: true });
+	const input = props([thread()]);
+	renderView(<Harness {...input} />);
+	await flush();
+
+	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
+
+	const main = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+
+	expect(main.querySelector('.inbox-row-subagents')?.textContent).toBe('5 subagents · Working');
+	expect(expansion.closest('.inbox-row')).toBe(main.closest('.inbox-row'));
+	expect(main.contains(expansion)).toBe(false);
+	expect(expansion.getAttribute('aria-expanded')).toBe('false');
+	expect(expansion.getAttribute('aria-label')).toBe('Expand subagents of Thread');
+	expect(expansion.querySelector('.lucide-chevron-right')).toBeTruthy();
+	expect(document.querySelector('.inbox-children')).toBeNull();
+	expect(input.resolveChildren).not.toHaveBeenCalled();
+
+	act(() => {
+		expansion.click();
+	});
+
+	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+	act(() => {
+		main.click();
+	});
+	expect(input.onSelect).toHaveBeenCalledWith(expect.objectContaining({ _id: 'thread' }));
+});
+
+it('uses singular for one subagent and omits the row without descendants', async () => {
+	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
+	const oneChild = props([thread()]);
+	const oneChildView = renderView(<Harness {...oneChild} />);
+	await flush();
+
+	const badge = document.querySelector('.inbox-row-subagents')!;
+
+	expect(badge.textContent).toBe('1 subagent');
+	expect(badge.textContent).not.toContain('Working');
+	expect(document.querySelector('.inbox-subagents-working')).toBeNull();
+
+	treeSummaries.set('thread', { descendantCount: 0, anyActive: false, descendantsActive: false });
+	oneChildView.unmount();
+	renderView(<Harness {...props([thread()])} />);
+	await flush();
+
+	expect(document.querySelector('.inbox-row-subagents')).toBeNull();
+	expect(document.querySelector('.inbox-subagents')).toBeNull();
+});
+
+it('renders and selects nested children with increasing indentation', async () => {
+	const child = childThread('child', 'Child thread');
+
+	const grandchild = {
+		...childThread('grandchild', 'Grandchild thread'),
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		parentThreadId: 'child' as Id<'threadRecords'>
+	};
+
+	treeSummaries.set('thread', { descendantCount: 2, anyActive: false, descendantsActive: false });
+	treeSummaries.set('child', { descendantCount: 1, anyActive: false, descendantsActive: false });
+
+	const input = props([thread()]);
+	input.expansion = expansionStub(['thread', 'child']);
+	input.resolveChildren = childrenResolverStub({ thread: [child], child: [grandchild] });
+	renderView(<NavigationHarness {...input} />);
+	await flush();
+
+	const expansionRows = [...document.querySelectorAll<HTMLButtonElement>('.inbox-subagents')];
+
+	expect(
+		expansionRows.map(
+			(row) => row.closest('.inbox-row')?.querySelector('.inbox-row-subagents')?.textContent
+		)
+	).toEqual(['2 subagents', '1 subagent']);
+	expect(expansionRows.every((row) => row.getAttribute('aria-expanded') === 'true')).toBe(true);
+
+	const titles = [...document.querySelectorAll('.inbox-row-title')].map((row) => row.textContent);
+
+	expect(titles).toEqual(['Thread', 'Child thread', 'Grandchild thread']);
+
+	const childRow = [...document.querySelectorAll<HTMLElement>('.inbox-row')].find(
+		(row) => row.getAttribute('aria-label') === 'Child thread'
+	)!;
+
+	const grandchildRow = [...document.querySelectorAll<HTMLElement>('.inbox-row')].find(
+		(row) => row.getAttribute('aria-label') === 'Grandchild thread'
+	)!;
+
+	expect(Number(childRow.style.marginLeft.replace('px', ''))).toBeGreaterThan(0);
+	expect(Number(grandchildRow.style.marginLeft.replace('px', ''))).toBeGreaterThan(
+		Number(childRow.style.marginLeft.replace('px', ''))
+	);
+	const childMain = grandchildRow.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+
+	act(() => {
+		childMain.click();
+	});
+	await flush();
+
+	expect(childMain.getAttribute('aria-current')).toBe('page');
+	expect(childMain.closest('.inbox-row-selected')).toBeTruthy();
+});
+
+it('collapses an expanded branch through the expansion control', async () => {
+	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
+	const input = props([thread()]);
+	input.expansion = expansionStub(['thread']);
+	renderView(<Harness {...input} />);
+	await flush();
+
+	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
+
+	expect(expansion.getAttribute('aria-label')).toBe('Collapse subagents of Thread');
+	expect(expansion.querySelector('.lucide-chevron-down')).toBeTruthy();
+
+	act(() => {
+		expansion.click();
+	});
+
+	expect(input.expansion.collapse).toHaveBeenCalledWith('thread');
+});
+
+it('hides settle and unsettle controls for child threads', async () => {
+	const child = childThread('child', 'Child thread');
+	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
+
+	const input = props([thread()]);
+	input.expansion = expansionStub(['thread']);
+	input.resolveChildren = childrenResolverStub({ thread: [child] });
+	renderView(<Harness {...input} />);
+	await flush();
+
+	const childRow = [...document.querySelectorAll<HTMLElement>('.inbox-row')].find(
+		(row) => row.getAttribute('aria-label') === 'Child thread'
+	)!;
+
+	expect(childRow.querySelector('[aria-label^="Settle"]')).toBeNull();
+	expect(childRow.querySelector('[aria-label^="Unsettle"]')).toBeNull();
+	expect(childRow.getAttribute('draggable')).toBe('false');
+
+	act(() => {
+		childRow.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, clientX: 20, clientY: 20 })
+		);
+	});
+	await flush();
+
+	const actions = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+
+	expect(actions.map((action) => action.textContent?.trim())).toEqual(['Rename', 'Copy thread ID']);
+});
+
+it.each([
+	{
+		status: 'completed',
+		descendantCount: 2,
+		descendantsActive: true,
+		badge: '2 subagents · Working'
+	},
+	{ status: 'running', descendantCount: 2, descendantsActive: false, badge: '2 subagents' },
+	{ status: 'running', descendantCount: 0, descendantsActive: false, badge: undefined },
+	{ status: 'queued', descendantCount: 0, descendantsActive: false, badge: undefined }
+] satisfies {
+	status: ThreadStatus;
+	descendantCount: number;
+	descendantsActive: boolean;
+	badge: string | undefined;
+}[])(
+	'blocks settling a $status root with descendant activity $descendantsActive',
+	async ({ status, descendantCount, descendantsActive, badge }) => {
+		if (descendantCount) {
+			treeSummaries.set('thread', { descendantCount, anyActive: true, descendantsActive });
+		}
+
+		await render([thread(false, status)]);
+		expect(document.querySelector('.inbox-row-subagents')?.textContent).toBe(badge);
+		expect(document.querySelector('.inbox-subagents-working') !== null).toBe(descendantsActive);
+		expect(
+			document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')?.disabled
+		).toBe(true);
+		fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+		await flush();
+
+		const settle = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+			(button) => button.textContent?.trim() === 'Settle'
+		)!;
+
+		expect(settle.disabled).toBe(true);
+	}
+);

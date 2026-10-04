@@ -8,7 +8,9 @@ import {
 	type ActionCtx
 } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
-import { getUserId, pickPrimaryUser } from '@convex/lib/auth';
+import { getExecutionRun, getUserId, pickPrimaryUser } from '@convex/lib/auth';
+import { vCompletionActor } from '@convex/lib/docs';
+import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import {
 	vMandateReportOutcome,
@@ -74,6 +76,32 @@ type MandateSetupRequest = {
 // ---------------------------------------------------------------------------
 // Internal queries / mutations
 // ---------------------------------------------------------------------------
+
+export const paymentActor = internalQuery({
+	args: { runId: v.id('runs'), claimId: v.string(), executionSecret: v.string() },
+	returns: vCompletionActor,
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+			throw new Error('Run is no longer active.');
+		}
+
+		const thread = await ctx.db.get('threadRecords', run.threadId);
+
+		if (!thread) throw new Error('Thread not found.');
+
+		if (thread.parentThreadId) throw new Error('Payment tools are unavailable to subagents.');
+
+		return {
+			userId: run.userId,
+			threadId: run.threadId,
+			status: run.status,
+			claimId: run.claimId,
+			claimExpiresAt: run.claimExpiresAt
+		};
+	}
+});
 
 export const insertMandate = internalMutation({
 	args: {

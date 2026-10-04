@@ -6,6 +6,8 @@ import type { FunctionReference } from 'convex/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { z } from 'zod';
+import { isRunFinalStatus } from '@convex/lib/validators';
+import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -22,6 +24,27 @@ export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
 });
+
+export const reconcileLegacyTerminalJobs = migrations.define({
+	table: 'runExecutionStates',
+	batchSize: 1,
+	migrateOne: async (ctx, state) => {
+		if (state.terminalJobsReconciled !== undefined) return;
+		const run = await ctx.db.get('runs', state.runId);
+
+		if (!run || !isRunFinalStatus(run.status)) return;
+
+		await reconcileTerminalRun(ctx, run, {
+			completedAt: run.completedAt ?? Date.now(),
+			jobCursor: -1,
+			questionCursor: -1
+		});
+	}
+});
+
+export const runTerminalJobBackfill = migrations.runner([
+	internal.migrations.reconcileLegacyTerminalJobs
+]);
 
 export const removeTranscriptStateWorkThrough = migrations.define({
 	table: 'threadTranscriptStates',

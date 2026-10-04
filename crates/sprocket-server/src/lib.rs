@@ -17,6 +17,7 @@ pub mod repo_env;
 mod routes;
 mod static_dir;
 mod static_files;
+mod subagent_launcher;
 mod transcript_client;
 mod transcript_watch;
 mod work_sync;

@@ -290,6 +290,40 @@
 	visibility: visible;
 }
 
+.inbox-row-subagents {
+	padding-left: 20px;
+	color: var(--muted-foreground);
+	font-size: 11px;
+	line-height: 20px;
+}
+
+.inbox-subagents {
+	position: absolute;
+	bottom: 8px;
+	left: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.inbox-subagents:hover {
+	background: var(--hover-fill);
+}
+
+.inbox-subagents-working {
+	color: var(--accent-strong);
+}
+
+.inbox-children .inbox-load-more {
+	padding: 4px 10px;
+	text-align: left;
+}
+
 .inbox-working {
 	color: var(--accent-strong);
 }

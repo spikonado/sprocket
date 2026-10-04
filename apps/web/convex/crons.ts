@@ -11,6 +11,13 @@ crons.interval(
 );
 
 crons.interval(
+	'backfill terminal transcript readiness',
+	{ hours: 1 },
+	internal.migrations.runTerminalJobBackfill,
+	{}
+);
+
+crons.interval(
 	'promote legacy thread artifacts to projects',
 	{ hours: 1 },
 	internal.migrations.runProjectArtifactBackfillAutomatically,
