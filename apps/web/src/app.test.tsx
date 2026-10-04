@@ -608,7 +608,7 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	await waitFor(() => expect(listCalls).toBe(3));
 	fireEvent.change(
 		screen.getByPlaceholderText(
-			'Ask anything, @tag files/directories, or use $ to show available skills'
+			'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
 		),
 		{ target: { value: 'Fix the robot' } }
 	);

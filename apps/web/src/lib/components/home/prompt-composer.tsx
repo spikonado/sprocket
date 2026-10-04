@@ -834,7 +834,7 @@ export function PromptComposerView({
 										placeholder={
 											answeringQuestion
 												? 'Add detail, or type a custom answer'
-												: 'Ask anything, @tag files/directories, or use $ to show available skills'
+												: 'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
 										}
 										disabled={isSubmitting}
 										role="combobox"
