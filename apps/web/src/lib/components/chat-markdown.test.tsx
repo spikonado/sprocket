@@ -216,6 +216,20 @@ describe('artifact references', () => {
 });
 
 describe('images', () => {
+	it('renders Windows absolute image paths through sanitization', () => {
+		const { getByRole } = render(
+			<ChatMarkdown
+				content="![Board](C:/workspace/board.png)"
+				imageScope={{ workspacePath: 'C:/workspace' }}
+			/>
+		);
+
+		const image = getByRole('button', { name: 'View Board' });
+		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+
+		expect(url.searchParams.get('path')).toBe('C:/workspace/board.png');
+	});
+
 	it('shows local images as unavailable without a connected workspace', () => {
 		const { getByRole } = render(<ChatMarkdown content="![Board](assets/board.png)" />);
 		const image = getByRole('img', { name: 'Board (unavailable)' });

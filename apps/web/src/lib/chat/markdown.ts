@@ -6,6 +6,16 @@ marked.setOptions({
 	breaks: true
 });
 
+marked.use({
+	renderer: {
+		image(token) {
+			if (!/^[a-z]:[\\/]/i.test(token.href)) return false;
+
+			return this.image({ ...token, href: encodeURIComponent(token.href) });
+		}
+	}
+});
+
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
 	const sanitized = DOMPurify.sanitize(rendered, {
 		ADD_ATTR: ['target', 'rel'],
