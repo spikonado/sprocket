@@ -70,10 +70,13 @@ fn clean_function_error_message(raw: &str) -> String {
         if line.starts_with([' ', '\t']) && trimmed.starts_with("at ") {
             continue;
         }
-        let message = trimmed
+        let mut message = trimmed;
+        while let Some(inner) = message
             .strip_prefix("Uncaught ConvexError: ")
-            .or_else(|| trimmed.strip_prefix("Uncaught Error: "))
-            .unwrap_or(trimmed);
+            .or_else(|| message.strip_prefix("Uncaught Error: "))
+        {
+            message = inner;
+        }
         content.push(message);
     }
     if content.is_empty() {
