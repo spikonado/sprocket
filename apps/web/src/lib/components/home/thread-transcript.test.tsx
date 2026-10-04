@@ -797,9 +797,16 @@ describe('transcript viewport paging', () => {
 		expect(viewport.textContent).not.toContain('Next details');
 	});
 
-	it.each([false, true])(
-		'anchors the visible tool after prepending, including movement during the request: %s',
-		async (moveWhileLoading) => {
+	it.each([
+		{ visibleDetail: 'tool', moveWhileLoading: false },
+		{ visibleDetail: 'tool', moveWhileLoading: true },
+		{ visibleDetail: 'final patch error', moveWhileLoading: false },
+		{ visibleDetail: 'final patch error', moveWhileLoading: true }
+	])(
+		'anchors the visible $visibleDetail after prepending, movement during the request: $moveWhileLoading',
+		async ({ visibleDetail, moveWhileLoading }) => {
+			const viewingError = visibleDetail === 'final patch error';
+
 			const work: TranscriptDisplayRow = {
 				...message(2),
 				id: 'work',
@@ -812,17 +819,24 @@ describe('transcript viewport paging', () => {
 				message(0),
 				message(1),
 				work,
-				message(3)
+				...(viewingError ? [] : [message(3)])
 			]);
 
 			setProps({ nextBefore: undefined });
 
 			const rows = () =>
-				[...viewport.querySelectorAll<HTMLElement>('[data-work-detail]')].filter(
-					(element) => !element.querySelector('[data-work-detail]')
-				);
+				[
+					...viewport.querySelectorAll<HTMLElement>(
+						'[data-work-detail], [data-tool-kind] > [role="status"]'
+					)
+				].filter((element) => !element.querySelector('[data-work-detail]'));
 
-			Object.defineProperty(viewport, 'scrollHeight', { get: () => 1200 + rows().length * 100 });
+			const rowHeight = (element: HTMLElement) =>
+				element.getAttribute('role') === 'status' ? 600 : 100;
+
+			Object.defineProperty(viewport, 'scrollHeight', {
+				get: () => 1200 + rows().reduce((height, element) => height + rowHeight(element), 0)
+			});
 			let olderVisible = false;
 			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 				this: HTMLElement
@@ -840,7 +854,16 @@ describe('transcript viewport paging', () => {
 				const detailIndex = details.indexOf(this);
 
 				if (detailIndex >= 0)
-					return new DOMRect(0, 650 + detailIndex * 100 - viewport.scrollTop, 800, 100);
+					return new DOMRect(
+						0,
+						650 +
+							details
+								.slice(0, detailIndex)
+								.reduce((height, element) => height + rowHeight(element), 0) -
+							viewport.scrollTop,
+						800,
+						rowHeight(this)
+					);
 				const index = [...viewport.querySelectorAll('[data-transcript-anchor]')].indexOf(this);
 
 				return new DOMRect(
@@ -853,15 +876,30 @@ describe('transcript viewport paging', () => {
 
 			function page(ids: number[], previousBefore?: number): TranscriptDisplayDetails {
 				return {
-					parts: ids.flatMap((id) => [
-						{
-							type: 'tool-call' as const,
-							callId: String(id),
-							name: 'exec_command',
-							input: { cmd: `echo ${id}` }
-						},
-						{ type: 'tool-result' as const, callId: String(id), name: 'exec_command', output: {} }
-					]),
+					parts: ids.flatMap((id): TranscriptDisplayDetails['parts'] => {
+						const failedPatch = viewingError && id === 7;
+						const name = failedPatch ? 'apply_patch' : 'exec_command';
+
+						return [
+							{
+								type: 'tool-call' as const,
+								callId: String(id),
+								name,
+								input: failedPatch
+									? {
+											patch:
+												'*** Begin Patch\n*** Update File: a.ts\n*** Update File: b.ts\n*** End Patch'
+										}
+									: { cmd: `echo ${id}` }
+							},
+							{
+								type: 'tool-result' as const,
+								callId: String(id),
+								name,
+								output: failedPatch ? { status: 'failed', error: 'The patch did not apply.' } : {}
+							}
+						];
+					}),
 					previousBefore,
 					revision: 1,
 					indexing: false,
@@ -892,14 +930,21 @@ describe('transcript viewport paging', () => {
 			click(disclosure);
 			await settle();
 			expect(load).toHaveBeenCalledTimes(1);
-			scrollTo(700);
-			const anchor = rows()[0];
+
+			const anchor = viewingError
+				? within(viewport).getByText('The patch did not apply.')
+				: rows()[0];
+
+			const initialTop = viewingError ? 1000 : 699;
+			scrollTo(initialTop + 1);
 			olderVisible = true;
-			scrollTo(699);
+			scrollTo(initialTop);
 			await settle();
 			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
 
-			if (moveWhileLoading) scrollTo(660);
+			const top = moveWhileLoading ? initialTop - 39 : initialTop;
+
+			if (moveWhileLoading) scrollTo(top);
 			const offset = anchor.getBoundingClientRect().top;
 			await act(async () => {
 				resolve(page([4, 5]));
@@ -907,9 +952,9 @@ describe('transcript viewport paging', () => {
 			await settle();
 			expect(anchor.isConnected).toBe(true);
 			expect(anchor.getBoundingClientRect().top).toBe(offset);
-			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
+			expect(viewport.scrollTop).toBe(top + 200);
 			act(() => resize());
-			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
+			expect(viewport.scrollTop).toBe(top + 200);
 		}
 	);
 

@@ -51,6 +51,7 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 						))}
 						{error && failure ? (
 							<p
+								data-work-detail
 								className={`pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
 								role="status"
 							>
