@@ -116,31 +116,23 @@ export function useExpandedThreads(userKey: string | null) {
 		setExpandedThreadIds(userKey ? readStoredExpandedThreadIds(userKey) : []);
 	}, [userKey]);
 
-	const persist = (next: string[]) => {
-		if (userKey) storeExpandedThreadIds(userKey, next);
+	const expand = (threadIds: readonly Id<'threadRecords'>[]) => {
+		if (threadIds.length === 0) return;
+		setExpandedThreadIds((current) => {
+			const next = [...new Set([...current, ...threadIds])];
+
+			if (next.length === current.length) return current;
+
+			if (userKey) storeExpandedThreadIds(userKey, next);
+
+			return next;
+		});
 	};
 
 	return {
 		isExpanded: (threadId: Id<'threadRecords'>) => expandedThreadIds.includes(threadId),
-		expand: (threadId: Id<'threadRecords'>) => {
-			setExpandedThreadIds((current) => {
-				if (current.includes(threadId)) return current;
-				const next = [...current, threadId];
-				persist(next);
-
-				return next;
-			});
-		},
-		revealAncestors: (ancestorIds: readonly Id<'threadRecords'>[]) => {
-			if (ancestorIds.length === 0) return;
-			setExpandedThreadIds((current) => {
-				const next = [...new Set([...current, ...ancestorIds])];
-
-				if (next.length !== current.length) persist(next);
-
-				return next;
-			});
-		},
+		expand: (threadId: Id<'threadRecords'>) => expand([threadId]),
+		revealAncestors: expand,
 		registerChildren: (
 			parentId: Id<'threadRecords'>,
 			children: readonly Pick<Doc<'threadRecords'>, '_id'>[]
@@ -160,7 +152,8 @@ export function useExpandedThreads(userKey: string | null) {
 			setExpandedThreadIds((current) => {
 				if (!current.includes(threadId)) return current;
 				const next = collapseThreadBranch(current, threadId, childrenByParentRef.current);
-				persist(next);
+
+				if (userKey) storeExpandedThreadIds(userKey, next);
 
 				return next;
 			});

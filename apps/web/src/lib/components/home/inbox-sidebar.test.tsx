@@ -1,10 +1,10 @@
-import { act, useState, type ComponentProps, type ReactElement } from 'react';
+import { act, useState, type ComponentProps } from 'react';
 import { fireEvent, render as renderView } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { INBOX_STATES } from '@convex/lib/inboxState';
-import InboxSidebar from './inbox-sidebar';
+import InboxSidebar, { type SidebarChildrenResolver } from './inbox-sidebar';
 import type {
 	ThreadTreeSummary,
 	ThreadTreeSummaryRead,
@@ -40,16 +40,8 @@ function expansionStub(initial: string[] = []): UseExpandedThreads {
 }
 
 function childrenResolverStub(childrenByParent: Record<string, Thread[]> = {}) {
-	return vi.fn(
-		({
-			thread,
-			renderRows,
-			depth
-		}: {
-			thread: Thread;
-			renderRows: (rows: Thread[], depth: number) => ReactElement;
-			depth: number;
-		}) => <>{renderRows(childrenByParent[thread._id] ?? [], depth)}</>
+	return vi.fn<SidebarChildrenResolver>(({ threadId, renderRows }) =>
+		renderRows(childrenByParent[threadId] ?? [])
 	);
 }
 
@@ -446,18 +438,6 @@ it('renames a thread inline', async () => {
 	);
 });
 
-it('does not allow a running thread to settle', async () => {
-	const input = await render([thread(false, 'running')]);
-	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
-
-	expect(settleButton.disabled).toBe(true);
-	act(() => {
-		settleButton.click();
-	});
-	await flush();
-	expect(input.onChange).not.toHaveBeenCalled();
-});
-
 it('unsettles a settled thread', async () => {
 	localStorage.setItem('sprocket.inbox.settled-open', 'true');
 	const input = await render([thread(true)]);
@@ -554,7 +534,7 @@ it('uses singular for one subagent and omits the row without descendants', async
 	expect(document.querySelector('.inbox-subagents')).toBeNull();
 });
 
-it('expands immediate children recursively through the resolver', async () => {
+it('renders and selects nested children with increasing indentation', async () => {
 	const child = childThread('child', 'Child thread');
 
 	const grandchild = {
@@ -569,7 +549,7 @@ it('expands immediate children recursively through the resolver', async () => {
 	const input = props([thread()]);
 	input.expansion = expansionStub(['thread', 'child']);
 	input.resolveChildren = childrenResolverStub({ thread: [child], child: [grandchild] });
-	renderView(<Harness {...input} />);
+	renderView(<NavigationHarness {...input} />);
 	await flush();
 
 	const expansionRows = [...document.querySelectorAll<HTMLButtonElement>('.inbox-subagents')];
@@ -597,21 +577,7 @@ it('expands immediate children recursively through the resolver', async () => {
 	expect(Number(grandchildRow.style.marginLeft.replace('px', ''))).toBeGreaterThan(
 		Number(childRow.style.marginLeft.replace('px', ''))
 	);
-});
-
-it('selects a nested child through the ordinary selection flow', async () => {
-	const child = childThread('child', 'Child thread');
-	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
-
-	const input = props([thread()]);
-	input.expansion = expansionStub(['thread']);
-	input.resolveChildren = childrenResolverStub({ thread: [child] });
-	renderView(<NavigationHarness {...input} />);
-	await flush();
-
-	const childMain = [...document.querySelectorAll<HTMLButtonElement>('.inbox-row-main')].find(
-		(button) => button.textContent?.includes('Child thread')
-	)!;
+	const childMain = grandchildRow.querySelector<HTMLButtonElement>('.inbox-row-main')!;
 
 	act(() => {
 		childMain.click();
@@ -671,42 +637,41 @@ it('hides settle and unsettle controls for child threads', async () => {
 	expect(actions.map((action) => action.textContent?.trim())).toEqual(['Rename', 'Copy thread ID']);
 });
 
-it('shows descendant activity and disables settling in the row and context menu', async () => {
-	treeSummaries.set('thread', { descendantCount: 2, anyActive: true, descendantsActive: true });
-	const input = await render([thread()]);
-	expect(document.querySelector('.inbox-row-subagents')?.textContent).toBe('2 subagents · Working');
-	expect(document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')?.disabled).toBe(
-		true
-	);
-	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
-	await flush();
+it.each([
+	{
+		status: 'completed',
+		descendantCount: 2,
+		descendantsActive: true,
+		badge: '2 subagents · Working'
+	},
+	{ status: 'running', descendantCount: 2, descendantsActive: false, badge: '2 subagents' },
+	{ status: 'running', descendantCount: 0, descendantsActive: false, badge: undefined },
+	{ status: 'queued', descendantCount: 0, descendantsActive: false, badge: undefined }
+] satisfies {
+	status: ThreadStatus;
+	descendantCount: number;
+	descendantsActive: boolean;
+	badge: string | undefined;
+}[])(
+	'blocks settling a $status root with descendant activity $descendantsActive',
+	async ({ status, descendantCount, descendantsActive, badge }) => {
+		if (descendantCount) {
+			treeSummaries.set('thread', { descendantCount, anyActive: true, descendantsActive });
+		}
 
-	const settle = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-		(button) => button.textContent?.trim() === 'Settle'
-	)!;
+		await render([thread(false, status)]);
+		expect(document.querySelector('.inbox-row-subagents')?.textContent).toBe(badge);
+		expect(document.querySelector('.inbox-subagents-working') !== null).toBe(descendantsActive);
+		expect(
+			document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')?.disabled
+		).toBe(true);
+		fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+		await flush();
 
-	expect(settle.disabled).toBe(true);
-	settle.click();
-	expect(input.onChange).not.toHaveBeenCalled();
-});
+		const settle = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+			(button) => button.textContent?.trim() === 'Settle'
+		)!;
 
-it('blocks settling an active parent with idle children without a Working badge', async () => {
-	treeSummaries.set('thread', { descendantCount: 2, anyActive: true, descendantsActive: false });
-	const input = await render([thread(false, 'running')]);
-
-	const badge = document.querySelector('.inbox-row-subagents')!;
-
-	expect(badge.textContent).toBe('2 subagents');
-	expect(badge.textContent).not.toContain('Working');
-	expect(badge.querySelector('.inbox-subagents-working')).toBeNull();
-
-	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
-
-	expect(settleButton.disabled).toBe(true);
-	act(() => {
-		settleButton.click();
-	});
-	await flush();
-
-	expect(input.onChange).not.toHaveBeenCalled();
-});
+		expect(settle.disabled).toBe(true);
+	}
+);

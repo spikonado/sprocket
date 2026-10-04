@@ -29,7 +29,7 @@ use crate::subagents::{
     resolve_subagent_settings,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
-use crate::transcript::monitor::{MONITOR_PAGE_CHAR_LIMIT, MonitorPage};
+use crate::transcript::monitor::MONITOR_PAGE_CHAR_LIMIT;
 use crate::types::CompletionProvider;
 
 const CREATE_OR_SEND: &str = "subagents:createOrSend";
@@ -1189,76 +1189,56 @@ async fn read_transcript_snapshot(
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let store = context
         .transcript_store
-        .clone()
+        .as_ref()
         .ok_or_else(|| tool_failure("transcript store is unavailable"))?;
 
-    sync_monitor_transcript(context, &info, &store).await?;
+    let transcript = &info.transcript;
+    let user_id = &context.user_id;
+    let thread_id = &transcript.thread_id;
+    crate::transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
+        .await
+        .map_err(tool_error)?;
+    crate::transcript::fetch_missing_parts(
+        store,
+        user_id,
+        thread_id,
+        0,
+        transcript.total_parts,
+        |numbers| async move {
+            let mut fields = thread_args(context, thread_id);
+            fields.insert(
+                "numbers".to_string(),
+                Value::Array(
+                    numbers
+                        .iter()
+                        .map(|number| Value::Float64(*number as f64))
+                        .collect(),
+                ),
+            );
+            let value: serde_json::Value = context
+                .runtime
+                .mutation_json(TRANSCRIPT_PARTS, fields)
+                .await?;
+            crate::transcript::parse_remote_parts(value)
+        },
+    )
+    .await
+    .map_err(tool_error)?;
     let page = crate::transcript::monitor::read_monitor_page(
-        &store,
-        &info.user_id,
-        &info.thread_id,
+        store,
+        user_id,
+        thread_id,
         cursor,
         MONITOR_PAGE_CHAR_LIMIT,
     )
     .await
     .map_err(tool_error)?;
 
-    Ok(subagent_snapshot(&info, page))
-}
-
-fn subagent_snapshot(info: &SubagentMonitorInfo, page: MonitorPage) -> serde_json::Value {
-    let mut result = subagent_metadata(info);
+    let mut result = subagent_metadata(&info);
     result["entries"] = json!(page.entries);
     result["nextCursor"] = json!(page.next_cursor);
     result["hasMore"] = json!(page.has_more);
-    result
-}
-
-async fn sync_monitor_transcript(
-    context: &AgentToolContext,
-    info: &SubagentMonitorInfo,
-    store: &crate::TranscriptStore,
-) -> Result<(), ToolExecutionError> {
-    crate::transcript::apply_remote_state(
-        store,
-        &info.user_id,
-        &info.thread_id,
-        &info.transcript,
-        false,
-    )
-    .await
-    .map_err(tool_error)?;
-    crate::transcript::fetch_missing_parts(
-        store,
-        &info.user_id,
-        &info.thread_id,
-        0,
-        info.transcript.total_parts,
-        |numbers| {
-            let context = context.clone();
-            let thread_id = info.thread_id.clone();
-            async move {
-                let mut fields = thread_args(&context, &thread_id);
-                fields.insert(
-                    "numbers".to_string(),
-                    Value::Array(
-                        numbers
-                            .iter()
-                            .map(|number| Value::Float64(*number as f64))
-                            .collect(),
-                    ),
-                );
-                let value: serde_json::Value = context
-                    .runtime
-                    .mutation_json(TRANSCRIPT_PARTS, fields)
-                    .await?;
-                crate::transcript::parse_remote_parts(value)
-            }
-        },
-    )
-    .await
-    .map_err(tool_error)?;
-    Ok(())
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1316,8 +1296,6 @@ mod tests {
 
     fn monitor_info(active: bool) -> SubagentMonitorInfo {
         SubagentMonitorInfo {
-            thread_id: "child".to_string(),
-            user_id: "user".to_string(),
             status: if active { "running" } else { "completed" }.to_string(),
             last_error: None,
             active,
@@ -1344,33 +1322,6 @@ mod tests {
         assert_eq!(
             result,
             json!({"status": "running", "lastError": null, "pendingQuestions": []})
-        );
-    }
-
-    #[test]
-    fn transcript_snapshot_projects_only_public_fields() {
-        let mut info = monitor_info(false);
-        info.pending_questions
-            .push(crate::subagents::SubagentQuestion {
-                question_id: "question".to_string(),
-                question: "Continue?".to_string(),
-                options: Vec::new(),
-            });
-        let result = subagent_snapshot(
-            &info,
-            MonitorPage {
-                entries: Vec::new(),
-                next_cursor: "next".to_string(),
-                has_more: true,
-            },
-        );
-        assert_eq!(
-            result,
-            json!({
-                "status": "completed", "lastError": null,
-                "pendingQuestions": [{"questionId": "question", "question": "Continue?", "options": []}],
-                "entries": [], "nextCursor": "next", "hasMore": true
-            })
         );
     }
 

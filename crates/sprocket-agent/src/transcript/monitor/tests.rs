@@ -101,23 +101,31 @@ fn page(
     )
 }
 
-fn collect_all(replica: &WorkReplica, max_chars: usize) -> (Vec<MonitorEntry>, MonitorPage) {
+fn collect_all(
+    replica: &WorkReplica,
+    mut current: MonitorPage,
+    max_chars: usize,
+) -> Vec<MonitorEntry> {
     let mut entries = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut last = None;
     for _ in 0..64 {
-        let page = page(replica, cursor.as_deref(), max_chars).unwrap();
-        entries.extend(page.entries.iter().cloned());
-        cursor = Some(page.next_cursor.clone());
-        let done = !page.has_more;
-        last = Some(page);
-        if done {
-            break;
+        let cost: usize = current
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                MonitorEntry::Prompt { text, .. } | MonitorEntry::Text { text, .. } => {
+                    text.chars().count()
+                }
+                MonitorEntry::Patch { changes, .. } => changes.iter().map(patch_change_cost).sum(),
+            })
+            .sum();
+        assert!(cost <= max_chars, "monitor page exceeded the char budget");
+        entries.append(&mut current.entries);
+        if !current.has_more {
+            return entries;
         }
+        current = page(replica, Some(&current.next_cursor), max_chars).unwrap();
     }
-    let last = last.expect("at least one page");
-    assert!(!last.has_more, "monitor paging did not terminate");
-    (entries, last)
+    panic!("monitor paging did not terminate");
 }
 
 fn texts(entries: &[MonitorEntry]) -> Vec<&str> {
@@ -639,19 +647,7 @@ fn paged_tool_only_patch_resumes_after_its_canonical_call_arrives() {
             ],
         )
         .unwrap();
-    let mut entries = first.entries;
-    let mut cursor = first.next_cursor;
-    let mut finished = false;
-    for _ in 0..64 {
-        let next = page(&replica, Some(&cursor), 30).unwrap();
-        entries.extend(next.entries);
-        cursor = next.next_cursor;
-        if !next.has_more {
-            finished = true;
-            break;
-        }
-    }
-    assert!(finished, "patch pagination must terminate");
+    let entries = collect_all(&replica, first, 30);
     let paths: Vec<_> = entries
         .iter()
         .flat_map(|entry| match entry {
@@ -694,6 +690,40 @@ fn full_page_defers_the_next_entry_without_empty_fragments() {
 }
 
 #[test]
+fn patch_paths_are_kept_whole_when_text_uses_the_page_budget() {
+    let (_dir, mut replica) = open_replica();
+    replica
+        .save_parts(
+            "thread",
+            &[
+                prompt_part(0, "123"),
+                completion_part(1, vec![patch_call_item("c1")]),
+                tool_part(
+                    2,
+                    Some("inv-c"),
+                    "c1",
+                    "apply_patch",
+                    "completed",
+                    Some(json!({"changes":[{"operation":"renamed","path":"new","source":"old"}]})),
+                ),
+            ],
+        )
+        .unwrap();
+    let first = page(&replica, None, 8).unwrap();
+    assert_eq!(texts(&first.entries), ["123"]);
+    assert!(first.has_more);
+    let second = page(&replica, Some(&first.next_cursor), 8).unwrap();
+    let [MonitorEntry::Patch { ok, changes, .. }] = second.entries.as_slice() else {
+        panic!()
+    };
+    assert!(ok);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "new");
+    assert_eq!(changes[0].source_path.as_deref(), Some("old"));
+    assert!(!second.has_more);
+}
+
+#[test]
 fn multiple_oversized_entries_page_in_order_without_loss() {
     let (_dir, mut replica) = open_replica();
     let first_text: String = "a".repeat(600);
@@ -712,8 +742,7 @@ fn multiple_oversized_entries_page_in_order_without_loss() {
         )
         .unwrap();
 
-    let (entries, last) = collect_all(&replica, 500);
-    assert!(!last.has_more);
+    let entries = collect_all(&replica, page(&replica, None, 500).unwrap(), 500);
     let kinds: Vec<&str> = entries
         .iter()
         .map(|entry| match entry {
@@ -798,7 +827,13 @@ fn unicode_text_resumes_cumulatively_on_char_boundaries() {
 fn long_patch_change_lists_page_without_dropping_paths() {
     let (_dir, mut replica) = open_replica();
     let changes: Vec<JsonValue> = (0..200)
-        .map(|index| json!({"operation":"updated","path":format!("dir/file-{index}.txt")}))
+        .map(|index| {
+            json!({
+                "operation":"renamed",
+                "path":format!("dir/file-{index}.txt"),
+                "source":format!("old/file-{index}.txt")
+            })
+        })
         .collect();
     replica
         .save_parts(
@@ -817,12 +852,10 @@ fn long_patch_change_lists_page_without_dropping_paths() {
         )
         .unwrap();
 
-    let mut collected = Vec::new();
-    let mut cursor: Option<String> = None;
-    for _ in 0..16 {
-        let page = page(&replica, cursor.as_deref(), 1000).unwrap();
-        assert!(page.next_cursor.len() < 1000);
-        for entry in page.entries {
+    let entries = collect_all(&replica, page(&replica, None, 1000).unwrap(), 1000);
+    let collected: Vec<_> = entries
+        .into_iter()
+        .flat_map(|entry| {
             let MonitorEntry::Patch { changes, .. } = entry else {
                 panic!()
             };
@@ -830,18 +863,20 @@ fn long_patch_change_lists_page_without_dropping_paths() {
                 !changes.is_empty(),
                 "over-budget patch must not emit empties"
             );
-            collected.extend(changes.into_iter().map(|change| change.path));
-        }
-        cursor = Some(page.next_cursor);
-        if !page.has_more {
-            break;
-        }
-    }
-    assert_eq!(collected.len(), 200);
-    assert_eq!(collected[0], "dir/file-0.txt");
-    assert_eq!(collected[199], "dir/file-199.txt");
-    let unique: std::collections::HashSet<_> = collected.iter().collect();
-    assert_eq!(unique.len(), 200);
+            changes
+                .into_iter()
+                .map(|change| (change.path, change.source_path))
+        })
+        .collect();
+    assert_eq!(
+        collected,
+        (0..200)
+            .map(|index| (
+                format!("dir/file-{index}.txt"),
+                Some(format!("old/file-{index}.txt"))
+            ))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

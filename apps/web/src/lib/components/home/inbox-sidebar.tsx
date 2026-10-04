@@ -44,9 +44,8 @@ const labels = {
 } satisfies Record<InboxState, string>;
 
 export type SidebarChildrenResolver = (args: {
-	thread: Thread;
-	renderRows: (rows: Thread[], depth: number) => ReactElement;
-	depth: number;
+	threadId: Id<'threadRecords'>;
+	renderRows: (rows: Thread[]) => ReactElement;
 }) => ReactElement | null;
 
 type RenderThreadRow = (thread: Thread, sectionState: InboxState, depth: number) => ReactElement;
@@ -67,7 +66,7 @@ type ThreadTreeRowProps = {
 	projectName: string;
 	model: Pick<CatalogModel, 'id' | 'label' | 'provider'> | undefined;
 	ageLabel: string;
-	renderRow: RenderThreadRow;
+	renderChildren: (rows: Thread[]) => ReactElement;
 	onChoose: (thread: Thread) => void;
 	onOpenMenu: (event: ReactMouseEvent, thread: Thread) => void;
 	onBeginRename: (thread: Thread) => void;
@@ -267,10 +266,6 @@ export default function InboxSidebar({
 		return `${Math.floor(minutes / 1440)}d`;
 	}
 
-	function choose(thread: Thread) {
-		onSelect(thread);
-	}
-
 	function beginRename(thread: Thread) {
 		setMenu(null);
 		setRenameThread(thread);
@@ -383,8 +378,10 @@ export default function InboxSidebar({
 			projectName={projectName(thread)}
 			model={threadModel(thread)}
 			ageLabel={age(thread.lastMessageAt)}
-			renderRow={renderThreadRow}
-			onChoose={choose}
+			renderChildren={(children) => (
+				<>{children.map((child) => renderThreadRow(child, sectionState, depth + 1))}</>
+			)}
+			onChoose={onSelect}
 			onOpenMenu={openMenu}
 			onBeginRename={beginRename}
 			onCancelRename={cancelRename}
@@ -681,7 +678,7 @@ function ThreadTreeRow({
 	projectName,
 	model,
 	ageLabel,
-	renderRow,
+	renderChildren,
 	onChoose,
 	onOpenMenu,
 	onBeginRename,
@@ -845,11 +842,8 @@ function ThreadTreeRow({
 			{expanded && (
 				<div className="inbox-children">
 					{resolveChildren({
-						thread,
-						depth: depth + 1,
-						renderRows: (rows: Thread[], nextDepth: number) => (
-							<>{rows.map((child) => renderRow(child, sectionState, nextDepth))}</>
-						)
+						threadId: thread._id,
+						renderRows: renderChildren
 					})}
 				</div>
 			)}

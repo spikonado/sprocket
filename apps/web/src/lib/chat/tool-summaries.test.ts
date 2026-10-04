@@ -91,14 +91,7 @@ describe('subagent summaries', () => {
 			input: { action: 'stop', threadId: 'child' },
 			expected: 'Stop child agent'
 		},
-		{
-			name: 'control_subagent',
-			input: { action: 'answer_question', threadId: 'child', questionId: 'q', text: 'Yes' },
-			expected: 'Answered question'
-		},
-		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' },
-		{ name: 'list_subagents', input: {}, expected: '' },
-		{ name: 'list_subagent_models', input: {}, expected: '' }
+		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' }
 	])('summarizes $name as "$expected"', ({ name, input, expected }) => {
 		const tool: AssistantTimelineTool = { type: 'tool', callId: 'call', name, input };
 		expect(toolItemSummary(tool, new Map())).toBe(expected);

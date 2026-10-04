@@ -133,7 +133,6 @@ export const insertGatewayRun = internalMutation({
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
-		parentThreadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),

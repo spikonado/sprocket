@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
-import { pendingQuestionsForThread } from '@convex/agentQuestions';
+import { actionablePendingQuestionsForThread } from '@convex/lib/agentQuestions';
 import { registerChildThread, subtreeSummary } from '@convex/lib/threadHierarchy';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { toolInvocationIdForJob, toolSourceKey } from '@convex/lib/transcriptParts';
@@ -743,7 +743,9 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		);
 		expect(
 			await t.run(async (ctx) =>
-				(await pendingQuestionsForThread(ctx, threadId)).map((question) => question._id)
+				(await actionablePendingQuestionsForThread(ctx.db, threadId)).map(
+					(question) => question._id
+				)
 			)
 		).toEqual([questionId]);
 		expect(

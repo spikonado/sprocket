@@ -61,7 +61,7 @@ pub enum MonitorReadError {
     MonitorCursorReset,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MonitorCursor {
     thread_id: String,
@@ -73,7 +73,7 @@ struct MonitorCursor {
     fallback_patches: BTreeSet<(String, String)>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResumeEntry {
     id: String,
@@ -89,12 +89,10 @@ pub async fn read_monitor_page(
     max_chars: usize,
 ) -> anyhow::Result<MonitorPage> {
     let cursor = cursor.map(parse_cursor).transpose()?;
-    let user = user_id.to_string();
     let thread = thread_id.to_string();
     store
-        .with_work_replica(&user, &thread, {
-            let thread = thread.clone();
-            move |replica| read_page(replica, &thread, cursor, max_chars)
+        .with_work_replica(user_id, thread_id, move |replica| {
+            read_page(replica, &thread, cursor, max_chars)
         })
         .await
 }
@@ -145,7 +143,7 @@ fn read_page(
         .unwrap_or(0);
     let ready_end = u64::from(prefix) * POSITION_STRIDE;
 
-    if let Some(resume) = cursor.resume.clone() {
+    if let Some(resume) = cursor.resume.take() {
         let (entry, next) = resume_entry(replica, &resume, max_chars)?;
         cursor.resume = next;
         cursor.revision = revision;
@@ -169,7 +167,7 @@ fn read_page(
     let mut output: Vec<MonitorEntry> = Vec::new();
     let mut used = 0usize;
     let mut exhausted = true;
-    for (sequence, entry) in entries {
+    for (sequence, mut entry) in entries {
         let patch_identity = if matches!(entry, MonitorEntry::Patch { .. }) {
             let source = replica
                 .patch_sources(sequence, sequence + 1)?
@@ -211,18 +209,11 @@ fn read_page(
             cursor.fallback_patches.insert(identity);
         }
         cursor.scanned = sequence + 1;
-        match truncate_entry(entry, used, max_chars) {
-            Truncated::Complete(entry, now_used) => {
-                used = now_used;
-                output.push(entry);
-            }
-            Truncated::Overflow(entry, now_used, resume) => {
-                used = now_used;
-                output.push(entry);
-                cursor.resume = Some(resume);
-                exhausted = false;
-                break;
-            }
+        cursor.resume = truncate_entry(&mut entry, &mut used, max_chars);
+        output.push(entry);
+        if cursor.resume.is_some() {
+            exhausted = false;
+            break;
         }
     }
     if exhausted {
@@ -240,79 +231,43 @@ fn read_page(
     })
 }
 
-enum Truncated {
-    Complete(MonitorEntry, usize),
-    Overflow(MonitorEntry, usize, ResumeEntry),
-}
-
-fn truncate_entry(entry: MonitorEntry, used: usize, max_chars: usize) -> Truncated {
+fn truncate_entry(
+    entry: &mut MonitorEntry,
+    used: &mut usize,
+    max_chars: usize,
+) -> Option<ResumeEntry> {
     match entry {
-        MonitorEntry::Prompt { id, text } => truncate_text(true, id, text, used, max_chars),
-        MonitorEntry::Text { id, text } => truncate_text(false, id, text, used, max_chars),
-        MonitorEntry::Patch { id, ok, changes } => {
-            let mut used = used;
+        MonitorEntry::Prompt { id, text } | MonitorEntry::Text { id, text } => {
+            let budget = max_chars.saturating_sub(*used);
+            if let Some((end, _)) = text.char_indices().nth(budget) {
+                text.truncate(end);
+                *used += budget;
+                Some(ResumeEntry {
+                    id: id.clone(),
+                    offset: budget as u64,
+                    patch: false,
+                })
+            } else {
+                *used += text.chars().count();
+                None
+            }
+        }
+        MonitorEntry::Patch { id, changes, .. } => {
             for (index, change) in changes.iter().enumerate() {
                 let cost = patch_change_cost(change);
                 if used.saturating_add(cost) > max_chars && index > 0 {
-                    return Truncated::Overflow(
-                        MonitorEntry::Patch {
-                            id: id.clone(),
-                            ok,
-                            changes: changes[..index].to_vec(),
-                        },
-                        used,
-                        ResumeEntry {
-                            id,
-                            offset: index as u64,
-                            patch: true,
-                        },
-                    );
+                    changes.truncate(index);
+                    return Some(ResumeEntry {
+                        id: id.clone(),
+                        offset: index as u64,
+                        patch: true,
+                    });
                 }
-                used = used.saturating_add(cost);
+                *used = used.saturating_add(cost);
             }
-            Truncated::Complete(MonitorEntry::Patch { id, ok, changes }, used)
+            None
         }
     }
-}
-
-fn truncate_text(
-    is_prompt: bool,
-    id: String,
-    text: String,
-    used: usize,
-    max_chars: usize,
-) -> Truncated {
-    let len = text.chars().count();
-    if used.saturating_add(len) <= max_chars {
-        let entry = if is_prompt {
-            MonitorEntry::Prompt { id, text }
-        } else {
-            MonitorEntry::Text { id, text }
-        };
-        return Truncated::Complete(entry, used + len);
-    }
-    let budget = max_chars.saturating_sub(used).min(len);
-    let kept: String = text.chars().take(budget).collect();
-    let entry = if is_prompt {
-        MonitorEntry::Prompt {
-            id: id.clone(),
-            text: kept,
-        }
-    } else {
-        MonitorEntry::Text {
-            id: id.clone(),
-            text: kept,
-        }
-    };
-    Truncated::Overflow(
-        entry,
-        used.saturating_add(budget),
-        ResumeEntry {
-            id,
-            offset: u64::try_from(budget).unwrap_or(u64::MAX),
-            patch: false,
-        },
-    )
 }
 
 fn patch_change_cost(change: &PatchChangeSummary) -> usize {
@@ -330,7 +285,7 @@ fn resume_entry(
     resume: &ResumeEntry,
     max_chars: usize,
 ) -> anyhow::Result<(MonitorEntry, Option<ResumeEntry>)> {
-    let entry = if resume.patch {
+    let mut entry = if resume.patch {
         let sequence: u64 = resume
             .id
             .strip_prefix("patch-")
@@ -342,24 +297,28 @@ fn resume_entry(
             |row| row.get(0),
         )?;
         let source: WorkItem = serde_json::from_str(&source)?;
-        let MonitorEntry::Patch { ok, changes, .. } = replica
+        let MonitorEntry::Patch {
+            ok, mut changes, ..
+        } = replica
             .patch_outcome(&source)?
             .context("patch resume result is gone")?
         else {
             anyhow::bail!("patch resume points at another entry kind");
         };
         let offset = usize::try_from(resume.offset)?;
-        let remaining = changes
-            .get(offset..)
-            .context("patch resume offset exceeds result")?;
         anyhow::ensure!(
-            remaining.first().map_or(0, patch_change_cost) <= max_chars,
+            offset <= changes.len(),
+            "patch resume offset exceeds result"
+        );
+        drop(changes.drain(..offset));
+        anyhow::ensure!(
+            changes.first().map_or(0, patch_change_cost) <= max_chars,
             "patch path exceeds monitor page budget"
         );
         MonitorEntry::Patch {
             id: resume.id.clone(),
             ok,
-            changes: remaining.to_vec(),
+            changes,
         }
     } else {
         let row: Option<(String, String)> = replica
@@ -385,13 +344,12 @@ fn resume_entry(
             other => anyhow::bail!("monitor resume points at a {other} row"),
         }
     };
-    match truncate_entry(entry, 0, max_chars) {
-        Truncated::Complete(entry, _) => Ok((entry, None)),
-        Truncated::Overflow(entry, _, mut next) => {
-            next.offset = next.offset.saturating_add(resume.offset);
-            Ok((entry, Some(next)))
-        }
+    let mut used = 0;
+    let mut next = truncate_entry(&mut entry, &mut used, max_chars);
+    if let Some(next) = &mut next {
+        next.offset = next.offset.saturating_add(resume.offset);
     }
+    Ok((entry, next))
 }
 
 impl WorkReplica {

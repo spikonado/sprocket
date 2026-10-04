@@ -112,8 +112,6 @@ pub struct SubagentControlResponse {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentMonitorInfo {
-    pub thread_id: String,
-    pub user_id: String,
     pub status: String,
     #[serde(default)]
     pub last_error: Option<String>,

@@ -12,9 +12,9 @@ import {
 	answerPendingQuestion,
 	cancelPendingQuestionsForThread,
 	questionContinuation,
-	pendingQuestionsForThread,
 	toAgentQuestionSnapshot
 } from '@convex/agentQuestions';
+import { actionablePendingQuestionsForThread } from '@convex/lib/agentQuestions';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { normalizeTaskTimeoutMs } from '@convex/lib/models';
 import { executionSecretHash, getExecutionRun } from '@convex/lib/auth';
@@ -28,14 +28,13 @@ import { requestRunCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { getRunWithExecution } from '@convex/lib/runExecution';
-import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
+import { transcriptStateResult } from '@convex/transcript';
 import {
 	assertDescendantThreadAccess,
 	listDirectChildrenPage,
 	refreshThreadHierarchyActivity
 } from '@convex/lib/threadHierarchy';
 import {
-	getTranscriptState,
 	getPromptPart,
 	loadTranscriptPartsByNumbers,
 	transcriptPartsForClient
@@ -75,6 +74,16 @@ function subagentSettings(
 	};
 }
 
+function createdSubagentRun(run: Doc<'runs'>): Infer<typeof vCreatedSubagentRun> {
+	return {
+		threadId: run.threadId,
+		runId: run._id,
+		status: run.status,
+		continuationOfRunId: run.continuationOfRunId,
+		settings: subagentSettings(run)
+	};
+}
+
 export const recoverSubmission = mutation({
 	args: {
 		...vCallerRun.fields,
@@ -99,11 +108,7 @@ export const recoverSubmission = mutation({
 			const prompt = (await getPromptPart(ctx, run.threadId, run._id))?.prompt?.text ?? '';
 
 			return {
-				threadId: run.threadId,
-				runId: run._id,
-				status: run.status,
-				continuationOfRunId: run.continuationOfRunId,
-				settings: subagentSettings(run),
+				...createdSubagentRun(run),
 				prompt
 			};
 		} catch (error) {
@@ -264,13 +269,7 @@ export const createOrSend = mutation({
 
 			const run = (await ctx.db.get('runs', created.runId))!;
 
-			return {
-				threadId: created.threadId,
-				runId: created.runId,
-				status: run.status,
-				continuationOfRunId: run.continuationOfRunId,
-				settings: subagentSettings(run)
-			};
+			return createdSubagentRun(run);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -392,15 +391,12 @@ export const control = mutation({
 			if (args.action === 'stop') {
 				const latest = await latestRunForThread(ctx, thread._id);
 
-				if (latest && !isRunFinalStatus(latest.status)) {
+				if (latest) {
 					await requestRunCancellation(ctx, latest);
 				} else {
-					// No live run: still retire pending questions awaiting
-					// continuation so Stop is meaningful on idle-but-waiting threads.
 					await cancelPendingQuestionsForThread(ctx, thread._id);
+					await refreshThreadHierarchyActivity(ctx, thread._id);
 				}
-
-				await refreshThreadHierarchyActivity(ctx, thread._id);
 
 				return { stoppedRunId: latest?._id };
 			}
@@ -437,17 +433,17 @@ export const control = mutation({
 			});
 
 			if (result.kind === 'alreadyAnswered') {
-				const question = await ctx.db.get('agentQuestions', args.questionId);
+				const question = result.question;
 
 				const retryContinuation =
 					args.toolJobId &&
-					question?.continuationClaim?.toolJobId === args.toolJobId &&
+					question.continuationClaim?.toolJobId === args.toolJobId &&
 					question.continuationClaim.claimId === args.claimId
 						? await questionContinuation(ctx, question)
 						: undefined;
 
 				return {
-					answer: result.answer,
+					answer: question.answer,
 					alreadyAnswered: true,
 					continuation: retryContinuation
 				};
@@ -494,8 +490,6 @@ export const transcriptParts = mutation({
 export const threadMonitorInfo = mutation({
 	args: vDescendantCaller.extend({ targetRunId: v.optional(v.id('runs')) }).fields,
 	returns: v.object({
-		threadId: v.id('threadRecords'),
-		userId: v.string(),
 		status: vRunStatus,
 		transcript: vTranscriptStateResult,
 		lastError: v.optional(v.string()),
@@ -505,11 +499,10 @@ export const threadMonitorInfo = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const thread = await requireDescendantThread(ctx, args);
-			const pending = await pendingQuestionsForThread(ctx, thread._id);
-			const state = await getTranscriptState(ctx, thread._id);
+			const pending = await actionablePendingQuestionsForThread(ctx.db, thread._id);
 
 			const latest = args.targetRunId
-				? await getRunWithExecution(ctx.db, args.targetRunId)
+				? await ctx.db.get('runs', args.targetRunId)
 				: await latestRunForThread(ctx, thread._id);
 
 			if (args.targetRunId && (!latest || latest.threadId !== thread._id)) {
@@ -517,14 +510,7 @@ export const threadMonitorInfo = mutation({
 			}
 
 			return {
-				threadId: thread._id,
-				userId: thread.userId,
-				transcript: {
-					threadId: thread._id,
-					totalParts: state?.totalParts ?? 0,
-					historyFromNumber: transcriptHistoryFromNumber(thread),
-					contextSummary: thread.contextSummary
-				},
+				transcript: await transcriptStateResult(ctx, thread._id, thread),
 				status: latest?.status ?? thread.status,
 				lastError: latest?.lastError,
 				active: (latest !== null && !isRunFinalStatus(latest.status)) || pending.length > 0,

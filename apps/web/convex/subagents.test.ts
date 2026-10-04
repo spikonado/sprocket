@@ -263,7 +263,7 @@ describe('subagents.createOrSend', () => {
 		).rejects.toThrow(/no longer active/);
 	});
 
-	it('creates one child thread with its parent, chosen secret, machine, and prompt', async () => {
+	it('creates and retries one child with its parent, chosen secret, machine, and prompt', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
 		const args = createArgs(caller);
@@ -289,6 +289,13 @@ describe('subagents.createOrSend', () => {
 			status: 'queued',
 			machineId: machine.machineId
 		});
+		expect(await t.mutation(api.subagents.createOrSend, args)).toEqual(created);
+		await expect(
+			t.mutation(api.subagents.createOrSend, {
+				...args,
+				childExecutionSecret: 'different-secret'
+			})
+		).rejects.toThrow(/different executor/);
 
 		// The parent secret cannot claim the child's run; the chosen child secret can.
 		await expect(
@@ -311,36 +318,6 @@ describe('subagents.createOrSend', () => {
 
 		expect(parts).toHaveLength(1);
 		expect(parts[0].prompt?.text).toBe('Do the delegated thing');
-	});
-
-	it('recovers the same child on idempotent retry without duplicating the prompt', async () => {
-		const t = initConvexTest();
-		const caller = await startCallerRun(t);
-		const args = createArgs(caller, { submissionId: 'retryable-submission' });
-
-		const first = await t.mutation(api.subagents.createOrSend, args);
-		const second = await t.mutation(api.subagents.createOrSend, args);
-		expect(second.threadId).toBe(first.threadId);
-		expect(second.runId).toBe(first.runId);
-
-		// The recovered run is claimable with the originally chosen child secret.
-		await claimChildRun(t, first, args.childExecutionSecret);
-
-		const parts = await t.run(async (ctx) =>
-			ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', first.threadId))
-				.collect()
-		);
-
-		expect(parts).toHaveLength(1);
-
-		await expect(
-			t.mutation(api.subagents.createOrSend, {
-				...args,
-				childExecutionSecret: 'different-secret'
-			})
-		).rejects.toThrow(/different executor/);
 	});
 
 	it('rejects reusing the parent secret and empty prompts', async () => {
@@ -837,9 +814,18 @@ describe('subagents.control', () => {
 				expect(controlled.answer).toMatchObject({ optionId: 'one', optionLabel: 'One' });
 				expect(controlled.continuation).toEqual({ runId: child.runId, prompt: 'One' });
 			} else {
+				expect(controlled.stoppedRunId).toBe(child.runId);
 				expect((await t.run((ctx) => ctx.db.get('agentQuestions', questionId)))?.status).toBe(
 					'cancelled'
 				);
+				await expect(
+					t.mutation(api.subagents.control, {
+						...target,
+						action: 'answer_question',
+						questionId,
+						optionId: 'one'
+					})
+				).rejects.toThrow(/no longer awaiting an answer/);
 			}
 
 			expect(await t.mutation(api.subagents.threadMonitorInfo, target)).toMatchObject({
@@ -923,52 +909,6 @@ describe('subagents.control', () => {
 
 		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
 		expect(stored?.answer).toMatchObject({ optionId: 'one' });
-	});
-
-	it('stop cancels pending questions immediately, even after the run ended', async () => {
-		const t = initConvexTest();
-		const { caller, child, childRun, questionId } = await childWithPendingQuestion(t);
-
-		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: child.runId,
-			text: 'done',
-			status: 'completed',
-			executionSecret: childRun.executionSecret
-		});
-
-		const stopped = await t.mutation(api.subagents.control, {
-			runId: caller.runId,
-			claimId: caller.claimId,
-			executionSecret: caller.executionSecret,
-			threadId: child.threadId,
-			action: 'stop'
-		});
-
-		expect(stopped.stoppedRunId).toBe(child.runId);
-
-		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
-		expect(stored?.status).toBe('cancelled');
-
-		await expect(
-			t.mutation(api.subagents.control, {
-				runId: caller.runId,
-				claimId: caller.claimId,
-				executionSecret: caller.executionSecret,
-				threadId: child.threadId,
-				action: 'answer_question',
-				questionId,
-				optionId: 'one'
-			})
-		).rejects.toThrow(/no longer awaiting an answer/);
-
-		const monitor = await t.mutation(api.subagents.threadMonitorInfo, {
-			runId: caller.runId,
-			claimId: caller.claimId,
-			executionSecret: caller.executionSecret,
-			threadId: child.threadId
-		});
-
-		expect(monitor).toMatchObject({ status: 'completed', active: false, pendingQuestions: [] });
 	});
 
 	it('stop on an active child requests cancellation and leaves descendants running', async () => {

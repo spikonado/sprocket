@@ -170,14 +170,12 @@ export const listChildren = query({
 	}
 });
 
-export const vSubtreeSummary = v.object({
+const vSubtreeSummary = v.object({
 	descendantCount: v.number(),
 	anyActive: v.boolean(),
 	descendantsActive: v.boolean()
 });
 
-/** All-descendant count and aggregate activity for the sidebar expansion
- * row. The caller may pass any owned thread; counts cover its full subtree. */
 export const subtreeSummaryForThread = query({
 	args: {
 		threadId: v.id('threadRecords')
@@ -191,8 +189,6 @@ export const subtreeSummaryForThread = query({
 	}
 });
 
-/** Ancestor chain from the root down to (and excluding) the given thread, so
- * selecting a child can reveal its ancestors in the sidebar. */
 export const ancestorChain = query({
 	args: {
 		threadId: v.id('threadRecords')

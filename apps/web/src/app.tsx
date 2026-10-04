@@ -5,7 +5,6 @@ import {
 	useEffectEvent,
 	useLayoutEffect,
 	useMemo,
-	type ReactElement,
 	useRef,
 	useState
 } from 'react';
@@ -43,7 +42,7 @@ import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
 import BrandMark from '$lib/components/brand-mark';
-import InboxSidebar from '$lib/components/home/inbox-sidebar';
+import InboxSidebar, { type SidebarChildrenResolver } from '$lib/components/home/inbox-sidebar';
 import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsPayments from '$lib/components/home/settings-payments';
@@ -140,8 +139,6 @@ const agentLaunchTimeoutMs = 30_000;
 
 type SidebarProps = ComponentProps<typeof InboxSidebar>;
 
-type SidebarChildrenRenderer = (rows: Doc<'threadRecords'>[], depth: number) => ReactElement;
-
 function InboxSidebarContainer(
 	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
 		signedInUserId: string | null;
@@ -184,17 +181,12 @@ function InboxSidebarContainer(
 		onSettledOpenChange(true);
 	}, [root, currentThreadId, onSettledOpenChange]);
 
-	const resolveChildren = useCallback(
-		(args: {
-			thread: Doc<'threadRecords'>;
-			renderRows: SidebarChildrenRenderer;
-			depth: number;
-		}) => (
+	const resolveChildren: SidebarChildrenResolver = useCallback(
+		({ threadId, renderRows }) => (
 			<ExpandedThreadChildren
 				expansion={expansion}
-				parent={args.thread}
-				renderRows={args.renderRows}
-				depth={args.depth}
+				threadId={threadId}
+				renderRows={renderRows}
 				selectedPath={selectedPath}
 			/>
 		),
@@ -206,31 +198,27 @@ function InboxSidebarContainer(
 
 function ExpandedThreadChildren({
 	expansion,
-	parent,
+	threadId,
 	renderRows,
-	depth,
 	selectedPath
-}: {
+}: Parameters<SidebarChildrenResolver>[0] & {
 	expansion: UseExpandedThreads;
-	parent: Doc<'threadRecords'>;
-	renderRows: SidebarChildrenRenderer;
-	depth: number;
 	selectedPath: readonly Id<'threadRecords'>[];
 }) {
-	const children = useThreadChildren(parent._id);
-	const parentIndex = selectedPath.indexOf(parent._id);
+	const children = useThreadChildren(threadId);
+	const parentIndex = selectedPath.indexOf(threadId);
 	useRevealPaginatedThread(
 		parentIndex >= 0 ? (selectedPath[parentIndex + 1] ?? null) : null,
 		children
 	);
 
 	useEffect(() => {
-		expansion.registerChildren(parent._id, children.rows);
-	}, [expansion, parent._id, children.rows]);
+		expansion.registerChildren(threadId, children.rows);
+	}, [expansion, threadId, children.rows]);
 
 	return (
 		<>
-			{renderRows(children.rows, depth)}
+			{renderRows(children.rows)}
 			<InboxLoadMore section={children} />
 		</>
 	);

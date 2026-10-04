@@ -50,7 +50,6 @@ export async function threadRoot(
 	return (await ancestorThreads(db, thread)).at(-1) ?? thread;
 }
 
-/** Ancestor ids from the root down to (and excluding) the given thread. */
 export async function threadAncestryIds(
 	db: DatabaseReader,
 	thread: Doc<'threadRecords'>
@@ -140,16 +139,7 @@ export async function refreshThreadHierarchyActivity(
 	if (active) await unsettleRootOfThread(ctx, thread);
 }
 
-export type SubtreeSummary = {
-	descendantCount: number;
-	anyActive: boolean;
-	descendantsActive: boolean;
-};
-
-export async function subtreeSummary(
-	db: DatabaseReader,
-	thread: Doc<'threadRecords'>
-): Promise<SubtreeSummary> {
+export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
 	const state = await hierarchyState(db, thread._id);
 	const descendantsActive = (state?.activeDescendantCount ?? 0) > 0;
 
@@ -168,13 +158,11 @@ export async function unsettleRootOfThread(ctx: MutationCtx, thread: Doc<'thread
 	}
 }
 
-export type ChildPageArgs = Infer<typeof paginationOptsValidator>;
-
 export async function listDirectChildrenPage(
 	ctx: QueryCtx | MutationCtx,
 	userId: string,
-	parentThreadId: Id<'threadRecords'> | undefined,
-	paginationOpts: ChildPageArgs
+	parentThreadId: Id<'threadRecords'>,
+	paginationOpts: Infer<typeof paginationOptsValidator>
 ) {
 	return await ctx.db
 		.query('threadRecords')

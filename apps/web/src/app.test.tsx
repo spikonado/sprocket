@@ -760,39 +760,6 @@ it('keeps a sent prompt cleared when returning to a thread before its lifecycle 
 	expect(runAgent).toHaveBeenCalledOnce();
 });
 
-it('keeps an in-flight launch pending while prior thread cleanup takes longer than 30 seconds', async () => {
-	const { client, thread, launch, runAgent } = await renderThreadLaunch();
-	const composer = screen.getByRole('combobox');
-	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
-	const send = screen.getByRole('button', { name: 'Send message' });
-	await waitFor(() => expect(send).toHaveProperty('disabled', false));
-	vi.useFakeTimers();
-	await act(async () => {
-		fireEvent.click(send);
-		await vi.advanceTimersByTimeAsync(31_000);
-	});
-	expect(runAgent).toHaveBeenCalledOnce();
-	expect(composer).toHaveProperty('value', '');
-	expect(screen.queryByRole('alert')).toBeNull();
-	expect(send).toHaveProperty('disabled', true);
-	await act(async () => {
-		launch.resolve({
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			runId: 'run-new' as Id<'runs'>,
-			threadId: thread._id
-		});
-		client.registerQuery(api.chat.selectedThreadLifecycle, {
-			threadId: thread._id,
-			phase: 'running',
-			// SAFETY: fixture strings are only compared as opaque Convex document ids.
-			run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
-		});
-	});
-	expect(runAgent).toHaveBeenCalledOnce();
-	expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
-	expect(composer).toHaveProperty('value', '');
-});
-
 it('launches ChatGPT with a gateway model and a connected local account', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();

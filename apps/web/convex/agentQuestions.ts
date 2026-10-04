@@ -11,7 +11,6 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	finalizeQuestionOptions,
-	actionablePendingQuestionsForThread,
 	headActionablePendingQuestion,
 	isPendingQuestionActionable,
 	formatQuestionContinuationPrompt,
@@ -65,22 +64,6 @@ async function nextThreadSequence(
 		.first();
 
 	return (latest?.sequence ?? 0) + 1;
-}
-
-export async function headPendingQuestion(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'agentQuestions'> | null> {
-	return await headActionablePendingQuestion(ctx.db, threadId);
-}
-
-/** All of a thread's pending questions in answer order. UI, lifecycle, and
- * subagent monitoring must observe exactly this set. */
-export async function pendingQuestionsForThread(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'agentQuestions'>[]> {
-	return await actionablePendingQuestionsForThread(ctx.db, threadId);
 }
 
 type CreateQuestionArgs = {
@@ -241,33 +224,20 @@ export const answer = mutation({
 
 		const result = await answerPendingQuestion(ctx, args);
 
-		const outcome: QuestionAnswerOutcome = { question: result.question };
-
-		if (result.kind === 'answered' && result.continuation)
-			outcome.continuation = result.continuation;
-
-		return outcome;
+		return {
+			question: toAgentQuestionSnapshot(result.question),
+			continuation: result.kind === 'answered' ? result.continuation : undefined
+		};
 	}
 });
 
-export type QuestionAnswerOutcome = {
-	question: AgentQuestionSnapshot;
-	continuation?: { runId: Id<'runs'>; prompt: string };
-};
+type QuestionAnswerResult = {
+	question: Doc<'agentQuestions'>;
+} & (
+	| { kind: 'answered'; continuation?: Awaited<ReturnType<typeof questionContinuation>> }
+	| { kind: 'alreadyAnswered' }
+);
 
-export type QuestionAnswerResult =
-	| ({ kind: 'answered' } & QuestionAnswerOutcome)
-	| {
-			kind: 'alreadyAnswered';
-			question: AgentQuestionSnapshot;
-			answer: NonNullable<Doc<'agentQuestions'>['answer']>;
-	  };
-
-/** Shared first-answer-wins transaction used by the authenticated UI path
- * and the executor-authorized subagent control path. Callers authorize before
- * invoking; this helper owns validation and atomicity. A question answered by
- * another actor reports the committed answer without overwriting it;
- * cancelled/expired questions stay unanswerable. */
 export async function answerPendingQuestion(
 	ctx: MutationCtx,
 	args: {
@@ -290,8 +260,7 @@ export async function answerPendingQuestion(
 
 		return {
 			kind: 'alreadyAnswered',
-			question: toAgentQuestionSnapshot(question),
-			answer: question.answer
+			question
 		};
 	}
 
@@ -299,7 +268,7 @@ export async function answerPendingQuestion(
 		throw new Error('Question is no longer awaiting an answer.');
 	}
 
-	const head = await headPendingQuestion(ctx, args.threadId);
+	const head = await headActionablePendingQuestion(ctx.db, args.threadId);
 
 	if (!head || head._id !== question._id) {
 		throw new Error('Answer the earliest pending question first.');
@@ -313,37 +282,33 @@ export async function answerPendingQuestion(
 
 	const answeredAt = Date.now();
 	const run = await ctx.db.get('runs', question.runId);
-	await ctx.db.patch('agentQuestions', question._id, {
+
+	const questionPatch = {
 		status: 'answered',
 		answer,
 		answeredAt,
 		requiresContinuation:
 			question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
-	});
-	await refreshThreadHierarchyActivity(ctx, args.threadId);
+	} as const;
 
-	const snapshot = toAgentQuestionSnapshot({
-		...question,
-		status: 'answered',
-		answer,
-		answeredAt
-	});
+	await ctx.db.patch('agentQuestions', question._id, questionPatch);
+	await refreshThreadHierarchyActivity(ctx, args.threadId);
 
 	return {
 		kind: 'answered',
-		question: snapshot,
-		continuation: await questionContinuation(ctx, question, { run })
+		question: { ...question, ...questionPatch },
+		continuation: await questionContinuation(ctx, question, run)
 	};
 }
 
 export async function questionContinuation(
 	ctx: QueryCtx | MutationCtx,
 	question: Pick<Doc<'agentQuestions'>, 'threadId' | 'runId'>,
-	known?: { run?: Doc<'runs'> | null }
+	knownRun?: Doc<'runs'> | null
 ) {
 	const [nextQuestion, run, latestRun] = await Promise.all([
-		headPendingQuestion(ctx, question.threadId),
-		known?.run !== undefined ? Promise.resolve(known.run) : ctx.db.get('runs', question.runId),
+		headActionablePendingQuestion(ctx.db, question.threadId),
+		knownRun !== undefined ? Promise.resolve(knownRun) : ctx.db.get('runs', question.runId),
 		ctx.db
 			.query('runs')
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', question.threadId))
@@ -455,7 +420,7 @@ export const headPendingForThread = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const head = await headPendingQuestion(ctx, args.threadId);
+		const head = await headActionablePendingQuestion(ctx.db, args.threadId);
 
 		return head ? toAgentQuestionSnapshot(head) : null;
 	}
