@@ -22,7 +22,7 @@ import ChatMarkdown from '$lib/components/chat-markdown';
 import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer';
 import TranscriptPromptMessage from '$lib/components/home/transcript-prompt-message';
 import MandateApprovalForm from '$lib/components/home/mandate-approval-form';
-import WorkReasoning from '$lib/components/home/work-reasoning';
+import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure';
 import WorkTools from '$lib/components/home/work-tools';
 import WorkDisclosure from '$lib/components/home/work-disclosure';
 import WorkSectionDetails from '$lib/components/home/work-section-details';
@@ -473,7 +473,11 @@ export default function ThreadTranscript({
 							work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
 
 						return (
-							<WorkReasoning key={renderKey} text={block.text} inProgress={reasoningInProgress} />
+							<ReasoningDisclosure
+								key={renderKey}
+								text={block.text}
+								inProgress={reasoningInProgress}
+							/>
 						);
 					}
 

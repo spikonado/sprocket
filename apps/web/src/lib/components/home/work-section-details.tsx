@@ -13,7 +13,7 @@ import {
 } from '$lib/chat/assistant-timeline';
 import { WorkDetails } from '$lib/project/work-details';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
-import WorkReasoning from '$lib/components/home/work-reasoning';
+import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure';
 import WorkTools from '$lib/components/home/work-tools';
 
 type Props = {
@@ -229,7 +229,7 @@ export default function WorkSectionDetails({
 				{settled.map(({ block, renderKey }) => (
 					<div key={renderKey} data-work-detail>
 						{block.type === 'reasoning' ? (
-							<WorkReasoning text={block.text} inProgress={false} />
+							<ReasoningDisclosure text={block.text} inProgress={false} />
 						) : (
 							<WorkTools tools={block.tools} inProgress={inProgress} commands={commands} />
 						)}

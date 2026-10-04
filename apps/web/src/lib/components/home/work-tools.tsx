@@ -1,19 +1,15 @@
-import { LoaderCircle } from 'lucide-react';
 import {
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
-	isAssistantTimelineToolRunning,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import {
-	commandSnapshotLabel,
 	fullToolSummary,
-	toolGroupLabel,
+	toolItemLabel,
 	toolItemSummary,
 	toolSummaryClass
 } from '$lib/chat/tool-summaries';
 import { toolLogIcon } from '$lib/chat/tool-icons';
-import { isCommandToolKind } from '$lib/chat/command-tool-kinds';
 
 type Props = {
 	tools: AssistantTimelineTool[];
@@ -28,8 +24,8 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 				const kind = tool.job?.kind ?? tool.name;
 				const Icon = toolLogIcon(tool);
 				const summary = toolItemSummary(tool, commands);
-				const snapshot = commandSnapshotLabel(tool);
-				const running = isAssistantTimelineToolRunning(tool, inProgress);
+				const summaries = kind === 'apply_patch' ? summary.split('\n') : [summary];
+				const label = toolItemLabel(kind);
 				const error = assistantTimelineToolError(tool, inProgress);
 				const failure = assistantTimelineToolFailureKind(tool, inProgress);
 
@@ -37,45 +33,30 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 					failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
 
 				return (
-					<div
-						key={tool.callId}
-						data-work-detail
-						data-tool-kind={kind}
-						className="flex min-w-0 items-start gap-1.5"
-					>
-						<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
-						<div className="min-w-0 flex-1">
+					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
+						{summaries.map((item, index) => (
 							<p
+								key={index}
+								data-work-detail
 								className="flex min-w-0 items-start gap-1.5"
 								title={fullToolSummary(tool, inProgress, commands)}
 							>
-								{!isCommandToolKind(kind) ? (
-									<span className="shrink-0">{toolGroupLabel(kind)}:</span>
-								) : null}
-								<span className={`min-w-0 ${toolSummaryClass(tool)}`}>{summary}</span>
-								{running ? (
-									<>
-										<LoaderCircle
-											className="mt-1.5 size-3 shrink-0 animate-spin"
-											aria-hidden="true"
-										/>
-										<span className="sr-only">Running</span>
-									</>
-								) : null}
-								{error && failure ? (
+								<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
+								{label ? <span className="shrink-0">{label}:</span> : null}
+								<span className={`min-w-0 ${toolSummaryClass(tool)}`}>{item}</span>
+								{error && failure && index === summaries.length - 1 ? (
 									<span className={`shrink-0 ${errorClass}`}>({failure})</span>
 								) : null}
 							</p>
-							{error && failure ? (
-								<p
-									className={`mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
-									role="status"
-								>
-									{error}
-								</p>
-							) : null}
-							{snapshot ? <p className="text-xs">{snapshot}</p> : null}
-						</div>
+						))}
+						{error && failure ? (
+							<p
+								className={`pl-5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
+								role="status"
+							>
+								{error}
+							</p>
+						) : null}
 					</div>
 				);
 			})}

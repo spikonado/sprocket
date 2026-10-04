@@ -121,7 +121,7 @@ afterEach(() => {
 });
 
 describe('scrolling work details', () => {
-	it('appends completed work without replacing inline reasoning', async () => {
+	it('appends completed work without replacing expanded reasoning', async () => {
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce(page([1], undefined, 1))
@@ -129,6 +129,7 @@ describe('scrolling work details', () => {
 
 		const { viewport, edges, props, restore } = await render(load);
 		expect(load.mock.calls[0][1]).toEqual({});
+		act(() => within(viewport).getByRole('button', { name: 'Reasoned' }).click());
 		const reasoning = within(viewport).getByText('Reason 1');
 		edges.newer = 1_500;
 		act(() => intersection());
@@ -136,6 +137,7 @@ describe('scrolling work details', () => {
 		expect(load.mock.calls[1][1]).toEqual({ after: 1 });
 		expect(within(viewport).getByText('Reason 1')).toBe(reasoning);
 		expect(viewport.textContent).toContain('Reason 1');
+		act(() => within(viewport).getAllByRole('button', { name: 'Reasoned' })[1].click());
 		expect(viewport.textContent).toContain('Reason 2');
 		expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(2);
 		expect(viewport.textContent).not.toMatch(/Previous details|Next details/);
