@@ -184,6 +184,7 @@ unsynced local records, and another machine downloads remote logs into its own
 data directory before returning local log paths. Completed cloud results are
 immutable; late running snapshots cannot regress them. Cloud reads authorize
 the thread owner. Live processes and their controls remain on the origin machine.
+Clearing a local transcript replica preserves its command history and logs.
 Older servers have no cloud session records; no existing Convex rows require a
 schema migration.
 

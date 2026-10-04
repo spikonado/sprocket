@@ -163,52 +163,81 @@ async fn sync_directory(
                 if path.extension().is_none_or(|extension| extension != "json") {
                     continue;
                 }
-                if tokio::fs::try_exists(path.with_extension("synced")).await? {
-                    continue;
-                }
-                let history: CommandHistory =
-                    serde_json::from_slice(&tokio::fs::read(&path).await?)?;
-                if history.machine_id != machine_id || history.user_id.is_empty() {
-                    continue;
-                }
-                if auth.require_user(&history.user_id).await.is_err() {
-                    continue;
-                }
-                let session_id = path
-                    .file_stem()
-                    .context("session record has no ID")?
-                    .to_str()
-                    .context("invalid session ID")?;
-                let manager = registry
-                    .get(&history.user_id, &history.thread_id)
-                    .await
-                    .unwrap_or_else(|| {
-                        CommandSessionManager::new(PathBuf::new(), directory.clone())
-                    });
-                let snapshot = manager.history_snapshot(session_id).await?;
-                if client.is_none() {
-                    client = Some(
-                        UserConvexClient::connect_with_fetcher(
-                            deployment,
-                            auth.auth_token_fetcher_for_user(history.user_id.clone()),
-                        )
-                        .await?,
-                    );
-                }
-                match sync_session(client.as_ref().unwrap(), session_id, &snapshot).await {
-                    Ok(true) => {
-                        tokio::fs::write(path.with_extension("synced"), b"").await?;
-                    }
-                    Ok(false) => complete = false,
+                let result = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    sync_record(
+                        &path,
+                        &directory,
+                        registry,
+                        auth,
+                        deployment,
+                        machine_id,
+                        &mut client,
+                    ),
+                )
+                .await
+                .context("command sync timed out")
+                .and_then(|result| result);
+                match result {
+                    Ok(synced) => complete &= synced,
                     Err(error) => {
-                        return Err(error)
-                            .with_context(|| format!("command {session_id} sync failed"));
+                        complete = false;
+                        tracing::warn!(
+                            "command record {} sync will retry: {error:#}",
+                            path.display()
+                        );
                     }
                 }
             }
         }
     }
     Ok(complete)
+}
+
+async fn sync_record(
+    path: &Path,
+    directory: &Path,
+    registry: &ThreadCommandSessions,
+    auth: &Arc<NativeAuthManager>,
+    deployment: &str,
+    machine_id: &str,
+    client: &mut Option<UserConvexClient>,
+) -> Result<bool> {
+    if tokio::fs::try_exists(path.with_extension("synced")).await? {
+        return Ok(true);
+    }
+    let history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    if history.machine_id != machine_id || history.user_id.is_empty() {
+        return Ok(true);
+    }
+    if auth.require_user(&history.user_id).await.is_err() {
+        return Ok(true);
+    }
+    let session_id = path
+        .file_stem()
+        .context("session record has no ID")?
+        .to_str()
+        .context("invalid session ID")?;
+    let manager = registry
+        .get(&history.user_id, &history.thread_id)
+        .await
+        .unwrap_or_else(|| CommandSessionManager::new(PathBuf::new(), directory.to_path_buf()));
+    let snapshot = manager.history_snapshot(session_id).await?;
+    let client = match client {
+        Some(client) => client,
+        None => client.insert(
+            UserConvexClient::connect_with_fetcher(
+                deployment,
+                auth.auth_token_fetcher_for_user(history.user_id.clone()),
+            )
+            .await?,
+        ),
+    };
+    let completed = sync_session(client, session_id, &snapshot).await?;
+    if completed {
+        tokio::fs::write(path.with_extension("synced"), b"").await?;
+    }
+    Ok(completed)
 }
 
 #[derive(Deserialize)]
@@ -309,6 +338,46 @@ pub(crate) async fn fetch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn malformed_records_remain_pending_until_individually_marked_synced() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(directory.path().to_path_buf());
+        let mut paths = Vec::new();
+        for thread_id in ["first-thread", "second-thread"] {
+            let records = store
+                .thread_dir("user", thread_id)
+                .join("command-logs/sessions");
+            tokio::fs::create_dir_all(&records).await.unwrap();
+            let path = records.join(format!("{}.json", uuid::Uuid::new_v4()));
+            tokio::fs::write(&path, b"interrupted write").await.unwrap();
+            paths.push(path);
+        }
+        let auth = NativeAuthManager::configured_for_test(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "test".into(),
+            },
+            "http://localhost/callback".into(),
+        );
+        let registry = ThreadCommandSessions::default();
+        for path in &paths {
+            assert!(
+                !sync_directory(&store, &registry, &auth, "http://localhost", "machine")
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(tokio::fs::read(path).await.unwrap(), b"interrupted write");
+            assert!(!path.with_extension("synced").exists());
+            tokio::fs::write(path.with_extension("synced"), b"")
+                .await
+                .unwrap();
+        }
+        assert!(
+            sync_directory(&store, &registry, &auth, "http://localhost", "machine")
+                .await
+                .unwrap()
+        );
+    }
 
     #[tokio::test]
     async fn log_batches_resume_in_order_without_changing_retry_bytes() {

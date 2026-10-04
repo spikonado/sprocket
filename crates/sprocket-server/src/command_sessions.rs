@@ -137,6 +137,12 @@ mod tests {
                 .to_string()
                 .contains("blocked spawn released")
         );
+        assert_eq!(
+            std::fs::read_dir(root.join("logs/sessions"))
+                .unwrap()
+                .count(),
+            0
+        );
         pruning.await;
         let other = access.expect("cleanup blocked access to an unrelated thread");
         registry.prune().await;

@@ -293,18 +293,32 @@ impl CommandSessionManager {
             },
         };
         history.save(&history_path).await?;
-        cancellation.ensure_active()?;
-        if self.stopped.load(Ordering::Acquire) {
-            bail!("command sessions are shutting down");
-        }
-        let lifetime_guard = self
-            .lifetime_guard_factory
-            .as_ref()
-            .map(|factory| factory())
-            .transpose()?;
-        let mut child = process
-            .spawn()
-            .with_context(|| format!("failed to start shell \"{shell}\" in {}", cwd.display()))?;
+        let launch: Result<_> = (|| {
+            cancellation.ensure_active()?;
+            if self.stopped.load(Ordering::Acquire) {
+                bail!("command sessions are shutting down");
+            }
+            let lifetime_guard = self
+                .lifetime_guard_factory
+                .as_ref()
+                .map(|factory| factory())
+                .transpose()?;
+            let child = process.spawn().with_context(|| {
+                format!("failed to start shell \"{shell}\" in {}", cwd.display())
+            })?;
+            Ok((child, lifetime_guard))
+        })();
+        let (mut child, lifetime_guard) = match launch {
+            Ok(launched) => launched,
+            Err(error) => {
+                if let Err(cleanup_error) = tokio::fs::remove_file(&history_path).await {
+                    return Err(error.context(format!(
+                        "failed to remove unstarted command history: {cleanup_error}"
+                    )));
+                }
+                return Err(error);
+            }
+        };
         let process_id = child.id();
         let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
@@ -1381,6 +1395,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&output).unwrap(),
             serde_json::json!({
+                "sessionId": output.session_id,
                 "exitCode": 0,
                 "success": true,
                 "running": false,
@@ -1742,6 +1757,29 @@ mod tests {
         assert_eq!(
             error.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::NotFound
+        );
+        let next = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "echo started",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let records = fs::read_dir(root.join("logs/sessions"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            records,
+            vec![std::ffi::OsString::from(format!(
+                "{}.json",
+                next.session_id.unwrap()
+            ))]
         );
         fs::remove_dir_all(root).unwrap();
     }
