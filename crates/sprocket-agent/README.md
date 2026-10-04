@@ -191,6 +191,11 @@ Native delegation uses `spawn_subagent` for child creation and follow-up prompts
 `control_subagent` for stopping descendant work or answering its questions, and
 `poll_subagent` for lifecycle, filtered transcript pages, and pending questions.
 Zero-wait actions return metadata only, without transcript entries or cursors.
+Stop waits for the targeted run to reach a terminal status regardless of the
+requested yield time, without waiting for replacement work in the same thread.
+Tool status is the run status: queued, running, completed, failed, or cancelled.
+Pending questions are returned separately. Only spawn and child listings return
+thread IDs; internal activity, question deadlines, and transcript paths are omitted.
 Positive polls wait for settlement or a question before reading a page,
 even when the cursor points at older entries.
 `list_subagents` lists immediate children in pages of 32; `list_subagent_models`

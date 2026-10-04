@@ -271,6 +271,12 @@ provider-compatible model settings. Actions and polls share the timing policy of
 10-second cooldown; completed reads and waiting polls bypass it. Subagents use
 the existing sidebar thread tree, not a separate dashboard.
 
+Stop waits for confirmed termination of the run it targeted, even with a zero
+yield time. A replacement run cannot extend that wait. Tool outputs report run
+status rather than the UI lifecycle phase, with pending questions separately.
+Only spawn and child listings return thread IDs. Activity flags, question
+deadlines, creation flags, and transcript directories remain internal.
+
 Delegation creates ordinary persistent threads linked by an immutable optional
 `parentThreadId`. Only agents create children; humans can select and control
 them normally. A live executing claim authorizes agent control of strict

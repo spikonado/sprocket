@@ -594,10 +594,8 @@ describe('subagent tool job results', () => {
 			});
 
 			const metadata = {
-				threadId: child.threadId,
 				status: 'running' as const,
 				lastError: null,
-				active: true,
 				pendingQuestions: []
 			};
 
@@ -605,14 +603,13 @@ describe('subagent tool job results', () => {
 				kind === 'poll_subagent'
 					? {
 							...metadata,
-							transcriptDir: '/transcripts/child',
 							entries: [{ type: 'text' as const, id: 'part-1', text: 'Progress' }],
 							nextCursor: 'cursor-1',
 							hasMore: false
 						}
 					: kind === 'spawn_subagent'
-						? { ...metadata, created: true, settings: child.settings }
-						: metadata;
+						? { ...metadata, threadId: child.threadId, settings: child.settings }
+						: { ...metadata, status: 'cancelled' as const };
 
 			await expect(
 				t.mutation(api.executor.complete, {
@@ -813,7 +810,7 @@ describe('subagents.control', () => {
 			expect(snapshot.pendingQuestions[0]).toMatchObject({ questionId, status: 'pending' });
 			expect(snapshot.pendingQuestions[0]).not.toHaveProperty('timeoutAt');
 			expect(monitor).toMatchObject({
-				status: 'waiting_for_input',
+				status: 'completed',
 				active: true,
 				pendingQuestions: snapshot.pendingQuestions
 			});
@@ -896,7 +893,7 @@ describe('subagents.control', () => {
 		});
 
 		expect(monitor).toMatchObject({
-			status: 'waiting_for_input',
+			status: 'running',
 			active: true,
 			pendingQuestions: snapshot.pendingQuestions
 		});
@@ -1021,7 +1018,7 @@ describe('subagents.control', () => {
 
 		const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
 
-		await t.mutation(api.subagents.control, {
+		const stopped = await t.mutation(api.subagents.control, {
 			runId: caller.runId,
 			claimId: caller.claimId,
 			executionSecret: caller.executionSecret,
@@ -1029,12 +1026,58 @@ describe('subagents.control', () => {
 			action: 'stop'
 		});
 
+		expect(stopped.stoppedRunId).toBe(child.runId);
 		const childRunDoc = await t.run((ctx) => ctx.db.get('runs', child.runId));
 		expect(childRunDoc?.cancellationRequestedAt).toBeDefined();
 
 		const grandchildRun = await t.run((ctx) => ctx.db.get('runs', grandchild.runId));
 		expect(grandchildRun?.cancellationRequestedAt).toBeUndefined();
 		expect(grandchildRun?.status).toBe('queued');
+	});
+
+	it('observes the stopped run even after replacement work starts', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+
+		const credentials = {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret
+		};
+
+		const child = await createChild(t, caller);
+
+		const stopped = await t.mutation(api.subagents.control, {
+			...credentials,
+			threadId: child.threadId,
+			action: 'stop'
+		});
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', child.runId, { status: 'cancelled' });
+			await ctx.db.patch('threadRecords', child.threadId, { status: 'cancelled' });
+		});
+		await t.mutation(
+			api.subagents.createOrSend,
+			createArgs(caller, { threadId: child.threadId, prompt: 'Replacement work' })
+		);
+		const target = { ...credentials, threadId: child.threadId };
+		expect(
+			await t.mutation(api.subagents.threadMonitorInfo, {
+				...target,
+				targetRunId: stopped.stoppedRunId
+			})
+		).toMatchObject({ status: 'cancelled' });
+		expect(await t.mutation(api.subagents.threadMonitorInfo, target)).toMatchObject({
+			status: 'queued'
+		});
+		const sibling = await createChild(t, caller);
+		await expect(
+			t.mutation(api.subagents.threadMonitorInfo, {
+				...target,
+				targetRunId: sibling.runId
+			})
+		).rejects.toThrow(/does not belong/);
 	});
 
 	it('stop on a thread without work or questions is an idempotent no-op', async () => {
@@ -1060,6 +1103,7 @@ describe('subagents.control', () => {
 		});
 
 		expect(stopped.status).toBe('completed');
+		expect(stopped.stoppedRunId).toBe(child.runId);
 	});
 });
 

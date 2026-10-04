@@ -391,7 +391,7 @@ export const listChildren = mutation({
 				threadId: v.id('threadRecords'),
 				parentThreadId: v.optional(v.id('threadRecords')),
 				title: v.optional(v.string()),
-				status: vSelectedThreadLifecyclePhase,
+				status: vRunStatus,
 				lastError: v.optional(v.string()),
 				lastMessageAt: v.number(),
 				settings: vSubagentSettings
@@ -419,16 +419,12 @@ export const listChildren = mutation({
 			const page = await Promise.all(
 				result.page.map(async (child) => {
 					const latest = await latestRunForThread(ctx, child._id);
-					const pending = await pendingQuestionsForThread(ctx, child._id);
 
 					return {
 						threadId: child._id,
 						parentThreadId: child.parentThreadId,
 						title: child.title,
-						status: selectedThreadLifecyclePhase({
-							run: latest,
-							waitingForInput: pending.length > 0
-						}),
+						status: latest?.status ?? child.status,
 						lastError: latest?.lastError,
 						lastMessageAt: child.lastMessageAt,
 						settings: subagentSettings(child)
@@ -457,6 +453,7 @@ export const control = mutation({
 		lastError: v.optional(v.string()),
 		answer: v.optional(vAskQuestionAnswer),
 		alreadyAnswered: v.optional(v.boolean()),
+		stoppedRunId: v.optional(v.id('runs')),
 		continuation: v.optional(v.object({ runId: v.id('runs'), prompt: v.string() }))
 	}),
 	handler: async (ctx, args) => {
@@ -480,7 +477,8 @@ export const control = mutation({
 
 				return {
 					status: latest?.status ?? thread.status,
-					lastError: latest?.lastError
+					lastError: latest?.lastError,
+					stoppedRunId: latest?._id
 				};
 			}
 
@@ -577,11 +575,11 @@ export const transcriptParts = mutation({
 });
 
 export const threadMonitorInfo = mutation({
-	args: vDescendantCaller.fields,
+	args: vDescendantCaller.extend({ targetRunId: v.optional(v.id('runs')) }).fields,
 	returns: v.object({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		status: vSelectedThreadLifecyclePhase,
+		status: vRunStatus,
 		transcript: vTranscriptStateResult,
 		lastError: v.optional(v.string()),
 		active: v.boolean(),
@@ -592,7 +590,14 @@ export const threadMonitorInfo = mutation({
 			const thread = await requireDescendantThread(ctx, args);
 			const pending = await pendingQuestionsForThread(ctx, thread._id);
 			const state = await getTranscriptState(ctx, thread._id);
-			const latest = await latestRunForThread(ctx, thread._id);
+
+			const latest = args.targetRunId
+				? await getRunWithExecution(ctx.db, args.targetRunId)
+				: await latestRunForThread(ctx, thread._id);
+
+			if (args.targetRunId && (!latest || latest.threadId !== thread._id)) {
+				throw new Error('Target run does not belong to the descendant thread.');
+			}
 
 			return {
 				threadId: thread._id,
@@ -603,7 +608,7 @@ export const threadMonitorInfo = mutation({
 					historyFromNumber: transcriptHistoryFromNumber(thread),
 					contextSummary: thread.contextSummary
 				},
-				status: selectedThreadLifecyclePhase({ run: latest, waitingForInput: pending.length > 0 }),
+				status: latest?.status ?? thread.status,
 				lastError: latest?.lastError,
 				active: (latest !== null && !isRunFinalStatus(latest.status)) || pending.length > 0,
 				pendingQuestions: pending.map(toAgentQuestionSnapshot)

@@ -489,6 +489,14 @@ export const vAskQuestionResult = vPollQuestionResult.extend({
 	options: v.optional(v.array(vAskQuestionOption))
 });
 
+export const vRunStatus = v.union(
+	v.literal('queued'),
+	v.literal('running'),
+	v.literal('completed'),
+	v.literal('failed'),
+	v.literal('cancelled')
+);
+
 export const vThreadLifecyclePhase = v.union(
 	v.literal('idle'),
 	v.literal('queued'),
@@ -510,8 +518,7 @@ const vSubagentSettings = v.object({
 const vSubagentPendingQuestion = v.object({
 	questionId: v.id('agentQuestions'),
 	question: v.string(),
-	options: v.array(vAskQuestionOption),
-	timeoutAt: v.union(v.number(), v.null())
+	options: v.array(vAskQuestionOption)
 });
 
 const vSubagentMonitorEntry = v.union(
@@ -528,23 +535,36 @@ const vSubagentMonitorEntry = v.union(
 );
 
 export const vSubagentActionResult = v.object({
-	threadId: v.id('threadRecords'),
-	status: vThreadLifecyclePhase,
+	status: vRunStatus,
 	lastError: v.optional(v.union(v.string(), v.null())),
-	active: v.boolean(),
-	created: v.optional(v.boolean()),
-	settings: v.optional(vSubagentSettings),
-	answer: v.optional(vAskQuestionAnswer),
-	alreadyAnswered: v.optional(v.boolean()),
 	pendingQuestions: v.array(vSubagentPendingQuestion)
 });
 
 export const vSubagentSnapshotResult = vSubagentActionResult.extend({
-	transcriptDir: v.string(),
 	entries: v.array(vSubagentMonitorEntry),
 	nextCursor: v.string(),
 	hasMore: v.boolean()
 });
+
+const vSpawnSubagentFields = {
+	threadId: v.id('threadRecords'),
+	settings: vSubagentSettings
+};
+
+export const vSpawnSubagentResult = v.union(
+	vSubagentActionResult.extend(vSpawnSubagentFields),
+	vSubagentSnapshotResult.extend(vSpawnSubagentFields)
+);
+
+const vControlSubagentFields = {
+	answer: v.optional(vAskQuestionAnswer),
+	alreadyAnswered: v.optional(v.literal(true))
+};
+
+export const vControlSubagentResult = v.union(
+	vSubagentActionResult.extend(vControlSubagentFields),
+	vSubagentSnapshotResult.extend(vControlSubagentFields)
+);
 
 export const vListSubagentsResult = v.object({
 	children: v.array(
@@ -552,10 +572,9 @@ export const vListSubagentsResult = v.object({
 			threadId: v.id('threadRecords'),
 			parentThreadId: v.id('threadRecords'),
 			title: v.optional(v.union(v.string(), v.null())),
-			status: vThreadLifecyclePhase,
+			status: vRunStatus,
 			lastError: v.optional(v.union(v.string(), v.null())),
-			settings: vSubagentSettings,
-			transcriptDir: v.string()
+			settings: vSubagentSettings
 		})
 	),
 	nextCursor: v.union(v.string(), v.null()),
@@ -637,7 +656,8 @@ export const vExecutorJobResult = v.union(
 	vApplyPatchResult,
 	vAskQuestionResult,
 	vPollQuestionResult,
-	vSubagentActionResult,
+	vSpawnSubagentResult,
+	vControlSubagentResult,
 	vSubagentSnapshotResult,
 	vListSubagentsResult,
 	vListModelsResult,
@@ -659,14 +679,6 @@ export const vExecutorJobResult = v.union(
 	vMandateListResult,
 	vMandateChargeResult,
 	vMandateReportResult
-);
-
-export const vRunStatus = v.union(
-	v.literal('queued'),
-	v.literal('running'),
-	v.literal('completed'),
-	v.literal('failed'),
-	v.literal('cancelled')
 );
 
 export const runFinalStatus = ['cancelled', 'completed', 'failed'] as const;

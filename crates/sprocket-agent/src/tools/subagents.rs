@@ -29,7 +29,7 @@ use crate::subagents::{
     resolve_subagent_settings,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
-use crate::transcript::monitor::MONITOR_PAGE_CHAR_LIMIT;
+use crate::transcript::monitor::{MONITOR_PAGE_CHAR_LIMIT, MonitorPage};
 use crate::types::CompletionProvider;
 
 const CREATE_OR_SEND: &str = "subagents:createOrSend";
@@ -510,7 +510,7 @@ impl SpawnSubagentTool {
             &cancellation,
         )
         .await?;
-        result["created"] = json!(created.created);
+        result["threadId"] = json!(created.thread_id);
         result["settings"] =
             serde_json::to_value(&created.settings).map_err(|e| tool_error(e.into()))?;
         Ok(result)
@@ -772,13 +772,37 @@ impl ControlSubagentTool {
             }
         }
 
-        let mut result = action_settlement_result(
-            &self.context,
-            &args.thread_id,
-            YieldMode::Action.normalize(args.yield_time_ms),
-            &cancellation,
-        )
-        .await?;
+        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms);
+        let mut result = if matches!(args.action, SubagentControlAction::Stop) {
+            let info = if let Some(run_id) = response.stopped_run_id.as_deref() {
+                wait_for_stopped_run_using(&cancellation, || {
+                    self.context.runtime.mutation_json(
+                        MONITOR_INFO,
+                        subagent_args(
+                            &self.context,
+                            BTreeMap::from([
+                                ("threadId".to_string(), args.thread_id.clone().into()),
+                                ("targetRunId".to_string(), run_id.to_string().into()),
+                            ]),
+                        ),
+                    )
+                })
+                .await?
+            } else {
+                cancelled_read(
+                    &cancellation,
+                    fetch_monitor_info(&self.context, &args.thread_id),
+                )
+                .await?
+            };
+            subagent_action_result(info, yield_time_ms, &cancellation, |info| {
+                read_transcript_snapshot(&self.context, info, None)
+            })
+            .await?
+        } else {
+            action_settlement_result(&self.context, &args.thread_id, yield_time_ms, &cancellation)
+                .await?
+        };
         if let Some(answer) = response.answer {
             result["answer"] = serde_json::to_value(answer).map_err(|e| tool_error(e.into()))?;
         }
@@ -857,10 +881,6 @@ impl rig::tool::Tool for ListSubagentsTool {
                 let context = self.context.clone();
                 async move {
                     cancelled_read(&cancellation, async {
-                        let store = context
-                            .transcript_store
-                            .as_ref()
-                            .ok_or_else(|| tool_failure("transcript store is unavailable"))?;
                         let mut fields = BTreeMap::new();
                         if let Some(parent_thread_id) = &args.parent_thread_id {
                             fields.insert(
@@ -887,9 +907,7 @@ impl rig::tool::Tool for ListSubagentsTool {
                             .mutation_json(LIST_CHILDREN, subagent_args(&context, fields))
                             .await
                             .map_err(tool_error)?;
-                        Ok(list_page_response(&page, |thread_id| {
-                            store.thread_dir(&context.user_id, thread_id)
-                        }))
+                        Ok(list_page_response(&page))
                     })
                     .await
                 }
@@ -1048,10 +1066,7 @@ async fn recover_submission(
     .map_err(|_| anyhow::anyhow!("timed out recovering subagent submission"))?
 }
 
-fn list_page_response(
-    page: &SubagentListPage,
-    transcript_dir: impl Fn(&str) -> std::path::PathBuf,
-) -> serde_json::Value {
+fn list_page_response(page: &SubagentListPage) -> serde_json::Value {
     let children: Vec<_> = page
         .page
         .iter()
@@ -1063,7 +1078,6 @@ fn list_page_response(
                 "status": child.status,
                 "lastError": child.last_error,
                 "settings": child.settings,
-                "transcriptDir": transcript_dir(&child.thread_id),
             })
         })
         .collect();
@@ -1133,13 +1147,44 @@ where
     }
 }
 
+async fn wait_for_stopped_run_using<F, Fut>(
+    cancellation: &WorkspaceCancellation,
+    mut fetch: F,
+) -> Result<SubagentMonitorInfo, ToolExecutionError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<SubagentMonitorInfo>>,
+{
+    loop {
+        let info =
+            cancelled_read(cancellation, async { fetch().await.map_err(tool_error) }).await?;
+        if matches!(info.status.as_str(), "completed" | "failed" | "cancelled") {
+            return Ok(info);
+        }
+        cancelled_read(cancellation, async {
+            sleep(WAIT_POLL_INTERVAL).await;
+            Ok(())
+        })
+        .await?;
+    }
+}
+
 fn subagent_metadata(info: &SubagentMonitorInfo) -> serde_json::Value {
+    let pending_questions: Vec<_> = info
+        .pending_questions
+        .iter()
+        .map(|question| {
+            json!({
+                "questionId": question.question_id,
+                "question": question.question,
+                "options": question.options,
+            })
+        })
+        .collect();
     json!({
-        "threadId": info.thread_id,
         "status": info.status,
         "lastError": info.last_error,
-        "active": info.active,
-        "pendingQuestions": info.pending_questions,
+        "pendingQuestions": pending_questions,
     })
 }
 
@@ -1193,19 +1238,15 @@ async fn read_transcript_snapshot(
     .await
     .map_err(tool_error)?;
 
-    let transcript_dir = store.thread_dir(&info.user_id, &info.thread_id);
+    Ok(subagent_snapshot(&info, page))
+}
 
-    Ok(json!({
-        "threadId": info.thread_id,
-        "status": info.status,
-        "lastError": info.last_error,
-        "active": info.active,
-        "transcriptDir": transcript_dir,
-        "entries": page.entries,
-        "nextCursor": page.next_cursor,
-        "hasMore": page.has_more,
-        "pendingQuestions": info.pending_questions,
-    }))
+fn subagent_snapshot(info: &SubagentMonitorInfo, page: MonitorPage) -> serde_json::Value {
+    let mut result = subagent_metadata(info);
+    result["entries"] = json!(page.entries);
+    result["nextCursor"] = json!(page.next_cursor);
+    result["hasMore"] = json!(page.has_more);
+    result
 }
 
 async fn sync_monitor_transcript(
@@ -1380,12 +1421,84 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result["threadId"], "child");
-        assert_eq!(result["status"], "running");
-        assert_eq!(result["active"], true);
-        assert_eq!(result["pendingQuestions"], json!([]));
-        assert!(result.get("entries").is_none());
-        assert!(result.get("nextCursor").is_none());
+        assert_eq!(
+            result,
+            json!({"status": "running", "lastError": null, "pendingQuestions": []})
+        );
+    }
+
+    #[test]
+    fn transcript_snapshot_projects_only_public_fields() {
+        let mut info = monitor_info(false);
+        info.pending_questions
+            .push(crate::subagents::SubagentQuestion {
+                question_id: "question".to_string(),
+                question: "Continue?".to_string(),
+                options: Vec::new(),
+                timeout_at: Some(123),
+            });
+        let result = subagent_snapshot(
+            &info,
+            MonitorPage {
+                entries: Vec::new(),
+                next_cursor: "next".to_string(),
+                has_more: true,
+                transcript_revision: 7,
+            },
+        );
+        assert_eq!(
+            result,
+            json!({
+                "status": "completed", "lastError": null,
+                "pendingQuestions": [{"questionId": "question", "question": "Continue?", "options": []}],
+                "entries": [], "nextCursor": "next", "hasMore": true
+            })
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_waits_for_the_target_run_to_finish_even_with_pending_questions() {
+        let started = Instant::now();
+        let mut reads = 0;
+        let info = wait_for_stopped_run_using(&WorkspaceCancellation::new(), || {
+            reads += 1;
+            let mut info = monitor_info(true);
+            info.pending_questions
+                .push(crate::subagents::SubagentQuestion {
+                    question_id: "question".to_string(),
+                    question: "Continue?".to_string(),
+                    options: Vec::new(),
+                    timeout_at: Some(123),
+                });
+            if reads == 3 {
+                info.status = "cancelled".to_string();
+            }
+            async move { Ok(info) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(reads, 3);
+        assert_eq!(started.elapsed(), WAIT_POLL_INTERVAL * 2);
+        assert_eq!(
+            subagent_metadata(&info),
+            json!({
+                "status": "cancelled", "lastError": null,
+                "pendingQuestions": [{"questionId": "question", "question": "Continue?", "options": []}]
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_aborts_a_stalled_stop_observation() {
+        let cancellation = WorkspaceCancellation::new();
+        let cancel = cancellation.clone();
+        let error = wait_for_stopped_run_using(&cancellation, || {
+            cancel.cancel();
+            std::future::pending::<anyhow::Result<SubagentMonitorInfo>>()
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), rig::tool::ToolErrorKind::Cancelled);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1615,7 +1728,7 @@ mod tests {
             "page": [{
                 "threadId": "jd7child",
                 "title": "Research",
-                "status": "waiting_for_input",
+                "status": "running",
                 "parentThreadId": "jd7parent",
                 "lastMessageAt": 1.0,
                 "settings": {
@@ -1629,16 +1742,17 @@ mod tests {
             "continueCursor": "cursor-2"
         }))
         .expect("list page");
-        let response = list_page_response(&page, |thread_id| {
-            std::path::PathBuf::from("/transcripts/user_1").join(thread_id)
-        });
+        let response = list_page_response(&page);
         assert_eq!(response["nextCursor"], "cursor-2");
         assert_eq!(response["hasMore"], true);
         assert_eq!(
-            response["children"][0]["transcriptDir"],
-            "/transcripts/user_1/jd7child"
+            response["children"][0],
+            json!({
+                "threadId": "jd7child", "parentThreadId": "jd7parent", "title": "Research",
+                "status": "running", "lastError": null,
+                "settings": {"model": "gpt-5.6-sol", "reasoning": "high", "fast": false, "completionProvider": "spikonado"}
+            })
         );
-        assert!(response["children"][0].get("entries").is_none());
 
         let done: SubagentListPage = serde_json::from_value(serde_json::json!({
             "page": [],
@@ -1646,7 +1760,7 @@ mod tests {
             "continueCursor": "cursor-end"
         }))
         .expect("done page");
-        let response = list_page_response(&done, |_| unreachable!());
+        let response = list_page_response(&done);
         assert!(response["nextCursor"].is_null());
         assert_eq!(response["hasMore"], false);
     }
@@ -1688,6 +1802,7 @@ mod tests {
                     Err(MutationFailure::Transport(anyhow::anyhow!("response lost")))
                 } else {
                     Ok(SubagentControlResponse {
+                        stopped_run_id: None,
                         answer: Some(crate::subagents::SubagentCommittedAnswer {
                             option_id: Some("east".to_string()),
                             option_label: Some("East".to_string()),

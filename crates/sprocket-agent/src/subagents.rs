@@ -71,7 +71,6 @@ pub struct CreateSubagentRunResponse {
     pub thread_id: String,
     pub run_id: String,
     pub status: String,
-    pub created: bool,
     pub settings: SubagentSettings,
     /// Previous child run for follow-up/continuation launches; none for a new child.
     #[serde(default)]
@@ -121,6 +120,8 @@ pub struct SubagentContinuation {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentControlResponse {
+    #[serde(default)]
+    pub stopped_run_id: Option<String>,
     #[serde(default)]
     pub answer: Option<SubagentCommittedAnswer>,
     #[serde(default)]
