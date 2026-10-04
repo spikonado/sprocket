@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
+import { highlightCode } from '$lib/chat/code-highlighting';
+import type { HighlightRequest, HighlightResponse } from '$lib/chat/code-highlighting-client';
 import ChatMarkdown from './chat-markdown';
 
 const artifact: ArtifactEntry = {
@@ -29,6 +31,49 @@ describe('links', () => {
 		const link = document.querySelector('a');
 		expect(link?.target).toBe('_blank');
 		expect(link?.rel).toBe('noopener noreferrer');
+	});
+});
+
+describe('code blocks', () => {
+	beforeEach(() => {
+		vi.stubGlobal(
+			'Worker',
+			class {
+				onmessage?: (event: MessageEvent<HighlightResponse>) => void;
+				async postMessage({ id, code, language }: HighlightRequest) {
+					const tokens = await highlightCode(code, language);
+					this.onmessage?.(new MessageEvent('message', { data: { id, tokens } }));
+				}
+			}
+		);
+	});
+
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('highlights nested fences while preserving literal code, tabs, and blank lines', async () => {
+		const code = 'const markup = "<img src=x onerror=alert(1)>";\n\n\tconsole.log(markup);\n';
+
+		const { container } = render(
+			<ChatMarkdown
+				content={`> \`\`\`ts\n${code
+					.split('\n')
+					.map((line) => `> ${line}`)
+					.join('\n')}\`\`\``}
+			/>
+		);
+
+		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
+		expect(container.querySelector('pre code')?.textContent).toBe(code);
+		expect(container.querySelector('img')).toBeNull();
+	});
+
+	it('renders the latest code when an unfinished fence streams more content', async () => {
+		const { container, rerender } = render(<ChatMarkdown content={'```js\nconst'} />);
+		const code = 'const reading = 23.4;\n';
+		rerender(<ChatMarkdown content={`\`\`\`js\n${code}\`\`\``} />);
+
+		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
+		expect(container.querySelector('pre code')?.textContent).toBe(code);
 	});
 });
 

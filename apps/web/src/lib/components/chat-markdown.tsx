@@ -3,6 +3,7 @@ import { cn } from '$lib/utils';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { renderMarkdownBlocks } from '$lib/chat/markdown';
 import ArtifactReference from '$lib/components/artifact-reference';
+import MarkdownHtml from '$lib/components/markdown-html';
 
 const NO_ARTIFACTS = new Set<string>();
 
@@ -53,13 +54,7 @@ export default function ChatMarkdown({
 					return null;
 				}
 
-				return (
-					<div
-						key={`${block.type}-${index}`}
-						className="chat-markdown-html"
-						dangerouslySetInnerHTML={{ __html: block.html }}
-					/>
-				);
+				return <MarkdownHtml key={`${block.type}-${index}`} html={block.html} />;
 			})}
 		</div>
 	);

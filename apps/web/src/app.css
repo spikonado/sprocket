@@ -305,14 +305,18 @@ body::after {
 .chat-markdown h1,
 .chat-markdown h2,
 .chat-markdown h3,
-.chat-markdown h4 {
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
 	margin: 0.8rem 0;
 }
 
 .chat-markdown h1,
 .chat-markdown h2,
 .chat-markdown h3,
-.chat-markdown h4 {
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
 	line-height: 1.35;
 	font-weight: 600;
 	letter-spacing: -0.02em;
@@ -331,6 +335,12 @@ body::after {
 	font-size: 1.1rem;
 }
 
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+	font-size: 1em;
+}
+
 .chat-markdown ul,
 .chat-markdown ol {
 	padding-left: 1.4rem;
@@ -342,6 +352,30 @@ body::after {
 
 .chat-markdown ol {
 	list-style: decimal;
+}
+
+.chat-markdown li > ul,
+.chat-markdown li > ol {
+	margin: 0.2rem 0;
+}
+
+.chat-markdown ul ul {
+	list-style: circle;
+}
+
+.chat-markdown ul ul ul {
+	list-style: square;
+}
+
+.chat-markdown li:has(> input[type='checkbox']),
+.chat-markdown li:has(> p > input[type='checkbox']) {
+	list-style: none;
+}
+
+.chat-markdown input[type='checkbox'] {
+	margin-left: -1.2rem;
+	margin-right: 0.35rem;
+	accent-color: var(--accent-strong);
 }
 
 .chat-markdown li + li {
@@ -376,6 +410,9 @@ body::after {
 
 .chat-markdown pre {
 	overflow-x: auto;
+	white-space: pre;
+	overflow-wrap: normal;
+	word-break: normal;
 	border: 1px solid var(--hairline);
 	border-radius: 1rem;
 	background: var(--panel-elevated);
@@ -392,6 +429,14 @@ body::after {
 	font-family: var(--font-mono);
 	font-size: 0.82rem;
 	line-height: 1.7;
+}
+
+.chat-markdown .shiki span {
+	color: var(--shiki-light);
+}
+
+[data-theme='dark'] .chat-markdown .shiki span {
+	color: var(--shiki-dark);
 }
 
 .chat-markdown hr {
@@ -413,6 +458,10 @@ body::after {
 .chat-markdown td {
 	border: 1px solid var(--border);
 	padding: 0.5rem 0.65rem;
+}
+
+.chat-markdown th:not([align]),
+.chat-markdown td:not([align]) {
 	text-align: left;
 }
 
