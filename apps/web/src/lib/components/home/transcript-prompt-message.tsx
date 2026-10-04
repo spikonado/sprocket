@@ -30,10 +30,10 @@ export default function TranscriptPromptMessage({
 		<div
 			data-message-id={message.id}
 			data-transcript-anchor={message.id}
-			className="flex flex-col items-start gap-1.5"
+			className="flex flex-col items-end gap-1.5"
 		>
 			{attachments.length > 0 ? (
-				<ul className="flex max-w-132 flex-wrap gap-2" aria-label="Attached files">
+				<ul className="flex max-w-132 flex-wrap justify-end gap-2" aria-label="Attached files">
 					{attachments.map((attachment) => (
 						<li key={attachment.storageId}>
 							<TranscriptAttachment

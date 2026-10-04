@@ -728,7 +728,7 @@ export default function ThreadTranscript({
 			>
 				<div
 					ref={contentRef}
-					className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8"
+					className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 py-8"
 				>
 					{currentError ? (
 						<div

@@ -163,7 +163,7 @@ describe('transcript viewport paging', () => {
 		expect(viewport.classList.contains('overflow-auto')).toBe(false);
 	});
 
-	it('left-aligns user and agent messages inside a centered column', async () => {
+	it('right-aligns user prompts inside a composer-width column', async () => {
 		const promptMessage: TranscriptDisplayRow = {
 			...message(1),
 			attachments: [
@@ -196,10 +196,10 @@ describe('transcript viewport paging', () => {
 		}
 
 		expect(column.classList.contains('mx-auto')).toBe(true);
-		expect(column.classList.contains('max-w-5xl')).toBe(true);
-		expect(prompt.classList.contains('items-start')).toBe(true);
-		expect(prompt.classList.contains('items-end')).toBe(false);
-		expect(chips.classList.contains('justify-end')).toBe(false);
+		expect(column.classList.contains('max-w-[48rem]')).toBe(true);
+		expect(prompt.classList.contains('items-end')).toBe(true);
+		expect(prompt.classList.contains('items-start')).toBe(false);
+		expect(chips.classList.contains('justify-end')).toBe(true);
 		expect(agent.className).not.toMatch(/\b(items-end|justify-end|self-end|ml-auto|text-right)\b/);
 	});
 
