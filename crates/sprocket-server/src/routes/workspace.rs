@@ -22,8 +22,8 @@ use sprocket_workspace::{
     load_workspace_skills,
 };
 
-const MAX_WORKSPACE_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
-static WORKSPACE_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+const MAX_LOCAL_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+static LOCAL_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,8 +55,8 @@ struct WorkspaceSearchRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkspaceImageRequest {
-    workspace_path: String,
+struct LocalImageRequest {
+    workspace_path: Option<PathBuf>,
     path: String,
 }
 
@@ -96,26 +96,20 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/browse", post(browse_path))
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
-        .route("/workspace/image", get(workspace_image))
+        .route("/workspace/image", get(local_image))
 }
 
-async fn workspace_image(
-    State(state): State<AppState>,
+async fn local_image(
     MachineSession: MachineSession,
-    Query(payload): Query<WorkspaceImageRequest>,
+    Query(payload): Query<LocalImageRequest>,
 ) -> Result<Response, ApiError> {
-    let attachment = state
-        .project_attachments
-        .require_available_workspace(&payload.workspace_path)
-        .await
-        .map_err(ApiError::bad_request)?;
-    let permit = WORKSPACE_IMAGE_READS
+    let permit = LOCAL_IMAGE_READS
         .acquire()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        read_workspace_image(PathBuf::from(attachment.workspace_path), payload.path)
+        read_local_image(payload.workspace_path, payload.path)
     })
     .await
     .map_err(|error| ApiError::internal(error.into()))?
@@ -145,163 +139,61 @@ async fn workspace_image(
     Ok(response)
 }
 
-struct WorkspaceImage {
+struct LocalImage {
     contents: Vec<u8>,
     media_type: &'static str,
 }
 
-fn read_workspace_image(
-    workspace_path: PathBuf,
+fn read_local_image(
+    workspace_path: Option<PathBuf>,
     image_path: String,
-) -> anyhow::Result<WorkspaceImage> {
-    let workspace = std::fs::canonicalize(&workspace_path).with_context(|| {
-        format!(
-            "failed to resolve attached workspace {}",
-            workspace_path.display()
-        )
-    })?;
-    let workspace_file = open_workspace_root(&workspace)?;
+) -> anyhow::Result<LocalImage> {
     let image_path = Path::new(&image_path);
     let image_path = if image_path.is_absolute() {
         image_path.to_path_buf()
     } else {
-        workspace.join(image_path)
+        workspace_path
+            .context("relative image paths require a workspace directory")?
+            .join(image_path)
     };
-    let image_path =
-        std::fs::canonicalize(&image_path).with_context(|| "image path is unavailable")?;
-    if !image_path.starts_with(&workspace) {
-        anyhow::bail!("image path is outside the attached workspace");
+    if !image_path.is_absolute() {
+        anyhow::bail!("image path must resolve to an absolute path");
     }
 
-    let file = open_workspace_image(workspace_file, &workspace, &image_path)
-        .with_context(|| "failed to open workspace image")?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(image_path)
+        .with_context(|| "failed to open local image")?;
     let metadata = file
         .metadata()
-        .with_context(|| "failed to inspect workspace image")?;
+        .with_context(|| "failed to inspect local image")?;
     if !metadata.is_file() {
-        anyhow::bail!("workspace image is not a regular file");
+        anyhow::bail!("local image is not a regular file");
     }
-    if metadata.len() > MAX_WORKSPACE_IMAGE_BYTES {
-        anyhow::bail!("workspace image exceeds the 20 MiB limit");
+    if metadata.len() > MAX_LOCAL_IMAGE_BYTES {
+        anyhow::bail!("local image exceeds the 20 MiB limit");
     }
 
     let mut contents = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_WORKSPACE_IMAGE_BYTES + 1)
+    file.take(MAX_LOCAL_IMAGE_BYTES + 1)
         .read_to_end(&mut contents)
-        .with_context(|| "failed to read workspace image")?;
-    if contents.len() as u64 > MAX_WORKSPACE_IMAGE_BYTES {
-        anyhow::bail!("workspace image exceeds the 20 MiB limit");
+        .with_context(|| "failed to read local image")?;
+    if contents.len() as u64 > MAX_LOCAL_IMAGE_BYTES {
+        anyhow::bail!("local image exceeds the 20 MiB limit");
     }
 
     let media_type = detect_image_media_type(&contents)
-        .ok_or_else(|| anyhow::anyhow!("workspace file is not a supported image"))?;
-    Ok(WorkspaceImage {
+        .ok_or_else(|| anyhow::anyhow!("local file is not a supported image"))?;
+    Ok(LocalImage {
         contents,
         media_type,
     })
-}
-
-#[cfg(unix)]
-fn open_workspace_root(workspace: &Path) -> anyhow::Result<std::fs::File> {
-    use std::os::unix::fs::MetadataExt;
-    let checked = std::fs::metadata(workspace)?;
-    let root = std::fs::File::open("/")?;
-    let file = open_relative_image(root, workspace.strip_prefix("/")?, true)?;
-    let opened = file.metadata()?;
-    if checked.dev() != opened.dev() || checked.ino() != opened.ino() {
-        anyhow::bail!("workspace changed while opening image");
-    }
-    Ok(file)
-}
-
-#[cfg(unix)]
-fn open_workspace_image(
-    workspace_file: std::fs::File,
-    workspace: &Path,
-    image_path: &Path,
-) -> anyhow::Result<std::fs::File> {
-    open_relative_image(workspace_file, image_path.strip_prefix(workspace)?, false)
-}
-
-#[cfg(unix)]
-fn open_relative_image(
-    mut file: std::fs::File,
-    relative: &Path,
-    directory: bool,
-) -> anyhow::Result<std::fs::File> {
-    use std::ffi::CString;
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::ffi::OsStrExt;
-
-    let mut components = relative.components().peekable();
-    while let Some(component) = components.next() {
-        let name = CString::new(component.as_os_str().as_bytes())?;
-        let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
-        if directory || components.peek().is_some() {
-            flags |= libc::O_DIRECTORY;
-        }
-        // Walk from the workspace descriptor so a concurrent symlink swap cannot escape it.
-        let descriptor = unsafe { libc::openat(file.as_raw_fd(), name.as_ptr(), flags) };
-        if descriptor < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        // SAFETY: openat returned a new, owned descriptor.
-        file = unsafe { std::fs::File::from_raw_fd(descriptor) };
-    }
-    Ok(file)
-}
-
-#[cfg(windows)]
-fn open_workspace_root(workspace: &Path) -> anyhow::Result<std::fs::File> {
-    use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    };
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(workspace)?;
-    if opened_windows_path(&file)? != workspace {
-        anyhow::bail!("workspace changed while opening image");
-    }
-    Ok(file)
-}
-
-#[cfg(windows)]
-fn open_workspace_image(
-    workspace_file: std::fs::File,
-    _workspace: &Path,
-    image_path: &Path,
-) -> anyhow::Result<std::fs::File> {
-    let file = std::fs::File::open(image_path)?;
-    if !opened_windows_path(&file)?.starts_with(opened_windows_path(&workspace_file)?) {
-        anyhow::bail!("image path is outside the attached workspace");
-    }
-    Ok(file)
-}
-
-#[cfg(windows)]
-fn opened_windows_path(file: &std::fs::File) -> anyhow::Result<PathBuf> {
-    use std::os::windows::ffi::OsStringExt;
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
-    let mut path = vec![0u16; 32768];
-    // SAFETY: the handle is live and the buffer has the supplied capacity.
-    let length = unsafe {
-        GetFinalPathNameByHandleW(
-            file.as_raw_handle(),
-            path.as_mut_ptr(),
-            path.len() as u32,
-            0,
-        )
-    } as usize;
-    if length == 0 || length >= path.len() {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    Ok(PathBuf::from(std::ffi::OsString::from_wide(
-        &path[..length],
-    )))
 }
 
 fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {
@@ -352,13 +244,35 @@ fn is_svg(contents: &[u8]) -> bool {
         rest = trim_xml_whitespace(&rest[end + 2..]);
     }
     loop {
-        if !rest.starts_with("<!--") {
+        if rest.starts_with("<!--") {
+            let Some(end) = rest.find("-->") else {
+                return false;
+            };
+            rest = trim_xml_whitespace(&rest[end + 3..]);
+        } else if rest.starts_with("<!DOCTYPE") {
+            let mut quote = None;
+            let mut subset_depth = 0usize;
+            let end = rest.char_indices().find_map(|(index, character)| {
+                if quote == Some(character) {
+                    quote = None;
+                } else if quote.is_none() {
+                    match character {
+                        '\'' | '"' => quote = Some(character),
+                        '[' => subset_depth += 1,
+                        ']' => subset_depth = subset_depth.saturating_sub(1),
+                        '>' if subset_depth == 0 => return Some(index),
+                        _ => {}
+                    }
+                }
+                None
+            });
+            let Some(end) = end else {
+                return false;
+            };
+            rest = trim_xml_whitespace(&rest[end + 1..]);
+        } else {
             break;
         }
-        let Some(end) = rest.find("-->") else {
-            return false;
-        };
-        rest = trim_xml_whitespace(&rest[end + 3..]);
     }
     let Some(tag) = rest.strip_prefix("<svg") else {
         return false;
@@ -490,7 +404,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    async fn image_test_app(data_dir: &Path, workspace: &Path) -> (axum::Router, String) {
+    async fn image_test_app(data_dir: &Path) -> (axum::Router, String) {
         let auth = crate::auth::AuthState::load(data_dir).unwrap();
         let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
         auth.bind_session_user(&token, "test-user").await.unwrap();
@@ -507,22 +421,15 @@ mod tests {
             true,
             crate::package_update::PackageUpdateManager::disabled(),
         );
-        state
-            .project_attachments
-            .attach(AttachProjectRequest {
-                workspace_path: workspace.to_string_lossy().into_owned(),
-                replace_workspace_path: None,
-            })
-            .await
-            .unwrap();
         (routes().with_state(state), token)
     }
 
-    fn image_request(workspace: &Path, path: &str, token: Option<&str>) -> Request<Body> {
-        let query = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("workspacePath", &workspace.to_string_lossy())
-            .append_pair("path", path)
-            .finish();
+    fn image_request(workspace: Option<&Path>, path: &str, token: Option<&str>) -> Request<Body> {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(workspace) = workspace {
+            query.append_pair("workspacePath", &workspace.to_string_lossy());
+        }
+        let query = query.append_pair("path", path).finish();
         let uri = format!("/workspace/image?{query}");
         let mut builder = Request::builder().method("GET").uri(uri);
         if let Some(token) = token {
@@ -616,7 +523,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_image_requires_auth_and_serves_relative_and_absolute_images() {
+    async fn local_image_serves_relative_and_absolute_images_without_an_attachment() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let image = b"\x89PNG\r\n\x1a\npng-data";
@@ -627,11 +534,15 @@ mod tests {
             b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
         )
         .unwrap();
-        let (app, token) = image_test_app(data.path(), workspace.path()).await;
+        let (app, token) = image_test_app(data.path()).await;
 
         let denied = app
             .clone()
-            .oneshot(image_request(workspace.path(), "images/photo.bin", None))
+            .oneshot(image_request(
+                Some(workspace.path()),
+                "images/photo.bin",
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
@@ -656,7 +567,7 @@ mod tests {
         for path in paths {
             let response = app
                 .clone()
-                .oneshot(image_request(workspace.path(), &path, Some(&token)))
+                .oneshot(image_request(Some(workspace.path()), &path, Some(&token)))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
@@ -672,7 +583,7 @@ mod tests {
 
         let svg = app
             .oneshot(image_request(
-                workspace.path(),
+                Some(workspace.path()),
                 "images/vector.svg",
                 Some(&token),
             ))
@@ -687,34 +598,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_image_rejects_path_escapes_and_non_image_files() {
+    async fn local_image_serves_images_outside_the_workspace() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("outside.png"), b"\x89PNG\r\n\x1a\n").unwrap();
-        std::fs::write(workspace.path().join("fake.png"), b"not an image").unwrap();
-        let (app, token) = image_test_app(data.path(), workspace.path()).await;
+        let (app, token) = image_test_app(data.path()).await;
 
         let traversal_path = Path::new("..")
             .join(outside.path().file_name().unwrap())
             .join("outside.png");
-        let traversal = app
-            .clone()
-            .oneshot(image_request(
-                workspace.path(),
-                &traversal_path.to_string_lossy(),
-                Some(&token),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(traversal.status(), StatusCode::BAD_REQUEST);
-
-        let unsupported = app
-            .clone()
-            .oneshot(image_request(workspace.path(), "fake.png", Some(&token)))
-            .await
-            .unwrap();
-        assert_eq!(unsupported.status(), StatusCode::BAD_REQUEST);
+        for (base, path) in [
+            (Some(workspace.path()), traversal_path),
+            (None, outside.path().join("outside.png")),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(image_request(base, &path.to_string_lossy(), Some(&token)))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+            let contents = to_bytes(response.into_body(), 1024).await.unwrap();
+            assert_eq!(contents.as_ref(), b"\x89PNG\r\n\x1a\n");
+        }
 
         #[cfg(unix)]
         {
@@ -723,62 +630,38 @@ mod tests {
                 workspace.path().join("linked.png"),
             )
             .unwrap();
-            let symlink_escape = app
-                .oneshot(image_request(workspace.path(), "linked.png", Some(&token)))
+            let linked_image = app
+                .oneshot(image_request(
+                    Some(workspace.path()),
+                    "linked.png",
+                    Some(&token),
+                ))
                 .await
                 .unwrap();
-            assert_eq!(symlink_escape.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(linked_image.status(), StatusCode::OK);
         }
     }
 
     #[tokio::test]
-    async fn workspace_image_requires_an_attachment_and_rejects_oversized_or_nonregular_files() {
+    async fn local_image_rejects_unsupported_oversized_or_nonregular_files() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
-        let unattached = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("fake.png"), b"not an image").unwrap();
         std::fs::File::create(workspace.path().join("oversized.png"))
             .unwrap()
-            .set_len(MAX_WORKSPACE_IMAGE_BYTES + 1)
+            .set_len(MAX_LOCAL_IMAGE_BYTES + 1)
             .unwrap();
         std::fs::create_dir(workspace.path().join("directory.png")).unwrap();
-        let (app, token) = image_test_app(data.path(), workspace.path()).await;
+        let (app, token) = image_test_app(data.path()).await;
 
-        let unavailable = app
-            .clone()
-            .oneshot(image_request(unattached.path(), "image.png", Some(&token)))
-            .await
-            .unwrap();
-        assert_eq!(unavailable.status(), StatusCode::BAD_REQUEST);
-
-        for path in ["oversized.png", "directory.png"] {
+        for path in ["fake.png", "oversized.png", "directory.png"] {
             let response = app
                 .clone()
-                .oneshot(image_request(workspace.path(), path, Some(&token)))
+                .oneshot(image_request(Some(workspace.path()), path, Some(&token)))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
         }
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn opened_workspace_survives_path_replacement_without_reading_outside() {
-        let parent = tempfile::tempdir().unwrap();
-        let workspace = parent.path().join("workspace");
-        let outside = parent.path().join("outside");
-        std::fs::create_dir(&workspace).unwrap();
-        std::fs::create_dir(&outside).unwrap();
-        std::fs::write(workspace.join("board.png"), b"inside").unwrap();
-        std::fs::write(outside.join("board.png"), b"outside").unwrap();
-        let checked = std::fs::canonicalize(&workspace).unwrap();
-        let root = open_workspace_root(&checked).unwrap();
-        std::fs::rename(&workspace, parent.path().join("moved")).unwrap();
-        std::os::unix::fs::symlink(&outside, &workspace).unwrap();
-        let mut image = open_workspace_image(root, &checked, &checked.join("board.png")).unwrap();
-        let mut contents = Vec::new();
-        image.read_to_end(&mut contents).unwrap();
-        assert_eq!(contents, b"inside");
-        assert!(open_workspace_root(&checked).is_err());
     }
 
     #[test]
@@ -795,6 +678,14 @@ mod tests {
             (&avif[..], "image/avif"),
             (
                 &b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>"[..],
+                "image/svg+xml",
+            ),
+            (
+                &b"<?xml version=\"1.0\"?><!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\"><svg/>"[..],
+                "image/svg+xml",
+            ),
+            (
+                &b"<!DOCTYPE svg [<!ENTITY label \"Board > layout\">]><svg/>"[..],
                 "image/svg+xml",
             ),
         ] {

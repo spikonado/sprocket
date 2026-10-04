@@ -130,9 +130,7 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 					<ChatMarkdown
 						content={artifact.content}
 						className="text-foreground text-sm"
-						imageScope={
-							workspacePath ? { workspacePath, documentPath: artifact.localPath } : undefined
-						}
+						imageScope={{ workspacePath, documentPath: artifact.localPath }}
 					/>
 				</div>
 			)}

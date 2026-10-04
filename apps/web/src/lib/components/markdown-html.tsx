@@ -18,11 +18,7 @@ export default function MarkdownHtml({
 	const documentPath = imageScope?.documentPath;
 
 	const html = useMemo(
-		() =>
-			prepareMarkdownImages(
-				sourceHtml,
-				workspacePath ? { workspacePath, documentPath } : undefined
-			),
+		() => prepareMarkdownImages(sourceHtml, { workspacePath, documentPath }),
 		[sourceHtml, workspacePath, documentPath]
 	);
 
@@ -122,13 +118,13 @@ export default function MarkdownHtml({
 			return;
 
 		const url = new URL(image.src);
-		const workspaceImage = image.src.startsWith(`${resolveLocalApiBaseUrl()}/api/workspace/image?`);
+		const localImage = image.src.startsWith(`${resolveLocalApiBaseUrl()}/api/workspace/image?`);
 		setViewerImage({
 			url: image.src,
 			name: image.alt || 'Image',
 			mediaType: '',
 			readActions:
-				workspaceImage || !/^https?:$/.test(url.protocol) || url.origin === window.location.origin
+				localImage || !/^https?:$/.test(url.protocol) || url.origin === window.location.origin
 		});
 	}
 

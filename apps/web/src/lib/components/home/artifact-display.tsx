@@ -85,7 +85,7 @@ export default function ArtifactDisplay({
 						<ChatMarkdown
 							content={content}
 							className="text-foreground text-sm"
-							imageScope={workspacePath ? { workspacePath, documentPath: localPath } : undefined}
+							imageScope={{ workspacePath, documentPath: localPath }}
 						/>
 					</div>
 				)}

@@ -55,9 +55,8 @@ it('resolves images beside the artifact and closes the image before the fullscre
 				title: 'Notes',
 				artifactType: 'markdown',
 				content: '![Board](./board.png)',
-				localPath: '/workspace/docs/notes.md'
+				localPath: '/tmp/docs/notes.md'
 			}}
-			workspacePath="/workspace"
 			onClose={onClose}
 		/>
 	);
@@ -65,7 +64,7 @@ it('resolves images beside the artifact and closes the image before the fullscre
 	const trigger = getByRole('button', { name: 'View Board' });
 	const url = new URL(trigger.getAttribute('src') ?? '', 'http://localhost');
 
-	expect(url.searchParams.get('path')).toBe('/workspace/docs/./board.png');
+	expect(url.searchParams.get('path')).toBe('/tmp/docs/./board.png');
 	await waitFor(() => expect(document.activeElement).toBe(getByRole('dialog')));
 	fireEvent.click(trigger);
 

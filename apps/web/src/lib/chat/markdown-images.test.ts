@@ -3,7 +3,7 @@ import { markdownImageUrl } from './markdown-images';
 
 afterEach(() => vi.unstubAllEnvs());
 
-it('uses the configured local API origin for workspace images', () => {
+it('uses the configured local API origin for local images', () => {
 	vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
 	const url = markdownImageUrl('board.png', { workspacePath: '/workspace' });
 
@@ -33,4 +33,32 @@ it('resolves chat images from the workspace root and keeps remote URLs intact', 
 		'/api/workspace/image?workspacePath=%2Fworkspace&path=assets%2Fboard.png'
 	);
 	expect(markdownImageUrl('https://example.com/board.png')).toBe('https://example.com/board.png');
+});
+
+it.each([
+	'assets/board.png',
+	'./board%20layout.png',
+	'../assets/board.svg',
+	'/workspace/assets/board.png',
+	'C:/workspace/assets/board.png',
+	'C:\\workspace\\assets\\board.png'
+])('resolves file://%s like the corresponding image path', (path) => {
+	const scope = { workspacePath: '/workspace', documentPath: 'docs/notes.md' };
+
+	expect(markdownImageUrl(`file://${path}`, scope)).toBe(markdownImageUrl(path, scope));
+});
+
+it.each([
+	['/tmp/board.png', undefined, '/tmp/board.png'],
+	['./board.png', { documentPath: '/tmp/notes.md' }, '/tmp/./board.png']
+])('resolves %s without a workspace', (source, scope, path) => {
+	const url = markdownImageUrl(source, scope);
+
+	expect(new URL(url ?? '', 'http://localhost').searchParams.get('path')).toBe(path);
+});
+
+it('resolves a Windows file URL like an absolute Windows path', () => {
+	expect(markdownImageUrl('file:///C:/workspace/board.png')).toBe(
+		markdownImageUrl('C:/workspace/board.png')
+	);
 });

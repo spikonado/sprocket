@@ -1,19 +1,18 @@
 import DOMPurify from 'isomorphic-dompurify';
 import { marked, type Token } from 'marked';
+import { isWindowsImagePath, stripImageFileScheme } from './markdown-image-path';
 
 marked.setOptions({
 	gfm: true,
 	breaks: true
 });
 
-marked.use({
-	renderer: {
-		image(token) {
-			if (!/^[a-z]:[\\/]/i.test(token.href)) return false;
+DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
+	if (node.nodeName !== 'IMG' || attribute.attrName !== 'src') return;
 
-			return this.image({ ...token, href: encodeURIComponent(token.href) });
-		}
-	}
+	const source = stripImageFileScheme(attribute.attrValue);
+
+	attribute.attrValue = isWindowsImagePath(source) ? source.replace(':', '%3A') : source;
 });
 
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {

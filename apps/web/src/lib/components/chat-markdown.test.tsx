@@ -216,6 +216,27 @@ describe('artifact references', () => {
 });
 
 describe('images', () => {
+	it.each([
+		['![Board](file:///workspace/board%20layout.png)', '/workspace/board layout.png'],
+		['![Board](file://assets/board.png)', 'assets/board.png'],
+		['![Board](file://C:/workspace/board.png)', 'C:/workspace/board.png'],
+		['![Board](file:///C:/workspace/board.png)', 'C:/workspace/board.png'],
+		['![Board](file:///C:/workspace/board%20layout.png)', 'C:/workspace/board layout.png'],
+		['<img src="file:///tmp/100%ready.png" alt="Board">', '/tmp/100%ready.png'],
+		['<img src="file:///workspace/board.png" alt="Board">', '/workspace/board.png'],
+		['<img src="file://C:/workspace/board.png" alt="Board">', 'C:/workspace/board.png']
+	])('renders %s through the existing image path resolution', (content, path) => {
+		const { getByRole } = render(
+			<ChatMarkdown content={content} imageScope={{ workspacePath: '/workspace' }} />
+		);
+
+		const image = getByRole('button', { name: 'View Board' });
+		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+
+		expect(url.pathname).toBe('/api/workspace/image');
+		expect(url.searchParams.get('path')).toBe(path);
+	});
+
 	it('offers the original remote image instead of CORS-dependent read actions', () => {
 		const { getByRole, queryByRole } = render(
 			<ChatMarkdown content="![Board](https://example.com/board.png)" />
@@ -228,6 +249,17 @@ describe('images', () => {
 		);
 		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
 	});
+
+	it.each(['![Board](/tmp/board.png)', '![Board](file:///tmp/board.png)'])(
+		'renders %s without a workspace',
+		(content) => {
+			const { getByRole } = render(<ChatMarkdown content={content} />);
+			const image = getByRole('button', { name: 'View Board' });
+			const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+
+			expect(url.searchParams.get('path')).toBe('/tmp/board.png');
+		}
+	);
 
 	it('renders Windows absolute image paths through sanitization', () => {
 		const { getByRole } = render(

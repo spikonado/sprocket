@@ -1,30 +1,40 @@
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
+import {
+	isAbsoluteImagePath,
+	isWindowsImagePath,
+	stripImageFileScheme
+} from './markdown-image-path';
 
-export type MarkdownImageScope = { workspacePath: string; documentPath?: string };
+export type MarkdownImageScope = { workspacePath?: string; documentPath?: string };
 
 export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
+	source = stripImageFileScheme(source);
+
 	if (/^(?:https?:|data:image\/|blob:|\/\/)/i.test(source)) return source;
 
-	if (!scope || !source) return null;
+	if (!source) return null;
 
-	if (/^[a-z][a-z\d+.-]*:/i.test(source) && !/^[a-z]:[\\/]/i.test(source)) return null;
+	if (/^[a-z][a-z\d+.-]*:/i.test(source) && !isWindowsImagePath(source)) return null;
 
+	const encodedPath = source.split(/[?#]/, 1)[0];
 	let path: string;
 
 	try {
-		path = decodeURIComponent(source.split(/[?#]/, 1)[0]);
+		path = decodeURIComponent(encodedPath);
 	} catch {
-		return null;
+		path = encodedPath;
 	}
 
-	const absolute = /^(?:[\\/]|[a-z]:[\\/])/i.test(path);
-	const documentPath = scope.documentPath?.replaceAll('\\', '/');
+	const documentPath = scope?.documentPath?.replaceAll('\\', '/');
 	const directory = documentPath?.slice(0, documentPath.lastIndexOf('/') + 1) ?? '';
+	const resolvedPath = isAbsoluteImagePath(path) ? path : directory + path;
 
-	const query = new URLSearchParams({
-		workspacePath: scope.workspacePath,
-		path: absolute ? path : directory + path
-	});
+	if (!isAbsoluteImagePath(resolvedPath) && !scope?.workspacePath) return null;
+
+	const query = new URLSearchParams();
+
+	if (scope?.workspacePath) query.set('workspacePath', scope.workspacePath);
+	query.set('path', resolvedPath);
 
 	const baseUrl = resolveLocalApiBaseUrl();
 	const pathUrl = `/api/workspace/image?${query}`;
