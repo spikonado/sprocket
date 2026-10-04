@@ -290,28 +290,29 @@
 	visibility: visible;
 }
 
-.inbox-subagents {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-	width: calc(100% - 4px);
-	margin: -2px 2px 2px;
-	padding: 3px 10px;
-	border: 1px solid transparent;
-	border-radius: 7px;
-	background: transparent;
+.inbox-row-subagents {
+	padding-left: 20px;
 	color: var(--muted-foreground);
 	font-size: 11px;
-	text-align: left;
+	line-height: 20px;
+}
+
+.inbox-subagents {
+	position: absolute;
+	bottom: 8px;
+	left: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
+	color: var(--muted-foreground);
 	cursor: pointer;
 }
 
 .inbox-subagents:hover {
 	background: var(--hover-fill);
-}
-
-.inbox-subagents svg {
-	flex-shrink: 0;
 }
 
 .inbox-subagents-working {

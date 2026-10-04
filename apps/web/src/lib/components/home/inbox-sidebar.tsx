@@ -784,6 +784,15 @@ function ThreadTreeRow({
 								<span className={cn('inbox-status', status.className)}>{status.label}</span>
 							)}
 						</span>
+						{badge && (
+							<span
+								className={cn('inbox-row-subagents', {
+									'inbox-subagents-working': summary?.descendantsActive === true
+								})}
+							>
+								{badge}
+							</span>
+						)}
 					</button>
 				)}
 				{!renaming && isRoot && (
@@ -815,28 +824,24 @@ function ThreadTreeRow({
 						)}
 					</div>
 				)}
+				{badge && !renaming && (
+					<button
+						className="inbox-subagents"
+						type="button"
+						aria-expanded={expanded}
+						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}`}
+						onClick={() => {
+							if (expanded) {
+								expansion.collapse(thread._id);
+							} else {
+								expansion.expand(thread._id);
+							}
+						}}
+					>
+						{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+					</button>
+				)}
 			</div>
-			{badge && (
-				<button
-					className="inbox-subagents"
-					type="button"
-					style={indentStyle}
-					aria-expanded={expanded}
-					aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}`}
-					onClick={() => {
-						if (expanded) {
-							expansion.collapse(thread._id);
-						} else {
-							expansion.expand(thread._id);
-						}
-					}}
-				>
-					{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-					<span className={cn({ 'inbox-subagents-working': summary?.descendantsActive === true })}>
-						{badge}
-					</span>
-				</button>
-			)}
 			{expanded && (
 				<div className="inbox-children">
 					{resolveChildren({
