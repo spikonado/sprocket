@@ -17,10 +17,6 @@ import {
 } from '@convex/agentQuestions';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { normalizeTaskTimeoutMs } from '@convex/lib/models';
-import {
-	selectedThreadLifecyclePhase,
-	vSelectedThreadLifecyclePhase
-} from '@convex/lib/runCancellation';
 import { executionSecretHash, getExecutionRun } from '@convex/lib/auth';
 import {
 	vAgentQuestionSnapshot,
@@ -59,6 +55,14 @@ const vSubagentSettings = v.object({
 	completionProvider: vCompletionProvider
 });
 
+const vCreatedSubagentRun = v.object({
+	threadId: v.id('threadRecords'),
+	runId: v.id('runs'),
+	status: vRunStatus,
+	continuationOfRunId: v.optional(v.id('runs')),
+	settings: vSubagentSettings
+});
+
 const vCallerRun = v.object({
 	runId: v.id('runs'),
 	claimId: v.string(),
@@ -84,19 +88,7 @@ export const recoverSubmission = mutation({
 		submissionId: v.string(),
 		childExecutionSecret: v.string()
 	},
-	returns: v.union(
-		v.null(),
-		v.object({
-			threadId: v.id('threadRecords'),
-			runId: v.id('runs'),
-			created: v.boolean(),
-			status: vRunStatus,
-			lastError: v.optional(v.string()),
-			continuationOfRunId: v.optional(v.id('runs')),
-			settings: vSubagentSettings,
-			prompt: v.string()
-		})
-	),
+	returns: v.union(v.null(), vCreatedSubagentRun.extend({ prompt: v.string() })),
 	handler: async (ctx, args) => {
 		try {
 			const caller = await requireLiveCallerRun(ctx, args);
@@ -116,9 +108,7 @@ export const recoverSubmission = mutation({
 			return {
 				threadId: run.threadId,
 				runId: run._id,
-				created: false,
 				status: run.status,
-				lastError: run.lastError,
 				continuationOfRunId: run.continuationOfRunId,
 				settings: subagentSettings(run),
 				prompt
@@ -196,21 +186,12 @@ export const createOrSend = mutation({
 		continuationQuestionId: v.optional(v.id('agentQuestions')),
 		threadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
-		model: v.optional(v.string()),
-		reasoning: v.optional(vReasoningEffort),
-		fast: v.optional(v.boolean()),
+		model: v.string(),
+		reasoning: vReasoningEffort,
+		fast: v.boolean(),
 		timeoutMs: v.optional(v.number())
 	},
-	returns: v.object({
-		threadId: v.id('threadRecords'),
-		runId: v.id('runs'),
-		created: v.boolean(),
-		status: vRunStatus,
-		lastError: v.optional(v.string()),
-		timeoutMs: v.optional(v.number()),
-		continuationOfRunId: v.optional(v.id('runs')),
-		settings: vSubagentSettings
-	}),
+	returns: vCreatedSubagentRun,
 	handler: async (ctx, args) => {
 		try {
 			const callerRun = await requireLiveCallerRun(ctx, args);
@@ -226,10 +207,6 @@ export const createOrSend = mutation({
 				args.threadId === undefined
 					? callerThread
 					: await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
-
-			if (args.model === undefined || args.reasoning === undefined || args.fast === undefined) {
-				throw new Error('Model, reasoning, and fast overrides must be resolved before submission.');
-			}
 
 			// Creation inherits the caller's effective provider; follow-ups keep
 			// the target child's saved provider.
@@ -298,21 +275,14 @@ export const createOrSend = mutation({
 				});
 			}
 
-			const thread = await ctx.db.get('threadRecords', created.threadId);
-
-			if (!thread) throw new Error('Thread not found.');
-
-			const run = await ctx.db.get('runs', created.runId);
+			const run = (await ctx.db.get('runs', created.runId))!;
 
 			return {
 				threadId: created.threadId,
 				runId: created.runId,
-				created: created.created,
-				status: run?.status ?? thread.status,
-				lastError: run?.lastError,
-				timeoutMs,
-				continuationOfRunId: run?.continuationOfRunId,
-				settings: subagentSettings(run ?? thread)
+				status: run.status,
+				continuationOfRunId: run.continuationOfRunId,
+				settings: subagentSettings(run)
 			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -346,33 +316,12 @@ export const enforceTaskDeadline = internalMutation({
 
 export const snapshot = mutation({
 	args: vDescendantCaller.fields,
-	returns: v.object({
-		threadId: v.id('threadRecords'),
-		parentThreadId: v.optional(v.id('threadRecords')),
-		status: vSelectedThreadLifecyclePhase,
-		lastError: v.optional(v.string()),
-		activeRunId: v.optional(v.id('runs')),
-		startedAt: v.optional(v.number()),
-		pendingQuestions: v.array(vAgentQuestionSnapshot),
-		settings: vSubagentSettings
-	}),
+	returns: v.object({ settings: vSubagentSettings }),
 	handler: async (ctx, args) => {
 		try {
 			const thread = await requireDescendantThread(ctx, args);
-			const pending = await pendingQuestionsForThread(ctx, args.threadId);
-			const latest = await latestRunForThread(ctx, thread._id);
-			const active = latest && !isRunFinalStatus(latest.status) ? latest : null;
 
-			return {
-				threadId: thread._id,
-				parentThreadId: thread.parentThreadId,
-				status: selectedThreadLifecyclePhase({ run: latest, waitingForInput: pending.length > 0 }),
-				lastError: latest?.lastError,
-				activeRunId: active?._id,
-				startedAt: active?.startedAt,
-				pendingQuestions: pending.map(toAgentQuestionSnapshot),
-				settings: subagentSettings(thread)
-			};
+			return { settings: subagentSettings(thread) };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -389,11 +338,10 @@ export const listChildren = mutation({
 		page: v.array(
 			v.object({
 				threadId: v.id('threadRecords'),
-				parentThreadId: v.optional(v.id('threadRecords')),
+				parentThreadId: v.id('threadRecords'),
 				title: v.optional(v.string()),
 				status: vRunStatus,
 				lastError: v.optional(v.string()),
-				lastMessageAt: v.number(),
 				settings: vSubagentSettings
 			})
 		),
@@ -422,11 +370,10 @@ export const listChildren = mutation({
 
 					return {
 						threadId: child._id,
-						parentThreadId: child.parentThreadId,
+						parentThreadId: parentId,
 						title: child.title,
 						status: latest?.status ?? child.status,
 						lastError: latest?.lastError,
-						lastMessageAt: child.lastMessageAt,
 						settings: subagentSettings(child)
 					};
 				})

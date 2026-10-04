@@ -96,13 +96,11 @@ export function useRevealInboxThread(
 	const visibleRoot = root && repositoryKeys.includes(root.repositoryKey) ? root : null;
 	const emptyPage = { rows: [], loading: false, canLoadMore: false, loadMore: () => {} };
 
+	const state = visibleRoot?.archivedAt === undefined ? 'unsettled' : 'settled';
+
 	useRevealPaginatedThread(
-		visibleRoot && visibleRoot.archivedAt === undefined ? visibleRoot._id : null,
-		sections.find((section) => section.state === 'unsettled') ?? emptyPage
-	);
-	useRevealPaginatedThread(
-		visibleRoot && visibleRoot.archivedAt !== undefined ? visibleRoot._id : null,
-		sections.find((section) => section.state === 'settled') ?? emptyPage
+		visibleRoot?._id ?? null,
+		sections.find((section) => section.state === state) ?? emptyPage
 	);
 
 	return visibleRoot;

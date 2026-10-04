@@ -27,7 +27,6 @@ function expansionStub(initial: string[] = []): UseExpandedThreads {
 	const expanded = new Set(initial);
 
 	return {
-		expandedThreadIds: [...expanded],
 		isExpanded: (threadId: Id<'threadRecords'>) => expanded.has(threadId),
 		expand: vi.fn((threadId: Id<'threadRecords'>) => {
 			expanded.add(threadId);
@@ -665,23 +664,13 @@ it('hides settle and unsettle controls for child threads', async () => {
 	expect(actions.map((action) => action.textContent?.trim())).toEqual(['Rename', 'Copy thread ID']);
 });
 
-it('disables root settling while the subtree has active work', async () => {
+it('shows descendant activity and disables settling in the row and context menu', async () => {
 	treeSummaries.set('thread', { descendantCount: 2, anyActive: true, descendantsActive: true });
 	const input = await render([thread()]);
-	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
-
-	expect(settleButton.disabled).toBe(true);
-	act(() => {
-		settleButton.click();
-	});
-	await flush();
-
-	expect(input.onChange).not.toHaveBeenCalled();
-});
-
-it('disables context-menu settling while descendants are active', async () => {
-	treeSummaries.set('thread', { descendantCount: 2, anyActive: true, descendantsActive: true });
-	const input = await render([thread()]);
+	expect(document.querySelector('.inbox-subagents')?.textContent).toBe('2 subagents · Working');
+	expect(document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')?.disabled).toBe(
+		true
+	);
 	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
 	await flush();
 
@@ -713,17 +702,4 @@ it('blocks settling an active parent with idle children without a Working badge'
 	await flush();
 
 	expect(input.onChange).not.toHaveBeenCalled();
-});
-
-it('shows the Working label when only descendants are active', async () => {
-	treeSummaries.set('thread', { descendantCount: 2, anyActive: true, descendantsActive: true });
-	await render([thread(false, 'completed')]);
-
-	const badge = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
-
-	expect(badge.textContent).toBe('2 subagents · Working');
-
-	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
-
-	expect(settleButton.disabled).toBe(true);
 });

@@ -47,13 +47,11 @@ pub struct MonitorPage {
     pub entries: Vec<MonitorEntry>,
     pub next_cursor: String,
     pub has_more: bool,
-    pub transcript_revision: u64,
 }
 
 /// Cursor failures are explicit so callers restart from the beginning instead
 /// of silently dropping history.
-#[derive(Clone, Copy, Debug, thiserror::Error, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MonitorReadError {
     #[error("monitor cursor is malformed")]
     MalformedCursor,
@@ -80,7 +78,6 @@ struct MonitorCursor {
 struct ResumeEntry {
     id: String,
     offset: u64,
-    #[serde(default)]
     patch: bool,
 }
 
@@ -162,7 +159,6 @@ fn read_page(
             entries: vec![entry],
             next_cursor: encode_cursor(&cursor)?,
             has_more,
-            transcript_revision: revision,
         });
     }
 
@@ -223,7 +219,7 @@ fn read_page(
             Truncated::Overflow(entry, now_used, resume) => {
                 used = now_used;
                 output.push(entry);
-                cursor.resume = resume;
+                cursor.resume = Some(resume);
                 exhausted = false;
                 break;
             }
@@ -241,13 +237,12 @@ fn read_page(
         entries: output,
         next_cursor: encode_cursor(&cursor)?,
         has_more,
-        transcript_revision: revision,
     })
 }
 
 enum Truncated {
     Complete(MonitorEntry, usize),
-    Overflow(MonitorEntry, usize, Option<ResumeEntry>),
+    Overflow(MonitorEntry, usize, ResumeEntry),
 }
 
 fn truncate_entry(entry: MonitorEntry, used: usize, max_chars: usize) -> Truncated {
@@ -266,11 +261,11 @@ fn truncate_entry(entry: MonitorEntry, used: usize, max_chars: usize) -> Truncat
                             changes: changes[..index].to_vec(),
                         },
                         used,
-                        Some(ResumeEntry {
+                        ResumeEntry {
                             id,
                             offset: index as u64,
                             patch: true,
-                        }),
+                        },
                     );
                 }
                 used = used.saturating_add(cost);
@@ -312,11 +307,11 @@ fn truncate_text(
     Truncated::Overflow(
         entry,
         used.saturating_add(budget),
-        Some(ResumeEntry {
+        ResumeEntry {
             id,
             offset: u64::try_from(budget).unwrap_or(u64::MAX),
             patch: false,
-        }),
+        },
     )
 }
 
@@ -371,7 +366,7 @@ fn resume_entry(
             max_chars,
         ) {
             Truncated::Complete(entry, _) => (entry, None),
-            Truncated::Overflow(entry, _, next) => (entry, next),
+            Truncated::Overflow(entry, _, next) => (entry, Some(next)),
         };
         if let Some(next) = &mut next {
             next.offset += resume.offset;

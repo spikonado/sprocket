@@ -1067,9 +1067,6 @@ mod tests {
         assert!(output.changes[0].source.is_none());
         assert!(output.changes[1].source.is_none());
         assert_eq!(output.changes[2].source.as_deref(), Some("source.txt"));
-        let serialized = serde_json::to_value(&output).unwrap();
-        assert!(serialized["changes"][0].get("source").is_none());
-        assert!(serialized["changes"][1].get("source").is_none());
         assert_eq!(
             fs::read_to_string(root.join("created.txt")).unwrap(),
             "created\n"
@@ -1107,11 +1104,6 @@ mod tests {
         assert_eq!(output.changes[0].source.as_deref(), Some("src.txt"));
         assert_eq!(output.changes[1].path, "renamed.txt");
         assert_eq!(output.changes[1].source.as_deref(), Some("old.txt"));
-        let serialized = serde_json::to_value(&output).unwrap();
-        assert_eq!(
-            serialized["changes"][0]["source"],
-            serde_json::json!("src.txt")
-        );
         assert_eq!(
             fs::read_to_string(root.join("src.txt")).unwrap(),
             "shared\n"

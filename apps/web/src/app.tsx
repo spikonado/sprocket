@@ -99,7 +99,6 @@ import {
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
-import { mergeSelectedThreadSummary } from '$lib/project/subagents';
 import { useRevealInboxThread, useThreadInbox } from '$lib/project/inbox';
 import {
 	useExpandedThreads,
@@ -218,7 +217,7 @@ function ExpandedThreadChildren({
 	depth: number;
 	selectedPath: readonly Id<'threadRecords'>[];
 }) {
-	const children = useThreadChildren(parent._id, true);
+	const children = useThreadChildren(parent._id);
 	const parentIndex = selectedPath.indexOf(parent._id);
 	useRevealPaginatedThread(
 		parentIndex >= 0 ? (selectedPath[parentIndex + 1] ?? null) : null,
@@ -785,13 +784,19 @@ export default function App({
 	const currentActiveThread = dataForThread(activeThreadQuery.data, currentThreadId);
 
 	const threads = useMemo<ThreadSummary[]>(() => {
-		return mergeSelectedThreadSummary(
+		const summaries =
 			inbox.sections
 				.find((section) => section.state === 'unsettled')
-				?.rows.map(threadRecordToSummary) ?? [],
-			currentActiveThread,
-			threadRecordToSummary
-		);
+				?.rows.map(threadRecordToSummary) ?? [];
+
+		if (
+			!currentActiveThread ||
+			summaries.some((thread) => thread.threadId === currentActiveThread._id)
+		) {
+			return summaries;
+		}
+
+		return [threadRecordToSummary(currentActiveThread), ...summaries];
 	}, [inbox.sections, currentActiveThread]);
 
 	const currentLifecycle = dataForThread(lifecycleQuery.data, currentThreadId);
@@ -1989,7 +1994,7 @@ export default function App({
 			if (
 				signedInUserIdRef.current !== expectedUserId ||
 				currentThreadIdRef.current !== expectedThreadId ||
-				(expectedRunId && runStateRef.current?.runId !== expectedRunId)
+				runStateRef.current?.runId !== expectedRunId
 			)
 				return;
 			setCurrentError(error instanceof Error ? error.message : 'Failed to cancel run.');

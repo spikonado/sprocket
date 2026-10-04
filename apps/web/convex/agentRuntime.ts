@@ -1,10 +1,4 @@
-import {
-	action,
-	internalMutation,
-	mutation,
-	query,
-	type ActionCtx
-} from '@convex/_generated/server';
+import { action, internalMutation, mutation, query } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
@@ -40,7 +34,6 @@ import {
 } from '@convex/lib/transcriptWrites';
 import {
 	COMPLETION_STREAM_SUPERSEDED,
-	SPROCKET_SUBMISSION_WAITING,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
@@ -159,79 +152,62 @@ export const insertGatewayRun = internalMutation({
 	}
 });
 
-const vCreateGatewayRunArgs = v.object({
-	submissionId: v.string(),
-	threadId: v.optional(v.id('threadRecords')),
-	repositoryKey: v.optional(v.string()),
-	prompt: v.string(),
-	storageIds: v.array(v.id('_storage')),
-	selectedModel: v.string(),
-	completionProvider: v.optional(vCompletionProvider),
-	reasoningEffort: vReasoningEffort,
-	fastMode: v.boolean(),
-	executionSecret: v.string(),
-	agentVersion: v.optional(v.string()),
-	machineId: v.optional(v.string()),
-	continuationOfRunId: v.optional(v.id('runs'))
-});
-
-async function createGatewayRunResult(
-	ctx: ActionCtx,
-	args: Infer<typeof vCreateGatewayRunArgs>
-): Promise<Infer<typeof vCreateGatewayRunResult>> {
-	const userId = await getUserId(ctx);
-
-	const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
-		userId,
-		storageIds: args.storageIds
-	});
-
-	const gatewayUrl = modelGatewayUrl();
-
-	const request: QueuedRunRequest = {
-		userId,
-		submissionId: args.submissionId,
-		threadId: args.threadId,
-		repositoryKey: args.repositoryKey,
-		prompt: args.prompt,
-		imageUploadIds,
-		selectedModel: args.selectedModel,
-		completionProvider: args.completionProvider,
-		reasoningEffort: args.reasoningEffort,
-		fastMode: args.fastMode,
-		executionSecret: args.executionSecret,
-		protocolVersion: GATEWAY_PROTOCOL_VERSION,
-		agentVersion: args.agentVersion,
-		machineId: args.machineId
-	};
-
-	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
-	const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
-
-	if (created.promptPart) {
-		created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
-	}
-
-	return {
-		...created,
-		gatewayUrl,
-		protocolVersion: GATEWAY_PROTOCOL_VERSION
-	};
-}
-
 export const createGatewayRun = action({
-	args: vCreateGatewayRunArgs.fields,
+	args: {
+		submissionId: v.string(),
+		threadId: v.optional(v.id('threadRecords')),
+		repositoryKey: v.optional(v.string()),
+		prompt: v.string(),
+		storageIds: v.array(v.id('_storage')),
+		selectedModel: v.string(),
+		completionProvider: v.optional(vCompletionProvider),
+		reasoningEffort: vReasoningEffort,
+		fastMode: v.boolean(),
+		executionSecret: v.string(),
+		agentVersion: v.optional(v.string()),
+		machineId: v.optional(v.string()),
+		continuationOfRunId: v.optional(v.id('runs'))
+	},
 	returns: vCreateGatewayRunResult,
-	handler: async (ctx, args) => {
-		try {
-			return await createGatewayRunResult(ctx, args);
-		} catch (error) {
-			if (error instanceof ConvexError && error.data === SPROCKET_SUBMISSION_WAITING) {
-				throw new ConvexError(SPROCKET_SUBMISSION_WAITING);
-			}
+	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
+		const userId = await getUserId(ctx);
 
-			throw error;
+		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
+			userId,
+			storageIds: args.storageIds
+		});
+
+		const gatewayUrl = modelGatewayUrl();
+
+		const request: QueuedRunRequest = {
+			userId,
+			submissionId: args.submissionId,
+			threadId: args.threadId,
+			repositoryKey: args.repositoryKey,
+			prompt: args.prompt,
+			imageUploadIds,
+			selectedModel: args.selectedModel,
+			completionProvider: args.completionProvider,
+			reasoningEffort: args.reasoningEffort,
+			fastMode: args.fastMode,
+			executionSecret: args.executionSecret,
+			protocolVersion: GATEWAY_PROTOCOL_VERSION,
+			agentVersion: args.agentVersion,
+			machineId: args.machineId
+		};
+
+		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+
+		if (created.promptPart) {
+			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
 		}
+
+		return {
+			...created,
+			gatewayUrl,
+			protocolVersion: GATEWAY_PROTOCOL_VERSION
+		};
 	}
 });
 

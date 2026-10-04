@@ -353,13 +353,9 @@ impl rig::tool::Tool for SpawnSubagentTool {
     }
 }
 
-fn submission_id(run_id: &str, job_id: &str) -> String {
-    format!("subagent:{run_id}:{job_id}")
-}
-
 fn child_credentials(context: &AgentToolContext, job_id: &str) -> (String, String) {
     (
-        submission_id(&context.run_id, job_id),
+        format!("subagent:{}:{job_id}", context.run_id),
         derive_child_execution_secret(context.runtime.execution_secret(), job_id),
     )
 }
@@ -888,19 +884,13 @@ impl rig::tool::Tool for ListSubagentsTool {
                                 parent_thread_id.clone().into(),
                             );
                         }
-                        let mut pagination = serde_json::Map::new();
-                        pagination.insert("numItems".to_string(), json!(SUBAGENT_LIST_PAGE_SIZE));
-                        pagination.insert(
-                            "cursor".to_string(),
-                            args.cursor
-                                .clone()
-                                .map(serde_json::Value::String)
-                                .unwrap_or(serde_json::Value::Null),
-                        );
                         fields.insert(
                             "paginationOpts".to_string(),
-                            Value::try_from(serde_json::Value::Object(pagination))
-                                .map_err(tool_error)?,
+                            Value::try_from(json!({
+                                "numItems": SUBAGENT_LIST_PAGE_SIZE,
+                                "cursor": args.cursor,
+                            }))
+                            .map_err(tool_error)?,
                         );
                         let page: SubagentListPage = context
                             .runtime
@@ -1067,22 +1057,8 @@ async fn recover_submission(
 }
 
 fn list_page_response(page: &SubagentListPage) -> serde_json::Value {
-    let children: Vec<_> = page
-        .page
-        .iter()
-        .map(|child| {
-            json!({
-                "threadId": child.thread_id,
-                "parentThreadId": child.parent_thread_id,
-                "title": child.title,
-                "status": child.status,
-                "lastError": child.last_error,
-                "settings": child.settings,
-            })
-        })
-        .collect();
     json!({
-        "children": children,
+        "children": page.page,
         "nextCursor": if page.is_done { serde_json::Value::Null } else {
             serde_json::Value::String(page.continue_cursor.clone())
         },
@@ -1170,21 +1146,10 @@ where
 }
 
 fn subagent_metadata(info: &SubagentMonitorInfo) -> serde_json::Value {
-    let pending_questions: Vec<_> = info
-        .pending_questions
-        .iter()
-        .map(|question| {
-            json!({
-                "questionId": question.question_id,
-                "question": question.question,
-                "options": question.options,
-            })
-        })
-        .collect();
     json!({
         "status": info.status,
         "lastError": info.last_error,
-        "pendingQuestions": pending_questions,
+        "pendingQuestions": info.pending_questions,
     })
 }
 
@@ -1331,17 +1296,6 @@ mod tests {
     }
 
     #[test]
-    fn stop_targets_the_child_with_an_immediate_action_wait() {
-        let control: ControlSubagentArgs = serde_json::from_value(json!({
-            "action": "stop", "threadId": "child-thread", "yieldTimeMs": 0
-        }))
-        .unwrap();
-        validate_control(&control).unwrap();
-        assert!(matches!(control.action, SubagentControlAction::Stop));
-        assert_eq!(control.thread_id, "child-thread");
-    }
-
-    #[test]
     fn control_fields_and_execution_options_are_action_specific() {
         for payload in [
             json!({"action": "stop"}),
@@ -1358,40 +1312,6 @@ mod tests {
                 .and_then(|args| validate_control(&args));
             assert!(result.is_err(), "{payload}");
         }
-    }
-
-    #[test]
-    fn subagent_wait_schemas_share_the_command_policy() {
-        use super::super::commands::{exec_command_parameters, poll_command_parameters};
-
-        let action = exec_command_parameters()["properties"]["yieldTimeMs"].clone();
-        for schema in [spawn_subagent_parameters(), control_subagent_parameters()] {
-            assert_eq!(schema["properties"]["yieldTimeMs"], action);
-        }
-        let poll = poll_command_parameters()["properties"]["yieldTimeMs"].clone();
-        let schema = poll_subagent_parameters();
-        assert_eq!(schema["properties"]["yieldTimeMs"], poll);
-    }
-
-    #[test]
-    fn listing_arguments_select_a_parent_and_cursor() {
-        let args: ListSubagentsArgs = serde_json::from_value(json!({
-            "parentThreadId": "child-thread",
-            "cursor": "next-page"
-        }))
-        .unwrap();
-        assert_eq!(args.parent_thread_id.as_deref(), Some("child-thread"));
-        assert_eq!(args.cursor.as_deref(), Some("next-page"));
-        let payload = serde_json::to_value(args).unwrap();
-        assert_eq!(
-            payload,
-            json!({"parentThreadId": "child-thread", "cursor": "next-page"})
-        );
-        let schema = json!(schemars::schema_for!(ListSubagentsArgs));
-        let properties = schema["properties"].as_object().unwrap();
-        let mut names = properties.keys().map(String::as_str).collect::<Vec<_>>();
-        names.sort_unstable();
-        assert_eq!(names, ["cursor", "parentThreadId"]);
     }
 
     fn monitor_info(active: bool) -> SubagentMonitorInfo {
@@ -1435,7 +1355,6 @@ mod tests {
                 question_id: "question".to_string(),
                 question: "Continue?".to_string(),
                 options: Vec::new(),
-                timeout_at: Some(123),
             });
         let result = subagent_snapshot(
             &info,
@@ -1443,7 +1362,6 @@ mod tests {
                 entries: Vec::new(),
                 next_cursor: "next".to_string(),
                 has_more: true,
-                transcript_revision: 7,
             },
         );
         assert_eq!(
@@ -1468,7 +1386,6 @@ mod tests {
                     question_id: "question".to_string(),
                     question: "Continue?".to_string(),
                     options: Vec::new(),
-                    timeout_at: Some(123),
                 });
             if reads == 3 {
                 info.status = "cancelled".to_string();
@@ -1532,7 +1449,6 @@ mod tests {
                         question_id: "question".to_string(),
                         question: "Which direction?".to_string(),
                         options: Vec::new(),
-                        timeout_at: None,
                     });
             }
             async move { Ok(info) }
@@ -1720,49 +1636,6 @@ mod tests {
             secret_a,
             derive_child_execution_secret("other-secret", "job-1")
         );
-    }
-
-    #[test]
-    fn listing_response_uses_next_cursor_and_has_more() {
-        let page: SubagentListPage = serde_json::from_value(serde_json::json!({
-            "page": [{
-                "threadId": "jd7child",
-                "title": "Research",
-                "status": "running",
-                "parentThreadId": "jd7parent",
-                "lastMessageAt": 1.0,
-                "settings": {
-                    "model": "gpt-5.6-sol",
-                    "reasoning": "high",
-                    "fast": false,
-                    "completionProvider": "spikonado"
-                }
-            }],
-            "isDone": false,
-            "continueCursor": "cursor-2"
-        }))
-        .expect("list page");
-        let response = list_page_response(&page);
-        assert_eq!(response["nextCursor"], "cursor-2");
-        assert_eq!(response["hasMore"], true);
-        assert_eq!(
-            response["children"][0],
-            json!({
-                "threadId": "jd7child", "parentThreadId": "jd7parent", "title": "Research",
-                "status": "running", "lastError": null,
-                "settings": {"model": "gpt-5.6-sol", "reasoning": "high", "fast": false, "completionProvider": "spikonado"}
-            })
-        );
-
-        let done: SubagentListPage = serde_json::from_value(serde_json::json!({
-            "page": [],
-            "isDone": true,
-            "continueCursor": "cursor-end"
-        }))
-        .expect("done page");
-        let response = list_page_response(&done);
-        assert!(response["nextCursor"].is_null());
-        assert_eq!(response["hasMore"], false);
     }
 
     #[test]

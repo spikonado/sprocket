@@ -25,8 +25,7 @@ import type { Project } from '$lib/types/sprocket';
 import type { SprocketTheme } from '$lib/theme';
 import type { InboxSectionData } from '$lib/project/inbox';
 import { isRootThread, subagentBadgeLabel } from '$lib/project/subagents';
-import type { UseExpandedThreads } from '$lib/project/useThreadTree';
-import type { ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
+import type { UseExpandedThreads, ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
 import { useThreadTreeSummary } from '$lib/project/useThreadTree';
 import { cn } from '$lib/utils';
 import BrandMark from '$lib/components/brand-mark';
@@ -68,7 +67,6 @@ type ThreadTreeRowProps = {
 	projectName: string;
 	model: Pick<CatalogModel, 'id' | 'label' | 'provider'> | undefined;
 	ageLabel: string;
-	threadAgeAt: number;
 	renderRow: RenderThreadRow;
 	onChoose: (thread: Thread) => void;
 	onOpenMenu: (event: ReactMouseEvent, thread: Thread) => void;
@@ -339,7 +337,6 @@ export default function InboxSidebar({
 			mutationsEnabled &&
 			!busy &&
 			dragging !== null &&
-			isRootThread(dragging) &&
 			canChange(dragging, state, draggingSummary?.anyActive === true)
 		);
 	}
@@ -386,7 +383,6 @@ export default function InboxSidebar({
 			projectName={projectName(thread)}
 			model={threadModel(thread)}
 			ageLabel={age(thread.lastMessageAt)}
-			threadAgeAt={thread.lastMessageAt}
 			renderRow={renderThreadRow}
 			onChoose={choose}
 			onOpenMenu={openMenu}
@@ -685,7 +681,6 @@ function ThreadTreeRow({
 	projectName,
 	model,
 	ageLabel,
-	threadAgeAt,
 	renderRow,
 	onChoose,
 	onOpenMenu,
@@ -763,7 +758,7 @@ function ThreadTreeRow({
 					<button
 						className="inbox-row-main"
 						type="button"
-						title={`${thread.title ?? 'New thread'}\n${projectName}\n${new Date(threadAgeAt).toLocaleString()}`}
+						title={`${thread.title ?? 'New thread'}\n${projectName}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
 						onClick={() => onChoose(thread)}
 						onDoubleClick={() => {
 							if (!mutationsEnabled || busy) return;

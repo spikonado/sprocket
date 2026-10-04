@@ -923,7 +923,6 @@ fn cursor_survives_new_revisions_and_keeps_progress() {
         panic!()
     };
     assert_eq!(text, "two");
-    assert!(second.transcript_revision > first.transcript_revision);
 }
 
 #[test]

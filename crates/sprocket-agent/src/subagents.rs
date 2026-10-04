@@ -17,14 +17,10 @@ pub struct SubagentSettings {
     pub completion_provider: CompletionProvider,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default)]
 pub struct SubagentSettingsOverrides {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast: Option<bool>,
 }
 
@@ -41,25 +37,9 @@ pub struct SubagentQuestion {
     pub question_id: String,
     pub question: String,
     pub options: Vec<SubagentQuestionOption>,
-    #[serde(default, deserialize_with = "deserialize_optional_convex_u64")]
-    pub timeout_at: Option<u64>,
 }
 
-fn deserialize_optional_convex_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<f64>::deserialize(deserializer)?
-        .map(|value| {
-            if !value.is_finite() || value < 0.0 || value >= u64::MAX as f64 {
-                return Err(serde::de::Error::custom("invalid convex timestamp"));
-            }
-            Ok(value as u64)
-        })
-        .transpose()
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentThreadSnapshot {
     pub settings: SubagentSettings,
@@ -85,7 +65,7 @@ pub struct SubagentListPage {
     pub continue_cursor: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentChildSummary {
     pub thread_id: String,
@@ -94,8 +74,7 @@ pub struct SubagentChildSummary {
     pub status: String,
     #[serde(default)]
     pub last_error: Option<String>,
-    #[serde(default)]
-    pub parent_thread_id: Option<String>,
+    pub parent_thread_id: String,
     pub settings: SubagentSettings,
 }
 
@@ -438,17 +417,5 @@ mod tests {
         let error =
             resolve_settings_for_target(&catalog(), &saved_settings(), &bad_fast).unwrap_err();
         assert!(error.to_string().contains("fast mode is unavailable"));
-    }
-
-    #[test]
-    fn question_decodes_convex_timestamps() {
-        let question: SubagentQuestion = serde_json::from_value(serde_json::json!({
-                "questionId": "jd7q",
-                "question": "Pick one",
-                "options": [{"id": "a", "label": "A"}],
-                "timeoutAt": 1_700_000_000_000.5
-        }))
-        .expect("question");
-        assert_eq!(question.timeout_at, Some(1_700_000_000_000));
     }
 }

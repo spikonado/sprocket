@@ -43,9 +43,7 @@ struct GatewayModelsResponse {
 #[serde(rename_all = "camelCase")]
 struct GatewaySprocketCatalog {
     protocol_version: u64,
-    #[serde(default)]
     default_model_id: String,
-    #[serde(default)]
     default_service_tier: String,
     models: Vec<GatewayCatalogModel>,
 }
@@ -55,16 +53,12 @@ struct GatewaySprocketCatalog {
 struct GatewayCatalogModel {
     id: String,
     label: String,
-    #[serde(default)]
     provider: String,
     supports_images: bool,
     #[serde(default)]
     supports_required_tool_choice: bool,
-    #[serde(default)]
     reasoning_efforts: Vec<String>,
-    #[serde(default)]
     default_reasoning_effort: String,
-    #[serde(default)]
     service_tiers: Vec<String>,
     context_window_tokens: u64,
     #[serde(rename = "autoCompactTokenLimit")]
@@ -199,47 +193,20 @@ pub async fn catalog_capabilities_for_model(
 mod tests {
     use super::*;
 
-    #[test]
-    fn provider_catalog_preserves_the_list_models_wire_contract() {
-        let expected = serde_json::json!({
-            "defaultModelId": "vision-model",
-            "defaultFast": true,
-            "models": [{
-                "id": "vision-model",
-                "label": "Vision Model",
-                "supportsImages": true,
-                "reasoningEfforts": ["medium", "high"],
-                "defaultReasoningEffort": "high",
-                "serviceTiers": ["standard", "fast"]
-            }]
-        });
-        let catalog = ProviderCatalog {
-            default_model_id: "vision-model".into(),
-            default_fast: true,
-            models: vec![ProviderCatalogModel {
-                id: "vision-model".into(),
-                label: "Vision Model".into(),
-                supports_images: true,
-                reasoning_efforts: vec!["medium".into(), "high".into()],
-                default_reasoning_effort: "high".into(),
-                service_tiers: vec!["standard".into(), "fast".into()],
-            }],
-        };
-        assert_eq!(serde_json::to_value(&catalog).unwrap(), expected);
-        assert_eq!(
-            serde_json::from_value::<ProviderCatalog>(expected).unwrap(),
-            catalog
-        );
-    }
-
     fn catalog_payload() -> GatewayModelsResponse {
         serde_json::from_value(serde_json::json!({
             "sprocket": {
                 "protocolVersion": 1,
+                "defaultModelId": "vision-model",
+                "defaultServiceTier": "standard",
                 "models": [
                     {
                         "id": "vision-model",
                         "label": "Vision Model",
+                        "provider": "openai",
+                        "reasoningEfforts": ["medium", "high"],
+                        "defaultReasoningEffort": "high",
+                        "serviceTiers": ["standard", "fast"],
                         "supportsImages": true,
                         "supportsRequiredToolChoice": true,
                         "contextWindowTokens": 100000,
@@ -248,6 +215,10 @@ mod tests {
                     {
                         "id": "long-context-model",
                         "label": "Long Context Model",
+                        "provider": "other",
+                        "reasoningEfforts": ["none"],
+                        "defaultReasoningEffort": "none",
+                        "serviceTiers": ["standard"],
                         "supportsImages": false,
                         "contextWindowTokens": 1000000,
                         "autoCompactTokenLimit": 900000

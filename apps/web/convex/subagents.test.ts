@@ -245,7 +245,6 @@ describe('subagents.createOrSend', () => {
 		expect(await t.mutation(api.subagents.recoverSubmission, recoveryArgs)).toMatchObject({
 			threadId: created.threadId,
 			runId: created.runId,
-			created: false,
 			prompt: args.prompt,
 			settings: created.settings
 		});
@@ -278,7 +277,6 @@ describe('subagents.createOrSend', () => {
 			])
 		);
 
-		expect(created.created).toBe(true);
 		expect(created.threadId).not.toBe(caller.threadId);
 		expect(thread).toMatchObject({
 			parentThreadId: caller.threadId,
@@ -322,8 +320,6 @@ describe('subagents.createOrSend', () => {
 
 		const first = await t.mutation(api.subagents.createOrSend, args);
 		const second = await t.mutation(api.subagents.createOrSend, args);
-
-		expect(second.created).toBe(false);
 		expect(second.threadId).toBe(first.threadId);
 		expect(second.runId).toBe(first.runId);
 
@@ -347,7 +343,7 @@ describe('subagents.createOrSend', () => {
 		).rejects.toThrow(/different executor/);
 	});
 
-	it('rejects reusing the parent secret and requires resolved settings', async () => {
+	it('rejects reusing the parent secret and empty prompts', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
 
@@ -357,10 +353,6 @@ describe('subagents.createOrSend', () => {
 				createArgs(caller, { childExecutionSecret: caller.executionSecret })
 			)
 		).rejects.toThrow(/fresh execution secret/);
-
-		await expect(
-			t.mutation(api.subagents.createOrSend, createArgs(caller, { model: undefined }))
-		).rejects.toThrow(/resolved before submission/);
 
 		await expect(
 			t.mutation(api.subagents.createOrSend, createArgs(caller, { prompt: '  ' }))
@@ -474,7 +466,6 @@ describe('subagents.createOrSend', () => {
 			})
 		);
 
-		expect(followUp.created).toBe(true);
 		expect(followUp.threadId).toBe(child.threadId);
 		expect(followUp.settings).toMatchObject({
 			model: 'gpt-5.6-sol',
@@ -505,15 +496,12 @@ describe('subagents.createOrSend', () => {
 		});
 
 		const continued = await t.mutation(api.subagents.createOrSend, continuedArgs);
-
-		expect(continued.created).toBe(true);
 		expect(continued.threadId).toBe(child.threadId);
 		expect(continued.continuationOfRunId).toBeUndefined();
 
 		await claimChildRun(t, continued, continuedArgs.childExecutionSecret);
 
 		const retry = await t.mutation(api.subagents.createOrSend, continuedArgs);
-		expect(retry.created).toBe(false);
 		expect(retry.threadId).toBe(child.threadId);
 		expect(retry.runId).toBe(continued.runId);
 		expect(retry.continuationOfRunId).toBeUndefined();
@@ -650,7 +638,7 @@ describe('subagents access control', () => {
 				executionSecret: caller.executionSecret,
 				threadId: grandchild.threadId
 			})
-		).resolves.toMatchObject({ threadId: grandchild.threadId });
+		).resolves.toMatchObject({ settings: grandchild.settings });
 
 		const grandchildRun = await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
 
@@ -801,18 +789,15 @@ describe('subagents.control', () => {
 				threadId: child.threadId
 			};
 
-			const snapshot = await t.mutation(api.subagents.snapshot, target);
 			const monitor = await t.mutation(api.subagents.threadMonitorInfo, target);
 
-			expect(snapshot.status).toBe('waiting_for_input');
-			expect(snapshot.activeRunId).toBeUndefined();
-			expect(snapshot.pendingQuestions).toHaveLength(1);
-			expect(snapshot.pendingQuestions[0]).toMatchObject({ questionId, status: 'pending' });
-			expect(snapshot.pendingQuestions[0]).not.toHaveProperty('timeoutAt');
+			expect(monitor.pendingQuestions).toHaveLength(1);
+			expect(monitor.pendingQuestions[0]).toMatchObject({ questionId, status: 'pending' });
+			expect(monitor.pendingQuestions[0]).not.toHaveProperty('timeoutAt');
 			expect(monitor).toMatchObject({
 				status: 'completed',
 				active: true,
-				pendingQuestions: snapshot.pendingQuestions
+				pendingQuestions: [expect.objectContaining({ questionId })]
 			});
 
 			const transcript = await t.run(async (ctx) => {
@@ -874,17 +859,6 @@ describe('subagents.control', () => {
 		const t = initConvexTest();
 		const { caller, child, questionId } = await childWithPendingQuestion(t);
 
-		const snapshot = await t.mutation(api.subagents.snapshot, {
-			runId: caller.runId,
-			claimId: caller.claimId,
-			executionSecret: caller.executionSecret,
-			threadId: child.threadId
-		});
-
-		expect(snapshot.pendingQuestions.map((q) => q.questionId)).toEqual([questionId]);
-		expect(snapshot.status).toBe('waiting_for_input');
-		expect(snapshot.activeRunId).toBe(child.runId);
-
 		const monitor = await t.mutation(api.subagents.threadMonitorInfo, {
 			runId: caller.runId,
 			claimId: caller.claimId,
@@ -895,7 +869,7 @@ describe('subagents.control', () => {
 		expect(monitor).toMatchObject({
 			status: 'running',
 			active: true,
-			pendingQuestions: snapshot.pendingQuestions
+			pendingQuestions: [expect.objectContaining({ questionId })]
 		});
 
 		// The human (UI) answers first; the agent's later answer must not overwrite.
@@ -986,16 +960,6 @@ describe('subagents.control', () => {
 				optionId: 'one'
 			})
 		).rejects.toThrow(/no longer awaiting an answer/);
-
-		const snapshot = await t.mutation(api.subagents.snapshot, {
-			runId: caller.runId,
-			claimId: caller.claimId,
-			executionSecret: caller.executionSecret,
-			threadId: child.threadId
-		});
-
-		expect(snapshot.pendingQuestions).toEqual([]);
-		expect(snapshot.activeRunId).toBeUndefined();
 
 		const monitor = await t.mutation(api.subagents.threadMonitorInfo, {
 			runId: caller.runId,
@@ -1310,7 +1274,7 @@ describe('subagents.control delegated answer retries', () => {
 					claimId
 				});
 
-				expect(duplicate).toMatchObject({ runId: queued.runId, created: false });
+				expect(duplicate).toMatchObject({ runId: queued.runId });
 			} else {
 				expect(recovered).toBeNull();
 				await expect(
@@ -1449,12 +1413,10 @@ describe('subagents.control delegated answer retries', () => {
 		});
 
 		const queued = await t.mutation(api.subagents.createOrSend, continuationArgs);
-		expect(queued.created).toBe(true);
 		expect(queued.threadId).toBe(child.threadId);
 		expect(queued.continuationOfRunId).toBe(child.runId);
 
 		const retried = await t.mutation(api.subagents.createOrSend, continuationArgs);
-		expect(retried.created).toBe(false);
 		expect(retried.runId).toBe(queued.runId);
 		expect(retried.threadId).toBe(child.threadId);
 
@@ -1471,7 +1433,7 @@ describe('subagents.control delegated answer retries', () => {
 
 		await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: queued.runId });
 		const stoppedRetry = await t.mutation(api.subagents.createOrSend, continuationArgs);
-		expect(stoppedRetry).toMatchObject({ runId: queued.runId, created: false });
+		expect(stoppedRetry).toMatchObject({ runId: queued.runId });
 
 		const recovered = await t.mutation(api.subagents.recoverSubmission, {
 			runId: caller.runId,
@@ -1603,7 +1565,6 @@ describe('subagents task deadline', () => {
 
 		const taskAArgs = createArgs(caller, { timeoutMs: 30_000 });
 		const taskA = await t.mutation(api.subagents.createOrSend, taskAArgs);
-		expect(taskA.timeoutMs).toBe(30_000);
 
 		const runA = await claimChildRun(t, taskA, taskAArgs.childExecutionSecret);
 		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -1628,38 +1589,19 @@ describe('subagents task deadline', () => {
 		expect(bDoc?.cancellationRequestedAt).toBeUndefined();
 	});
 
-	it('cancels the bound execution when its deadline fires while still active', async () => {
+	it.each([30_000, 0])('cancels the bound execution after a %i ms timeout', async (timeoutMs) => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
+		const timed = await t.mutation(api.subagents.createOrSend, createArgs(caller, { timeoutMs }));
+		const deadlineMs = Math.max(1, timeoutMs);
 
-		const timed = await t.mutation(
-			api.subagents.createOrSend,
-			createArgs(caller, { timeoutMs: 30_000 })
-		);
-
-		await vi.advanceTimersByTimeAsync(29_000);
+		await vi.advanceTimersByTimeAsync(deadlineMs - 1);
 		expect((await t.run((ctx) => ctx.db.get('runs', timed.runId)))?.status).toBe('queued');
 
-		await vi.advanceTimersByTimeAsync(2_000);
+		await vi.advanceTimersByTimeAsync(2);
 		const expired = await t.run((ctx) => ctx.db.get('runs', timed.runId));
 		expect(expired?.status).toBe('cancelled');
 		expect(expired?.lastError).toMatch(/deadline/);
-	});
-
-	it('normalizes a zero timeout to a 1 ms deadline', async () => {
-		vi.useFakeTimers();
-		const t = initConvexTest();
-		const caller = await startCallerRun(t);
-
-		const timed = await t.mutation(
-			api.subagents.createOrSend,
-			createArgs(caller, { timeoutMs: 0 })
-		);
-
-		expect(timed.timeoutMs).toBe(1);
-
-		await vi.advanceTimersByTimeAsync(2);
-		expect((await t.run((ctx) => ctx.db.get('runs', timed.runId)))?.status).toBe('cancelled');
 	});
 });

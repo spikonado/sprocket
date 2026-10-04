@@ -57,13 +57,10 @@ export function useRevealPaginatedThread(
 	}, [threadId, rows, loading, canLoadMore, error, loadMore]);
 }
 
-export function useThreadChildren(
-	parentId: Id<'threadRecords'>,
-	enabled: boolean
-): ThreadChildrenData {
+export function useThreadChildren(parentId: Id<'threadRecords'>): ThreadChildrenData {
 	const query = usePaginatedQueryResult({
 		query: api.threads.listChildren,
-		args: enabled ? { threadId: parentId } : 'skip',
+		args: { threadId: parentId },
 		initialNumItems: THREAD_CHILDREN_PAGE_SIZE
 	});
 
@@ -143,8 +140,7 @@ export function useExpandedThreads(userKey: string | null) {
 	};
 
 	return {
-		expandedThreadIds,
-		isExpanded: (threadId: Id<'threadRecords'>) => expandedThreadIds.some((id) => id === threadId),
+		isExpanded: (threadId: Id<'threadRecords'>) => expandedThreadIds.includes(threadId),
 		expand: (threadId: Id<'threadRecords'>) => {
 			setExpandedThreadIds((current) => {
 				if (current.includes(threadId)) return current;
@@ -166,12 +162,12 @@ export function useExpandedThreads(userKey: string | null) {
 		},
 		registerChildren: (
 			parentId: Id<'threadRecords'>,
-			children: readonly { _id: Id<'threadRecords'>; parentThreadId?: Id<'threadRecords'> }[]
+			children: readonly Pick<Doc<'threadRecords'>, '_id'>[]
 		) => {
 			const known = knownThreadsRef.current;
 
 			for (const child of children) {
-				known.set(child._id, { ...child, parentThreadId: child.parentThreadId ?? parentId });
+				known.set(child._id, { _id: child._id, parentThreadId: parentId });
 			}
 		},
 		collapse: (threadId: Id<'threadRecords'>) => {
