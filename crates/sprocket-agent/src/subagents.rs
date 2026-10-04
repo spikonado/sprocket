@@ -398,24 +398,4 @@ mod tests {
         assert_eq!(resolved.model, "default");
         assert_eq!(resolved.reasoning, "medium");
     }
-
-    #[test]
-    fn follow_up_explicit_unsupported_choices_fail_clearly() {
-        let bad_reasoning = SubagentSettingsOverrides {
-            reasoning: Some("low".into()),
-            ..Default::default()
-        };
-        let error =
-            resolve_settings_for_target(&catalog(), &saved_settings(), &bad_reasoning).unwrap_err();
-        assert!(error.to_string().contains("reasoning level low"));
-
-        let bad_fast = SubagentSettingsOverrides {
-            model: Some("pro".into()),
-            fast: Some(true),
-            ..Default::default()
-        };
-        let error =
-            resolve_settings_for_target(&catalog(), &saved_settings(), &bad_fast).unwrap_err();
-        assert!(error.to_string().contains("fast mode is unavailable"));
-    }
 }

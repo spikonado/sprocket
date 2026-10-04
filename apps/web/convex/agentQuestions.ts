@@ -339,18 +339,16 @@ export async function answerPendingQuestion(
 export async function questionContinuation(
 	ctx: QueryCtx | MutationCtx,
 	question: Pick<Doc<'agentQuestions'>, 'threadId' | 'runId'>,
-	known?: { run?: Doc<'runs'> | null; latestRun?: Doc<'runs'> | null }
+	known?: { run?: Doc<'runs'> | null }
 ) {
 	const [nextQuestion, run, latestRun] = await Promise.all([
 		headPendingQuestion(ctx, question.threadId),
 		known?.run !== undefined ? Promise.resolve(known.run) : ctx.db.get('runs', question.runId),
-		known?.latestRun !== undefined
-			? Promise.resolve(known.latestRun)
-			: ctx.db
-					.query('runs')
-					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', question.threadId))
-					.order('desc')
-					.first()
+		ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', question.threadId))
+			.order('desc')
+			.first()
 	]);
 
 	const continuationOfRunId =
@@ -472,7 +470,6 @@ export async function cancelPendingQuestionsForThread(
 ): Promise<boolean> {
 	const now = Date.now();
 	let cancelledAny = false;
-	let afterSequence = -1;
 
 	const latest = await ctx.db
 		.query('runs')
@@ -491,26 +488,17 @@ export async function cancelPendingQuestionsForThread(
 		}
 	}
 
-	for (;;) {
-		const pending = await ctx.db
-			.query('agentQuestions')
-			.withIndex('by_threadId_status_sequence', (query) =>
-				query.eq('threadId', threadId).eq('status', 'pending').gt('sequence', afterSequence)
-			)
-			.take(32);
-
-		if (pending.length === 0) return cancelledAny;
-
-		for (const question of pending) {
-			await ctx.db.patch('agentQuestions', question._id, {
-				status: 'cancelled',
-				answeredAt: now
-			});
-		}
-
+	for await (const question of ctx.db
+		.query('agentQuestions')
+		.withIndex('by_threadId_status_sequence', (query) =>
+			query.eq('threadId', threadId).eq('status', 'pending')
+		)) {
+		await ctx.db.patch('agentQuestions', question._id, {
+			status: 'cancelled',
+			answeredAt: now
+		});
 		cancelledAny = true;
-		afterSequence = pending.at(-1)!.sequence;
-
-		if (pending.length < 32) return cancelledAny;
 	}
+
+	return cancelledAny;
 }

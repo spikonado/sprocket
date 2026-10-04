@@ -89,7 +89,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'poll_question':
 			return 'Waiting for answer';
 		case 'spawn_subagent':
-			return jsonString(fields?.prompt) ?? jsonString(fields?.threadId) ?? 'Child agent';
+			return jsonString(fields?.prompt) ?? 'Child agent';
 		case 'control_subagent':
 			if (fields?.action === 'stop') return 'Stop child agent';
 

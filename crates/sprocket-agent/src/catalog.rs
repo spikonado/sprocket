@@ -93,10 +93,6 @@ impl ProviderCatalogModel {
     }
 }
 
-fn provider_matches(catalog_provider: &str, provider: CompletionProvider) -> bool {
-    provider == CompletionProvider::Spikonado || catalog_provider == "openai"
-}
-
 async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatalog> {
     let url = format!("{}/models", gateway_api_v1_url(gateway_url));
     let response = catalog_client(gateway_url)?
@@ -132,7 +128,7 @@ pub async fn catalog_for_provider(
     let models: Vec<ProviderCatalogModel> = catalog
         .models
         .into_iter()
-        .filter(|model| provider_matches(&model.provider, provider))
+        .filter(|model| provider == CompletionProvider::Spikonado || model.provider == "openai")
         .map(|model| ProviderCatalogModel {
             id: model.id,
             label: model.label,
@@ -252,14 +248,5 @@ mod tests {
             .expect_err("unknown model")
             .to_string();
         assert!(error.contains("no-such-model"));
-    }
-
-    #[test]
-    fn provider_catalog_matches_the_ui_filter_and_fallback() {
-        // Spikonado sees every model; openai/chatgpt only openai-vendor models.
-        assert!(provider_matches("other", CompletionProvider::Spikonado));
-        assert!(!provider_matches("other", CompletionProvider::Openai));
-        assert!(provider_matches("openai", CompletionProvider::Openai));
-        assert!(provider_matches("openai", CompletionProvider::Chatgpt));
     }
 }

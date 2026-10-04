@@ -497,20 +497,9 @@ export const vRunStatus = v.union(
 	v.literal('cancelled')
 );
 
-export const vThreadLifecyclePhase = v.union(
-	v.literal('idle'),
-	v.literal('queued'),
-	v.literal('running'),
-	v.literal('waiting_for_input'),
-	v.literal('cancellation_requested'),
-	v.literal('completed'),
-	v.literal('failed'),
-	v.literal('cancelled')
-);
-
-const vSubagentSettings = v.object({
+export const vSubagentSettings = v.object({
 	model: v.string(),
-	reasoning: v.string(),
+	reasoning: vReasoningEffort,
 	fast: v.boolean(),
 	completionProvider: vCompletionProvider
 });

@@ -1,11 +1,6 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
-import {
-	isRunFinalStatus,
-	vThreadLifecyclePhase as vSelectedThreadLifecyclePhase,
-	type vRunFinalStatus,
-	type vRunStatus
-} from '@convex/lib/validators';
+import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 
 export const CANCELLATION_FORCE_AFTER_MS = 10_000;
 
@@ -20,7 +15,16 @@ export const selectedThreadLifecyclePhases = [
 	'cancelled'
 ] as const;
 
-export { vThreadLifecyclePhase as vSelectedThreadLifecyclePhase } from '@convex/lib/validators';
+export const vSelectedThreadLifecyclePhase = v.union(
+	v.literal('idle'),
+	v.literal('queued'),
+	v.literal('running'),
+	v.literal('waiting_for_input'),
+	v.literal('cancellation_requested'),
+	v.literal('completed'),
+	v.literal('failed'),
+	v.literal('cancelled')
+);
 
 export type SelectedThreadLifecyclePhase = Infer<typeof vSelectedThreadLifecyclePhase>;
 

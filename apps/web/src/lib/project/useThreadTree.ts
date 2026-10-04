@@ -3,6 +3,7 @@ import {
 	usePaginatedQuery_experimental as usePaginatedQueryResult,
 	useQuery_experimental as useQueryResult
 } from 'convex/react';
+import type { FunctionReturnType } from 'convex/server';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -12,13 +13,9 @@ function expandedThreadsStorageKey(userKey: string): string {
 	return `sprocket.inbox.expanded-threads:${userKey}`;
 }
 
-export const THREAD_CHILDREN_PAGE_SIZE = 20;
+const THREAD_CHILDREN_PAGE_SIZE = 20;
 
-export type ThreadTreeSummary = {
-	descendantCount: number;
-	anyActive: boolean;
-	descendantsActive: boolean;
-};
+export type ThreadTreeSummary = FunctionReturnType<typeof api.threads.subtreeSummaryForThread>;
 
 export type ThreadChildrenData = {
 	rows: Doc<'threadRecords'>[];
@@ -88,17 +85,6 @@ export function useThreadTreeSummary({
 	return result.status === 'success' ? result.data : undefined;
 }
 
-function useThreadAncestry(
-	threadId: Id<'threadRecords'> | null
-): Id<'threadRecords'>[] | undefined {
-	const result = useQueryResult({
-		query: api.threads.ancestorChain,
-		args: threadId ? { threadId } : 'skip'
-	});
-
-	return result.status === 'success' ? result.data : undefined;
-}
-
 function readStoredExpandedThreadIds(userKey: string): string[] {
 	try {
 		const stored = localStorage.getItem(expandedThreadsStorageKey(userKey));
@@ -122,12 +108,7 @@ export function useExpandedThreads(userKey: string | null) {
 	const [expandedThreadIds, setExpandedThreadIds] = useState<string[]>([]);
 	const loadedForRef = useRef<string | null>(null);
 
-	const knownThreadsRef = useRef(
-		new Map<
-			Id<'threadRecords'>,
-			{ _id: Id<'threadRecords'>; parentThreadId?: Id<'threadRecords'> }
-		>()
-	);
+	const childrenByParentRef = useRef(new Map<string, Set<string>>());
 
 	useEffect(() => {
 		if (loadedForRef.current === userKey) return;
@@ -164,16 +145,21 @@ export function useExpandedThreads(userKey: string | null) {
 			parentId: Id<'threadRecords'>,
 			children: readonly Pick<Doc<'threadRecords'>, '_id'>[]
 		) => {
-			const known = knownThreadsRef.current;
+			let knownChildren = childrenByParentRef.current.get(parentId);
+
+			if (!knownChildren) {
+				knownChildren = new Set();
+				childrenByParentRef.current.set(parentId, knownChildren);
+			}
 
 			for (const child of children) {
-				known.set(child._id, { _id: child._id, parentThreadId: parentId });
+				knownChildren.add(child._id);
 			}
 		},
 		collapse: (threadId: Id<'threadRecords'>) => {
 			setExpandedThreadIds((current) => {
 				if (!current.includes(threadId)) return current;
-				const next = collapseThreadBranch(current, threadId, [...knownThreadsRef.current.values()]);
+				const next = collapseThreadBranch(current, threadId, childrenByParentRef.current);
 				persist(next);
 
 				return next;
@@ -193,7 +179,12 @@ export function useSelectedThreadAncestryReveal({
 	enabled: boolean;
 	expansion: UseExpandedThreads;
 }) {
-	const ancestry = useThreadAncestry(enabled ? currentThreadId : null);
+	const result = useQueryResult({
+		query: api.threads.ancestorChain,
+		args: enabled && currentThreadId ? { threadId: currentThreadId } : 'skip'
+	});
+
+	const ancestry = result.status === 'success' ? result.data : undefined;
 	const reveal = expansion.revealAncestors;
 	const revealedKeyRef = useRef<string | null>(null);
 

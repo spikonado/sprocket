@@ -37,43 +37,6 @@ pub(super) struct AgentToolContext {
     pub(super) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 }
 
-impl AgentToolContext {
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn new(
-        runtime: RuntimeClient,
-        run_id: String,
-        claim_id: String,
-        user_id: String,
-        workspace_root: PathBuf,
-        transcript_dir: PathBuf,
-        gateway_url: String,
-        transcript_store: Option<Arc<crate::TranscriptStore>>,
-        artifact_bindings: crate::artifact_bindings::ArtifactBindings,
-        supports_images: bool,
-        tool_call_tracker: ToolCallTracker,
-        command_sessions: CommandSessionManager,
-        subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
-    ) -> Self {
-        Self {
-            runtime,
-            run_id,
-            claim_id,
-            user_id,
-            workspace_root,
-            transcript_dir,
-            gateway_url,
-            transcript_store,
-            artifact_bindings,
-            supports_images,
-            tool_call_tracker,
-            command_sessions,
-            question_polls: super::questions::QuestionPolls::default(),
-            subagent_polls: super::subagents::SubagentPolls::default(),
-            subagent_launcher,
-        }
-    }
-}
-
 pub(super) fn tool_error(error: anyhow::Error) -> ToolExecutionError {
     if error.is::<WorkspaceOperationCancelled>() {
         cancelled_error()

@@ -944,7 +944,7 @@ describe('subagents.control', () => {
 			action: 'stop'
 		});
 
-		expect(stopped.status).toBe('completed');
+		expect(stopped.stoppedRunId).toBe(child.runId);
 
 		const stored = await t.run((ctx) => ctx.db.get('agentQuestions', questionId));
 		expect(stored?.status).toBe('cancelled');
@@ -1042,32 +1042,6 @@ describe('subagents.control', () => {
 				targetRunId: sibling.runId
 			})
 		).rejects.toThrow(/does not belong/);
-	});
-
-	it('stop on a thread without work or questions is an idempotent no-op', async () => {
-		const t = initConvexTest();
-		const caller = await startCallerRun(t);
-		const childArgs = createArgs(caller);
-		const child = await t.mutation(api.subagents.createOrSend, childArgs);
-		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
-
-		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: child.runId,
-			text: 'done',
-			status: 'completed',
-			executionSecret: childRun.executionSecret
-		});
-
-		const stopped = await t.mutation(api.subagents.control, {
-			runId: caller.runId,
-			claimId: caller.claimId,
-			executionSecret: caller.executionSecret,
-			threadId: child.threadId,
-			action: 'stop'
-		});
-
-		expect(stopped.status).toBe('completed');
-		expect(stopped.stoppedRunId).toBe(child.runId);
 	});
 });
 

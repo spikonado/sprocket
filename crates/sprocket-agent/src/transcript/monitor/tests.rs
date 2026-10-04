@@ -941,20 +941,3 @@ fn out_of_order_downloads_do_not_leak_later_entries() {
     assert_eq!(texts(&second.entries), ["earlier", "later"]);
     assert!(!second.has_more);
 }
-
-#[tokio::test]
-async fn read_monitor_page_uses_the_store_replica() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = TranscriptStore::new(dir.path().to_owned());
-    store.prepare_work_replica("user", "thread").await.unwrap();
-    store
-        .with_work_replica("user", "thread", |replica| {
-            replica.save_parts("thread", &[prompt_part(0, "hello")])
-        })
-        .await
-        .unwrap();
-    let page = read_monitor_page(&store, "user", "thread", None, MONITOR_PAGE_CHAR_LIMIT)
-        .await
-        .unwrap();
-    assert_eq!(page.entries.len(), 1);
-}

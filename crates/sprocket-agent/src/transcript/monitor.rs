@@ -330,7 +330,7 @@ fn resume_entry(
     resume: &ResumeEntry,
     max_chars: usize,
 ) -> anyhow::Result<(MonitorEntry, Option<ResumeEntry>)> {
-    if resume.patch {
+    let entry = if resume.patch {
         let sequence: u64 = resume
             .id
             .strip_prefix("patch-")
@@ -356,60 +356,42 @@ fn resume_entry(
             remaining.first().map_or(0, patch_change_cost) <= max_chars,
             "patch path exceeds monitor page budget"
         );
-        let (entry, mut next) = match truncate_entry(
-            MonitorEntry::Patch {
-                id: resume.id.clone(),
-                ok,
-                changes: remaining.to_vec(),
-            },
-            0,
-            max_chars,
-        ) {
-            Truncated::Complete(entry, _) => (entry, None),
-            Truncated::Overflow(entry, _, next) => (entry, Some(next)),
-        };
-        if let Some(next) = &mut next {
-            next.offset += resume.offset;
+        MonitorEntry::Patch {
+            id: resume.id.clone(),
+            ok,
+            changes: remaining.to_vec(),
         }
-        return Ok((entry, next));
-    }
-    let row: Option<(String, String)> = replica
-        .db
-        .query_row(
-            "SELECT kind, json_extract(body,'$.text') FROM rows WHERE id=?",
-            [&resume.id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let (kind, text) = row.with_context(|| format!("monitor entry {} is gone", resume.id))?;
-    let offset = usize::try_from(resume.offset).unwrap_or(usize::MAX);
-    let remaining: String = text.chars().skip(offset).collect();
-    let len = remaining.chars().count();
-    let (kept, next) = if len <= max_chars {
-        (remaining, None)
     } else {
-        let kept: String = remaining.chars().take(max_chars).collect();
-        let next = ResumeEntry {
-            id: resume.id.clone(),
-            offset: resume
-                .offset
-                .saturating_add(u64::try_from(max_chars).unwrap_or(u64::MAX)),
-            patch: false,
-        };
-        (kept, Some(next))
+        let row: Option<(String, String)> = replica
+            .db
+            .query_row(
+                "SELECT kind, json_extract(body,'$.text') FROM rows WHERE id=?",
+                [&resume.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (kind, text) = row.with_context(|| format!("monitor entry {} is gone", resume.id))?;
+        let offset = usize::try_from(resume.offset).unwrap_or(usize::MAX);
+        let text = text.chars().skip(offset).collect();
+        match kind.as_str() {
+            "prompt" => MonitorEntry::Prompt {
+                id: resume.id.clone(),
+                text,
+            },
+            "text" => MonitorEntry::Text {
+                id: resume.id.clone(),
+                text,
+            },
+            other => anyhow::bail!("monitor resume points at a {other} row"),
+        }
     };
-    let entry = match kind.as_str() {
-        "prompt" => MonitorEntry::Prompt {
-            id: resume.id.clone(),
-            text: kept,
-        },
-        "text" => MonitorEntry::Text {
-            id: resume.id.clone(),
-            text: kept,
-        },
-        other => anyhow::bail!("monitor resume points at a {other} row"),
-    };
-    Ok((entry, next))
+    match truncate_entry(entry, 0, max_chars) {
+        Truncated::Complete(entry, _) => Ok((entry, None)),
+        Truncated::Overflow(entry, _, mut next) => {
+            next.offset = next.offset.saturating_add(resume.offset);
+            Ok((entry, Some(next)))
+        }
+    }
 }
 
 impl WorkReplica {

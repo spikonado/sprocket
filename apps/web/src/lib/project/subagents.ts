@@ -1,27 +1,14 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 
-export type ThreadTreeLink = Pick<Doc<'threadRecords'>, '_id' | 'parentThreadId'>;
-
-export function isRootThread(thread: Pick<ThreadTreeLink, 'parentThreadId'>): boolean {
+export function isRootThread(thread: Pick<Doc<'threadRecords'>, 'parentThreadId'>): boolean {
 	return thread.parentThreadId === undefined;
 }
 
 export function collapseThreadBranch(
 	expandedThreadIds: readonly string[],
 	rootId: Id<'threadRecords'>,
-	threads: readonly ThreadTreeLink[]
+	childrenByParent: ReadonlyMap<string, ReadonlySet<string>>
 ): string[] {
-	const childrenByParent = new Map<string, string[]>();
-
-	for (const thread of threads) {
-		if (thread.parentThreadId === undefined) continue;
-
-		const children = childrenByParent.get(thread.parentThreadId);
-
-		if (children) children.push(thread._id);
-		else childrenByParent.set(thread.parentThreadId, [thread._id]);
-	}
-
 	const collapsed = new Set<string>([rootId]);
 	const stack: string[] = [rootId];
 

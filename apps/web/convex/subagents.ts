@@ -6,7 +6,7 @@ import {
 	type MutationCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
-import { paginationOptsValidator } from 'convex/server';
+import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v, type Infer } from 'convex/values';
 import {
 	answerPendingQuestion,
@@ -42,18 +42,11 @@ import {
 } from '@convex/lib/transcriptParts';
 import {
 	isRunFinalStatus,
-	vCompletionProvider,
 	vReasoningEffort,
 	vRunStatus,
-	vAskQuestionAnswer
+	vAskQuestionAnswer,
+	vSubagentSettings
 } from '@convex/lib/validators';
-
-const vSubagentSettings = v.object({
-	model: v.string(),
-	reasoning: vReasoningEffort,
-	fast: v.boolean(),
-	completionProvider: vCompletionProvider
-});
 
 const vCreatedSubagentRun = v.object({
 	threadId: v.id('threadRecords'),
@@ -138,12 +131,6 @@ async function submissionRun(
 			q.eq('userId', caller.userId).eq('submissionId', submissionId)
 		)
 		.unique();
-}
-
-async function activeRunForThread(ctx: QueryCtx | MutationCtx, threadId: Id<'threadRecords'>) {
-	const latest = await latestRunForThread(ctx, threadId);
-
-	return latest && !isRunFinalStatus(latest.status) ? latest : null;
 }
 
 async function requireLiveCallerRun(ctx: MutationCtx, args: Infer<typeof vCallerRun>) {
@@ -334,20 +321,16 @@ export const listChildren = mutation({
 		parentThreadId: v.optional(v.id('threadRecords')),
 		paginationOpts: paginationOptsValidator
 	},
-	returns: v.object({
-		page: v.array(
-			v.object({
-				threadId: v.id('threadRecords'),
-				parentThreadId: v.id('threadRecords'),
-				title: v.optional(v.string()),
-				status: vRunStatus,
-				lastError: v.optional(v.string()),
-				settings: vSubagentSettings
-			})
-		),
-		isDone: v.boolean(),
-		continueCursor: v.string()
-	}),
+	returns: paginationResultValidator(
+		v.object({
+			threadId: v.id('threadRecords'),
+			parentThreadId: v.id('threadRecords'),
+			title: v.optional(v.string()),
+			status: vRunStatus,
+			lastError: v.optional(v.string()),
+			settings: vSubagentSettings
+		})
+	),
 	handler: async (ctx, args) => {
 		try {
 			const callerRun = await requireLiveCallerRun(ctx, args);
@@ -379,7 +362,7 @@ export const listChildren = mutation({
 				})
 			);
 
-			return { page, isDone: result.isDone, continueCursor: result.continueCursor };
+			return { ...result, page };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -396,8 +379,6 @@ export const control = mutation({
 		text: v.optional(v.string())
 	},
 	returns: v.object({
-		status: vRunStatus,
-		lastError: v.optional(v.string()),
 		answer: v.optional(vAskQuestionAnswer),
 		alreadyAnswered: v.optional(v.boolean()),
 		stoppedRunId: v.optional(v.id('runs')),
@@ -409,10 +390,10 @@ export const control = mutation({
 			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 
 			if (args.action === 'stop') {
-				const active = await activeRunForThread(ctx, thread._id);
+				const latest = await latestRunForThread(ctx, thread._id);
 
-				if (active) {
-					await requestRunCancellation(ctx, active);
+				if (latest && !isRunFinalStatus(latest.status)) {
+					await requestRunCancellation(ctx, latest);
 				} else {
 					// No live run: still retire pending questions awaiting
 					// continuation so Stop is meaningful on idle-but-waiting threads.
@@ -420,13 +401,8 @@ export const control = mutation({
 				}
 
 				await refreshThreadHierarchyActivity(ctx, thread._id);
-				const latest = await latestRunForThread(ctx, thread._id);
 
-				return {
-					status: latest?.status ?? thread.status,
-					lastError: latest?.lastError,
-					stoppedRunId: latest?._id
-				};
+				return { stoppedRunId: latest?._id };
 			}
 
 			if (!args.questionId) {
@@ -460,8 +436,6 @@ export const control = mutation({
 				text: args.text
 			});
 
-			const latest = await latestRunForThread(ctx, thread._id);
-
 			if (result.kind === 'alreadyAnswered') {
 				const question = await ctx.db.get('agentQuestions', args.questionId);
 
@@ -469,12 +443,10 @@ export const control = mutation({
 					args.toolJobId &&
 					question?.continuationClaim?.toolJobId === args.toolJobId &&
 					question.continuationClaim.claimId === args.claimId
-						? await questionContinuation(ctx, question, { latestRun: latest })
+						? await questionContinuation(ctx, question)
 						: undefined;
 
 				return {
-					status: latest?.status ?? thread.status,
-					lastError: latest?.lastError,
 					answer: result.answer,
 					alreadyAnswered: true,
 					continuation: retryContinuation
@@ -488,8 +460,6 @@ export const control = mutation({
 			}
 
 			return {
-				status: latest?.status ?? thread.status,
-				lastError: latest?.lastError,
 				answer: result.question.answer,
 				continuation: result.continuation
 			};

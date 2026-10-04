@@ -153,11 +153,11 @@ pub(crate) fn agent_tools(
     command_sessions: CommandSessionManager,
     subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 ) -> AgentToolSet {
-    let context = AgentToolContext::new(
+    let context = AgentToolContext {
         runtime,
         run_id,
         claim_id,
-        user_id.clone(),
+        user_id,
         workspace_root,
         transcript_dir,
         gateway_url,
@@ -165,9 +165,11 @@ pub(crate) fn agent_tools(
         artifact_bindings,
         supports_images,
         tool_call_tracker,
-        command_sessions.clone(),
-        subagent_launcher.clone(),
-    );
+        command_sessions,
+        question_polls: questions::QuestionPolls::default(),
+        subagent_polls: subagents::SubagentPolls::default(),
+        subagent_launcher,
+    };
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
         ask_question: AskQuestionTool(context.clone()),

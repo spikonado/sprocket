@@ -83,11 +83,6 @@ describe('subagent summaries', () => {
 	it.each<{ name: string; input: JsonValue; expected: string }>([
 		{
 			name: 'spawn_subagent',
-			input: { prompt: 'Research the circuit' },
-			expected: 'Research the circuit'
-		},
-		{
-			name: 'spawn_subagent',
 			input: { threadId: 'child', prompt: 'Implement the design' },
 			expected: 'Implement the design'
 		},
