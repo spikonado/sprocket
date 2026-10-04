@@ -1,0 +1,77 @@
+import { resolveLocalApiBaseUrl } from '$lib/local/client';
+import {
+	isAbsoluteImagePath,
+	isWindowsImagePath,
+	stripImageFileScheme
+} from './markdown-image-path';
+
+export type MarkdownImageScope = { workspacePath?: string; documentPath?: string };
+
+export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
+	source = stripImageFileScheme(source);
+
+	if (/^(?:https?:|data:image\/|blob:|\/\/)/i.test(source)) return source;
+
+	if (!source) return null;
+
+	if (/^[a-z][a-z\d+.-]*:/i.test(source) && !isWindowsImagePath(source)) return null;
+
+	const encodedPath = source.split(/[?#]/, 1)[0];
+	let path: string;
+
+	try {
+		path = decodeURIComponent(encodedPath);
+	} catch {
+		path = encodedPath;
+	}
+
+	const documentPath = scope?.documentPath?.replaceAll('\\', '/');
+	const directory = documentPath?.slice(0, documentPath.lastIndexOf('/') + 1) ?? '';
+	const resolvedPath = isAbsoluteImagePath(path) ? path : directory + path;
+
+	if (!isAbsoluteImagePath(resolvedPath) && !scope?.workspacePath) return null;
+
+	const query = new URLSearchParams();
+
+	if (scope?.workspacePath) query.set('workspacePath', scope.workspacePath);
+	query.set('path', resolvedPath);
+
+	const baseUrl = resolveLocalApiBaseUrl();
+	const pathUrl = `/api/workspace/image?${query}`;
+
+	return baseUrl && baseUrl !== globalThis.window?.location.origin
+		? `${baseUrl}${pathUrl}`
+		: pathUrl;
+}
+
+export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) {
+	const template = document.createElement('template');
+	template.innerHTML = html;
+
+	for (const image of template.content.querySelectorAll('img')) {
+		const source = image.getAttribute('src') ?? '';
+		const url = markdownImageUrl(source, scope);
+		image.setAttribute('loading', 'lazy');
+		image.setAttribute('decoding', 'async');
+		image.setAttribute('referrerpolicy', 'no-referrer');
+		image.removeAttribute('srcset');
+
+		if (url) image.src = url;
+		else {
+			image.removeAttribute('src');
+			image.alt = `${image.alt || 'Image'} (unavailable)`;
+		}
+
+		if (url && url.startsWith(`${resolveLocalApiBaseUrl()}/api/workspace/image?`)) {
+			image.crossOrigin = 'use-credentials';
+		}
+
+		if (!image.closest('a') && url) {
+			image.tabIndex = 0;
+			image.setAttribute('role', 'button');
+			image.setAttribute('aria-label', `View ${image.alt || 'image'}`);
+		}
+	}
+
+	return template.innerHTML;
+}

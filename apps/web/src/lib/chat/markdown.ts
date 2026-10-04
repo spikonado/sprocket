@@ -1,9 +1,18 @@
 import DOMPurify from 'isomorphic-dompurify';
 import { marked, type Token } from 'marked';
+import { isWindowsImagePath, stripImageFileScheme } from './markdown-image-path';
 
 marked.setOptions({
 	gfm: true,
 	breaks: true
+});
+
+DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
+	if (node.nodeName !== 'IMG' || attribute.attrName !== 'src') return;
+
+	const source = stripImageFileScheme(attribute.attrValue);
+
+	attribute.attrValue = isWindowsImagePath(source) ? `${source[0]}%3A${source.slice(2)}` : source;
 });
 
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {

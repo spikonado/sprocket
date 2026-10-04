@@ -1,10 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import CodeCopyButton from './code-copy-button';
+import ImageViewer, { type ViewerImage } from './image-viewer';
+import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
+import { resolveLocalApiBaseUrl } from '$lib/local/client';
 
 type CodeControl = { target: HTMLElement; wrapper: HTMLDivElement; pre: HTMLElement; code: string };
 
-export default function MarkdownHtml({ html }: { html: string }) {
+export default function MarkdownHtml({
+	html: sourceHtml,
+	imageScope
+}: {
+	html: string;
+	imageScope?: MarkdownImageScope;
+}) {
+	const workspacePath = imageScope?.workspacePath;
+	const documentPath = imageScope?.documentPath;
+
+	const html = useMemo(
+		() => prepareMarkdownImages(sourceHtml, { workspacePath, documentPath }),
+		[sourceHtml, workspacePath, documentPath]
+	);
+
 	const ref = useRef<HTMLDivElement>(null);
+	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
 
 	const [controls, setControls] = useState<{ html: string; blocks: CodeControl[] }>({
 		html,
@@ -90,12 +109,67 @@ export default function MarkdownHtml({ html }: { html: string }) {
 		};
 	}, [html]);
 
+	function openImage(image: HTMLImageElement) {
+		if (
+			!image.getAttribute('src') ||
+			image.closest('a') ||
+			image.classList.contains('markdown-image-error')
+		)
+			return;
+
+		const url = new URL(image.src);
+		const localImage = image.src.startsWith(`${resolveLocalApiBaseUrl()}/api/workspace/image?`);
+		setViewerImage({
+			url: image.src,
+			name: image.alt || 'Image',
+			mediaType: '',
+			readActions:
+				localImage || !/^https?:$/.test(url.protocol) || url.origin === window.location.origin
+		});
+	}
+
 	return (
 		<>
-			<div ref={ref} className="chat-markdown-html" dangerouslySetInnerHTML={{ __html: html }} />
+			<div
+				ref={ref}
+				className="chat-markdown-html"
+				onClick={(event) => {
+					if (event.target instanceof HTMLImageElement) openImage(event.target);
+				}}
+				onKeyDown={(event) => {
+					if (
+						event.target instanceof HTMLImageElement &&
+						(event.key === 'Enter' || event.key === ' ')
+					) {
+						event.preventDefault();
+						openImage(event.target);
+					}
+				}}
+				onErrorCapture={(event) => {
+					if (
+						!(event.target instanceof HTMLImageElement) ||
+						event.target.classList.contains('markdown-image-error')
+					)
+						return;
+
+					const image = event.target;
+					image.classList.add('markdown-image-error');
+					image.alt = `${image.alt || 'Image'} (unavailable)`;
+					image.removeAttribute('role');
+					image.removeAttribute('tabindex');
+					image.removeAttribute('aria-label');
+				}}
+				dangerouslySetInnerHTML={{ __html: html }}
+			/>
 			{controls.blocks.map(({ target, code }, index) => (
 				<CodeCopyButton key={index} target={target} code={code} />
 			))}
+			{viewerImage
+				? createPortal(
+						<ImageViewer image={viewerImage} onClose={() => setViewerImage(null)} />,
+						document.body
+					)
+				: null}
 		</>
 	);
 }

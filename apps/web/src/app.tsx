@@ -2724,6 +2724,7 @@ export default function App({
 					inert={artifactPanel.fullscreenArtifact ? true : undefined}
 				>
 					<SidePanel
+						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 						artifacts={artifactPanel.artifacts}
 						onDeleteArtifact={deleteArtifact}
 						selectedKey={artifactPanel.panel.selectedKey}
@@ -2755,6 +2756,7 @@ export default function App({
 
 			{artifactPanel.fullscreenArtifact && (
 				<ArtifactScreenFullscreen
+					workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 					artifact={artifactPanel.fullscreenArtifact}
 					onClose={() => artifactPanel.setFullscreenKey(null)}
 				/>

@@ -214,3 +214,112 @@ describe('artifact references', () => {
 		expect(document.body.textContent).toContain('artifact:missing');
 	});
 });
+
+describe('images', () => {
+	it.each([
+		['![Board](file:///workspace/board%20layout.png)', '/workspace/board layout.png'],
+		['![Board](file://assets/board.png)', 'assets/board.png'],
+		['![Board](file://C:/workspace/board.png)', 'C:/workspace/board.png'],
+		['![Board](file:///C:/workspace/board.png)', 'C:/workspace/board.png'],
+		['![Board](file:///C:/workspace/board%20layout.png)', 'C:/workspace/board layout.png'],
+		['<img src="file:///tmp/100%ready.png" alt="Board">', '/tmp/100%ready.png'],
+		['<img src="file:///workspace/board.png" alt="Board">', '/workspace/board.png'],
+		['<img src="file://C:/workspace/board.png" alt="Board">', 'C:/workspace/board.png']
+	])('renders %s through the existing image path resolution', (content, path) => {
+		const { getByRole } = render(
+			<ChatMarkdown content={content} imageScope={{ workspacePath: '/workspace' }} />
+		);
+
+		const image = getByRole('button', { name: 'View Board' });
+		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+
+		expect(url.pathname).toBe('/api/workspace/image');
+		expect(url.searchParams.get('path')).toBe(path);
+	});
+
+	it('offers the original remote image instead of CORS-dependent read actions', () => {
+		const { getByRole, queryByRole } = render(
+			<ChatMarkdown content="![Board](https://example.com/board.png)" />
+		);
+
+		fireEvent.click(getByRole('button', { name: 'View Board' }));
+
+		expect(getByRole('link', { name: 'Open original image' }).getAttribute('href')).toBe(
+			'https://example.com/board.png'
+		);
+		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
+	});
+
+	it.each(['![Board](/tmp/board.png)', '![Board](file:///tmp/board.png)'])(
+		'renders %s without a workspace',
+		(content) => {
+			const { getByRole } = render(<ChatMarkdown content={content} />);
+			const image = getByRole('button', { name: 'View Board' });
+			const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+
+			expect(url.searchParams.get('path')).toBe('/tmp/board.png');
+		}
+	);
+
+	it('renders Windows absolute image paths through sanitization', () => {
+		const { getByRole } = render(
+			<ChatMarkdown
+				content="![Board](C:/workspace/board.png)"
+				imageScope={{ workspacePath: 'C:/workspace' }}
+			/>
+		);
+
+		const image = getByRole('button', { name: 'View Board' });
+		const url = new URL(image.getAttribute('src') ?? '', 'http://localhost');
+
+		expect(url.searchParams.get('path')).toBe('C:/workspace/board.png');
+	});
+
+	it('shows local images as unavailable without a connected workspace', () => {
+		const { getByRole } = render(<ChatMarkdown content="![Board](assets/board.png)" />);
+		const image = getByRole('img', { name: 'Board (unavailable)' });
+
+		expect(image.getAttribute('src')).toBeNull();
+	});
+
+	it('renders local Markdown images and opens them with keyboard-accessible enlargement', async () => {
+		const { getByRole, queryByRole } = render(
+			<ChatMarkdown
+				content="![Board layout](../assets/board%20layout.png)"
+				imageScope={{ workspacePath: '/workspace', documentPath: 'docs/notes.md' }}
+			/>
+		);
+
+		const trigger = getByRole('button', { name: 'View Board layout' });
+
+		expect(trigger.getAttribute('src')).toContain('path=docs%2F..%2Fassets%2Fboard+layout.png');
+		expect(trigger.getAttribute('loading')).toBe('lazy');
+		trigger.focus();
+		fireEvent.keyDown(trigger, { key: 'Enter' });
+
+		expect(getByRole('dialog', { name: 'Image preview: Board layout' })).toBeTruthy();
+		fireEvent.keyDown(window, { key: 'Escape' });
+
+		await waitFor(() => expect(queryByRole('dialog')).toBeNull());
+		expect(document.activeElement).toBe(trigger);
+	});
+
+	it('keeps linked images as links and presents failed loads as unavailable', () => {
+		const { getByRole, container } = render(
+			<ChatMarkdown
+				content={
+					'[![Documentation](https://example.com/logo.png)](https://example.com)\n\n![Missing board](https://example.com/missing.png)'
+				}
+			/>
+		);
+
+		expect(getByRole('link').getAttribute('href')).toBe('https://example.com');
+		const trigger = getByRole('button', { name: 'View Missing board' });
+		fireEvent.error(trigger);
+
+		expect(container.querySelector('img.markdown-image-error')?.getAttribute('alt')).toBe(
+			'Missing board (unavailable)'
+		);
+		expect(trigger.hasAttribute('tabindex')).toBe(false);
+	});
+});
