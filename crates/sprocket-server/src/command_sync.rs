@@ -253,11 +253,11 @@ async fn download_log(
     path: &Path,
     length: u64,
 ) -> Result<()> {
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path).await?;
     let mut offset = file.metadata().await?.len();
     if offset > length {
         bail!("local command log is longer than its remote source");
@@ -309,7 +309,16 @@ pub(crate) async fn fetch(
     };
     let id = uuid::Uuid::parse_str(session_id)?;
     let logs = directory.join("remote").join(id.to_string());
-    tokio::fs::create_dir_all(&logs).await?;
+    let mut builder = tokio::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(&logs).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o700)).await?;
+    }
     let output = logs.join("output.log");
     let events = logs.join("events.jsonl");
     download_log(&client, &args, "output", &output, remote.output_bytes).await?;

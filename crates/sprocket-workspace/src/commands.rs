@@ -187,7 +187,6 @@ impl CommandSessionManager {
     }
 
     async fn saved_result(&self, session_id: &str) -> Result<CommandStdinOutput> {
-        let _fetch = self.history_fetch_lock.lock().await;
         let path = history_path(&self.log_directory, session_id)?;
         let local = match tokio::fs::read(path).await {
             Ok(bytes) => Some(serde_json::from_slice::<CommandHistory>(&bytes)?),
@@ -198,15 +197,33 @@ impl CommandSessionManager {
             history.machine_id != self.history_scope.2 && history.result.running
         }) {
             if let Some(resolver) = &self.history_resolver {
-                if let Some(history) =
-                    resolver(session_id.to_string(), self.log_directory.clone()).await?
-                {
-                    return Ok(CommandStdinOutput {
-                        command: history.command,
-                        workdir: history.workdir,
-                        result: history.result,
-                    });
+                let fetched = tokio::time::timeout(Duration::from_secs(10), async {
+                    let _fetch = self.history_fetch_lock.lock().await;
+                    resolver(session_id.to_string(), self.log_directory.clone()).await
+                })
+                .await
+                .context("remote command history fetch timed out")
+                .and_then(|result| result);
+                match fetched {
+                    Ok(Some(history)) => {
+                        return Ok(CommandStdinOutput {
+                            command: history.command,
+                            workdir: history.workdir,
+                            result: history.result,
+                        });
+                    }
+                    Err(error) if local.is_none() => return Err(error),
+                    _ => {}
                 }
+            }
+        }
+        if let Some(history) = local {
+            if history.machine_id != self.history_scope.2 && history.result.running {
+                return Ok(CommandStdinOutput {
+                    command: history.command,
+                    workdir: history.workdir,
+                    result: history.result,
+                });
             }
         }
         CommandHistory::load(&self.log_directory, session_id).await
@@ -2358,6 +2375,71 @@ mod tests {
         assert_eq!(poll(&offline, &id, 0).await.output, "shared");
         fs::remove_dir_all(origin).unwrap();
         fs::remove_dir_all(destination).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
+            .with_history_scope("user".into(), "thread".into(), "destination".into());
+        let completed = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf cached",
+                ".",
+                &default_command_shell(),
+                None,
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let completed_id = completed.session_id.unwrap();
+        sessions.prune_completed().await;
+        let mut remote: super::CommandHistory = serde_json::from_slice(
+            &tokio::fs::read(super::history_path(&root.join("logs"), &completed_id).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        remote.machine_id = "origin".into();
+        remote.result.running = true;
+        remote.result.success = false;
+        remote.result.exit_code = None;
+        remote.result.error = Some("last synced output, not a live process observation".into());
+        let remote_id = uuid::Uuid::new_v4().to_string();
+        remote
+            .save(&super::history_path(&root.join("logs"), &remote_id).unwrap())
+            .await
+            .unwrap();
+
+        let sessions = sessions.with_history_resolver(|_, _| std::future::pending());
+        let manager = sessions.clone();
+        let id = remote_id.clone();
+        tokio::time::pause();
+        let fetching = tokio::spawn(async move { poll(&manager, &id, 0).await });
+        while sessions.history_fetch_lock.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(poll(&sessions, &completed_id, 0).await.output, "cached");
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let cached = fetching.await.unwrap();
+        assert!(cached.running);
+        assert_eq!(cached.output, "cached");
+        assert!(cached.error.unwrap().contains("last synced"));
+        let unknown = uuid::Uuid::new_v4().to_string();
+        let timed_out = sessions
+            .poll_command(WorkspaceCancellation::new(), &unknown, 0)
+            .await
+            .unwrap_err();
+        assert!(timed_out.to_string().contains("timed out"));
+        tokio::time::resume();
+
+        let sessions = sessions.with_history_resolver(|_, _| async { anyhow::bail!("offline") });
+        let cached = poll(&sessions, &remote_id, 0).await;
+        assert!(cached.running);
+        assert_eq!(cached.output, "cached");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
