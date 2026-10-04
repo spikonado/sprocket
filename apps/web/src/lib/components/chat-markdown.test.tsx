@@ -95,6 +95,26 @@ describe('code blocks', () => {
 describe('copying code', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
+	it('keeps copy feedback when the code streams during a pending clipboard write', async () => {
+		let finish: () => void = () => {};
+
+		const writeText = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+		);
+
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		const { getByRole, getByText, rerender } = render(<ChatMarkdown content={'```\nconst'} />);
+		fireEvent.click(getByRole('button', { name: 'Copy code' }));
+		rerender(<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />);
+		finish();
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		expect(writeText).toHaveBeenCalledWith('const\n');
+	});
+
 	it('copies each block verbatim without including controls or Markdown fences', async () => {
 		const writeText = vi.fn().mockResolvedValue(undefined);
 		vi.stubGlobal('navigator', { clipboard: { writeText } });

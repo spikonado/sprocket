@@ -1,7 +1,8 @@
 import { Check, Copy } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
-export default function CodeCopyButton({ code }: { code: string }) {
+export default function CodeCopyButton({ code, target }: { code: string; target: HTMLElement }) {
 	const [status, setStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
 	const disposed = useRef(false);
 	const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -31,7 +32,7 @@ export default function CodeCopyButton({ code }: { code: string }) {
 		}
 	}
 
-	return (
+	return createPortal(
 		<button
 			type="button"
 			className="markdown-code-copy"
@@ -47,6 +48,7 @@ export default function CodeCopyButton({ code }: { code: string }) {
 			<span role="status">
 				{status === 'copied' ? 'Copied' : status === 'failed' ? 'Copy failed' : 'Copy'}
 			</span>
-		</button>
+		</button>,
+		target
 	);
 }

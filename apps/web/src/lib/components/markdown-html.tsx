@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import CodeCopyButton from './code-copy-button';
 
 type CodeControl = { target: HTMLElement; wrapper: HTMLDivElement; pre: HTMLElement; code: string };
@@ -94,11 +93,9 @@ export default function MarkdownHtml({ html }: { html: string }) {
 	return (
 		<>
 			<div ref={ref} className="chat-markdown-html" dangerouslySetInnerHTML={{ __html: html }} />
-			{controls.html === html
-				? controls.blocks.map(({ target, code }, index) =>
-						createPortal(<CodeCopyButton code={code} />, target, String(index))
-					)
-				: null}
+			{controls.blocks.map(({ target, code }, index) => (
+				<CodeCopyButton key={index} target={target} code={code} />
+			))}
 		</>
 	);
 }
