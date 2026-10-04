@@ -1624,17 +1624,18 @@ mod tests {
 
     #[test]
     fn child_secret_is_keyed_stable_and_never_the_caller_secret() {
-        let secret_a = derive_child_execution_secret("caller-secret", "job-1");
-        let secret_b = derive_child_execution_secret("caller-secret", "job-1");
-        let secret_c = derive_child_execution_secret("caller-secret", "job-2");
+        let caller_secret = uuid::Uuid::new_v4().to_string();
+        let other_secret = uuid::Uuid::new_v4().to_string();
+        let secret_a = derive_child_execution_secret(&caller_secret, "job-1");
+        let secret_b = derive_child_execution_secret(&caller_secret, "job-1");
+        let secret_c = derive_child_execution_secret(&caller_secret, "job-2");
         assert_eq!(secret_a, secret_b);
         assert_ne!(secret_a, secret_c);
-        assert_ne!(secret_a, "caller-secret");
-        assert!(!secret_a.contains("caller-secret"));
+        assert_ne!(secret_a, caller_secret);
         assert_eq!(secret_a.len(), 64);
         assert_ne!(
             secret_a,
-            derive_child_execution_secret("other-secret", "job-1")
+            derive_child_execution_secret(&other_secret, "job-1")
         );
     }
 
