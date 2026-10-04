@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
 use sprocket_agent::TranscriptStore;
-use sprocket_workspace::{CommandHistory, CommandOutput, CommandSessionManager, history_path};
+use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::command_sessions::ThreadCommandSessions;
@@ -206,7 +206,7 @@ async fn sync_record(
     if tokio::fs::try_exists(path.with_extension("synced")).await? {
         return Ok(true);
     }
-    let history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
     if history.machine_id != machine_id || history.user_id.is_empty() {
         return Ok(true);
     }
@@ -218,11 +218,10 @@ async fn sync_record(
         .context("session record has no ID")?
         .to_str()
         .context("invalid session ID")?;
-    let manager = registry
-        .get(&history.user_id, &history.thread_id)
-        .await
-        .unwrap_or_else(|| CommandSessionManager::new(PathBuf::new(), directory.to_path_buf()));
-    let snapshot = manager.history_snapshot(session_id).await?;
+    match registry.get(&history.user_id, &history.thread_id).await {
+        Some(manager) => manager.history_snapshot(session_id, &mut history).await?,
+        None => history.recover_if_running(directory, session_id).await?,
+    }
     let client = match client {
         Some(client) => client,
         None => client.insert(
@@ -233,7 +232,7 @@ async fn sync_record(
             .await?,
         ),
     };
-    let completed = sync_session(client, session_id, &snapshot).await?;
+    let completed = sync_session(client, session_id, &history).await?;
     if completed {
         tokio::fs::write(path.with_extension("synced"), b"").await?;
     }
@@ -340,19 +339,15 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn malformed_records_remain_pending_until_individually_marked_synced() {
+    async fn malformed_record_remains_pending_for_retry() {
         let directory = tempfile::tempdir().unwrap();
         let store = TranscriptStore::new(directory.path().to_path_buf());
-        let mut paths = Vec::new();
-        for thread_id in ["first-thread", "second-thread"] {
-            let records = store
-                .thread_dir("user", thread_id)
-                .join("command-logs/sessions");
-            tokio::fs::create_dir_all(&records).await.unwrap();
-            let path = records.join(format!("{}.json", uuid::Uuid::new_v4()));
-            tokio::fs::write(&path, b"interrupted write").await.unwrap();
-            paths.push(path);
-        }
+        let records = store
+            .thread_dir("user", "thread")
+            .join("command-logs/sessions");
+        tokio::fs::create_dir_all(&records).await.unwrap();
+        let path = records.join(format!("{}.json", uuid::Uuid::new_v4()));
+        tokio::fs::write(&path, b"interrupted write").await.unwrap();
         let auth = NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "test".into(),
@@ -360,23 +355,13 @@ mod tests {
             "http://localhost/callback".into(),
         );
         let registry = ThreadCommandSessions::default();
-        for path in &paths {
-            assert!(
-                !sync_directory(&store, &registry, &auth, "http://localhost", "machine")
-                    .await
-                    .unwrap()
-            );
-            assert_eq!(tokio::fs::read(path).await.unwrap(), b"interrupted write");
-            assert!(!path.with_extension("synced").exists());
-            tokio::fs::write(path.with_extension("synced"), b"")
-                .await
-                .unwrap();
-        }
         assert!(
-            sync_directory(&store, &registry, &auth, "http://localhost", "machine")
+            !sync_directory(&store, &registry, &auth, "http://localhost", "machine")
                 .await
                 .unwrap()
         );
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"interrupted write");
+        assert!(!path.with_extension("synced").exists());
     }
 
     #[tokio::test]

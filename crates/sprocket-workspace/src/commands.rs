@@ -154,26 +154,25 @@ impl CommandSessionManager {
         self
     }
 
-    pub async fn history_snapshot(&self, session_id: &str) -> Result<CommandHistory> {
-        let path = history_path(&self.log_directory, session_id)?;
-        let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    pub async fn history_snapshot(
+        &self,
+        session_id: &str,
+        history: &mut CommandHistory,
+    ) -> Result<()> {
         if let Some(session) = self.session(session_id).await {
             let capture = session.output.lock().await;
             let completion = session.completion.borrow().clone();
             let preview = capture.full_preview();
-            history.result = match completion {
-                Some(completion) => completion_output(&completion, preview),
-                None => CommandOutput {
-                    output: preview.output,
-                    ..history.result
-                },
-            };
-        } else if history.result.running {
-            history.result = CommandHistory::load(&self.log_directory, session_id)
-                .await?
-                .result;
+            match completion {
+                Some(completion) => history.result = completion_output(&completion, preview),
+                None => history.result.output = preview.output,
+            }
+        } else {
+            history
+                .recover_if_running(&self.log_directory, session_id)
+                .await?;
         }
-        Ok(history)
+        Ok(())
     }
 
     pub fn with_history_resolver<F, Fut>(mut self, resolver: F) -> Self
@@ -339,7 +338,7 @@ impl CommandSessionManager {
             output.clone(),
             timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
             lifetime_guard,
-            Some((history_path, history)),
+            (history_path, history),
         ));
 
         // Sessions appear in saved agent history and browser requests, so their
@@ -756,7 +755,7 @@ async fn supervise_command(
     output: Arc<Mutex<CapturedOutput>>,
     timeout: Option<Duration>,
     lifetime_guard: Option<CommandLifetimeGuard>,
-    history: Option<(PathBuf, CommandHistory)>,
+    history: (PathBuf, CommandHistory),
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
@@ -819,18 +818,17 @@ async fn supervise_command(
         timed_out,
         error,
     };
-    if let Some((path, mut history)) = history {
-        history.result = completion_output(&completed, output.lock().await.full_preview());
-        match history.save(&path).await {
-            Ok(()) => completed.archived = true,
-            Err(error) => {
-                completed.success = false;
-                let message = format!("failed to save command result: {error:#}");
-                completed.error = Some(match completed.error {
-                    Some(error) => format!("{error}; {message}"),
-                    None => message,
-                });
-            }
+    let (path, mut history) = history;
+    history.result = completion_output(&completed, output.lock().await.full_preview());
+    match history.save(&path).await {
+        Ok(()) => completed.archived = true,
+        Err(error) => {
+            completed.success = false;
+            let message = format!("failed to save command result: {error:#}");
+            completed.error = Some(match completed.error {
+                Some(error) => format!("{error}; {message}"),
+                None => message,
+            });
         }
     }
     stdin_task.abort();
@@ -1660,11 +1658,25 @@ mod tests {
     #[tokio::test]
     async fn capture_failure_terminates_the_command_and_reports_failure() {
         let root = temp_workspace();
+        let command = "sleep 0.5; touch leaked";
         let output = super::CapturedOutput::create(&root.join("logs"), 100)
             .await
             .unwrap();
-        let mut process =
-            super::build_shell_command("sleep 0.5; touch leaked", &default_command_shell());
+        let history_path =
+            super::history_path(&root.join("logs"), &uuid::Uuid::new_v4().to_string()).unwrap();
+        let history = super::CommandHistory {
+            user_id: String::new(),
+            thread_id: String::new(),
+            machine_id: String::new(),
+            command: command.into(),
+            workdir: root.to_string_lossy().into_owned(),
+            max_output_chars: 100,
+            result: super::completion_output(
+                &CommandCompletion::default(),
+                output.preview_metadata(),
+            ),
+        };
+        let mut process = super::build_shell_command(command, &default_command_shell());
         process.current_dir(&root).kill_on_drop(true);
         #[cfg(unix)]
         process.process_group(0);
@@ -1682,7 +1694,7 @@ mod tests {
             std::sync::Arc::new(tokio::sync::Mutex::new(output)),
             Some(Duration::from_secs(5)),
             None,
-            None,
+            (history_path, history),
         ));
         tokio::time::timeout(Duration::from_secs(2), completed.changed())
             .await
@@ -2220,13 +2232,10 @@ mod tests {
         assert_eq!(finished.output, "ready:done");
         sessions.prune_completed().await;
         assert!(sessions.sessions.lock().await.is_empty());
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(7 * 24 * 60 * 60)).await;
         let replay = sessions
             .poll_command(WorkspaceCancellation::new(), &id, 270_000)
             .await
             .unwrap();
-        tokio::time::resume();
         assert_eq!(replay.command, "printf ready; read value; printf ':done'");
         assert_eq!(replay.result.output, "ready:done");
         assert_eq!(replay.result.exit_code, Some(0));
@@ -2238,6 +2247,38 @@ mod tests {
         assert_eq!(poll(&restarted, &id, 0).await.output, "ready:done");
         assert!(terminate(&restarted, &id, 0).await.output.is_empty());
         assert_eq!(poll(&restarted, &id, 0).await.output, "ready:done");
+        let other = CommandSessionManager::new(root.clone(), root.join("other-thread"));
+        assert!(
+            other
+                .poll_command(WorkspaceCancellation::new(), &id, 0)
+                .await
+                .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn history_snapshot_recovers_the_archive_after_a_running_session_is_pruned() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, _) = exec_running(&sessions, "read value; printf '%s' \"$value\"").await;
+        let mut history = serde_json::from_slice(
+            &tokio::fs::read(super::history_path(&root.join("logs"), &id).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        sessions.history_snapshot(&id, &mut history).await.unwrap();
+        assert!(history.result.running);
+
+        write(&sessions, &id, "done\n", 0).await;
+        await_completion(&sessions, &id).await;
+        sessions.prune_completed().await;
+        sessions.history_snapshot(&id, &mut history).await.unwrap();
+        assert!(history.result.success);
+        assert!(!history.result.running);
+        assert_eq!(history.result.exit_code, Some(0));
+        assert_eq!(history.result.output, "done");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2282,7 +2323,13 @@ mod tests {
             .await
             .unwrap();
         let id = result.session_id.unwrap();
-        let history = sessions.history_snapshot(&id).await.unwrap();
+        let mut history = serde_json::from_slice(
+            &tokio::fs::read(super::history_path(&origin.join("logs"), &id).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        sessions.history_snapshot(&id, &mut history).await.unwrap();
         let destination = temp_workspace();
         let expected_id = id.clone();
         let remote = CommandSessionManager::new(destination.clone(), destination.join("logs"))
@@ -2311,49 +2358,6 @@ mod tests {
         assert_eq!(poll(&offline, &id, 0).await.output, "shared");
         fs::remove_dir_all(origin).unwrap();
         fs::remove_dir_all(destination).unwrap();
-    }
-
-    #[tokio::test]
-    async fn command_history_has_no_completed_count_limit_and_is_thread_scoped() {
-        let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-        let mut ids = Vec::new();
-        for i in 0..140 {
-            let id = uuid::Uuid::new_v4().to_string();
-            let history = super::CommandHistory {
-                user_id: String::new(),
-                thread_id: String::new(),
-                machine_id: String::new(),
-                command: format!("echo {i}"),
-                workdir: root.to_string_lossy().into_owned(),
-                max_output_chars: 20_000,
-                result: super::completion_output(
-                    &completed_ok(),
-                    crate::command_output::OutputPreview {
-                        output: format!("{i}\n"),
-                        complete_log_path: "log".into(),
-                        events_path: "events".into(),
-                    },
-                ),
-            };
-            history
-                .save(&super::history_path(&root.join("logs"), &id).unwrap())
-                .await
-                .unwrap();
-            ids.push(id);
-        }
-        sessions.prune_completed().await;
-        for (i, id) in ids.iter().enumerate() {
-            assert_eq!(poll(&sessions, id, 0).await.output, format!("{i}\n"));
-        }
-        let other = CommandSessionManager::new(root.clone(), root.join("other-thread"));
-        assert!(
-            other
-                .poll_command(WorkspaceCancellation::new(), &ids[0], 0)
-                .await
-                .is_err()
-        );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

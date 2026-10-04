@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import { initConvexTest, seedOwnedThread } from './test.setup';
 
 const sessionId = '00000000-0000-4000-8000-000000000001';
 
@@ -12,7 +12,7 @@ const snapshot = {
 };
 
 describe('durable thread command sessions', () => {
-	it('replays ordered logs and completed results to a later run on the same thread', async () => {
+	it('replays ordered logs and preserves completed results across sync retries', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const bytes = new TextEncoder().encode('first\nlast\n').buffer;
@@ -46,20 +46,7 @@ describe('durable thread command sessions', () => {
 		});
 		await asUser.mutation(api.commands.sync, args);
 
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'later-machine',
-			'later-secret',
-			'query old command'
-		);
-
-		const result = await t.query(api.commands.getForRun, {
-			runId,
-			executionSecret: 'later-secret',
-			sessionId
-		});
+		const result = await asUser.query(api.commands.get, { threadId, sessionId });
 
 		expect(result).toMatchObject({
 			machineId: 'machine-one',

@@ -58,7 +58,11 @@ mod tests {
             .save(&history_path(root.path(), &id).unwrap())
             .await
             .unwrap();
-        let recovered = CommandHistory::load(root.path(), &id).await.unwrap();
+        let mut recovered = history;
+        recovered
+            .recover_if_running(root.path(), &id)
+            .await
+            .unwrap();
         assert_eq!(recovered.command, "build");
         assert_eq!(recovered.result.output, "before restart\n");
         assert!(!recovered.result.running);
@@ -69,6 +73,18 @@ mod tests {
 }
 
 impl CommandHistory {
+    pub async fn recover_if_running(
+        &mut self,
+        log_directory: &Path,
+        session_id: &str,
+    ) -> Result<()> {
+        if self.result.running {
+            // The supervisor may have archived the result since this snapshot was read.
+            self.result = Self::load(log_directory, session_id).await?.result;
+        }
+        Ok(())
+    }
+
     pub async fn save(&self, path: &Path) -> Result<()> {
         let parent = path.parent().context("command history has no directory")?;
         tokio::fs::create_dir_all(parent).await?;

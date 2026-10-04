@@ -2,7 +2,7 @@ import { mutation, query, type QueryCtx } from '@convex/_generated/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import { commandSnapshot, commandStream } from '@convex/lib/commandSessions';
 import schema from '@convex/schema';
 
@@ -119,17 +119,6 @@ export const get = query({
 		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
 
 		return await findSession(ctx, args.threadId, args.sessionId);
-	}
-});
-
-export const getForRun = query({
-	args: { runId: v.id('runs'), executionSecret: v.string(), sessionId: v.string() },
-	returns: v.union(schema.doc('commandSessions'), v.null()),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-		await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
-
-		return await findSession(ctx, run.threadId, args.sessionId);
 	}
 });
 
