@@ -2,14 +2,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::async_tools::{YieldMode, ZeroPollCooldown};
+use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
 use crate::paths::expand_home;
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
@@ -95,13 +96,32 @@ impl WorkspaceCancellation {
 #[error("workspace operation was cancelled")]
 pub struct WorkspaceOperationCancelled;
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningCommand {
+    pub session_id: String,
+    pub command: String,
+    pub workdir: String,
+    pub started_at: u64,
+}
+
+type CommandLifetimeGuard = Box<dyn Send + Sync>;
+type CommandLifetimeGuardFactory = Arc<dyn Fn() -> Result<CommandLifetimeGuard> + Send + Sync>;
+type HistoryFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<CommandHistory>>> + Send>>;
+type HistoryResolver = Arc<dyn Fn(String, PathBuf) -> HistoryFuture + Send + Sync>;
+
 #[derive(Clone)]
 pub struct CommandSessionManager {
     workspace_root: PathBuf,
     log_directory: PathBuf,
     output_limits: CommandOutputLimits,
     sessions: Arc<Mutex<HashMap<String, Arc<CommandSession>>>>,
-    next_session_id: Arc<AtomicU64>,
+    stopped: Arc<AtomicBool>,
+    lifetime_guard_factory: Option<CommandLifetimeGuardFactory>,
+    history_scope: (String, String, String),
+    history_resolver: Option<HistoryResolver>,
+    history_fetch_lock: Arc<Mutex<()>>,
 }
 
 impl CommandSessionManager {
@@ -111,8 +131,117 @@ impl CommandSessionManager {
             log_directory,
             output_limits: CommandOutputLimits::default(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            next_session_id: Arc::new(AtomicU64::new(1)),
+            stopped: Arc::new(AtomicBool::new(false)),
+            lifetime_guard_factory: None,
+            history_scope: Default::default(),
+            history_resolver: None,
+            history_fetch_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    pub fn with_workspace_root(mut self, workspace_root: PathBuf) -> Self {
+        self.workspace_root = workspace_root;
+        self
+    }
+
+    pub fn with_history_scope(
+        mut self,
+        user_id: String,
+        thread_id: String,
+        machine_id: String,
+    ) -> Self {
+        self.history_scope = (user_id, thread_id, machine_id);
+        self
+    }
+
+    pub async fn history_snapshot(
+        &self,
+        session_id: &str,
+        history: &mut CommandHistory,
+    ) -> Result<()> {
+        if let Some(session) = self.session(session_id).await {
+            let capture = session.output.lock().await;
+            let completion = session.completion.borrow().clone();
+            let preview = capture.full_preview();
+            match completion {
+                Some(completion) => history.result = completion_output(&completion, preview),
+                None => history.result.output = preview.output,
+            }
+        } else {
+            history
+                .recover_if_running(&self.log_directory, session_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub fn with_history_resolver<F, Fut>(mut self, resolver: F) -> Self
+    where
+        F: Fn(String, PathBuf) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<Option<CommandHistory>>> + Send + 'static,
+    {
+        self.history_resolver = Some(Arc::new(move |id, directory| {
+            Box::pin(resolver(id, directory))
+        }));
+        self
+    }
+
+    async fn saved_result(&self, session_id: &str) -> Result<CommandStdinOutput> {
+        let path = history_path(&self.log_directory, session_id)?;
+        let local = match tokio::fs::read(path).await {
+            Ok(bytes) => Some(serde_json::from_slice::<CommandHistory>(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if local.as_ref().is_none_or(|history| {
+            history.machine_id != self.history_scope.2 && history.result.running
+        }) {
+            if let Some(resolver) = &self.history_resolver {
+                let fetched = tokio::time::timeout(Duration::from_secs(10), async {
+                    let _fetch = self.history_fetch_lock.lock().await;
+                    resolver(session_id.to_string(), self.log_directory.clone()).await
+                })
+                .await
+                .context("remote command history fetch timed out")
+                .and_then(|result| result);
+                match fetched {
+                    Ok(Some(history)) => {
+                        return Ok(CommandStdinOutput {
+                            command: history.command,
+                            workdir: history.workdir,
+                            result: history.result,
+                        });
+                    }
+                    Err(error) if local.is_none() => return Err(error),
+                    _ => {}
+                }
+            }
+        }
+        let Some(history) = local else {
+            bail!("unknown command session: {session_id}");
+        };
+        if history.machine_id == self.history_scope.2 && history.result.running {
+            // The supervisor may have archived this session since the initial read.
+            return CommandHistory::load(&self.log_directory, session_id).await;
+        }
+        Ok(CommandStdinOutput {
+            command: history.command,
+            workdir: history.workdir,
+            result: history.result,
+        })
+    }
+
+    /// Keeps the process's host alive independently of the initiating run.
+    /// The guard is acquired before spawning and released by the supervisor.
+    pub fn with_lifetime_guard_factory<F, G>(mut self, factory: F) -> Self
+    where
+        F: Fn() -> Result<G> + Send + Sync + 'static,
+        G: Send + Sync + 'static,
+    {
+        self.lifetime_guard_factory = Some(Arc::new(move || {
+            factory().map(|guard| Box::new(guard) as CommandLifetimeGuard)
+        }));
+        self
     }
 
     pub fn with_output_limits(mut self, limits: CommandOutputLimits) -> Self {
@@ -131,6 +260,7 @@ impl CommandSessionManager {
         max_output_chars: usize,
     ) -> Result<CommandExecOutput> {
         cancellation.ensure_active()?;
+        self.prune_completed().await;
         if command.trim().is_empty() {
             bail!("command cannot be empty");
         }
@@ -154,10 +284,59 @@ impl CommandSessionManager {
         #[cfg(unix)]
         process.process_group(0);
 
+        let mut sessions = self.sessions.lock().await;
         cancellation.ensure_active()?;
-        let mut child = process
-            .spawn()
-            .with_context(|| format!("failed to start shell \"{shell}\" in {}", cwd.display()))?;
+        if self.stopped.load(Ordering::Acquire) {
+            bail!("command sessions are shutting down");
+        }
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let history_path = history_path(&self.log_directory, &session_id)?;
+        let preview = output.lock().await.preview_metadata();
+        let history = CommandHistory {
+            user_id: self.history_scope.0.clone(),
+            thread_id: self.history_scope.1.clone(),
+            machine_id: self.history_scope.2.clone(),
+            command: command.to_string(),
+            workdir: cwd.to_string_lossy().to_string(),
+            max_output_chars: max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+            result: CommandOutput {
+                exit_code: None,
+                success: false,
+                running: true,
+                timed_out: false,
+                output: String::new(),
+                complete_log_path: preview.complete_log_path,
+                events_path: preview.events_path,
+                error: None,
+            },
+        };
+        history.save(&history_path).await?;
+        let launch: Result<_> = (|| {
+            cancellation.ensure_active()?;
+            if self.stopped.load(Ordering::Acquire) {
+                bail!("command sessions are shutting down");
+            }
+            let lifetime_guard = self
+                .lifetime_guard_factory
+                .as_ref()
+                .map(|factory| factory())
+                .transpose()?;
+            let child = process.spawn().with_context(|| {
+                format!("failed to start shell \"{shell}\" in {}", cwd.display())
+            })?;
+            Ok((child, lifetime_guard))
+        })();
+        let (mut child, lifetime_guard) = match launch {
+            Ok(launched) => launched,
+            Err(error) => {
+                if let Err(cleanup_error) = tokio::fs::remove_file(&history_path).await {
+                    return Err(error.context(format!(
+                        "failed to remove unstarted command history: {cleanup_error}"
+                    )));
+                }
+                return Err(error);
+            }
+        };
         let process_id = child.id();
         let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
@@ -177,26 +356,28 @@ impl CommandSessionManager {
             capture_task,
             output.clone(),
             timeout_ms.map(|timeout_ms| Duration::from_millis(timeout_ms.max(1))),
+            lifetime_guard,
+            (history_path, history),
         ));
 
-        let session_id = self
-            .next_session_id
-            .fetch_add(1, Ordering::Relaxed)
-            .to_string();
+        // Sessions appear in saved agent history and browser requests, so their
+        // IDs must remain distinct when a manager or the server is recreated.
         let session = Arc::new(CommandSession {
             id: session_id.clone(),
             command: command.to_string(),
             workdir: cwd.to_string_lossy().to_string(),
+            started_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
             control,
             stdin,
             completion,
             output,
             observation: Mutex::new(CommandObservation::default()),
         });
-        self.sessions
-            .lock()
-            .await
-            .insert(session_id.clone(), session.clone());
+        sessions.insert(session_id.clone(), session.clone());
+        drop(sessions);
 
         let result = self
             .observe_session(
@@ -207,7 +388,7 @@ impl CommandSessionManager {
             )
             .await?;
         Ok(CommandExecOutput {
-            session_id: (result.running || yield_time_ms == 0).then_some(session_id),
+            session_id: Some(session_id),
             result,
         })
     }
@@ -221,7 +402,22 @@ impl CommandSessionManager {
         yield_time_ms: u64,
     ) -> Result<CommandStdinOutput> {
         action.validate(chars)?;
-        let session = self.session(session_id).await?;
+        cancellation.ensure_active()?;
+        let Some(session) = self.session(session_id).await else {
+            let mut output = tokio::select! {
+                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
+                result = self.saved_result(session_id) => result?,
+            };
+            if output.result.running {
+                bail!(
+                    "command is running on another machine; control it on its originating machine"
+                );
+            }
+            if yield_time_ms == 0 {
+                output.result.output.clear();
+            }
+            return Ok(output);
+        };
         let result = self
             .write_session(session.clone(), cancellation, action, chars, yield_time_ms)
             .await?;
@@ -238,7 +434,13 @@ impl CommandSessionManager {
         session_id: &str,
         yield_time_ms: u64,
     ) -> Result<CommandStdinOutput> {
-        let session = self.session(session_id).await?;
+        cancellation.ensure_active()?;
+        let Some(session) = self.session(session_id).await else {
+            return tokio::select! {
+                _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
+                result = self.saved_result(session_id) => result,
+            };
+        };
         let yield_time_ms = YieldMode::Poll.normalize(yield_time_ms);
         let mode = if yield_time_ms == 0 {
             ObservationMode::ZeroPoll
@@ -255,13 +457,53 @@ impl CommandSessionManager {
         })
     }
 
-    async fn session(&self, session_id: &str) -> Result<Arc<CommandSession>> {
+    /// Lists live processes without consuming command output or poll cooldowns.
+    pub async fn running_commands(&self) -> Vec<RunningCommand> {
+        let sessions = self.sessions.lock().await;
+        let mut commands = sessions
+            .values()
+            .filter(|session| session.completion.borrow().is_none())
+            .map(|session| RunningCommand {
+                session_id: session.id.clone(),
+                command: session.command.clone(),
+                workdir: session.workdir.clone(),
+                started_at: session.started_at,
+            })
+            .collect::<Vec<_>>();
+        commands.sort_by(|a, b| (a.started_at, &a.session_id).cmp(&(b.started_at, &b.session_id)));
+        commands
+    }
+
+    pub async fn terminate_command(&self, session_id: &str) -> bool {
+        let session = self.sessions.lock().await.get(session_id).cloned();
+        session.is_some_and(|session| {
+            session.completion.borrow().is_none() && session.terminate().is_ok()
+        })
+    }
+
+    /// Release live handles only after their completed results are saved on disk.
+    pub async fn prune_completed(&self) {
+        let mut sessions = self.sessions.lock().await;
+        sessions.retain(|_, session| {
+            Arc::strong_count(session) > 1
+                || session
+                    .completion
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|completion| !completion.archived)
+        });
+    }
+
+    /// True when no sessions remain and no clone still holds this manager.
+    /// Returns false without waiting if another task holds the session lock.
+    pub fn try_is_unused(&self) -> bool {
         self.sessions
-            .lock()
-            .await
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("unknown command session: {session_id}"))
+            .try_lock()
+            .is_ok_and(|sessions| sessions.is_empty() && Arc::strong_count(&self.sessions) == 1)
+    }
+
+    async fn session(&self, session_id: &str) -> Option<Arc<CommandSession>> {
+        self.sessions.lock().await.get(session_id).cloned()
     }
 
     async fn write_session(
@@ -272,11 +514,7 @@ impl CommandSessionManager {
         chars: &str,
         yield_time_ms: u64,
     ) -> Result<CommandOutput> {
-        if let Err(error) = cancellation.ensure_active() {
-            let _ = session.terminate();
-            self.sessions.lock().await.remove(&session.id);
-            return Err(error);
-        }
+        cancellation.ensure_active()?;
 
         if session.completion.borrow().is_none() {
             match action {
@@ -285,6 +523,12 @@ impl CommandSessionManager {
                         .write(chars.as_bytes().to_vec(), &cancellation)
                         .await
                     {
+                        if error
+                            .downcast_ref::<WorkspaceOperationCancelled>()
+                            .is_some()
+                        {
+                            return Err(error);
+                        }
                         return self
                             .observe_after_write_error(session, cancellation, yield_time_ms, error)
                             .await;
@@ -304,6 +548,7 @@ impl CommandSessionManager {
     }
 
     pub async fn stop_all(&self) {
+        self.stopped.store(true, Ordering::Release);
         let sessions = self
             .sessions
             .lock()
@@ -326,18 +571,6 @@ impl CommandSessionManager {
         self.sessions.lock().await.clear();
     }
 
-    /// Best-effort synchronous terminate used when async cleanup cannot run
-    /// (for example during `Drop` outside a Tokio runtime).
-    pub fn terminate_all(&self) {
-        let Ok(mut sessions) = self.sessions.try_lock() else {
-            return;
-        };
-        for session in sessions.values() {
-            let _ = session.terminate();
-        }
-        sessions.clear();
-    }
-
     async fn observe_session(
         &self,
         session: Arc<CommandSession>,
@@ -345,14 +578,7 @@ impl CommandSessionManager {
         yield_time_ms: u64,
         mode: ObservationMode,
     ) -> Result<CommandOutput> {
-        let completion = match wait_for_completion(&session, &cancellation, yield_time_ms).await {
-            Ok(completion) => completion,
-            Err(error) => {
-                let _ = session.terminate();
-                self.sessions.lock().await.remove(&session.id);
-                return Err(error);
-            }
-        };
+        let completion = wait_for_completion(&session, &cancellation, yield_time_ms).await?;
         session.output_snapshot(completion, None, mode).await
     }
 
@@ -376,14 +602,9 @@ impl CommandSessionManager {
             }
             Ok(None) => {
                 let _ = session.terminate();
-                self.sessions.lock().await.remove(&session.id);
                 Err(write_error)
             }
-            Err(error) => {
-                let _ = session.terminate();
-                self.sessions.lock().await.remove(&session.id);
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -392,6 +613,7 @@ struct CommandSession {
     id: String,
     command: String,
     workdir: String,
+    started_at: u64,
     control: mpsc::UnboundedSender<CommandControl>,
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
@@ -469,7 +691,9 @@ impl CommandSession {
                 .check()
                 .map_err(|error| anyhow!(error.message("Command is still running.")))?;
         }
-        let preview = if !matches!(mode, ObservationMode::Metadata) || completion.is_some() {
+        let preview = if completion.is_some() {
+            capture.full_preview()
+        } else if !matches!(mode, ObservationMode::Metadata) {
             capture.take_preview()
         } else {
             capture.preview_metadata()
@@ -504,6 +728,7 @@ struct StdinRequest {
 
 #[derive(Clone, Debug, Default)]
 struct CommandCompletion {
+    archived: bool,
     exit_code: Option<i32>,
     success: bool,
     timed_out: bool,
@@ -548,6 +773,8 @@ async fn supervise_command(
     mut capture_task: tokio::task::JoinHandle<Result<()>>,
     output: Arc<Mutex<CapturedOutput>>,
     timeout: Option<Duration>,
+    lifetime_guard: Option<CommandLifetimeGuard>,
+    history: (PathBuf, CommandHistory),
 ) {
     let timeout = wait_for_timeout(timeout);
     tokio::pin!(timeout);
@@ -603,15 +830,46 @@ async fn supervise_command(
     if let Err(capture_error) = output.lock().await.finish().await {
         error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));
     }
-    let completed = CommandCompletion {
+    let mut completed = CommandCompletion {
+        archived: false,
         exit_code: status.as_ref().and_then(ExitStatus::code),
         success: status.is_some_and(|status| status.success()) && !timed_out && error.is_none(),
         timed_out,
         error,
     };
-    let _ = completion.send(Some(completed));
+    let (path, mut history) = history;
+    history.result = completion_output(&completed, output.lock().await.full_preview());
+    match history.save(&path).await {
+        Ok(()) => completed.archived = true,
+        Err(error) => {
+            completed.success = false;
+            let message = format!("failed to save command result: {error:#}");
+            completed.error = Some(match completed.error {
+                Some(error) => format!("{error}; {message}"),
+                None => message,
+            });
+        }
+    }
     stdin_task.abort();
     let _ = stdin_task.await;
+    drop(lifetime_guard);
+    let _ = completion.send(Some(completed));
+}
+
+fn completion_output(
+    completion: &CommandCompletion,
+    preview: crate::command_output::OutputPreview,
+) -> CommandOutput {
+    CommandOutput {
+        exit_code: completion.exit_code,
+        success: completion.success,
+        running: false,
+        timed_out: completion.timed_out,
+        output: preview.output,
+        complete_log_path: preview.complete_log_path,
+        events_path: preview.events_path,
+        error: completion.error.clone(),
+    }
 }
 
 async fn wait_for_timeout(timeout: Option<Duration>) {
@@ -798,19 +1056,42 @@ pub struct CommandStdinOutput {
     pub result: CommandOutput,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandOutput {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_exit_code",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub exit_code: Option<i32>,
     pub success: bool,
     pub running: bool,
     pub timed_out: bool,
     pub output: String,
+    #[serde(default)]
     pub complete_log_path: String,
+    #[serde(default)]
     pub events_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+fn deserialize_exit_code<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i32>, D::Error> {
+    Option::<f64>::deserialize(deserializer)?
+        .map(|value| {
+            if !value.is_finite()
+                || value.fract() != 0.0
+                || value < i32::MIN as f64
+                || value > i32::MAX as f64
+            {
+                return Err(serde::de::Error::custom("invalid command exit code"));
+            }
+            Ok(value as i32)
+        })
+        .transpose()
 }
 
 #[cfg(test)]
@@ -874,6 +1155,7 @@ mod tests {
 
     fn completed_ok() -> CommandCompletion {
         CommandCompletion {
+            archived: true,
             exit_code: Some(0),
             success: true,
             timed_out: false,
@@ -905,6 +1187,7 @@ mod tests {
                 id: "test".into(),
                 command: "test".into(),
                 workdir: root.to_string_lossy().into_owned(),
+                started_at: 0,
                 control,
                 stdin,
                 completion: completion_rx,
@@ -1008,7 +1291,7 @@ mod tests {
         stub.complete();
         let finished = poll(&sessions, &stub.session.id, 10_000).await;
         assert!(finished.success);
-        assert_eq!(finished.output, ":done");
+        assert_eq!(finished.output, "ready:done");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1055,8 +1338,8 @@ mod tests {
         assert!(finished.success);
         assert!(!finished.running);
         assert_eq!(
-            finished.output, ":done",
-            "output preview is incremental across calls"
+            finished.output, "ready:done",
+            "completed output includes bytes already observed by earlier runs"
         );
         assert_eq!(
             fs::read(&finished.complete_log_path).unwrap(),
@@ -1129,6 +1412,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&output).unwrap(),
             serde_json::json!({
+                "sessionId": output.session_id,
                 "exitCode": 0,
                 "success": true,
                 "running": false,
@@ -1393,11 +1677,25 @@ mod tests {
     #[tokio::test]
     async fn capture_failure_terminates_the_command_and_reports_failure() {
         let root = temp_workspace();
+        let command = "sleep 0.5; touch leaked";
         let output = super::CapturedOutput::create(&root.join("logs"), 100)
             .await
             .unwrap();
-        let mut process =
-            super::build_shell_command("sleep 0.5; touch leaked", &default_command_shell());
+        let history_path =
+            super::history_path(&root.join("logs"), &uuid::Uuid::new_v4().to_string()).unwrap();
+        let history = super::CommandHistory {
+            user_id: String::new(),
+            thread_id: String::new(),
+            machine_id: String::new(),
+            command: command.into(),
+            workdir: root.to_string_lossy().into_owned(),
+            max_output_chars: 100,
+            result: super::completion_output(
+                &CommandCompletion::default(),
+                output.preview_metadata(),
+            ),
+        };
+        let mut process = super::build_shell_command(command, &default_command_shell());
         process.current_dir(&root).kill_on_drop(true);
         #[cfg(unix)]
         process.process_group(0);
@@ -1414,6 +1712,8 @@ mod tests {
             tokio::spawn(async { anyhow::bail!("injected log write failure") }),
             std::sync::Arc::new(tokio::sync::Mutex::new(output)),
             Some(Duration::from_secs(5)),
+            None,
+            (history_path, history),
         ));
         tokio::time::timeout(Duration::from_secs(2), completed.changed())
             .await
@@ -1488,6 +1788,29 @@ mod tests {
         assert_eq!(
             error.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::NotFound
+        );
+        let next = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "echo started",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let records = fs::read_dir(root.join("logs/sessions"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            records,
+            vec![std::ffi::OsString::from(format!(
+                "{}.json",
+                next.session_id.unwrap()
+            ))]
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -1781,13 +2104,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_poll_removes_and_terminates_session() {
+    async fn cancelled_observation_preserves_command_for_a_later_run() {
         let root = temp_workspace();
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
-                "sleep 5",
+                "while [ ! -f release ]; do sleep 0.01; done; printf survived",
                 ".",
                 &default_command_shell(),
                 Some(5_000),
@@ -1798,24 +2121,355 @@ mod tests {
             .expect("command should start");
         let session_id = started.session_id.as_deref().unwrap();
         let cancellation = WorkspaceCancellation::new();
-        cancellation.cancel();
-
-        sessions
-            .poll_command(cancellation.clone(), session_id, 5_000)
-            .await
-            .expect_err("cancelled poll should fail");
+        let observer = sessions.poll_command(cancellation.clone(), session_id, 5_000);
+        let cancel = async {
+            tokio::task::yield_now().await;
+            cancellation.cancel();
+        };
+        let (result, _) = tokio::join!(observer, cancel);
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<super::WorkspaceOperationCancelled>()
+                .is_some()
+        );
         let cancelled_write = sessions
             .control_command(cancellation, session_id, CommandAction::Write, "x", 5_000)
             .await;
         assert!(
             cancelled_write
-                .expect_err("cancelled write should fail")
-                .to_string()
-                .contains("unknown command session")
+                .unwrap_err()
+                .downcast_ref::<super::WorkspaceOperationCancelled>()
+                .is_some()
         );
+        let running = sessions.running_commands().await;
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].session_id, session_id);
+        assert_eq!(running[0].workdir, root.to_string_lossy());
+        assert!(running[0].started_at > 0);
 
-        assert!(!sessions.sessions.lock().await.contains_key(session_id));
+        // A fresh run cancellation token can still observe the command's result.
+        fs::write(root.join("release"), "").unwrap();
+        let finished = poll(&sessions, session_id, 5_000).await;
+        assert!(finished.success);
+        assert_eq!(finished.output, "survived");
+        assert!(sessions.running_commands().await.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_exec_keeps_the_started_command_discoverable() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let cancellation = WorkspaceCancellation::new();
+        let cancel = async {
+            // Observe registration instead of relying on process startup timing.
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while sessions.running_commands().await.is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("command must register before cancellation");
+            cancellation.cancel();
+        };
+        let shell = default_command_shell();
+        let exec = sessions.exec_command(
+            cancellation.clone(),
+            "sleep 5",
+            ".",
+            &shell,
+            Some(5_000),
+            5_000,
+            20_000,
+        );
+        let (result, _) = tokio::join!(exec, cancel);
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<super::WorkspaceOperationCancelled>()
+                .is_some()
+        );
+        let running = sessions.running_commands().await;
+        assert_eq!(running.len(), 1);
+        assert!(sessions.terminate_command(&running[0].session_id).await);
+        let finished = poll(&sessions, &running[0].session_id, 5_000).await;
+        assert!(!finished.running);
+        assert!(!sessions.terminate_command(&running[0].session_id).await);
+        assert!(!sessions.terminate_command("missing").await);
         sessions.stop_all().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cleanup_releases_archived_handles_and_preserves_live_observations() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let running = stub_session(&root).await;
+        sessions
+            .sessions
+            .lock()
+            .await
+            .insert("running".into(), running.session.clone());
+        let observed = stub_session(&root).await;
+        observed.complete();
+        sessions
+            .sessions
+            .lock()
+            .await
+            .insert("observed".into(), observed.session.clone());
+        let completed = stub_session(&root).await;
+        completed.complete();
+        sessions
+            .sessions
+            .lock()
+            .await
+            .insert("completed".into(), completed.session);
+        sessions.prune_completed().await;
+        let retained = sessions.sessions.lock().await;
+        assert_eq!(retained.len(), 2);
+        assert!(retained.contains_key("running"));
+        assert!(retained.contains_key("observed"));
+        drop(retained);
+        drop(observed);
+        sessions.prune_completed().await;
+        assert!(!sessions.sessions.lock().await.contains_key("observed"));
+        sessions.stop_all().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn later_runs_replay_full_output_after_cleanup_and_server_restart() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, started) =
+            exec_running(&sessions, "printf ready; read value; printf ':done'").await;
+        wait_for_log(&started.complete_log_path, b"ready").await;
+        assert_eq!(poll(&sessions, &id, 0).await.output, "ready");
+        write(&sessions, &id, "go\n", 0).await;
+        let finished = poll(&sessions, &id, 5_000).await;
+        assert_eq!(finished.output, "ready:done");
+        sessions.prune_completed().await;
+        assert!(sessions.sessions.lock().await.is_empty());
+        let replay = sessions
+            .poll_command(WorkspaceCancellation::new(), &id, 270_000)
+            .await
+            .unwrap();
+        assert_eq!(replay.command, "printf ready; read value; printf ':done'");
+        assert_eq!(replay.result.output, "ready:done");
+        assert_eq!(replay.result.exit_code, Some(0));
+        assert!(replay.result.success);
+        assert_eq!(replay.result.complete_log_path, finished.complete_log_path);
+        sessions.stop_all().await;
+        drop(sessions);
+        let restarted = CommandSessionManager::new(root.clone(), root.join("logs"));
+        assert_eq!(poll(&restarted, &id, 0).await.output, "ready:done");
+        assert!(terminate(&restarted, &id, 0).await.output.is_empty());
+        assert_eq!(poll(&restarted, &id, 0).await.output, "ready:done");
+        let other = CommandSessionManager::new(root.clone(), root.join("other-thread"));
+        assert!(
+            other
+                .poll_command(WorkspaceCancellation::new(), &id, 0)
+                .await
+                .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn history_snapshot_recovers_the_archive_after_a_running_session_is_pruned() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (id, _) = exec_running(&sessions, "read value; printf '%s' \"$value\"").await;
+        let mut history = serde_json::from_slice(
+            &tokio::fs::read(super::history_path(&root.join("logs"), &id).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        sessions.history_snapshot(&id, &mut history).await.unwrap();
+        assert!(history.result.running);
+
+        write(&sessions, &id, "done\n", 0).await;
+        await_completion(&sessions, &id).await;
+        sessions.prune_completed().await;
+        sessions.history_snapshot(&id, &mut history).await.unwrap();
+        assert!(history.result.success);
+        assert!(!history.result.running);
+        assert_eq!(history.result.exit_code, Some(0));
+        assert_eq!(history.result.output, "done");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn another_machine_resolves_the_same_session_and_keeps_a_local_replica() {
+        let origin = temp_workspace();
+        let sessions = CommandSessionManager::new(origin.clone(), origin.join("logs"))
+            .with_history_scope("user".into(), "thread".into(), "origin".into());
+        let result = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf shared",
+                ".",
+                &default_command_shell(),
+                None,
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let id = result.session_id.unwrap();
+        let mut history = serde_json::from_slice(
+            &tokio::fs::read(super::history_path(&origin.join("logs"), &id).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        sessions.history_snapshot(&id, &mut history).await.unwrap();
+        let destination = temp_workspace();
+        let expected_id = id.clone();
+        let remote = CommandSessionManager::new(destination.clone(), destination.join("logs"))
+            .with_history_scope("user".into(), "thread".into(), "destination".into())
+            .with_history_resolver(move |id, directory| {
+                let expected_id = expected_id.clone();
+                let mut history = history.clone();
+                async move {
+                    assert_eq!(id, expected_id);
+                    tokio::fs::create_dir_all(&directory).await?;
+                    let log = directory.join("output.log");
+                    let events = directory.join("events.jsonl");
+                    tokio::fs::copy(&history.result.complete_log_path, &log).await?;
+                    tokio::fs::copy(&history.result.events_path, &events).await?;
+                    history.result.complete_log_path = log.to_string_lossy().into_owned();
+                    history.result.events_path = events.to_string_lossy().into_owned();
+                    history.save(&super::history_path(&directory, &id)?).await?;
+                    Ok(Some(history))
+                }
+            });
+        let replay = poll(&remote, &id, 0).await;
+        assert_eq!(replay.output, "shared");
+        assert!(std::path::Path::new(&replay.complete_log_path).starts_with(&destination));
+        drop(remote);
+        let offline = CommandSessionManager::new(destination.clone(), destination.join("logs"));
+        assert_eq!(poll(&offline, &id, 0).await.output, "shared");
+        fs::remove_dir_all(origin).unwrap();
+        fs::remove_dir_all(destination).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cached_history_stays_available_during_failed_or_stalled_remote_fetches() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
+            .with_history_scope("user".into(), "thread".into(), "destination".into());
+        let completed = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf cached",
+                ".",
+                &default_command_shell(),
+                None,
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+        assert!(completed.result.success);
+        let completed_id = completed.session_id.unwrap();
+        sessions.prune_completed().await;
+        let mut remote: super::CommandHistory = serde_json::from_slice(
+            &tokio::fs::read(super::history_path(&root.join("logs"), &completed_id).unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        remote.machine_id = "origin".into();
+        remote.result.running = true;
+        remote.result.success = false;
+        remote.result.exit_code = None;
+        remote.result.error = Some("last synced output, not a live process observation".into());
+        let remote_id = uuid::Uuid::new_v4().to_string();
+        remote
+            .save(&super::history_path(&root.join("logs"), &remote_id).unwrap())
+            .await
+            .unwrap();
+
+        let sessions = sessions.with_history_resolver(|_, _| std::future::pending());
+        let manager = sessions.clone();
+        let id = remote_id.clone();
+        tokio::time::pause();
+        let fetching = tokio::spawn(async move { poll(&manager, &id, 0).await });
+        while sessions.history_fetch_lock.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(poll(&sessions, &completed_id, 0).await.output, "cached");
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let cached = fetching.await.unwrap();
+        assert!(cached.running);
+        assert_eq!(cached.output, "cached");
+        assert!(cached.error.unwrap().contains("last synced"));
+        let unknown = uuid::Uuid::new_v4().to_string();
+        let timed_out = sessions
+            .poll_command(WorkspaceCancellation::new(), &unknown, 0)
+            .await
+            .unwrap_err();
+        assert!(timed_out.to_string().contains("timed out"));
+        tokio::time::resume();
+
+        let sessions = sessions.with_history_resolver(|_, _| async { anyhow::bail!("offline") });
+        let cached = poll(&sessions, &remote_id, 0).await;
+        assert!(cached.running);
+        assert_eq!(cached.output, "cached");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recreated_manager_cannot_retarget_stale_session_ids() {
+        let root = temp_workspace();
+        let old_sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (old_id, _) = exec_running_with_timeout(&old_sessions, "sleep 5", Some(5_000)).await;
+        old_sessions.stop_all().await;
+        drop(old_sessions);
+
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let (new_id, _) = exec_running_with_timeout(&sessions, "sleep 5", Some(5_000)).await;
+        assert_ne!(old_id, new_id);
+        assert!(!sessions.terminate_command(&old_id).await);
+        let old_result = sessions
+            .control_command(
+                WorkspaceCancellation::new(),
+                &old_id,
+                CommandAction::Terminate,
+                "",
+                0,
+            )
+            .await
+            .unwrap();
+        assert!(!old_result.result.running);
+        assert_eq!(sessions.running_commands().await[0].session_id, new_id);
+        sessions.stop_all().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_rejects_commands_from_existing_manager_clones() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let run_sessions = sessions.clone();
+        sessions.stop_all().await;
+        let error = run_sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "touch leaked",
+                ".",
+                &default_command_shell(),
+                None,
+                0,
+                20_000,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("shutting down"));
+        assert!(!root.join("leaked").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1842,31 +2496,6 @@ mod tests {
         assert!(!finished.success);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!root.join("leaked.txt").exists());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
-    async fn terminate_all_clears_active_sessions() {
-        let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
-        let started = sessions
-            .exec_command(
-                WorkspaceCancellation::new(),
-                "sleep 5",
-                ".",
-                &default_command_shell(),
-                Some(5_000),
-                0,
-                20_000,
-            )
-            .await
-            .expect("command should start");
-        let session_id = started.session_id.expect("session id");
-        assert!(sessions.sessions.lock().await.contains_key(&session_id));
-
-        sessions.terminate_all();
-        assert!(sessions.sessions.lock().await.is_empty());
-        tokio::time::sleep(Duration::from_millis(300)).await;
         fs::remove_dir_all(root).unwrap();
     }
 

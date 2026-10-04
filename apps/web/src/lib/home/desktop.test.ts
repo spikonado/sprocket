@@ -41,6 +41,8 @@ const recoveredSubmission = {
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
+		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unusedDesktopCall,
 		listWorkspaceSkills: unusedDesktopCall,
 		searchWorkspace: unusedDesktopCall,

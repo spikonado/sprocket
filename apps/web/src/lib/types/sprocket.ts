@@ -282,7 +282,21 @@ export type WorkspaceSearchResult = {
 	scanning: boolean;
 };
 
+export type RunningCommand = {
+	sessionId: string;
+	command: string;
+	workdir: string;
+	startedAt: number;
+};
+
 export type DesktopApi = {
+	listRunningCommands: (
+		request: TranscriptScopeRequest,
+		signal?: AbortSignal
+	) => Promise<{ commands: RunningCommand[] }>;
+	terminateCommand: (
+		request: TranscriptScopeRequest & { sessionId: string }
+	) => Promise<{ terminated: boolean }>;
 	browseFilesystem: (input: {
 		partialPath: string;
 		cwd?: string;

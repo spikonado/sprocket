@@ -162,19 +162,35 @@ instead of `write_stdin`. Convex still accepts `write_stdin` jobs from released
 agents, and the UI still renders their stored input, command results, session
 labels, and log previews. New agents do not dispatch historical `write_stdin`
 calls, so that name cannot bypass the new poll cooldown. Command sessions are
-local to an agent run; no live-session or stored-data migration is needed.
+server resources scoped to the user and thread. New commands save thread-local
+session records beside their logs; no stored transcript rewrite is needed.
 
 Remove `write_stdin` from the current Convex job-kind validator after agents
 that advertise it are outside the supported upgrade window. Keep acceptance
 in stored-history validators and historical UI rendering permanently.
+
+### Durable command sessions
+
+New `exec_cmd` results always include a string `sessionId`, even when the command
+finishes during its initial wait. Completed polls return a bounded preview of the
+full output rather than only its previously unread tail. Existing result shapes,
+saved transcript results, and log paths remain valid. Thread-local session records
+and the `commandSessions` and `commandLogChunks` Convex tables are additive;
+released servers stored no such records, so no migration is needed.
+
+Released servers did not persist a mapping from session IDs to logs. Session IDs
+already lost on restart or pruning cannot be reconstructed reliably; no numeric-ID guess or
+log retargeting is attempted. Session IDs for newly launched commands remain
+UUIDs, preventing old IDs from controlling replacement processes. No compatibility
+shim or migration is introduced for data that was never stored.
 
 ### Renamed command and question tools
 
 Current agents advertise `exec_cmd`, `control_cmd`, `poll_cmd`, and
 `poll_question`, replacing `exec_command`, `control_command`, `poll_command`,
 and `await_question`. Convex accepts the former names for released agents and
-the UI renders both names. Current agents do not dispatch the former names;
-command sessions remain local to a run. No stored-history rewrite is needed.
+the UI renders both names. Current agents do not dispatch the former names.
+No stored-history rewrite is needed.
 
 All five command/question tools default to 10-second execution waits. Positive
 poll waits clamp to 10–270 seconds, and pending zero-wait polls have a 10-second

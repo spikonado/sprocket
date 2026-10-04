@@ -801,6 +801,7 @@ async fn load_prior_history(
 
 pub async fn run_agent(
     run: AgentRun,
+    command_sessions: sprocket_workspace::CommandSessionManager,
     live: Arc<LiveCompletionHub>,
     store: Arc<TranscriptStore>,
 ) -> anyhow::Result<()> {
@@ -989,6 +990,7 @@ pub async fn run_agent(
                         &context.run.user_id,
                         &workspace_root,
                     ),
+                    command_sessions: command_sessions.clone(),
                     workspace_root,
                     skills,
                     reasoning_effort,

@@ -10,7 +10,7 @@ See [ARCHITECTURE.md](../../ARCHITECTURE.md) for its role in the complete system
 
 - Resolve and browse workspace paths.
 - Load scoped workspace instructions and skills.
-- Run cancellable shell commands and manage long-running sessions.
+- Manage shell command sessions whose processes outlive cancelled observations and agent runs.
 - Apply multi-file patches, including paths outside the workspace.
 
 ## Design
@@ -22,8 +22,12 @@ per workspace, and rolled back when application fails.
 
 Command execution has a different trust boundary. Commands start in the
 workspace by default, but they are not sandboxed and may access the wider
-machine with the permissions of the Sprocket process. Output is bounded, and
-cancellation or timeout stops the process tree.
+machine with the permissions of the Sprocket process. Output is bounded.
+Cancelling an observation leaves the process running; explicit termination,
+timeout, or server shutdown stops its process tree. Completed session results
+remain queryable from thread-local disk history after live handles are released.
+The server replicates those records and event logs to Convex. On another machine,
+it downloads the events and reconstructs the raw output log locally.
 
 Workspace instruction loading follows the project hierarchy so deeper
 instructions can refine root-level guidance without coupling that behavior to

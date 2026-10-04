@@ -154,8 +154,31 @@ Async tools share their timing policy through
 with `YieldMode::Action`; poll tools use `YieldMode::Poll`. Use
 `tools/async_tools.rs` for the matching provider schema and serde defaults, and
 `execute_serialized_tool_job` for typed arguments and results in the existing
-job lifecycle. Resource operations must observe the supplied cancellation token;
-commands also terminate their process tree during cancellation.
+job lifecycle. Resource operations must observe the supplied cancellation token.
+Cancelling a command operation stops waiting for input or output; the process stays available
+through its thread session. Commands keep running after agent completion or
+cancellation until they exit, reach an explicit timeout, are terminated, or the
+server shuts down. Subsequent runs in the same thread reuse the sessions.
+Every command returns a thread-scoped session ID, including commands that finish
+within the initial wait. Session records, `output.log`, and `events.jsonl` are
+stored under the Sprocket data directory. Only the event log is replicated to
+Convex in ordered, retryable chunks; downloads reconstruct the raw output from
+its ordered byte arrays. Downloaded logs live directly under
+`command-logs/command-<sessionId>/`, alongside locally captured log directories.
+Completed results remain pollable without an age or count limit after restarts
+or from another machine. Remote queries download logs into the local data directory;
+live command control requires the originating machine. Network outages leave
+local records pending for retry, so another machine sees only previously synced data.
+Once a running session's events are fully acknowledged, unchanged event lengths skip
+cloud queries and writes. New bytes or completion resume synchronization; failed
+and partial uploads remain pending. This idle tracking is in memory, so server
+restart reconciles unsynced records with Convex again.
+Running polls return incremental output; completed polls replay a bounded preview
+of the full output, including bytes read by earlier runs, with full log paths.
+If shutdown interrupts a command before its final status is saved, later polls
+recover the log and report an interrupted, potentially incomplete result.
+The transcript dashboard lists live commands without consuming output and offers
+per-command termination.
 
 For immediate polls, keep `ZeroPollCooldown` under the resource's observation
 lock. Fetch current state before checking the cooldown so terminal results remain

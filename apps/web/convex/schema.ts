@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
+import { commandSnapshot } from '@convex/lib/commandSessions';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -160,6 +161,18 @@ export default defineSchema({
 		lifecycleCheckId: v.optional(v.id('_scheduled_functions')),
 		lifecycleGeneration: v.optional(v.number())
 	}).index('by_runId', ['runId']),
+	commandSessions: defineTable({
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		sessionId: v.string(),
+		...commandSnapshot.fields,
+		eventsBytes: v.number()
+	}).index('by_threadId_and_sessionId', ['threadId', 'sessionId']),
+	commandLogChunks: defineTable({
+		commandId: v.id('commandSessions'),
+		offset: v.number(),
+		bytes: v.bytes()
+	}).index('by_commandId_offset', ['commandId', 'offset']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({

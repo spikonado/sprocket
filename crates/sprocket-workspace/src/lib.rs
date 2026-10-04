@@ -4,6 +4,7 @@ mod artifacts;
 pub mod async_tools;
 mod browse;
 mod builtin_skills;
+mod command_history;
 mod command_output;
 mod commands;
 mod git_repository;
@@ -29,10 +30,11 @@ pub use browse::{
     resolve_or_create_workspace_root,
 };
 pub use builtin_skills::BUILTIN_SKILLS;
+pub use command_history::{CommandHistory, history_path};
 pub use command_output::CommandOutputLimits;
 pub use commands::{
     CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
-    MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, WorkspaceCancellation,
+    MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, RunningCommand, WorkspaceCancellation,
     WorkspaceOperationCancelled, default_command_shell,
 };
 pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};

@@ -92,6 +92,8 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
+		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,
 		listWorkspaceSkills: async () => ({ skills: [], warnings: [] }),
 		searchWorkspace: unused,
