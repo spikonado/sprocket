@@ -12,7 +12,7 @@ DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
 
 	const source = stripImageFileScheme(attribute.attrValue);
 
-	attribute.attrValue = isWindowsImagePath(source) ? source.replace(':', '%3A') : source;
+	attribute.attrValue = isWindowsImagePath(source) ? `${source[0]}%3A${source.slice(2)}` : source;
 });
 
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
