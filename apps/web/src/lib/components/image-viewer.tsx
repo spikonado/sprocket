@@ -5,6 +5,7 @@ export type ViewerImage = {
 	url: string;
 	name: string;
 	mediaType: string;
+	readActions?: boolean;
 };
 
 function extensionForMediaType(mediaType: string): string | undefined {
@@ -50,7 +51,13 @@ function downloadFilename(current: ViewerImage) {
 }
 
 async function fetchImageBlob(current: ViewerImage) {
-	const response = await fetch(current.url, { referrerPolicy: 'no-referrer' });
+	const response = await fetch(current.url, {
+		referrerPolicy: 'no-referrer',
+		credentials:
+			new URL(current.url, window.location.href).pathname === '/api/workspace/image'
+				? 'include'
+				: 'same-origin'
+	});
 
 	if (!response.ok) {
 		throw new Error(`Fetch failed with status ${response.status}`);
@@ -139,6 +146,10 @@ export default function ImageViewer({
 		const previousBodyOverflow = document.body.style.overflow;
 		document.body.style.overflow = 'hidden';
 
+		if (document.fullscreenElement && document.querySelector('[data-artifact-screen-fullscreen]')) {
+			void document.exitFullscreen?.().catch(() => {});
+		}
+
 		function handleWindowKeydown(event: KeyboardEvent) {
 			if (event.key === 'Escape') {
 				event.preventDefault();
@@ -156,7 +167,7 @@ export default function ImageViewer({
 
 			const focusable = Array.from(
 				dialogEl.querySelectorAll<HTMLElement>(
-					'button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+					'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
 				)
 			).filter((element) => !element.hasAttribute('hidden'));
 
@@ -326,36 +337,50 @@ export default function ImageViewer({
 				</button>
 
 				<div className="absolute right-3 bottom-3 flex items-center gap-2">
-					<button
-						type="button"
-						className={actionButtonClass}
-						aria-disabled={copying}
-						aria-label={copying ? 'Copying image' : copied ? 'Image copied' : 'Copy image'}
-						title={copying ? 'Copying image' : copied ? 'Image copied' : 'Copy image'}
-						onClick={() => void copyImage(current)}
-					>
-						{copying ? (
-							<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-						) : copied ? (
-							<Check className="size-4" aria-hidden="true" />
-						) : (
-							<Copy className="size-4" aria-hidden="true" />
-						)}
-					</button>
-					<button
-						type="button"
-						className={actionButtonClass}
-						aria-disabled={downloading}
-						aria-label={downloading ? 'Downloading image' : 'Download image'}
-						title={downloading ? 'Downloading image' : 'Download image'}
-						onClick={() => void downloadImage(current)}
-					>
-						{downloading ? (
-							<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-						) : (
-							<Download className="size-4" aria-hidden="true" />
-						)}
-					</button>
+					{current.readActions === false ? (
+						<a
+							className={`${actionButtonClass} w-auto px-3 text-sm`}
+							href={current.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							referrerPolicy="no-referrer"
+						>
+							Open original image
+						</a>
+					) : (
+						<>
+							<button
+								type="button"
+								className={actionButtonClass}
+								aria-disabled={copying}
+								aria-label={copying ? 'Copying image' : copied ? 'Image copied' : 'Copy image'}
+								title={copying ? 'Copying image' : copied ? 'Image copied' : 'Copy image'}
+								onClick={() => void copyImage(current)}
+							>
+								{copying ? (
+									<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+								) : copied ? (
+									<Check className="size-4" aria-hidden="true" />
+								) : (
+									<Copy className="size-4" aria-hidden="true" />
+								)}
+							</button>
+							<button
+								type="button"
+								className={actionButtonClass}
+								aria-disabled={downloading}
+								aria-label={downloading ? 'Downloading image' : 'Download image'}
+								title={downloading ? 'Downloading image' : 'Download image'}
+								onClick={() => void downloadImage(current)}
+							>
+								{downloading ? (
+									<LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+								) : (
+									<Download className="size-4" aria-hidden="true" />
+								)}
+							</button>
+						</>
+					)}
 				</div>
 				<span className="sr-only" aria-live="polite">
 					{copying

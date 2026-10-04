@@ -1,3 +1,5 @@
+import { resolveLocalApiBaseUrl } from '$lib/local/client';
+
 export type MarkdownImageScope = { workspacePath: string; documentPath?: string };
 
 export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
@@ -24,7 +26,12 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 		path: absolute ? path : directory + path
 	});
 
-	return `/api/workspace/image?${query}`;
+	const baseUrl = resolveLocalApiBaseUrl();
+	const pathUrl = `/api/workspace/image?${query}`;
+
+	return baseUrl && baseUrl !== globalThis.window?.location.origin
+		? `${baseUrl}${pathUrl}`
+		: pathUrl;
 }
 
 export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) {
@@ -43,6 +50,10 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 		else {
 			image.removeAttribute('src');
 			image.alt = `${image.alt || 'Image'} (unavailable)`;
+		}
+
+		if (url && url.startsWith(`${resolveLocalApiBaseUrl()}/api/workspace/image?`)) {
+			image.crossOrigin = 'use-credentials';
 		}
 
 		if (!image.closest('a') && url) {

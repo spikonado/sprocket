@@ -216,6 +216,19 @@ describe('artifact references', () => {
 });
 
 describe('images', () => {
+	it('offers the original remote image instead of CORS-dependent read actions', () => {
+		const { getByRole, queryByRole } = render(
+			<ChatMarkdown content="![Board](https://example.com/board.png)" />
+		);
+
+		fireEvent.click(getByRole('button', { name: 'View Board' }));
+
+		expect(getByRole('link', { name: 'Open original image' }).getAttribute('href')).toBe(
+			'https://example.com/board.png'
+		);
+		expect(queryByRole('button', { name: 'Copy image' })).toBeNull();
+	});
+
 	it('renders Windows absolute image paths through sanitization', () => {
 		const { getByRole } = render(
 			<ChatMarkdown

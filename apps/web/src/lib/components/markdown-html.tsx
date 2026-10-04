@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import CodeCopyButton from './code-copy-button';
 import ImageViewer, { type ViewerImage } from './image-viewer';
 import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
+import { resolveLocalApiBaseUrl } from '$lib/local/client';
 
 type CodeControl = { target: HTMLElement; wrapper: HTMLDivElement; pre: HTMLElement; code: string };
 
@@ -120,7 +121,15 @@ export default function MarkdownHtml({
 		)
 			return;
 
-		setViewerImage({ url: image.src, name: image.alt || 'Image', mediaType: '' });
+		const url = new URL(image.src);
+		const workspaceImage = image.src.startsWith(`${resolveLocalApiBaseUrl()}/api/workspace/image?`);
+		setViewerImage({
+			url: image.src,
+			name: image.alt || 'Image',
+			mediaType: '',
+			readActions:
+				workspaceImage || !/^https?:$/.test(url.protocol) || url.origin === window.location.origin
+		});
 	}
 
 	return (

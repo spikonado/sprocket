@@ -160,6 +160,7 @@ fn read_workspace_image(
             workspace_path.display()
         )
     })?;
+    let workspace_file = open_workspace_root(&workspace)?;
     let image_path = Path::new(&image_path);
     let image_path = if image_path.is_absolute() {
         image_path.to_path_buf()
@@ -172,7 +173,7 @@ fn read_workspace_image(
         anyhow::bail!("image path is outside the attached workspace");
     }
 
-    let file = open_workspace_image(&workspace, &image_path)
+    let file = open_workspace_image(workspace_file, &workspace, &image_path)
         .with_context(|| "failed to open workspace image")?;
     let metadata = file
         .metadata()
@@ -201,18 +202,42 @@ fn read_workspace_image(
 }
 
 #[cfg(unix)]
-fn open_workspace_image(workspace: &Path, image_path: &Path) -> anyhow::Result<std::fs::File> {
+fn open_workspace_root(workspace: &Path) -> anyhow::Result<std::fs::File> {
+    use std::os::unix::fs::MetadataExt;
+    let checked = std::fs::metadata(workspace)?;
+    let root = std::fs::File::open("/")?;
+    let file = open_relative_image(root, workspace.strip_prefix("/")?, true)?;
+    let opened = file.metadata()?;
+    if checked.dev() != opened.dev() || checked.ino() != opened.ino() {
+        anyhow::bail!("workspace changed while opening image");
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_workspace_image(
+    workspace_file: std::fs::File,
+    workspace: &Path,
+    image_path: &Path,
+) -> anyhow::Result<std::fs::File> {
+    open_relative_image(workspace_file, image_path.strip_prefix(workspace)?, false)
+}
+
+#[cfg(unix)]
+fn open_relative_image(
+    mut file: std::fs::File,
+    relative: &Path,
+    directory: bool,
+) -> anyhow::Result<std::fs::File> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
 
-    let mut file = std::fs::File::open(workspace)?;
-    let relative = image_path.strip_prefix(workspace)?;
     let mut components = relative.components().peekable();
     while let Some(component) = components.next() {
         let name = CString::new(component.as_os_str().as_bytes())?;
         let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
-        if components.peek().is_some() {
+        if directory || components.peek().is_some() {
             flags |= libc::O_DIRECTORY;
         }
         // Walk from the workspace descriptor so a concurrent symlink swap cannot escape it.
@@ -226,9 +251,57 @@ fn open_workspace_image(workspace: &Path, image_path: &Path) -> anyhow::Result<s
     Ok(file)
 }
 
-#[cfg(not(unix))]
-fn open_workspace_image(_workspace: &Path, image_path: &Path) -> anyhow::Result<std::fs::File> {
-    Ok(std::fs::File::open(image_path)?)
+#[cfg(windows)]
+fn open_workspace_root(workspace: &Path) -> anyhow::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(workspace)?;
+    if opened_windows_path(&file)? != workspace {
+        anyhow::bail!("workspace changed while opening image");
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn open_workspace_image(
+    workspace_file: std::fs::File,
+    _workspace: &Path,
+    image_path: &Path,
+) -> anyhow::Result<std::fs::File> {
+    let file = std::fs::File::open(image_path)?;
+    if !opened_windows_path(&file)?.starts_with(opened_windows_path(&workspace_file)?) {
+        anyhow::bail!("image path is outside the attached workspace");
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn opened_windows_path(file: &std::fs::File) -> anyhow::Result<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+    let mut path = vec![0u16; 32768];
+    // SAFETY: the handle is live and the buffer has the supplied capacity.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle(),
+            path.as_mut_ptr(),
+            path.len() as u32,
+            0,
+        )
+    } as usize;
+    if length == 0 || length >= path.len() {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(
+        &path[..length],
+    )))
 }
 
 fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {
@@ -685,6 +758,27 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn opened_workspace_survives_path_replacement_without_reading_outside() {
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("workspace");
+        let outside = parent.path().join("outside");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(workspace.join("board.png"), b"inside").unwrap();
+        std::fs::write(outside.join("board.png"), b"outside").unwrap();
+        let checked = std::fs::canonicalize(&workspace).unwrap();
+        let root = open_workspace_root(&checked).unwrap();
+        std::fs::rename(&workspace, parent.path().join("moved")).unwrap();
+        std::os::unix::fs::symlink(&outside, &workspace).unwrap();
+        let mut image = open_workspace_image(root, &checked, &checked.join("board.png")).unwrap();
+        let mut contents = Vec::new();
+        image.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"inside");
+        assert!(open_workspace_root(&checked).is_err());
     }
 
     #[test]

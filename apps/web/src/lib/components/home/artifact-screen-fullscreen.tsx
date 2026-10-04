@@ -52,6 +52,13 @@ export default function ArtifactScreenFullscreen({ artifact, workspacePath, onCl
 			}
 
 			if (wasFullscreen) {
+				if (document.querySelector('[data-image-viewer]')) {
+					wasFullscreen = false;
+					setShowFallbackClose(true);
+
+					return;
+				}
+
 				close();
 			}
 		};

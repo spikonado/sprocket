@@ -1,5 +1,14 @@
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { markdownImageUrl } from './markdown-images';
+
+afterEach(() => vi.unstubAllEnvs());
+
+it('uses the configured local API origin for workspace images', () => {
+	vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
+	const url = markdownImageUrl('board.png', { workspacePath: '/workspace' });
+
+	expect(new URL(url ?? '').origin).toBe('https://machine.example.com');
+});
 
 it.each([
 	['./board%20layout.png', 'docs/./board layout.png'],
