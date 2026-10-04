@@ -78,9 +78,7 @@ struct GatewayCatalogModel {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCatalog {
     pub default_model_id: String,
-    #[serde(default)]
     pub default_fast: bool,
-    #[serde(default)]
     pub models: Vec<ProviderCatalogModel>,
 }
 
@@ -89,12 +87,9 @@ pub struct ProviderCatalog {
 pub struct ProviderCatalogModel {
     pub id: String,
     pub label: String,
-    #[serde(default)]
     pub supports_images: bool,
-    #[serde(default)]
     pub reasoning_efforts: Vec<String>,
     pub default_reasoning_effort: String,
-    #[serde(default)]
     pub service_tiers: Vec<String>,
 }
 

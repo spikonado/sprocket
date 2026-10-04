@@ -758,7 +758,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		const threadId = await seedThreadRecord(t, subject, repositoryKey);
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, { parentThreadId: rootId });
-			await registerChildThread(ctx, threadId);
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', threadId))!);
 		});
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'child-cleanup', 'child-secret');
 		const jobs = await seedJobs(t, runId, 35, false);

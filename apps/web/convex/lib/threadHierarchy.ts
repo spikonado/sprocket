@@ -90,34 +90,23 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 
 	if (existing) return existing;
 
-	const id = await ctx.db.insert('threadHierarchyStates', {
+	const initial = {
 		threadId,
 		ownActive: false,
 		descendantCount: 0,
-		activeDescendantCount: 0,
-		registered: false
-	});
+		activeDescendantCount: 0
+	};
 
-	return (await ctx.db.get('threadHierarchyStates', id))!;
+	return { ...initial, _id: await ctx.db.insert('threadHierarchyStates', initial) };
 }
 
-export async function registerChildThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
-	const thread = await ctx.db.get('threadRecords', threadId);
-
-	if (!thread || thread.parentThreadId === undefined) return;
-
-	const state = await ensureHierarchyState(ctx, threadId);
-
-	if (state.registered) return;
-
+export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
 	for (const ancestor of await ancestorThreads(ctx.db, thread)) {
 		const parentState = await ensureHierarchyState(ctx, ancestor._id);
 		await ctx.db.patch('threadHierarchyStates', parentState._id, {
 			descendantCount: parentState.descendantCount + 1
 		});
 	}
-
-	await ctx.db.patch('threadHierarchyStates', state._id, { registered: true });
 }
 
 export async function refreshThreadHierarchyActivity(

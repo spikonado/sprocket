@@ -29,7 +29,7 @@ async function child(t: Backend, parentId: Id<'threadRecords'>, title: string) {
 			lastMessageAt: parent.lastMessageAt
 		});
 
-		await registerChildThread(ctx, threadId);
+		await registerChildThread(ctx, (await ctx.db.get('threadRecords', threadId))!);
 
 		return threadId;
 	});

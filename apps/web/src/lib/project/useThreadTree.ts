@@ -6,7 +6,7 @@ import {
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { collapseThreadBranch, expandThreadAncestors } from '$lib/project/subagents';
+import { collapseThreadBranch } from '$lib/project/subagents';
 
 function expandedThreadsStorageKey(userKey: string): string {
 	return `sprocket.inbox.expanded-threads:${userKey}`;
@@ -157,7 +157,7 @@ export function useExpandedThreads(userKey: string | null) {
 		revealAncestors: (ancestorIds: readonly Id<'threadRecords'>[]) => {
 			if (ancestorIds.length === 0) return;
 			setExpandedThreadIds((current) => {
-				const next = expandThreadAncestors(current, ancestorIds);
+				const next = [...new Set([...current, ...ancestorIds])];
 
 				if (next.length !== current.length) persist(next);
 

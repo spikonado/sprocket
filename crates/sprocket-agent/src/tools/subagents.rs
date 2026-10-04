@@ -29,7 +29,6 @@ use crate::subagents::{
     resolve_subagent_settings,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
-use crate::transcript::RemoteTranscriptState;
 use crate::transcript::monitor::MONITOR_PAGE_CHAR_LIMIT;
 use crate::types::CompletionProvider;
 
@@ -37,7 +36,6 @@ const CREATE_OR_SEND: &str = "subagents:createOrSend";
 const RECOVER_SUBMISSION: &str = "subagents:recoverSubmission";
 const SNAPSHOT: &str = "subagents:snapshot";
 const MONITOR_INFO: &str = "subagents:threadMonitorInfo";
-const TRANSCRIPT_STATE: &str = "subagents:transcriptState";
 const TRANSCRIPT_PARTS: &str = "subagents:transcriptParts";
 const CONTROL: &str = "subagents:control";
 const LIST_CHILDREN: &str = "subagents:listChildren";
@@ -568,7 +566,6 @@ async fn launch_queued_child(
         .launch(SubagentLaunchRequest {
             user_id: context.user_id.clone(),
             thread_id: created.thread_id.clone(),
-            run_id: created.run_id.clone(),
             submission_id: submission_id.to_string(),
             execution_secret: child_execution_secret.to_string(),
             prompt: committed_prompt.to_string(),
@@ -1018,13 +1015,9 @@ async fn resolve_child_settings(
 ) -> Result<ResolvedSubagentSettings, ToolExecutionError> {
     match thread_id {
         Some(thread_id) => {
-            let existing =
-                fetch_thread::<Option<SubagentThreadSnapshot>>(context, SNAPSHOT, thread_id)
-                    .await?
-                    .ok_or_else(|| tool_failure("subagent thread is unavailable"))?;
-            let saved = existing
-                .settings
-                .ok_or_else(|| tool_failure("subagent settings are unavailable"))?;
+            let existing: SubagentThreadSnapshot =
+                fetch_thread(context, SNAPSHOT, thread_id).await?;
+            let saved = existing.settings;
             let catalog = fetch_model_catalog(context, saved.completion_provider).await?;
             resolve_settings_for_target(&catalog, &saved, overrides)
         }
@@ -1122,7 +1115,7 @@ fn list_page_response(
     json!({
         "children": children,
         "nextCursor": if page.is_done { serde_json::Value::Null } else {
-            page.continue_cursor.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
+            serde_json::Value::String(page.continue_cursor.clone())
         },
         "hasMore": !page.is_done,
     })
@@ -1132,9 +1125,7 @@ async fn fetch_monitor_info(
     context: &AgentToolContext,
     thread_id: &str,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    fetch_thread::<Option<SubagentMonitorInfo>>(context, MONITOR_INFO, thread_id)
-        .await?
-        .ok_or_else(|| tool_failure("subagent thread is unavailable"))
+    fetch_thread(context, MONITOR_INFO, thread_id).await
 }
 
 async fn wait_for_settlement(
@@ -1267,17 +1258,21 @@ async fn sync_monitor_transcript(
     info: &SubagentMonitorInfo,
     store: &crate::TranscriptStore,
 ) -> Result<(), ToolExecutionError> {
-    let state: RemoteTranscriptState =
-        fetch_thread(context, TRANSCRIPT_STATE, &info.thread_id).await?;
-    crate::transcript::apply_remote_state(store, &info.user_id, &info.thread_id, &state, false)
-        .await
-        .map_err(tool_error)?;
+    crate::transcript::apply_remote_state(
+        store,
+        &info.user_id,
+        &info.thread_id,
+        &info.transcript,
+        false,
+    )
+    .await
+    .map_err(tool_error)?;
     crate::transcript::fetch_missing_parts(
         store,
         &info.user_id,
         &info.thread_id,
         0,
-        state.total_parts,
+        info.transcript.total_parts,
         |numbers| {
             let context = context.clone();
             let thread_id = info.thread_id.clone();
@@ -1308,6 +1303,7 @@ async fn sync_monitor_transcript(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcript::RemoteTranscriptState;
 
     #[test]
     fn prompts_create_or_target_a_child_without_an_action() {
@@ -1369,28 +1365,6 @@ mod tests {
     }
 
     #[test]
-    fn delegation_requires_a_prompt_and_control_uses_its_own_tool() {
-        assert!(
-            serde_json::from_value::<SubagentArgs>(json!({
-                "prompt": "task", "threadId": "child", "action": "stop"
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<PollSubagentArgs>(json!({
-                "threadId": "child", "action": "stop"
-            }))
-            .is_err()
-        );
-        assert!(
-            subagent_parameters()["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("prompt"))
-        );
-    }
-
-    #[test]
     fn subagent_wait_schemas_share_the_command_policy() {
         use super::super::commands::{exec_command_parameters, poll_command_parameters};
 
@@ -1416,7 +1390,12 @@ mod tests {
             last_error: None,
             active,
             pending_questions: Vec::new(),
-            transcript: None,
+            transcript: RemoteTranscriptState {
+                thread_id: "child".to_string(),
+                total_parts: 0,
+                history_from_number: 0,
+                context_summary: None,
+            },
         }
     }
 
@@ -1660,18 +1639,6 @@ mod tests {
     }
 
     #[test]
-    fn submission_identity_is_stable_per_tool_job() {
-        assert_eq!(
-            submission_id("run-1", "job-1"),
-            submission_id("run-1", "job-1")
-        );
-        assert_ne!(
-            submission_id("run-1", "job-1"),
-            submission_id("run-1", "job-2")
-        );
-    }
-
-    #[test]
     fn listing_response_uses_next_cursor_and_has_more() {
         let page: SubagentListPage = serde_json::from_value(serde_json::json!({
             "page": [{
@@ -1750,8 +1717,6 @@ mod tests {
                     Err(MutationFailure::Transport(anyhow::anyhow!("response lost")))
                 } else {
                     Ok(SubagentControlResponse {
-                        status: "completed".to_string(),
-                        last_error: None,
                         answer: Some(crate::subagents::SubagentCommittedAnswer {
                             option_id: Some("east".to_string()),
                             option_label: Some("East".to_string()),

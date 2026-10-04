@@ -206,7 +206,7 @@ export async function createQueuedRunRecord(
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 
 		if (parentThread) {
-			await registerChildThread(ctx, threadId);
+			await registerChildThread(ctx, threadRecord);
 		}
 	}
 

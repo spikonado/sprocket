@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use sprocket_agent::subagents::{
-    SharedSubagentLauncher, SubagentLaunchHandle, SubagentLaunchRequest, SubagentLauncher,
-};
+use sprocket_agent::subagents::{SharedSubagentLauncher, SubagentLaunchRequest, SubagentLauncher};
 
 use crate::AppState;
 use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
@@ -21,22 +19,17 @@ impl SubagentLauncher for NativeSubagentLauncher {
     fn launch(
         &self,
         request: SubagentLaunchRequest,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<SubagentLaunchHandle>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
         Box::pin(self.launch_child(request))
     }
 }
 
 impl NativeSubagentLauncher {
-    async fn launch_child(
-        &self,
-        request: SubagentLaunchRequest,
-    ) -> anyhow::Result<SubagentLaunchHandle> {
+    async fn launch_child(&self, request: SubagentLaunchRequest) -> anyhow::Result<()> {
         let state = self.state.clone();
         let cancellation = sprocket_workspace::WorkspaceCancellation::new();
         let payload = launch_payload(request);
-        let handle = launch_agent(
+        launch_agent(
             state,
             payload,
             WorkspaceAccess::RunDirectory,
@@ -47,10 +40,7 @@ impl NativeSubagentLauncher {
         .await
         .map_err(|error| anyhow::anyhow!("failed to launch subagent: {error}"))?;
 
-        Ok(SubagentLaunchHandle {
-            run_id: handle.run_id,
-            thread_id: handle.thread_id,
-        })
+        Ok(())
     }
 }
 
@@ -81,7 +71,6 @@ mod tests {
         let request = SubagentLaunchRequest {
             user_id: "user_1".into(),
             thread_id: "jd7child".into(),
-            run_id: "jd7run".into(),
             submission_id: "subagent:jd7parent:job-1".into(),
             execution_secret: "child-secret".into(),
             prompt: "Continue with the selected answer".into(),

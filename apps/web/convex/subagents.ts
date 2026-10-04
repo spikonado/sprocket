@@ -554,30 +554,6 @@ export const control = mutation({
 	}
 });
 
-export const transcriptState = mutation({
-	args: vDescendantCaller.fields,
-	returns: vTranscriptStateResult,
-	handler: async (ctx, args) => {
-		try {
-			const thread = await requireDescendantThread(ctx, args);
-			const state = await getTranscriptState(ctx, thread._id);
-			const historyFromNumber = transcriptHistoryFromNumber(thread);
-
-			const result: Infer<typeof vTranscriptStateResult> = {
-				threadId: thread._id,
-				totalParts: state?.totalParts ?? 0,
-				historyFromNumber
-			};
-
-			if (thread.contextSummary) result.contextSummary = thread.contextSummary;
-
-			return result;
-		} catch (error) {
-			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
-		}
-	}
-});
-
 export const transcriptParts = mutation({
 	args: {
 		...vDescendantCaller.fields,
@@ -606,7 +582,7 @@ export const threadMonitorInfo = mutation({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		status: vSelectedThreadLifecyclePhase,
-		transcript: v.object({ totalParts: v.number(), historyFromNumber: v.number() }),
+		transcript: vTranscriptStateResult,
 		lastError: v.optional(v.string()),
 		active: v.boolean(),
 		pendingQuestions: v.array(vAgentQuestionSnapshot)
@@ -621,7 +597,12 @@ export const threadMonitorInfo = mutation({
 			return {
 				threadId: thread._id,
 				userId: thread.userId,
-				transcript: { totalParts: state?.totalParts ?? 0, historyFromNumber: 0 },
+				transcript: {
+					threadId: thread._id,
+					totalParts: state?.totalParts ?? 0,
+					historyFromNumber: transcriptHistoryFromNumber(thread),
+					contextSummary: thread.contextSummary
+				},
 				status: selectedThreadLifecyclePhase({ run: latest, waitingForInput: pending.length > 0 }),
 				lastError: latest?.lastError,
 				active: (latest !== null && !isRunFinalStatus(latest.status)) || pending.length > 0,

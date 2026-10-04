@@ -127,8 +127,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		ownActive: v.boolean(),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number(),
-		registered: v.boolean()
+		activeDescendantCount: v.number()
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({

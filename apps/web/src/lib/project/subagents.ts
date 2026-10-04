@@ -9,7 +9,7 @@ export function isRootThread(thread: Pick<ThreadTreeLink, 'parentThreadId'>): bo
 	return thread.parentThreadId === undefined;
 }
 
-export function collectSubtreeDescendantIds(
+function collectSubtreeDescendantIds(
 	rootId: Id<'threadRecords'>,
 	threads: readonly ThreadTreeLink[]
 ): Set<string> {
@@ -46,19 +46,6 @@ export function subagentBadgeLabel(descendantCount: number, subtreeActive: boole
 	const count = descendantCount === 1 ? '1 subagent' : `${descendantCount} subagents`;
 
 	return subtreeActive ? `${count} · Working` : count;
-}
-
-export function expandThreadAncestors(
-	expandedThreadIds: readonly string[],
-	ancestorIds: readonly Id<'threadRecords'>[]
-): string[] {
-	const expanded = new Set(expandedThreadIds);
-
-	for (const ancestorId of ancestorIds) {
-		expanded.add(ancestorId);
-	}
-
-	return [...expanded];
 }
 
 export function collapseThreadBranch(

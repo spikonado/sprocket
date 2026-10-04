@@ -297,25 +297,24 @@ where
         .tool(tools.list_subagents)
         .tool(tools.list_models)
         .tool(context_handoff_hook.tool());
-    // Payment tools are excluded for children at every depth; question tools
-    // stay available to children even under a noninteractive CLI root.
-    let questions_allowed = request.allow_interaction || request.is_child;
-    let agent = match (questions_allowed, request.is_child) {
-        (true, true) => agent.tool(tools.ask_question).tool(tools.poll_question),
-        (true, false) => agent
-            .tool(tools.ask_question)
-            .tool(tools.poll_question)
-            .tool(tools.mandate_setup)
+    let agent = if request.allow_interaction || request.is_child {
+        agent.tool(tools.ask_question).tool(tools.poll_question)
+    } else {
+        agent
+    };
+    let agent = if !request.is_child {
+        let agent = agent
             .tool(tools.mandate_status)
             .tool(tools.mandate_list)
             .tool(tools.mandate_charge)
-            .tool(tools.mandate_report),
-        (false, false) => agent
-            .tool(tools.mandate_status)
-            .tool(tools.mandate_list)
-            .tool(tools.mandate_charge)
-            .tool(tools.mandate_report),
-        (false, true) => agent,
+            .tool(tools.mandate_report);
+        if request.allow_interaction {
+            agent.tool(tools.mandate_setup)
+        } else {
+            agent
+        }
+    } else {
+        agent
     };
     let agent = if request.supports_images {
         agent.tool(tools.screenshot_url)

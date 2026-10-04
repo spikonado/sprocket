@@ -5,6 +5,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::ProviderCatalog;
+use crate::transcript::RemoteTranscriptState;
 use crate::types::CompletionProvider;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -39,9 +40,7 @@ pub struct SubagentQuestionOption {
 pub struct SubagentQuestion {
     pub question_id: String,
     pub question: String,
-    #[serde(default)]
     pub options: Vec<SubagentQuestionOption>,
-    /// Wire form is `timeoutAt: number | null`.
     #[serde(default, deserialize_with = "deserialize_optional_convex_u64")]
     pub timeout_at: Option<u64>,
 }
@@ -63,18 +62,7 @@ where
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentThreadSnapshot {
-    pub thread_id: String,
-    pub status: String,
-    #[serde(default)]
-    pub last_error: Option<String>,
-    #[serde(default)]
-    pub active_run_id: Option<String>,
-    #[serde(default)]
-    pub parent_thread_id: Option<String>,
-    #[serde(default)]
-    pub settings: Option<SubagentSettings>,
-    #[serde(default)]
-    pub pending_questions: Vec<SubagentQuestion>,
+    pub settings: SubagentSettings,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -83,29 +71,19 @@ pub struct CreateSubagentRunResponse {
     pub thread_id: String,
     pub run_id: String,
     pub status: String,
-    #[serde(default)]
-    pub last_error: Option<String>,
-    #[serde(default)]
     pub created: bool,
     pub settings: SubagentSettings,
     /// Previous child run for follow-up/continuation launches; none for a new child.
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
-    /// Durable deadline for this created run only. Omitted means none; the
-    /// backend already clamped an explicit 0 to 1 ms.
-    #[serde(default, deserialize_with = "deserialize_optional_convex_u64")]
-    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentListPage {
-    #[serde(default)]
     pub page: Vec<SubagentChildSummary>,
-    #[serde(default)]
     pub is_done: bool,
-    #[serde(default)]
-    pub continue_cursor: Option<String>,
+    pub continue_cursor: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -143,9 +121,6 @@ pub struct SubagentContinuation {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentControlResponse {
-    pub status: String,
-    #[serde(default)]
-    pub last_error: Option<String>,
     #[serde(default)]
     pub answer: Option<SubagentCommittedAnswer>,
     #[serde(default)]
@@ -162,22 +137,9 @@ pub struct SubagentMonitorInfo {
     pub status: String,
     #[serde(default)]
     pub last_error: Option<String>,
-    #[serde(default)]
     pub active: bool,
-    #[serde(default)]
     pub pending_questions: Vec<SubagentQuestion>,
-    /// Monitor paging coverage. `history_from_number` is 0 (full history).
-    #[serde(default)]
-    pub transcript: Option<SubagentTranscriptCoverage>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentTranscriptCoverage {
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    pub total_parts: u32,
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
-    pub history_from_number: u32,
+    pub transcript: RemoteTranscriptState,
 }
 
 /// Child settings resolved before any durable write.
@@ -194,18 +156,10 @@ pub fn resolve_subagent_settings(
     catalog: &ProviderCatalog,
     overrides: &SubagentSettingsOverrides,
 ) -> anyhow::Result<ResolvedSubagentSettings> {
-    let model_id = match overrides.model.as_deref() {
-        Some(model) => model,
-        None => catalog
-            .models
-            .iter()
-            .find(|model| model.id == catalog.default_model_id)
-            .or_else(|| catalog.models.first())
-            .map(|model| model.id.as_str())
-            .ok_or_else(|| {
-                anyhow::anyhow!("no models are available for the current completion provider")
-            })?,
-    };
+    let model_id = overrides
+        .model
+        .as_deref()
+        .unwrap_or(&catalog.default_model_id);
     resolve_settings(
         catalog,
         model_id,
@@ -269,7 +223,6 @@ fn resolve_settings(
 pub struct SubagentLaunchRequest {
     pub user_id: String,
     pub thread_id: String,
-    pub run_id: String,
     /// Idempotency key of the durable child run.
     pub submission_id: String,
     /// Child execution secret; never the parent run's secret.
@@ -290,22 +243,7 @@ impl std::fmt::Debug for SubagentLaunchRequest {
         f.debug_struct("SubagentLaunchRequest")
             .field("user_id", &self.user_id)
             .field("thread_id", &self.thread_id)
-            .field("run_id", &self.run_id)
             .field("submission_id", &self.submission_id)
-            .finish_non_exhaustive()
-    }
-}
-
-pub struct SubagentLaunchHandle {
-    pub run_id: String,
-    pub thread_id: String,
-}
-
-impl std::fmt::Debug for SubagentLaunchHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SubagentLaunchHandle")
-            .field("run_id", &self.run_id)
-            .field("thread_id", &self.thread_id)
             .finish_non_exhaustive()
     }
 }
@@ -316,7 +254,7 @@ pub trait SubagentLauncher: Send + Sync {
     fn launch(
         &self,
         request: SubagentLaunchRequest,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<SubagentLaunchHandle>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
 }
 
 pub type SharedSubagentLauncher = Arc<dyn SubagentLauncher>;
@@ -330,9 +268,9 @@ mod tests {
             "defaultModelId": "default",
             "defaultFast": false,
             "models": [
-                {"id": "default", "label": "Default", "reasoningEfforts": ["medium", "high"],
+                {"id": "default", "label": "Default", "supportsImages": false, "reasoningEfforts": ["medium", "high"],
                  "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
-                {"id": "pro", "label": "Pro", "reasoningEfforts": ["max"],
+                {"id": "pro", "label": "Pro", "supportsImages": false, "reasoningEfforts": ["max"],
                  "defaultReasoningEffort": "max", "serviceTiers": ["standard"]}
             ]
         }))
@@ -403,15 +341,6 @@ mod tests {
         };
         let resolved = resolve_subagent_settings(&catalog(), &overrides).unwrap();
         assert!(resolved.fast);
-    }
-
-    #[test]
-    fn an_incompatible_catalog_default_falls_back_to_the_first_model() {
-        let mut catalog = catalog();
-        catalog.default_model_id = "not-in-catalog".into();
-        let resolved =
-            resolve_subagent_settings(&catalog, &SubagentSettingsOverrides::default()).unwrap();
-        assert_eq!(resolved.model, "default");
     }
 
     fn saved_settings() -> SubagentSettings {
@@ -511,22 +440,14 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_decodes_convex_numbers() {
-        let snapshot: SubagentThreadSnapshot = serde_json::from_value(serde_json::json!({
-            "threadId": "jd7thread",
-            "status": "running",
-            "pendingQuestions": [{
+    fn question_decodes_convex_timestamps() {
+        let question: SubagentQuestion = serde_json::from_value(serde_json::json!({
                 "questionId": "jd7q",
                 "question": "Pick one",
                 "options": [{"id": "a", "label": "A"}],
                 "timeoutAt": 1_700_000_000_000.5
-            }]
         }))
-        .expect("snapshot");
-        assert_eq!(snapshot.thread_id, "jd7thread");
-        assert_eq!(
-            snapshot.pending_questions[0].timeout_at,
-            Some(1_700_000_000_000)
-        );
+        .expect("question");
+        assert_eq!(question.timeout_at, Some(1_700_000_000_000));
     }
 }

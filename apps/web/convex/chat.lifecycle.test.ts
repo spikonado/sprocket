@@ -19,7 +19,7 @@ async function runWithQuestion(
 	if (parentThreadId) {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, { parentThreadId });
-			await registerChildThread(ctx, threadId);
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', threadId))!);
 		});
 	}
 

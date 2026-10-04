@@ -817,6 +817,27 @@ describe('subagents.control', () => {
 				active: true,
 				pendingQuestions: snapshot.pendingQuestions
 			});
+
+			const transcript = await t.run(async (ctx) => {
+				const state = await ctx.db
+					.query('threadTranscriptStates')
+					.withIndex('by_threadId', (q) => q.eq('threadId', child.threadId))
+					.unique();
+
+				await ctx.db.patch('threadRecords', child.threadId, {
+					contextSummary: 'Prior delegated work',
+					contextSummaryThroughPartNumber: 0
+				});
+
+				return state!;
+			});
+
+			expect((await t.mutation(api.subagents.threadMonitorInfo, target)).transcript).toEqual({
+				threadId: child.threadId,
+				totalParts: transcript.totalParts,
+				historyFromNumber: 1,
+				contextSummary: 'Prior delegated work'
+			});
 			expect(
 				await caller.asUser.query(api.threads.subtreeSummaryForThread, {
 					threadId: caller.threadId

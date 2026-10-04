@@ -532,7 +532,7 @@ export const vSubagentActionResult = v.object({
 	threadId: v.id('threadRecords'),
 	status: vThreadLifecyclePhase,
 	lastError: v.optional(v.union(v.string(), v.null())),
-	active: v.optional(v.boolean()),
+	active: v.boolean(),
 	created: v.optional(v.boolean()),
 	settings: v.optional(vSubagentSettings),
 	answer: v.optional(vAskQuestionAnswer),

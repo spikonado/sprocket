@@ -55,7 +55,7 @@ async function startedRun(depth = 0) {
 		const parent = await seedOwnedThread(t);
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', descendantId, { parentThreadId: parent.threadId });
-			await registerChildThread(ctx, descendantId);
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', descendantId))!);
 		});
 		descendantId = parent.threadId;
 	}
