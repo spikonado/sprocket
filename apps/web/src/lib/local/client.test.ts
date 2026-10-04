@@ -346,6 +346,25 @@ describe('watchLiveCompletion', () => {
 	});
 });
 
+describe('deleteArtifact', () => {
+	const request = {
+		userId: 'alice',
+		repositoryKey: 'robot',
+		workspacePath: '/workspace',
+		artifactId: 'artifact'
+	};
+
+	it('deletes through the local server with the account and workspace scope', async () => {
+		const fetch = vi.fn(async () => Response.json(null));
+		vi.stubGlobal('fetch', fetch);
+		await createLocalClient('http://127.0.0.1:7731').deleteArtifact(request);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/artifacts/delete',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
+		);
+	});
+});
+
 describe('watchArtifacts', () => {
 	const artifact = {
 		_id: 'artifact-1',

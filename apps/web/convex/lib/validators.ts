@@ -578,6 +578,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
 	v.literal('edit_artifact'),
+	v.literal('delete_artifact'),
 	v.literal('save_artifact')
 );
 
