@@ -419,6 +419,43 @@ body::after {
 	padding: 0.95rem 1rem;
 }
 
+.chat-markdown .markdown-code-block {
+	position: relative;
+	margin: 0.8rem 0;
+}
+
+.chat-markdown .markdown-code-block pre {
+	margin: 0;
+	padding-top: 2.6rem;
+}
+
+.markdown-code-copy {
+	position: absolute;
+	top: 0.55rem;
+	right: 0.7rem;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	border-radius: 0.35rem;
+	padding: 0.2rem 0.4rem;
+	color: var(--muted-foreground);
+	background: var(--panel-elevated);
+	font-family: var(--font-sans);
+	font-size: 0.75rem;
+	line-height: 1.4;
+	cursor: pointer;
+}
+
+.markdown-code-copy:hover {
+	color: var(--foreground);
+	background: var(--hover-fill);
+}
+
+.markdown-code-copy:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
 [data-theme='light'] .chat-markdown pre {
 	background: color-mix(in oklab, var(--muted) 55%, var(--surface));
 }
