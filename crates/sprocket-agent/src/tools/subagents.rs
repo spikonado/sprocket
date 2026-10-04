@@ -1348,10 +1348,9 @@ mod tests {
         );
         let schema = json!(schemars::schema_for!(ListSubagentsArgs));
         let properties = schema["properties"].as_object().unwrap();
-        assert_eq!(
-            properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["cursor", "parentThreadId"]
-        );
+        let mut names = properties.keys().map(String::as_str).collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, ["cursor", "parentThreadId"]);
     }
 
     fn monitor_info(active: bool) -> SubagentMonitorInfo {
