@@ -11,8 +11,7 @@ import schema from '@convex/schema';
 import {
 	listDirectChildrenPage,
 	subtreeSummary,
-	threadAncestryIds,
-	threadDescendantsActive
+	threadAncestryIds
 } from '@convex/lib/threadHierarchy';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
@@ -188,10 +187,7 @@ export const subtreeSummaryForThread = query({
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
-		return {
-			...(await subtreeSummary(ctx.db, thread)),
-			descendantsActive: await threadDescendantsActive(ctx.db, thread._id)
-		};
+		return await subtreeSummary(ctx.db, thread);
 	}
 });
 

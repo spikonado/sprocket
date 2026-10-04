@@ -781,7 +781,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		const rootSummary = () =>
 			t.run(async (ctx) => subtreeSummary(ctx.db, (await ctx.db.get('threadRecords', rootId))!));
 
-		expect(await rootSummary()).toEqual({ descendantCount: 1, anyActive: true });
+		expect(await rootSummary()).toMatchObject({ descendantCount: 1, anyActive: true });
 
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
@@ -792,10 +792,10 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		expect(await t.run((ctx) => ctx.db.query('agentQuestions').first())).toMatchObject({
 			status: 'pending'
 		});
-		expect(await rootSummary()).toEqual({ descendantCount: 1, anyActive: false });
+		expect(await rootSummary()).toMatchObject({ descendantCount: 1, anyActive: false });
 		await asUser.mutation(api.threads.settle, { threadId: rootId });
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
-		expect(await rootSummary()).toEqual({ descendantCount: 1, anyActive: false });
+		expect(await rootSummary()).toMatchObject({ descendantCount: 1, anyActive: false });
 		expect(await t.run((ctx) => ctx.db.get('threadRecords', rootId))).toMatchObject({
 			archivedAt: expect.any(Number)
 		});

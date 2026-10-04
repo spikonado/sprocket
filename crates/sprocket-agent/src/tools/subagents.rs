@@ -7,6 +7,7 @@ use convex::Value;
 use hmac::{Hmac, KeyInit, Mac};
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{
@@ -20,15 +21,16 @@ use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schem
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
 use crate::catalog::ProviderCatalog;
-use crate::convex::{MutationFailure, RuntimeClient};
+use crate::convex::MutationFailure;
 use crate::subagents::{
-    CreateSubagentRunResponse, SharedSubagentLauncher, SubagentControlResponse,
-    SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo, SubagentSettingsOverrides,
-    SubagentThreadSnapshot, resolve_settings_for_target, resolve_subagent_settings,
+    CreateSubagentRunResponse, ResolvedSubagentSettings, SharedSubagentLauncher,
+    SubagentControlResponse, SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo,
+    SubagentSettingsOverrides, SubagentThreadSnapshot, resolve_settings_for_target,
+    resolve_subagent_settings,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::RemoteTranscriptState;
-use crate::transcript::monitor::{MONITOR_PAGE_CHAR_LIMIT, MonitorPage};
+use crate::transcript::monitor::MONITOR_PAGE_CHAR_LIMIT;
 use crate::types::CompletionProvider;
 
 const CREATE_OR_SEND: &str = "subagents:createOrSend";
@@ -354,10 +356,6 @@ fn list_subagents_parameters() -> serde_json::Value {
     schema
 }
 
-fn list_models_parameters() -> serde_json::Value {
-    json!(schemars::schema_for!(ListModelsArgs))
-}
-
 impl rig::tool::Tool for SubagentTool {
     const NAME: &'static str = "subagent";
     type Error = ToolExecutionError;
@@ -393,10 +391,24 @@ impl rig::tool::Tool for SubagentTool {
     }
 }
 
-/// Stable submission identity for one tool call; retried tool jobs recover
-/// the same child thread/run instead of duplicating it.
 fn submission_id(run_id: &str, job_id: &str) -> String {
     format!("subagent:{run_id}:{job_id}")
+}
+
+fn child_credentials(context: &AgentToolContext, job_id: &str) -> (String, String) {
+    (
+        submission_id(&context.run_id, job_id),
+        derive_child_execution_secret(context.runtime.execution_secret(), job_id),
+    )
+}
+
+fn derive_child_execution_secret(caller_execution_secret: &str, job_id: &str) -> String {
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(caller_execution_secret.as_bytes())
+        .expect("HMAC accepts any key length");
+    mac.update(b"sprocket-subagent-secret-v1");
+    mac.update(&(job_id.len() as u64).to_le_bytes());
+    mac.update(job_id.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
 }
 
 async fn submit_or_recover<T>(
@@ -454,13 +466,7 @@ async fn submit_child(
                         .runtime
                         .mutation_json(
                             "subagents:prepareSubmission",
-                            subagent_args(
-                                context,
-                                BTreeMap::from([(
-                                    "threadId".to_string(),
-                                    thread_id.to_string().into(),
-                                )]),
-                            ),
+                            thread_args(context, thread_id),
                         )
                         .await
                 })
@@ -472,20 +478,6 @@ async fn submit_child(
 }
 
 impl SubagentTool {
-    /// Retries need a stable secret without reusing the parent's capability.
-    fn derive_child_execution_secret(caller_execution_secret: &str, job_id: &str) -> String {
-        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(caller_execution_secret.as_bytes())
-            .expect("HMAC accepts any key length");
-        mac.update(b"sprocket-subagent-secret-v1");
-        mac.update(&(job_id.len() as u64).to_le_bytes());
-        mac.update(job_id.as_bytes());
-        mac.finalize()
-            .into_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
-    }
-
     async fn run(
         &self,
         args: SubagentArgs,
@@ -493,15 +485,8 @@ impl SubagentTool {
         job_id: String,
         cancellation: WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
-        let runtime = &self.context.runtime;
-        let launcher =
-            self.context.subagent_launcher.as_ref().ok_or_else(|| {
-                tool_failure("subagent execution is unavailable in this environment")
-            })?;
-
-        let submission_id = submission_id(&self.context.run_id, &job_id);
-        let child_execution_secret =
-            Self::derive_child_execution_secret(runtime.execution_secret(), &job_id);
+        let launcher = require_launcher(&self.context)?;
+        let (submission_id, child_execution_secret) = child_credentials(&self.context, &job_id);
         let recovered = cancelled_read(&cancellation, async {
             recover_submission(&self.context, &submission_id, &child_execution_secret)
                 .await
@@ -517,25 +502,7 @@ impl SubagentTool {
                 fast: args.fast,
             };
             let resolved = cancelled_read(&cancellation, async {
-                match &args.thread_id {
-                    Some(thread_id) => {
-                        let existing = fetch_snapshot(runtime, &self.context, thread_id)
-                            .await?
-                            .ok_or_else(|| tool_failure("subagent thread is unavailable"))?;
-                        let saved = existing
-                            .settings
-                            .ok_or_else(|| tool_failure("subagent settings are unavailable"))?;
-                        let catalog =
-                            fetch_model_catalog(&self.context, saved.completion_provider).await?;
-                        resolve_settings_for_target(&catalog, &saved, &overrides)
-                    }
-                    None => {
-                        let provider = self.caller_provider().await?;
-                        let catalog = fetch_model_catalog(&self.context, provider).await?;
-                        resolve_subagent_settings(&catalog, &overrides)
-                    }
-                }
-                .map_err(|error| tool_failure(format!("{error:#}")))
+                resolve_child_settings(&self.context, args.thread_id.as_deref(), &overrides).await
             })
             .await?;
 
@@ -574,47 +541,27 @@ impl SubagentTool {
             .await?;
         }
 
-        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms);
-        let info = wait_for_settlement(
-            runtime,
+        let mut result = action_settlement_result(
             &self.context,
             &created.thread_id,
-            yield_time_ms,
+            YieldMode::Action.normalize(args.yield_time_ms),
             &cancellation,
         )
-        .await?;
-        let mut result = subagent_action_result(info, yield_time_ms, &cancellation, |info| {
-            read_transcript_snapshot(runtime, &self.context, info, None)
-        })
         .await?;
         result["created"] = json!(created.created);
         result["settings"] =
             serde_json::to_value(&created.settings).map_err(|e| tool_error(e.into()))?;
         Ok(result)
     }
-
-    async fn caller_provider(&self) -> Result<CompletionProvider, ToolExecutionError> {
-        let run_context: crate::types::RunContextResponse = self
-            .context
-            .runtime
-            .run_context(&self.context.run_id)
-            .await
-            .map_err(tool_error)?;
-        Ok(run_context.run.completion_provider)
-    }
 }
 
-/// Launch the queued child run committed by `subagents:createOrSend`,
-/// reusing the same submission, secret, settings, and continuation.
 async fn launch_queued_child(
     launcher: &SharedSubagentLauncher,
     context: &AgentToolContext,
     created: &CreateSubagentRunResponse,
     submission_id: &str,
     child_execution_secret: &str,
-    // The exact prompt committed by createOrSend: start_agent_run reconciles
-    // the same submission and compares the recorded prompt, so this must match
-    // verbatim (empty only for a promptless follow-up continuation).
+    // start_agent_run reconciles this submission against the recorded prompt.
     committed_prompt: &str,
 ) -> Result<(), ToolExecutionError> {
     let launched = launcher
@@ -697,41 +644,17 @@ impl PollSubagentTool {
                     .subagent_polls
                     .observe_pending(
                         &args.thread_id,
-                        || async {
-                            fetch_monitor_info(
-                                &self.context.runtime,
-                                &self.context,
-                                &args.thread_id,
-                            )
-                            .await?
-                            .ok_or_else(|| tool_failure("subagent thread is unavailable"))
-                        },
+                        || fetch_monitor_info(&self.context, &args.thread_id),
                         |info| {
-                            read_transcript_snapshot(
-                                &self.context.runtime,
-                                &self.context,
-                                info,
-                                args.cursor.as_deref(),
-                            )
+                            read_transcript_snapshot(&self.context, info, args.cursor.as_deref())
                         },
                     )
                     .await;
             }
-            let info = wait_for_settlement(
-                &self.context.runtime,
-                &self.context,
-                &args.thread_id,
-                yield_time_ms,
-                &cancellation,
-            )
-            .await?;
-            read_transcript_snapshot(
-                &self.context.runtime,
-                &self.context,
-                info,
-                args.cursor.as_deref(),
-            )
-            .await
+            let info =
+                wait_for_settlement(&self.context, &args.thread_id, yield_time_ms, &cancellation)
+                    .await?;
+            read_transcript_snapshot(&self.context, info, args.cursor.as_deref()).await
         })
         .await
     }
@@ -779,21 +702,21 @@ impl ControlSubagentTool {
         job_id: String,
         cancellation: WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
-        let runtime = &self.context.runtime;
-        let mut fields = BTreeMap::new();
-        fields.insert("threadId".to_string(), args.thread_id.clone().into());
-        fields.insert(
-            "action".to_string(),
-            match args.action {
-                SubagentControlAction::Stop => "stop",
-                SubagentControlAction::AnswerQuestion => "answer_question",
-            }
-            .into(),
-        );
+        let mut fields = BTreeMap::from([
+            ("threadId".to_string(), args.thread_id.clone().into()),
+            (
+                "action".to_string(),
+                match args.action {
+                    SubagentControlAction::Stop => "stop",
+                    SubagentControlAction::AnswerQuestion => "answer_question",
+                }
+                .into(),
+            ),
+            ("toolJobId".to_string(), job_id.clone().into()),
+        ]);
         if let Some(question_id) = &args.question_id {
             fields.insert("questionId".to_string(), question_id.clone().into());
         }
-        fields.insert("toolJobId".to_string(), job_id.clone().into());
         if let Some(option_id) = &args.option_id {
             fields.insert("optionId".to_string(), option_id.clone().into());
         }
@@ -802,52 +725,49 @@ impl ControlSubagentTool {
         }
         let response = match args.action {
             SubagentControlAction::AnswerQuestion => {
-                control_mutation_with_retry(&self.context, fields, &args.thread_id, &cancellation)
-                    .await?
+                control_mutation_with_retry(&args.thread_id, &cancellation, || {
+                    self.context
+                        .runtime
+                        .mutation_checked(CONTROL, subagent_args(&self.context, fields.clone()))
+                })
+                .await?
             }
             // Retrying Stop could cancel replacement work rather than the original run.
-            SubagentControlAction::Stop => tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => return Err(cancelled_error()),
-                result = timeout(
-                    SUBMISSION_ATTEMPT_TIMEOUT,
-                    runtime.mutation_json(CONTROL, subagent_args(&self.context, fields)),
-                ) => result.map_err(|_| tool_failure("timed out stopping subagent"))?.map_err(tool_error)?,
-            },
+            SubagentControlAction::Stop => {
+                cancelled_read(&cancellation, async {
+                    timeout(
+                        SUBMISSION_ATTEMPT_TIMEOUT,
+                        self.context
+                            .runtime
+                            .mutation_json(CONTROL, subagent_args(&self.context, fields)),
+                    )
+                    .await
+                    .map_err(|_| tool_failure("timed out stopping subagent"))?
+                    .map_err(tool_error)
+                })
+                .await?
+            }
         };
 
         if matches!(args.action, SubagentControlAction::AnswerQuestion) {
-            let submission_id = submission_id(&self.context.run_id, &job_id);
-            let child_execution_secret =
-                SubagentTool::derive_child_execution_secret(runtime.execution_secret(), &job_id);
-            let recovered = tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => return Err(cancelled_error()),
-                result = recover_submission(&self.context, &submission_id, &child_execution_secret) => result.map_err(tool_error)?,
-            };
+            let (submission_id, child_execution_secret) = child_credentials(&self.context, &job_id);
+            let recovered = cancelled_read(&cancellation, async {
+                recover_submission(&self.context, &submission_id, &child_execution_secret)
+                    .await
+                    .map_err(tool_error)
+            })
+            .await?;
             let queued = match (recovered, response.continuation) {
                 (Some(recovered), _) => Some((recovered.run, recovered.prompt)),
                 (None, Some(continuation)) => {
-                    if self.context.subagent_launcher.is_none() {
-                        return Err(tool_failure(
-                            "subagent execution is unavailable in this environment",
-                        ));
-                    }
+                    require_launcher(&self.context)?;
                     let settings = cancelled_read(&cancellation, async {
-                        let snapshot = fetch_snapshot(runtime, &self.context, &args.thread_id)
-                            .await?
-                            .ok_or_else(|| tool_failure("subagent thread is unavailable"))?;
-                        let saved = snapshot
-                            .settings
-                            .ok_or_else(|| tool_failure("subagent settings are unavailable"))?;
-                        let catalog =
-                            fetch_model_catalog(&self.context, saved.completion_provider).await?;
-                        resolve_settings_for_target(
-                            &catalog,
-                            &saved,
+                        resolve_child_settings(
+                            &self.context,
+                            Some(&args.thread_id),
                             &SubagentSettingsOverrides::default(),
                         )
-                        .map_err(|error| tool_failure(format!("{error:#}")))
+                        .await
                     })
                     .await?;
                     let mut fields = BTreeMap::from([
@@ -881,11 +801,8 @@ impl ControlSubagentTool {
                 _ => None,
             };
             if let Some((queued, prompt)) = queued.filter(|(queued, _)| queued.status == "queued") {
-                let launcher = self.context.subagent_launcher.as_ref().ok_or_else(|| {
-                    tool_failure("subagent execution is unavailable in this environment")
-                })?;
                 launch_queued_child(
-                    launcher,
+                    require_launcher(&self.context)?,
                     &self.context,
                     &queued,
                     &submission_id,
@@ -896,18 +813,12 @@ impl ControlSubagentTool {
             }
         }
 
-        let yield_time_ms = YieldMode::Action.normalize(args.yield_time_ms);
-        let latest = wait_for_settlement(
-            runtime,
+        let mut result = action_settlement_result(
             &self.context,
             &args.thread_id,
-            yield_time_ms,
+            YieldMode::Action.normalize(args.yield_time_ms),
             &cancellation,
         )
-        .await?;
-        let mut result = subagent_action_result(latest, yield_time_ms, &cancellation, |info| {
-            read_transcript_snapshot(runtime, &self.context, info, None)
-        })
         .await?;
         if let Some(answer) = response.answer {
             result["answer"] = serde_json::to_value(answer).map_err(|e| tool_error(e.into()))?;
@@ -919,21 +830,7 @@ impl ControlSubagentTool {
     }
 }
 
-async fn control_mutation_with_retry(
-    context: &AgentToolContext,
-    fields: BTreeMap<String, Value>,
-    thread_id: &str,
-    cancellation: &WorkspaceCancellation,
-) -> Result<SubagentControlResponse, ToolExecutionError> {
-    control_mutation_with_retry_using(thread_id, cancellation, move || {
-        context
-            .runtime
-            .mutation_checked(CONTROL, subagent_args(context, fields.clone()))
-    })
-    .await
-}
-
-async fn control_mutation_with_retry_using<F, Fut>(
+async fn control_mutation_with_retry<F, Fut>(
     thread_id: &str,
     cancellation: &WorkspaceCancellation,
     mut call: F,
@@ -1061,7 +958,7 @@ impl rig::tool::Tool for ListModelsTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        list_models_parameters()
+        json!(schemars::schema_for!(ListModelsArgs))
     }
 
     async fn call(
@@ -1073,13 +970,8 @@ impl rig::tool::Tool for ListModelsTool {
             let context = self.0.clone();
             async move {
                 cancelled_read(&cancellation, async {
-                    let run_context: crate::types::RunContextResponse = context
-                        .runtime
-                        .run_context(&context.run_id)
-                        .await
-                        .map_err(tool_error)?;
                     let catalog =
-                        fetch_model_catalog(&context, run_context.run.completion_provider).await?;
+                        fetch_model_catalog(&context, caller_provider(&context).await?).await?;
                     serde_json::to_value(catalog).map_err(|e| tool_error(e.into()))
                 })
                 .await
@@ -1089,8 +981,7 @@ impl rig::tool::Tool for ListModelsTool {
     }
 }
 
-/// Fetch the model catalog for one completion provider from the local
-/// gateway. Provider identity never comes from a tool argument.
+/// Provider identity never comes from a tool argument.
 async fn fetch_model_catalog(
     context: &AgentToolContext,
     provider: CompletionProvider,
@@ -1100,6 +991,51 @@ async fn fetch_model_catalog(
         .map_err(tool_error)
 }
 
+fn require_launcher(
+    context: &AgentToolContext,
+) -> Result<&SharedSubagentLauncher, ToolExecutionError> {
+    context
+        .subagent_launcher
+        .as_ref()
+        .ok_or_else(|| tool_failure("subagent execution is unavailable in this environment"))
+}
+
+async fn caller_provider(
+    context: &AgentToolContext,
+) -> Result<CompletionProvider, ToolExecutionError> {
+    let run_context: crate::types::RunContextResponse = context
+        .runtime
+        .run_context(&context.run_id)
+        .await
+        .map_err(tool_error)?;
+    Ok(run_context.run.completion_provider)
+}
+
+async fn resolve_child_settings(
+    context: &AgentToolContext,
+    thread_id: Option<&str>,
+    overrides: &SubagentSettingsOverrides,
+) -> Result<ResolvedSubagentSettings, ToolExecutionError> {
+    match thread_id {
+        Some(thread_id) => {
+            let existing =
+                fetch_thread::<Option<SubagentThreadSnapshot>>(context, SNAPSHOT, thread_id)
+                    .await?
+                    .ok_or_else(|| tool_failure("subagent thread is unavailable"))?;
+            let saved = existing
+                .settings
+                .ok_or_else(|| tool_failure("subagent settings are unavailable"))?;
+            let catalog = fetch_model_catalog(context, saved.completion_provider).await?;
+            resolve_settings_for_target(&catalog, &saved, overrides)
+        }
+        None => {
+            let catalog = fetch_model_catalog(context, caller_provider(context).await?).await?;
+            resolve_subagent_settings(&catalog, overrides)
+        }
+    }
+    .map_err(|error| tool_failure(format!("{error:#}")))
+}
+
 fn subagent_args(
     context: &AgentToolContext,
     mut fields: BTreeMap<String, Value>,
@@ -1107,6 +1043,25 @@ fn subagent_args(
     fields.insert("runId".to_string(), context.run_id.clone().into());
     fields.insert("claimId".to_string(), context.claim_id.clone().into());
     fields
+}
+
+fn thread_args(context: &AgentToolContext, thread_id: &str) -> BTreeMap<String, Value> {
+    subagent_args(
+        context,
+        BTreeMap::from([("threadId".to_string(), thread_id.to_string().into())]),
+    )
+}
+
+async fn fetch_thread<T: DeserializeOwned>(
+    context: &AgentToolContext,
+    function: &str,
+    thread_id: &str,
+) -> Result<T, ToolExecutionError> {
+    context
+        .runtime
+        .mutation_json(function, thread_args(context, thread_id))
+        .await
+        .map_err(tool_error)
 }
 
 #[derive(Deserialize)]
@@ -1131,12 +1086,15 @@ async fn recover_submission(
     submission_id: &str,
     child_execution_secret: &str,
 ) -> anyhow::Result<Option<RecoveredSubmission>> {
-    let fields = submission_fields(submission_id, child_execution_secret);
     timeout(
         SUBMISSION_ATTEMPT_TIMEOUT,
-        context
-            .runtime
-            .mutation_json(RECOVER_SUBMISSION, subagent_args(context, fields)),
+        context.runtime.mutation_json(
+            RECOVER_SUBMISSION,
+            subagent_args(
+                context,
+                submission_fields(submission_id, child_execution_secret),
+            ),
+        ),
     )
     .await
     .map_err(|_| anyhow::anyhow!("timed out recovering subagent submission"))?
@@ -1170,43 +1128,23 @@ fn list_page_response(
     })
 }
 
-async fn fetch_snapshot(
-    runtime: &RuntimeClient,
-    context: &AgentToolContext,
-    thread_id: &str,
-) -> Result<Option<SubagentThreadSnapshot>, ToolExecutionError> {
-    let mut fields = BTreeMap::new();
-    fields.insert("threadId".to_string(), thread_id.to_string().into());
-    runtime
-        .mutation_json(SNAPSHOT, subagent_args(context, fields))
-        .await
-        .map_err(tool_error)
-}
-
 async fn fetch_monitor_info(
-    runtime: &RuntimeClient,
     context: &AgentToolContext,
     thread_id: &str,
-) -> Result<Option<SubagentMonitorInfo>, ToolExecutionError> {
-    let mut fields = BTreeMap::new();
-    fields.insert("threadId".to_string(), thread_id.to_string().into());
-    runtime
-        .mutation_json(MONITOR_INFO, subagent_args(context, fields))
-        .await
-        .map_err(tool_error)
+) -> Result<SubagentMonitorInfo, ToolExecutionError> {
+    fetch_thread::<Option<SubagentMonitorInfo>>(context, MONITOR_INFO, thread_id)
+        .await?
+        .ok_or_else(|| tool_failure("subagent thread is unavailable"))
 }
 
 async fn wait_for_settlement(
-    runtime: &RuntimeClient,
     context: &AgentToolContext,
     thread_id: &str,
     yield_time_ms: u64,
     cancellation: &WorkspaceCancellation,
 ) -> Result<SubagentMonitorInfo, ToolExecutionError> {
-    wait_for_settlement_using(yield_time_ms, cancellation, || async {
-        fetch_monitor_info(runtime, context, thread_id)
-            .await?
-            .ok_or_else(|| tool_failure("subagent thread is unavailable"))
+    wait_for_settlement_using(yield_time_ms, cancellation, || {
+        fetch_monitor_info(context, thread_id)
     })
     .await
 }
@@ -1275,8 +1213,20 @@ where
     cancelled_read(cancellation, read(info)).await
 }
 
+async fn action_settlement_result(
+    context: &AgentToolContext,
+    thread_id: &str,
+    yield_time_ms: u64,
+    cancellation: &WorkspaceCancellation,
+) -> Result<serde_json::Value, ToolExecutionError> {
+    let info = wait_for_settlement(context, thread_id, yield_time_ms, cancellation).await?;
+    subagent_action_result(info, yield_time_ms, cancellation, |info| {
+        read_transcript_snapshot(context, info, None)
+    })
+    .await
+}
+
 async fn read_transcript_snapshot(
-    runtime: &RuntimeClient,
     context: &AgentToolContext,
     info: SubagentMonitorInfo,
     cursor: Option<&str>,
@@ -1286,8 +1236,16 @@ async fn read_transcript_snapshot(
         .clone()
         .ok_or_else(|| tool_failure("transcript store is unavailable"))?;
 
-    sync_monitor_transcript(runtime, context, &info, &store).await?;
-    let page = read_page(&store, &info.user_id, &info.thread_id, cursor).await?;
+    sync_monitor_transcript(context, &info, &store).await?;
+    let page = crate::transcript::monitor::read_monitor_page(
+        &store,
+        &info.user_id,
+        &info.thread_id,
+        cursor,
+        MONITOR_PAGE_CHAR_LIMIT,
+    )
+    .await
+    .map_err(tool_error)?;
 
     let transcript_dir = store.thread_dir(&info.user_id, &info.thread_id);
 
@@ -1304,37 +1262,13 @@ async fn read_transcript_snapshot(
     }))
 }
 
-async fn read_page(
-    store: &crate::TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    cursor: Option<&str>,
-) -> Result<MonitorPage, ToolExecutionError> {
-    crate::transcript::monitor::read_monitor_page(
-        store,
-        user_id,
-        thread_id,
-        cursor,
-        MONITOR_PAGE_CHAR_LIMIT,
-    )
-    .await
-    .map_err(tool_error)
-}
-
-/// Pull the monitor thread's committed parts into the local replica through
-/// the ordinary sync path, from part zero (full history).
 async fn sync_monitor_transcript(
-    runtime: &RuntimeClient,
     context: &AgentToolContext,
     info: &SubagentMonitorInfo,
     store: &crate::TranscriptStore,
 ) -> Result<(), ToolExecutionError> {
-    let mut fields = BTreeMap::new();
-    fields.insert("threadId".to_string(), info.thread_id.clone().into());
-    let state: RemoteTranscriptState = runtime
-        .mutation_json(TRANSCRIPT_STATE, subagent_args(context, fields))
-        .await
-        .map_err(tool_error)?;
+    let state: RemoteTranscriptState =
+        fetch_thread(context, TRANSCRIPT_STATE, &info.thread_id).await?;
     crate::transcript::apply_remote_state(store, &info.user_id, &info.thread_id, &state, false)
         .await
         .map_err(tool_error)?;
@@ -1345,12 +1279,10 @@ async fn sync_monitor_transcript(
         0,
         state.total_parts,
         |numbers| {
-            let runtime = runtime.clone();
             let context = context.clone();
             let thread_id = info.thread_id.clone();
             async move {
-                let mut fields = BTreeMap::new();
-                fields.insert("threadId".to_string(), thread_id.into());
+                let mut fields = thread_args(&context, &thread_id);
                 fields.insert(
                     "numbers".to_string(),
                     Value::Array(
@@ -1360,8 +1292,9 @@ async fn sync_monitor_transcript(
                             .collect(),
                     ),
                 );
-                let value: serde_json::Value = runtime
-                    .mutation_json(TRANSCRIPT_PARTS, subagent_args(&context, fields))
+                let value: serde_json::Value = context
+                    .runtime
+                    .mutation_json(TRANSCRIPT_PARTS, fields)
                     .await?;
                 crate::transcript::parse_remote_parts(value)
             }
@@ -1712,9 +1645,9 @@ mod tests {
 
     #[test]
     fn child_secret_is_keyed_stable_and_never_the_caller_secret() {
-        let secret_a = SubagentTool::derive_child_execution_secret("caller-secret", "job-1");
-        let secret_b = SubagentTool::derive_child_execution_secret("caller-secret", "job-1");
-        let secret_c = SubagentTool::derive_child_execution_secret("caller-secret", "job-2");
+        let secret_a = derive_child_execution_secret("caller-secret", "job-1");
+        let secret_b = derive_child_execution_secret("caller-secret", "job-1");
+        let secret_c = derive_child_execution_secret("caller-secret", "job-2");
         assert_eq!(secret_a, secret_b);
         assert_ne!(secret_a, secret_c);
         assert_ne!(secret_a, "caller-secret");
@@ -1722,7 +1655,7 @@ mod tests {
         assert_eq!(secret_a.len(), 64);
         assert_ne!(
             secret_a,
-            SubagentTool::derive_child_execution_secret("other-secret", "job-1")
+            derive_child_execution_secret("other-secret", "job-1")
         );
     }
 
@@ -1809,30 +1742,29 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn control_retries_a_lost_response_and_returns_the_committed_answer() {
         let mut attempts = 0;
-        let response =
-            control_mutation_with_retry_using("child", &WorkspaceCancellation::new(), || {
-                attempts += 1;
-                let attempt = attempts;
-                async move {
-                    if attempt == 1 {
-                        Err(MutationFailure::Transport(anyhow::anyhow!("response lost")))
-                    } else {
-                        Ok(SubagentControlResponse {
-                            status: "completed".to_string(),
-                            last_error: None,
-                            answer: Some(crate::subagents::SubagentCommittedAnswer {
-                                option_id: Some("east".to_string()),
-                                option_label: Some("East".to_string()),
-                                text: None,
-                            }),
-                            already_answered: true,
-                            continuation: None,
-                        })
-                    }
+        let response = control_mutation_with_retry("child", &WorkspaceCancellation::new(), || {
+            attempts += 1;
+            let attempt = attempts;
+            async move {
+                if attempt == 1 {
+                    Err(MutationFailure::Transport(anyhow::anyhow!("response lost")))
+                } else {
+                    Ok(SubagentControlResponse {
+                        status: "completed".to_string(),
+                        last_error: None,
+                        answer: Some(crate::subagents::SubagentCommittedAnswer {
+                            option_id: Some("east".to_string()),
+                            option_label: Some("East".to_string()),
+                            text: None,
+                        }),
+                        already_answered: true,
+                        continuation: None,
+                    })
                 }
-            })
-            .await
-            .unwrap();
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(attempts, 2);
         assert_eq!(response.answer.unwrap().option_id.as_deref(), Some("east"));
     }
@@ -1840,17 +1772,16 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn control_returns_function_errors_without_retrying() {
         let mut attempts = 0;
-        let error =
-            control_mutation_with_retry_using("child", &WorkspaceCancellation::new(), || {
-                attempts += 1;
-                async {
-                    Err(MutationFailure::Functional(anyhow::anyhow!(
-                        "question unavailable"
-                    )))
-                }
-            })
-            .await
-            .unwrap_err();
+        let error = control_mutation_with_retry("child", &WorkspaceCancellation::new(), || {
+            attempts += 1;
+            async {
+                Err(MutationFailure::Functional(anyhow::anyhow!(
+                    "question unavailable"
+                )))
+            }
+        })
+        .await
+        .unwrap_err();
         assert_eq!(attempts, 1);
         assert!(error.to_string().contains("question unavailable"));
     }
@@ -1858,13 +1789,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn control_stalled_calls_finish_after_bounded_retries() {
         let mut attempts = 0;
-        let error =
-            control_mutation_with_retry_using("child", &WorkspaceCancellation::new(), || {
-                attempts += 1;
-                std::future::pending::<Result<SubagentControlResponse, MutationFailure>>()
-            })
-            .await
-            .unwrap_err();
+        let error = control_mutation_with_retry("child", &WorkspaceCancellation::new(), || {
+            attempts += 1;
+            std::future::pending::<Result<SubagentControlResponse, MutationFailure>>()
+        })
+        .await
+        .unwrap_err();
         assert_eq!(attempts, 3);
         assert!(error.to_string().contains("timed out calling"));
     }
@@ -1876,7 +1806,7 @@ mod tests {
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let mut started_tx = Some(started_tx);
         let task = tokio::spawn(async move {
-            control_mutation_with_retry_using("child", &pending_cancellation, || {
+            control_mutation_with_retry("child", &pending_cancellation, || {
                 if let Some(tx) = started_tx.take() {
                     let _ = tx.send(());
                 }

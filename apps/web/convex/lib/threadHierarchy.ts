@@ -154,24 +154,20 @@ export async function refreshThreadHierarchyActivity(
 export type SubtreeSummary = {
 	descendantCount: number;
 	anyActive: boolean;
+	descendantsActive: boolean;
 };
-
-export async function threadDescendantsActive(
-	db: DatabaseReader,
-	threadId: Id<'threadRecords'>
-): Promise<boolean> {
-	return ((await hierarchyState(db, threadId))?.activeDescendantCount ?? 0) > 0;
-}
 
 export async function subtreeSummary(
 	db: DatabaseReader,
 	thread: Doc<'threadRecords'>
 ): Promise<SubtreeSummary> {
 	const state = await hierarchyState(db, thread._id);
+	const descendantsActive = (state?.activeDescendantCount ?? 0) > 0;
 
 	return {
 		descendantCount: state?.descendantCount ?? 0,
-		anyActive: (state?.activeDescendantCount ?? 0) > 0 || (await threadOwnActivity(db, thread._id))
+		anyActive: descendantsActive || (await threadOwnActivity(db, thread._id)),
+		descendantsActive
 	};
 }
 

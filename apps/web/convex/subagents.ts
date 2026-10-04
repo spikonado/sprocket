@@ -59,6 +59,14 @@ const vSubagentSettings = v.object({
 	completionProvider: vCompletionProvider
 });
 
+const vCallerRun = v.object({
+	runId: v.id('runs'),
+	claimId: v.string(),
+	executionSecret: v.string()
+});
+
+const vDescendantCaller = vCallerRun.extend({ threadId: v.id('threadRecords') });
+
 function subagentSettings(
 	source: Doc<'threadRecords'> | Doc<'runs'>
 ): Infer<typeof vSubagentSettings> {
@@ -72,9 +80,7 @@ function subagentSettings(
 
 export const recoverSubmission = mutation({
 	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
+		...vCallerRun.fields,
 		submissionId: v.string(),
 		childExecutionSecret: v.string()
 	},
@@ -150,10 +156,7 @@ async function activeRunForThread(ctx: QueryCtx | MutationCtx, threadId: Id<'thr
 	return latest && !isRunFinalStatus(latest.status) ? latest : null;
 }
 
-async function requireLiveCallerRun(
-	ctx: MutationCtx,
-	args: { runId: Id<'runs'>; claimId: string; executionSecret: string }
-) {
+async function requireLiveCallerRun(ctx: MutationCtx, args: Infer<typeof vCallerRun>) {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 	assertRunAcceptsModelCompletion(run);
 
@@ -164,18 +167,18 @@ async function requireLiveCallerRun(
 	return run;
 }
 
+async function requireDescendantThread(ctx: MutationCtx, args: Infer<typeof vDescendantCaller>) {
+	const callerRun = await requireLiveCallerRun(ctx, args);
+
+	return await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+}
+
 export const prepareSubmission = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		threadId: v.id('threadRecords')
-	},
+	args: vDescendantCaller.fields,
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		try {
-			const callerRun = await requireLiveCallerRun(ctx, args);
-			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+			const thread = await requireDescendantThread(ctx, args);
 
 			return await submissionReadiness(ctx, thread._id);
 		} catch (error) {
@@ -186,9 +189,7 @@ export const prepareSubmission = mutation({
 
 export const createOrSend = mutation({
 	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
+		...vCallerRun.fields,
 		submissionId: v.string(),
 		childExecutionSecret: v.string(),
 		continuationOfRunId: v.optional(v.id('runs')),
@@ -344,12 +345,7 @@ export const enforceTaskDeadline = internalMutation({
 });
 
 export const snapshot = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		threadId: v.id('threadRecords')
-	},
+	args: vDescendantCaller.fields,
 	returns: v.object({
 		threadId: v.id('threadRecords'),
 		parentThreadId: v.optional(v.id('threadRecords')),
@@ -362,8 +358,7 @@ export const snapshot = mutation({
 	}),
 	handler: async (ctx, args) => {
 		try {
-			const callerRun = await requireLiveCallerRun(ctx, args);
-			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+			const thread = await requireDescendantThread(ctx, args);
 			const pending = await pendingQuestionsForThread(ctx, args.threadId);
 			const latest = await latestRunForThread(ctx, thread._id);
 			const active = latest && !isRunFinalStatus(latest.status) ? latest : null;
@@ -386,9 +381,7 @@ export const snapshot = mutation({
 
 export const listChildren = mutation({
 	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
+		...vCallerRun.fields,
 		parentThreadId: v.optional(v.id('threadRecords')),
 		paginationOpts: paginationOptsValidator
 	},
@@ -452,10 +445,7 @@ export const listChildren = mutation({
 
 export const control = mutation({
 	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		threadId: v.id('threadRecords'),
+		...vDescendantCaller.fields,
 		action: v.union(v.literal('stop'), v.literal('answer_question')),
 		toolJobId: v.optional(v.id('executorJobs')),
 		questionId: v.optional(v.id('agentQuestions')),
@@ -565,17 +555,11 @@ export const control = mutation({
 });
 
 export const transcriptState = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		threadId: v.id('threadRecords')
-	},
+	args: vDescendantCaller.fields,
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
 		try {
-			const callerRun = await requireLiveCallerRun(ctx, args);
-			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+			const thread = await requireDescendantThread(ctx, args);
 			const state = await getTranscriptState(ctx, thread._id);
 			const historyFromNumber = transcriptHistoryFromNumber(thread);
 
@@ -596,17 +580,13 @@ export const transcriptState = mutation({
 
 export const transcriptParts = mutation({
 	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		threadId: v.id('threadRecords'),
+		...vDescendantCaller.fields,
 		numbers: v.array(v.number())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		try {
-			const callerRun = await requireLiveCallerRun(ctx, args);
-			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+			const thread = await requireDescendantThread(ctx, args);
 
 			const parts = await transcriptPartsForClient(
 				ctx,
@@ -621,12 +601,7 @@ export const transcriptParts = mutation({
 });
 
 export const threadMonitorInfo = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		threadId: v.id('threadRecords')
-	},
+	args: vDescendantCaller.fields,
 	returns: v.object({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
@@ -638,8 +613,7 @@ export const threadMonitorInfo = mutation({
 	}),
 	handler: async (ctx, args) => {
 		try {
-			const callerRun = await requireLiveCallerRun(ctx, args);
-			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
+			const thread = await requireDescendantThread(ctx, args);
 			const pending = await pendingQuestionsForThread(ctx, thread._id);
 			const state = await getTranscriptState(ctx, thread._id);
 			const latest = await latestRunForThread(ctx, thread._id);

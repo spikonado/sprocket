@@ -41,8 +41,7 @@ pub struct SubagentQuestion {
     pub question: String,
     #[serde(default)]
     pub options: Vec<SubagentQuestionOption>,
-    /// The wire validator uses `timeoutAt: number | null`; serialize null
-    /// rather than omitting the key.
+    /// Wire form is `timeoutAt: number | null`.
     #[serde(default, deserialize_with = "deserialize_optional_convex_u64")]
     pub timeout_at: Option<u64>,
 }
@@ -89,15 +88,11 @@ pub struct CreateSubagentRunResponse {
     #[serde(default)]
     pub created: bool,
     pub settings: SubagentSettings,
-    /// Continuation recorded on the queued child run, reused verbatim for
-    /// the native launch. For a follow-up the backend resolves this to the
-    /// child's previous run (or the question's continuation run); a new
-    /// child run has no continuation.
+    /// Previous child run for follow-up/continuation launches; none for a new child.
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
-    /// Command-style normalized task deadline; omitted means no deadline,
-    /// and an explicit zero was already clamped to 1 ms by the backend.
-    /// Enforced durably by Convex against the created run only.
+    /// Durable deadline for this created run only. Omitted means none; the
+    /// backend already clamped an explicit 0 to 1 ms.
     #[serde(default, deserialize_with = "deserialize_optional_convex_u64")]
     pub timeout_ms: Option<u64>,
 }
@@ -171,8 +166,7 @@ pub struct SubagentMonitorInfo {
     pub active: bool,
     #[serde(default)]
     pub pending_questions: Vec<SubagentQuestion>,
-    /// Transcript coverage for monitor paging. `history_from_number` is 0:
-    /// monitors fetch full history, not just the completion context.
+    /// Monitor paging coverage. `history_from_number` is 0 (full history).
     #[serde(default)]
     pub transcript: Option<SubagentTranscriptCoverage>,
 }
@@ -186,7 +180,7 @@ pub struct SubagentTranscriptCoverage {
     pub history_from_number: u32,
 }
 
-/// Resolved child settings, chosen before any durable write.
+/// Child settings resolved before any durable write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedSubagentSettings {
     pub model: String,
@@ -194,14 +188,8 @@ pub struct ResolvedSubagentSettings {
     pub fast: bool,
 }
 
-/// Resolve the effective settings for a child submission.
-///
-/// Mirrors the approved provider-compatible fallback: an omitted model uses
-/// the catalog default when present, otherwise the first compatible model; an
-/// omitted reasoning uses the chosen model's default reasoning; an omitted
-/// fast flag uses the catalog default service tier, turned off when the
-/// chosen model cannot support it. Explicit but unsupported
-/// model/reasoning/fast choices are hard errors.
+/// Catalog defaults for omitted model/reasoning/fast; unsupported explicit
+/// choices are errors.
 pub fn resolve_subagent_settings(
     catalog: &ProviderCatalog,
     overrides: &SubagentSettingsOverrides,
@@ -227,13 +215,9 @@ pub fn resolve_subagent_settings(
     )
 }
 
-/// Resolve the effective settings for a follow-up to an existing child.
-///
-/// Retains the target's saved model/reasoning/fast unless explicitly
-/// overridden. Selecting a different model without reasoning uses the new
-/// model's default reasoning; retained fast mode is turned off when the new
-/// model cannot support it. Explicit unsupported model/reasoning/fast choices
-/// fail clearly. Nothing is recorded before this succeeds.
+/// Keep saved model/reasoning/fast unless overridden. A model change without
+/// reasoning uses the new model's default; retained fast turns off when
+/// unsupported. Explicit unsupported choices are errors.
 pub fn resolve_settings_for_target(
     catalog: &ProviderCatalog,
     saved: &SubagentSettings,
@@ -281,28 +265,23 @@ fn resolve_settings(
     })
 }
 
-/// Everything the launcher needs to attach a native execution to the child
-/// run committed by `subagents:createOrSend`.
+/// Inputs to attach a native execution to a child run committed by createOrSend.
 pub struct SubagentLaunchRequest {
     pub user_id: String,
     pub thread_id: String,
     pub run_id: String,
-    /// Idempotency key of the durable child run; reused verbatim.
+    /// Idempotency key of the durable child run.
     pub submission_id: String,
-    /// Fresh child execution secret committed by the creation transaction.
-    /// The parent run's secret is never reused for a child.
+    /// Child execution secret; never the parent run's secret.
     pub execution_secret: String,
     pub prompt: String,
-    /// The caller run's workspace root: the child executes in the same
-    /// workspace with ordinary instruction/skill loading.
+    /// Caller workspace root; the child runs in the same workspace.
     pub workspace_path: String,
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
     pub reasoning_effort: String,
     pub fast_mode: bool,
-    /// Continuation marker recorded on the child run: `Some` with a previous
-    /// run of the same child thread on a follow-up/continuation launch so
-    /// ordinary continuation rules apply; `None` for a new child.
+    /// Previous child run on follow-up/continuation; none for a new child.
     pub continuation_of_run_id: Option<String>,
 }
 
@@ -331,9 +310,8 @@ impl std::fmt::Debug for SubagentLaunchHandle {
     }
 }
 
-/// Server-owned native launch interface supplied to agent tools. The server
-/// implements this over its ordinary launch orchestration; the agent crate
-/// never depends on the server.
+/// Server-owned launch hook for agent tools. The agent crate does not depend
+/// on the server crate.
 pub trait SubagentLauncher: Send + Sync {
     fn launch(
         &self,

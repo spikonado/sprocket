@@ -49,7 +49,11 @@ describe('thread hierarchy', () => {
 
 		for (let i = 0; i < 70; i += 1) children.push(await child(t, threadId, `child-${i}`));
 		const grandchild = await child(t, children[0], 'grandchild');
-		expect(await summary(t, threadId)).toEqual({ descendantCount: 71, anyActive: false });
+		expect(await summary(t, threadId)).toEqual({
+			descendantCount: 71,
+			anyActive: false,
+			descendantsActive: false
+		});
 
 		const before = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		await asUser.mutation(api.threads.settle, { threadId });
@@ -69,8 +73,16 @@ describe('thread hierarchy', () => {
 			await refreshThreadHierarchyActivity(ctx, grandchild);
 		});
 
-		expect(await summary(t, threadId)).toEqual({ descendantCount: 71, anyActive: true });
-		expect(await summary(t, children[0])).toEqual({ descendantCount: 1, anyActive: true });
+		expect(await summary(t, threadId)).toEqual({
+			descendantCount: 71,
+			anyActive: true,
+			descendantsActive: true
+		});
+		expect(await summary(t, children[0])).toEqual({
+			descendantCount: 1,
+			anyActive: true,
+			descendantsActive: true
+		});
 		const after = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(after?.archivedAt).toBeUndefined();
 		expect(after?.lastMessageAt).toBe(before?.lastMessageAt);
@@ -133,7 +145,11 @@ describe('thread hierarchy', () => {
 
 		expect(seen).toHaveLength(7);
 		expect(new Set(seen)).toEqual(new Set(children));
-		expect(await summary(t, threadId)).toEqual({ descendantCount: 8, anyActive: false });
+		expect(await summary(t, threadId)).toEqual({
+			descendantCount: 8,
+			anyActive: false,
+			descendantsActive: false
+		});
 		await expect(asUser.mutation(api.threads.settle, { threadId: children[0] })).rejects.toThrow(
 			/root/
 		);
