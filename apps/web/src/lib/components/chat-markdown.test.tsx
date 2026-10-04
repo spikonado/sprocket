@@ -34,6 +34,20 @@ describe('links', () => {
 	});
 });
 
+it('preserves GFM table column alignment through parsing and sanitization', () => {
+	const { container } = render(
+		<ChatMarkdown
+			content={'| Sensor | Status | Value |\n| :--- | :---: | ---: |\n| Voltage | Ready | 3.3 |'}
+		/>
+	);
+
+	const alignments = (selector: string) =>
+		[...container.querySelectorAll(selector)].map((cell) => cell.getAttribute('align'));
+
+	expect(alignments('th')).toEqual(['left', 'center', 'right']);
+	expect(alignments('td')).toEqual(['left', 'center', 'right']);
+});
+
 describe('code blocks', () => {
 	beforeEach(() => {
 		vi.stubGlobal(

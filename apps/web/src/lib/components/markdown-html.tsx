@@ -8,7 +8,7 @@ export default function MarkdownHtml({ html }: { html: string }) {
 
 		if (!codeBlocks?.length) return;
 
-		let cancelled = false;
+		const controller = new AbortController();
 
 		for (const block of codeBlocks) {
 			const language = [...block.classList]
@@ -24,10 +24,12 @@ export default function MarkdownHtml({ html }: { html: string }) {
 
 			void import('$lib/chat/code-highlighting-client')
 				.then(({ highlightCodeInWorker }) =>
-					cancelled ? null : highlightCodeInWorker(code, language)
+					controller.signal.aborted
+						? null
+						: highlightCodeInWorker(code, language, controller.signal)
 				)
 				.then((lines) => {
-					if (!lines || cancelled) return;
+					if (!lines || controller.signal.aborted) return;
 
 					const fragment = document.createDocumentFragment();
 
@@ -55,7 +57,7 @@ export default function MarkdownHtml({ html }: { html: string }) {
 		}
 
 		return () => {
-			cancelled = true;
+			controller.abort();
 		};
 	}, [html]);
 
