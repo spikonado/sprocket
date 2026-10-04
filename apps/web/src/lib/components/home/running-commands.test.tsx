@@ -138,8 +138,10 @@ describe('running commands dashboard', () => {
 		await flush();
 		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Stop command: bun run dev' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		await flush();
 		expect(screen.getByRole('alert').textContent).toBe('Server offline');
+		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(
 			screen.getByRole('button', { name: 'Stop command: bun run dev' }).hasAttribute('disabled')
 		).toBe(false);
@@ -197,7 +199,7 @@ describe('running commands dashboard', () => {
 		}
 	);
 
-	it('recovers from a polling failure without hiding known running commands', async () => {
+	it('shows polling failures while collapsed and recovers without losing known commands', async () => {
 		const api: CommandApi = {
 			listRunningCommands: vi
 				.fn()
@@ -209,6 +211,11 @@ describe('running commands dashboard', () => {
 
 		render(<RunningCommands api={api} scope={scope('thread')} />);
 		await flush(1_000);
+		expect(screen.getByRole('region', { name: 'Running commands' })).toBeTruthy();
+		expect(
+			screen.getByRole('button', { name: 'Running commands' }).getAttribute('aria-expanded')
+		).toBe('false');
+		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
 		fireEvent.click(screen.getByRole('button', { name: 'Running commands' }));
 		expect(screen.getByText('bun run dev')).toBeTruthy();
 		expect(screen.getByRole('alert').textContent).toContain('Reconnecting');
