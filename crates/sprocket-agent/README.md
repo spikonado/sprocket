@@ -160,13 +160,16 @@ through its thread session. Commands keep running after agent completion or
 cancellation until they exit, reach an explicit timeout, are terminated, or the
 server shuts down. Subsequent runs in the same thread reuse the sessions.
 Every command returns a thread-scoped session ID, including commands that finish
-within the initial wait. Session records and both log streams are stored under
-the Sprocket data directory and replicated to Convex in ordered, retryable chunks.
+within the initial wait. Session records, `output.log`, and `events.jsonl` are
+stored under the Sprocket data directory. Only the event log is replicated to
+Convex in ordered, retryable chunks; downloads reconstruct the raw output from
+its ordered byte arrays. Downloaded logs live directly under
+`command-logs/command-<sessionId>/`, alongside locally captured log directories.
 Completed results remain pollable without an age or count limit after restarts
 or from another machine. Remote queries download logs into the local data directory;
 live command control requires the originating machine. Network outages leave
 local records pending for retry, so another machine sees only previously synced data.
-Once a running session's logs are fully acknowledged, unchanged log lengths skip
+Once a running session's events are fully acknowledged, unchanged event lengths skip
 cloud queries and writes. New bytes or completion resume synchronization; failed
 and partial uploads remain pending. This idle tracking is in memory, so server
 restart reconciles unsynced records with Convex again.

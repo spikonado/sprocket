@@ -3,7 +3,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { commandSnapshot, commandStream } from '@convex/lib/commandSessions';
+import { commandSnapshot } from '@convex/lib/commandSessions';
 import schema from '@convex/schema';
 
 async function findSession(ctx: QueryCtx, threadId: Id<'threadRecords'>, sessionId: string) {
@@ -24,7 +24,7 @@ export const sync = mutation({
 		threadId: v.id('threadRecords'),
 		sessionId: v.string(),
 		snapshot: commandSnapshot,
-		chunks: v.array(v.object({ stream: commandStream, offset: v.number(), bytes: v.bytes() }))
+		chunks: v.array(v.object({ offset: v.number(), bytes: v.bytes() }))
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -47,7 +47,6 @@ export const sync = mutation({
 				sessionId: args.sessionId,
 				...args.snapshot,
 				result: { ...args.snapshot.result, running: true, success: false },
-				outputBytes: 0,
 				eventsBytes: 0
 			});
 
@@ -60,7 +59,6 @@ export const sync = mutation({
 			session.workdir !== args.snapshot.workdir
 		)
 			throw new Error('Command session identity cannot change.');
-		let outputBytes = session.outputBytes;
 		let eventsBytes = session.eventsBytes;
 
 		for (const chunk of args.chunks) {
@@ -68,13 +66,13 @@ export const sync = mutation({
 
 			if (chunk.bytes.byteLength === 0 || chunk.bytes.byteLength > 128 * 1024)
 				throw new Error('Invalid command log chunk size.');
-			const offset = chunk.stream === 'output' ? outputBytes : eventsBytes;
+			const offset = eventsBytes;
 
 			if (chunk.offset < offset) {
 				const previous = await ctx.db
 					.query('commandLogChunks')
-					.withIndex('by_commandId_stream_offset', (q) =>
-						q.eq('commandId', session._id).eq('stream', chunk.stream).eq('offset', chunk.offset)
+					.withIndex('by_commandId_offset', (q) =>
+						q.eq('commandId', session._id).eq('offset', chunk.offset)
 					)
 					.unique();
 
@@ -94,17 +92,14 @@ export const sync = mutation({
 			if (!session.result.running) throw new Error('Completed command logs cannot change.');
 			await ctx.db.insert('commandLogChunks', { commandId: session._id, ...chunk });
 
-			if (chunk.stream === 'output') outputBytes += chunk.bytes.byteLength;
-			else eventsBytes += chunk.bytes.byteLength;
+			eventsBytes += chunk.bytes.byteLength;
 		}
 
-		if (outputBytes + eventsBytes > 64 * 1024 * 1024)
-			throw new Error('Command log quota exceeded.');
+		if (eventsBytes > 64 * 1024 * 1024) throw new Error('Command log quota exceeded.');
 
 		if (session.result.running)
 			await ctx.db.patch('commandSessions', session._id, {
 				result: args.snapshot.result,
-				outputBytes,
 				eventsBytes
 			});
 
@@ -126,7 +121,6 @@ export const getLogChunks = query({
 	args: {
 		threadId: v.id('threadRecords'),
 		sessionId: v.string(),
-		stream: commandStream,
 		offset: v.number()
 	},
 	returns: v.array(schema.doc('commandLogChunks')),
@@ -139,8 +133,8 @@ export const getLogChunks = query({
 
 		const previous = await ctx.db
 			.query('commandLogChunks')
-			.withIndex('by_commandId_stream_offset', (q) =>
-				q.eq('commandId', session._id).eq('stream', args.stream).lte('offset', args.offset)
+			.withIndex('by_commandId_offset', (q) =>
+				q.eq('commandId', session._id).lte('offset', args.offset)
 			)
 			.order('desc')
 			.first();
@@ -150,11 +144,8 @@ export const getLogChunks = query({
 
 		const next = await ctx.db
 			.query('commandLogChunks')
-			.withIndex('by_commandId_stream_offset', (q) =>
-				q
-					.eq('commandId', session._id)
-					.eq('stream', args.stream)
-					.gt('offset', containing?.offset ?? args.offset - 1)
+			.withIndex('by_commandId_offset', (q) =>
+				q.eq('commandId', session._id).gt('offset', containing?.offset ?? args.offset - 1)
 			)
 			.take(containing ? 3 : 4);
 

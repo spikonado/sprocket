@@ -11,17 +11,32 @@ const snapshot = {
 	result: { success: false, running: true, timedOut: false, output: 'first\n' }
 };
 
+function eventBytes(sequence: number, channel: 'stdout' | 'stderr', output: string) {
+	return new TextEncoder().encode(
+		`${JSON.stringify({ sequence, timestampMs: 123, channel, bytes: [...new TextEncoder().encode(output)] })}\n`
+	);
+}
+
 describe('durable thread command sessions', () => {
 	it('replays ordered logs and preserves completed results across sync retries', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const bytes = new TextEncoder().encode('first\nlast\n').buffer;
+
+		const bytes = new Uint8Array([
+			...eventBytes(0, 'stdout', 'first\n'),
+			...eventBytes(1, 'stderr', 'last\n')
+		]);
+
+		const split = 17;
 
 		const args = {
 			threadId,
 			sessionId,
 			snapshot,
-			chunks: [{ stream: 'output' as const, offset: 0, bytes }]
+			chunks: [
+				{ offset: 0, bytes: bytes.slice(0, split).buffer },
+				{ offset: split, bytes: bytes.slice(split).buffer }
+			]
 		};
 
 		await asUser.mutation(api.commands.sync, args);
@@ -50,19 +65,28 @@ describe('durable thread command sessions', () => {
 
 		expect(result).toMatchObject({
 			machineId: 'machine-one',
-			outputBytes: bytes.byteLength,
+			eventsBytes: bytes.byteLength,
 			result: completed.result
 		});
 
 		const logs = await asUser.query(api.commands.getLogChunks, {
 			threadId,
 			sessionId,
-			stream: 'output',
 			offset: 3
 		});
 
-		expect(logs).toHaveLength(1);
-		expect(new TextDecoder().decode(logs[0].bytes)).toBe('first\nlast\n');
+		expect(logs.map((log) => log.offset)).toEqual([0, split]);
+		expect(logs.map((log) => new TextDecoder().decode(log.bytes)).join('')).toBe(
+			new TextDecoder().decode(bytes)
+		);
+
+		const remaining = await asUser.query(api.commands.getLogChunks, {
+			threadId,
+			sessionId,
+			offset: split
+		});
+
+		expect(remaining.map((log) => log.offset)).toEqual([split]);
 	});
 
 	it('isolates users and threads for metadata and log access', async () => {
@@ -74,7 +98,7 @@ describe('durable thread command sessions', () => {
 			'Thread not found'
 		);
 		await expect(
-			other.query(api.commands.getLogChunks, { threadId, sessionId, stream: 'output', offset: 0 })
+			other.query(api.commands.getLogChunks, { threadId, sessionId, offset: 0 })
 		).rejects.toThrow('Thread not found');
 		await expect(
 			other.mutation(api.commands.sync, { threadId, sessionId, snapshot, chunks: [] })
@@ -86,19 +110,19 @@ describe('durable thread command sessions', () => {
 	it('rejects gaps, changed retries, and a different originating machine', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const bytes = new TextEncoder().encode('saved').buffer;
+		const bytes = eventBytes(0, 'stdout', 'saved').buffer;
 		await asUser.mutation(api.commands.sync, {
 			threadId,
 			sessionId,
 			snapshot,
-			chunks: [{ stream: 'output', offset: 0, bytes }]
+			chunks: [{ offset: 0, bytes }]
 		});
 		await expect(
 			asUser.mutation(api.commands.sync, {
 				threadId,
 				sessionId,
 				snapshot,
-				chunks: [{ stream: 'output', offset: 99, bytes }]
+				chunks: [{ offset: bytes.byteLength + 1, bytes }]
 			})
 		).rejects.toThrow('out of order');
 		await expect(
@@ -106,7 +130,7 @@ describe('durable thread command sessions', () => {
 				threadId,
 				sessionId,
 				snapshot,
-				chunks: [{ stream: 'output', offset: 0, bytes: new TextEncoder().encode('other').buffer }]
+				chunks: [{ offset: 0, bytes: eventBytes(0, 'stdout', 'other').buffer }]
 			})
 		).rejects.toThrow('does not match');
 		await expect(

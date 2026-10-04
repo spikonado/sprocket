@@ -181,17 +181,19 @@ not expire. A record without final status is recovered as interrupted, with a
 preview read from the existing log.
 
 The additive `commandSessions` and `commandLogChunks` Convex tables hold the same
-thread-scoped records and ordered raw log bytes. The origin machine retries
+thread-scoped records and ordered event-log bytes. The origin machine retries
 unsynced local records, and another machine downloads remote logs into its own
-data directory before returning local log paths. Completed cloud results are
-immutable; late running snapshots cannot regress them. Cloud reads authorize
-the thread owner. Live processes and their controls remain on the origin machine.
+data directory, reconstructs `output.log` from the captured event bytes, and
+returns local paths to both files. Downloaded logs use
+`command-logs/command-<sessionId>/`; there is no separate remote hierarchy.
+Completed cloud results are immutable; late running snapshots cannot regress
+them. Cloud reads authorize the thread owner. Live processes and their controls
+remain on the origin machine.
 Clearing a local transcript replica preserves its command history and logs.
 Remote history fetches have a ten-second deadline, including waiting for another
 fetch. Completed local records bypass remote fetches; cached running replicas
 remain readable as last-synced observations when a refresh fails or times out.
-Downloaded log directories use private permissions on Unix, including existing
-replica directories created by earlier development builds.
+Downloaded log directories use private permissions on Unix.
 Older servers have no cloud session records; no existing Convex rows require a
 schema migration.
 

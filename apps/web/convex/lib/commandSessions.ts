@@ -8,8 +8,6 @@ export const commandResult = vCommandStdinResult.omit(
 	'eventsPath'
 );
 
-export const commandStream = v.union(v.literal('output'), v.literal('events'));
-
 export const commandSnapshot = v.object({
 	command: v.string(),
 	workdir: v.string(),

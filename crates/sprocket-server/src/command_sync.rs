@@ -9,7 +9,7 @@ use convex::Value;
 use serde::Deserialize;
 use sprocket_agent::TranscriptStore;
 use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::command_sessions::ThreadCommandSessions;
 use crate::native_auth::NativeAuthManager;
@@ -17,7 +17,7 @@ use crate::transcript_client::UserConvexClient;
 
 const CHUNK_BYTES: usize = 128 * 1024;
 
-type IdleSessions = HashMap<PathBuf, (u64, u64)>;
+type IdleSessions = HashMap<PathBuf, u64>;
 
 #[derive(Clone, Copy)]
 enum SyncOutcome {
@@ -32,22 +32,17 @@ async fn sync_when_changed(
     history: &CommandHistory,
     sync: impl Future<Output = Result<SyncOutcome>>,
 ) -> Result<bool> {
-    let sizes = (
-        tokio::fs::metadata(&history.result.complete_log_path)
-            .await?
-            .len(),
-        tokio::fs::metadata(&history.result.events_path)
-            .await?
-            .len(),
-    );
-    if history.result.running && idle.get(path) == Some(&sizes) {
+    let size = tokio::fs::metadata(&history.result.events_path)
+        .await?
+        .len();
+    if history.result.running && idle.get(path) == Some(&size) {
         return Ok(false);
     }
     idle.remove(path);
     match sync.await? {
         SyncOutcome::Completed => Ok(true),
         SyncOutcome::RunningCaughtUp => {
-            idle.insert(path.to_path_buf(), sizes);
+            idle.insert(path.to_path_buf(), size);
             Ok(false)
         }
         SyncOutcome::Pending => Ok(false),
@@ -61,8 +56,6 @@ struct RemoteCommand {
     workdir: String,
     machine_id: String,
     result: CommandOutput,
-    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
-    output_bytes: u64,
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     events_bytes: u64,
 }
@@ -98,7 +91,7 @@ fn snapshot_value(history: &CommandHistory, running: bool) -> Value {
     ]))
 }
 
-async fn log_chunks(path: &str, stream: &str, mut offset: u64) -> Result<Vec<Value>> {
+async fn log_chunks(path: &str, mut offset: u64) -> Result<Vec<Value>> {
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut chunks = Vec::new();
@@ -110,7 +103,6 @@ async fn log_chunks(path: &str, stream: &str, mut offset: u64) -> Result<Vec<Val
         }
         bytes.truncate(read);
         chunks.push(Value::Object(BTreeMap::from([
-            ("stream".into(), stream.to_string().into()),
             ("offset".into(), Value::Float64(offset as f64)),
             ("bytes".into(), Value::Bytes(bytes)),
         ])));
@@ -126,13 +118,12 @@ async fn sync_session(
 ) -> Result<SyncOutcome> {
     let mut args = session_args(&history.thread_id, session_id);
     let remote: Option<RemoteCommand> = client.query("commands:get", args.clone()).await?;
-    let (output_offset, events_offset) = match remote {
+    let events_offset = match remote {
         Some(remote) if !remote.result.running => return Ok(SyncOutcome::Completed),
-        Some(remote) => (remote.output_bytes, remote.events_bytes),
-        None => (0, 0),
+        Some(remote) => remote.events_bytes,
+        None => 0,
     };
-    let mut chunks = log_chunks(&history.result.complete_log_path, "output", output_offset).await?;
-    chunks.extend(log_chunks(&history.result.events_path, "events", events_offset).await?);
+    let chunks = log_chunks(&history.result.events_path, events_offset).await?;
     let caught_up = chunks.is_empty();
     let completed = caught_up && !history.result.running;
     args.insert("snapshot".into(), snapshot_value(history, !completed));
@@ -307,10 +298,53 @@ struct RemoteChunk {
     bytes: Vec<u8>,
 }
 
+#[derive(Deserialize)]
+struct CapturedEvent {
+    sequence: u64,
+    bytes: Vec<u8>,
+}
+
+async fn rebuild_output(events: &Path, output: &Path, allow_partial: bool) -> Result<()> {
+    let mut reader = BufReader::new(tokio::fs::File::open(events).await?);
+    let temporary =
+        tempfile::NamedTempFile::new_in(output.parent().context("log has no directory")?)?;
+    let (file, temporary_path) = temporary.into_parts();
+    let mut file = BufWriter::new(tokio::fs::File::from_std(file));
+    let mut line = Vec::new();
+    let mut sequence = 0;
+    loop {
+        line.clear();
+        let read = (&mut reader)
+            .take(64 * 1024)
+            .read_until(b'\n', &mut line)
+            .await?;
+        if read == 0 {
+            break;
+        }
+        if line.last() != Some(&b'\n') {
+            if read == 64 * 1024 || !allow_partial {
+                bail!("command event log has an incomplete or oversized record");
+            }
+            break;
+        }
+        let event: CapturedEvent =
+            serde_json::from_slice(&line).context("invalid command event")?;
+        if event.sequence != sequence {
+            bail!("command event log has an unexpected sequence");
+        }
+        file.write_all(&event.bytes).await?;
+        sequence += 1;
+    }
+    file.flush().await?;
+    file.get_ref().sync_all().await?;
+    drop(file);
+    temporary_path.persist(output)?;
+    Ok(())
+}
+
 async fn download_log(
     client: &UserConvexClient,
     args: &BTreeMap<String, Value>,
-    stream: &str,
     path: &Path,
     length: u64,
 ) -> Result<()> {
@@ -325,7 +359,6 @@ async fn download_log(
     }
     while offset < length {
         let mut args = args.clone();
-        args.insert("stream".into(), stream.to_string().into());
         args.insert("offset".into(), Value::Float64(offset as f64));
         let chunks: Vec<RemoteChunk> = client.query("commands:getLogChunks", args).await?;
         if chunks.is_empty() {
@@ -369,21 +402,26 @@ pub(crate) async fn fetch(
         return Ok(None);
     };
     let id = uuid::Uuid::parse_str(session_id)?;
-    let logs = directory.join("remote").join(id.to_string());
+    let logs = directory.join(format!("command-{id}"));
     let mut builder = tokio::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
     builder.mode(0o700);
     builder.create(&logs).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o700)).await?;
-    }
     let output = logs.join("output.log");
     let events = logs.join("events.jsonl");
-    download_log(&client, &args, "output", &output, remote.output_bytes).await?;
-    download_log(&client, &args, "events", &events, remote.events_bytes).await?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    drop(options.open(&output).await?);
+    download_log(&client, &args, &events, remote.events_bytes).await?;
+    rebuild_output(
+        &events,
+        &output,
+        remote.result.running || !remote.result.success,
+    )
+    .await?;
     if remote.result.running {
         remote.result.error = Some("command belongs to another machine; this is its last synced output, not a live process observation".into());
     }
@@ -409,6 +447,113 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    fn event(sequence: u64, channel: &str, bytes: &[u8]) -> Vec<u8> {
+        let mut encoded = serde_json::to_vec(&serde_json::json!({
+            "sequence": sequence,
+            "timestampMs": 123,
+            "channel": channel,
+            "bytes": bytes,
+        }))
+        .unwrap();
+        encoded.push(b'\n');
+        encoded
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn captured_command_events_rebuild_the_original_log() {
+        use sprocket_workspace::{
+            CommandSessionManager, WorkspaceCancellation, default_command_shell,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let sessions =
+            CommandSessionManager::new(directory.path().into(), directory.path().join("logs"));
+        let captured = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf '\\033[32mready\\000\\377\\n'; printf 'warning\\n' >&2",
+                ".",
+                &default_command_shell(),
+                None,
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+        assert!(captured.result.success);
+        let output = directory.path().join("rebuilt.log");
+        rebuild_output(Path::new(&captured.result.events_path), &output, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::fs::read(output).await.unwrap(),
+            tokio::fs::read(captured.result.complete_log_path)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn downloaded_events_rebuild_exact_combined_output_across_partial_batches() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events.jsonl");
+        let output = directory.path().join("output.log");
+        let first = event(0, "stdout", b"\x1b[32mready\x00\xff\n");
+        let second = event(1, "stderr", b"warning\n");
+        let third = event(2, "stdout", "done \u{1f680}\n".as_bytes());
+        let mut downloaded = first.clone();
+        downloaded.extend_from_slice(&second[..second.len() / 2]);
+        tokio::fs::write(&events, &downloaded).await.unwrap();
+        rebuild_output(&events, &output, true).await.unwrap();
+        assert_eq!(
+            tokio::fs::read(&output).await.unwrap(),
+            b"\x1b[32mready\x00\xff\n"
+        );
+
+        downloaded.extend_from_slice(&second[second.len() / 2..]);
+        downloaded.extend_from_slice(&third);
+        tokio::fs::write(&events, &downloaded).await.unwrap();
+        let expected = [
+            b"\x1b[32mready\x00\xff\nwarning\n".as_slice(),
+            "done \u{1f680}\n".as_bytes(),
+        ]
+        .concat();
+        for _ in 0..2 {
+            rebuild_output(&events, &output, false).await.unwrap();
+            assert_eq!(tokio::fs::read(&output).await.unwrap(), expected);
+        }
+        assert_eq!(tokio::fs::read(&events).await.unwrap(), downloaded);
+    }
+
+    #[tokio::test]
+    async fn invalid_events_preserve_the_previous_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events.jsonl");
+        let output = directory.path().join("output.log");
+        tokio::fs::write(&output, b"previous output").await.unwrap();
+        let incomplete = event(0, "stdout", b"unfinished");
+        for bytes in [
+            event(1, "stdout", b"sequence gap"),
+            b"not JSON\n".to_vec(),
+            incomplete[..incomplete.len() - 1].to_vec(),
+        ] {
+            tokio::fs::write(&events, bytes).await.unwrap();
+            assert!(rebuild_output(&events, &output, false).await.is_err());
+            assert_eq!(tokio::fs::read(&output).await.unwrap(), b"previous output");
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_events_produce_an_empty_output_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events.jsonl");
+        let output = directory.path().join("output.log");
+        tokio::fs::write(&events, b"").await.unwrap();
+        rebuild_output(&events, &output, false).await.unwrap();
+        assert_eq!(tokio::fs::read(output).await.unwrap(), b"");
+    }
 
     async fn running_history(directory: &Path) -> CommandHistory {
         let output = directory.join("output.log");
@@ -441,7 +586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_sessions_sync_again_for_each_log_and_completion() {
+    async fn idle_sessions_sync_again_for_events_and_completion() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session.json");
         let mut history = running_history(directory.path()).await;
@@ -462,23 +607,20 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::Relaxed), 1);
 
-        for log in [
-            &history.result.complete_log_path,
-            &history.result.events_path,
-        ] {
-            tokio::fs::write(log, b"new output").await.unwrap();
-            for _ in 0..2 {
-                sync_when_changed(
-                    &mut idle,
-                    &path,
-                    &history,
-                    acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
-                )
-                .await
-                .unwrap();
-            }
+        tokio::fs::write(&history.result.events_path, b"new event")
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            sync_when_changed(
+                &mut idle,
+                &path,
+                &history,
+                acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
+            )
+            .await
+            .unwrap();
         }
-        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
 
         history.result.running = false;
         history.result.exit_code = Some(0);
@@ -493,7 +635,7 @@ mod tests {
             .await
             .unwrap()
         );
-        assert_eq!(calls.load(Ordering::Relaxed), 4);
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
         assert!(idle.is_empty());
     }
 
@@ -590,8 +732,8 @@ mod tests {
 
         while downloaded.len() < bytes.len() {
             let offset = downloaded.len() as u64;
-            let chunks = log_chunks(path, "output", offset).await.unwrap();
-            assert_eq!(chunks, log_chunks(path, "output", offset).await.unwrap());
+            let chunks = log_chunks(path, offset).await.unwrap();
+            assert_eq!(chunks, log_chunks(path, offset).await.unwrap());
             assert!(!chunks.is_empty());
             assert!(chunks.len() <= 2);
 
@@ -599,7 +741,6 @@ mod tests {
                 let Value::Object(mut chunk) = chunk else {
                     panic!("expected a log chunk");
                 };
-                assert_eq!(chunk.remove("stream"), Some("output".into()));
                 assert_eq!(
                     chunk.remove("offset"),
                     Some(Value::Float64(downloaded.len() as f64))
@@ -615,7 +756,7 @@ mod tests {
 
         assert_eq!(downloaded, bytes);
         assert!(
-            log_chunks(path, "output", bytes.len() as u64)
+            log_chunks(path, bytes.len() as u64)
                 .await
                 .unwrap()
                 .is_empty()

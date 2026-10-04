@@ -1,7 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
-import { commandSnapshot, commandStream } from '@convex/lib/commandSessions';
+import { commandSnapshot } from '@convex/lib/commandSessions';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -166,15 +166,13 @@ export default defineSchema({
 		userId: v.string(),
 		sessionId: v.string(),
 		...commandSnapshot.fields,
-		outputBytes: v.number(),
 		eventsBytes: v.number()
 	}).index('by_threadId_and_sessionId', ['threadId', 'sessionId']),
 	commandLogChunks: defineTable({
 		commandId: v.id('commandSessions'),
-		stream: commandStream,
 		offset: v.number(),
 		bytes: v.bytes()
-	}).index('by_commandId_stream_offset', ['commandId', 'stream', 'offset']),
+	}).index('by_commandId_offset', ['commandId', 'offset']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({
