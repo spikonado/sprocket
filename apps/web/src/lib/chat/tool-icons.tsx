@@ -33,12 +33,12 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'await_question':
 		case 'poll_question':
 			return Hourglass;
-		case 'subagent':
+		case 'spawn_subagent':
 		case 'control_subagent':
 		case 'poll_subagent':
 			return Bot;
 		case 'list_subagents':
-		case 'list_models':
+		case 'list_subagent_models':
 			return ListChecks;
 		case 'check_docs':
 			return BookOpen;

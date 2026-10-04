@@ -83,12 +83,12 @@ describe('command tool summaries', () => {
 describe('subagent summaries', () => {
 	it.each<{ name: string; input: JsonValue; expected: string }>([
 		{
-			name: 'subagent',
+			name: 'spawn_subagent',
 			input: { prompt: 'Research the circuit' },
 			expected: 'Research the circuit'
 		},
 		{
-			name: 'subagent',
+			name: 'spawn_subagent',
 			input: { threadId: 'child', prompt: 'Implement the design' },
 			expected: 'Implement the design'
 		},
@@ -102,7 +102,9 @@ describe('subagent summaries', () => {
 			input: { action: 'answer_question', threadId: 'child', questionId: 'q', text: 'Yes' },
 			expected: 'Answer child question'
 		},
-		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' }
+		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' },
+		{ name: 'list_subagents', input: {}, expected: 'Child agents' },
+		{ name: 'list_subagent_models', input: {}, expected: 'Available subagent models' }
 	])('describes $expected', ({ name, input, expected }) => {
 		const tool: AssistantTimelineTool = { type: 'tool', callId: 'call', name, input };
 		expect(toolItemSummary(tool, new Map())).toBe(expected);

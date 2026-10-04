@@ -570,7 +570,7 @@ describe('subagents.createOrSend', () => {
 });
 
 describe('subagent tool job results', () => {
-	it.each(['subagent', 'control_subagent', 'poll_subagent'] as const)(
+	it.each(['spawn_subagent', 'control_subagent', 'poll_subagent'] as const)(
 		'commits and retrieves the %s result through the executor lifecycle',
 		async (kind) => {
 			const t = initConvexTest();
@@ -578,7 +578,7 @@ describe('subagent tool job results', () => {
 			const child = await createChild(t, caller);
 
 			const payload =
-				kind === 'subagent'
+				kind === 'spawn_subagent'
 					? { prompt: 'Delegate work', yieldTimeMs: 0 }
 					: kind === 'control_subagent'
 						? { threadId: child.threadId, action: 'stop' as const, yieldTimeMs: 0 }
@@ -610,7 +610,7 @@ describe('subagent tool job results', () => {
 							nextCursor: 'cursor-1',
 							hasMore: false
 						}
-					: kind === 'subagent'
+					: kind === 'spawn_subagent'
 						? { ...metadata, created: true, settings: child.settings }
 						: metadata;
 

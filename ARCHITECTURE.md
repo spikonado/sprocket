@@ -260,11 +260,12 @@ that order and keeps no cross-thread transcript cache.
 
 ### Native subagent threads
 
-The `subagent` tool requires a nonempty prompt for delegation: no `threadId`
+The `spawn_subagent` tool requires a nonempty prompt for delegation: no `threadId`
 creates a child, while a supplied `threadId` sends a follow-up.
 `control_subagent` stops a descendant or answers its pending question, while
 `poll_subagent` observes its lifecycle and pages its transcript. Discovery uses
-`list_subagents`. Actions and polls share the timing policy of `exec_cmd`,
+`list_subagents`, with 32 children per page. `list_subagent_models` exposes
+provider-compatible model settings. Actions and polls share the timing policy of `exec_cmd`,
 `control_cmd`, and `poll_cmd`: a 10-second default, a 270-second cap, and a
 10-second minimum for positive poll waits. Pending immediate polls have a
 10-second cooldown; completed reads and waiting polls bypass it. Subagents use

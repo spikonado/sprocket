@@ -34,7 +34,8 @@ use self::patch::ApplyPatchTool;
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
 use self::subagents::{
-    ControlSubagentTool, ListModelsTool, ListSubagentsTool, PollSubagentTool, SubagentTool,
+    ControlSubagentTool, ListSubagentModelsTool, ListSubagentsTool, PollSubagentTool,
+    SpawnSubagentTool,
 };
 use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
@@ -62,14 +63,14 @@ pub(crate) struct AgentToolSet {
     pub(crate) control_cmd: ControlCmdTool,
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
-    pub(crate) list_models: ListModelsTool,
+    pub(crate) list_subagent_models: ListSubagentModelsTool,
     pub(crate) list_subagents: ListSubagentsTool,
     pub(crate) parse_file: ParseFileTool,
     pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) screenshot_url: ScreenshotUrlTool,
-    pub(crate) subagent: SubagentTool,
+    pub(crate) spawn_subagent: SpawnSubagentTool,
     pub(crate) poll_subagent: PollSubagentTool,
     pub(crate) web_search: WebSearchTool,
     pub(crate) add_artifact: AddArtifactTool,
@@ -176,7 +177,7 @@ pub(crate) fn agent_tools(
         control_subagent: ControlSubagentTool {
             context: context.clone(),
         },
-        list_models: ListModelsTool(context.clone()),
+        list_subagent_models: ListSubagentModelsTool(context.clone()),
         list_subagents: ListSubagentsTool {
             context: context.clone(),
         },
@@ -188,7 +189,7 @@ pub(crate) fn agent_tools(
         },
         scrape_url: ScrapeUrlTool(context.clone()),
         screenshot_url: ScreenshotUrlTool(context.clone()),
-        subagent: SubagentTool {
+        spawn_subagent: SpawnSubagentTool {
             context: context.clone(),
         },
         poll_subagent: PollSubagentTool {

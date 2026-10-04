@@ -19,7 +19,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "edit_artifact",
     "exec_cmd",
     "list_artifacts",
-    "list_models",
+    "list_subagent_models",
     "list_subagents",
     "mandate_charge",
     "mandate_list",
@@ -34,7 +34,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "save_artifact",
     "scrape_url",
     "screenshot_url",
-    "subagent",
+    "spawn_subagent",
     "web_search",
 ];
 
@@ -621,11 +621,11 @@ mod tests {
         // launched through the noninteractive CLI.
         assert!(child.contains(&"ask_question"));
         assert!(child.contains(&"poll_question"));
-        assert!(child.contains(&"subagent"));
+        assert!(child.contains(&"spawn_subagent"));
         assert!(child.contains(&"control_subagent"));
         assert!(child.contains(&"poll_subagent"));
         assert!(child.contains(&"list_subagents"));
-        assert!(child.contains(&"list_models"));
+        assert!(child.contains(&"list_subagent_models"));
         for payment in PAYMENT_TOOL_NAMES {
             assert!(!child.contains(payment), "child exposes {payment}");
         }

@@ -40,14 +40,13 @@ const TRANSCRIPT_PARTS: &str = "subagents:transcriptParts";
 const CONTROL: &str = "subagents:control";
 const LIST_CHILDREN: &str = "subagents:listChildren";
 
-const MAX_LIST_LIMIT: u32 = 128;
-const DEFAULT_LIST_LIMIT: u32 = 32;
+const SUBAGENT_LIST_PAGE_SIZE: u32 = 32;
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const CONTROL_MAX_ATTEMPTS: usize = 3;
 const CONTROL_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
-pub(crate) struct SubagentTool {
+pub(crate) struct SpawnSubagentTool {
     pub(super) context: AgentToolContext,
 }
 
@@ -67,7 +66,7 @@ pub(crate) struct ListSubagentsTool {
 }
 
 #[derive(Clone)]
-pub(crate) struct ListModelsTool(pub(super) AgentToolContext);
+pub(crate) struct ListSubagentModelsTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Default)]
 pub(super) struct SubagentPolls {
@@ -110,35 +109,20 @@ impl SubagentPolls {
     }
 }
 
-fn default_list_limit() -> u32 {
-    DEFAULT_LIST_LIMIT
-}
-
-fn is_default_list_limit(limit: &u32) -> bool {
-    *limit == DEFAULT_LIST_LIMIT
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SubagentArgs {
-    /// Nonempty task to delegate.
+pub(crate) struct SpawnSubagentArgs {
     pub(crate) prompt: String,
-    /// Omit to create a child; include to send a follow-up.
+    /// Omit to create a new subagent; include to send a follow-up.
     #[serde(rename = "threadId", default, skip_serializing_if = "Option::is_none")]
     pub(crate) thread_id: Option<String>,
-    /// Model override. New children use the provider-compatible default;
-    /// follow-ups retain the child's saved model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) model: Option<String>,
-    /// Reasoning override. Retained on follow-up unless selecting a new model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<String>,
-    /// Fast override. New children use the catalog default; follow-ups retain
-    /// saved fast mode, turned off when the selected model cannot support it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fast: Option<bool>,
-    /// Wait for child work to settle before returning, in milliseconds.
-    /// Defaults to 10000; 0 returns immediately.
+    /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -146,10 +130,7 @@ pub(crate) struct SubagentArgs {
     )]
     #[schemars(default = "default_yield_ms")]
     pub(crate) yield_time_ms: u64,
-    /// Task deadline for the child execution started by this call, in
-    /// milliseconds. Omit for no deadline; 0 clamps to 1 ms like
-    /// exec_cmd. Bound durably to this call's execution: later work in
-    /// the same thread is unaffected.
+    /// Maximum execution runtime. Without a limit, the subagent runs until it completes or is stopped.
     #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_ms: Option<u64>,
 }
@@ -164,8 +145,7 @@ pub(crate) struct PollSubagentArgs {
     /// beginning. Reads are non-destructive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cursor: Option<String>,
-    /// Wait for the thread to settle before returning, in milliseconds.
-    /// Defaults to 10000; 0 returns immediately.
+    /// Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -189,20 +169,18 @@ pub(crate) struct ControlSubagentArgs {
     #[serde(rename = "threadId")]
     pub(crate) thread_id: String,
     pub(crate) action: SubagentControlAction,
-    /// Pending question to answer. Required only for answer_question.
     #[serde(
         rename = "questionId",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) question_id: Option<String>,
-    /// Chosen option id; text may accompany it as an annotation.
     #[serde(rename = "optionId", default, skip_serializing_if = "Option::is_none")]
     pub(crate) option_id: Option<String>,
-    /// Free-text answer or annotation. Only for answer_question.
+    /// Free-text answer or annotation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) text: Option<String>,
-    /// Maximum time to wait for child work to settle. Zero returns immediately.
+    /// Maximum time to wait for completion before returning the tool call.
     #[serde(
         rename = "yieldTimeMs",
         default = "default_yield_ms",
@@ -225,23 +203,16 @@ pub(crate) struct ListSubagentsArgs {
     /// Pagination cursor from a previous listing's nextCursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cursor: Option<String>,
-    /// Maximum children to return. Defaults to 32.
-    #[serde(
-        default = "default_list_limit",
-        skip_serializing_if = "is_default_list_limit"
-    )]
-    #[schemars(default = "default_list_limit")]
-    pub(crate) limit: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ListModelsArgs {}
+pub(crate) struct ListSubagentModelsArgs {}
 
-fn subagent_parameters() -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(SubagentArgs));
+fn spawn_subagent_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(SpawnSubagentArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
-        "Maximum time to wait for child work to settle before returning. Zero returns immediately.",
+        "Maximum time to wait for completion before returning the tool call.",
     );
     schema
 }
@@ -250,7 +221,7 @@ fn poll_subagent_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(PollSubagentArgs));
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Poll,
-        "Maximum time to wait for child work to settle before returning. Zero returns an immediate status/output snapshot.",
+        "Maximum time to wait for completion before returning the tool call. Zero returns an immediate status/output snapshot.",
     );
     schema
 }
@@ -266,7 +237,7 @@ fn control_subagent_parameters() -> serde_json::Value {
     }
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
-        "Maximum time to wait for child work to settle before returning. Zero returns immediately.",
+        "Maximum time to wait for completion before returning the tool call.",
     );
     schema["anyOf"] = json!([
         {
@@ -292,7 +263,7 @@ fn control_subagent_parameters() -> serde_json::Value {
     schema
 }
 
-fn prepare_subagent(args: &SubagentArgs) -> Result<String, ToolExecutionError> {
+fn prepare_subagent(args: &SpawnSubagentArgs) -> Result<String, ToolExecutionError> {
     if args
         .thread_id
         .as_ref()
@@ -348,25 +319,18 @@ fn validate_control(args: &ControlSubagentArgs) -> Result<(), ToolExecutionError
     Ok(())
 }
 
-fn list_subagents_parameters() -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(ListSubagentsArgs));
-    schema["properties"]["limit"]["default"] = json!(DEFAULT_LIST_LIMIT);
-    schema
-}
-
-impl rig::tool::Tool for SubagentTool {
-    const NAME: &'static str = "subagent";
+impl rig::tool::Tool for SpawnSubagentTool {
+    const NAME: &'static str = "spawn_subagent";
     type Error = ToolExecutionError;
-    type Args = SubagentArgs;
+    type Args = SpawnSubagentArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Delegate a nonempty prompt: omit threadId to create a child, or include it to send a follow-up. Children run independently in the same workspace without payment tools. Use control_subagent to stop or answer a question, poll_subagent for output, and list_subagents to discover children. yieldTimeMs=0 returns metadata without reading transcripts. timeoutMs is a durable deadline for this execution only, not later work in the thread."
-            .to_string()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        subagent_parameters()
+        spawn_subagent_parameters()
     }
 
     async fn call(
@@ -475,10 +439,10 @@ async fn submit_child(
     }
 }
 
-impl SubagentTool {
+impl SpawnSubagentTool {
     async fn run(
         &self,
-        args: SubagentArgs,
+        args: SpawnSubagentArgs,
         prompt: String,
         job_id: String,
         cancellation: WorkspaceCancellation,
@@ -597,8 +561,7 @@ impl rig::tool::Tool for PollSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Observe a descendant thread: lifecycle, filtered transcript (prompts, completed assistant text, apply_patch outcomes), and pending questions. Poll with the returned nextCursor; reads are non-destructive."
-            .to_string()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -664,8 +627,7 @@ impl rig::tool::Tool for ControlSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Control a descendant thread. stop cancels its current work and pending questions. answer_question requires questionId and optionId or text; the first valid answer wins. Use subagent to send prompts and poll_subagent to observe output. Children keep running independently unless explicitly stopped."
-            .to_string()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -874,12 +836,11 @@ impl rig::tool::Tool for ListSubagentsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the immediate children of this thread (or of a descendant thread) with their lifecycle and saved settings. Transcripts are not inlined; use poll_subagent."
-            .to_string()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        list_subagents_parameters()
+        json!(schemars::schema_for!(ListSubagentsArgs))
     }
 
     async fn call(
@@ -887,11 +848,6 @@ impl rig::tool::Tool for ListSubagentsTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        if args.limit == 0 || args.limit > MAX_LIST_LIMIT {
-            return Err(tool_failure(format!(
-                "limit must be between 1 and {MAX_LIST_LIMIT}"
-            )));
-        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job_with_id(
             &self.context,
@@ -913,7 +869,7 @@ impl rig::tool::Tool for ListSubagentsTool {
                             );
                         }
                         let mut pagination = serde_json::Map::new();
-                        pagination.insert("numItems".to_string(), json!(args.limit));
+                        pagination.insert("numItems".to_string(), json!(SUBAGENT_LIST_PAGE_SIZE));
                         pagination.insert(
                             "cursor".to_string(),
                             args.cursor
@@ -943,19 +899,18 @@ impl rig::tool::Tool for ListSubagentsTool {
     }
 }
 
-impl rig::tool::Tool for ListModelsTool {
-    const NAME: &'static str = "list_models";
+impl rig::tool::Tool for ListSubagentModelsTool {
+    const NAME: &'static str = "list_subagent_models";
     type Error = ToolExecutionError;
-    type Args = ListModelsArgs;
+    type Args = ListSubagentModelsArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the model catalog choices compatible with this thread's completion provider, including supported reasoning values, defaults, and capabilities."
-            .to_string()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ListModelsArgs))
+        json!(schemars::schema_for!(ListSubagentModelsArgs))
     }
 
     async fn call(
@@ -1312,7 +1267,7 @@ mod tests {
             if let Some(thread_id) = thread_id {
                 payload["threadId"] = json!(thread_id);
             }
-            let args: SubagentArgs = serde_json::from_value(payload).unwrap();
+            let args: SpawnSubagentArgs = serde_json::from_value(payload).unwrap();
             let prompt = prepare_subagent(&args).unwrap();
             assert_eq!(args.thread_id.as_deref(), thread_id);
             assert_eq!(prompt, "implement the task");
@@ -1327,7 +1282,7 @@ mod tests {
             json!({"threadId": "child-thread"}),
             json!({"threadId": "child-thread", "prompt": "  "}),
         ] {
-            let result = serde_json::from_value::<SubagentArgs>(payload)
+            let result = serde_json::from_value::<SpawnSubagentArgs>(payload)
                 .map_err(|error| tool_failure(error.to_string()))
                 .and_then(|args| prepare_subagent(&args));
             assert!(result.unwrap_err().to_string().contains("prompt"));
@@ -1369,17 +1324,34 @@ mod tests {
         use super::super::commands::{exec_command_parameters, poll_command_parameters};
 
         let action = exec_command_parameters()["properties"]["yieldTimeMs"].clone();
-        for schema in [subagent_parameters(), control_subagent_parameters()] {
-            let wait = &schema["properties"]["yieldTimeMs"];
-            for field in ["type", "minimum", "maximum", "default"] {
-                assert_eq!(wait[field], action[field]);
-            }
+        for schema in [spawn_subagent_parameters(), control_subagent_parameters()] {
+            assert_eq!(schema["properties"]["yieldTimeMs"], action);
         }
         let poll = poll_command_parameters()["properties"]["yieldTimeMs"].clone();
         let schema = poll_subagent_parameters();
-        for field in ["type", "anyOf", "default"] {
-            assert_eq!(schema["properties"]["yieldTimeMs"][field], poll[field]);
-        }
+        assert_eq!(schema["properties"]["yieldTimeMs"], poll);
+    }
+
+    #[test]
+    fn listing_arguments_select_a_parent_and_cursor() {
+        let args: ListSubagentsArgs = serde_json::from_value(json!({
+            "parentThreadId": "child-thread",
+            "cursor": "next-page"
+        }))
+        .unwrap();
+        assert_eq!(args.parent_thread_id.as_deref(), Some("child-thread"));
+        assert_eq!(args.cursor.as_deref(), Some("next-page"));
+        let payload = serde_json::to_value(args).unwrap();
+        assert_eq!(
+            payload,
+            json!({"parentThreadId": "child-thread", "cursor": "next-page"})
+        );
+        let schema = json!(schemars::schema_for!(ListSubagentsArgs));
+        let properties = schema["properties"].as_object().unwrap();
+        assert_eq!(
+            properties.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["cursor", "parentThreadId"]
+        );
     }
 
     fn monitor_info(active: bool) -> SubagentMonitorInfo {

@@ -238,8 +238,7 @@ export const vPollSubagentPayload = v.object({
 
 export const vListSubagentsPayload = v.object({
 	parentThreadId: v.optional(v.id('threadRecords')),
-	cursor: v.optional(v.string()),
-	limit: v.optional(v.number())
+	cursor: v.optional(v.string())
 });
 
 export const vCurrentExecutorJobPayload = v.union(
@@ -705,12 +704,12 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('poll_command'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
-	v.literal('list_models'),
+	v.literal('list_subagent_models'),
 	v.literal('list_subagents'),
 	v.literal('edit_artifact'),
 	v.literal('delete_artifact'),
 	v.literal('save_artifact'),
-	v.literal('subagent'),
+	v.literal('spawn_subagent'),
 	v.literal('control_subagent'),
 	v.literal('poll_subagent')
 );
