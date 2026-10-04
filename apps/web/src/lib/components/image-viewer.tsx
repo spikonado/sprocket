@@ -1,4 +1,4 @@
-import { Check, Copy, Download, LoaderCircle } from 'lucide-react';
+import { Check, Copy, Download, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type ViewerImage = {
@@ -17,6 +17,12 @@ function extensionForMediaType(mediaType: string): string | undefined {
 			return 'gif';
 		case 'image/webp':
 			return 'webp';
+		case 'image/svg+xml':
+			return 'svg';
+		case 'image/avif':
+			return 'avif';
+		case 'image/bmp':
+			return 'bmp';
 		default:
 			return undefined;
 	}
@@ -44,7 +50,7 @@ function downloadFilename(current: ViewerImage) {
 }
 
 async function fetchImageBlob(current: ViewerImage) {
-	const response = await fetch(current.url);
+	const response = await fetch(current.url, { referrerPolicy: 'no-referrer' });
 
 	if (!response.ok) {
 		throw new Error(`Fetch failed with status ${response.status}`);
@@ -262,7 +268,7 @@ export default function ImageViewer({
 			const objectUrl = URL.createObjectURL(blob);
 			const anchor = document.createElement('a');
 			anchor.href = objectUrl;
-			anchor.download = downloadFilename(current);
+			anchor.download = downloadFilename({ ...current, mediaType: blob.type || current.mediaType });
 			document.body.append(anchor);
 
 			try {
@@ -287,7 +293,8 @@ export default function ImageViewer({
 
 	return (
 		<div
-			className="bg-background/92 fixed inset-0 z-50 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-12"
+			className="bg-background/92 fixed inset-0 z-300 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-12"
+			data-image-viewer=""
 			role="presentation"
 			onClick={(event) => {
 				if (event.target === event.currentTarget) {
@@ -306,8 +313,17 @@ export default function ImageViewer({
 				<img
 					src={current.url}
 					alt={current.name}
+					referrerPolicy="no-referrer"
 					className="border-border block max-h-[calc(100dvh-2rem)] max-w-full rounded-2xl border object-contain sm:max-h-[calc(100dvh-6rem)]"
 				/>
+				<button
+					type="button"
+					className={`${actionButtonClass} absolute top-3 right-3`}
+					aria-label="Close image preview"
+					onClick={onClose}
+				>
+					<X className="size-4" aria-hidden="true" />
+				</button>
 
 				<div className="absolute right-3 bottom-3 flex items-center gap-2">
 					<button

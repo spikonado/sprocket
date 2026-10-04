@@ -9,6 +9,7 @@ import type { ArtifactType } from '@convex/lib/validators';
 
 type Props = {
 	artifacts: ArtifactEntry[];
+	workspacePath?: string;
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 	selectedKey: string | null;
 	tab: SidePanelTab;
@@ -42,6 +43,7 @@ const TABS: { id: SidePanelTab; label: string }[] = [
 
 export default function SidePanel({
 	artifacts,
+	workspacePath,
 	onDeleteArtifact,
 	selectedKey,
 	tab,
@@ -89,7 +91,8 @@ export default function SidePanel({
 			// Artifact screen-fullscreen (browser FS or CSS fallback) owns Escape.
 			if (
 				document.fullscreenElement ||
-				document.querySelector('[data-artifact-screen-fullscreen]')
+				document.querySelector('[data-artifact-screen-fullscreen]') ||
+				document.querySelector('[data-image-viewer]')
 			) {
 				return;
 			}
@@ -193,6 +196,7 @@ export default function SidePanel({
 									artifactType={selected.artifactType}
 									content={selected.content}
 									localPath={selected.localPath}
+									workspacePath={workspacePath}
 									localError={selected.localError}
 									variant="full"
 									onOpenFullscreen={() => onOpenFullscreen(selected.key)}

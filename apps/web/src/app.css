@@ -399,6 +399,32 @@ body::after {
 	color: var(--muted-foreground);
 }
 
+.chat-markdown img {
+	display: inline-block;
+	max-width: 100%;
+	max-height: 32rem;
+	height: auto;
+	object-fit: contain;
+	border-radius: 0.75rem;
+	vertical-align: middle;
+}
+
+.chat-markdown img[role='button'] {
+	cursor: zoom-in;
+}
+
+.chat-markdown img:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 3px;
+}
+
+.chat-markdown .markdown-image-error,
+.chat-markdown img:not([src]) {
+	border: 1px solid var(--border);
+	padding: 0.5rem 0.75rem;
+	color: var(--muted-foreground);
+}
+
 .chat-markdown :not(pre) > code {
 	border: 1px solid var(--hairline);
 	border-radius: 0.5rem;

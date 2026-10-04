@@ -1,5 +1,12 @@
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
 use axum::Json;
-use axum::extract::State;
+use axum::body::Body;
+use axum::extract::{Query, State};
+use axum::http::{StatusCode, header};
+use axum::response::Response;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +21,9 @@ use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
     load_workspace_skills,
 };
+
+const MAX_WORKSPACE_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+static WORKSPACE_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +51,13 @@ struct WorkspaceSkillsRequest {
 struct WorkspaceSearchRequest {
     workspace_path: String,
     query: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceImageRequest {
+    workspace_path: String,
+    path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +96,213 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/workspace/browse", post(browse_path))
         .route("/workspace/skills", post(list_skills))
         .route("/workspace/search", post(search_workspace))
+        .route("/workspace/image", get(workspace_image))
+}
+
+async fn workspace_image(
+    State(state): State<AppState>,
+    MachineSession: MachineSession,
+    Query(payload): Query<WorkspaceImageRequest>,
+) -> Result<Response, ApiError> {
+    let attachment = state
+        .project_attachments
+        .require_available_workspace(&payload.workspace_path)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let permit = WORKSPACE_IMAGE_READS
+        .acquire()
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?;
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        read_workspace_image(PathBuf::from(attachment.workspace_path), payload.path)
+    })
+    .await
+    .map_err(|error| ApiError::internal(error.into()))?
+    .map_err(ApiError::bad_request)?;
+
+    let is_svg = result.media_type == "image/svg+xml";
+    let mut response = Response::new(Body::from(result.contents));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static(result.media_type),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    if is_svg {
+        headers.insert(
+            axum::http::HeaderName::from_static("content-security-policy"),
+            header::HeaderValue::from_static("sandbox; default-src 'none'"),
+        );
+    }
+    Ok(response)
+}
+
+struct WorkspaceImage {
+    contents: Vec<u8>,
+    media_type: &'static str,
+}
+
+fn read_workspace_image(
+    workspace_path: PathBuf,
+    image_path: String,
+) -> anyhow::Result<WorkspaceImage> {
+    let workspace = std::fs::canonicalize(&workspace_path).with_context(|| {
+        format!(
+            "failed to resolve attached workspace {}",
+            workspace_path.display()
+        )
+    })?;
+    let image_path = Path::new(&image_path);
+    let image_path = if image_path.is_absolute() {
+        image_path.to_path_buf()
+    } else {
+        workspace.join(image_path)
+    };
+    let image_path =
+        std::fs::canonicalize(&image_path).with_context(|| "image path is unavailable")?;
+    if !image_path.starts_with(&workspace) {
+        anyhow::bail!("image path is outside the attached workspace");
+    }
+
+    let file = open_workspace_image(&workspace, &image_path)
+        .with_context(|| "failed to open workspace image")?;
+    let metadata = file
+        .metadata()
+        .with_context(|| "failed to inspect workspace image")?;
+    if !metadata.is_file() {
+        anyhow::bail!("workspace image is not a regular file");
+    }
+    if metadata.len() > MAX_WORKSPACE_IMAGE_BYTES {
+        anyhow::bail!("workspace image exceeds the 20 MiB limit");
+    }
+
+    let mut contents = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_WORKSPACE_IMAGE_BYTES + 1)
+        .read_to_end(&mut contents)
+        .with_context(|| "failed to read workspace image")?;
+    if contents.len() as u64 > MAX_WORKSPACE_IMAGE_BYTES {
+        anyhow::bail!("workspace image exceeds the 20 MiB limit");
+    }
+
+    let media_type = detect_image_media_type(&contents)
+        .ok_or_else(|| anyhow::anyhow!("workspace file is not a supported image"))?;
+    Ok(WorkspaceImage {
+        contents,
+        media_type,
+    })
+}
+
+#[cfg(unix)]
+fn open_workspace_image(workspace: &Path, image_path: &Path) -> anyhow::Result<std::fs::File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut file = std::fs::File::open(workspace)?;
+    let relative = image_path.strip_prefix(workspace)?;
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        let name = CString::new(component.as_os_str().as_bytes())?;
+        let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
+        if components.peek().is_some() {
+            flags |= libc::O_DIRECTORY;
+        }
+        // Walk from the workspace descriptor so a concurrent symlink swap cannot escape it.
+        let descriptor = unsafe { libc::openat(file.as_raw_fd(), name.as_ptr(), flags) };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: openat returned a new, owned descriptor.
+        file = unsafe { std::fs::File::from_raw_fd(descriptor) };
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_workspace_image(_workspace: &Path, image_path: &Path) -> anyhow::Result<std::fs::File> {
+    Ok(std::fs::File::open(image_path)?)
+}
+
+fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {
+    if contents.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if contents.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if contents.starts_with(b"GIF87a") || contents.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if contents.len() >= 12 && &contents[..4] == b"RIFF" && &contents[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if contents.starts_with(b"BM") {
+        Some("image/bmp")
+    } else if is_avif(contents) {
+        Some("image/avif")
+    } else if is_svg(contents) {
+        Some("image/svg+xml")
+    } else {
+        None
+    }
+}
+
+fn is_avif(contents: &[u8]) -> bool {
+    if contents.len() < 16 || &contents[4..8] != b"ftyp" {
+        return false;
+    }
+    let box_size = u32::from_be_bytes(contents[..4].try_into().unwrap()) as usize;
+    if box_size < 16 || box_size > contents.len() || box_size % 4 != 0 {
+        return false;
+    }
+    &contents[8..12] == b"avif"
+        || &contents[8..12] == b"avis"
+        || contents[16..box_size]
+            .chunks_exact(4)
+            .any(|brand| brand == b"avif" || brand == b"avis")
+}
+
+fn is_svg(contents: &[u8]) -> bool {
+    let Ok(document) = std::str::from_utf8(contents) else {
+        return false;
+    };
+    let mut rest = document.strip_prefix('\u{feff}').unwrap_or(document);
+    rest = trim_xml_whitespace(rest);
+    if rest.starts_with("<?xml") {
+        let Some(end) = rest.find("?>") else {
+            return false;
+        };
+        rest = trim_xml_whitespace(&rest[end + 2..]);
+    }
+    loop {
+        if !rest.starts_with("<!--") {
+            break;
+        }
+        let Some(end) = rest.find("-->") else {
+            return false;
+        };
+        rest = trim_xml_whitespace(&rest[end + 3..]);
+    }
+    let Some(tag) = rest.strip_prefix("<svg") else {
+        return false;
+    };
+    tag.chars()
+        .next()
+        .is_some_and(|character| matches!(character, '>' | '/' | ' ' | '\t' | '\r' | '\n'))
+}
+
+fn trim_xml_whitespace(mut value: &str) -> &str {
+    while let Some(character) = value.chars().next() {
+        if !matches!(character, ' ' | '\t' | '\r' | '\n') {
+            break;
+        }
+        value = &value[character.len_utf8()..];
+    }
+    value
 }
 
 async fn search_workspace(
@@ -193,6 +417,50 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
+    async fn image_test_app(data_dir: &Path, workspace: &Path) -> (axum::Router, String) {
+        let auth = crate::auth::AuthState::load(data_dir).unwrap();
+        let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
+        auth.bind_session_user(&token, "test-user").await.unwrap();
+        let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            crate::auth::desktop_login_callback_url(7731),
+        );
+        let state = AppState::for_test(
+            auth,
+            native_auth,
+            data_dir.to_path_buf(),
+            true,
+            crate::package_update::PackageUpdateManager::disabled(),
+        );
+        state
+            .project_attachments
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .unwrap();
+        (routes().with_state(state), token)
+    }
+
+    fn image_request(workspace: &Path, path: &str, token: Option<&str>) -> Request<Body> {
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("workspacePath", &workspace.to_string_lossy())
+            .append_pair("path", path)
+            .finish();
+        let uri = format!("/workspace/image?{query}");
+        let mut builder = Request::builder().method("GET").uri(uri);
+        if let Some(token) = token {
+            builder = builder.header(
+                "cookie",
+                format!("{}={token}", crate::config::SESSION_COOKIE_NAME),
+            );
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
     #[tokio::test]
     async fn workspace_search_requires_session_and_returns_completion_entries() {
         let data = tempfile::tempdir().unwrap();
@@ -272,5 +540,172 @@ mod tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn workspace_image_requires_auth_and_serves_relative_and_absolute_images() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let image = b"\x89PNG\r\n\x1a\npng-data";
+        std::fs::create_dir(workspace.path().join("images")).unwrap();
+        std::fs::write(workspace.path().join("images/photo.bin"), image).unwrap();
+        std::fs::write(
+            workspace.path().join("images/vector.svg"),
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+        )
+        .unwrap();
+        let (app, token) = image_test_app(data.path(), workspace.path()).await;
+
+        let denied = app
+            .clone()
+            .oneshot(image_request(workspace.path(), "images/photo.bin", None))
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+
+        let mut paths = vec![
+            "images/photo.bin".to_string(),
+            workspace
+                .path()
+                .join("images/photo.bin")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                workspace.path().join("images/photo.bin"),
+                workspace.path().join("images/internal-link.png"),
+            )
+            .unwrap();
+            paths.push("images/internal-link.png".to_string());
+        }
+        for path in paths {
+            let response = app
+                .clone()
+                .oneshot(image_request(workspace.path(), &path, Some(&token)))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(
+                response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                "nosniff"
+            );
+            let contents = to_bytes(response.into_body(), 1024).await.unwrap();
+            assert_eq!(contents.as_ref(), &image[..]);
+        }
+
+        let svg = app
+            .oneshot(image_request(
+                workspace.path(),
+                "images/vector.svg",
+                Some(&token),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(svg.status(), StatusCode::OK);
+        assert_eq!(svg.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        assert_eq!(
+            svg.headers().get("content-security-policy").unwrap(),
+            "sandbox; default-src 'none'"
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_image_rejects_path_escapes_and_non_image_files() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("outside.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        std::fs::write(workspace.path().join("fake.png"), b"not an image").unwrap();
+        let (app, token) = image_test_app(data.path(), workspace.path()).await;
+
+        let traversal_path = Path::new("..")
+            .join(outside.path().file_name().unwrap())
+            .join("outside.png");
+        let traversal = app
+            .clone()
+            .oneshot(image_request(
+                workspace.path(),
+                &traversal_path.to_string_lossy(),
+                Some(&token),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(traversal.status(), StatusCode::BAD_REQUEST);
+
+        let unsupported = app
+            .clone()
+            .oneshot(image_request(workspace.path(), "fake.png", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(unsupported.status(), StatusCode::BAD_REQUEST);
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                outside.path().join("outside.png"),
+                workspace.path().join("linked.png"),
+            )
+            .unwrap();
+            let symlink_escape = app
+                .oneshot(image_request(workspace.path(), "linked.png", Some(&token)))
+                .await
+                .unwrap();
+            assert_eq!(symlink_escape.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_image_requires_an_attachment_and_rejects_oversized_or_nonregular_files() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let unattached = tempfile::tempdir().unwrap();
+        std::fs::File::create(workspace.path().join("oversized.png"))
+            .unwrap()
+            .set_len(MAX_WORKSPACE_IMAGE_BYTES + 1)
+            .unwrap();
+        std::fs::create_dir(workspace.path().join("directory.png")).unwrap();
+        let (app, token) = image_test_app(data.path(), workspace.path()).await;
+
+        let unavailable = app
+            .clone()
+            .oneshot(image_request(unattached.path(), "image.png", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(unavailable.status(), StatusCode::BAD_REQUEST);
+
+        for path in ["oversized.png", "directory.png"] {
+            let response = app
+                .clone()
+                .oneshot(image_request(workspace.path(), path, Some(&token)))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        }
+    }
+
+    #[test]
+    fn image_sniffing_recognizes_supported_formats_and_sandboxes_svg() {
+        let avif = [
+            0, 0, 0, 16, b'f', b't', b'y', b'p', b'a', b'v', b'i', b'f', 0, 0, 0, 0,
+        ];
+        for (contents, expected_type) in [
+            (&b"\x89PNG\r\n\x1a\n"[..], "image/png"),
+            (&b"\xff\xd8\xff\x00"[..], "image/jpeg"),
+            (&b"GIF89a"[..], "image/gif"),
+            (&b"RIFF\x04\x00\x00\x00WEBP"[..], "image/webp"),
+            (&b"BM"[..], "image/bmp"),
+            (&avif[..], "image/avif"),
+            (
+                &b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>"[..],
+                "image/svg+xml",
+            ),
+        ] {
+            assert_eq!(detect_image_media_type(contents), Some(expected_type));
+        }
+        assert_eq!(detect_image_media_type(b"plain text"), None);
     }
 }

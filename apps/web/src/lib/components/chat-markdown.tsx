@@ -4,6 +4,7 @@ import type { ArtifactEntry } from '$lib/chat/artifacts';
 import { renderMarkdownBlocks } from '$lib/chat/markdown';
 import ArtifactReference from '$lib/components/artifact-reference';
 import MarkdownHtml from '$lib/components/markdown-html';
+import type { MarkdownImageScope } from '$lib/chat/markdown-images';
 
 const NO_ARTIFACTS = new Set<string>();
 
@@ -12,13 +13,15 @@ export default function ChatMarkdown({
 	className = '',
 	artifacts = [],
 	onOpenArtifact,
-	openLinksInNewTab = false
+	openLinksInNewTab = false,
+	imageScope
 }: {
 	content: string;
 	className?: string;
 	artifacts?: ArtifactEntry[];
 	onOpenArtifact?: (artifactId: string) => void;
 	openLinksInNewTab?: boolean;
+	imageScope?: MarkdownImageScope;
 }) {
 	const artifactById = useMemo(
 		() => new Map(artifacts.map((artifact) => [artifact.key, artifact])),
@@ -54,7 +57,9 @@ export default function ChatMarkdown({
 					return null;
 				}
 
-				return <MarkdownHtml key={`${block.type}-${index}`} html={block.html} />;
+				return (
+					<MarkdownHtml key={`${block.type}-${index}`} html={block.html} imageScope={imageScope} />
+				);
 			})}
 		</div>
 	);

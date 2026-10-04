@@ -140,6 +140,7 @@ export default function ThreadTranscript({
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
 	const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const imageScope = project ? { workspacePath: project.workspacePath } : undefined;
 
 	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
 
@@ -509,6 +510,7 @@ export default function ThreadTranscript({
 				<TranscriptPromptMessage
 					key={message.id}
 					message={message}
+					imageScope={imageScope}
 					copied={copiedMessageId === message.id}
 					loadAttachment={loadAttachment}
 					onCopy={() => void copyUserMessage(message.id, message.text ?? '')}
@@ -591,6 +593,7 @@ export default function ThreadTranscript({
 					data-message-kind="text"
 				>
 					<ChatMarkdown
+						imageScope={imageScope}
 						content={message.text || ' '}
 						className="text-foreground"
 						artifacts={artifacts}
@@ -624,6 +627,7 @@ export default function ThreadTranscript({
 					{!hasPersistedAssistantContent &&
 					(message.text || (live.isStreaming && live.timeline.length === 0)) ? (
 						<ChatMarkdown
+							imageScope={imageScope}
 							content={message.text || '...'}
 							className="text-foreground"
 							artifacts={artifacts}
@@ -639,6 +643,7 @@ export default function ThreadTranscript({
 									data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
 								>
 									<ChatMarkdown
+										imageScope={imageScope}
 										content={section.text || ' '}
 										className="text-foreground"
 										artifacts={artifacts}
