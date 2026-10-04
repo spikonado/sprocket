@@ -227,7 +227,7 @@ describe('transcript viewport paging', () => {
 	});
 
 	it.each(['live', 'persisted'] as const)(
-		'uses the same patch and failure disclosures for %s tools',
+		'shows patch paths and failure details inline for %s tools',
 		async (kind) => {
 			const parts: LiveTranscriptMessage['parts'] = [
 				{
@@ -275,26 +275,134 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 
-			const patch = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes('Changed Files')
-			);
-
-			expect(patch).toBeUndefined();
+			expect(viewport.textContent).toContain('Changed Files');
 			expect(viewport.textContent).toContain('a.txt');
 			expect(viewport.textContent).toContain('b.txt');
 			expect(viewport.textContent).toContain('c.txt');
-			const failures = [...viewport.querySelectorAll('details summary')];
-			expect(failures.map((summary) => summary.textContent)).toEqual([
+
+			const failures = [...viewport.querySelectorAll('[data-tool-kind] p[title]')].filter(
+				(row) =>
+					row.textContent?.includes('(cancelled)') || row.textContent?.includes('(interrupted)')
+			);
+
+			expect(failures.map((row) => row.textContent)).toEqual([
 				expect.stringContaining('(cancelled)'),
 				expect.stringContaining('(interrupted)')
 			]);
 			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
-			expect(viewport.querySelector('details [role="status"]')?.textContent).toBe(
+			expect(viewport.querySelector('[data-tool-kind] [role="status"]')?.textContent).toBe(
 				'stopped by user'
 			);
 			expect(props.loadSectionDetails).toBeDefined();
 		}
 	);
+
+	it.each(['live', 'persisted'] as const)(
+		'lists repeated tools, artifacts, and reasoning directly inside %s work',
+		async (kind) => {
+			const calls: { name: string; input: JsonValue }[] = [
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'exec_cmd',
+					input: { cmd: `echo command-${index}` }
+				})),
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'read_skill',
+					input: { name: `skill-${index}` }
+				})),
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'apply_patch',
+					input: { patch: `*** Begin Patch\n*** Add File: file-${index}.txt\n+text\n*** End Patch` }
+				})),
+				{ name: 'add_artifact', input: { path: 'notes.md' } },
+				{ name: 'list_artifacts', input: {} },
+				{ name: 'edit_artifact', input: { path: 'notes.md' } }
+			];
+
+			const parts: LiveTranscriptMessage['parts'] = [
+				{ type: 'reasoning', id: 'plan', text: 'Inspect, edit, and validate.' },
+				...calls.flatMap((call, index): LiveTranscriptMessage['parts'] => [
+					{ type: 'tool-call', callId: `tool-${index}`, ...call },
+					{ type: 'tool-result', callId: `tool-${index}`, name: call.name, output: {} }
+				])
+			];
+
+			const response: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), parts }
+					: { ...message(3), kind: 'work', id: 'work-3', itemCount: calls.length };
+
+			const { viewport, setProps } = await renderTranscript([response]);
+			setProps({
+				loadSectionDetails: vi
+					.fn()
+					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+			});
+			click(within(viewport).getByRole('button', { name: /^Worked/ }));
+			await settle();
+
+			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
+			expect(rows).toHaveLength(calls.length);
+			expect(rows.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
+			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
+			expect(viewport.querySelector('details')).toBeNull();
+
+			for (let index = 0; index < 3; index += 1) {
+				expect(viewport.textContent).toContain(`echo command-${index}`);
+				expect(viewport.textContent).toContain(`Read Skill:$skill-${index}`);
+				expect(viewport.textContent).toContain(`file-${index}.txt`);
+			}
+
+			expect(viewport.textContent).toContain('Created Artifacts:notes.md');
+			expect(viewport.textContent).toContain('Listed Artifacts');
+			expect(viewport.textContent).toContain('Updated Artifacts:notes.md');
+			expect(viewport.textContent).toContain('Inspect, edit, and validate.');
+		}
+	);
+
+	it('keeps running calls inside Working as they settle and the run completes', async () => {
+		const response: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: Array.from({ length: 3 }, (_, index) => ({
+				type: 'tool-call',
+				callId: `command-${index}`,
+				name: 'exec_cmd',
+				input: { cmd: `sleep ${index + 1}` }
+			}))
+		};
+
+		const { viewport, setProps } = await renderTranscript([response]);
+		setProps({ activeRunId: response.runId });
+		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
+		const work = within(viewport).getByRole('button', { name: /^Working/ });
+		click(work);
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
+		expect(viewport.querySelectorAll('[data-tool-kind] .animate-spin')).toHaveLength(3);
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
+
+		const settled: LiveTranscriptMessage = {
+			...response,
+			runStatus: 'completed',
+			parts: [
+				...response.parts,
+				...response.parts
+					.filter((part) => part.type === 'tool-call')
+					.map((part) => ({
+						type: 'tool-result' as const,
+						callId: part.callId,
+						name: part.name,
+						output: { exitCode: 0 }
+					}))
+			]
+		};
+
+		setProps({ messages: [settled], activeRunId: null });
+		await settle();
+		expect(within(viewport).getByRole('button', { name: /^Worked/ })).toBe(work);
+		expect(work.getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
+		expect(viewport.querySelector('.animate-spin')).toBeNull();
+	});
 
 	it.each([false, true])(
 		'reveals a synchronous call only after its result arrives with async=%s',
@@ -355,7 +463,7 @@ describe('transcript viewport paging', () => {
 			});
 			await settle();
 
-			expect(viewport.textContent).not.toContain('Read Skill');
+			expect(viewport.textContent).toContain('Read Skill');
 			expect(viewport.textContent).toContain('hidden-skill');
 			expect(viewport.querySelector('[title="sleep 10 (running)"]') !== null).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
@@ -444,11 +552,7 @@ describe('transcript viewport paging', () => {
 			click(work);
 			await settle();
 
-			const commands = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes(group)
-			);
-
-			expect(commands).toBeUndefined();
+			expect(viewport.textContent).not.toContain(group);
 			expect(viewport.querySelector('.animate-spin')).toBeNull();
 			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
 			expect(viewport.textContent).toContain('Still running when this call returned');
@@ -563,15 +667,10 @@ describe('transcript viewport paging', () => {
 		await settle();
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 
-		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
-			(button) => {
-				const label = button.textContent?.trim();
-
-				return label === 'Reasoned' || label === 'Reasoning' ? [label] : [];
-			}
-		);
-
-		expect(reasoningLabels).toEqual(['Reasoned', 'Reasoning']);
+		expect(viewport.textContent).toContain('Reasoned');
+		expect(viewport.textContent).toContain('Saved reasoning');
+		expect(viewport.textContent).toContain('Reasoning');
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
 

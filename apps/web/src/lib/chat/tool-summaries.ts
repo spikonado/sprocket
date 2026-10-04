@@ -82,7 +82,6 @@ function describeExecCommandOptions(input: JsonValue | undefined) {
 	return workdir && workdir.trim().length > 0 && workdir !== '.' ? ` (cwd ${workdir})` : '';
 }
 
-/** Detail line for a tool row; no type prefix (that lives on the dropdown label). */
 function summarizeTool(name: string, input: JsonValue | undefined) {
 	const fields = isJsonObject(input) ? input : undefined;
 
@@ -312,10 +311,6 @@ function patchSummary(toolLog: AssistantTimelineTool) {
 	}
 
 	return toolLog.name === 'apply_patch' ? summarizePatchInput(toolLog.input) : null;
-}
-
-export function changedFileCount(tools: AssistantTimelineTool[]) {
-	return new Set(tools.flatMap((tool) => patchSummary(tool)?.split('\n') ?? [])).size;
 }
 
 function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {

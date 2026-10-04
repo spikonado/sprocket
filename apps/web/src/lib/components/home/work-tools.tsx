@@ -2,101 +2,83 @@ import { LoaderCircle } from 'lucide-react';
 import {
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
+	isAssistantTimelineToolRunning,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import {
-	changedFileCount,
 	commandSnapshotLabel,
 	fullToolSummary,
 	toolGroupLabel,
 	toolItemSummary,
 	toolSummaryClass
 } from '$lib/chat/tool-summaries';
-import { toolKindIcon } from '$lib/chat/tool-icons';
-import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure';
+import { toolLogIcon } from '$lib/chat/tool-icons';
+import { isCommandToolKind } from '$lib/chat/command-tool-kinds';
 
 type Props = {
 	tools: AssistantTimelineTool[];
-	toolKey?: string;
-	running?: boolean;
-	preserveExpansion?: boolean;
 	inProgress: boolean;
 	commands: ReadonlyMap<string, string>;
 };
 
-export default function WorkTools({
-	tools,
-	toolKey = '',
-	running = false,
-	preserveExpansion = false,
-	inProgress,
-	commands
-}: Props) {
+export default function WorkTools({ tools, inProgress, commands }: Props) {
 	return (
-		<ToolCallsDisclosure
-			label={running ? 'Running' : toolGroupLabel(toolKey)}
-			icon={running ? LoaderCircle : toolKindIcon(toolKey)}
-			iconClass={running ? 'animate-spin' : undefined}
-			tools={tools}
-			preserveExpansion={preserveExpansion}
-			defaultExpanded={
-				running ? true : toolKey === 'apply_patch' ? changedFileCount(tools) <= 2 : undefined
-			}
-			toolRow={(tool) => {
+		<div className="text-muted-foreground space-y-1.5 text-[13px] leading-6">
+			{tools.map((tool) => {
+				const kind = tool.job?.kind ?? tool.name;
+				const Icon = toolLogIcon(tool);
 				const summary = toolItemSummary(tool, commands);
 				const snapshot = commandSnapshotLabel(tool);
-
-				if (running) {
-					return (
-						<p className="flex min-w-0 items-start gap-1.5" title={`${summary} (running)`}>
-							<LoaderCircle
-								className="text-muted-foreground mt-1.5 size-3 shrink-0 animate-spin"
-								aria-hidden="true"
-							/>
-							<span className="sr-only">Running</span>
-							<span className={toolSummaryClass(tool)}>{summary}</span>
-						</p>
-					);
-				}
-
+				const running = isAssistantTimelineToolRunning(tool, inProgress);
 				const error = assistantTimelineToolError(tool, inProgress);
 				const failure = assistantTimelineToolFailureKind(tool, inProgress);
 
-				if (error && failure) {
-					const errorClass =
-						failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
-
-					return (
-						<details className="min-w-0">
-							<summary
-								className="min-w-0 cursor-pointer text-left"
-								title={fullToolSummary(tool, inProgress, commands)}
-							>
-								<span className={toolSummaryClass(tool)}>{summary}</span>
-								<span className={errorClass}>({failure})</span>
-							</summary>
-							<p
-								className={`mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
-								role="status"
-							>
-								{error}
-							</p>
-						</details>
-					);
-				}
+				const errorClass =
+					failure === 'failed' ? 'text-destructive' : 'text-amber-800 dark:text-amber-200';
 
 				return (
-					<div>
-						<p
-							className={`min-w-0 ${toolSummaryClass(tool)}`}
-							title={fullToolSummary(tool, inProgress, commands)}
-						>
-							{summary}
-						</p>
-						{snapshot ? <p className="text-xs">{snapshot}</p> : null}
+					<div
+						key={tool.callId}
+						data-work-detail
+						data-tool-kind={kind}
+						className="flex min-w-0 items-start gap-1.5"
+					>
+						<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
+						<div className="min-w-0 flex-1">
+							<p
+								className="flex min-w-0 items-start gap-1.5"
+								title={fullToolSummary(tool, inProgress, commands)}
+							>
+								{!isCommandToolKind(kind) ? (
+									<span className="shrink-0">{toolGroupLabel(kind)}:</span>
+								) : null}
+								<span className={`min-w-0 ${toolSummaryClass(tool)}`}>{summary}</span>
+								{running ? (
+									<>
+										<LoaderCircle
+											className="mt-1.5 size-3 shrink-0 animate-spin"
+											aria-hidden="true"
+										/>
+										<span className="sr-only">Running</span>
+									</>
+								) : null}
+								{error && failure ? (
+									<span className={`shrink-0 ${errorClass}`}>({failure})</span>
+								) : null}
+							</p>
+							{error && failure ? (
+								<p
+									className={`mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap ${errorClass}`}
+									role="status"
+								>
+									{error}
+								</p>
+							) : null}
+							{snapshot ? <p className="text-xs">{snapshot}</p> : null}
+						</div>
 					</div>
 				);
-			}}
-		/>
+			})}
+		</div>
 	);
 }
