@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
@@ -88,6 +89,99 @@ describe('code blocks', () => {
 
 		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
 		expect(container.querySelector('pre code')?.textContent).toBe(code);
+	});
+});
+
+describe('copying code', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('identifies the copied snapshot when code streams during a pending clipboard write', async () => {
+		let finish: () => void = () => {};
+
+		const writeText = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+		);
+
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		const { getByRole, getByText, rerender } = render(<ChatMarkdown content={'```\nconst'} />);
+		fireEvent.click(getByRole('button', { name: 'Copy code' }));
+		rerender(<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />);
+		finish();
+
+		await waitFor(() => expect(getByText('Copied earlier')).toBeTruthy());
+		expect(writeText).toHaveBeenCalledWith('const\n');
+		expect(getByRole('button', { name: 'Copy current code' })).toBeTruthy();
+	});
+
+	it('updates copy feedback when code grows after copying and lets the user copy the current version', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		const { getByRole, getByText, rerender } = render(<ChatMarkdown content={'```\nconst'} />);
+		fireEvent.click(getByRole('button', { name: 'Copy code' }));
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		rerender(<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />);
+
+		expect(getByText('Copied earlier')).toBeTruthy();
+		fireEvent.click(getByRole('button', { name: 'Copy current code' }));
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		expect(writeText).toHaveBeenLastCalledWith('const reading = 23.4;\n');
+	});
+
+	it('copies each block verbatim without including controls or Markdown fences', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		const code = '<div>sensor</div>\n\n\treading = 23.4;\n';
+
+		const { getAllByRole, getByText } = render(
+			<StrictMode>
+				<ChatMarkdown content={`\`\`\`\n${code}\`\`\`\n\n    echo ready`} />
+			</StrictMode>
+		);
+
+		const buttons = getAllByRole('button', { name: 'Copy code' });
+		fireEvent.click(buttons[0]);
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		expect(writeText).toHaveBeenCalledWith(code);
+		fireEvent.click(buttons[1]);
+
+		await waitFor(() => expect(writeText).toHaveBeenCalledWith('echo ready\n'));
+	});
+
+	it('offers a retry after a failed clipboard write and copies the latest streamed block', async () => {
+		const writeText = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('Clipboard denied'))
+			.mockResolvedValue(undefined);
+
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+
+		const { getAllByRole, getByRole, getByText, rerender } = render(
+			<StrictMode>
+				<ChatMarkdown content={'```\nconst'} />
+			</StrictMode>
+		);
+
+		fireEvent.click(getByRole('button', { name: 'Copy code' }));
+
+		await waitFor(() => expect(getByText('Copy failed')).toBeTruthy());
+		fireEvent.click(getByRole('button', { name: 'Retry copying code' }));
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		rerender(
+			<StrictMode>
+				<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />
+			</StrictMode>
+		);
+		expect(getAllByRole('button', { name: 'Copy current code' })).toHaveLength(1);
+		fireEvent.click(getByRole('button', { name: 'Copy current code' }));
+
+		await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('const reading = 23.4;\n'));
 	});
 });
 
