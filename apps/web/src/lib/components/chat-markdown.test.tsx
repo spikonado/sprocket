@@ -95,7 +95,7 @@ describe('code blocks', () => {
 describe('copying code', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
-	it('keeps copy feedback when the code streams during a pending clipboard write', async () => {
+	it('identifies the copied snapshot when code streams during a pending clipboard write', async () => {
 		let finish: () => void = () => {};
 
 		const writeText = vi.fn(
@@ -111,8 +111,25 @@ describe('copying code', () => {
 		rerender(<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />);
 		finish();
 
-		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		await waitFor(() => expect(getByText('Copied earlier')).toBeTruthy());
 		expect(writeText).toHaveBeenCalledWith('const\n');
+		expect(getByRole('button', { name: 'Copy current code' })).toBeTruthy();
+	});
+
+	it('updates copy feedback when code grows after copying and lets the user copy the current version', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		const { getByRole, getByText, rerender } = render(<ChatMarkdown content={'```\nconst'} />);
+		fireEvent.click(getByRole('button', { name: 'Copy code' }));
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		rerender(<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />);
+
+		expect(getByText('Copied earlier')).toBeTruthy();
+		fireEvent.click(getByRole('button', { name: 'Copy current code' }));
+
+		await waitFor(() => expect(getByText('Copied')).toBeTruthy());
+		expect(writeText).toHaveBeenLastCalledWith('const reading = 23.4;\n');
 	});
 
 	it('copies each block verbatim without including controls or Markdown fences', async () => {
@@ -161,8 +178,8 @@ describe('copying code', () => {
 				<ChatMarkdown content={'```\nconst reading = 23.4;\n```'} />
 			</StrictMode>
 		);
-		expect(getAllByRole('button', { name: 'Copy code' })).toHaveLength(1);
-		fireEvent.click(getByRole('button', { name: 'Copy code' }));
+		expect(getAllByRole('button', { name: 'Copy current code' })).toHaveLength(1);
+		fireEvent.click(getByRole('button', { name: 'Copy current code' }));
 
 		await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('const reading = 23.4;\n'));
 	});

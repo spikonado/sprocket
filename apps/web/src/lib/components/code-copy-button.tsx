@@ -2,8 +2,10 @@ import { Check, Copy } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+type CopyState = { status: 'idle' | 'copying' | 'failed' } | { status: 'copied'; code: string };
+
 export default function CodeCopyButton({ code, target }: { code: string; target: HTMLElement }) {
-	const [status, setStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
+	const [copyState, setCopyState] = useState<CopyState>({ status: 'idle' });
 	const disposed = useRef(false);
 	const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -17,36 +19,51 @@ export default function CodeCopyButton({ code, target }: { code: string; target:
 	}, []);
 
 	async function copy() {
+		const codeSnapshot = code;
 		clearTimeout(resetTimer.current);
-		setStatus('copying');
+		setCopyState({ status: 'copying' });
 
 		try {
-			await navigator.clipboard.writeText(code);
+			await navigator.clipboard.writeText(codeSnapshot);
 
 			if (disposed.current) return;
 
-			setStatus('copied');
-			resetTimer.current = setTimeout(() => setStatus('idle'), 2_000);
+			setCopyState({ status: 'copied', code: codeSnapshot });
+			resetTimer.current = setTimeout(() => setCopyState({ status: 'idle' }), 2_000);
 		} catch {
-			if (!disposed.current) setStatus('failed');
+			if (!disposed.current) setCopyState({ status: 'failed' });
 		}
 	}
+
+	const copiedEarlier = copyState.status === 'copied' && copyState.code !== code;
 
 	return createPortal(
 		<button
 			type="button"
 			className="markdown-code-copy"
-			aria-label={status === 'failed' ? 'Retry copying code' : 'Copy code'}
-			disabled={status === 'copying'}
+			aria-label={
+				copyState.status === 'failed'
+					? 'Retry copying code'
+					: copiedEarlier
+						? 'Copy current code'
+						: 'Copy code'
+			}
+			disabled={copyState.status === 'copying'}
 			onClick={() => void copy()}
 		>
-			{status === 'copied' ? (
+			{copyState.status === 'copied' ? (
 				<Check size={14} aria-hidden="true" />
 			) : (
 				<Copy size={14} aria-hidden="true" />
 			)}
 			<span role="status">
-				{status === 'copied' ? 'Copied' : status === 'failed' ? 'Copy failed' : 'Copy'}
+				{copyState.status === 'copied'
+					? copiedEarlier
+						? 'Copied earlier'
+						: 'Copied'
+					: copyState.status === 'failed'
+						? 'Copy failed'
+						: 'Copy'}
 			</span>
 		</button>,
 		target
