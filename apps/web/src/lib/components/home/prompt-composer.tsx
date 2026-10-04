@@ -21,14 +21,20 @@ import {
 import { formatCountdownDuration } from '$lib/format';
 import AgentQuestion from '$lib/components/home/agent-question';
 import RunElapsed from '$lib/components/home/run-elapsed';
+import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
+import type { CommandApi } from '$lib/home/running-commands';
 import OptionSelector from '$lib/components/option-selector';
 import ProviderLogo from '$lib/components/provider-logo';
 import ReasoningSelector from '$lib/components/reasoning-selector';
-import type { SkillSummary, WorkspaceSearchEntry } from '$lib/types/sprocket';
+import type {
+	SkillSummary,
+	TranscriptScopeRequest,
+	WorkspaceSearchEntry
+} from '$lib/types/sprocket';
 
 export type PendingAgentQuestion = {
 	questionId: string;
@@ -56,6 +62,7 @@ export type PromptComposerProps = {
 	pendingQuestion?: PendingAgentQuestion | null;
 	showContinueWorking?: boolean;
 	onContinueWorking?: () => void;
+	runningCommands?: { api: CommandApi; scope: TranscriptScopeRequest } | null;
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
 	canSend: boolean;
@@ -117,6 +124,7 @@ export function PromptComposerView({
 	pendingQuestion = null,
 	showContinueWorking = false,
 	onContinueWorking,
+	runningCommands = null,
 	selectedQuestionOptionId = null,
 	onSelectedQuestionOptionIdChange,
 	canSend,
@@ -132,6 +140,7 @@ export function PromptComposerView({
 	usageFailed
 }: PromptComposerViewProps) {
 	const [now, setNow] = useState(() => Date.now());
+	const continueWorkingVisible = showContinueWorking && Boolean(onContinueWorking);
 
 	useEffect(() => {
 		const interval = setInterval(() => {
@@ -718,7 +727,11 @@ export function PromptComposerView({
 						</div>
 					) : null}
 
-					{showContinueWorking && onContinueWorking ? (
+					{runningCommands && (
+						<RunningCommands {...runningCommands} collapseWhen={continueWorkingVisible} />
+					)}
+
+					{continueWorkingVisible ? (
 						<div className="mx-auto mb-3 w-full max-w-[48rem] px-4">
 							<button
 								type="button"

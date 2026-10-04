@@ -48,7 +48,6 @@ import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
 import SettingsUsage from '$lib/components/home/settings-usage';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
-import RunningCommands from '$lib/components/home/running-commands';
 import SidePanel from '$lib/components/home/side-panel';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
@@ -2612,12 +2611,6 @@ export default function App({
 								/>
 							)}
 
-							{currentThreadId && signedInUserId && desktopApi && authReady && (
-								<RunningCommands
-									api={desktopApi}
-									scope={{ userId: signedInUserId, threadId: currentThreadId }}
-								/>
-							)}
 							<div className={!currentThreadId ? 'create-thread-screen' : ''}>
 								{!currentThreadId && (
 									<>
@@ -2692,6 +2685,14 @@ export default function App({
 										pendingQuestion={pendingAgentQuestion}
 										showContinueWorking={latestRunResumeKind != null}
 										onContinueWorking={() => void continueWorking()}
+										runningCommands={
+											currentThreadId && signedInUserId && desktopApi && authReady
+												? {
+														api: desktopApi,
+														scope: { userId: signedInUserId, threadId: currentThreadId }
+													}
+												: null
+										}
 										selectedQuestionOptionId={selectedQuestionOptionId}
 										onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
 										canSend={canSend}
