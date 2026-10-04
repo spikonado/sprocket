@@ -166,6 +166,10 @@ Completed results remain pollable without an age or count limit after restarts
 or from another machine. Remote queries download logs into the local data directory;
 live command control requires the originating machine. Network outages leave
 local records pending for retry, so another machine sees only previously synced data.
+Once a running session's logs are fully acknowledged, unchanged log lengths skip
+cloud queries and writes. New bytes or completion resume synchronization; failed
+and partial uploads remain pending. This idle tracking is in memory, so server
+restart reconciles unsynced records with Convex again.
 Running polls return incremental output; completed polls replay a bounded preview
 of the full output, including bytes read by earlier runs, with full log paths.
 If shutdown interrupts a command before its final status is saved, later polls

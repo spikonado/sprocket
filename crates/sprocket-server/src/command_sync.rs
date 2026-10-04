@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +16,43 @@ use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
 
 const CHUNK_BYTES: usize = 128 * 1024;
+
+type IdleSessions = HashMap<PathBuf, (u64, u64)>;
+
+#[derive(Clone, Copy)]
+enum SyncOutcome {
+    Completed,
+    RunningCaughtUp,
+    Pending,
+}
+
+async fn sync_when_changed(
+    idle: &mut IdleSessions,
+    path: &Path,
+    history: &CommandHistory,
+    sync: impl Future<Output = Result<SyncOutcome>>,
+) -> Result<bool> {
+    let sizes = (
+        tokio::fs::metadata(&history.result.complete_log_path)
+            .await?
+            .len(),
+        tokio::fs::metadata(&history.result.events_path)
+            .await?
+            .len(),
+    );
+    if history.result.running && idle.get(path) == Some(&sizes) {
+        return Ok(false);
+    }
+    idle.remove(path);
+    match sync.await? {
+        SyncOutcome::Completed => Ok(true),
+        SyncOutcome::RunningCaughtUp => {
+            idle.insert(path.to_path_buf(), sizes);
+            Ok(false)
+        }
+        SyncOutcome::Pending => Ok(false),
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,21 +123,28 @@ async fn sync_session(
     client: &UserConvexClient,
     session_id: &str,
     history: &CommandHistory,
-) -> Result<bool> {
+) -> Result<SyncOutcome> {
     let mut args = session_args(&history.thread_id, session_id);
     let remote: Option<RemoteCommand> = client.query("commands:get", args.clone()).await?;
     let (output_offset, events_offset) = match remote {
-        Some(remote) if !remote.result.running => return Ok(true),
+        Some(remote) if !remote.result.running => return Ok(SyncOutcome::Completed),
         Some(remote) => (remote.output_bytes, remote.events_bytes),
         None => (0, 0),
     };
     let mut chunks = log_chunks(&history.result.complete_log_path, "output", output_offset).await?;
     chunks.extend(log_chunks(&history.result.events_path, "events", events_offset).await?);
-    let completed = chunks.is_empty() && !history.result.running;
+    let caught_up = chunks.is_empty();
+    let completed = caught_up && !history.result.running;
     args.insert("snapshot".into(), snapshot_value(history, !completed));
     args.insert("chunks".into(), Value::Array(chunks));
     let _: serde_json::Value = client.mutate("commands:sync", args).await?;
-    Ok(completed)
+    Ok(if completed {
+        SyncOutcome::Completed
+    } else if caught_up {
+        SyncOutcome::RunningCaughtUp
+    } else {
+        SyncOutcome::Pending
+    })
 }
 
 pub(crate) fn spawn(
@@ -110,9 +155,17 @@ pub(crate) fn spawn(
     machine_id: String,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut idle = IdleSessions::new();
         loop {
-            if let Err(error) =
-                sync_directory(&store, &registry, &auth, &deployment, &machine_id).await
+            if let Err(error) = sync_directory(
+                &store,
+                &registry,
+                &auth,
+                &deployment,
+                &machine_id,
+                &mut idle,
+            )
+            .await
             {
                 tracing::warn!("command sync will retry: {error:#}");
             }
@@ -128,7 +181,8 @@ pub(crate) async fn flush(
     deployment: &str,
     machine_id: &str,
 ) -> Result<()> {
-    while !sync_directory(store, registry, auth, deployment, machine_id).await? {}
+    let mut idle = IdleSessions::new();
+    while !sync_directory(store, registry, auth, deployment, machine_id, &mut idle).await? {}
     Ok(())
 }
 
@@ -138,6 +192,7 @@ async fn sync_directory(
     auth: &Arc<NativeAuthManager>,
     deployment: &str,
     machine_id: &str,
+    idle: &mut IdleSessions,
 ) -> Result<bool> {
     let mut complete = true;
     let mut users = match tokio::fs::read_dir(store.root()).await {
@@ -173,6 +228,7 @@ async fn sync_directory(
                         deployment,
                         machine_id,
                         &mut client,
+                        idle,
                     ),
                 )
                 .await
@@ -202,8 +258,10 @@ async fn sync_record(
     deployment: &str,
     machine_id: &str,
     client: &mut Option<UserConvexClient>,
+    idle: &mut IdleSessions,
 ) -> Result<bool> {
     if tokio::fs::try_exists(path.with_extension("synced")).await? {
+        idle.remove(path);
         return Ok(true);
     }
     let mut history: CommandHistory = serde_json::from_slice(&tokio::fs::read(path).await?)?;
@@ -222,17 +280,20 @@ async fn sync_record(
         Some(manager) => manager.history_snapshot(session_id, &mut history).await?,
         None => history.recover_if_running(directory, session_id).await?,
     }
-    let client = match client {
-        Some(client) => client,
-        None => client.insert(
-            UserConvexClient::connect_with_fetcher(
-                deployment,
-                auth.auth_token_fetcher_for_user(history.user_id.clone()),
-            )
-            .await?,
-        ),
-    };
-    let completed = sync_session(client, session_id, &history).await?;
+    let completed = sync_when_changed(idle, path, &history, async {
+        let client = match client {
+            Some(client) => client,
+            None => client.insert(
+                UserConvexClient::connect_with_fetcher(
+                    deployment,
+                    auth.auth_token_fetcher_for_user(history.user_id.clone()),
+                )
+                .await?,
+            ),
+        };
+        sync_session(client, session_id, &history).await
+    })
+    .await?;
     if completed {
         tokio::fs::write(path.with_extension("synced"), b"").await?;
     }
@@ -345,7 +406,145 @@ pub(crate) async fn fetch(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+
+    async fn running_history(directory: &Path) -> CommandHistory {
+        let output = directory.join("output.log");
+        let events = directory.join("events.jsonl");
+        tokio::fs::write(&output, b"").await.unwrap();
+        tokio::fs::write(&events, b"").await.unwrap();
+        CommandHistory {
+            user_id: "user".into(),
+            thread_id: "thread".into(),
+            machine_id: "machine".into(),
+            command: "build".into(),
+            workdir: "/workspace".into(),
+            max_output_chars: 20_000,
+            result: CommandOutput {
+                exit_code: None,
+                success: false,
+                running: true,
+                timed_out: false,
+                output: String::new(),
+                complete_log_path: output.to_string_lossy().into_owned(),
+                events_path: events.to_string_lossy().into_owned(),
+                error: None,
+            },
+        }
+    }
+
+    async fn acknowledged_sync(calls: &AtomicUsize, outcome: SyncOutcome) -> Result<SyncOutcome> {
+        calls.fetch_add(1, Ordering::Relaxed);
+        Ok(outcome)
+    }
+
+    #[tokio::test]
+    async fn idle_sessions_sync_again_for_each_log_and_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.json");
+        let mut history = running_history(directory.path()).await;
+        let mut idle = IdleSessions::new();
+        let calls = AtomicUsize::new(0);
+
+        for _ in 0..3 {
+            assert!(
+                !sync_when_changed(
+                    &mut idle,
+                    &path,
+                    &history,
+                    acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
+                )
+                .await
+                .unwrap()
+            );
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        for log in [
+            &history.result.complete_log_path,
+            &history.result.events_path,
+        ] {
+            tokio::fs::write(log, b"new output").await.unwrap();
+            for _ in 0..2 {
+                sync_when_changed(
+                    &mut idle,
+                    &path,
+                    &history,
+                    acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
+                )
+                .await
+                .unwrap();
+            }
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+
+        history.result.running = false;
+        history.result.exit_code = Some(0);
+        history.result.success = true;
+        assert!(
+            sync_when_changed(
+                &mut idle,
+                &path,
+                &history,
+                acknowledged_sync(&calls, SyncOutcome::Completed),
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
+        assert!(idle.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_batches_and_failed_uploads_retry_until_acknowledged() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.json");
+        let history = running_history(directory.path()).await;
+        let mut idle = IdleSessions::new();
+        let calls = AtomicUsize::new(0);
+
+        for _ in 0..2 {
+            sync_when_changed(
+                &mut idle,
+                &path,
+                &history,
+                acknowledged_sync(&calls, SyncOutcome::Pending),
+            )
+            .await
+            .unwrap();
+        }
+        let failed = sync_when_changed(&mut idle, &path, &history, async {
+            calls.fetch_add(1, Ordering::Relaxed);
+            bail!("upload failed");
+        })
+        .await;
+        assert!(failed.is_err());
+
+        for _ in 0..2 {
+            sync_when_changed(
+                &mut idle,
+                &path,
+                &history,
+                acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 4);
+
+        let mut restarted = IdleSessions::new();
+        sync_when_changed(
+            &mut restarted,
+            &path,
+            &history,
+            acknowledged_sync(&calls, SyncOutcome::RunningCaughtUp),
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 5);
+    }
 
     #[tokio::test]
     async fn malformed_record_remains_pending_for_retry() {
@@ -365,9 +564,16 @@ mod tests {
         );
         let registry = ThreadCommandSessions::default();
         assert!(
-            !sync_directory(&store, &registry, &auth, "http://localhost", "machine")
-                .await
-                .unwrap()
+            !sync_directory(
+                &store,
+                &registry,
+                &auth,
+                "http://localhost",
+                "machine",
+                &mut IdleSessions::new(),
+            )
+            .await
+            .unwrap()
         );
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"interrupted write");
         assert!(!path.with_extension("synced").exists());
