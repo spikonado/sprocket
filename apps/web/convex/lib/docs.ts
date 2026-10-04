@@ -67,7 +67,10 @@ export const vGetContextResult = v.object({
 			'startedAt',
 			'continuationOfRunId'
 		)
-		.extend({ fastMode: v.boolean() }),
+		.extend({
+			fastMode: v.boolean(),
+			parentThreadId: v.optional(v.id('threadRecords'))
+		}),
 	prompt: v.string(),
 	contextTokens: v.optional(v.number())
 });

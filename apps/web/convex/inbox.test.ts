@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from './_generated/api';
-import { initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
+import { createQueuedRun, initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
 
 describe('thread inbox', () => {
 	it('paginates unsettled and settled threads across selected projects', async () => {
@@ -87,32 +87,28 @@ describe('thread inbox', () => {
 		).toBeUndefined();
 	});
 
-	it('refuses to settle a running thread', async () => {
+	it.each(['queued', 'running'] as const)('refuses to settle a %s thread', async (status) => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status: 'running' }));
+		const executionSecret = 'inbox-settle-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'inbox-active', executionSecret);
 
-		await expect(asUser.mutation(api.threads.settle, { threadId })).rejects.toThrow(
-			'running thread'
-		);
+		if (status === 'running') {
+			await asUser.mutation(api.agentRuntime.start, {
+				runId,
+				executionSecret,
+				claimId: 'inbox-claim'
+			});
+		}
+
+		await expect(asUser.mutation(api.threads.settle, { threadId })).rejects.toThrow('active work');
 	});
 
-	it('settles a queued thread', async () => {
+	it('settles question-waiting work only after Stop', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { status: 'queued' }));
 
-		await asUser.mutation(api.threads.settle, { threadId });
-
-		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(
-			'number'
-		);
-	});
-
-	it('settles a thread with a pending question', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		await t.run(async (ctx) => {
+		const runId = await t.run(async (ctx) => {
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
@@ -140,11 +136,15 @@ describe('thread inbox', () => {
 				options: [],
 				status: 'pending',
 				createdAt: 1,
-				timeoutAt: 2,
+				timeoutAt: Date.now() + 60_000,
 				sequence: 1
 			});
+
+			return run._id;
 		});
 
+		await expect(asUser.mutation(api.threads.settle, { threadId })).rejects.toThrow('active work');
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
 		await asUser.mutation(api.threads.settle, { threadId });
 
 		expect((await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.archivedAt).toBeTypeOf(

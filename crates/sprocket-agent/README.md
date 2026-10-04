@@ -187,6 +187,23 @@ the read succeeds. Failed, rejected, terminal, and positive-wait reads leave the
 cooldown unchanged. Process I/O and question subscriptions retain their own wait
 implementations.
 
+Native delegation uses `spawn_subagent` for child creation and follow-up prompts,
+`control_subagent` for stopping descendant work or answering its questions, and
+`poll_subagent` for lifecycle, filtered transcript pages, and pending questions.
+Zero-wait actions return metadata only, without transcript entries or cursors.
+Stop waits for the targeted run to reach a terminal status regardless of the
+requested yield time, without waiting for replacement work in the same thread.
+Tool status is the run status: queued, running, completed, failed, or cancelled.
+Pending questions are returned separately. Only spawn and child listings return
+thread IDs; internal activity, question deadlines, and transcript paths are omitted.
+Positive polls wait for settlement or a question before reading a page,
+even when the cursor points at older entries.
+`list_subagents` lists immediate children in pages of 32; `list_subagent_models`
+exposes compatible model settings. Child runs are independent of the caller's lifetime and never receive
+payment tools. The delegation `timeoutMs` is persisted against the submitted run,
+not the thread or subsequent runs. Stable tool-job submission identities recover
+accepted child runs after a lost response instead of creating duplicates.
+
 Command execution and patch operations both run with the local Sprocket
 process's permissions. Web search runs Exa through a Convex Workpool job.
 Current agents orchestrate scraping locally and call an authenticated Firecrawl

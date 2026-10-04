@@ -382,7 +382,7 @@ fn test_agent_with_tools(
 #[tokio::test]
 async fn noninteractive_turn_only_activates_registered_tools() {
     let (base_url, server) = spawn_responses_sse(vec![text_sse("done", 4, 4)]);
-    let active_tools = available_agent_tool_names(false, true);
+    let active_tools = available_agent_tool_names(false, true, false);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, active_tools.clone(), true);
     let agent = test_agent_with_tools(&base_url, &hook, &active_tools);
 

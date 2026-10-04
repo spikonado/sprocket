@@ -349,7 +349,10 @@ describe('partitionWorkSectionTools', () => {
 		'poll_cmd',
 		'ask_question',
 		'poll_question',
-		'await_question'
+		'await_question',
+		'spawn_subagent',
+		'control_subagent',
+		'poll_subagent'
 	])('shows an unfinished %s call as running before a job attaches', (name) => {
 		const call = tool('live', name);
 

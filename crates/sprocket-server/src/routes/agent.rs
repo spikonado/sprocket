@@ -1,9 +1,8 @@
 use std::convert::Infallible;
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -27,7 +26,6 @@ use crate::auth::require_session_user;
 use crate::cli_protocol::RunStarted;
 use crate::routes::api_error::ApiError;
 
-const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 struct FinishedOnDrop(Option<Arc<sprocket_agent::RunOutput>>);
@@ -65,6 +63,11 @@ pub(crate) struct RunAgentApiRequest {
     pub workspace_path: String,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
+    /// Pre-committed run capability for native delegation: the child run was
+    /// already durably created by `subagents:createOrSend` with this fresh
+    /// secret; the launch reuses it instead of minting its own.
+    #[serde(default)]
+    pub execution_secret: Option<String>,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -197,7 +200,9 @@ pub(crate) async fn launch_agent(
         .to_string();
     let project_attachments = Arc::clone(&state.project_attachments);
     let attachment_key = attachment.attachment_key.clone();
-    let is_question_continuation = payload.continuation_of_run_id.is_some();
+    let records_message = !payload.prompt.trim().is_empty()
+        || !payload.storage_ids.is_empty()
+        || payload.continuation_of_run_id.is_some();
 
     state
         .machines
@@ -218,7 +223,9 @@ pub(crate) async fn launch_agent(
         cancellation,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
-        execution_secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+        execution_secret: payload
+            .execution_secret
+            .unwrap_or_else(|| format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())),
         submission_id: payload.submission_id,
         thread_id: payload.thread_id.unwrap_or_default(),
         repository_key: payload.repository_key,
@@ -231,6 +238,8 @@ pub(crate) async fn launch_agent(
         workspace_path,
         installation_id: state.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
+        subagent_launcher: Some(crate::subagent_launcher::launcher(&state)),
+        transcript_store: Some(Arc::clone(&state.transcript)),
     };
 
     let cleanup_request = request.clone();
@@ -251,17 +260,28 @@ pub(crate) async fn launch_agent(
     tokio::spawn(async move {
         let _guard = guard;
         let _finished = FinishedOnDrop(output.clone());
-        let run = await_agent_start(
-            start_agent_run(request),
-            AGENT_START_TIMEOUT,
-            AGENT_START_CLEANUP_TIMEOUT,
-            move |startup_error| {
+        let run = match start_agent_run(request).await {
+            Ok(run) => Ok(run),
+            Err(error) => {
+                let startup_error = format!("{error:#}");
                 let mut cleanup_request = cleanup_request;
                 cleanup_request.auth_token_fetcher = auth_token_fetcher;
-                finalize_failed_start(cleanup_request, startup_error)
-            },
-        )
-        .await;
+                match timeout(
+                    AGENT_START_CLEANUP_TIMEOUT,
+                    finalize_failed_start(cleanup_request, startup_error.clone()),
+                )
+                .await
+                {
+                    Ok(Ok(())) => Err(error),
+                    Ok(Err(cleanup_error)) => Err(anyhow!(
+                        "{startup_error}; additionally failed to reconcile the startup: {cleanup_error:#}"
+                    )),
+                    Err(_) => Err(anyhow!(
+                        "{startup_error}; additionally timed out reconciling the startup"
+                    )),
+                }
+            }
+        };
 
         match run {
             Ok(mut run) => {
@@ -309,7 +329,7 @@ pub(crate) async fn launch_agent(
                 let sent_at = prompt_part
                     .as_ref()
                     .map(|part| part.created_at.unwrap_or_else(crate::now_ms))
-                    .or_else(|| is_question_continuation.then(crate::now_ms));
+                    .or_else(|| records_message.then(crate::now_ms));
                 if let Some(sent_at) = sent_at
                     && let Err(error) = project_attachments
                         .record_message_sent(&attachment_key, sent_at)
@@ -464,44 +484,8 @@ fn encode_live_event(event: LiveCompletionWatchEvent) -> Option<Result<Event, In
     Event::default().json_data(event).ok().map(Ok)
 }
 
-async fn await_agent_start<F, T, C, CF>(
-    startup: F,
-    startup_timeout: Duration,
-    cleanup_timeout: Duration,
-    cleanup: C,
-) -> anyhow::Result<T>
-where
-    F: Future<Output = anyhow::Result<T>>,
-    C: FnOnce(String) -> CF,
-    CF: Future<Output = anyhow::Result<()>>,
-{
-    let result = timeout(startup_timeout, startup)
-        .await
-        .context("timed out starting agent run")
-        .and_then(|result| result);
-
-    match result {
-        Ok(started) => Ok(started),
-        Err(error) => {
-            let startup_error = format!("{error:#}");
-            let cleanup_result = timeout(cleanup_timeout, cleanup(startup_error.clone())).await;
-            match cleanup_result {
-                Ok(Ok(())) => Err(error),
-                Ok(Err(cleanup_error)) => Err(anyhow!(
-                    "{startup_error}; additionally failed to reconcile the startup: {cleanup_error:#}"
-                )),
-                Err(_) => Err(anyhow!(
-                    "{startup_error}; additionally timed out reconciling the startup"
-                )),
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use super::*;
 
     #[tokio::test]
@@ -690,41 +674,5 @@ mod tests {
         json.as_object_mut().unwrap().remove("fastMode");
         json["serviceTier"] = "fast".into();
         assert!(serde_json::from_value::<RunAgentApiRequest>(json).is_err());
-    }
-
-    struct DropSignal(Arc<AtomicBool>);
-
-    impl Drop for DropSignal {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-    }
-
-    #[tokio::test]
-    async fn timed_out_startup_reconciles_before_returning() {
-        let dropped = Arc::new(AtomicBool::new(false));
-        let drop_signal = DropSignal(dropped.clone());
-        let startup = async move {
-            let _drop_signal = drop_signal;
-            std::future::pending::<anyhow::Result<()>>().await
-        };
-        let reconciled = Arc::new(AtomicBool::new(false));
-        let cleanup_reconciled = reconciled.clone();
-
-        let error = await_agent_start(
-            startup,
-            Duration::from_millis(1),
-            Duration::from_secs(1),
-            move |_| async move {
-                cleanup_reconciled.store(true, Ordering::SeqCst);
-                Ok(())
-            },
-        )
-        .await
-        .expect_err("startup should time out");
-
-        assert!(error.to_string().contains("timed out starting agent run"));
-        assert!(dropped.load(Ordering::SeqCst));
-        assert!(reconciled.load(Ordering::SeqCst));
     }
 }

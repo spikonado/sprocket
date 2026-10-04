@@ -1,5 +1,6 @@
 mod attachment_store;
 mod history;
+pub mod monitor;
 mod read_index;
 mod replica;
 pub mod sections;

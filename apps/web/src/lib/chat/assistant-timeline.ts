@@ -185,7 +185,10 @@ function isAsyncAssistantTimelineTool(tool: AssistantTimelineTool): boolean {
 		isCommandToolKind(kind) ||
 		kind === 'ask_question' ||
 		kind === 'await_question' ||
-		kind === 'poll_question'
+		kind === 'poll_question' ||
+		kind === 'spawn_subagent' ||
+		kind === 'control_subagent' ||
+		kind === 'poll_subagent'
 	);
 }
 

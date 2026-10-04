@@ -1,6 +1,11 @@
-import type { InboxSectionData } from '$lib/project/inbox';
+type LoadMoreSection = {
+	loading: boolean;
+	canLoadMore: boolean;
+	error?: string;
+	loadMore: () => void;
+};
 
-export default function InboxLoadMore({ section }: { section: InboxSectionData }) {
+export default function InboxLoadMore({ section }: { section: LoadMoreSection }) {
 	return (
 		<div className="inbox-load-more" aria-live="polite">
 			{section.error ? (

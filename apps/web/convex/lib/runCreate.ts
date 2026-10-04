@@ -3,7 +3,7 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
-import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { RUN_ABANDONED_BY_AGENT, SPROCKET_SUBMISSION_WAITING } from '@convex/lib/agentErrors';
 import {
 	getOwnedImageUploads,
 	markImageUploadsAttached,
@@ -20,6 +20,12 @@ import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease'
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
+import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
+import {
+	refreshThreadHierarchyActivity,
+	registerChildThread,
+	unsettleRootOfThread
+} from '@convex/lib/threadHierarchy';
 import { startRunLifecycle } from '@convex/runLifecycle';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
@@ -28,13 +34,16 @@ import {
 	type CompletionProvider,
 	type vReasoningEffort
 } from '@convex/lib/validators';
-import { withRunExecution } from '@convex/lib/runExecution';
+import { withRunExecution, getRunExecutionState } from '@convex/lib/runExecution';
+import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 
 export type QueuedRunRequest = {
 	userId: string;
 	submissionId: string;
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
+	// Native delegation only; never accepted from ordinary client submissions.
+	parentThreadId?: Id<'threadRecords'>;
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
@@ -61,12 +70,59 @@ type GatewayRunTelemetry = {
 	agentVersion?: string;
 };
 
+export async function submissionReadiness(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<boolean> {
+	let latestRun = await ctx.db
+		.query('runs')
+		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+		.order('desc')
+		.first();
+
+	if (!latestRun) return true;
+
+	const run = await withRunExecution(ctx.db, latestRun);
+
+	if (isClaimedRunStatus(run.status) && !isRunClaimLeaseActive(run, Date.now())) {
+		await finalizeRunRecord(ctx, run, {
+			text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}`,
+			status: 'failed',
+			lastError: RUN_ABANDONED_BY_AGENT
+		});
+		latestRun = (await ctx.db.get('runs', run._id))!;
+	} else {
+		assertThreadCanStartRun(latestRun.status);
+	}
+
+	return await terminalJobsReady(ctx, latestRun);
+}
+
+async function terminalJobsReady(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
+	let execution = await getRunExecutionState(ctx.db, run._id);
+
+	if (execution?.terminalJobsReconciled === undefined) {
+		await reconcileTerminalRun(ctx, run, {
+			completedAt: run.completedAt ?? Date.now(),
+			jobCursor: -1,
+			questionCursor: -1
+		});
+		execution = await getRunExecutionState(ctx.db, run._id);
+	}
+
+	return execution?.terminalJobsReconciled === true;
+}
+
 export async function createQueuedRunRecord(
 	ctx: MutationCtx,
 	args: QueuedRunRequest
 ): Promise<CreatedGatewayRun> {
 	if ((args.threadId === undefined) === (args.repositoryKey === undefined)) {
 		throw new Error('Exactly one of thread ID or repository key is required.');
+	}
+
+	if (args.parentThreadId !== undefined && args.threadId !== undefined) {
+		throw new Error('A parent linkage requires a new thread.');
 	}
 
 	if (args.continuationOfRunId && !args.threadId) {
@@ -115,11 +171,27 @@ export async function createQueuedRunRecord(
 		const repositoryKey = args.repositoryKey?.trim();
 
 		if (!repositoryKey) throw new Error('Repository key is required for a new thread.');
+
+		let parentThread: Doc<'threadRecords'> | null = null;
+
+		if (args.parentThreadId !== undefined) {
+			parentThread = await ctx.db.get('threadRecords', args.parentThreadId);
+
+			if (
+				!parentThread ||
+				parentThread.userId !== args.userId ||
+				parentThread.repositoryKey !== repositoryKey
+			) {
+				throw new Error('Parent thread not found.');
+			}
+		}
+
 		const now = Date.now();
 
 		const threadId = await ctx.db.insert('threadRecords', {
 			userId: args.userId,
 			submissionId: args.submissionId,
+			parentThreadId: args.parentThreadId,
 			status: 'queued',
 			repositoryKey,
 			title: fallbackTitle,
@@ -132,6 +204,10 @@ export async function createQueuedRunRecord(
 
 		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
+
+		if (parentThread) {
+			await registerChildThread(ctx, threadRecord);
+		}
 	}
 
 	const latestRunRecord = await ctx.db
@@ -167,8 +243,16 @@ export async function createQueuedRunRecord(
 		assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
 	}
 
+	if (await headActionablePendingQuestion(ctx.db, threadRecord._id)) {
+		throw new Error('Answer or cancel pending questions before sending another message.');
+	}
+
 	if (machine && machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs.');
+	}
+
+	if (latestRun && !(await terminalJobsReady(ctx, latestRun))) {
+		throw new ConvexError(SPROCKET_SUBMISSION_WAITING);
 	}
 
 	const gatewayFields: GatewayRunTelemetry = {
@@ -196,6 +280,7 @@ export async function createQueuedRunRecord(
 	if (machineId) runRecord.machineId = machineId;
 
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
+
 	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 
@@ -210,8 +295,9 @@ export async function createQueuedRunRecord(
 		userId: args.userId
 	};
 
+	await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
+
 	if (recordsPrompt) {
-		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
 			userId: args.userId,
@@ -233,6 +319,9 @@ export async function createQueuedRunRecord(
 	};
 
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
+
+	await unsettleRootOfThread(ctx, threadRecord);
+	await refreshThreadHierarchyActivity(ctx, threadRecord._id);
 	await startRunLifecycle(ctx, runId);
 
 	return created;
@@ -258,6 +347,8 @@ async function reconcileExistingQueuedRun(
 		(args.threadId !== undefined && existingRun.threadId !== args.threadId) ||
 		!existingThread ||
 		existingThread.userId !== args.userId ||
+		(args.parentThreadId !== undefined && existingThread.parentThreadId !== args.parentThreadId) ||
+		(args.machineId !== undefined && existingRun.machineId !== args.machineId) ||
 		(args.repositoryKey !== undefined &&
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
@@ -302,15 +393,7 @@ async function reconcileExistingQueuedRun(
 		userId: args.userId
 	};
 
-	if (recordsPrompt) {
-		reconciled.promptPart = await recordPromptTranscript(ctx, {
-			threadId: existingRun.threadId,
-			userId: args.userId,
-			runId: existingRun._id,
-			text: prompt,
-			imageUploadIds: args.imageUploadIds
-		});
-	}
+	if (recordsPrompt && existingPrompt) reconciled.promptPart = existingPrompt;
 
 	return reconciled;
 }
@@ -381,10 +464,9 @@ export async function finalizeFailedQueuedStart(
 
 	if (recordsPrompt) {
 		if (
-			!promptPart?.prompt ||
-			promptPart.prompt.text !== prompt ||
+			promptPart?.prompt?.text !== prompt ||
 			!areStorageIdsEqual(
-				promptPart.prompt.imageUploads.map((upload) => upload.storageId),
+				promptPart?.prompt?.imageUploads.map((upload) => upload.storageId),
 				args.storageIds
 			)
 		) {

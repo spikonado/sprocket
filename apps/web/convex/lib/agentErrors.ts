@@ -10,6 +10,9 @@ export const RUN_NO_LONGER_ACTIVE = 'Run is no longer active.';
 
 export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSEDED';
 
+// This exact wire sentinel means creation committed no run or prompt.
+export const SPROCKET_SUBMISSION_WAITING = 'SPROCKET_SUBMISSION_WAITING';
+
 export const RUN_ABANDONED_BY_AGENT =
 	'The local agent stopped responding before this run finished.';
 

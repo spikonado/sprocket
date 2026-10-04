@@ -5,7 +5,9 @@ import { getRunExecutionState } from '@convex/lib/runExecution';
 import { isClaimedRunStatus, RUN_QUEUED_STARTUP_DEADLINE_MS } from '@convex/lib/runLease';
 
 export function runDeadline(
-	run: Pick<Doc<'runs'>, 'status' | 'startedAt'> & { claimExpiresAt?: number }
+	run: Pick<Doc<'runs'>, 'status' | 'startedAt'> & {
+		claimExpiresAt?: number;
+	}
 ): number | null {
 	if (run.status === 'queued') return run.startedAt + RUN_QUEUED_STARTUP_DEADLINE_MS;
 
