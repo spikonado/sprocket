@@ -2589,7 +2589,6 @@ export default function App({
 
 							{currentThreadId && signedInUserId && desktopApi && authReady && (
 								<RunningCommands
-									key={`${signedInUserId}:${currentThreadId}`}
 									api={desktopApi}
 									scope={{ userId: signedInUserId, threadId: currentThreadId }}
 								/>

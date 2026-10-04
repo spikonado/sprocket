@@ -216,7 +216,6 @@ pub(crate) async fn launch_agent(
         chatgpt_credentials: Some(state.chatgpt_credentials.for_user(payload.user_id.clone())),
         allow_interaction,
         cancellation,
-        command_sessions: None,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
         execution_secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
@@ -281,7 +280,6 @@ pub(crate) async fn launch_agent(
                     )
                     .await
                     .with_lifetime_guard_factory(move || command_lifetime.run_guard());
-                run.set_command_sessions(sessions);
                 let prompt_part = run.prompt_part().cloned();
                 let sent_at = prompt_part
                     .as_ref()
@@ -329,7 +327,7 @@ pub(crate) async fn launch_agent(
                 };
                 let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
                 let transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
-                let result = run_agent(run, live, transcript).await;
+                let result = run_agent(run, sessions, live, transcript).await;
                 if let Some(output) = &output {
                     output.finish(result.as_ref().err().map(ToString::to_string));
                 }

@@ -791,7 +791,7 @@ describe('chatgpt local sign-in', () => {
 });
 
 describe('running command controls', () => {
-	it('lists live commands without reading output and terminates a scoped session', async () => {
+	it('sends scoped list and termination requests and forwards the list abort signal', async () => {
 		const commands = [{ sessionId: '7', command: 'bun run dev', workdir: '/work', startedAt: 100 }];
 
 		const fetch = vi

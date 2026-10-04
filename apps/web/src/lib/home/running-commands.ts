@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DesktopApi, RunningCommand, TranscriptScopeRequest } from '$lib/types/sprocket';
 
 export type CommandApi = Pick<DesktopApi, 'listRunningCommands' | 'terminateCommand'>;
 
 type CommandLifetime = {
 	api: CommandApi;
-	userId: string;
-	threadId: TranscriptScopeRequest['threadId'];
 	controller: AbortController;
 	stopping: Set<string>;
 };
@@ -21,12 +19,10 @@ type CommandState = {
 
 export function useRunningCommands(api: CommandApi, { userId, threadId }: TranscriptScopeRequest) {
 	const [state, setState] = useState<CommandState | null>(null);
-	const lifetime = useRef<CommandLifetime | null>(null);
 
 	useEffect(() => {
 		const controller = new AbortController();
-		const active = { api, userId, threadId, controller, stopping: new Set<string>() };
-		lifetime.current = active;
+		const active = { api, controller, stopping: new Set<string>() };
 		let timer: ReturnType<typeof setTimeout>;
 
 		async function refresh() {
@@ -68,26 +64,12 @@ export function useRunningCommands(api: CommandApi, { userId, threadId }: Transc
 	}, [api, userId, threadId]);
 
 	const current =
-		state?.lifetime.api === api &&
-		state.lifetime.userId === userId &&
-		state.lifetime.threadId === threadId &&
-		!state.lifetime.controller.signal.aborted
-			? state
-			: null;
+		state?.lifetime.api === api && !state.lifetime.controller.signal.aborted ? state : null;
 
 	async function terminate(sessionId: string) {
-		const active = lifetime.current;
+		const active = current?.lifetime;
 
-		if (
-			!active ||
-			active.api !== api ||
-			active.userId !== userId ||
-			active.threadId !== threadId ||
-			active.controller.signal.aborted ||
-			active.stopping.has(sessionId) ||
-			!current?.commands.some((command) => command.sessionId === sessionId)
-		)
-			return;
+		if (!active || active.controller.signal.aborted || active.stopping.has(sessionId)) return;
 		active.stopping.add(sessionId);
 		setState((previous) =>
 			previous?.lifetime === active

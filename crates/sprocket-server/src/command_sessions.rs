@@ -24,7 +24,7 @@ impl ThreadCommandSessions {
         let mut threads = self.threads.lock().await;
         if self.stopped.load(Ordering::Acquire) {
             let sessions = CommandSessionManager::new(workspace_root, log_directory);
-            sessions.terminate_all();
+            sessions.stop_all().await;
             return sessions;
         }
         threads

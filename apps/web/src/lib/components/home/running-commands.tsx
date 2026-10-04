@@ -95,13 +95,7 @@ export function RunningCommandsView({
 	);
 }
 
-export default function RunningCommands({
-	api,
-	scope
-}: {
-	api: CommandApi;
-	scope: TranscriptScopeRequest;
-}) {
+function ScopedRunningCommands({ api, scope }: { api: CommandApi; scope: TranscriptScopeRequest }) {
 	const commands = useRunningCommands(api, scope);
 
 	return (
@@ -110,4 +104,8 @@ export default function RunningCommands({
 			onTerminate={(sessionId) => void commands.terminate(sessionId)}
 		/>
 	);
+}
+
+export default function RunningCommands(props: { api: CommandApi; scope: TranscriptScopeRequest }) {
+	return <ScopedRunningCommands key={`${props.scope.userId}:${props.scope.threadId}`} {...props} />;
 }
