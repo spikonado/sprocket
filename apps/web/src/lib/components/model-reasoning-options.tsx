@@ -14,7 +14,7 @@ export default function ModelReasoningOptions({
 		<button
 			key={effort}
 			type="button"
-			className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex h-9 w-full items-center gap-1.5 rounded-lg px-1.5 text-left text-sm outline-none focus-visible:ring-2"
+			className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2"
 			aria-label={`${reasoningEffortLabel(effort)}${effort === model.defaultReasoningEffort ? ' (default)' : ''}`}
 			aria-pressed={effort === reasoningEffort}
 			data-default-reasoning={effort === model.defaultReasoningEffort ? '' : undefined}
@@ -37,7 +37,7 @@ export default function ModelReasoningOptions({
 		>
 			<span className="min-w-0 flex-1">{reasoningEffortLabel(effort)}</span>
 			{effort === model.defaultReasoningEffort ? (
-				<span className="text-muted-foreground shrink-0 text-[10px]">Default</span>
+				<span className="text-muted-foreground shrink-0 text-xs">Default</span>
 			) : null}
 			{effort === reasoningEffort ? <Check className="text-accent-strong size-3 shrink-0" /> : null}
 		</button>

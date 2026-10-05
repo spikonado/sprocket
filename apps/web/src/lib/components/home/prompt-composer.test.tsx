@@ -613,8 +613,6 @@ describe('PromptComposer model selection', () => {
 	it('navigates from model rows to reasoning with the keyboard', async () => {
 		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'medium' });
 		await click(screen.getByRole('button', { name: 'Select model' }));
-		const search = screen.getByRole('textbox', { name: 'Search model' });
-		await pressKey(search, { key: 'ArrowDown' });
 		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Model One' }));
 		await pressKey(document.activeElement!, { key: 'ArrowDown' });
 		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Model Two' }));
@@ -647,30 +645,20 @@ describe('PromptComposer model selection', () => {
 		);
 	});
 
-	it('searches models and selects their defaults without interfering with composition', async () => {
+	it('focuses the selected model on open and selects a model with its default reasoning', async () => {
 		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'medium' });
 		await click(screen.getByRole('button', { name: 'Select model' }));
-		const search = screen.getByRole('textbox', { name: 'Search model' });
-		expect(document.activeElement).toBe(search);
-		await act(async () => {
-			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-			setter?.call(search, 'Two');
-			search.dispatchEvent(new Event('input', { bubbles: true }));
-		});
 		const menu = screen.getByRole('dialog', { name: 'Model' });
-		const compositionCommit = await pressKey(search, { key: 'Enter', isComposing: true });
-		expect(compositionCommit.defaultPrevented).toBe(false);
-		expect(within(menu).getByRole('button', { name: 'Model Two', pressed: false })).toBeTruthy();
-		await pressKey(search, { key: 'Enter' });
+		expect(document.activeElement).toBe(within(menu).getByRole('button', { name: 'Model One' }));
+		await click(within(menu).getByRole('button', { name: 'Model Two', pressed: false }));
 		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
 			'Model Two · High'
 		);
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		const reopenedMenu = screen.getByRole('dialog', { name: 'Model' });
-		await pressKey(screen.getByRole('textbox', { name: 'Search model' }), { key: 'Enter' });
-		expect(
+		expect(document.activeElement).toBe(
 			within(reopenedMenu).getByRole('button', { name: 'Model Two', pressed: true })
-		).toBeTruthy();
+		);
 	});
 
 	it.each([true, false])(
