@@ -331,10 +331,15 @@ impl CommandSessionManager {
         let (mut child, lifetime_guard) = match launch {
             Ok(launched) => launched,
             Err(error) => {
-                if let Err(cleanup_error) = tokio::fs::remove_file(&history_path).await {
+                let history_cleanup = tokio::fs::remove_file(&history_path).await;
+                let log_cleanup = output.lock().await.discard().await;
+                if let Err(cleanup_error) = history_cleanup {
                     return Err(error.context(format!(
                         "failed to remove unstarted command history: {cleanup_error}"
                     )));
+                }
+                if let Err(cleanup_error) = log_cleanup {
+                    return Err(error.context(cleanup_error));
                 }
                 return Err(error);
             }
@@ -1805,6 +1810,30 @@ mod tests {
             ))]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_process_launch_removes_unstarted_logs_and_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let logs = root.join("logs");
+        let sessions = CommandSessionManager::new(root, logs.clone()).with_lifetime_guard_factory(
+            || -> anyhow::Result<()> { anyhow::bail!("host unavailable") },
+        );
+        let error = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "echo ready",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("host unavailable"));
+        assert_eq!(fs::read_dir(logs).unwrap().count(), 0);
     }
 
     #[tokio::test]

@@ -31,15 +31,20 @@ pub(crate) fn resolve_command_shell(shell: &str, cwd: &Path) -> Result<String> {
 
 #[cfg(unix)]
 mod unix {
-    use std::ffi::OsStr;
-    use std::os::unix::fs::PermissionsExt;
+    use std::ffi::{CString, OsStr};
+    use std::os::unix::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
 
     use anyhow::Result;
 
     fn executable(path: &Path) -> bool {
-        path.metadata()
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        if !path.is_file() {
+            return false;
+        }
+        let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
     }
 
     fn find_in_path(shell: &OsStr, path: Option<&OsStr>, cwd: &Path) -> Option<PathBuf> {
@@ -149,6 +154,25 @@ mod unix {
         fn default_works_without_shell_or_path_environment() {
             let resolved = default_shell(None, None, Path::new("/"));
             assert!(executable(Path::new(&resolved)));
+        }
+
+        #[test]
+        fn default_skips_shell_executable_only_by_other_users() {
+            if unsafe { libc::geteuid() } == 0 {
+                return;
+            }
+            let directory = tempfile::tempdir().unwrap();
+            let configured = shell_file(directory.path(), "user-shell");
+            fs::set_permissions(&configured, fs::Permissions::from_mode(0o601)).unwrap();
+            let bash = shell_file(directory.path(), "bash");
+            assert_eq!(
+                default_shell(
+                    configured.to_str(),
+                    Some(directory.path().as_os_str()),
+                    directory.path(),
+                ),
+                bash.to_string_lossy()
+            );
         }
 
         #[test]
