@@ -1862,6 +1862,7 @@ export default function App({
 					threadId,
 					launch
 				);
+
 				pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
 				setPendingAgentLaunches(nextPendingAgentLaunches);
 			}
@@ -2050,6 +2051,7 @@ export default function App({
 			threadId,
 			launch
 		);
+
 		pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
 		setPendingAgentLaunches(nextPendingAgentLaunches);
 
