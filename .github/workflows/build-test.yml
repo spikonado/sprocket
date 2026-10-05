@@ -34,6 +34,8 @@ jobs:
         run: cargo test --locked -p sprocket-workspace patch::tests
       - name: Test workspace command shells
         run: cargo test --locked -p sprocket-workspace command_shell
+      - name: Test failed command launch cleanup
+        run: cargo test --locked -p sprocket-workspace commands::tests::failed_process_launch
 
   build_and_test:
     runs-on: ubuntu-latest

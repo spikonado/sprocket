@@ -1833,7 +1833,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("host unavailable"));
-        assert_eq!(fs::read_dir(logs).unwrap().count(), 0);
+        let entries = fs::read_dir(&logs)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(entries, vec![std::ffi::OsString::from("sessions")]);
+        assert_eq!(fs::read_dir(logs.join("sessions")).unwrap().count(), 0);
     }
 
     #[tokio::test]
