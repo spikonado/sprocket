@@ -817,7 +817,7 @@ function ThreadTreeRow({
 						className="inbox-subagents"
 						type="button"
 						aria-expanded={expanded}
-						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}`}
+						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}: ${badge}`}
 						onClick={() => {
 							if (expanded) {
 								expansion.collapse(thread._id);

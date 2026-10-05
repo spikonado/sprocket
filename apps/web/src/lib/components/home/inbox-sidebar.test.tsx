@@ -485,7 +485,7 @@ function childThread(id: string, title: string, status: ThreadStatus = 'complete
 it('expands subagents from the status text without selecting the thread', async () => {
 	treeSummaries.set('thread', { descendantCount: 5, anyActive: true, descendantsActive: true });
 	const input = props([thread()]);
-	renderView(<Harness {...input} />);
+	const view = renderView(<Harness {...input} />);
 	await flush();
 
 	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
@@ -498,7 +498,9 @@ it('expands subagents from the status text without selecting the thread', async 
 	expect(expansion.closest('.inbox-row')).toBe(main.closest('.inbox-row'));
 	expect(main.contains(expansion)).toBe(false);
 	expect(expansion.getAttribute('aria-expanded')).toBe('false');
-	expect(expansion.getAttribute('aria-label')).toBe('Expand subagents of Thread');
+	expect(
+		view.getByRole('button', { name: 'Expand subagents of Thread: 5 subagents · Working' })
+	).toBe(expansion);
 	expect(expansion.querySelector('.lucide-chevron-right')).toBeTruthy();
 	expect(document.querySelector('.inbox-children')).toBeNull();
 	expect(input.resolveChildren).not.toHaveBeenCalled();
@@ -509,11 +511,25 @@ it('expands subagents from the status text without selecting the thread', async 
 
 	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
 	expect(input.onSelect).not.toHaveBeenCalled();
-	vi.mocked(input.expansion.expand).mockClear();
+	view.rerender(<Harness {...input} />);
+	expect(expansion.getAttribute('aria-expanded')).toBe('true');
+	expect(
+		view.getByRole('button', { name: 'Collapse subagents of Thread: 5 subagents · Working' })
+	).toBe(expansion);
+	expect(document.querySelector('.inbox-children')).toBeTruthy();
+	act(() => {
+		fireEvent.click(expansion.querySelector('.lucide-chevron-down')!);
+	});
+	expect(input.expansion.collapse).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+	view.rerender(<Harness {...input} />);
+	expect(expansion.getAttribute('aria-expanded')).toBe('false');
+	expect(document.querySelector('.inbox-children')).toBeNull();
 	act(() => {
 		fireEvent.click(expansion.querySelector('.lucide-chevron-right')!);
 	});
 	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.expansion.expand).toHaveBeenCalledTimes(2);
 	expect(input.onSelect).not.toHaveBeenCalled();
 	act(() => {
 		main.click();
@@ -605,7 +621,7 @@ it('collapses an expanded branch through the expansion control', async () => {
 
 	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
 
-	expect(expansion.getAttribute('aria-label')).toBe('Collapse subagents of Thread');
+	expect(expansion.getAttribute('aria-label')).toBe('Collapse subagents of Thread: 1 subagent');
 	expect(expansion.querySelector('.lucide-chevron-down')).toBeTruthy();
 
 	act(() => {
