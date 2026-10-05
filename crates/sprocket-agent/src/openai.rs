@@ -17,8 +17,6 @@ pub(crate) fn stateless_responses_model(
     Model::new(StatelessResponses(model.wire), model.transport).erase()
 }
 
-/// Rig preserves and inlines Responses items, including their IDs and phases.
-/// Stateless runs additionally need opaque reasoning and explicit storage settings.
 #[derive(Clone)]
 pub(crate) struct StatelessResponses(pub(crate) Responses);
 
@@ -34,8 +32,6 @@ impl Wire for StatelessResponses {
 
     fn encode(&self, mut request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
         // Summary-only reasoning cannot be replayed against store:false.
-        // Keep Rig's provider item identities: it now sends complete items,
-        // and dropping IDs loses message phase and other replay metadata.
         request.chat_history.retain_mut(|message| {
             if let Message::Assistant { content, .. } = message {
                 content.retain(|part| match part {

@@ -30,37 +30,43 @@ struct GatewayAuth<F> {
     cached: Arc<Mutex<Option<CachedCredential>>>,
 }
 
-async fn resolve_credential<F, Fut>(
-    issue_credential: &F,
-    cached: &Mutex<Option<CachedCredential>>,
-) -> http_client::Result<String>
+impl<F, Fut> GatewayAuth<F>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<GatewayCredential>>,
 {
-    let mut cached = cached.lock().await;
-    if let Some(cached) = cached.as_ref()
-        && Instant::now() < cached.refresh_at
-        && cached.expires_at.saturating_sub(now_ms()) > REFRESH_HEADROOM_MS
-    {
-        return Ok(cached.token.clone());
+    fn new(issue_credential: F) -> Self {
+        Self {
+            issue_credential,
+            cached: Arc::default(),
+        }
     }
-    let credential = issue_credential()
-        .await
-        .map_err(|error| http_client::Error::Instance(error.into()))?;
-    let remaining_ms = credential.expires_at.saturating_sub(now_ms());
-    if remaining_ms <= REFRESH_HEADROOM_MS {
-        return Err(http_client::Error::Instance(
-            "Gateway returned a credential too close to expiry.".into(),
-        ));
+
+    async fn resolve_credential(&self) -> http_client::Result<String> {
+        let mut cached = self.cached.lock().await;
+        if let Some(cached) = cached.as_ref()
+            && Instant::now() < cached.refresh_at
+            && cached.expires_at.saturating_sub(now_ms()) > REFRESH_HEADROOM_MS
+        {
+            return Ok(cached.token.clone());
+        }
+        let credential = (self.issue_credential)()
+            .await
+            .map_err(|error| http_client::Error::Instance(error.into()))?;
+        let remaining_ms = credential.expires_at.saturating_sub(now_ms());
+        if remaining_ms <= REFRESH_HEADROOM_MS {
+            return Err(http_client::Error::Instance(
+                "Gateway returned a credential too close to expiry.".into(),
+            ));
+        }
+        let token = credential.token.clone();
+        *cached = Some(CachedCredential {
+            token: token.clone(),
+            expires_at: credential.expires_at,
+            refresh_at: Instant::now() + Duration::from_millis(remaining_ms - REFRESH_HEADROOM_MS),
+        });
+        Ok(token)
     }
-    let token = credential.token.clone();
-    *cached = Some(CachedCredential {
-        token: token.clone(),
-        expires_at: credential.expires_at,
-        refresh_at: Instant::now() + Duration::from_millis(remaining_ms - REFRESH_HEADROOM_MS),
-    });
-    Ok(token)
 }
 
 impl<F, Fut> HttpMiddleware for GatewayAuth<F>
@@ -75,7 +81,7 @@ where
         headers: &'a mut HeaderMap,
     ) -> WasmBoxedFuture<'a, http_client::Result<()>> {
         Box::pin(async move {
-            let token = resolve_credential(&self.issue_credential, &self.cached).await?;
+            let token = self.resolve_credential().await?;
             bearer_auth_header(headers, token)?;
             Ok(())
         })
@@ -83,33 +89,28 @@ where
 }
 
 #[derive(Clone)]
-pub(crate) struct GatewayClient<F> {
+pub(crate) struct GatewayClient {
     base_url: String,
     http: DynHttpClient,
-    // Tests inspect and refresh through this shared cache; live requests use GatewayAuth.
-    #[cfg_attr(not(test), allow(dead_code))]
-    issue_credential: F,
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     cached: Arc<Mutex<Option<CachedCredential>>>,
 }
 
-impl<F, Fut> GatewayClient<F>
-where
-    F: Fn() -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
-{
-    pub(crate) fn new(base_url: String, issue_credential: F) -> Self {
-        let cached = Arc::default();
-        let http = DynHttpClient::new(ReqwestClient::from(reqwest::Client::new())).with_middleware(
-            GatewayAuth {
-                issue_credential: issue_credential.clone(),
-                cached: Arc::clone(&cached),
-            },
-        );
+impl GatewayClient {
+    pub(crate) fn new<F, Fut>(base_url: String, issue_credential: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
+    {
+        let auth = GatewayAuth::new(issue_credential);
+        #[cfg(test)]
+        let cached = Arc::clone(&auth.cached);
+        let http =
+            DynHttpClient::new(ReqwestClient::from(reqwest::Client::new())).with_middleware(auth);
         Self {
             base_url,
             http,
-            issue_credential,
+            #[cfg(test)]
             cached,
         }
     }
@@ -120,11 +121,6 @@ where
             .connect(self.http.clone())
             .responses(model)
             .erase()
-    }
-
-    #[cfg(test)]
-    async fn resolve_credential(&self) -> http_client::Result<String> {
-        resolve_credential(&self.issue_credential, &self.cached).await
     }
 }
 
@@ -267,7 +263,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn concurrent_requests_reuse_the_cache_and_refresh_before_expiry() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let issued = issued.clone();
@@ -281,31 +277,31 @@ mod tests {
                 }
             }
         });
-        let cloned = client.clone();
-        let (a, b) = tokio::join!(client.resolve_credential(), cloned.resolve_credential());
+        let cloned = auth.clone();
+        let (a, b) = tokio::join!(auth.resolve_credential(), cloned.resolve_credential());
         a.unwrap();
         b.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 1);
-        let refresh_at = client.cached.lock().await.as_ref().unwrap().refresh_at;
+        let refresh_at = auth.cached.lock().await.as_ref().unwrap().refresh_at;
         tokio::time::advance(refresh_at.duration_since(Instant::now()) - Duration::from_millis(1))
             .await;
-        client.resolve_credential().await.unwrap();
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 1);
         tokio::time::advance(Duration::from_millis(1)).await;
-        let cloned = client.clone();
-        let (a, b) = tokio::join!(client.resolve_credential(), cloned.resolve_credential());
+        let cloned = auth.clone();
+        let (a, b) = tokio::join!(auth.resolve_credential(), cloned.resolve_credential());
         a.unwrap();
         b.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 2);
         tokio::time::advance(Duration::from_secs(37 * 60 * 60)).await;
-        client.resolve_credential().await.unwrap();
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn failed_refresh_can_retry_without_using_the_stale_credential() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let attempt = issued.fetch_add(1, Ordering::SeqCst);
@@ -320,17 +316,17 @@ mod tests {
                 }
             }
         });
-        client.resolve_credential().await.unwrap();
-        client.cached.lock().await.as_mut().unwrap().refresh_at = Instant::now();
-        assert!(client.resolve_credential().await.is_err());
-        client.resolve_credential().await.unwrap();
+        auth.resolve_credential().await.unwrap();
+        auth.cached.lock().await.as_mut().unwrap().refresh_at = Instant::now();
+        assert!(auth.resolve_credential().await.is_err());
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn credentials_within_the_refresh_headroom_are_rejected() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let issued = issued.clone();
@@ -347,17 +343,17 @@ mod tests {
             }
         });
         for _ in 0..2 {
-            let error = client.resolve_credential().await.err().unwrap();
+            let error = auth.resolve_credential().await.err().unwrap();
             assert!(error.to_string().contains("too close to expiry"));
         }
         assert_eq!(issued.load(Ordering::SeqCst), 2);
-        assert!(client.cached.lock().await.is_none());
+        assert!(auth.cached.lock().await.is_none());
     }
 
     #[tokio::test(start_paused = true)]
     async fn wall_clock_expired_cache_entry_is_not_reused() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let issued = issued.clone();
@@ -370,11 +366,11 @@ mod tests {
                 }
             }
         });
-        client.resolve_credential().await.unwrap();
+        auth.resolve_credential().await.unwrap();
         // A wall-clock jump past expiry must force a refresh even though the
         // monotonic refresh deadline is still far ahead.
-        client.cached.lock().await.as_mut().unwrap().expires_at = now_ms() - 1;
-        client.resolve_credential().await.unwrap();
+        auth.cached.lock().await.as_mut().unwrap().expires_at = now_ms() - 1;
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 2);
     }
 

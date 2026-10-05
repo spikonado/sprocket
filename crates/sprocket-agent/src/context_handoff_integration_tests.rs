@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use rig::agent::{MultiTurnStreamItem, StreamingError};
+use rig::agent::MultiTurnStreamItem;
 use rig::completion::{Message, PromptError};
 use rig::message::{AssistantContent, ToolResultContent, UserContent};
 use rig::providers::openai;
@@ -484,12 +484,9 @@ fn message_contains(message: &Message, needle: &str) -> bool {
     }
 }
 
-fn cancelled_reason(error: StreamingError) -> String {
+fn cancelled_reason(error: PromptError) -> String {
     match error {
-        StreamingError::Prompt(error) => match error {
-            PromptError::PromptCancelled { reason, .. } => reason,
-            other => other.to_string(),
-        },
+        PromptError::Cancelled { reason, .. } => reason,
         other => other.to_string(),
     }
 }
@@ -916,4 +913,36 @@ async fn two_handoff_tool_calls_are_rejected() {
     }
     assert_eq!(hook.take_summary(), None);
     let _ = server.join().expect("responses mock thread");
+}
+
+#[tokio::test]
+async fn handoff_typos_cannot_bypass_single_call_validation_through_repair() {
+    let body = two_tool_calls_sse().replace("handoff_context", "handoff-context");
+    let (base_url, server) = spawn_responses_sse(vec![body]);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, AGENT_TOOL_NAMES.to_vec(), true);
+    hook.start_handoff();
+    let agent = test_agent(&base_url, &hook);
+    let mut stream = agent
+        .prompt("write the handoff")
+        .add_hook(hook.clone())
+        .add_hook(crate::hooks::AgentPromptHook::new(
+            crate::hooks::ToolCallTracker::new("run", "claim"),
+        ))
+        .stream();
+    let mut failed = false;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. }) => {
+                panic!("invalid handoff must not execute")
+            }
+            Err(_) => {
+                failed = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(failed);
+    assert!(hook.take_summary().is_none());
+    assert_eq!(server.join().unwrap().len(), 1);
 }

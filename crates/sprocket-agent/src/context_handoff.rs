@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
-    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
-    ModelTurnFinished, RequestPatch, StepEventKind,
+    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
+    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, RequestPatch, StepEventKind,
 };
 use rig::completion::{Message, Usage};
 use rig::message::{AssistantContent, ToolChoice};
@@ -169,6 +169,15 @@ impl ContextHandoffHook {
 }
 
 impl AgentHook for ContextHandoffHook {
+    async fn on_invalid_tool_call(
+        &self,
+        _context: &HookContext,
+        _event: &InvalidToolCallContext,
+    ) -> Option<InvalidToolCallAction> {
+        // Rig skips turn validation after name repair. Handoffs must not take that path.
+        self.is_writing().then(InvalidToolCallAction::fail)
+    }
+
     async fn on_completion_call(
         &self,
         _context: &HookContext,
@@ -227,7 +236,9 @@ impl AgentHook for ContextHandoffHook {
     fn observes(&self, kind: StepEventKind) -> bool {
         matches!(
             kind,
-            StepEventKind::CompletionCall | StepEventKind::ModelTurnFinished
+            StepEventKind::CompletionCall
+                | StepEventKind::ModelTurnFinished
+                | StepEventKind::InvalidToolCall
         )
     }
 }

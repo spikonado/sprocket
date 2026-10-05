@@ -191,6 +191,8 @@ impl ChatGptClient {
 struct SiwcHttpClient {
     inner: reqwest::Client,
     authorization: Option<(Arc<dyn ChatGptCredentials>, SharedConnection)>,
+    #[cfg(test)]
+    test_endpoint: Option<String>,
 }
 
 impl std::fmt::Debug for SiwcHttpClient {
@@ -249,9 +251,12 @@ impl HttpClientExt for SiwcHttpClient {
                 ));
             }
             let body = rewrite_request_body(&body.into())?;
+            let endpoint = parts.uri.to_string();
+            #[cfg(test)]
+            let endpoint = this.test_endpoint.as_deref().unwrap_or(&endpoint);
             let request = this
                 .inner
-                .request(parts.method, parts.uri.to_string())
+                .request(parts.method, endpoint)
                 .headers(parts.headers)
                 .body(body)
                 .build()
@@ -572,6 +577,8 @@ impl ChatGptClient {
             SiwcHttpClient {
                 inner: self.http.clone(),
                 authorization: Some((Arc::clone(&self.credentials), Arc::clone(&self.connection))),
+                #[cfg(test)]
+                test_endpoint: None,
             },
         )
         .erase()
@@ -588,6 +595,7 @@ fn wire_tool(definition: &rig::completion::ToolDefinition) -> serde_json::Value 
 mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use futures::future::BoxFuture;
     use rig::completion::Message;
@@ -596,9 +604,13 @@ mod tests {
         ToolResultContent, UserContent,
     };
     use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     use super::*;
-    use crate::types::ChatGptAccess;
+    use crate::reasoning::{openai_reasoning_metadata, reasoning_summary_text};
+    use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
+    use crate::types::{ChatGptAccess, deserialize_agent_history};
 
     struct StubCredentials {
         connection: tokio::sync::watch::Sender<Option<String>>,
@@ -776,6 +788,310 @@ mod tests {
         assert_eq!(response.usage.total_tokens, Some(2));
         assert_eq!(response.response_id.as_deref(), Some("resp-test"));
         assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
+    }
+
+    struct CapturedSiwcRequest {
+        headers: String,
+        body: serde_json::Value,
+    }
+
+    async fn spawn_siwc_sse(
+        bodies: Vec<String>,
+    ) -> (String, tokio::task::JoinHandle<Vec<CapturedSiwcRequest>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(10), async move {
+                let mut captured = Vec::new();
+                for (turn, body) in bodies.into_iter().enumerate() {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 2048];
+                    let header_end = loop {
+                        let read = stream.read(&mut chunk).await.unwrap();
+                        assert!(read > 0, "request ended before its headers");
+                        request.extend_from_slice(&chunk[..read]);
+                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break end;
+                        }
+                        assert!(request.len() < 64 * 1024, "oversized request headers");
+                    };
+                    let headers = String::from_utf8(request[..header_end].to_vec()).unwrap();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().expect("request content length"))
+                        })
+                        .expect("request must have a content length");
+                    assert!(length < 1024 * 1024, "oversized request body");
+                    let body_start = header_end + 4;
+                    while request.len() < body_start + length {
+                        let read = stream.read(&mut chunk).await.unwrap();
+                        assert!(read > 0, "request ended before its body");
+                        request.extend_from_slice(&chunk[..read]);
+                    }
+                    captured.push(CapturedSiwcRequest {
+                        headers,
+                        body: serde_json::from_slice(&request[body_start..body_start + length])
+                            .unwrap(),
+                    });
+                    // SIWC can omit Content-Type; exercise the real transport's fallback.
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\nx-request-id: req-siwc-{turn}\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+                captured
+            })
+            .await
+            .expect("SIWC test server timed out")
+        });
+        (endpoint, server)
+    }
+
+    fn siwc_output_sse(response_id: &str, output: Vec<serde_json::Value>) -> String {
+        let response = |status, output| {
+            json!({
+                "id": response_id, "object": "response", "created_at": 0,
+                "status": status, "model": "gpt-5.3-codex", "output": output,
+                "tools": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            })
+        };
+        let mut events = vec![json!({
+            "type": "response.created", "response": response("in_progress", vec![]),
+        })];
+        for (index, item) in output.iter().enumerate() {
+            events.push(json!({
+                "type": "response.output_item.added", "output_index": index, "item": item,
+            }));
+            if item["type"] == "message" {
+                events.push(json!({
+                    "type": "response.output_text.delta", "output_index": index,
+                    "item_id": item["id"], "content_index": 0,
+                    "delta": item["content"][0]["text"],
+                }));
+            }
+            events.push(json!({
+                "type": "response.output_item.done", "output_index": index, "item": item,
+            }));
+        }
+        events.push(json!({
+            "type": "response.completed", "response": response("completed", output),
+        }));
+        events
+            .into_iter()
+            .enumerate()
+            .map(|(sequence, mut event)| {
+                event["sequence_number"] = json!(sequence);
+                format!("data: {event}\n\n")
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn() {
+        const ENVELOPE: &str = "  encrypted+state/=\n  ";
+        let (endpoint, server) = spawn_siwc_sse(vec![
+            siwc_output_sse(
+                "resp-siwc-0",
+                vec![
+                    json!({
+                        "type": "reasoning", "id": "rs_1", "status": "completed",
+                        "summary": [{"type": "summary_text", "text": "Read the workspace."}],
+                        "encrypted_content": ENVELOPE,
+                    }),
+                    json!({
+                        "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                        "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}",
+                        "status": "completed",
+                    }),
+                ],
+            ),
+            siwc_output_sse(
+                "resp-siwc-1",
+                vec![json!({
+                    "type": "message", "id": "msg_final", "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "The workspace is /workspace."}],
+                })],
+            ),
+        ])
+        .await;
+        let (credentials, client) = stub_client("connection-1");
+        let model = Model::new(
+            StatelessResponses(
+                openai::responses_api::wire::Responses::new(
+                    openai::OpenAIConfig::new("siwc-managed-by-transport"),
+                    "gpt-5.3-codex",
+                )
+                .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions),
+            ),
+            SiwcHttpClient {
+                inner: reqwest::Client::builder()
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .retry(reqwest::retry::never())
+                    .timeout(Duration::from_secs(5))
+                    .build()
+                    .unwrap(),
+                authorization: Some((credentials.clone(), Arc::clone(&client.connection))),
+                test_endpoint: Some(endpoint),
+            },
+        );
+        let request = |history| {
+            completion_request(
+                history,
+                json!({
+                    "store": true, "previous_response_id": "resp-old",
+                    "reasoning": {"effort": "high"},
+                }),
+            )
+        };
+        let first = model
+            .stream(request(vec![Message::user("Where is the workspace?")]))
+            .unwrap()
+            .finish()
+            .await
+            .expect("headerless SIWC tool turn completes");
+        assert_eq!(first.response_id.as_deref(), Some("resp-siwc-0"));
+        assert_eq!(first.provider_request_id.as_deref(), Some("req-siwc-0"));
+        assert_eq!(
+            first.finish_reason(),
+            Some(rig::completion::FinishReason::ToolCalls)
+        );
+        assert_eq!(first.choice.len(), 2);
+        let AssistantContent::Reasoning(reasoning) = &first.choice[0] else {
+            panic!("first turn must contain parsed reasoning");
+        };
+        let opened_reasoning = reasoning.open(reasoning.issuer()).unwrap();
+        assert_eq!(opened_reasoning.id.as_deref(), Some("rs_1"));
+        assert_eq!(opened_reasoning.encrypted_content(), Some(ENVELOPE));
+        let AssistantContent::ToolCall(call) = &first.choice[1] else {
+            panic!("first turn must contain a parsed tool call");
+        };
+        let provider_id = call.id.provider().unwrap();
+        assert_eq!(provider_id.item_id.as_deref(), Some("fc_1"));
+        assert_eq!(call.id.wire(), "call_1");
+        assert_eq!(call.function.name, "exec_command");
+        assert_eq!(call.function.arguments, json!({"cmd": "pwd"}));
+
+        let parts: Vec<TranscriptPart> = serde_json::from_value(json!([
+            {
+                "number": 0, "sourceKey": "completion:siwc", "kind": "completion",
+                "runId": "run", "completion": {"streamId": "stream", "items": [
+                    {
+                        "type": "reasoning", "text": reasoning_summary_text(reasoning),
+                        "providerMetadata": openai_reasoning_metadata(
+                            opened_reasoning.id.as_deref(), opened_reasoning.encrypted_content(),
+                        ),
+                    },
+                    {
+                        "type": "tool-call", "callId": call.id.wire(),
+                        "name": call.function.name, "input": call.function.arguments,
+                        "providerMetadata": {"openai": {"itemId": provider_id.item_id}},
+                    },
+                ]},
+            },
+            {
+                "number": 1, "sourceKey": "tool:siwc", "kind": "tool", "runId": "run",
+                "tool": {
+                    "callId": call.id.wire(), "name": call.function.name,
+                    "output": "/workspace", "status": "completed",
+                },
+            },
+        ]))
+        .expect("parsed SIWC turn as durable transcript");
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_path_buf());
+        store.append_parts("user", "thread", &parts).await.unwrap();
+        let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
+        let parts = reloaded_store
+            .read_parts("user", "thread", &[0, 1])
+            .await
+            .unwrap();
+        let state = reloaded_store.load_state("user", "thread").await.unwrap();
+        let reloaded = agent_history_from_parts(&state, &parts, None);
+        let mut history = vec![Message::user("Where is the workspace?")];
+        history.extend(deserialize_agent_history(reloaded).expect("reload SIWC history"));
+        let second = model
+            .stream(request(history))
+            .unwrap()
+            .finish()
+            .await
+            .expect("replayed SIWC turn completes");
+        assert_eq!(second.response_id.as_deref(), Some("resp-siwc-1"));
+        assert_eq!(second.provider_request_id.as_deref(), Some("req-siwc-1"));
+        assert_eq!(
+            second.finish_reason(),
+            Some(rig::completion::FinishReason::Stop)
+        );
+        assert_eq!(second.usage.total_tokens, Some(2));
+        assert!(matches!(
+            second.choice.as_slice(),
+            [AssistantContent::Text(text)] if text.text == "The workspace is /workspace."
+        ));
+
+        let requests = server.await.expect("SIWC test server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(credentials.calls.load(Ordering::SeqCst), 2);
+        let expected_tool = wire_tool(&test_request(vec![Message::user("hello")]).tools[0]);
+        for (turn, request) in requests.iter().enumerate() {
+            assert_eq!(
+                request.headers.lines().next(),
+                Some("POST /v1/responses HTTP/1.1")
+            );
+            let header = |name: &str| {
+                request.headers.lines().find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case(name).then(|| value.trim())
+                })
+            };
+            assert_eq!(
+                header("authorization"),
+                Some(format!("Bearer token-{turn}").as_str())
+            );
+            assert_eq!(header("content-type"), Some("application/json"));
+            let body = &request.body;
+            assert_eq!(body["model"], "gpt-5.3-codex");
+            assert_eq!(body["instructions"], "Base instructions.");
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["store"], false);
+            assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+            assert_eq!(body["reasoning"]["effort"], "high");
+            for field in UNSUPPORTED_FIELDS {
+                assert!(body.get(*field).is_none(), "{field} must be omitted");
+            }
+            assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+            assert_eq!(body["tools"][0]["type"], "namespace");
+            assert_eq!(body["tools"][0]["name"], SIWC_TOOL_NAMESPACE);
+            assert_eq!(body["tools"][0]["tools"], json!([expected_tool]));
+        }
+        let initial = requests[0].body["input"].as_array().unwrap();
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0]["role"], "user");
+        assert_eq!(initial[0]["content"][0]["text"], "Where is the workspace?");
+        let replay = requests[1].body["input"].as_array().unwrap();
+        assert_eq!(replay.len(), 4);
+        assert_eq!(replay[0], initial[0]);
+        assert_eq!(replay[1]["type"], "reasoning");
+        assert_eq!(replay[1]["id"], "rs_1");
+        assert_eq!(replay[1]["encrypted_content"], ENVELOPE);
+        assert_eq!(
+            replay[1]["summary"],
+            json!([{"type": "summary_text", "text": "Read the workspace."}])
+        );
+        assert_eq!(replay[2]["type"], "function_call");
+        assert_eq!(replay[2]["id"], "fc_1");
+        assert_eq!(replay[2]["call_id"], "call_1");
+        assert_eq!(replay[2]["name"], "exec_command");
+        assert_eq!(replay[2]["arguments"], "{\"cmd\":\"pwd\"}");
+        assert_eq!(replay[3]["type"], "function_call_output");
+        assert_eq!(replay[3]["call_id"], replay[2]["call_id"]);
+        assert_eq!(replay[3]["output"], json!("/workspace").to_string());
     }
 
     #[tokio::test]

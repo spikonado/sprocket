@@ -5,7 +5,7 @@ use anyhow::{Context, anyhow};
 use futures::future::BoxFuture;
 use rig::completion::Message;
 use rig::message::{
-    AdditionalParams, AssistantContent, CallId, Issuer, Reasoning, ReasoningContent, Text,
+    AdditionalParams, AssistantContent, CallId, Issuer, Reasoning, ReasoningContent, Sealed, Text,
     ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Serialize};
@@ -323,7 +323,10 @@ impl AgentHistoryContent {
         }
     }
 
-    fn into_assistant_content(self) -> anyhow::Result<AssistantContent> {
+    fn into_assistant_content(
+        self,
+        tool_calls: &HashMap<String, IndexedToolCall>,
+    ) -> anyhow::Result<AssistantContent> {
         match self {
             Self::Text {
                 text,
@@ -335,35 +338,45 @@ impl AgentHistoryContent {
                     "text additional params",
                 )?,
             })),
-            Self::Reasoning { id, blocks_json } => Ok(AssistantContent::Reasoning(
-                Reasoning {
-                    id,
-                    content: from_json_string::<Vec<ReasoningContent>>(
-                        &blocks_json,
-                        "reasoning blocks",
-                    )?,
+            Self::Reasoning { id, blocks_json } => {
+                #[derive(Deserialize)]
+                #[serde(untagged)]
+                enum ReasoningBlocks {
+                    Legacy(Vec<ReasoningContent>),
+                    Sealed(Sealed<Reasoning>),
                 }
-                .sealed(Issuer::from("openai")),
-            )),
+
+                let reasoning = match from_json_string(&blocks_json, "reasoning blocks")? {
+                    ReasoningBlocks::Legacy(content) => {
+                        Reasoning { id, content }.sealed(Issuer::from("openai"))
+                    }
+                    ReasoningBlocks::Sealed(reasoning) => reasoning,
+                };
+                Ok(AssistantContent::Reasoning(reasoning))
+            }
             Self::ToolCall {
                 id,
-                call_id,
-                name,
                 arguments_json,
                 signature,
                 additional_params_json,
-            } => Ok(AssistantContent::ToolCall(ToolCall {
-                id: history_call_id(id, call_id),
-                function: ToolFunction {
-                    name: ToolName::new(name)?,
-                    arguments: from_json_string(&arguments_json, "tool call arguments")?,
-                },
-                signature,
-                additional_params: additional_params_json
-                    .as_deref()
-                    .map(|json| from_json_string(json, "tool call additional params"))
-                    .transpose()?,
-            })),
+                ..
+            } => {
+                let indexed = tool_calls
+                    .get(&id)
+                    .ok_or_else(|| anyhow!("history tool call is not indexed: {id}"))?;
+                Ok(AssistantContent::ToolCall(ToolCall {
+                    id: indexed.call.clone(),
+                    function: ToolFunction {
+                        name: indexed.name.clone(),
+                        arguments: from_json_string(&arguments_json, "tool call arguments")?,
+                    },
+                    signature,
+                    additional_params: additional_params_json
+                        .as_deref()
+                        .map(|json| from_json_string(json, "tool call additional params"))
+                        .transpose()?,
+                }))
+            }
             Self::Image { image_json } => Ok(AssistantContent::Image(from_json_string(
                 &image_json,
                 "assistant image",
@@ -422,7 +435,7 @@ fn history_message(
                 message
                     .contents
                     .into_iter()
-                    .map(AgentHistoryContent::into_assistant_content)
+                    .map(|content| content.into_assistant_content(tool_calls))
                     .collect::<anyhow::Result<Vec<_>>>()?,
                 "assistant history contents",
             )?,
@@ -582,6 +595,43 @@ mod tests {
             },
             other => panic!("expected user message, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mints_one_identity_for_an_empty_tool_call_and_its_result() {
+        let history = serde_json::from_value(serde_json::json!([
+            {
+                "role": "assistant",
+                "contents": [{
+                    "type": "toolCall", "id": "", "callId": "",
+                    "name": "exec_command", "argumentsJson": "{}"
+                }]
+            },
+            {
+                "role": "user",
+                "contents": [{
+                    "type": "toolResult", "id": "", "callId": "",
+                    "items": [{"type": "text", "text": "ok"}]
+                }]
+            }
+        ]))
+        .unwrap();
+        let messages = deserialize_agent_history(history).unwrap();
+        let Message::Assistant { content, .. } = &messages[0] else {
+            panic!("expected assistant message");
+        };
+        let AssistantContent::ToolCall(call) = &content[0] else {
+            panic!("expected tool call");
+        };
+        let Message::User { content } = &messages[1] else {
+            panic!("expected user message");
+        };
+        let UserContent::ToolResult(result) = &content[0] else {
+            panic!("expected tool result");
+        };
+        assert!(call.id.is_local());
+        assert_eq!(call.id, result.call);
+        assert_eq!(call.function.name, result.name);
     }
 
     #[test]

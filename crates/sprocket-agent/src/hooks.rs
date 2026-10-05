@@ -3,10 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use rig::agent::{
     AgentHook, DispatchAction, DispatchEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, InvalidToolCallReason, ModelTurnAction, ModelTurnFinished,
-    StepEventKind,
+    InvalidToolCallContext, InvalidToolCallReason, StepEventKind,
 };
-use rig::message::AssistantContent;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -116,7 +114,6 @@ enum OrderedContent {
     Text(bool),
     Reasoning(bool),
     Tool { call_id: String },
-    Other,
 }
 
 #[derive(Debug)]
@@ -174,6 +171,26 @@ impl ToolCallTracker {
             .lock()
             .map(|state| state.completion.clone())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn record_parts(&self, parts: &[crate::live::LiveAssistantPart]) {
+        use crate::live::LiveAssistantPart;
+
+        let content = parts
+            .iter()
+            .map(|part| match part {
+                LiveAssistantPart::Text { text, .. } => {
+                    OrderedContent::Text(!text.trim().is_empty())
+                }
+                LiveAssistantPart::Reasoning { text, .. } => {
+                    OrderedContent::Reasoning(!text.trim().is_empty())
+                }
+                LiveAssistantPart::ToolCall { call_id, .. } => OrderedContent::Tool {
+                    call_id: call_id.clone(),
+                },
+            })
+            .collect::<Vec<_>>();
+        self.record_turn(&content);
     }
 
     pub(crate) fn assignment_for_dispatch(
@@ -279,9 +296,7 @@ impl ToolCallTracker {
                         .push_back(assignment.clone());
                     state.completion.tool_invocations.push(assignment);
                 }
-                OrderedContent::Text(false)
-                | OrderedContent::Reasoning(false)
-                | OrderedContent::Other => {}
+                OrderedContent::Text(false) | OrderedContent::Reasoning(false) => {}
             }
         }
         touched_sections.sort_by_key(|section| section.section_ordinal);
@@ -344,30 +359,6 @@ fn stable_id(kind: &str, run_id: &str, claim_id: &str, attempt_seq: u64, index: 
     format!("agent-{kind}-{}", hex::encode(hash.finalize()))
 }
 
-fn ordered_content(content: &[AssistantContent]) -> Vec<OrderedContent> {
-    content
-        .iter()
-        .map(|item| match item {
-            AssistantContent::Text(text) => OrderedContent::Text(!text.text.trim().is_empty()),
-            AssistantContent::Reasoning(reasoning) => {
-                // Must match what is persisted: summary blocks only. `display_text`
-                // also joins Text/Redacted, which never become transcript text.
-                // Empty (encrypted-only) reasoning is stored for replay but carries
-                // no work assignment; the server rejects work covering it.
-                OrderedContent::Reasoning(
-                    !crate::reasoning::reasoning_summary_text(reasoning)
-                        .trim()
-                        .is_empty(),
-                )
-            }
-            AssistantContent::ToolCall(call) => OrderedContent::Tool {
-                call_id: call.id.to_string(),
-            },
-            _ => OrderedContent::Other,
-        })
-        .collect()
-}
-
 #[derive(Clone)]
 pub(crate) struct AgentPromptHook {
     tracker: ToolCallTracker,
@@ -388,7 +379,7 @@ impl AgentHook for AgentPromptHook {
         if let Some(tool_name) = event.tool_name()
             && AGENT_TOOL_NAMES.contains(&tool_name)
         {
-            let call_id = event.call_id.map(ToString::to_string);
+            let call_id = event.call_id.map(|id| id.wire());
             self.tracker.prepare_dispatch(
                 tool_name,
                 &event.id.to_string(),
@@ -397,15 +388,6 @@ impl AgentHook for AgentPromptHook {
             );
         }
         DispatchAction::proceed()
-    }
-
-    async fn on_model_turn_finished(
-        &self,
-        _context: &HookContext,
-        event: ModelTurnFinished<'_>,
-    ) -> ModelTurnAction {
-        self.tracker.record_turn(&ordered_content(event.content));
-        ModelTurnAction::Continue
     }
 
     async fn on_invalid_tool_call(
@@ -419,9 +401,7 @@ impl AgentHook for AgentPromptHook {
     fn observes(&self, kind: StepEventKind) -> bool {
         matches!(
             kind,
-            StepEventKind::InvalidToolCall
-                | StepEventKind::ToolDispatch
-                | StepEventKind::ModelTurnFinished
+            StepEventKind::InvalidToolCall | StepEventKind::ToolDispatch
         )
     }
 }
@@ -764,39 +744,39 @@ mod tests {
     }
 
     #[test]
-    fn non_summary_reasoning_blocks_carry_no_work() {
-        use rig::message::{AssistantContent, Reasoning, ReasoningContent};
-
-        // Summary text is what gets persisted, so only it counts as work.
-        // Text/Redacted never become transcript text; Encrypted is replay-only.
-        let summary = ordered_content(&[AssistantContent::Reasoning(
-            Reasoning {
-                id: Some("rs_1".into()),
-                content: vec![ReasoningContent::Summary("plan".into())],
-            }
-            .sealed("openai"),
-        )]);
-        assert_eq!(summary, vec![OrderedContent::Reasoning(true)]);
-
-        for content in [
-            vec![ReasoningContent::Encrypted("envelope".into())],
-            vec![ReasoningContent::Text {
-                text: "raw".into(),
-                signature: None,
-            }],
-            vec![ReasoningContent::Redacted {
-                data: "redacted".into(),
-            }],
-            vec![ReasoningContent::Summary("  \n ".into())],
-        ] {
-            let mapped = ordered_content(&[AssistantContent::Reasoning(
-                Reasoning {
-                    id: Some("rs_1".into()),
-                    content,
-                }
-                .sealed("openai"),
-            )]);
-            assert_eq!(mapped, vec![OrderedContent::Reasoning(false)]);
-        }
+    fn dual_wire_calls_bind_dispatch_to_the_persisted_correlator() {
+        let tracker = ToolCallTracker::new("run", "claim");
+        let call = rig::message::ToolCall::from_dual_wire(
+            "fc_1",
+            "call_1",
+            rig::message::ToolFunction {
+                name: "exec_cmd".try_into().unwrap(),
+                arguments: serde_json::json!({"cmd": "pwd"}),
+            },
+        );
+        let mut parts = crate::live::LiveAssistantParts::default();
+        parts.apply_tool_call(
+            Some("stream:tool:0".into()),
+            call.id.wire().into_owned(),
+            call.function.name.to_string(),
+            call.function.arguments.clone(),
+            Some("stream".into()),
+            1,
+        );
+        tracker.record_parts(&parts.parts);
+        tracker.prepare_dispatch(
+            "exec_cmd",
+            "dispatch-1",
+            Some(&call.id.wire()),
+            r#"{"cmd":"pwd"}"#,
+        );
+        let assignment = tracker
+            .claim_dispatch("exec_cmd", &call.function.arguments)
+            .expect("dispatch must bind the model's call");
+        assert_eq!(assignment.call_id, "call_1");
+        assert_eq!(
+            assignment,
+            tracker.completion_assignments().tool_invocations[0]
+        );
     }
 }

@@ -15,6 +15,15 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Rig 0.43 upstream revision
+
+Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
+first merged post-0.43 revision removing an unconditional partial-conversation
+stderr dump from invalid-tool recovery. This revision retains 0.43's history
+types but unifies streamed and awaited run errors as `PromptError`.
+Return to a registry release only once it contains that fix and the provider,
+replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+
 ### SIWC streaming content type
 
 The ChatGPT SIWC route can omit `Content-Type` on a successful streaming
@@ -58,6 +67,36 @@ resolves each result's required name from its preceding call. Historical
 OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
 No stored data is rewritten: local JSONL and Convex transcript formats remain
 compatible with released clients.
+
+New reasoning items retain every ordered native block in
+`providerMetadata.openai.reasoningBlocks` and their issuer in
+`providerMetadata.reasoningIssuer`. `openai.itemId` and
+`openai.reasoningEncryptedContent` remain as the legacy projection, and display
+text still contains only summaries. Opaque text, signatures, redacted data and
+encrypted payloads are preserved verbatim, never promoted to display text.
+The Rust reader prefers full blocks, including an explicitly empty list, and
+otherwise reconstructs legacy summary/encrypted blocks. Missing issuers default
+to `openai` for released histories. The history fields remain `id` and
+`blocksJson`; new full-block histories encode native sealed reasoning inside
+`blocksJson`, while the reader still accepts released block arrays. This additive
+metadata format needs no backfill; blocks and issuers discarded by older
+releases cannot be recovered. Keep the legacy projection, array reader and
+missing-issuer default until supported clients age out or a versioned migration
+rewrites all supported histories. Stateless BYOK/SIWC replay still requires a
+nonempty encrypted payload; full-block preservation does not change omission.
+
+New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
+the opaque signature in `providerMetadata.signature`, and native additional
+parameters in `providerMetadata.toolCallAdditionalParams`. `callId` stays the
+provider's tool-result correlator. Explicit `null` additional parameters mean
+the native call had none. Released readers ignore the added metadata;
+new readers fall back to `callId` and the historical metadata shape for old
+items. This additive format widening needs no backfill; IDs already discarded
+by older releases cannot be recovered.
+
+Text items preserve Rig's `openai_responses` extras, including their message ID
+and phase. Single-message completions add the call's message ID there when Rig
+only reports it on the terminal response; multi-message item IDs take precedence.
 
 Keep this boundary conversion while Sprocket's transcript protocol uses these
 fields. Remove it only with a versioned protocol migration that rewrites all

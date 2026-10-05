@@ -205,16 +205,14 @@ impl LiveAssistantParts {
             *existing_turn = turn_id;
             return std::mem::replace(existing, text);
         }
-        if !text.is_empty() {
-            self.text_index.insert(key, self.parts.len());
-            self.parts.push(LiveAssistantPart::Text {
-                id,
-                text,
-                started_at: Some(now_ms),
-                completed_at: Some(now_ms),
-                turn_id,
-            });
-        }
+        self.text_index.insert(key, self.parts.len());
+        self.parts.push(LiveAssistantPart::Text {
+            id,
+            text,
+            started_at: Some(now_ms),
+            completed_at: Some(now_ms),
+            turn_id,
+        });
         String::new()
     }
 

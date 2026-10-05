@@ -11,7 +11,7 @@ pub(crate) fn openai_reasoning_metadata(
     item_id: Option<&str>,
     encrypted: Option<&str>,
 ) -> Option<JsonValue> {
-    let item_id = item_id.map(str::trim).filter(|id| !id.is_empty());
+    let item_id = item_id.filter(|id| !id.is_empty());
     let encrypted = opaque_encrypted(encrypted);
     if item_id.is_none() && encrypted.is_none() {
         return None;
@@ -72,10 +72,19 @@ pub(crate) fn apply_completed_reasoning(
     let key = format!("reasoning:{id}");
     let inner = opened_reasoning(reasoning);
     let text = inner.map(summary_text).unwrap_or_default();
-    let metadata = openai_reasoning_metadata(
-        inner.and_then(|value| value.id.as_deref()),
-        opaque_encrypted(inner.and_then(Reasoning::encrypted_content)),
-    );
+    let metadata = inner.map(|value| {
+        let mut metadata = openai_reasoning_metadata(
+            value.id.as_deref(),
+            opaque_encrypted(value.encrypted_content()),
+        )
+        .unwrap_or_else(|| serde_json::json!({ "openai": {} }));
+        if let Some(item_id) = &value.id {
+            metadata["openai"]["itemId"] = serde_json::json!(item_id);
+        }
+        metadata["openai"]["reasoningBlocks"] = serde_json::json!(value.content);
+        metadata["reasoningIssuer"] = serde_json::json!(reasoning.issuer());
+        metadata
+    });
     if let Some(metadata) = metadata {
         provider_metadata.insert(key, metadata);
     } else {
@@ -118,7 +127,11 @@ mod tests {
             metadata,
             Some(serde_json::json!({ "openai": { "itemId": "rs_empty" } }))
         );
-        assert!(openai_reasoning_metadata(Some("  "), Some("")).is_none());
+        assert!(openai_reasoning_metadata(Some(""), Some("")).is_none());
+        assert_eq!(
+            openai_reasoning_metadata(Some("  rs_1  "), None),
+            Some(serde_json::json!({ "openai": { "itemId": "  rs_1  " } }))
+        );
         assert!(opaque_encrypted(Some("")).is_none());
         assert!(opaque_encrypted(None).is_none());
     }
@@ -192,8 +205,16 @@ mod tests {
             serde_json::json!({
                 "openai": {
                     "itemId": "rs_123",
-                    "reasoningEncryptedContent": "envelope"
-                }
+                    "reasoningEncryptedContent": "envelope",
+                    "reasoningBlocks": [
+                        { "type": "summary", "content": "done" },
+                        { "type": "encrypted", "content": "envelope" },
+                        { "type": "redacted", "content": { "data": "redacted-state" } },
+                        { "type": "text", "content": { "text": "raw-state" } },
+                        { "type": "summary", "content": "second" }
+                    ]
+                },
+                "reasoningIssuer": "openai"
             })
         );
     }
@@ -285,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_reasoning_without_opaque_state_clears_metadata() {
+    fn completed_reasoning_replaces_metadata_without_stale_opaque_state() {
         let mut parts = LiveAssistantParts::default();
         let mut provider_metadata = HashMap::new();
         apply_completed_reasoning(
@@ -307,7 +328,15 @@ mod tests {
             "corr",
             &reasoning_with(None, vec![ReasoningContent::Summary("visible".to_string())]),
         );
-        assert!(!provider_metadata.contains_key("reasoning:stream:corr"));
+        assert_eq!(
+            provider_metadata["reasoning:stream:corr"],
+            serde_json::json!({
+                "openai": {
+                    "reasoningBlocks": [{ "type": "summary", "content": "visible" }]
+                },
+                "reasoningIssuer": "openai"
+            })
+        );
         match &parts.parts[0] {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "visible"),
             other => panic!("expected updated reasoning, got {other:?}"),
