@@ -849,7 +849,7 @@ describe('PromptComposer message queue', () => {
 		expect(onRemoveQueuedMessage).toHaveBeenCalledWith('failed-1');
 	});
 
-	it('queues on Enter while running and shows Stop generation alongside Queue message', async () => {
+	it('queues on Enter while running and switches back to Stop after the draft is sent', async () => {
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
@@ -859,15 +859,13 @@ describe('PromptComposer message queue', () => {
 			usage: { tier: 'pro', exhausted: false, resetsAt: null }
 		});
 
-		expect(textarea.getAttribute('placeholder')).toBe(
-			'Message sends when the current run finishes'
-		);
+		expect(textarea.getAttribute('placeholder')).toBe('Queue a follow-up…');
 		expect(textarea.disabled).toBe(false);
 		expect(document.querySelector('[aria-label="Send message"]')).toBeNull();
 		expect(
 			document.querySelector<HTMLButtonElement>('[aria-label="Queue message"]')?.disabled
 		).toBe(false);
-		expect(document.querySelector('[aria-label="Stop generation"]')).not.toBeNull();
+		expect(document.querySelector('[aria-label="Stop generation"]')).toBeNull();
 		expect(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]')?.disabled).toBe(
 			false
 		);
@@ -877,9 +875,26 @@ describe('PromptComposer message queue', () => {
 
 		await click(document.querySelector<HTMLButtonElement>('[aria-label="Queue message"]'));
 		expect(props.onSubmit).toHaveBeenCalledTimes(2);
+		expect(props.onCancel).not.toHaveBeenCalled();
 
+		await typeInComposer(textarea, '');
+		expect(document.querySelector('[aria-label="Queue message"]')).toBeNull();
 		await click(document.querySelector<HTMLButtonElement>('[aria-label="Stop generation"]'));
 		expect(props.onCancel).toHaveBeenCalledOnce();
+	});
+
+	it('collapses the attached queue without losing messages or hiding failure attention', async () => {
+		renderComposer({ queuedMessages });
+		const list = screen.getByRole('list', { name: 'Queued messages' });
+		expect(screen.getByRole('status').textContent).toContain('3 queued messages');
+		await click(screen.getByRole('button', { name: 'Collapse queued messages' }));
+		expect(list.hidden).toBe(true);
+		expect(screen.getByRole('button', { name: 'Expand queued messages' }).textContent).toContain(
+			'Needs attention'
+		);
+		await click(screen.getByRole('button', { name: 'Expand queued messages' }));
+		expect(list.hidden).toBe(false);
+		expect(list.querySelectorAll('li')).toHaveLength(3);
 	});
 
 	it('treats isQueuing separately from Stop availability', async () => {

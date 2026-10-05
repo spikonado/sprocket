@@ -1,4 +1,4 @@
-import { ArrowUp, CircleAlert, Paperclip, RotateCcw, Square, X } from 'lucide-react';
+import { ArrowUp, CircleAlert, ListPlus, Paperclip, Square } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
@@ -23,6 +23,7 @@ import AgentQuestion from '$lib/components/home/agent-question';
 import RunElapsed from '$lib/components/home/run-elapsed';
 import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
+import ComposerMessageQueue from '$lib/components/home/composer-message-queue';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
@@ -112,7 +113,7 @@ const SUPPORTS_FIELD_SIZING = Boolean(globalThis.CSS?.supports('field-sizing', '
 const ATTACH_TOOLTIP_LABEL = 'Attach files';
 
 const COMPOSER_SHELL_CLASS =
-	'composer-shell mx-auto w-full max-w-[48rem] rounded-[28px] p-px transition-colors duration-200';
+	'composer-shell relative mx-auto w-full max-w-[48rem] rounded-[28px] p-px transition-colors duration-200';
 
 const COMPOSER_INNER_CLASS =
 	'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
@@ -762,60 +763,11 @@ export function PromptComposerView({
 					) : null}
 
 					{queuedMessages.length > 0 ? (
-						<ol
-							aria-label="Queued messages"
-							className="mx-auto mb-3 flex w-full max-w-[48rem] flex-col gap-1.5 px-4"
-						>
-							{queuedMessages.map((message) => (
-								<li
-									key={message.id}
-									className="border-hairline bg-surface/80 flex items-center gap-2 rounded-xl border px-3 py-2"
-								>
-									<div className="min-w-0 flex-1">
-										<p className="text-foreground truncate text-[13px] leading-5">
-											{message.prompt}
-										</p>
-										{message.attachmentNames.length > 0 ? (
-											<p className="text-muted-foreground truncate text-[11px] leading-4">
-												{message.attachmentNames.join(', ')}
-											</p>
-										) : null}
-										{message.status === 'failed' && message.error ? (
-											<p className="text-destructive truncate text-[11px] leading-4">
-												{message.error}
-											</p>
-										) : null}
-									</div>
-									<span className="text-muted-foreground shrink-0 text-[11px] capitalize">
-										{message.status}
-									</span>
-									{message.status === 'failed' ? (
-										<button
-											type="button"
-											className="text-muted-foreground enabled:hover:text-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition enabled:cursor-pointer disabled:opacity-40"
-											aria-label={`Retry queued message: ${message.prompt}`}
-											title="Retry"
-											disabled={!onRetryQueuedMessage}
-											onClick={() => onRetryQueuedMessage?.(message.id)}
-										>
-											<RotateCcw className="size-3.5" aria-hidden="true" />
-										</button>
-									) : null}
-									{message.status !== 'sending' ? (
-										<button
-											type="button"
-											className="text-muted-foreground enabled:hover:text-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition enabled:cursor-pointer disabled:opacity-40"
-											aria-label={`Remove queued message: ${message.prompt}`}
-											title="Remove"
-											disabled={!onRemoveQueuedMessage}
-											onClick={() => onRemoveQueuedMessage?.(message.id)}
-										>
-											<X className="size-3.5" aria-hidden="true" />
-										</button>
-									) : null}
-								</li>
-							))}
-						</ol>
+						<ComposerMessageQueue
+							messages={queuedMessages}
+							onRemove={onRemoveQueuedMessage}
+							onRetry={onRetryQueuedMessage}
+						/>
 					) : null}
 
 					<div
@@ -909,7 +861,7 @@ export function PromptComposerView({
 											answeringQuestion
 												? 'Add detail, or type a custom answer'
 												: queuingActive
-													? 'Message sends when the current run finishes'
+													? 'Queue a follow-up…'
 													: 'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
 										}
 										disabled={isSubmitting}
@@ -1020,7 +972,7 @@ export function PromptComposerView({
 									</div>
 
 									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
-										{isRunning ? (
+										{isRunning && (answeringQuestion || !hasMessageContent) ? (
 											<button
 												type="button"
 												className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100"
@@ -1031,25 +983,7 @@ export function PromptComposerView({
 												<Square className="size-3.5 fill-current" />
 											</button>
 										) : null}
-										{queuingActive ? (
-											<button
-												type="button"
-												className="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 items-center justify-center rounded-full px-4 text-[13px] font-medium transition-all duration-150 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30"
-												onClick={onSubmit}
-												disabled={
-													!canSend ||
-													!canSubmitWithModel ||
-													usageBlocked ||
-													isSubmitting ||
-													!canSubmitContent ||
-													attachmentsPending
-												}
-												aria-label="Queue message"
-											>
-												Queue message
-											</button>
-										) : null}
-										{answeringQuestion || !queuingActive ? (
+										{answeringQuestion || !isRunning || hasMessageContent ? (
 											<button
 												type="button"
 												className="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"
@@ -1062,9 +996,24 @@ export function PromptComposerView({
 													!canSubmitContent ||
 													(!answeringQuestion && attachmentsPending)
 												}
-												aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
+												aria-label={
+													answeringQuestion
+														? 'Submit answer'
+														: queuingActive
+															? 'Queue message'
+															: 'Send message'
+												}
+												title={
+													queuingActive
+														? 'Queue message — sends after the current run finishes'
+														: undefined
+												}
 											>
-												<ArrowUp className="size-4" />
+												{queuingActive ? (
+													<ListPlus className="size-4" aria-hidden="true" />
+												) : (
+													<ArrowUp className="size-4" aria-hidden="true" />
+												)}
 											</button>
 										) : null}
 									</div>
