@@ -1,6 +1,7 @@
 import {
 	useCallback,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 	type KeyboardEvent,
@@ -126,6 +127,64 @@ export default function ThreadTranscript({
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const imageScope = project ? { workspacePath: project.workspacePath } : undefined;
 
+	const [rememberedCommands, setRememberedCommands] = useState<ReadonlyMap<string, string>>(
+		() => new Map()
+	);
+
+	const rememberCommands = useCallback((added: ReadonlyMap<string, string>) => {
+		if (added.size === 0) return;
+		setRememberedCommands((previous) => {
+			if ([...added].every(([session, command]) => previous.get(session) === command)) {
+				return previous;
+			}
+
+			return new Map([...previous, ...added]);
+		});
+	}, []);
+
+	const liveCommands = useMemo(() => {
+		const tools = [
+			...buildAssistantTimeline([], actions),
+			...messages.flatMap((message) =>
+				message.kind === 'live'
+					? buildAssistantTimeline(
+							message.parts,
+							actions.filter((job) => job.runId === message.runId)
+						)
+					: []
+			)
+		].filter((item): item is AssistantTimelineTool => item.type === 'tool');
+
+		return buildCommandSessionCommandMap(tools);
+	}, [messages, actions]);
+
+	useLayoutEffect(() => rememberCommands(liveCommands), [liveCommands, rememberCommands]);
+
+	const commands = useMemo(
+		() => new Map([...rememberedCommands, ...liveCommands]),
+		[rememberedCommands, liveCommands]
+	);
+
+	const loadWorkDetails = useMemo<Props['loadSectionDetails']>(
+		() =>
+			loadSectionDetails
+				? async (row, cursor, signal) => {
+						const details = await loadSectionDetails(row, cursor, signal);
+
+						if (!signal.aborted) {
+							const tools = buildAssistantTimeline(details.parts, []).filter(
+								(item): item is AssistantTimelineTool => item.type === 'tool'
+							);
+
+							rememberCommands(buildCommandSessionCommandMap(tools));
+						}
+
+						return details;
+					}
+				: undefined,
+		[loadSectionDetails, rememberCommands]
+	);
+
 	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
 
 	if (!sectionKeysRef.current) sectionKeysRef.current = new TranscriptSectionKeys();
@@ -145,7 +204,6 @@ export default function ThreadTranscript({
 		);
 
 		const timeline = buildAssistantTimeline(message.parts, messageActions);
-		const tools = timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool');
 
 		const sections = sectionKeys.reconcile(
 			message.id,
@@ -158,7 +216,7 @@ export default function ThreadTranscript({
 			timeline,
 			sections,
 			isStreaming,
-			commands: buildCommandSessionCommandMap(tools)
+			commands
 		};
 	}
 
@@ -555,10 +613,11 @@ export default function ThreadTranscript({
 						startedAtMs={startedAt}
 						completedAtMs={completedAt}
 					>
-						{loadSectionDetails ? (
+						{loadWorkDetails ? (
 							<WorkSectionDetails
 								row={row}
-								load={loadSectionDetails}
+								load={loadWorkDetails}
+								commands={commands}
 								inProgress={inProgress}
 								viewport={viewport}
 								beforeChange={beforeDetailChange}

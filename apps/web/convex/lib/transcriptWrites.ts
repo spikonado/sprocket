@@ -23,6 +23,7 @@ type TranscriptToolJob = Pick<
 	| 'status'
 	| 'callId'
 	| 'kind'
+	| 'payload'
 	| 'result'
 	| 'error'
 	| 'completedAt'
@@ -30,6 +31,40 @@ type TranscriptToolJob = Pick<
 	| 'sectionKey'
 	| 'sectionOrdinal'
 >;
+
+export function isCommandToolName(name: string): boolean {
+	return (
+		name === 'exec_cmd' ||
+		name === 'exec_command' ||
+		name === 'control_cmd' ||
+		name === 'control_command' ||
+		name === 'poll_cmd' ||
+		name === 'poll_command' ||
+		name === 'write_stdin'
+	);
+}
+
+async function appendToolTranscriptPart(
+	ctx: MutationCtx,
+	args: Parameters<typeof appendTranscriptPart>[1]
+) {
+	if (args.tool?.input !== undefined) {
+		const existing = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_sourceKey', (q) =>
+				q.eq('threadId', args.threadId).eq('sourceKey', args.sourceKey)
+			)
+			.unique();
+
+		if (existing?.kind === 'tool' && existing.tool && existing.tool.input === undefined) {
+			await ctx.db.patch('threadTranscriptParts', existing._id, {
+				tool: { ...existing.tool, input: args.tool.input }
+			});
+		}
+	}
+
+	return await appendTranscriptPart(ctx, args);
+}
 
 export async function recordPromptTranscript(
 	ctx: MutationCtx,
@@ -118,7 +153,7 @@ export async function recordStartedToolTranscript(
 ): Promise<void> {
 	const toolInvocationId = toolInvocationIdForJob(args.job);
 
-	const result = await appendTranscriptPart(ctx, {
+	const result = await appendToolTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'started'),
@@ -154,7 +189,7 @@ export async function recordToolTranscript(
 
 	const toolInvocationId = toolInvocationIdForJob(args.job);
 
-	const result = await appendTranscriptPart(ctx, {
+	const result = await appendToolTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'finished'),
@@ -226,6 +261,10 @@ function progressToolBody(
 		name: job.kind,
 		status: args.status
 	};
+
+	if (isCommandToolName(job.kind)) {
+		body.input = job.payload;
+	}
 
 	if (args.output !== undefined) {
 		body.output = args.output;

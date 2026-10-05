@@ -313,9 +313,14 @@ In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
+`backfillCommandToolInputs` (resolves retained jobs after invocation IDs migrate),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
 `removeSectionLinkedParts`, and
 `removeArtifactRegistryRekeyTargets`.
+
+The runner checks the current migration list even when the schedule already
+records completion, so adding a backfill reopens that schedule until the new
+migration finishes.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
@@ -461,3 +466,36 @@ stored `closed` flags instead of rescanning each run for every section.
 
 Remove this local migration once supported installations no longer have caches
 with the session column, or a later cache migration also rebuilds these indexes.
+
+#### Command tool inputs
+
+Tool detail bodies accept optional `input`. Current started and terminal events
+preserve executor payloads only for `exec_cmd`, `exec_command`, `control_cmd`,
+`control_command`, `poll_cmd`, `poll_command`, and `write_stdin`; other tool
+events omit input to avoid duplicating large payloads. Remote sync retains the
+field, and synthetic tool calls use it when no canonical completion call exists.
+Canonical completion inputs remain authoritative. Missing legacy input produces
+`null`, leaving the command session unknown rather than guessing from a call ID
+or error message.
+
+`backfillCommandToolInputs` fills only absent command inputs from retained
+`executorJobs`, pairing by run and tool invocation ID, with legacy `jobId` as a
+fallback. It verifies the job's run, thread, and tool kind and preserves existing
+inputs. The legacy runner runs it after invocation-ID backfills. Remove that
+migration and its `jobId` lookup after it completes and production scans confirm
+all recoverable command inputs were backfilled; retire the shared `jobId` pairing
+shim under the Tool invocation IDs gate above.
+
+Until the migration finishes, command transcript retries hydrate an existing
+part's absent input in the same transaction before strict retry comparison.
+Other mismatches still fail and roll back the hydration. Remove this extra
+lookup once production has no recoverable command parts with absent input and
+all writers preserve command inputs.
+
+Older local JSONL transcripts and derived history caches may have no command
+input, and commands whose executor job was deleted cannot be backfilled. Those
+historical inputs remain unknown; this change does not rebuild local caches or
+invent missing payloads. Keep the optional field and missing-input fallback
+while such history is supported. They cannot be removed solely because released
+clients aged out or the Convex migration finished. Noncommand detail input stays
+optional by design.

@@ -85,6 +85,8 @@ struct RemoteTool {
     call_id: String,
     name: String,
     #[serde(default)]
+    input: Option<serde_json::Value>,
+    #[serde(default)]
     output: Option<serde_json::Value>,
     status: String,
 }
@@ -141,6 +143,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
             tool_invocation_id: tool.tool_invocation_id,
             call_id: tool.call_id,
             name: tool.name,
+            input: tool.input,
             output: tool.output,
             status: tool.status,
         }),
@@ -335,6 +338,54 @@ mod tests {
         .unwrap();
         assert_eq!(parts[0].created_at, Some(1_700_000_000_000));
         assert_eq!(parts[0].tool.as_ref().unwrap().call_id, "c1");
+        assert_eq!(parts[0].tool.as_ref().unwrap().input, None);
+    }
+
+    #[tokio::test]
+    async fn remote_command_inputs_survive_local_storage() {
+        let inputs = [
+            serde_json::json!({"sessionId":"session","yieldTimeMs":1000}),
+            serde_json::json!({"sessionId":"session","action":"write","chars":"hello"}),
+        ];
+        let parts = parse_remote_parts(serde_json::json!({
+            "parts": [
+                {
+                    "number": 0.0,
+                    "sourceKey": "tool:poll:started",
+                    "kind": "tool",
+                    "runId": "run",
+                    "tool": {
+                        "callId": "poll",
+                        "name": "poll_cmd",
+                        "input": inputs[0],
+                        "status": "started"
+                    }
+                },
+                {
+                    "number": 1.0,
+                    "sourceKey": "tool:control:failed",
+                    "kind": "tool",
+                    "runId": "run",
+                    "tool": {
+                        "callId": "control",
+                        "name": "control_cmd",
+                        "input": inputs[1],
+                        "output": {"error":"session unavailable"},
+                        "status": "failed"
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+        for (part, input) in parts.iter().zip(&inputs) {
+            assert_eq!(part.tool.as_ref().unwrap().input.as_ref(), Some(input));
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_owned());
+        store.append_parts("user", "thread", &parts).await.unwrap();
+        let stored = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
+        assert_eq!(stored, parts);
     }
 
     #[test]

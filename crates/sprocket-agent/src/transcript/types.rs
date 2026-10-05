@@ -196,6 +196,8 @@ pub struct TranscriptToolBody {
     pub call_id: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<JsonValue>,
     pub status: String,
 }
@@ -249,5 +251,17 @@ mod tests {
             part.prompt.as_ref().map(|prompt| prompt.text.as_str()),
             Some("hi")
         );
+    }
+
+    #[test]
+    fn transcript_tool_keeps_old_json_without_input() {
+        let tool: TranscriptToolBody = serde_json::from_value(serde_json::json!({
+            "callId": "call",
+            "name": "poll_cmd",
+            "status": "started"
+        }))
+        .unwrap();
+        assert_eq!(tool.input, None);
+        assert!(serde_json::to_value(tool).unwrap().get("input").is_none());
     }
 }

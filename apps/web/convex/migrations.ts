@@ -8,6 +8,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
+import { isCommandToolName } from '@convex/lib/transcriptWrites';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -129,6 +130,48 @@ export const migrateToolPartJobIds = migrations.define({
 	}
 });
 
+export const backfillCommandToolInputs = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (ctx, part) => {
+		const tool = part.tool;
+
+		if (
+			part.kind !== 'tool' ||
+			!tool ||
+			tool.input !== undefined ||
+			!isCommandToolName(tool.name)
+		) {
+			return;
+		}
+
+		const toolInvocationId = tool.toolInvocationId;
+
+		let job = toolInvocationId
+			? await ctx.db
+					.query('executorJobs')
+					.withIndex('by_runId_and_toolInvocationId', (q) =>
+						q.eq('runId', part.runId).eq('toolInvocationId', toolInvocationId)
+					)
+					.unique()
+			: null;
+
+		if (!job && tool.jobId) {
+			job = await ctx.db.get('executorJobs', tool.jobId);
+		}
+
+		if (
+			!job ||
+			job.runId !== part.runId ||
+			job.threadId !== part.threadId ||
+			job.kind !== tool.name
+		) {
+			return;
+		}
+
+		return { tool: { ...tool, input: job.payload } };
+	}
+});
+
 export const normalizeTranscriptCompletionTiming = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: async (_ctx, part) => {
@@ -215,6 +258,7 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 	internal.migrations.normalizeScrapeUrlResults,
 	internal.migrations.backfillExecutorJobToolInvocationId,
 	internal.migrations.migrateToolPartJobIds,
+	internal.migrations.backfillCommandToolInputs,
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
 	internal.migrations.removeSectionLinkedParts,
@@ -241,7 +285,9 @@ async function runBackfillAutomatically(
 		.withIndex('by_name', (q) => q.eq('name', name))
 		.unique();
 
-	if (schedule?.completedAt !== undefined) return null;
+	const statuses = await migrations.getStatus(ctx, { migrations: backfills });
+
+	if (schedule?.completedAt !== undefined && statuses.every((status) => status.isDone)) return null;
 	let scheduleId = schedule?._id;
 
 	if (!schedule) {
@@ -254,12 +300,14 @@ async function runBackfillAutomatically(
 		await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
 	}
 
-	const statuses = await migrations.getStatus(ctx, { migrations: backfills });
-
 	if (statuses.every((status) => status.isDone)) {
 		await ctx.db.patch('migrationSchedules', scheduleId!, { completedAt: Date.now() });
 
 		return null;
+	}
+
+	if (schedule?.completedAt !== undefined) {
+		await ctx.db.patch('migrationSchedules', schedule._id, { completedAt: undefined });
 	}
 
 	await migrations.runSerially(ctx, backfills);
