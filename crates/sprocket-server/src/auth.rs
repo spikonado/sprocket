@@ -145,14 +145,17 @@ pub fn verify_pairing_proof(credential: &str, message: &str, proof: &[u8]) -> bo
 
 impl AuthState {
     pub(crate) async fn create_cli_session(&self, token: String) {
-        self.sessions.write().await.insert(token, SessionRecord {
-            ephemeral: true,
-            local_browser: true,
-            role: "owner".into(),
-            created_at: crate::now_ms(),
-            user_id: None,
-            uncommitted: false,
-        });
+        self.sessions.write().await.insert(
+            token,
+            SessionRecord {
+                ephemeral: true,
+                local_browser: true,
+                role: "owner".into(),
+                created_at: crate::now_ms(),
+                user_id: None,
+                uncommitted: false,
+            },
+        );
     }
 
     pub async fn session_state(&self, session_token: Option<&str>) -> AuthSessionResponse {
@@ -213,14 +216,17 @@ impl AuthState {
             };
             sessions.remove(&oldest_browser);
         }
-        sessions.insert(session_token.clone(), SessionRecord {
-            ephemeral: false,
-            local_browser,
-            role: "owner".to_string(),
-            created_at: crate::now_ms(),
-            user_id: None,
-            uncommitted: false,
-        });
+        sessions.insert(
+            session_token.clone(),
+            SessionRecord {
+                ephemeral: false,
+                local_browser,
+                role: "owner".to_string(),
+                created_at: crate::now_ms(),
+                user_id: None,
+                uncommitted: false,
+            },
+        );
         self.save_sessions(sessions).await?;
 
         Ok((
@@ -910,23 +916,29 @@ mod tests {
         {
             let mut sessions = auth.sessions.write().await;
             for index in 0..(MAX_PERSISTED_BROWSER_SESSIONS - 1) {
-                sessions.insert(format!("bound-{index}"), SessionRecord {
+                sessions.insert(
+                    format!("bound-{index}"),
+                    SessionRecord {
+                        ephemeral: false,
+                        local_browser: false,
+                        role: "owner".into(),
+                        created_at: now.saturating_sub(10_000 - index as u64),
+                        user_id: Some("user-1".into()),
+                        uncommitted: false,
+                    },
+                );
+            }
+            sessions.insert(
+                "unbound".into(),
+                SessionRecord {
                     ephemeral: false,
                     local_browser: false,
                     role: "owner".into(),
-                    created_at: now.saturating_sub(10_000 - index as u64),
-                    user_id: Some("user-1".into()),
+                    created_at: now.saturating_sub(20_000),
+                    user_id: None,
                     uncommitted: false,
-                });
-            }
-            sessions.insert("unbound".into(), SessionRecord {
-                ephemeral: false,
-                local_browser: false,
-                role: "owner".into(),
-                created_at: now.saturating_sub(20_000),
-                user_id: None,
-                uncommitted: false,
-            });
+                },
+            );
         }
 
         let (_, first_new) = auth.bootstrap_browser_session(false).await.unwrap();
