@@ -219,6 +219,7 @@ describe('images', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.unstubAllGlobals();
+		vi.unstubAllEnvs();
 		vi.restoreAllMocks();
 	});
 
@@ -265,6 +266,103 @@ describe('images', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 		unmount();
 	});
+
+	it.each([
+		'parse_file/board.png',
+		'./parse_file/board%20layout.png',
+		'screenshot_url/board.png',
+		'scrape_url/board.png'
+	])('resolves %s in the message thread instead of the workspace', (path) => {
+		const { getByRole, rerender } = render(
+			<ChatMarkdown
+				content={`![Board](${path})`}
+				imageScope={{
+					workspacePath: '/workspace',
+					transcript: { userId: 'user', threadId: 'first-thread' }
+				}}
+			/>
+		);
+
+		const url = new URL(
+			getByRole('button', { name: 'View Board' }).getAttribute('src') ?? '',
+			window.location.href
+		);
+
+		expect(url.searchParams.get('workspacePath')).toBe('/workspace');
+		expect(url.searchParams.get('path')).toBe(decodeURIComponent(path.replace(/^\.\//, '')));
+		expect(url.searchParams.get('userId')).toBe('user');
+		expect(url.searchParams.get('threadId')).toBe('first-thread');
+
+		rerender(
+			<ChatMarkdown
+				content={`![Board](${path})`}
+				imageScope={{ transcript: { userId: 'user', threadId: 'second-thread' } }}
+			/>
+		);
+
+		const nextUrl = new URL(
+			getByRole('button', { name: 'View Board' }).getAttribute('src') ?? '',
+			window.location.href
+		);
+
+		expect(nextUrl.searchParams.get('threadId')).toBe('second-thread');
+	});
+
+	it('watches thread-scoped images using credentials on the configured machine API', async () => {
+		vi.stubEnv('VITE_LOCAL_API_URL', 'http://127.0.0.1:7731');
+		vi.useFakeTimers();
+		vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+		const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify('100-1')));
+		vi.stubGlobal('fetch', fetch);
+
+		const { getByRole, unmount } = render(
+			<ChatMarkdown
+				content="![Board](parse_file/board.png)"
+				imageScope={{ transcript: { userId: 'user', threadId: 'thread' } }}
+			/>
+		);
+
+		const image = getByRole('button', { name: 'View Board' });
+		expect(image.getAttribute('crossorigin')).toBe('use-credentials');
+		await act(() => vi.advanceTimersByTimeAsync(2_000));
+		const request = new URL(fetch.mock.calls[0][0]);
+		expect(request.origin).toBe('http://127.0.0.1:7731');
+		expect(request.searchParams.get('userId')).toBe('user');
+		expect(request.searchParams.get('threadId')).toBe('thread');
+		expect(request.searchParams.get('revisionOnly')).toBe('true');
+		expect(fetch.mock.calls[0][1].credentials).toBe('include');
+		expect(new URL(image.getAttribute('src') ?? '').searchParams.get('revision')).toBe('100-1');
+		unmount();
+	});
+
+	it.each([
+		['assets/board.png', undefined, 'assets/board.png'],
+		['/tmp/board.png', undefined, '/tmp/board.png'],
+		['parse_file/board.png', 'docs/notes.md', 'docs/parse_file/board.png']
+	])(
+		'keeps %s workspace-relative or absolute when a thread scope exists',
+		(path, documentPath, resolvedPath) => {
+			const { getByRole } = render(
+				<ChatMarkdown
+					content={`![Board](${path})`}
+					imageScope={{
+						workspacePath: '/workspace',
+						documentPath,
+						transcript: { userId: 'user', threadId: 'thread' }
+					}}
+				/>
+			);
+
+			const url = new URL(
+				getByRole('button', { name: 'View Board' }).getAttribute('src') ?? '',
+				window.location.href
+			);
+
+			expect(url.searchParams.get('path')).toBe(resolvedPath);
+			expect(url.searchParams.get('workspacePath')).toBe('/workspace');
+			expect(url.searchParams.get('threadId')).toBeNull();
+		}
+	);
 
 	it('restores enlargement after an initially missing local image becomes available', async () => {
 		vi.useFakeTimers();
