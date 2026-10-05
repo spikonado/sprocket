@@ -282,14 +282,14 @@ impl NativeAuthManager {
             .pending
             .by_session
             .insert(session_token.to_string(), authorization.state.clone());
-        session.pending.by_state.insert(
-            authorization.state.clone(),
-            PendingLogin {
+        session
+            .pending
+            .by_state
+            .insert(authorization.state.clone(), PendingLogin {
                 session_token: session_token.to_string(),
                 code_verifier: authorization.code_verifier,
                 created_at: Instant::now(),
-            },
-        );
+            });
         session.login_errors.remove(session_token);
 
         Ok(NativeLoginStart {
