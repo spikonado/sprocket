@@ -68,22 +68,19 @@ OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
 No stored data is rewritten: local JSONL and Convex transcript formats remain
 compatible with released clients.
 
-New reasoning items retain every ordered native block in
-`providerMetadata.openai.reasoningBlocks` and their issuer in
-`providerMetadata.reasoningIssuer`. `openai.itemId` and
-`openai.reasoningEncryptedContent` remain as the legacy projection, and display
-text still contains only summaries. Opaque text, signatures, redacted data and
-encrypted payloads are preserved verbatim, never promoted to display text.
-The Rust reader prefers full blocks, including an explicitly empty list, and
-otherwise reconstructs legacy summary/encrypted blocks. Missing issuers default
-to `openai` for released histories. The history fields remain `id` and
-`blocksJson`; new full-block histories encode native sealed reasoning inside
-`blocksJson`, while the reader still accepts released block arrays. This additive
-metadata format needs no backfill; blocks and issuers discarded by older
-releases cannot be recovered. Keep the legacy projection, array reader and
-missing-issuer default until supported clients age out or a versioned migration
-rewrites all supported histories. Stateless BYOK/SIWC replay still requires a
-nonempty encrypted payload; full-block preservation does not change omission.
+New reasoning items retain summaries as display text, one opaque encrypted
+replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
+ID in `providerMetadata.openai.itemId`, and the issuer in
+`providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
+are not persisted. Encrypted payload bytes are preserved verbatim without
+duplication. The Rust reader reconstructs summary/encrypted blocks; missing
+issuers default to `openai` for released histories. The history fields remain
+`id` and `blocksJson`; issuer-aware histories encode sealed projected reasoning
+inside `blocksJson`, while the reader still accepts released block arrays.
+This additive metadata format needs no backfill. Keep the existing replay
+fields, array reader and missing-issuer default until supported clients age out
+or a versioned migration rewrites all supported histories. Stateless BYOK/SIWC
+replay still requires a nonempty encrypted payload.
 
 New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
 the opaque signature in `providerMetadata.signature`, and native additional

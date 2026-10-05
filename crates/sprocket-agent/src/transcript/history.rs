@@ -250,17 +250,6 @@ fn completion_item_to_history(item: &serde_json::Value) -> Option<AgentHistoryCo
                 .get("providerMetadata")
                 .and_then(|metadata| metadata.get("reasoningIssuer"))
                 .and_then(|value| value.as_str());
-            if let Some(blocks) = openai_field(item, "reasoningBlocks") {
-                return Some(AgentHistoryContent::Reasoning {
-                    blocks_json: serde_json::json!({
-                        "issuer": issuer.unwrap_or("openai"),
-                        "id": item_id,
-                        "content": blocks
-                    })
-                    .to_string(),
-                    id: item_id,
-                });
-            }
             let text = item
                 .get("text")
                 .and_then(|value| value.as_str())
@@ -736,29 +725,20 @@ mod tests {
     }
 
     #[test]
-    fn completed_reasoning_roundtrips_every_block_and_issuer_through_durable_history() {
+    fn completed_reasoning_roundtrips_summary_and_one_envelope_with_issuer() {
+        let encrypted = "e".repeat(600_000);
         let content = vec![
             ReasoningContent::Text {
                 text: "  raw\n\0λ  ".into(),
                 signature: Some("  signed\n+/=  ".into()),
             },
             ReasoningContent::Summary(" first\nsummary ".into()),
-            ReasoningContent::Text {
-                text: String::new(),
-                signature: Some(String::new()),
-            },
             ReasoningContent::Redacted {
                 data: "  redacted\n\0+/=  ".into(),
             },
-            ReasoningContent::Encrypted("  encrypted\n+/=  ".into()),
+            ReasoningContent::Encrypted(encrypted.clone()),
             ReasoningContent::Summary(String::new()),
-            ReasoningContent::Text {
-                text: " unsigned ".into(),
-                signature: None,
-            },
-            ReasoningContent::Encrypted(String::new()),
             ReasoningContent::Summary("second".into()),
-            ReasoningContent::Encrypted("second encrypted".into()),
         ];
         for issuer in ["openai", "anthropic", "openrouter/anthropic"] {
             let original = Reasoning {
@@ -770,21 +750,23 @@ mod tests {
             parts.apply_text_delta("reasoning", "s:r".into(), "partial", None, 10);
             let mut metadata = HashMap::new();
             apply_completed_reasoning(&mut parts, &mut metadata, "s", "r", &original);
-            let mut item = merge_provider_metadata(&parts.parts[0], metadata.get("reasoning:s:r"));
+            let item = merge_provider_metadata(&parts.parts[0], metadata.get("reasoning:s:r"));
             assert_eq!(item["text"], " first\nsummary \n\nsecond");
-            assert_eq!(item["providerMetadata"]["reasoningIssuer"], issuer);
-            assert_eq!(item["providerMetadata"]["openai"]["itemId"], "  item\nλ  ");
             assert_eq!(
-                item["providerMetadata"]["openai"]["reasoningEncryptedContent"],
-                "  encrypted\n+/=  "
+                item["providerMetadata"],
+                serde_json::json!({
+                    "openai": {
+                        "itemId": "  item\nλ  ",
+                        "reasoningEncryptedContent": encrypted
+                    },
+                    "reasoningIssuer": issuer
+                })
             );
 
-            item["text"] = serde_json::json!("stale summary projection");
-            item["providerMetadata"]["openai"]["reasoningEncryptedContent"] =
-                serde_json::json!("stale encrypted projection");
             let stored = reasoning_completion(0, item);
-            let stored: TranscriptPart =
-                serde_json::from_str(&serde_json::to_string(&stored).unwrap()).unwrap();
+            let stored_json = serde_json::to_string(&stored).unwrap();
+            assert!(stored_json.len() < encrypted.len() + 1_000);
+            let stored: TranscriptPart = serde_json::from_str(&stored_json).unwrap();
             let state = TranscriptState::new("user".into(), "thread".into());
             let history = agent_history_from_parts(&state, &[stored], None);
             let serialized = serde_json::to_value(&history).unwrap();
@@ -801,7 +783,17 @@ mod tests {
             let AssistantContent::Reasoning(restored) = &content[0] else {
                 panic!("expected reasoning");
             };
-            assert_eq!(restored, &original);
+            assert_eq!(
+                restored,
+                &Reasoning {
+                    id: Some("  item\nλ  ".into()),
+                    content: vec![
+                        ReasoningContent::Summary(" first\nsummary \n\nsecond".into()),
+                        ReasoningContent::Encrypted(encrypted.clone()),
+                    ],
+                }
+                .sealed(issuer)
+            );
             assert_eq!(
                 reasoning_summary_text(restored),
                 " first\nsummary \n\nsecond"
@@ -810,86 +802,6 @@ mod tests {
                 assert!(restored.open(&Issuer::from("openai")).is_none());
             }
         }
-    }
-
-    #[test]
-    fn opaque_only_and_empty_reasoning_survive_without_legacy_replay_fields() {
-        for original in [
-            Reasoning {
-                id: None,
-                content: vec![ReasoningContent::Text {
-                    text: String::new(),
-                    signature: Some("  signature\n+/=  ".into()),
-                }],
-            },
-            Reasoning {
-                id: None,
-                content: vec![ReasoningContent::Redacted {
-                    data: "opaque".into(),
-                }],
-            },
-            Reasoning {
-                id: None,
-                content: vec![],
-            },
-            Reasoning {
-                id: Some(String::new()),
-                content: vec![],
-            },
-        ] {
-            let original = original.sealed("anthropic");
-            let mut parts = LiveAssistantParts::default();
-            let mut metadata = HashMap::new();
-            apply_completed_reasoning(&mut parts, &mut metadata, "s", "r", &original);
-            let item = merge_provider_metadata(&parts.parts[0], metadata.get("reasoning:s:r"));
-            assert_eq!(item["text"], "");
-            let stored = reasoning_completion(0, item);
-            let state = TranscriptState::new("user".into(), "thread".into());
-            let history = agent_history_from_parts(&state, &[stored], None);
-            let messages = deserialize_agent_history(history).unwrap();
-            let Message::Assistant { content, .. } = &messages[0] else {
-                panic!("expected assistant message");
-            };
-            let AssistantContent::Reasoning(restored) = &content[0] else {
-                panic!("expected reasoning");
-            };
-            assert_eq!(restored, &original);
-        }
-    }
-
-    #[test]
-    fn full_empty_blocks_override_legacy_projection_and_default_missing_issuer() {
-        let item = serde_json::json!({
-            "type": "reasoning",
-            "text": "stale summary",
-            "providerMetadata": {
-                "openai": {
-                    "reasoningBlocks": [],
-                    "reasoningEncryptedContent": "stale encrypted"
-                }
-            }
-        });
-        let contents = vec![completion_item_to_history(&item).expect("empty reasoning slot")];
-        let messages = deserialize_agent_history(vec![AgentHistoryMessage {
-            role: AgentHistoryRole::Assistant,
-            assistant_id: None,
-            contents,
-        }])
-        .unwrap();
-        let Message::Assistant { content, .. } = &messages[0] else {
-            panic!("expected assistant message");
-        };
-        let AssistantContent::Reasoning(reasoning) = &content[0] else {
-            panic!("expected reasoning");
-        };
-        assert_eq!(
-            reasoning,
-            &Reasoning {
-                id: None,
-                content: vec![]
-            }
-            .sealed("openai")
-        );
     }
 
     #[test]

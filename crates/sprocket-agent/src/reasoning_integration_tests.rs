@@ -634,11 +634,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         json!({
             "openai": {
                 "itemId": ITEM_ID,
-                "reasoningEncryptedContent": ENVELOPE,
-                "reasoningBlocks": [
-                    {"type": "summary", "content": DONE_SUMMARY},
-                    {"type": "encrypted", "content": ENVELOPE}
-                ]
+                "reasoningEncryptedContent": ENVELOPE
             },
             "reasoningIssuer": "openai"
         })

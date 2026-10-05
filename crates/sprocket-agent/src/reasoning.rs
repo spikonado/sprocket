@@ -77,11 +77,7 @@ pub(crate) fn apply_completed_reasoning(
             value.id.as_deref(),
             opaque_encrypted(value.encrypted_content()),
         )
-        .unwrap_or_else(|| serde_json::json!({ "openai": {} }));
-        if let Some(item_id) = &value.id {
-            metadata["openai"]["itemId"] = serde_json::json!(item_id);
-        }
-        metadata["openai"]["reasoningBlocks"] = serde_json::json!(value.content);
+        .unwrap_or_else(|| serde_json::json!({}));
         metadata["reasoningIssuer"] = serde_json::json!(reasoning.issuer());
         metadata
     });
@@ -205,14 +201,7 @@ mod tests {
             serde_json::json!({
                 "openai": {
                     "itemId": "rs_123",
-                    "reasoningEncryptedContent": "envelope",
-                    "reasoningBlocks": [
-                        { "type": "summary", "content": "done" },
-                        { "type": "encrypted", "content": "envelope" },
-                        { "type": "redacted", "content": { "data": "redacted-state" } },
-                        { "type": "text", "content": { "text": "raw-state" } },
-                        { "type": "summary", "content": "second" }
-                    ]
+                    "reasoningEncryptedContent": "envelope"
                 },
                 "reasoningIssuer": "openai"
             })
@@ -331,9 +320,6 @@ mod tests {
         assert_eq!(
             provider_metadata["reasoning:stream:corr"],
             serde_json::json!({
-                "openai": {
-                    "reasoningBlocks": [{ "type": "summary", "content": "visible" }]
-                },
                 "reasoningIssuer": "openai"
             })
         );
