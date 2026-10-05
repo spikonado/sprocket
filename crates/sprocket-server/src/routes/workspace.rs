@@ -1,16 +1,18 @@
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
+use crate::auth::require_session_user;
 use crate::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
@@ -58,6 +60,8 @@ struct WorkspaceSearchRequest {
 struct LocalImageRequest {
     workspace_path: Option<PathBuf>,
     path: String,
+    user_id: Option<String>,
+    thread_id: Option<String>,
     #[serde(default)]
     revision_only: bool,
 }
@@ -102,9 +106,27 @@ pub fn routes() -> axum::Router<AppState> {
 }
 
 async fn local_image(
+    State(state): State<AppState>,
     MachineSession: MachineSession,
+    headers: HeaderMap,
+    jar: CookieJar,
     Query(payload): Query<LocalImageRequest>,
 ) -> Result<Response, ApiError> {
+    let root = match (&payload.user_id, &payload.thread_id) {
+        (None, None) => LocalImageRoot::Workspace(payload.workspace_path),
+        (Some(user_id), Some(thread_id)) => {
+            require_session_user(&state.auth, &headers, &jar, user_id)
+                .await
+                .map_err(ApiError::unauthorized)?;
+            validate_thread_image_path(thread_id, &payload.path).map_err(ApiError::bad_request)?;
+            LocalImageRoot::Thread(state.transcript.thread_dir(user_id, thread_id))
+        }
+        _ => {
+            return Err(ApiError::bad_request(anyhow::anyhow!(
+                "local image scope requires both userId and threadId"
+            )));
+        }
+    };
     let permit = LOCAL_IMAGE_READS
         .acquire()
         .await
@@ -112,7 +134,7 @@ async fn local_image(
     if payload.revision_only {
         let revision = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let (_, metadata) = open_local_image(payload.workspace_path, payload.path).ok()?;
+            let (_, metadata) = open_local_image(root, payload.path).ok()?;
             let modified = metadata.modified().ok()?;
             let nanos = modified
                 .duration_since(std::time::UNIX_EPOCH)
@@ -126,7 +148,7 @@ async fn local_image(
     }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        read_local_image(payload.workspace_path, payload.path)
+        read_local_image(root, payload.path)
     })
     .await
     .map_err(|error| ApiError::internal(error.into()))?
@@ -161,11 +183,42 @@ struct LocalImage {
     media_type: &'static str,
 }
 
-fn read_local_image(
-    workspace_path: Option<PathBuf>,
-    image_path: String,
-) -> anyhow::Result<LocalImage> {
-    let (file, metadata) = open_local_image(workspace_path, image_path)?;
+enum LocalImageRoot {
+    Workspace(Option<PathBuf>),
+    Thread(PathBuf),
+}
+
+fn validate_thread_image_path(thread_id: &str, image_path: &str) -> anyhow::Result<()> {
+    if thread_id.is_empty()
+        || thread_id.eq_ignore_ascii_case("blobs")
+        || thread_id.eq_ignore_ascii_case("pending-attachments")
+        || !thread_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        anyhow::bail!("invalid transcript thread ID");
+    }
+
+    let mut components = Path::new(image_path).components();
+    let is_tool_cache = matches!(
+        components.next(),
+        Some(Component::Normal(name))
+            if matches!(name.to_str(), Some("parse_file" | "screenshot_url" | "scrape_url"))
+    );
+    if !is_tool_cache
+        || !matches!(components.next(), Some(Component::Normal(_)))
+        || !components.all(|component| matches!(component, Component::Normal(_)))
+        || image_path
+            .split(['/', '\\'])
+            .any(|part| matches!(part, "." | ".."))
+    {
+        anyhow::bail!("thread image paths must be relative tool-cache paths without traversal");
+    }
+    Ok(())
+}
+
+fn read_local_image(root: LocalImageRoot, image_path: String) -> anyhow::Result<LocalImage> {
+    let (file, metadata) = open_local_image(root, image_path)?;
     let mut contents = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_LOCAL_IMAGE_BYTES + 1)
         .read_to_end(&mut contents)
@@ -183,16 +236,33 @@ fn read_local_image(
 }
 
 fn open_local_image(
-    workspace_path: Option<PathBuf>,
+    root: LocalImageRoot,
     image_path: String,
 ) -> anyhow::Result<(std::fs::File, std::fs::Metadata)> {
     let image_path = Path::new(&image_path);
-    let image_path = if image_path.is_absolute() {
-        image_path.to_path_buf()
-    } else {
-        workspace_path
-            .context("relative image paths require a workspace directory")?
-            .join(image_path)
+    let image_path = match root {
+        LocalImageRoot::Workspace(workspace_path) => {
+            if image_path.is_absolute() {
+                image_path.to_path_buf()
+            } else {
+                workspace_path
+                    .context("relative image paths require a workspace directory")?
+                    .join(image_path)
+            }
+        }
+        LocalImageRoot::Thread(thread_dir) => {
+            let thread_dir = thread_dir
+                .canonicalize()
+                .context("failed to resolve transcript directory")?;
+            let image_path = thread_dir
+                .join(image_path)
+                .canonicalize()
+                .context("failed to resolve thread image")?;
+            if !image_path.starts_with(&thread_dir) {
+                anyhow::bail!("thread image must remain inside its transcript directory");
+            }
+            image_path
+        }
     };
     if !image_path.is_absolute() {
         anyhow::bail!("image path must resolve to an absolute path");
@@ -450,9 +520,21 @@ mod tests {
     }
 
     fn image_request(workspace: Option<&Path>, path: &str, token: Option<&str>) -> Request<Body> {
+        image_request_with_options(workspace, path, token, &[])
+    }
+
+    fn image_request_with_options(
+        workspace: Option<&Path>,
+        path: &str,
+        token: Option<&str>,
+        options: &[(&str, &str)],
+    ) -> Request<Body> {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if let Some(workspace) = workspace {
             query.append_pair("workspacePath", &workspace.to_string_lossy());
+        }
+        for (key, value) in options {
+            query.append_pair(key, value);
         }
         let query = query.append_pair("path", path).finish();
         let uri = format!("/workspace/image?{query}");
@@ -620,6 +702,294 @@ mod tests {
             svg.headers().get("content-security-policy").unwrap(),
             "sandbox; default-src 'none'"
         );
+    }
+
+    #[tokio::test]
+    async fn local_image_scopes_image_data_and_revisions_to_transcript_threads() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+        let path = "parse_file/550e8400-e29b-41d4-a716-446655440000.png";
+        let first = b"\x89PNG\r\n\x1a\nfirst";
+        let second = b"\x89PNG\r\n\x1a\nsecond";
+        let workspace_image = b"\x89PNG\r\n\x1a\nworkspace";
+        std::fs::create_dir(workspace.path().join("parse_file")).unwrap();
+        std::fs::write(workspace.path().join(path), workspace_image).unwrap();
+        let (app, token) = image_test_app(data.path()).await;
+
+        for (thread_id, contents, seconds) in
+            [("thread_1", &first[..], 1), ("thread-2", &second[..], 2)]
+        {
+            let thread_dir = transcript.thread_dir("test-user", thread_id);
+            std::fs::create_dir_all(thread_dir.join("parse_file")).unwrap();
+            let image_path = thread_dir.join(path);
+            std::fs::write(&image_path, contents).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&image_path)
+                .unwrap()
+                .set_times(
+                    std::fs::FileTimes::new().set_modified(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+                    ),
+                )
+                .unwrap();
+
+            for workspace_root in [Some(workspace.path()), None] {
+                for revision_only in [false, true] {
+                    let response = app
+                        .clone()
+                        .oneshot(image_request_with_options(
+                            workspace_root,
+                            path,
+                            Some(&token),
+                            &[
+                                ("userId", "test-user"),
+                                ("threadId", thread_id),
+                                ("revisionOnly", if revision_only { "true" } else { "false" }),
+                            ],
+                        ))
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+                    if !revision_only {
+                        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+                        assert_eq!(
+                            response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                            "nosniff"
+                        );
+                    }
+                    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+                    if revision_only {
+                        let revision = serde_json::from_slice::<String>(&body).unwrap();
+                        assert_eq!(
+                            revision,
+                            format!("{}-{}", contents.len(), seconds * 1_000_000_000)
+                        );
+                    } else {
+                        assert_eq!(body.as_ref(), contents);
+                    }
+                }
+            }
+        }
+
+        let unscoped = app
+            .clone()
+            .oneshot(image_request(Some(workspace.path()), path, Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(unscoped.status(), StatusCode::OK);
+        let body = to_bytes(unscoped.into_body(), 1024).await.unwrap();
+        assert_eq!(body.as_ref(), &workspace_image[..]);
+
+        for revision_only in [false, true] {
+            let missing = app
+                .clone()
+                .oneshot(image_request_with_options(
+                    Some(workspace.path()),
+                    path,
+                    Some(&token),
+                    &[
+                        ("userId", "test-user"),
+                        ("threadId", "missing-thread"),
+                        ("revisionOnly", if revision_only { "true" } else { "false" }),
+                    ],
+                ))
+                .await
+                .unwrap();
+            if revision_only {
+                assert_eq!(missing.status(), StatusCode::OK);
+                let body = to_bytes(missing.into_body(), 1024).await.unwrap();
+                assert_eq!(body.as_ref(), b"null");
+            } else {
+                assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn local_image_serves_each_thread_image_tool_cache() {
+        let data = tempfile::tempdir().unwrap();
+        let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+        let thread_dir = transcript.thread_dir("test-user", "thread-1");
+        let (app, token) = image_test_app(data.path()).await;
+        let contents = b"\x89PNG\r\n\x1a\n";
+        for tool in ["parse_file", "screenshot_url", "scrape_url"] {
+            std::fs::create_dir_all(thread_dir.join(tool)).unwrap();
+            let path = format!("{tool}/photo.png");
+            std::fs::write(thread_dir.join(&path), contents).unwrap();
+            let response = app
+                .clone()
+                .oneshot(image_request_with_options(
+                    None,
+                    &path,
+                    Some(&token),
+                    &[("userId", "test-user"), ("threadId", "thread-1")],
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+                contents
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn local_image_rejects_incomplete_scopes_and_mismatched_session_users() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::create_dir(workspace.path().join("parse_file")).unwrap();
+        std::fs::write(
+            workspace.path().join("parse_file/photo.png"),
+            b"\x89PNG\r\n\x1a\n",
+        )
+        .unwrap();
+        let (app, token) = image_test_app(data.path()).await;
+
+        for revision_only in ["false", "true"] {
+            for (user_id, thread_id, session_token, expected_status) in [
+                (
+                    Some("test-user"),
+                    None,
+                    Some(token.as_str()),
+                    StatusCode::BAD_REQUEST,
+                ),
+                (
+                    None,
+                    Some("thread-1"),
+                    Some(token.as_str()),
+                    StatusCode::BAD_REQUEST,
+                ),
+                (
+                    Some("other-user"),
+                    Some("thread-1"),
+                    Some(token.as_str()),
+                    StatusCode::UNAUTHORIZED,
+                ),
+                (
+                    Some(""),
+                    Some("thread-1"),
+                    Some(token.as_str()),
+                    StatusCode::UNAUTHORIZED,
+                ),
+                (
+                    Some("test-user"),
+                    Some("thread-1"),
+                    None,
+                    StatusCode::UNAUTHORIZED,
+                ),
+            ] {
+                let mut options = vec![("revisionOnly", revision_only)];
+                if let Some(user_id) = user_id {
+                    options.push(("userId", user_id));
+                }
+                if let Some(thread_id) = thread_id {
+                    options.push(("threadId", thread_id));
+                }
+                let response = app
+                    .clone()
+                    .oneshot(image_request_with_options(
+                        Some(workspace.path()),
+                        "parse_file/photo.png",
+                        session_token,
+                        &options,
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected_status, "{options:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn local_image_rejects_unsafe_thread_ids_and_scoped_paths() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let (app, token) = image_test_app(data.path()).await;
+        let absolute_path = workspace.path().join("parse_file/photo.png");
+        let absolute_path = absolute_path.to_str().unwrap();
+        let mut cases = vec![
+            ("thread-1", ""),
+            ("thread-1", "parse_file"),
+            ("thread-1", "parse_file/"),
+            ("thread-1", "images/photo.png"),
+            ("thread-1", "parse_file_other/photo.png"),
+            ("thread-1", "../parse_file/photo.png"),
+            ("thread-1", "./parse_file/photo.png"),
+            ("thread-1", "parse_file/../photo.png"),
+            ("thread-1", "parse_file/./photo.png"),
+            ("thread-1", "parse_file/nested/../../photo.png"),
+            ("thread-1", "parse_file/..\\photo.png"),
+            ("thread-1", "/parse_file/photo.png"),
+            ("thread-1", absolute_path),
+        ];
+        for thread_id in [
+            "",
+            "blobs",
+            "BLOBS",
+            "pending-attachments",
+            "Pending-Attachments",
+            "..",
+            "thread/1",
+            "thread\\1",
+            "thread.1",
+            "thread:1",
+            "thread 1",
+            "thréad",
+        ] {
+            cases.push((thread_id, "parse_file/photo.png"));
+        }
+        for revision_only in ["false", "true"] {
+            for (thread_id, path) in &cases {
+                let response = app
+                    .clone()
+                    .oneshot(image_request_with_options(
+                        Some(workspace.path()),
+                        path,
+                        Some(&token),
+                        &[
+                            ("userId", "test-user"),
+                            ("threadId", thread_id),
+                            ("revisionOnly", revision_only),
+                        ],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::BAD_REQUEST,
+                    "{thread_id:?}: {path}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_image_rejects_thread_images_linked_outside_the_transcript_directory() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+        let thread_dir = transcript.thread_dir("test-user", "thread-1");
+        std::fs::create_dir_all(thread_dir.join("parse_file")).unwrap();
+        let outside_image = workspace.path().join("outside.png");
+        std::fs::write(&outside_image, b"\x89PNG\r\n\x1a\n").unwrap();
+        std::os::unix::fs::symlink(&outside_image, thread_dir.join("parse_file/linked.png"))
+            .unwrap();
+        let (app, token) = image_test_app(data.path()).await;
+        let response = app
+            .oneshot(image_request_with_options(
+                Some(workspace.path()),
+                "parse_file/linked.png",
+                Some(&token),
+                &[("userId", "test-user"), ("threadId", "thread-1")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

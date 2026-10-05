@@ -54,6 +54,19 @@ multi-turn regression passes with native item IDs.
 
 ## Local data directory backwards compatibility
 
+### Thread-relative model images
+
+Stored model messages can reference `parse_file/…`, `screenshot_url/…`, or
+`scrape_url/…` images relative to their transcript directory. Chat rendering
+passes the message's user/thread scope to `/workspace/image` for those paths;
+workspace/document-relative and absolute paths retain their existing behavior.
+The optional scope also applies to revision checks. Existing clients may omit
+it, and no transcript or Convex data is rewritten.
+
+Remove this path-resolution shim only after a migration replaces every stored
+tool-cache image reference with a durable image reference and supported agents
+no longer emit thread-relative tool-cache paths.
+
 ### Legacy artifact binding scopes
 
 Existing local `bindings.json` rows accept `scope` and `thread_id`; the first
