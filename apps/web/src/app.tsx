@@ -2669,6 +2669,7 @@ export default function App({
 							{currentThreadId && (
 								<ThreadTranscript
 									key={`${currentThreadId}:${transcript.windowVersion}`}
+									userId={signedInUserId ?? undefined}
 									currentError={
 										transcript.error ??
 										currentError ??

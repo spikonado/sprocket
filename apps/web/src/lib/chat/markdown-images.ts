@@ -5,7 +5,11 @@ import {
 	stripImageFileScheme
 } from './markdown-image-path';
 
-export type MarkdownImageScope = { workspacePath?: string; documentPath?: string };
+export type MarkdownImageScope = {
+	workspacePath?: string;
+	documentPath?: string;
+	transcript?: { userId: string; threadId: string };
+};
 
 export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 	source = stripImageFileScheme(source);
@@ -28,13 +32,27 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 	const documentPath = scope?.documentPath?.replaceAll('\\', '/');
 	const directory = documentPath?.slice(0, documentPath.lastIndexOf('/') + 1) ?? '';
 	const resolvedPath = isAbsoluteImagePath(path) ? path : directory + path;
+	const toolPath = path.replace(/^(?:\.\/)+/, '');
 
-	if (!isAbsoluteImagePath(resolvedPath) && !scope?.workspacePath) return null;
+	const transcript =
+		!documentPath && /^(?:parse_file|screenshot_url|scrape_url)\//.test(toolPath)
+			? scope?.transcript
+			: undefined;
+
+	if (!isAbsoluteImagePath(resolvedPath) && !scope?.workspacePath && !transcript) return null;
 
 	const query = new URLSearchParams();
 
-	if (scope?.workspacePath) query.set('workspacePath', scope.workspacePath);
-	query.set('path', resolvedPath);
+	if (transcript) {
+		query.set('userId', transcript.userId);
+		query.set('threadId', transcript.threadId);
+	}
+
+	if (scope?.workspacePath) {
+		query.set('workspacePath', scope.workspacePath);
+	}
+
+	query.set('path', transcript ? toolPath : resolvedPath);
 
 	const baseUrl = resolveLocalApiBaseUrl();
 	const pathUrl = `/api/workspace/image?${query}`;

@@ -45,6 +45,7 @@ import type {
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
+	userId?: string;
 	currentError: string | null;
 	runError: string | null;
 	messages: TranscriptMessage[];
@@ -96,6 +97,7 @@ function laterTimestamp(left: number | undefined, right: number | undefined) {
 }
 
 export default function ThreadTranscript({
+	userId,
 	currentError,
 	runError,
 	messages,
@@ -125,7 +127,6 @@ export default function ThreadTranscript({
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
 	const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const imageScope = project ? { workspacePath: project.workspacePath } : undefined;
 
 	const [rememberedCommands, setRememberedCommands] = useState<ReadonlyMap<string, string>>(
 		() => new Map()
@@ -561,6 +562,11 @@ export default function ThreadTranscript({
 	}
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
+		const imageScope = {
+			workspacePath: project?.workspacePath,
+			transcript: userId ? { userId, threadId: message.threadId } : undefined
+		};
+
 		if (message.kind === 'prompt') {
 			return (
 				<TranscriptPromptMessage
