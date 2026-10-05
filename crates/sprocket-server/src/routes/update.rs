@@ -1,13 +1,11 @@
-use std::net::SocketAddr;
-
 use axum::Json;
-use axum::extract::{ConnectInfo, FromRequestParts, State};
+use axum::extract::{FromRequestParts, State};
 use axum::http::{HeaderMap, StatusCode, request::Parts};
 use axum::response::Response;
 use axum::routing::{get, post};
 
 use crate::AppState;
-use crate::auth::cookie_request_is_loopback_csrf_safe;
+use crate::auth::cookie_request_is_csrf_safe;
 use crate::package_update::PackageUpdateSnapshot;
 use crate::routes::api_error::{ApiError, no_store};
 use crate::routes::session::MachineSession;
@@ -27,16 +25,14 @@ async fn status(
 
 async fn install(
     State(state): State<AppState>,
-    LoopbackSession: LoopbackSession,
+    UpdateSession: UpdateSession,
 ) -> Result<Response, ApiError> {
     Ok(update_response(state.package_updates.install().await))
 }
 
-/// [`MachineSession`] plus a loopback peer and loopback CSRF-safe request,
-/// for mutations that must originate from this machine.
-struct LoopbackSession;
+struct UpdateSession;
 
-impl FromRequestParts<AppState> for LoopbackSession {
+impl FromRequestParts<AppState> for UpdateSession {
     type Rejection = ApiError;
 
     async fn from_request_parts(
@@ -44,19 +40,13 @@ impl FromRequestParts<AppState> for LoopbackSession {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         MachineSession::from_request_parts(parts, state).await?;
-        let peer = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(peer)| *peer);
         let headers = HeaderMap::from_request_parts(parts, state)
             .await
             .map_err(|_| ApiError::authentication_required())?;
-        if !peer.is_some_and(|peer| peer.ip().is_loopback())
-            || !cookie_request_is_loopback_csrf_safe(&headers)
-        {
+        if !cookie_request_is_csrf_safe(&headers) {
             return Err(ApiError::with_status(
                 StatusCode::FORBIDDEN,
-                anyhow::anyhow!("package updates can only be installed from this machine"),
+                anyhow::anyhow!("package updates require a same-origin request"),
             ));
         }
         Ok(Self)
@@ -69,11 +59,9 @@ fn update_response(snapshot: PackageUpdateSnapshot) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::Arc;
 
     use axum::body::Body;
-    use axum::extract::ConnectInfo;
     use axum::http::{Request, header};
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -119,24 +107,11 @@ mod tests {
         format!("{}={session_token}", crate::SESSION_COOKIE_NAME)
     }
 
-    fn loopback_peer() -> SocketAddr {
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54321)
-    }
-
-    fn lan_peer() -> SocketAddr {
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 54321)
-    }
-
-    fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
-        request.extensions_mut().insert(ConnectInfo(peer));
-        request
-    }
-
     fn status_request(session_token: Option<&str>, origin: Option<&str>) -> Request<Body> {
         let mut request = Request::builder()
             .method("GET")
             .uri("/api/update")
-            .header(header::HOST, "127.0.0.1:7731");
+            .header(header::HOST, "192.168.1.10:7731");
         if let Some(origin) = origin {
             request = request.header(header::ORIGIN, origin);
         }
@@ -172,7 +147,7 @@ mod tests {
 
         let unauthenticated = app
             .clone()
-            .oneshot(status_request(None, Some("http://127.0.0.1:7731")))
+            .oneshot(status_request(None, Some("http://192.168.1.10:7731")))
             .await
             .unwrap();
         assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
@@ -201,7 +176,7 @@ mod tests {
         let ok = app
             .oneshot(status_request(
                 Some(&session_token),
-                Some("http://127.0.0.1:7731"),
+                Some("http://192.168.1.10:7731"),
             ))
             .await
             .unwrap();
@@ -211,48 +186,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn install_requires_session_loopback_and_same_origin() {
+    async fn install_requires_session_and_same_origin() {
         let (state, session_token) = test_state(PackageUpdateManager::disabled()).await;
         let app = router(state);
 
         let unauthenticated = app
             .clone()
-            .oneshot(with_peer(
-                install_request(None, Some("http://127.0.0.1:7731"), "{}"),
-                loopback_peer(),
-            ))
+            .oneshot(install_request(None, Some("http://127.0.0.1:7731"), "{}"))
             .await
             .unwrap();
         assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 
         let missing_origin = app
             .clone()
-            .oneshot(with_peer(
-                install_request(Some(&session_token), None, "{}"),
-                loopback_peer(),
-            ))
+            .oneshot(install_request(Some(&session_token), None, "{}"))
             .await
             .unwrap();
         assert_eq!(missing_origin.status(), StatusCode::FORBIDDEN);
 
         let cross_origin = app
             .clone()
-            .oneshot(with_peer(
-                install_request(Some(&session_token), Some("https://attacker.example"), "{}"),
-                loopback_peer(),
+            .oneshot(install_request(
+                Some(&session_token),
+                Some("https://attacker.example"),
+                "{}",
             ))
             .await
             .unwrap();
         assert_eq!(cross_origin.status(), StatusCode::UNAUTHORIZED);
 
-        let lan = app
-            .oneshot(with_peer(
-                install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}"),
-                lan_peer(),
+        let ok = app
+            .oneshot(install_request(
+                Some(&session_token),
+                Some("http://127.0.0.1:7731"),
+                "{}",
             ))
             .await
             .unwrap();
-        assert_eq!(lan.status(), StatusCode::FORBIDDEN);
+        assert_eq!(ok.status(), StatusCode::OK);
     }
 }
 
@@ -305,6 +276,11 @@ mod process_tests {
             Duration::from_secs(5),
         )
     }
+
+    /// Install helper that blocks until `finish_install` creates the `finish` file.
+    const GATED_INSTALL_HELPER: &str = r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
+while [ ! -f "$(dirname "$0")/finish" ]; do sleep 0.02; done
+echo '{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":null,"method":"package"}'"#;
 
     async fn test_state(package_updates: Arc<PackageUpdateManager>) -> (AppState, String, TempDir) {
         let temp_dir = TempDir::new();
@@ -416,14 +392,70 @@ echo '{"status":"available","currentVersion":"1.0.0","version":"1.1.0","error":n
     }
 
     #[tokio::test]
+    async fn authenticated_remote_clients_install_package_updates() {
+        for (peer, host, origin, bearer) in [
+            (
+                "192.168.1.50:54321",
+                "192.168.1.10:7731",
+                Some("http://192.168.1.10:7731"),
+                false,
+            ),
+            (
+                "100.64.0.50:54321",
+                "100.64.0.10:7731",
+                Some("http://100.64.0.10:7731"),
+                false,
+            ),
+            (
+                "127.0.0.1:54321",
+                "sprocket.tailnet.ts.net",
+                Some("https://sprocket.tailnet.ts.net"),
+                false,
+            ),
+            ("100.64.0.50:54321", "100.64.0.10:7731", None, true),
+        ] {
+            let helper_dir = TempDir::new();
+            let manager = write_helper(&helper_dir.0, GATED_INSTALL_HELPER);
+            let (state, session_token, _dir) = test_state(Arc::clone(&manager)).await;
+            let app = router(state);
+            let mut request =
+                install_request((!bearer).then_some(session_token.as_str()), origin, "{}");
+            request
+                .headers_mut()
+                .insert(header::HOST, host.parse().unwrap());
+            if bearer {
+                request.headers_mut().insert(
+                    header::AUTHORIZATION,
+                    format!("Bearer {session_token}").parse().unwrap(),
+                );
+            }
+            let response = app
+                .clone()
+                .oneshot(with_peer(request, peer.parse().unwrap()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{host}");
+            assert_eq!(read_json(response).await["status"], "installing");
+            finish_install(&manager, &helper_dir.0).await;
+
+            let mut request = status_request(Some(&session_token), origin);
+            request
+                .headers_mut()
+                .insert(header::HOST, host.parse().unwrap());
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(read_json(response).await["status"], "installed");
+            assert_eq!(
+                fs::read_to_string(helper_dir.0.join("calls")).unwrap(),
+                "install\n"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn install_starts_without_using_request_body_and_returns_installing() {
         let helper_dir = TempDir::new();
-        let manager = write_helper(
-            &helper_dir.0,
-            r#"printf '%s\n' "$1" >> "$(dirname "$0")/calls"
-while [ ! -f "$(dirname "$0")/finish" ]; do sleep 0.02; done
-echo '{"status":"installed","currentVersion":"1.1.0","version":"1.1.0","error":null,"method":"package"}'"#,
-        );
+        let manager = write_helper(&helper_dir.0, GATED_INSTALL_HELPER);
         let (state, session_token, _dir) = test_state(Arc::clone(&manager)).await;
         let app = router(state);
 

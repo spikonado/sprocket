@@ -25,17 +25,27 @@ describe('package update requests', () => {
 		await expect(requestPackageUpdate(true)).rejects.toThrow('Update request failed (404)');
 	});
 
-	it('uses a credentialed POST for installation and validates its response', async () => {
-		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
+	it.each([
+		'http://127.0.0.1:1234',
+		'http://192.168.1.10:7731',
+		'http://100.64.0.10:7731',
+		'https://sprocket.tailnet.ts.net'
+	])('uses the current server origin %s for credentialed update requests', async (origin) => {
+		vi.stubGlobal('window', { location: { origin } });
 
-		const fetcher = vi
-			.fn()
-			.mockResolvedValue(Response.json({ ...state('installed'), method: 'package' }));
+		const fetcher = vi.fn(async () => Response.json({ ...state('installed'), method: 'package' }));
 
 		vi.stubGlobal('fetch', fetcher);
+		expect((await requestPackageUpdate(false))?.status).toBe('installed');
+		expect(fetcher).toHaveBeenNthCalledWith(
+			1,
+			`${origin}/api/update`,
+			expect.objectContaining({ method: 'GET', credentials: 'include' })
+		);
 		expect((await requestPackageUpdate(true))?.status).toBe('installed');
-		expect(fetcher).toHaveBeenCalledWith(
-			'http://127.0.0.1:1234/api/update/install',
+		expect(fetcher).toHaveBeenNthCalledWith(
+			2,
+			`${origin}/api/update/install`,
 			expect.objectContaining({
 				method: 'POST',
 				credentials: 'include',
