@@ -165,11 +165,11 @@ export default function ModelSelector({
 					ref={menuRef}
 					role="dialog"
 					aria-label="Model"
-					className="fixed z-50 flex w-[min(19rem,calc(100vw-1rem))] flex-col gap-1 sm:block sm:w-[30.75rem]"
+					className="fixed z-50 flex w-[min(19rem,calc(100vw-1rem))] flex-col gap-1 overflow-y-auto sm:block sm:w-[30.75rem] sm:overflow-visible"
 					style={position}
 				>
 					<div
-						className="bg-popover/96 flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:w-[19rem]"
+						className="bg-popover/96 flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:w-[19rem]"
 						style={{ maxHeight: position.maxHeight }}
 					>
 						<div role="group" aria-label="Models" className="min-h-0 space-y-0.5 overflow-y-auto">
