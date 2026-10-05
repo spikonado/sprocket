@@ -1545,8 +1545,10 @@ export default function App({
 				setCurrentError(error instanceof Error ? error.message : String(error));
 			}
 		} finally {
-			answeringAgentQuestionRef.current = false;
-			if (signedInUserIdRef.current === userId) setAnsweringAgentQuestion(false);
+			if (signedInUserIdRef.current === userId) {
+				answeringAgentQuestionRef.current = false;
+				setAnsweringAgentQuestion(false);
+			}
 		}
 
 		if (signedInUserIdRef.current !== userId) return;
@@ -1609,6 +1611,10 @@ export default function App({
 		const promptText = promptOverride ?? prompt;
 
 		if (currentComposerScope && submittingPromptScopes.has(currentComposerScope)) return;
+
+		if (currentThreadId && isAgentLaunchPending(pendingAgentLaunchesRef.current, currentThreadId)) {
+			return;
+		}
 
 		if (!promptText.trim() && composerAttachments.items.length === 0) return;
 
@@ -2096,6 +2102,8 @@ export default function App({
 		setDraftWorkspacePath(null);
 		setPendingCreatedThreadId(null);
 		setPendingAgentLaunches({});
+		pendingAgentLaunchesRef.current = {};
+		answeringAgentQuestionRef.current = false;
 		ensureSubscriptionAttemptedFor.current = null;
 		providerConfigurationLoadedFor.current = null;
 		setOpenAiConfigured(false);
