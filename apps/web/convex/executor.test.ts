@@ -789,4 +789,35 @@ describe('executor', () => {
 		expect(JSON.stringify(chargePart)).not.toContain('tok_live');
 		expect(JSON.stringify(chargePart)).not.toContain('737');
 	});
+
+	it('rejects mandate_charge text results instead of storing them', async () => {
+		const t = initConvexTest();
+
+		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+			executionSecret: 'mandate-charge-text-secret'
+		});
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, {
+				kind: 'mandate_charge'
+			});
+		});
+
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result: 'token=tok_live cvv=737',
+				runId,
+				claimId,
+				executionSecret
+			})
+		).rejects.toThrow(/charge handle/);
+
+		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+
+		expect(stored?.status).toBe('claimed');
+		expect(stored?.result).toBeUndefined();
+		expect(JSON.stringify(stored)).not.toContain('tok_live');
+		expect(JSON.stringify(stored)).not.toContain('737');
+	});
 });

@@ -22,7 +22,11 @@ export function persistExecutorJobResult(
 	kind: string,
 	result: ExecutorJobResult
 ): ExecutorJobResult {
-	if (kind !== 'mandate_charge' || !isMandateChargeResult(result)) return result;
+	if (kind !== 'mandate_charge') return result;
+
+	if (!isMandateChargeResult(result)) {
+		throw new Error('mandate_charge result must be a charge handle.');
+	}
 
 	return {
 		chargeId: result.chargeId,
