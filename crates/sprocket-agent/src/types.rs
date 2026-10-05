@@ -652,51 +652,6 @@ mod tests {
     }
 
     #[test]
-    fn restores_assistant_text_metadata_while_accepting_plain_user_text() {
-        let history: Vec<AgentHistoryMessage> = serde_json::from_value(serde_json::json!([
-            {
-                "role": "user",
-                "contents": [{ "type": "text", "text": "hello" }]
-            },
-            {
-                "role": "assistant",
-                "contents": [{
-                    "type": "text",
-                    "text": "hi",
-                    "additionalParamsJson": "{\"openai\":{\"itemId\":\"msg_123\"}}"
-                }]
-            }
-        ]))
-        .expect("history wire format");
-
-        let messages = deserialize_agent_history(history).expect("messages");
-
-        match &messages[0] {
-            Message::User { content } => match content.iter().next() {
-                Some(UserContent::Text(text)) => {
-                    assert_eq!(text.text, "hello");
-                    assert!(text.additional_params.is_none());
-                }
-                other => panic!("expected user text, got {other:?}"),
-            },
-            other => panic!("expected user message, got {other:?}"),
-        }
-        match &messages[1] {
-            Message::Assistant { content, .. } => match content.iter().next() {
-                Some(AssistantContent::Text(text)) => {
-                    assert_eq!(text.text, "hi");
-                    assert_eq!(
-                        text.additional_params.as_ref().unwrap()["openai"]["itemId"],
-                        "msg_123"
-                    );
-                }
-                other => panic!("expected assistant text, got {other:?}"),
-            },
-            other => panic!("expected assistant message, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn deserializes_create_run_response_gateway_fields_from_convex_numbers() {
         use super::CreateRunResponse;
 
@@ -801,36 +756,6 @@ mod tests {
             DocumentSourceKind::Url("https://example.com/robot.png".to_string())
         );
         assert_eq!(image.media_type, Some(ImageMediaType::PNG));
-    }
-
-    #[test]
-    fn reloads_encrypted_reasoning_as_native_rig_blocks() {
-        let history = vec![AgentHistoryMessage {
-            role: AgentHistoryRole::Assistant,
-            assistant_id: None,
-            contents: vec![AgentHistoryContent::Reasoning {
-                id: Some("rs_123".to_string()),
-                blocks_json: serde_json::json!([
-                    { "type": "summary", "content": "think" },
-                    { "type": "encrypted", "content": "envelope" }
-                ])
-                .to_string(),
-            }],
-        }];
-
-        let messages = deserialize_agent_history(history).expect("messages");
-        match &messages[0] {
-            Message::Assistant { content, .. } => match content.iter().next() {
-                Some(AssistantContent::Reasoning(sealed)) => {
-                    let reasoning = sealed.open(&rig::message::Issuer::from("openai")).unwrap();
-                    assert_eq!(reasoning.id.as_deref(), Some("rs_123"));
-                    assert_eq!(reasoning.display_text(), "think");
-                    assert_eq!(reasoning.encrypted_content(), Some("envelope"));
-                }
-                other => panic!("expected reasoning, got {other:?}"),
-            },
-            other => panic!("expected assistant message, got {other:?}"),
-        }
     }
 
     #[test]

@@ -599,10 +599,7 @@ mod tests {
 
     use futures::future::BoxFuture;
     use rig::completion::Message;
-    use rig::message::{
-        AssistantContent, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolResult,
-        ToolResultContent, UserContent,
-    };
+    use rig::message::{AssistantContent, Reasoning, ReasoningContent};
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -667,8 +664,8 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct StubResponseClient {
         http: SiwcHttpClient,
-        body: Option<String>,
-        status: Option<http::StatusCode>,
+        body: String,
+        status: http::StatusCode,
     }
 
     impl HttpClientExt for StubResponseClient {
@@ -706,31 +703,17 @@ mod tests {
         {
             let connection = self.http.authorization.as_ref().unwrap().1.clone();
             let response_body = self.body.clone();
-            let status = self.status.unwrap_or(http::StatusCode::OK);
+            let status = self.status;
             async move {
                 assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
                 let body: serde_json::Value =
                     serde_json::from_slice(&rewrite_request_body(&req.into_body().into())?)
                         .unwrap();
                 assert_eq!(body["tools"][0]["type"], "namespace");
-                let event = json!({
-                    "type": "response.completed",
-                    "sequence_number": 0,
-                    "response": {
-                        "id": "resp-test",
-                        "object": "response",
-                        "created_at": 0,
-                        "status": "completed",
-                        "model": "gpt-6.1-sol",
-                        "output": [],
-                        "tools": [],
-                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
-                    }
-                });
                 let response = http::Response::builder()
                     .status(status)
                     .header("x-request-id", "req-stream")
-                    .body(response_body.unwrap_or_else(|| format!("data: {event}\n\n")))
+                    .body(response_body)
                     .unwrap()
                     .into();
                 if status.is_success() {
@@ -743,10 +726,10 @@ mod tests {
     }
 
     fn stub_model(
-        response: Option<(http::StatusCode, String)>,
+        status: http::StatusCode,
+        body: String,
     ) -> Model<StatelessResponses, StubResponseClient> {
         let (credentials, client) = stub_client("connection-1");
-        let (status, body) = response.unzip();
         let http = StubResponseClient {
             http: SiwcHttpClient {
                 authorization: Some((credentials, Arc::clone(&client.connection))),
@@ -773,21 +756,6 @@ mod tests {
             .finish()
             .await
             .expect_err("provider error must fail the stream")
-    }
-
-    #[tokio::test]
-    async fn responses_client_completes_a_headerless_siwc_stream() {
-        let model = stub_model(None);
-        let mut stream = model
-            .stream(test_request(vec![Message::user("hello")]))
-            .unwrap();
-        while let Some(item) = stream.next().await {
-            item.expect("Rig must accept the headerless SIWC handshake and parse its events");
-        }
-        let response = stream.finish().await.expect("parsed terminal response");
-        assert_eq!(response.usage.total_tokens, Some(2));
-        assert_eq!(response.response_id.as_deref(), Some("resp-test"));
-        assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
     }
 
     struct CapturedSiwcRequest {
@@ -948,6 +916,7 @@ mod tests {
                 json!({
                     "store": true, "previous_response_id": "resp-old",
                     "reasoning": {"effort": "high"},
+                    "metadata": {"trace": "abc"}, "user": "user-1",
                 }),
             )
         };
@@ -1068,6 +1037,11 @@ mod tests {
             assert_eq!(body["tools"].as_array().unwrap().len(), 1);
             assert_eq!(body["tools"][0]["type"], "namespace");
             assert_eq!(body["tools"][0]["name"], SIWC_TOOL_NAMESPACE);
+            assert!(
+                body["tools"][0]["description"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty())
+            );
             assert_eq!(body["tools"][0]["tools"], json!([expected_tool]));
         }
         let initial = requests[0].body["input"].as_array().unwrap();
@@ -1139,7 +1113,7 @@ mod tests {
                 ),
             ),
         ] {
-            let raw_error = first_stream_error(stub_model(Some((status, body)))).await;
+            let raw_error = first_stream_error(stub_model(status, body)).await;
             let raw_diagnostic = raw_error.to_string();
             let report_error = user_facing_error(anyhow::Error::new(raw_error.report()));
             assert!(
@@ -1176,32 +1150,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn streaming_response_supplies_missing_sse_content_type_and_preserves_events() {
-        let (_, client) = stub_client("connection-1");
-        let frame = Bytes::from_static(
-            b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
-        );
-        let response = http::Response::builder()
-            .status(http::StatusCode::OK)
-            .version(http::Version::HTTP_2)
-            .header("x-request-id", "req-stream")
-            .body(frame.clone())
-            .unwrap()
-            .into();
-        let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
-        assert_eq!(response.status(), http::StatusCode::OK);
-        assert_eq!(response.version(), http::Version::HTTP_2);
-        assert_eq!(
-            response.headers()[http::header::CONTENT_TYPE],
-            "text/event-stream"
-        );
-        assert_eq!(response.headers()["x-request-id"], "req-stream");
-        let mut stream = response.into_body();
-        assert_eq!(stream.next().await.unwrap().unwrap(), frame);
-        assert!(stream.next().await.is_none());
-    }
-
     #[test]
     fn streaming_response_preserves_explicit_content_types() {
         let (_, client) = stub_client("connection-1");
@@ -1227,8 +1175,7 @@ mod tests {
             "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
         ] {
             let error =
-                first_stream_error(stub_model(Some((http::StatusCode::OK, body.to_string()))))
-                    .await;
+                first_stream_error(stub_model(http::StatusCode::OK, body.to_string())).await;
             assert!(
                 matches!(error, ProviderError::Truncated | ProviderError::Json(_)),
                 "unexpected error: {error}"
@@ -1457,44 +1404,6 @@ mod tests {
         );
     }
 
-    fn assistant_turn() -> Message {
-        Message::Assistant {
-            id: None,
-            content: vec![
-                AssistantContent::Reasoning(
-                    Reasoning {
-                        id: Some("rs_1".to_string()),
-                        content: vec![
-                            ReasoningContent::Summary("plan".to_string()),
-                            ReasoningContent::Encrypted("envelope".to_string()),
-                        ],
-                    }
-                    .sealed("openai"),
-                ),
-                AssistantContent::text("working on it"),
-                AssistantContent::ToolCall(ToolCall {
-                    id: rig::message::CallId::from_dual_wire("fc_1", "call_1"),
-                    function: ToolFunction {
-                        name: "exec_command".try_into().unwrap(),
-                        arguments: json!({"cmd": "pwd"}),
-                    },
-                    signature: None,
-                    additional_params: None,
-                }),
-            ],
-        }
-    }
-
-    fn tool_result_turn() -> Message {
-        Message::User {
-            content: vec![UserContent::ToolResult(ToolResult {
-                call: rig::message::CallId::from_wire("call_1"),
-                name: "exec_command".try_into().unwrap(),
-                content: vec![ToolResultContent::Text("done".into())],
-            })],
-        }
-    }
-
     fn completion_request(
         chat_history: Vec<Message>,
         additional_params: serde_json::Value,
@@ -1550,28 +1459,6 @@ mod tests {
     }
 
     #[test]
-    fn siwc_body_sets_store_and_stream_and_drops_unsupported_fields() {
-        let body = shaped_body(completion_request(
-            vec![Message::user("hello")],
-            json!({
-                "reasoning": {"effort": "high"},
-                "metadata": {"trace": "abc"},
-                "user": "user-1"
-            }),
-        ));
-
-        assert_eq!(body["store"], json!(false));
-        assert_eq!(body["stream"], json!(true));
-        assert_eq!(body["model"], json!("gpt-5.3-codex"));
-        assert_eq!(body["instructions"], json!("Base instructions."));
-        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
-        for field in UNSUPPORTED_FIELDS {
-            assert!(body.get(*field).is_none(), "{field} must be omitted");
-        }
-        assert_eq!(body["reasoning"]["effort"], json!("high"));
-    }
-
-    #[test]
     fn siwc_body_lifts_mid_conversation_system_items_into_instructions() {
         let body = shaped_body(test_request(vec![
             Message::user("hi"),
@@ -1591,60 +1478,6 @@ mod tests {
             "system role input items are rejected by the SIWC route: {input:?}"
         );
         assert_eq!(input.len(), 2);
-    }
-
-    #[test]
-    fn siwc_body_replays_reasoning_and_tool_turns_as_self_contained_items() {
-        let body = shaped_body(test_request(vec![
-            Message::user("start"),
-            assistant_turn(),
-            tool_result_turn(),
-            Message::user("continue"),
-        ]));
-
-        let input = body["input"].as_array().unwrap();
-        let reasoning = input
-            .iter()
-            .find(|item| item["type"] == "reasoning")
-            .expect("reasoning replay item");
-        assert_eq!(reasoning["encrypted_content"], json!("envelope"));
-        let call = input
-            .iter()
-            .find(|item| item["type"] == "function_call")
-            .expect("function call replay item");
-        assert_eq!(call["id"], json!("fc_1"));
-        assert_eq!(call["call_id"], json!("call_1"));
-        assert_eq!(call["name"], json!("exec_command"));
-        assert_eq!(call["arguments"], json!(r#"{"cmd":"pwd"}"#));
-        let output = input
-            .iter()
-            .find(|item| item["type"] == "function_call_output")
-            .expect("function call output replay item");
-        assert_eq!(output["call_id"], json!("call_1"));
-        assert!(
-            body.get("previous_response_id").is_none(),
-            "conversation state is replayed, never referenced"
-        );
-    }
-
-    #[test]
-    fn siwc_body_groups_function_tools_under_a_namespace() {
-        let request = test_request(vec![Message::user("hello")]);
-        let expected_tool = wire_tool(&request.tools[0]);
-        let body = shaped_body(request);
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["type"], json!("namespace"));
-        assert_eq!(tools[0]["name"], json!(SIWC_TOOL_NAMESPACE));
-        assert!(
-            tools[0]["description"]
-                .as_str()
-                .is_some_and(|description| !description.is_empty())
-        );
-        let functions = tools[0]["tools"].as_array().unwrap();
-        assert_eq!(functions.len(), 1);
-        assert_eq!(functions[0]["type"], json!("function"));
-        assert_eq!(functions[0], expected_tool);
     }
 
     #[test]

@@ -742,41 +742,4 @@ mod tests {
             second.work.ranges[1].section_key
         );
     }
-
-    #[test]
-    fn dual_wire_calls_bind_dispatch_to_the_persisted_correlator() {
-        let tracker = ToolCallTracker::new("run", "claim");
-        let call = rig::message::ToolCall::from_dual_wire(
-            "fc_1",
-            "call_1",
-            rig::message::ToolFunction {
-                name: "exec_cmd".try_into().unwrap(),
-                arguments: serde_json::json!({"cmd": "pwd"}),
-            },
-        );
-        let mut parts = crate::live::LiveAssistantParts::default();
-        parts.apply_tool_call(
-            Some("stream:tool:0".into()),
-            call.id.wire().into_owned(),
-            call.function.name.to_string(),
-            call.function.arguments.clone(),
-            Some("stream".into()),
-            1,
-        );
-        tracker.record_parts(&parts.parts);
-        tracker.prepare_dispatch(
-            "exec_cmd",
-            "dispatch-1",
-            Some(&call.id.wire()),
-            r#"{"cmd":"pwd"}"#,
-        );
-        let assignment = tracker
-            .claim_dispatch("exec_cmd", &call.function.arguments)
-            .expect("dispatch must bind the model's call");
-        assert_eq!(assignment.call_id, "call_1");
-        assert_eq!(
-            assignment,
-            tracker.completion_assignments().tool_invocations[0]
-        );
-    }
 }

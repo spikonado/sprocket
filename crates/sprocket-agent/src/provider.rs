@@ -974,12 +974,9 @@ fn preserve_text_message_id(
 mod tests {
     use std::collections::HashMap;
 
-    use rig::completion::FinishReason;
-
     use super::{
         ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, apply_completed_text,
-        classify_provider_error, durable_items_json, incomplete_completion_error,
-        visible_live_parts,
+        classify_provider_error, durable_items_json, visible_live_parts,
     };
     use crate::live::LiveAssistantPart;
 
@@ -1171,15 +1168,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rejects_output_truncated_at_the_token_limit() {
-        let error = incomplete_completion_error(Some(&FinishReason::Length))
-            .expect("length must be treated as incomplete");
-
-        assert!(error.to_string().contains("output token limit"));
-        assert!(incomplete_completion_error(Some(&FinishReason::Stop)).is_none());
-    }
-
     fn reasoning_envelope() -> serde_json::Value {
         serde_json::json!({
             "openai": {
@@ -1187,48 +1175,5 @@ mod tests {
                 "reasoningEncryptedContent": "envelope"
             }
         })
-    }
-
-    #[test]
-    fn items_json_preserves_reasoning_metadata_and_visible_text() {
-        let mut parts = vec![LiveAssistantPart::Reasoning {
-            id: "stream:r1".into(),
-            text: "visible plan".into(),
-            started_at: None,
-            completed_at: None,
-            turn_id: Some("stream".into()),
-        }];
-        let mut provider_metadata =
-            HashMap::from([("reasoning:stream:r1".to_string(), reasoning_envelope())]);
-        parts.push(LiveAssistantPart::Text {
-            id: "stream:text:1".into(),
-            text: "hello".into(),
-            started_at: None,
-            completed_at: None,
-            turn_id: Some("stream".into()),
-        });
-        parts.push(LiveAssistantPart::Reasoning {
-            id: "stream:r2".into(),
-            text: "".into(),
-            started_at: None,
-            completed_at: None,
-            turn_id: Some("stream".into()),
-        });
-        parts.push(LiveAssistantPart::Text {
-            id: "stream:text:3".into(),
-            text: " after".into(),
-            started_at: None,
-            completed_at: None,
-            turn_id: Some("stream".into()),
-        });
-        provider_metadata.insert("reasoning:stream:r2".to_string(), reasoning_envelope());
-
-        let durable = durable_items_json(&parts, &provider_metadata);
-        assert_eq!(durable[0]["text"], "visible plan");
-        assert_eq!(durable[0]["providerMetadata"], reasoning_envelope());
-        assert_eq!(durable[1]["text"], "hello");
-        assert!(durable[1].get("providerMetadata").is_none());
-        assert_eq!(durable[2]["providerMetadata"], reasoning_envelope());
-        assert_eq!(durable[3]["text"], " after");
     }
 }

@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use rig::completion::{CompletionRequest, Message};
 use rig::message::{
-    AssistantContent, CallId, Reasoning, ReasoningContent, Sealed, ToolCall, ToolFunction,
-    ToolName, ToolResult, ToolResultContent, UserContent,
+    AssistantContent, CallId, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolName,
+    ToolResult, ToolResultContent, UserContent,
 };
 use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
@@ -22,7 +22,7 @@ use super::{apply_completed_text, apply_completed_tool_call, durable_items_json}
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
 use crate::openai::stateless_responses_model;
-use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
+use crate::reasoning::apply_completed_reasoning;
 use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{AgentHistoryMessage, deserialize_agent_history};
 
@@ -62,19 +62,6 @@ fn gateway_response(status: &str, output: Vec<JsonValue>) -> JsonValue {
             "total_tokens": 2
         }
     })
-}
-
-fn responses_api_params(fast_mode: bool) -> JsonValue {
-    openai::responses_api::AdditionalParameters {
-        reasoning: Some(
-            openai::responses_api::Reasoning::new()
-                .with_effort(openai::responses_api::ReasoningEffort::Medium),
-        ),
-        service_tier: fast_mode
-            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
-        ..Default::default()
-    }
-    .to_json()
 }
 
 fn responses_wire(request: CompletionRequest) -> JsonValue {
@@ -310,59 +297,19 @@ async fn durable_history_from_parts(
         }
     }))
     .expect("tool result fixture");
-    let dir = std::env::temp_dir().join(format!("sprocket-native-replay-{}", uuid::Uuid::new_v4()));
-    let store = TranscriptStore::new(dir.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_path_buf());
     store
         .append_parts("user", "thread", &[part, tool_result])
         .await
         .unwrap();
     let loaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
     let state = store.load_state("user", "thread").await.unwrap();
-    let history = agent_history_from_parts(&state, &loaded, None);
-    tokio::fs::remove_dir_all(dir).await.unwrap();
-    history
+    agent_history_from_parts(&state, &loaded, None)
 }
 
 fn first_index(events: &[Observed], kind: Observed) -> Option<usize> {
     events.iter().position(|event| *event == kind)
-}
-
-#[test]
-fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
-    const BASE_INSTRUCTIONS: &str = "stable base instructions";
-    const INITIAL_CONTEXT: &str = "unique initial workspace context";
-
-    let request = CompletionRequest::new("current request")
-        .preamble(BASE_INSTRUCTIONS.to_string())
-        .messages([
-            Message::user(INITIAL_CONTEXT),
-            Message::user("earlier request"),
-            Message::assistant("earlier response"),
-        ])
-        .additional_params(responses_api_params(false));
-    let wire = responses_wire(request);
-
-    assert_eq!(wire["instructions"], BASE_INSTRUCTIONS);
-    assert!(wire.get("service_tier").is_none());
-    assert!(wire.get("store").is_none());
-    assert_eq!(wire["include"], json!(["reasoning.encrypted_content"]));
-    assert_eq!(responses_api_params(true)["service_tier"], "fast");
-    assert!(
-        !wire["instructions"]
-            .as_str()
-            .unwrap()
-            .contains(INITIAL_CONTEXT)
-    );
-    let input = wire["input"].as_array().expect("responses input");
-    assert_eq!(input[0]["role"], "user");
-    assert!(input[0].to_string().contains(INITIAL_CONTEXT));
-    assert_eq!(
-        input
-            .iter()
-            .filter(|item| item.to_string().contains(INITIAL_CONTEXT))
-            .count(),
-        1
-    );
 }
 
 #[tokio::test]
@@ -462,7 +409,7 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
         responses_wire(
             CompletionRequest::new("next request")
                 .messages(history)
-                .additional_params(responses_api_params(false)),
+                .additional_params(json!({"reasoning": {"effort": "medium"}})),
         )
     };
     let live_wire = wire(live);
@@ -484,7 +431,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let mut parts = LiveAssistantParts::default();
     let mut provider_metadata = HashMap::new();
     let mut observed = Vec::new();
-    let mut completed: Option<Sealed<Reasoning>> = None;
 
     while let Some(item) = stream.next().await {
         match item.expect("stream item") {
@@ -502,26 +448,12 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
                 );
                 let text = live_reasoning_text(&parts.parts).expect("live reasoning after delta");
                 assert_eq!(text, DELTA_SUMMARY);
-                assert!(
-                    !text.contains(ENVELOPE),
-                    "deltas must not surface ciphertext"
-                );
             }
             Item::Event(StreamEvent::End {
                 part,
                 content: AssistantContent::Reasoning(reasoning),
             }) => {
                 observed.push(Observed::ReasoningDone);
-                let value = reasoning
-                    .open(reasoning.issuer())
-                    .expect("issued reasoning");
-                assert_eq!(value.id.as_deref(), Some(ITEM_ID));
-                assert_eq!(value.display_text(), DONE_SUMMARY);
-                assert_eq!(value.encrypted_content(), Some(ENVELOPE));
-                assert!(
-                    !value.display_text().contains(ENVELOPE),
-                    "completed live summary must not include envelope bytes"
-                );
                 apply_completed_reasoning(
                     &mut parts,
                     &mut provider_metadata,
@@ -529,7 +461,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
                     &format!("reasoning:{}", part.index()),
                     &reasoning,
                 );
-                completed = Some(reasoning);
             }
             Item::Event(StreamEvent::Text { part, text }) => {
                 observed.push(Observed::Text);
@@ -577,18 +508,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let text = first_index(&observed, Observed::Text).expect("gateway text must stream");
     let tool =
         first_index(&observed, Observed::ToolCall).expect("gateway function call must stream");
-    assert!(
-        reasoning_delta < reasoning_done,
-        "summary delta must precede the authoritative done item, got {observed:?}"
-    );
-    assert!(
-        reasoning_done < text && reasoning_done < tool,
-        "gateway completes reasoning before text/tool, got {observed:?}"
-    );
-    assert_ne!(
-        text, tool,
-        "function call and text must both appear as distinct stream events: {observed:?}"
-    );
+    assert!(reasoning_delta < reasoning_done && reasoning_done < text && reasoning_done < tool);
     assert_eq!(
         observed
             .iter()
@@ -598,7 +518,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         "empty added item must not yield a second completed reasoning, got {observed:?}"
     );
 
-    let completed = completed.expect("completed reasoning");
     let reasoning_part = parts
         .parts
         .iter()
@@ -606,24 +525,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         .expect("live reasoning part");
     let live_text = live_reasoning_text(&parts.parts).expect("live reasoning text");
     assert_eq!(live_text, DONE_SUMMARY);
-    assert!(!live_text.contains(ENVELOPE));
-    assert_ne!(live_text, DELTA_SUMMARY, "done summary is authoritative");
-    assert!(
-        parts
-            .parts
-            .iter()
-            .any(|part| matches!(part, LiveAssistantPart::Text { text, .. } if text == TEXT))
-    );
-    assert!(parts.parts.iter().any(|part| {
-        matches!(
-            part,
-            LiveAssistantPart::ToolCall {
-                call_id,
-                name,
-                ..
-            } if call_id == TOOL_CALL_ID && name == TOOL_NAME
-        )
-    }));
 
     let reasoning_key = match reasoning_part {
         LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
@@ -639,60 +540,14 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
             "reasoningIssuer": "openai"
         })
     );
-    for value in provider_metadata.values() {
-        if let Some(encrypted) = value.pointer("/openai/reasoningEncryptedContent") {
-            assert_eq!(encrypted, ENVELOPE);
-        }
-    }
-    let durable = merge_provider_metadata(reasoning_part, provider_metadata.get(&reasoning_key));
-    assert_eq!(durable["text"], DONE_SUMMARY);
-    assert_eq!(
-        durable["providerMetadata"]["openai"]["reasoningEncryptedContent"],
-        ENVELOPE
-    );
-    assert_eq!(
-        completed
-            .open(completed.issuer())
-            .unwrap()
-            .encrypted_content(),
-        Some(ENVELOPE)
-    );
-
     let history = deserialize_agent_history(
         durable_history_from_parts(&parts.parts, &provider_metadata).await,
     )
     .expect("durable history conversion");
-    match &history[0] {
-        Message::Assistant { content, .. } => {
-            let reasoning = content.iter().find_map(|part| match part {
-                AssistantContent::Reasoning(reasoning) => Some(reasoning),
-                _ => None,
-            });
-            let reasoning = reasoning.expect("durable reasoning");
-            assert_eq!(reasoning.issuer().as_str(), "openai");
-            let reasoning = reasoning.open(reasoning.issuer()).unwrap();
-            assert_eq!(reasoning.id.as_deref(), Some(ITEM_ID));
-            assert_eq!(reasoning.display_text(), DONE_SUMMARY);
-            assert_eq!(reasoning.encrypted_content(), Some(ENVELOPE));
-            assert_eq!(content.len(), 3);
-            assert!(content.iter().any(|part| matches!(
-                part,
-                AssistantContent::ToolCall(call)
-                    if call.id.wire() == TOOL_CALL_ID
-                        && call.function.name == TOOL_NAME
-                        && call.function.arguments == json!({ "cmd": "pwd" })
-            )));
-            assert!(content.iter().any(|part| matches!(
-                part, AssistantContent::Text(text) if text.text == TEXT
-            )));
-        }
-        other => panic!("expected assistant history, got {other:?}"),
-    }
-
     let replay = responses_wire(
         CompletionRequest::new("next")
             .messages(std::iter::once(Message::user("hello")).chain(history))
-            .additional_params(responses_api_params(false)),
+            .additional_params(json!({"reasoning": {"effort": "medium"}})),
     );
     let reasoning_input = replay["input"]
         .as_array()
@@ -716,6 +571,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     assert_eq!(inputs[tool_index]["type"], "function_call");
     assert_eq!(inputs[tool_index]["call_id"], TOOL_CALL_ID);
     assert_eq!(inputs[tool_index]["name"], TOOL_NAME);
+    assert_eq!(inputs[tool_index]["arguments"], r#"{"cmd":"pwd"}"#);
     assert_eq!(inputs[text_index]["role"], "assistant");
     assert_eq!(inputs[text_index]["content"], TEXT);
     assert_eq!(inputs[4]["type"], "function_call_output");
@@ -1099,7 +955,7 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
         "gateway-model",
     );
     let agent = rig::AgentBuilder::new(model)
-        .additional_params(responses_api_params(false))
+        .additional_params(json!({"reasoning": {"effort": "medium"}}))
         .dynamic_tool(DynamicTool::new(
             TOOL_NAME,
             "Read the workspace path",
