@@ -40,7 +40,7 @@ describe('tool rows', () => {
 		expect(view.queryByRole('tooltip')).toBeNull();
 	});
 
-	it('keeps a focused tooltip open after the pointer leaves, then closes it on scroll', () => {
+	it('keeps a focused tooltip open after the pointer leaves and after scroll', () => {
 		const tool: AssistantTimelineTool = {
 			type: 'tool',
 			callId: 'cmd',
@@ -60,7 +60,7 @@ describe('tool rows', () => {
 		act(() => {
 			window.dispatchEvent(new Event('scroll'));
 		});
-		expect(view.queryByRole('tooltip')).toBeNull();
+		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
 	});
 
 	it('places the tooltip above a row when there is not enough room below', () => {

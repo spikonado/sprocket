@@ -76,9 +76,12 @@ function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNod
 		if (!open) return;
 
 		function onScroll() {
-			setHovered(false);
-			setFocused(false);
-			rowRef.current?.blur();
+			const row = rowRef.current;
+
+			if (!row) return;
+
+			const next = placeTooltip(row, tooltipRef.current);
+			setAnchor((current) => (current && sameAnchor(current, next) ? current : next));
 		}
 
 		window.addEventListener('scroll', onScroll, true);
