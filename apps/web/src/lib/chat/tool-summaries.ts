@@ -166,13 +166,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 	}
 }
 
-/** Patch summaries list one path per line; give them room to wrap instead of truncating. */
-export function toolSummaryClass(toolLog: AssistantTimelineTool) {
-	return (toolLog.job?.kind ?? toolLog.name) === 'apply_patch'
-		? 'whitespace-pre-wrap [overflow-wrap:anywhere]'
-		: 'truncate';
-}
-
 /** "Merchant · 120.00 USD monthly" from a mandate setup payload. */
 function summarizeMandateSetup(fields: Record<string, JsonValue> | undefined) {
 	const merchant = jsonString(fields?.merchantName) ?? 'Any merchant';

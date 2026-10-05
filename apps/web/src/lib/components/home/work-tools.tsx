@@ -3,12 +3,7 @@ import {
 	assistantTimelineToolFailureKind,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
-import {
-	fullToolSummary,
-	toolItemLabel,
-	toolItemSummary,
-	toolSummaryClass
-} from '$lib/chat/tool-summaries';
+import { fullToolSummary, toolItemLabel, toolItemSummary } from '$lib/chat/tool-summaries';
 import { toolLogIcon } from '$lib/chat/tool-icons';
 
 type Props = {
@@ -48,7 +43,7 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 										{item ? ':' : ''}
 									</span>
 								) : null}
-								{item ? <span className={`min-w-0 ${toolSummaryClass(tool)}`}>{item}</span> : null}
+								{item ? <span className="min-w-0 truncate">{item}</span> : null}
 								{error && failure && index === summaries.length - 1 ? (
 									<span className={`shrink-0 ${errorClass}`}>({failure})</span>
 								) : null}
