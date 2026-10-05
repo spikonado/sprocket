@@ -290,29 +290,34 @@
 	visibility: visible;
 }
 
+.inbox-row:has(> .inbox-subagents) {
+	flex-direction: column;
+	align-items: stretch;
+}
+
+.inbox-row:has(> .inbox-subagents) .inbox-row-main {
+	padding-bottom: 4px;
+}
+
 .inbox-row-subagents {
-	padding-left: 20px;
 	color: var(--muted-foreground);
 	font-size: 11px;
 	line-height: 20px;
 }
 
 .inbox-subagents {
-	position: absolute;
-	bottom: 8px;
-	left: 10px;
 	display: flex;
+	align-self: flex-start;
 	align-items: center;
-	justify-content: center;
-	width: 20px;
-	height: 20px;
-	border-radius: 5px;
+	gap: 7px;
+	margin: 0 10px 8px;
+	background: transparent;
 	color: var(--muted-foreground);
 	cursor: pointer;
 }
 
-.inbox-subagents:hover {
-	background: var(--hover-fill);
+.inbox-subagents svg {
+	flex-shrink: 0;
 }
 
 .inbox-subagents-working {
