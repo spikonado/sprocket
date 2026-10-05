@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::async_tools::{YieldMode, ZeroPollCooldown};
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
+use crate::command_shell::resolve_command_shell;
 use crate::paths::expand_home;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -266,6 +267,7 @@ impl CommandSessionManager {
         }
 
         let cwd = resolve_command_workdir(&self.workspace_root, workdir)?;
+        let shell = resolve_command_shell(shell, &cwd)?;
         let output = Arc::new(Mutex::new(
             CapturedOutput::create_with_limits(
                 &self.log_directory,
@@ -274,7 +276,7 @@ impl CommandSessionManager {
             )
             .await?,
         ));
-        let mut process = build_shell_command(command, shell);
+        let mut process = build_shell_command(command, &shell);
         process
             .current_dir(&cwd)
             .stdin(Stdio::piped())
@@ -1009,17 +1011,6 @@ fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
     stop_remaining_processes(process_id)
 }
 
-pub fn default_command_shell() -> String {
-    #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
-    }
-    #[cfg(windows)]
-    {
-        "powershell.exe".to_string()
-    }
-}
-
 #[cfg(not(windows))]
 fn build_shell_command(command: &str, shell: &str) -> Command {
     let mut process = Command::new(shell);
@@ -1104,8 +1095,9 @@ mod tests {
     use super::{
         CapturedOutput, CommandAction, CommandCompletion, CommandObservation, CommandOutput,
         CommandSession, CommandSessionManager, ObservationMode, OutputChannel,
-        WorkspaceCancellation, default_command_shell,
+        WorkspaceCancellation,
     };
+    use crate::default_command_shell;
     use crate::test_support::temp_workspace;
     use tokio::sync::{Mutex, mpsc, watch};
 

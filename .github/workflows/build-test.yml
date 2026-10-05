@@ -32,6 +32,8 @@ jobs:
         run: cargo check --locked -p sprocket-server
       - name: Test workspace patch replacement
         run: cargo test --locked -p sprocket-workspace patch::tests
+      - name: Test workspace command shells
+        run: cargo test --locked -p sprocket-workspace command_shell
 
   build_and_test:
     runs-on: ubuntu-latest
