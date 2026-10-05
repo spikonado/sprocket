@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Infer } from 'convex/values';
 import { vAskQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -10,6 +11,20 @@ import {
 	toolTranscriptAssignment,
 	type ConvexTestInstance
 } from './test.setup';
+
+describe('command display inputs', () => {
+	it('keeps bounded labels without copying stdin or execution options', () => {
+		const input = commandToolDisplayInput('exec_cmd', {
+			cmd: '😀'.repeat(10_000),
+			workdir: '/repo',
+			chars: 'x'.repeat(500_000),
+			yieldTimeMs: 0
+		});
+
+		expect(input).toEqual({ cmd: `${'😀'.repeat(4096)}…`, workdir: '/repo' });
+		expect(commandToolDisplayInput('poll_cmd', { sessionId: 'x'.repeat(500_000) })).toEqual({});
+	});
+});
 
 async function seedRunWithJob(
 	t: ConvexTestInstance,
@@ -244,10 +259,17 @@ describe('executor', () => {
 			kind === 'exec_cmd' || kind === 'exec_command'
 				? { cmd: 'echo ok', workdir: '/workspace', yieldTimeMs: 0 }
 				: kind === 'control_cmd' || kind === 'control_command'
-					? { sessionId: '1', action: 'write' as const, chars: 'yes\n' }
+					? { sessionId: '1', action: 'write' as const, chars: 'x'.repeat(500_000) }
 					: kind === 'write_stdin'
-						? { sessionId: '1', chars: 'yes\n', terminate: false }
+						? { sessionId: '1', chars: 'x'.repeat(500_000), terminate: false }
 						: { sessionId: '1', yieldTimeMs: 0 };
+
+		const displayInput =
+			kind === 'exec_cmd' || kind === 'exec_command'
+				? { cmd: 'echo ok', workdir: '/workspace' }
+				: kind === 'control_cmd' || kind === 'control_command'
+					? { sessionId: '1', action: 'write' }
+					: { sessionId: '1' };
 
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			runId,
@@ -262,7 +284,7 @@ describe('executor', () => {
 		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(started.parts.find((part) => part.tool?.name === kind)?.tool).toMatchObject({
 			status: 'started',
-			input: payload
+			input: displayInput
 		});
 
 		const result = {
@@ -294,8 +316,12 @@ describe('executor', () => {
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
 		expect(parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)).toEqual(
 			[
-				expect.objectContaining({ status: 'started', input: payload, callId: `call-${kind}` }),
-				expect.objectContaining({ status: 'completed', input: payload, callId: `call-${kind}` })
+				expect.objectContaining({ status: 'started', input: displayInput, callId: `call-${kind}` }),
+				expect.objectContaining({
+					status: 'completed',
+					input: displayInput,
+					callId: `call-${kind}`
+				})
 			]
 		);
 
@@ -317,7 +343,7 @@ describe('executor', () => {
 			})
 		).resolves.toBe(true);
 		const retried = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
-		expect(retried.parts[0].tool?.input).toEqual(payload);
+		expect(retried.parts[0].tool?.input).toEqual(displayInput);
 	});
 
 	it.each([

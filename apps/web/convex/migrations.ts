@@ -8,7 +8,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
-import { isCommandToolName } from '@convex/lib/transcriptWrites';
+import { commandToolDisplayInput, isCommandToolName } from '@convex/lib/transcriptWrites';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -168,7 +168,7 @@ export const backfillCommandToolInputs = migrations.define({
 			return;
 		}
 
-		return { tool: { ...tool, input: job.payload } };
+		return { tool: { ...tool, input: commandToolDisplayInput(job.kind, job.payload) } };
 	}
 });
 

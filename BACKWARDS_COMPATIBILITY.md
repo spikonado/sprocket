@@ -470,9 +470,13 @@ with the session column, or a later cache migration also rebuilds these indexes.
 #### Command tool inputs
 
 Tool detail bodies accept optional `input`. Current started and terminal events
-preserve executor payloads only for `exec_cmd`, `exec_command`, `control_cmd`,
+preserve display inputs only for `exec_cmd`, `exec_command`, `control_cmd`,
 `control_command`, `poll_cmd`, `poll_command`, and `write_stdin`; other tool
-events omit input to avoid duplicating large payloads. Remote sync retains the
+events omit input to avoid duplicating large payloads. Only `cmd`, `workdir`,
+`sessionId`, and `action` are copied; command and workdir strings are capped at
+8192 characters with an ellipsis, and session IDs over 128 characters are omitted
+rather than truncated. Stdin contents and execution options are never copied.
+This keeps started/terminal events and backfills small. Remote sync retains the
 field, and synthetic tool calls use it when no canonical completion call exists.
 Canonical completion inputs remain authoritative. Missing legacy input produces
 `null`, leaving the command session unknown rather than guessing from a call ID

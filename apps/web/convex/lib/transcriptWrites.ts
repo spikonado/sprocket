@@ -9,6 +9,7 @@ import {
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
+import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from '@convex/lib/json';
 import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
 import {
 	writeCompletionSectionData,
@@ -42,6 +43,28 @@ export function isCommandToolName(name: string): boolean {
 		name === 'poll_command' ||
 		name === 'write_stdin'
 	);
+}
+
+export function commandToolDisplayInput(name: string, input: JsonValue): JsonObject | undefined {
+	if (!isCommandToolName(name) || !isJsonObject(input)) return undefined;
+
+	const display: JsonObject = {};
+
+	for (const key of ['cmd', 'workdir']) {
+		const value = input[key];
+
+		if (isJsonString(value)) {
+			display[key] = value.length > 8192 ? `${value.slice(0, 8192)}…` : value;
+		}
+	}
+
+	if (isJsonString(input.sessionId) && input.sessionId.length <= 128) {
+		display.sessionId = input.sessionId;
+	}
+
+	if (input.action === 'write' || input.action === 'terminate') display.action = input.action;
+
+	return display;
 }
 
 async function appendToolTranscriptPart(
@@ -262,9 +285,9 @@ function progressToolBody(
 		status: args.status
 	};
 
-	if (isCommandToolName(job.kind)) {
-		body.input = job.payload;
-	}
+	const input = commandToolDisplayInput(job.kind, job.payload);
+
+	if (input !== undefined) body.input = input;
 
 	if (args.output !== undefined) {
 		body.output = args.output;

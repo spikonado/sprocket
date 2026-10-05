@@ -206,17 +206,14 @@ describe('legacy compat backfill migrations', () => {
 			toolInvocationId: jobId
 		});
 
-		await t.mutation(internal.migrations.backfillCommandToolInputs, oneBatch);
-		expect((await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId)))?.tool).toMatchObject(
-			{
-				jobId,
-				input: { cmd: 'echo hi' }
-			}
-		);
-
 		await t.mutation(internal.migrations.migrateToolPartJobIds, oneBatch);
+		await t.mutation(internal.migrations.backfillCommandToolInputs, oneBatch);
 		const part = await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId));
-		expect(part?.tool).toMatchObject({ toolInvocationId: jobId, callId: 'call-1' });
+		expect(part?.tool).toMatchObject({
+			toolInvocationId: jobId,
+			callId: 'call-1',
+			input: { cmd: 'echo hi' }
+		});
 		expect(part?.tool).not.toHaveProperty('jobId');
 	});
 
@@ -228,10 +225,22 @@ describe('legacy compat backfill migrations', () => {
 			{ kind: 'exec_cmd', payload: { cmd: 'echo current' } },
 			{ kind: 'exec_command', payload: { cmd: 'echo legacy' } },
 			{ kind: 'control_cmd', payload: { sessionId: 'current', action: 'terminate' } },
-			{ kind: 'control_command', payload: { sessionId: 'legacy', action: 'write', chars: 'hi' } },
-			{ kind: 'poll_cmd', payload: { sessionId: 'current', yieldTimeMs: 0 } },
+			{
+				kind: 'control_command',
+				payload: { sessionId: 'legacy', action: 'write', chars: 'hi' },
+				expected: { sessionId: 'legacy', action: 'write' }
+			},
+			{
+				kind: 'poll_cmd',
+				payload: { sessionId: 'current', yieldTimeMs: 0 },
+				expected: { sessionId: 'current' }
+			},
 			{ kind: 'poll_command', payload: { sessionId: 'legacy' } },
-			{ kind: 'write_stdin', payload: { sessionId: 'oldest', chars: 'hi', terminate: false } }
+			{
+				kind: 'write_stdin',
+				payload: { sessionId: 'oldest', chars: 'hi', terminate: false },
+				expected: { sessionId: 'oldest' }
+			}
 		] as const;
 
 		const partIds = await t.run(async (ctx) => {
@@ -279,7 +288,7 @@ describe('legacy compat backfill migrations', () => {
 		for (const [index, partId] of partIds.entries()) {
 			expect(
 				(await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId)))?.tool?.input
-			).toEqual(cases[index].payload);
+			).toEqual('expected' in cases[index] ? cases[index].expected : cases[index].payload);
 		}
 	});
 
