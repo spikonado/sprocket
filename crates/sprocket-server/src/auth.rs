@@ -801,14 +801,17 @@ mod tests {
             let bind_token = token.clone();
             let request =
                 tokio::spawn(async move { writer.bind_session_user(&bind_token, "user-1").await });
-            let mut locked_before_abort = false;
-            for _ in 0..200 {
-                if state.sessions.try_write().is_err() {
-                    locked_before_abort = true;
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
+            let locked_before_abort =
+                tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                    loop {
+                        if state.sessions.try_write().is_err() {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .is_ok();
             assert!(locked_before_abort);
             tokio::task::yield_now().await;
             request.abort();
