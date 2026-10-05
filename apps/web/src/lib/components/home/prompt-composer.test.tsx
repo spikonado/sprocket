@@ -603,6 +603,7 @@ describe('PromptComposer model selection', () => {
 		fireEvent.mouseEnter(model);
 		const settings = screen.getByRole('group', { name: 'Reasoning for Model One' });
 		expect(within(settings).getByRole('button', { name: 'Low', pressed: true })).toBeTruthy();
+		expect(within(settings).getByText('Default')).toBeTruthy();
 		await click(within(settings).getByRole('button', { name: 'Medium (default)', pressed: false }));
 		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
 			'Model One · Medium'

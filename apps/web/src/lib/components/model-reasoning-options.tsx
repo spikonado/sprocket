@@ -1,6 +1,5 @@
 import { Check } from 'lucide-react';
 import { type CatalogModel, reasoningEffortLabel } from '$lib/chat/model-catalog';
-import { cn } from '$lib/utils';
 
 export default function ModelReasoningOptions({
 	model,
@@ -37,12 +36,10 @@ export default function ModelReasoningOptions({
 			}}
 		>
 			<span className="min-w-0 flex-1">{reasoningEffortLabel(effort)}</span>
-			<Check
-				className={cn(
-					'text-accent-strong size-3 shrink-0',
-					effort === reasoningEffort ? 'opacity-100' : 'opacity-0'
-				)}
-			/>
+			{effort === model.defaultReasoningEffort ? (
+				<span className="text-muted-foreground shrink-0 text-[10px]">Default</span>
+			) : null}
+			{effort === reasoningEffort ? <Check className="text-accent-strong size-3 shrink-0" /> : null}
 		</button>
 	));
 }

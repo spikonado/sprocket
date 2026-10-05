@@ -142,7 +142,10 @@ export default function ModelSelector({
 	}, [disabled]);
 
 	return (
-		<div ref={rootRef} className="relative z-20 min-w-32 flex-1 sm:min-w-0 sm:flex-none">
+		<div
+			ref={rootRef}
+			className={cn('relative min-w-32 flex-1 sm:min-w-0 sm:flex-none', isOpen ? 'z-30' : 'z-20')}
+		>
 			<button
 				ref={triggerRef}
 				type="button"
@@ -169,11 +172,11 @@ export default function ModelSelector({
 					ref={menuRef}
 					role="dialog"
 					aria-label="Model"
-					className="fixed z-50 w-[min(27rem,calc(100vw-1rem))]"
+					className="fixed z-50 w-[min(23.75rem,calc(100vw-1rem))]"
 					style={position}
 				>
 					<div
-						className="bg-popover/96 flex w-[calc(100%-7.25rem)] flex-col overflow-hidden rounded-xl border border-[var(--hairline)] p-1 shadow-[var(--composer-shadow)] backdrop-blur-xl"
+						className="bg-popover/96 flex w-[calc(100%-9.75rem)] flex-col overflow-hidden rounded-xl border border-[var(--hairline)] p-1 shadow-[var(--composer-shadow)] backdrop-blur-xl"
 						style={{ maxHeight: position.maxHeight }}
 					>
 						<label className="text-muted-foreground flex h-9 shrink-0 items-center gap-2 border-b border-[var(--hairline)] px-2">
@@ -304,7 +307,7 @@ export default function ModelSelector({
 							ref={reasoningRef}
 							role="group"
 							aria-label={`Reasoning for ${previewModel.label}`}
-							className="bg-popover/96 absolute right-0 w-28 rounded-xl border border-[var(--hairline)] p-1 shadow-[var(--composer-shadow)] backdrop-blur-xl"
+							className="bg-popover/96 absolute right-0 w-38 rounded-xl border border-[var(--hairline)] p-1 shadow-[var(--composer-shadow)] backdrop-blur-xl"
 							style={{ top: reasoningTop }}
 							onKeyDown={(event) => {
 								if (event.key === 'ArrowLeft') {
