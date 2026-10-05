@@ -579,9 +579,8 @@ describe('PromptComposer model selection', () => {
 		fireEvent.mouseEnter(modelTwo);
 		expect(onSelectedModelChange).not.toHaveBeenCalled();
 		expect(trigger.textContent).toBe('Model One · Medium');
-		expect(modelTwo.textContent).toBe('Model TwoHigh');
-		const settings = within(menu).getByRole('group', { name: 'Settings for Model Two' });
-		await click(within(settings).getByRole('button', { name: /^High/, pressed: true }));
+		const settings = within(menu).getByRole('group', { name: 'Reasoning for Model Two' });
+		await click(within(settings).getByRole('button', { name: 'High (default)' }));
 		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
 		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
 		expect(trigger.textContent).toBe('Model Two · High');
@@ -597,15 +596,14 @@ describe('PromptComposer model selection', () => {
 		expect(trigger.getAttribute('aria-expanded')).toBe('false');
 	});
 
-	it('shows the model default beside its row even when a different effort is selected', async () => {
+	it('offers a selectable default alongside the other reasoning choices', async () => {
 		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'low' });
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		const model = screen.getByRole('button', { name: 'Model One' });
 		fireEvent.mouseEnter(model);
-		expect(model.textContent).toBe('Model OneMedium');
-		const settings = screen.getByRole('group', { name: 'Settings for Model One' });
+		const settings = screen.getByRole('group', { name: 'Reasoning for Model One' });
 		expect(within(settings).getByRole('button', { name: 'Low', pressed: true })).toBeTruthy();
-		await click(within(settings).getByRole('button', { name: /^Medium/ }));
+		await click(within(settings).getByRole('button', { name: 'Medium (default)', pressed: false }));
 		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
 			'Model One · Medium'
 		);
@@ -624,6 +622,11 @@ describe('PromptComposer model selection', () => {
 		expect(document.activeElement).toBe(high);
 		await pressKey(high, { key: 'ArrowLeft' });
 		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Model Two' }));
+		await pressKey(document.activeElement!, { key: 'ArrowUp' });
+		await pressKey(document.activeElement!, { key: 'ArrowRight' });
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Medium (default)' }));
+		await pressKey(document.activeElement!, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Low' }));
 	});
 
 	it('opens reasoning on touch before selecting a model and effort', async () => {
@@ -826,11 +829,30 @@ describe('PromptComposer Fast mode', () => {
 		await click(trigger);
 		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model One' }));
 		const toggle = screen.getByRole('switch', { name: 'Fast' });
+		const models = screen.getByRole('group', { name: 'Models' });
+		expect(models.nextElementSibling).toBe(toggle.parentElement);
 		expect(toggle.getAttribute('aria-checked')).toBe('false');
 		await click(toggle);
 		expect(onFastModeChange).toHaveBeenCalledWith(true);
 		expect(toggle.getAttribute('aria-checked')).toBe('true');
 		expect(trigger.textContent).toBe('Model One · Medium · Fast');
+	});
+
+	it('toggles speed without selecting the hovered model', async () => {
+		const onSelectedModelChange = vi.fn();
+		renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange
+		});
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model Two' }));
+		await click(screen.getByRole('switch', { name: 'Fast' }));
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model One · Medium · Fast'
+		);
+		expect(onSelectedModelChange).not.toHaveBeenCalled();
 	});
 
 	it('keeps Fast on when the subscription tier loads and changes', async () => {
