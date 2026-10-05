@@ -601,6 +601,9 @@ describe('PromptComposer model selection', () => {
 			search.dispatchEvent(new Event('input', { bubbles: true }));
 		});
 		const menu = screen.getByRole('dialog', { name: 'Model' });
+		const compositionCommit = await pressKey(search, { key: 'Enter', isComposing: true });
+		expect(compositionCommit.defaultPrevented).toBe(false);
+		expect(within(menu).getByRole('button', { name: 'Model Two', pressed: false })).toBeTruthy();
 		expect(within(menu).getByRole('button', { name: 'Low' })).toBeTruthy();
 		await pressKey(search, { key: 'Enter' });
 		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(

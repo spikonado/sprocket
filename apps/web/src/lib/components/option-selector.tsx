@@ -80,10 +80,11 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	}
 
 	function handleSearchKeydown(event: React.KeyboardEvent) {
-		if (event.key !== 'Enter') return;
-		event.preventDefault();
+		if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
 
 		if (filteredOptions.length === 0 || (!closeOnSelect && !searchQuery.trim())) return;
+
+		event.preventDefault();
 		selectOption(filteredOptions[0].id);
 	}
 
