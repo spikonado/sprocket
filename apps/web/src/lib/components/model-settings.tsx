@@ -37,7 +37,7 @@ export default function ModelSettings({
 							<button
 								key={effort}
 								type="button"
-								className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+								className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm outline-none focus-visible:ring-2 sm:gap-3 sm:px-3"
 								aria-pressed={effort === reasoningEffort}
 								onClick={() => onReasoningEffortChange?.(effort)}
 							>
@@ -47,9 +47,9 @@ export default function ModelSettings({
 										effort === reasoningEffort ? 'opacity-100' : 'opacity-0'
 									)}
 								/>
-								<span>{reasoningEffortLabel(effort)}</span>
+								<span className="min-w-0 break-words">{reasoningEffortLabel(effort)}</span>
 								{effort === model.defaultReasoningEffort ? (
-									<span className="text-muted-foreground ml-auto text-xs">Default</span>
+									<span className="text-muted-foreground ml-auto shrink-0 text-xs">Default</span>
 								) : null}
 							</button>
 						))}
@@ -65,7 +65,7 @@ export default function ModelSettings({
 						<button
 							type="button"
 							role="switch"
-							className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
+							className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm outline-none focus-visible:ring-2 sm:gap-3 sm:px-3"
 							aria-checked={fastMode}
 							onClick={() => onFastModeChange?.(!fastMode)}
 						>

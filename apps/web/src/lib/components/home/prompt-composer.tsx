@@ -870,7 +870,7 @@ export function PromptComposerView({
 								</div>
 
 								<div className="flex min-w-0 flex-nowrap items-center justify-between gap-3 overflow-visible px-0 pt-2.5 pb-0">
-									<div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1">
+									<div className="-m-1 flex min-w-0 flex-1 flex-wrap items-center gap-1 overflow-visible p-1 sm:flex-nowrap">
 										<input
 											ref={attachmentInput}
 											type="file"

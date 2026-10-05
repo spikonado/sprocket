@@ -122,7 +122,7 @@ export default function ModelSelector({
 	}, [disabled]);
 
 	return (
-		<div ref={rootRef} className="relative z-20 min-w-0">
+		<div ref={rootRef} className="relative z-20 min-w-32 flex-1 sm:min-w-0 sm:flex-none">
 			<button
 				ref={triggerRef}
 				type="button"
@@ -161,7 +161,7 @@ export default function ModelSelector({
 					<div
 						className={cn(
 							'grid h-full',
-							previewHasSettings && 'grid-cols-[minmax(0,1fr)_minmax(9rem,0.65fr)]'
+							previewHasSettings && 'grid-cols-[minmax(0,1fr)_minmax(10rem,0.65fr)]'
 						)}
 					>
 						<div className="flex min-h-0 min-w-0 flex-col p-2">
@@ -202,7 +202,7 @@ export default function ModelSelector({
 										aria-label={model.label}
 										aria-pressed={model.id === modelId}
 										className={cn(
-											'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2',
+											'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-xl px-2 py-2.5 text-left text-sm outline-none focus-visible:ring-2 sm:flex sm:gap-2 sm:px-3',
 											model.id === previewId && 'bg-hover-fill'
 										)}
 										onMouseEnter={() => setPreviewId(model.id)}
@@ -233,21 +233,26 @@ export default function ModelSelector({
 											}
 										}}
 									>
-										<ProviderLogo provider={model.provider} className="size-4 shrink-0" />
-										<span className="min-w-0 flex-1 truncate font-medium">{model.label}</span>
+										<ProviderLogo
+											provider={model.provider}
+											className="hidden size-4 shrink-0 sm:block"
+										/>
+										<span className="col-start-1 row-start-1 min-w-0 flex-1 truncate font-medium">
+											{model.label}
+										</span>
 										{model.id === previewId && showsReasoningControl(model) ? (
 											<span
-												className="text-muted-foreground shrink-0 text-xs"
+												className="text-muted-foreground col-start-1 row-start-2 shrink-0 text-xs"
 												title="Default reasoning"
 											>
 												{reasoningEffortLabel(model.defaultReasoningEffort)}
 											</span>
 										) : null}
 										{model.id === modelId ? (
-											<Check className="text-accent-strong size-3.5 shrink-0" />
+											<Check className="text-accent-strong col-start-2 row-start-1 size-3.5 shrink-0" />
 										) : null}
 										{hasSettings(model) ? (
-											<ChevronRight className="text-muted-foreground size-3 shrink-0" />
+											<ChevronRight className="text-muted-foreground hidden size-3 shrink-0 sm:block" />
 										) : null}
 									</button>
 								))}
