@@ -10,12 +10,18 @@ import {
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 import type { Infer } from 'convex/values';
 
+function isPlainObject(
+	result: ExecutorJobResult
+): result is Exclude<Extract<ExecutorJobResult, object>, unknown[]> {
+	if (result === null || Array.isArray(result)) return false;
+
+	return Object.getPrototypeOf(result) === Object.prototype;
+}
+
 function isMandateChargeResult(
 	result: ExecutorJobResult
 ): result is Infer<typeof vMandateChargeResult> {
-	if (result === null || Array.isArray(result)) return false;
-
-	if (Object.getPrototypeOf(result) !== Object.prototype) return false;
+	if (!isPlainObject(result)) return false;
 
 	return 'chargeId' in result && 'transactionId' in result;
 }
