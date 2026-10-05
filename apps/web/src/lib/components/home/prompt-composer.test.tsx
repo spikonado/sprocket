@@ -607,6 +607,8 @@ describe('PromptComposer model selection', () => {
 			'Model Two · High'
 		);
 		expect(within(menu).getByRole('button', { name: /^High/, pressed: true })).toBeTruthy();
+		expect(within(menu).getByRole('button', { name: 'Model One' })).toBeTruthy();
+		expect(within(menu).getByRole('button', { name: 'Model Two', pressed: true })).toBeTruthy();
 	});
 
 	it.each([true, false])(

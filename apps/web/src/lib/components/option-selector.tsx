@@ -71,9 +71,10 @@ export default function OptionSelector<TOption extends SelectorOption>({
 			onValueChange?.(optionId);
 		}
 
+		setSearchQuery('');
+
 		if (closeOnSelect) {
 			setIsOpen(false);
-			setSearchQuery('');
 			triggerRef.current?.focus();
 		}
 	}
