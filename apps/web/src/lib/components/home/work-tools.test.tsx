@@ -4,7 +4,7 @@ import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
 
 describe('tool rows', () => {
-	it('reveals each full filename on activation and closes it with Escape', () => {
+	it('reveals the full tool log in a tooltip on hover and closes it with Escape', () => {
 		const paths = [
 			'/home/ubuntu/sprocket/.worktrees/composer-hover-reasoning/apps/web/src/lib/components/model-reasoning-options.tsx',
 			'/home/ubuntu/sprocket/.worktrees/composer-hover-reasoning/apps/web/src/lib/components/model-selector.tsx'
@@ -19,18 +19,20 @@ describe('tool rows', () => {
 		};
 
 		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
-		const details = [...view.container.querySelectorAll('details')];
-		expect(details).toHaveLength(paths.length);
+		const rows = [...view.container.querySelectorAll('[data-tool-row]')];
+		expect(rows).toHaveLength(paths.length);
+		expect(rows.every((row) => !row.hasAttribute('title'))).toBe(true);
+		expect(view.container.querySelector('details')).toBeNull();
+		expect(view.queryByRole('tooltip')).toBeNull();
 
-		for (const [index, detail] of details.entries()) {
-			expect(detail.open).toBe(false);
-			const summary = detail.querySelector('summary')!;
-			fireEvent.click(summary);
-			expect(detail.open).toBe(true);
-			expect(detail.querySelector('p')?.textContent).toBe(paths[index]);
-			fireEvent.keyDown(summary, { key: 'Escape' });
-			expect(detail.open).toBe(false);
-		}
+		fireEvent.mouseEnter(rows[0]!);
+		const tooltip = view.getByRole('tooltip');
+		expect(tooltip.textContent).toContain(paths[0]);
+		expect(tooltip.textContent).toContain(paths[1]);
+		expect(tooltip.textContent).toContain('The patch did not apply.');
+
+		fireEvent.keyDown(rows[0]!, { key: 'Escape' });
+		expect(view.queryByRole('tooltip')).toBeNull();
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
@@ -83,7 +85,7 @@ describe('tool rows', () => {
 
 		const settledTools = tools.map((tool) => ({ ...tool, output: tool.output ?? {} }));
 		const view = render(<WorkTools tools={settledTools} inProgress={false} commands={new Map()} />);
-		const rows = [...view.container.querySelectorAll('summary[title]')];
+		const rows = [...view.container.querySelectorAll('[data-tool-row]')];
 
 		expect(rows.map((row) => row.textContent)).toEqual([
 			'a.ts',
@@ -121,7 +123,7 @@ describe('tool rows', () => {
 		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
 
 		expect(
-			[...view.container.querySelectorAll('summary[title]')].map((row) => row.textContent)
+			[...view.container.querySelectorAll('[data-tool-row]')].map((row) => row.textContent)
 		).toEqual(['a.ts', 'b.ts(failed)']);
 		expect(
 			within(view.container)
