@@ -254,18 +254,22 @@ fn open_local_image(
             }
         }
         LocalImageRoot::Thread(thread_dir, workspace_path) => {
-            let resolved_image = match thread_dir.join(image_path).canonicalize() {
-                Ok(path) => path,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::NotFound && workspace_path.is_some() =>
-                {
-                    return open_local_image(
-                        LocalImageRoot::Workspace(workspace_path),
-                        image_path.to_string_lossy().into_owned(),
-                    );
+            if let Some(workspace_path) = workspace_path {
+                match workspace_path.join(image_path).canonicalize() {
+                    Ok(path) => {
+                        return open_local_image(
+                            LocalImageRoot::Workspace(None),
+                            path.to_string_lossy().into_owned(),
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error).context("failed to resolve workspace image"),
                 }
-                Err(error) => return Err(error).context("failed to resolve thread image"),
-            };
+            }
+            let resolved_image = thread_dir
+                .join(image_path)
+                .canonicalize()
+                .context("failed to resolve thread image")?;
             let thread_dir = thread_dir
                 .canonicalize()
                 .context("failed to resolve transcript directory")?;
@@ -716,7 +720,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_image_scopes_image_data_and_revisions_to_transcript_threads() {
+    async fn local_image_prefers_workspace_images_and_scopes_missing_paths_to_transcript_threads() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
@@ -725,7 +729,17 @@ mod tests {
         let second = b"\x89PNG\r\n\x1a\nsecond";
         let workspace_image = b"\x89PNG\r\n\x1a\nworkspace";
         std::fs::create_dir(workspace.path().join("parse_file")).unwrap();
-        std::fs::write(workspace.path().join(path), workspace_image).unwrap();
+        let workspace_image_path = workspace.path().join(path);
+        std::fs::write(&workspace_image_path, workspace_image).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&workspace_image_path)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(3)),
+            )
+            .unwrap();
         let (app, token) = image_test_app(data.path()).await;
 
         for (thread_id, contents, seconds) in
@@ -747,6 +761,11 @@ mod tests {
                 .unwrap();
 
             for workspace_root in [Some(workspace.path()), None] {
+                let (expected_contents, expected_seconds) = if workspace_root.is_some() {
+                    (&workspace_image[..], 3)
+                } else {
+                    (contents, seconds)
+                };
                 for revision_only in [false, true] {
                     let response = app
                         .clone()
@@ -776,14 +795,59 @@ mod tests {
                         let revision = serde_json::from_slice::<String>(&body).unwrap();
                         assert_eq!(
                             revision,
-                            format!("{}-{}", contents.len(), seconds * 1_000_000_000)
+                            format!(
+                                "{}-{}",
+                                expected_contents.len(),
+                                expected_seconds * 1_000_000_000
+                            )
                         );
                     } else {
-                        assert_eq!(body.as_ref(), contents);
+                        assert_eq!(body.as_ref(), expected_contents);
                     }
                 }
             }
         }
+
+        std::fs::remove_file(&workspace_image_path).unwrap();
+        for (thread_id, expected_contents) in [("thread_1", &first[..]), ("thread-2", &second[..])]
+        {
+            for revision_only in ["false", "true"] {
+                let response = app
+                    .clone()
+                    .oneshot(image_request_with_options(
+                        Some(workspace.path()),
+                        path,
+                        Some(&token),
+                        &[
+                            ("userId", "test-user"),
+                            ("threadId", thread_id),
+                            ("revisionOnly", revision_only),
+                        ],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = to_bytes(response.into_body(), 1024).await.unwrap();
+                if revision_only == "true" {
+                    let metadata =
+                        std::fs::metadata(transcript.thread_dir("test-user", thread_id).join(path))
+                            .unwrap();
+                    let nanos = metadata
+                        .modified()
+                        .unwrap()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos();
+                    assert_eq!(
+                        serde_json::from_slice::<String>(&body).unwrap(),
+                        format!("{}-{nanos}", expected_contents.len())
+                    );
+                } else {
+                    assert_eq!(body.as_ref(), expected_contents);
+                }
+            }
+        }
+        std::fs::write(&workspace_image_path, workspace_image).unwrap();
 
         let unscoped = app
             .clone()
@@ -820,7 +884,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_image_falls_back_to_workspace_when_the_thread_cache_file_is_missing() {
+    async fn local_image_serves_workspace_images_when_the_thread_cache_file_is_missing() {
         let data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));

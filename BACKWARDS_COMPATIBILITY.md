@@ -59,8 +59,8 @@ multi-turn regression passes with native item IDs.
 Stored model messages can reference `parse_file/…`, `screenshot_url/…`, or
 `scrape_url/…` images relative to their transcript directory. Chat rendering
 passes the message's user/thread scope to `/workspace/image` for those paths.
-The thread cache takes precedence; missing cached files fall back to the
-workspace so existing images in tool-named project folders keep working.
+The workspace takes precedence; missing workspace files fall back to the
+thread cache so existing images in tool-named project folders keep working.
 Other workspace/document-relative and absolute paths retain their behavior.
 The optional scope also applies to revision checks. Existing clients may omit
 it, and no transcript or Convex data is rewritten.
