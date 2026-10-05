@@ -305,11 +305,7 @@ impl AuthState {
             pending.user_id = Some(user_id.to_string());
             pending.uncommitted = false;
         }
-        self.flush_sessions(&snapshot).await?;
-        if let Some(session) = sessions.get_mut(session_token) {
-            session.user_id = Some(user_id.to_string());
-            session.uncommitted = false;
-        }
+        self.persist_sessions_snapshot(sessions, snapshot).await?;
         Ok(true)
     }
 
@@ -368,7 +364,10 @@ impl AuthState {
             .filter(|session| !session_is_expired(session))
             .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
         match session.user_id.as_deref() {
-            Some(user_id) if user_id == expected_user_id => Ok(()),
+            Some(user_id) if user_id == expected_user_id && !session.uncommitted => Ok(()),
+            Some(user_id) if user_id == expected_user_id => {
+                anyhow::bail!("local session is not bound to a user; sign in again")
+            }
             Some(_) => anyhow::bail!("local session belongs to a different user"),
             None => anyhow::bail!("local session is not bound to a user; sign in again"),
         }
@@ -385,6 +384,7 @@ impl AuthState {
                 .get(session_token)
                 .is_some_and(|session| !session_is_expired(session)
                     && session.local_browser
+                    && !session.uncommitted
                     && session.user_id.as_deref() == Some(expected_user_id)),
             "authentication required"
         );
@@ -419,14 +419,20 @@ impl AuthState {
         Ok(())
     }
 
-    async fn flush_sessions(
+    async fn persist_sessions_snapshot(
         &self,
-        sessions: &HashMap<String, SessionRecord>,
+        mut sessions: OwnedRwLockWriteGuard<HashMap<String, SessionRecord>>,
+        snapshot: HashMap<String, SessionRecord>,
     ) -> anyhow::Result<()> {
         let sessions_path = self.data_dir.join(SESSIONS_FILE);
-        let payload = serde_json::to_vec(&sessions_snapshot(sessions))?;
         tokio::task::spawn_blocking(move || {
-            crate::profile::write_private_file(&sessions_path, &payload)
+            let payload = serde_json::to_vec(&sessions_snapshot(&snapshot))?;
+            let result = crate::profile::write_private_file(&sessions_path, &payload);
+            if result.is_ok() {
+                *sessions = snapshot;
+            }
+            drop(sessions);
+            result
         })
         .await??;
         Ok(())
@@ -772,6 +778,50 @@ mod tests {
         });
     }
 
+    #[test]
+    fn cancelled_bind_keeps_session_writes_serialized_until_persistence_finishes() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let state = super::AuthState::load(directory.path()).unwrap();
+            let (_, token) = state.bootstrap_browser_session(true).await.unwrap();
+            let (release, blocked) = std::sync::mpsc::channel();
+            let (ready, started) = tokio::sync::oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                ready.send(()).unwrap();
+                blocked.recv().unwrap();
+            });
+            started.await.unwrap();
+            let writer = std::sync::Arc::clone(&state);
+            let bind_token = token.clone();
+            let request = tokio::spawn(async move {
+                writer.bind_session_user(&bind_token, "user-1").await
+            });
+            let mut locked_before_abort = false;
+            for _ in 0..200 {
+                if state.sessions.try_write().is_err() {
+                    locked_before_abort = true;
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert!(locked_before_abort);
+            tokio::task::yield_now().await;
+            request.abort();
+            let _ = request.await;
+            let locked = state.sessions.try_write().is_err();
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            let _finished = state.sessions.read().await;
+            assert!(locked);
+        });
+    }
+
     use super::*;
     use std::thread;
 
@@ -1038,9 +1088,25 @@ mod tests {
                 .await
                 .unwrap()
         );
-        auth.require_session_user(&session_token, "user-1")
-            .await
-            .unwrap();
+        assert!(
+            auth.require_session_user(&session_token, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        assert!(
+            auth.lock_session_user(&session_token, "user-1")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            auth.bind_session_user(&session_token, "user-2")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "local session belongs to a different user"
+        );
         auth.bootstrap_browser_session(true)
             .await
             .expect("other session persist must not write the claim");
