@@ -26,7 +26,7 @@ export default function ModelSettings({
 	if (!showsReasoning && !fastModeAvailable) return null;
 
 	return (
-		<div className="mt-2 border-t border-[var(--hairline)] pt-2">
+		<div>
 			{showsReasoning ? (
 				<>
 					<p className="text-muted-foreground px-3 pt-1 pb-1.5 text-[11px] font-medium">

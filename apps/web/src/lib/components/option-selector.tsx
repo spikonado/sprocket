@@ -18,8 +18,6 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	className = '',
 	triggerClassName = '',
 	searchable = false,
-	closeOnSelect = true,
-	menuFooter,
 	onValueChange,
 	optionIcon
 }: {
@@ -31,8 +29,6 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	className?: string;
 	triggerClassName?: string;
 	searchable?: boolean;
-	closeOnSelect?: boolean;
-	menuFooter?: ReactNode;
 	onValueChange?: (value: TOption['id']) => void;
 	optionIcon?: (option: TOption) => ReactNode;
 }) {
@@ -71,18 +67,15 @@ export default function OptionSelector<TOption extends SelectorOption>({
 			onValueChange?.(optionId);
 		}
 
+		setIsOpen(false);
 		setSearchQuery('');
-
-		if (closeOnSelect) {
-			setIsOpen(false);
-			triggerRef.current?.focus();
-		}
+		triggerRef.current?.focus();
 	}
 
 	function handleSearchKeydown(event: React.KeyboardEvent) {
 		if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
 
-		if (filteredOptions.length === 0 || (!closeOnSelect && !searchQuery.trim())) return;
+		if (filteredOptions.length === 0) return;
 
 		event.preventDefault();
 		selectOption(filteredOptions[0].id);
@@ -143,7 +136,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 
 			{isOpen ? (
 				<div
-					className="bg-popover/96 absolute bottom-[calc(100%+0.75rem)] left-0 z-50 max-h-[60dvh] min-w-[19rem] overflow-y-auto rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl"
+					className="bg-popover/96 absolute bottom-[calc(100%+0.75rem)] left-0 z-50 min-w-[19rem] rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl"
 					role="dialog"
 					aria-label={menuTitle}
 				>
@@ -166,7 +159,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 						</p>
 					)}
 
-					<div className={cn('max-h-64 space-y-0.5 overflow-y-auto', searchable && 'pt-1.5')}>
+					<div className={cn('space-y-0.5', searchable && 'pt-1.5')}>
 						{filteredOptions.map((option) => (
 							<button
 								key={option.id}
@@ -207,7 +200,6 @@ export default function OptionSelector<TOption extends SelectorOption>({
 							</p>
 						) : null}
 					</div>
-					{menuFooter}
 				</div>
 			) : null}
 		</div>

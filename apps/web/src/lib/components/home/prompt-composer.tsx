@@ -13,9 +13,7 @@ import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/ch
 import {
 	getCatalogModel,
 	modelOptionsForCompletionProvider,
-	reasoningEffortLabel,
 	resolveModelForCompletionProvider,
-	showsReasoningControl,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
@@ -30,7 +28,7 @@ import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-pa
 import type { CommandApi } from '$lib/home/running-commands';
 import OptionSelector from '$lib/components/option-selector';
 import ProviderLogo from '$lib/components/provider-logo';
-import ModelSettings from '$lib/components/model-settings';
+import ModelSelector from '$lib/components/model-selector';
 import type {
 	SkillSummary,
 	TranscriptScopeRequest,
@@ -170,27 +168,6 @@ export function PromptComposerView({
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
-
-	// Fast mode only runs through Spikonado's gateway; other providers never offer it.
-	const selectedFastModeAvailable =
-		selectedCompletionProvider === 'spikonado' && selectedCatalogModel?.supportsFastMode === true;
-
-	const selectedModelSettingsSummary = [
-		selectedCatalogModel && showsReasoningControl(selectedCatalogModel)
-			? reasoningEffortLabel(selectedReasoningEffort)
-			: null,
-		selectedFastModeAvailable && fastMode ? 'Fast' : null
-	]
-		.filter(Boolean)
-		.join(' · ');
-
-	const modelOptionsWithTriggerLabel = modelOptions.map((option) => ({
-		...option,
-		triggerLabel:
-			option.id === selectedModel && selectedModelSettingsSummary
-				? `${option.label} · ${selectedModelSettingsSummary}`
-				: option.label
-	}));
 
 	const canSubmitWithModel =
 		(selectedCompletionProvider === 'spikonado' ||
@@ -582,12 +559,12 @@ export function PromptComposerView({
 		onSelectedQuestionOptionIdChange?.(selectedQuestionOptionId === optionId ? null : optionId);
 	}
 
-	function handleModelChange(modelId: CatalogModelId) {
+	function handleModelChange(modelId: CatalogModelId, effort: string) {
 		if (!modelCatalog) return;
 		onSelectedModelChange?.(modelId);
 		const model = getCatalogModel(modelCatalog, modelId);
 
-		if (model) onSelectedReasoningEffortChange?.(model.defaultReasoningEffort);
+		if (model) onSelectedReasoningEffortChange?.(effort);
 	}
 
 	function handleProviderChange(provider: CompletionProvider) {
@@ -920,32 +897,19 @@ export function PromptComposerView({
 
 										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
-										<OptionSelector
-											value={selectedModel}
-											options={modelOptionsWithTriggerLabel}
-											ariaLabel="Select model"
-											menuTitle="Model"
-											disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
-											searchable
-											closeOnSelect={false}
-											onValueChange={handleModelChange}
-											className="z-20 min-w-0"
-											triggerClassName="h-9 max-w-full border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
-											optionIcon={(option) => (
-												<ProviderLogo provider={option.provider} className="size-4 shrink-0" />
-											)}
-											menuFooter={
-												selectedCatalogModel ? (
-													<ModelSettings
-														model={selectedCatalogModel}
-														reasoningEffort={selectedReasoningEffort}
-														fastMode={fastMode}
-														fastModeAvailable={selectedFastModeAvailable}
-														onReasoningEffortChange={onSelectedReasoningEffortChange}
-														onFastModeChange={onFastModeChange}
-													/>
-												) : null
+										<ModelSelector
+											modelId={selectedModel}
+											models={
+												modelCatalog?.models.filter((model) =>
+													modelOptions.some((option) => option.id === model.id)
+												) ?? []
 											}
+											reasoningEffort={selectedReasoningEffort}
+											fastMode={fastMode}
+											allowsFastMode={selectedCompletionProvider === 'spikonado'}
+											disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
+											onSelect={handleModelChange}
+											onFastModeChange={onFastModeChange}
 										/>
 
 										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
