@@ -24,9 +24,11 @@ export default function ModelReasoningOptions({
 			onKeyDown={(event) => {
 				if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 					event.preventDefault();
+
 					const buttons = Array.from(
 						event.currentTarget.parentElement?.querySelectorAll('button') ?? []
 					);
+
 					const index = buttons.indexOf(event.currentTarget);
 					buttons[
 						(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length

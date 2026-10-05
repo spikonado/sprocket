@@ -43,9 +43,11 @@ export default function ModelSelector({
 	const touchPreviewRef = useRef(false);
 	const selectedModel = models.find((model) => model.id === modelId);
 	const fastModeAvailable = allowsFastMode && selectedModel?.supportsFastMode;
+
 	const filteredModels = models.filter((model) =>
 		model.label.toLocaleLowerCase().includes(searchQuery.trim().toLocaleLowerCase())
 	);
+
 	const previewModel = filteredModels.find((model) => model.id === previewId);
 
 	const summary = [
@@ -94,12 +96,14 @@ export default function ModelSelector({
 
 			if (!row || !options || !defaultOption) return;
 			const menuTop = trigger.top - 12 - menu.height;
+
 			const alignedTop =
 				row.top -
 				menu.top +
 				row.height / 2 -
 				defaultOption.offsetTop -
 				defaultOption.offsetHeight / 2;
+
 			setReasoningTop(
 				Math.max(
 					8 - menuTop,
