@@ -13,15 +13,18 @@ import {
 } from './test.setup';
 
 describe('command display inputs', () => {
-	it('keeps bounded labels without copying stdin or execution options', () => {
+	it.each(['', 'a'])('keeps bounded labels at whole code points after prefix "%s"', (prefix) => {
 		const input = commandToolDisplayInput('exec_cmd', {
-			cmd: '😀'.repeat(10_000),
+			cmd: `${prefix}${'😀'.repeat(10_000)}`,
 			workdir: '/repo',
 			chars: 'x'.repeat(500_000),
 			yieldTimeMs: 0
 		});
 
-		expect(input).toEqual({ cmd: `${'😀'.repeat(4096)}…`, workdir: '/repo' });
+		expect(input).toEqual({
+			cmd: `${prefix}${'😀'.repeat(prefix ? 4095 : 4096)}…`,
+			workdir: '/repo'
+		});
 		expect(commandToolDisplayInput('poll_cmd', { sessionId: 'x'.repeat(500_000) })).toEqual({});
 	});
 });

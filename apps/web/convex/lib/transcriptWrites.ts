@@ -54,7 +54,8 @@ export function commandToolDisplayInput(name: string, input: JsonValue): JsonObj
 		const value = input[key];
 
 		if (isJsonString(value)) {
-			display[key] = value.length > 8192 ? `${value.slice(0, 8192)}…` : value;
+			display[key] =
+				value.length > 8192 ? `${value.slice(0, 8192).replace(/[\uD800-\uDBFF]$/u, '')}…` : value;
 		}
 	}
 
