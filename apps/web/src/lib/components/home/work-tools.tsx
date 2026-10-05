@@ -7,6 +7,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
@@ -25,12 +26,18 @@ type TooltipAnchor = { top: number; left: number; maxHeight: number };
 
 const TOOLTIP_GAP = 8;
 
-function placeTooltip(row: HTMLElement, tooltip?: HTMLElement | null): TooltipAnchor {
+function placeTooltip(row: HTMLElement, tooltip?: HTMLElement | null): TooltipAnchor | null {
 	const rowRect = row.getBoundingClientRect();
-	const tooltipHeight = tooltip?.offsetHeight ?? 0;
+	const viewport = row.closest('[data-conversation-viewport]')?.getBoundingClientRect();
+	const visibleTop = Math.max(0, viewport?.top ?? 0);
+	const visibleBottom = Math.min(window.innerHeight, viewport?.bottom ?? window.innerHeight);
+
+	if (rowRect.bottom < visibleTop || rowRect.top > visibleBottom) return null;
+
+	const tooltipHeight = tooltip?.scrollHeight ?? 0;
 	const tooltipWidth = tooltip?.offsetWidth ?? 0;
-	const spaceBelow = window.innerHeight - rowRect.bottom - TOOLTIP_GAP;
-	const spaceAbove = rowRect.top - TOOLTIP_GAP;
+	const spaceBelow = window.innerHeight - rowRect.bottom - TOOLTIP_GAP * 2;
+	const spaceAbove = rowRect.top - TOOLTIP_GAP * 2;
 	const placeAbove = tooltipHeight > spaceBelow && spaceAbove > spaceBelow;
 	const maxHeight = Math.max(placeAbove ? spaceAbove : spaceBelow, 0);
 	const height = Math.min(tooltipHeight || maxHeight, maxHeight);
@@ -54,8 +61,19 @@ function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNod
 	const tooltipRef = useRef<HTMLParagraphElement>(null);
 	const [hovered, setHovered] = useState(false);
 	const [focused, setFocused] = useState(false);
+	const [dismissed, setDismissed] = useState(false);
 	const [anchor, setAnchor] = useState<TooltipAnchor | null>(null);
-	const open = hovered || focused;
+	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const open = (hovered || focused) && !dismissed;
+
+	function updateAnchor() {
+		const row = rowRef.current;
+
+		if (!row) return;
+
+		const next = placeTooltip(row, tooltipRef.current);
+		setAnchor((current) => (current && next && sameAnchor(current, next) ? current : next));
+	}
 
 	useLayoutEffect(() => {
 		if (!open) {
@@ -64,36 +82,80 @@ function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNod
 			return;
 		}
 
-		const row = rowRef.current;
-
-		if (!row) return;
-
-		const next = placeTooltip(row, tooltipRef.current);
-		setAnchor((current) => (current && sameAnchor(current, next) ? current : next));
+		updateAnchor();
 	}, [open, tooltip]);
 
 	useEffect(() => {
 		if (!open) return;
 
-		function onScroll() {
-			const row = rowRef.current;
+		function onScroll(event: Event) {
+			if (event.target === tooltipRef.current) return;
 
-			if (!row) return;
-
-			const next = placeTooltip(row, tooltipRef.current);
-			setAnchor((current) => (current && sameAnchor(current, next) ? current : next));
+			updateAnchor();
 		}
 
-		window.addEventListener('scroll', onScroll, true);
+		function onEscape(event: globalThis.KeyboardEvent) {
+			if (event.key === 'Escape') setDismissed(true);
+		}
 
-		return () => window.removeEventListener('scroll', onScroll, true);
+		const observer = globalThis.ResizeObserver ? new ResizeObserver(updateAnchor) : null;
+
+		if (rowRef.current) observer?.observe(rowRef.current);
+
+		if (tooltipRef.current) observer?.observe(tooltipRef.current);
+
+		window.addEventListener('scroll', onScroll, true);
+		window.addEventListener('resize', updateAnchor);
+		window.addEventListener('keydown', onEscape);
+
+		return () => {
+			window.removeEventListener('scroll', onScroll, true);
+			window.removeEventListener('resize', updateAnchor);
+			window.removeEventListener('keydown', onEscape);
+			observer?.disconnect();
+		};
 	}, [open]);
 
-	function onKeyDown(event: KeyboardEvent<HTMLElement>) {
-		if (event.key !== 'Escape' || !open) return;
+	useEffect(() => clearCloseTimer, []);
 
-		setHovered(false);
-		event.currentTarget.blur();
+	function clearCloseTimer() {
+		if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+		closeTimer.current = null;
+	}
+
+	function onMouseEnter() {
+		clearCloseTimer();
+
+		if (!hovered && !focused) setDismissed(false);
+		setHovered(true);
+	}
+
+	function onMouseLeave() {
+		clearCloseTimer();
+		closeTimer.current = setTimeout(() => setHovered(false), 100);
+	}
+
+	function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+		if (!open) return;
+
+		const log = tooltipRef.current;
+
+		if (!anchor || !log || log.scrollHeight <= log.clientHeight) return;
+
+		const offset = new Map([
+			['ArrowDown', 40],
+			['ArrowUp', -40],
+			['PageDown', log.clientHeight],
+			['PageUp', -log.clientHeight],
+			['Home', -log.scrollHeight],
+			['End', log.scrollHeight]
+		]).get(event.key);
+
+		if (offset === undefined) return;
+
+		event.preventDefault();
+		event.stopPropagation();
+		log.scrollTop += offset;
 	}
 
 	return (
@@ -102,31 +164,39 @@ function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNod
 			data-tool-row
 			data-work-detail
 			tabIndex={0}
-			aria-describedby={open ? tooltipId : undefined}
+			aria-describedby={open && anchor ? tooltipId : undefined}
 			className="focus-visible:ring-ring/60 relative flex min-w-0 items-start gap-1.5 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
-			onMouseEnter={() => setHovered(true)}
-			onMouseLeave={() => setHovered(false)}
-			onFocus={() => setFocused(true)}
+			onMouseEnter={onMouseEnter}
+			onMouseLeave={onMouseLeave}
+			onFocus={() => {
+				setFocused(true);
+				setDismissed(false);
+			}}
 			onBlur={() => setFocused(false)}
 			onKeyDown={onKeyDown}
 		>
 			{children}
-			{open && tooltip ? (
-				<p
-					ref={tooltipRef}
-					id={tooltipId}
-					role="tooltip"
-					className="bg-tooltip text-tooltip-foreground ring-border pointer-events-none fixed z-100 max-w-md overflow-hidden rounded-md px-2.5 py-1.5 text-[12px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap shadow-lg ring-1"
-					style={{
-						top: anchor?.top ?? 0,
-						left: anchor?.left ?? 0,
-						maxHeight: anchor?.maxHeight,
-						visibility: anchor ? 'visible' : 'hidden'
-					}}
-				>
-					{tooltip}
-				</p>
-			) : null}
+			{open && tooltip
+				? createPortal(
+						<p
+							ref={tooltipRef}
+							id={tooltipId}
+							role="tooltip"
+							className="bg-tooltip text-tooltip-foreground ring-border fixed z-100 w-max max-w-[min(28rem,calc(100vw-16px))] overflow-y-auto overscroll-contain rounded-md px-2.5 py-1.5 text-[12px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap shadow-lg ring-1"
+							onMouseEnter={onMouseEnter}
+							onMouseLeave={onMouseLeave}
+							style={{
+								top: anchor?.top ?? 0,
+								left: anchor?.left ?? 0,
+								maxHeight: anchor?.maxHeight,
+								visibility: anchor ? 'visible' : 'hidden'
+							}}
+						>
+							{tooltip}
+						</p>,
+						document.body
+					)
+				: null}
 		</div>
 	);
 }

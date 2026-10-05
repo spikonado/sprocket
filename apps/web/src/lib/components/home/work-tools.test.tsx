@@ -5,6 +5,7 @@ import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
@@ -63,22 +64,136 @@ describe('tool rows', () => {
 		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
 	});
 
-	it('places the tooltip above a row when there is not enough room below', () => {
-		const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
-		const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+	it('hides a focused log outside the conversation and restores it when its row returns', () => {
+		let rowTop = 200;
 
-		Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
-			configurable: true,
-			get() {
-				return this.getAttribute('role') === 'tooltip' ? 80 : 24;
-			}
+		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.hasAttribute('data-conversation-viewport')
+				? new DOMRect(0, 100, 500, 300)
+				: new DOMRect(10, rowTop, 300, 24);
 		});
-		Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
-			configurable: true,
-			get() {
-				return 200;
-			}
+
+		const view = render(
+			<div data-conversation-viewport>
+				<WorkTools
+					tools={[
+						{
+							type: 'tool',
+							callId: 'cmd',
+							name: 'exec_command',
+							input: { cmd: 'sleep 10' },
+							output: {}
+						}
+					]}
+					inProgress={false}
+					commands={new Map()}
+				/>
+			</div>
+		);
+
+		const row = view.container.querySelector<HTMLElement>('[data-tool-row]')!;
+
+		act(() => row.focus());
+		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
+
+		rowTop = 50;
+		fireEvent.scroll(view.container.firstElementChild!);
+		expect(view.queryByRole('tooltip')).toBeNull();
+		expect(document.activeElement).toBe(row);
+
+		rowTop = 250;
+		fireEvent.scroll(view.container.firstElementChild!);
+		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
+
+		fireEvent.keyDown(row, { key: 'Escape' });
+		expect(document.activeElement).toBe(row);
+		expect(view.queryByRole('tooltip')).toBeNull();
+		fireEvent.mouseEnter(row);
+		expect(view.queryByRole('tooltip')).toBeNull();
+		fireEvent.scroll(window);
+		expect(view.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('keeps the log open while the pointer moves from the row to the tooltip', () => {
+		vi.useFakeTimers();
+
+		const view = render(
+			<WorkTools
+				tools={[
+					{
+						type: 'tool',
+						callId: 'cmd',
+						name: 'exec_command',
+						input: { cmd: 'sleep 10' },
+						output: {}
+					}
+				]}
+				inProgress={false}
+				commands={new Map()}
+			/>
+		);
+
+		const row = view.container.querySelector('[data-tool-row]')!;
+
+		fireEvent.mouseEnter(row);
+		const tooltip = view.getByRole('tooltip');
+		fireEvent.mouseLeave(row);
+		fireEvent.mouseEnter(tooltip);
+		act(() => vi.advanceTimersByTime(150));
+		expect(view.getByRole('tooltip')).toBe(tooltip);
+
+		fireEvent.keyDown(window, { key: 'Escape' });
+		expect(view.queryByRole('tooltip')).toBeNull();
+		fireEvent.mouseLeave(row);
+		act(() => vi.advanceTimersByTime(150));
+		fireEvent.mouseEnter(row);
+		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
+
+		fireEvent.mouseLeave(view.getByRole('tooltip'));
+		act(() => vi.advanceTimersByTime(150));
+		expect(view.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('lets a keyboard user scroll a long log without scrolling the conversation', () => {
+		const view = render(
+			<WorkTools
+				tools={[
+					{
+						type: 'tool',
+						callId: 'cmd',
+						name: 'exec_command',
+						input: { cmd: 'echo long command' },
+						output: {}
+					}
+				]}
+				inProgress={false}
+				commands={new Map()}
+			/>
+		);
+
+		const row = view.container.querySelector<HTMLElement>('[data-tool-row]')!;
+
+		act(() => row.focus());
+		const tooltip = view.getByRole('tooltip');
+		vi.spyOn(tooltip, 'scrollHeight', 'get').mockReturnValue(1000);
+		vi.spyOn(tooltip, 'clientHeight', 'get').mockReturnValue(100);
+
+		fireEvent.keyDown(row, { key: 'PageDown' });
+		expect(tooltip.scrollTop).toBe(100);
+		fireEvent.keyDown(row, { key: 'ArrowUp' });
+		expect(tooltip.scrollTop).toBe(60);
+		expect(document.activeElement).toBe(row);
+	});
+
+	it('places the tooltip above a row when there is not enough room below', () => {
+		vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.getAttribute('role') === 'tooltip' ? 80 : 24;
 		});
+		vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200);
 		vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(760);
 		vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(800);
 		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
@@ -91,23 +206,17 @@ describe('tool rows', () => {
 			return new DOMRect(10, 700, 300, 24);
 		});
 
-		try {
-			const tool: AssistantTimelineTool = {
-				type: 'tool',
-				callId: 'cmd',
-				name: 'exec_command',
-				input: { cmd: 'sleep 10' },
-				output: {}
-			};
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'cmd',
+			name: 'exec_command',
+			input: { cmd: 'sleep 10' },
+			output: {}
+		};
 
-			const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
-			fireEvent.mouseEnter(view.container.querySelector('[data-tool-row]')!);
-			expect(view.getByRole('tooltip').style.top).toBe('612px');
-		} finally {
-			if (height) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', height);
-
-			if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width);
-		}
+		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		fireEvent.mouseEnter(view.container.querySelector('[data-tool-row]')!);
+		expect(view.getByRole('tooltip').style.top).toBe('612px');
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
