@@ -482,7 +482,7 @@ function childThread(id: string, title: string, status: ThreadStatus = 'complete
 	};
 }
 
-it('shows descendant activity inside the thread button with a separate expansion control', async () => {
+it('expands subagents from the status text without selecting the thread', async () => {
 	treeSummaries.set('thread', { descendantCount: 5, anyActive: true, descendantsActive: true });
 	const input = props([thread()]);
 	renderView(<Harness {...input} />);
@@ -492,7 +492,9 @@ it('shows descendant activity inside the thread button with a separate expansion
 
 	const main = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
 
-	expect(main.querySelector('.inbox-row-subagents')?.textContent).toBe('5 subagents · Working');
+	const badge = expansion.querySelector<HTMLElement>('.inbox-row-subagents')!;
+
+	expect(badge.textContent).toBe('5 subagents · Working');
 	expect(expansion.closest('.inbox-row')).toBe(main.closest('.inbox-row'));
 	expect(main.contains(expansion)).toBe(false);
 	expect(expansion.getAttribute('aria-expanded')).toBe('false');
@@ -502,9 +504,15 @@ it('shows descendant activity inside the thread button with a separate expansion
 	expect(input.resolveChildren).not.toHaveBeenCalled();
 
 	act(() => {
-		expansion.click();
+		badge.click();
 	});
 
+	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+	vi.mocked(input.expansion.expand).mockClear();
+	act(() => {
+		fireEvent.click(expansion.querySelector('.lucide-chevron-right')!);
+	});
 	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
 	expect(input.onSelect).not.toHaveBeenCalled();
 	act(() => {
@@ -601,7 +609,7 @@ it('collapses an expanded branch through the expansion control', async () => {
 	expect(expansion.querySelector('.lucide-chevron-down')).toBeTruthy();
 
 	act(() => {
-		expansion.click();
+		expansion.querySelector<HTMLElement>('.inbox-row-subagents')!.click();
 	});
 
 	expect(input.expansion.collapse).toHaveBeenCalledWith('thread');
