@@ -175,7 +175,9 @@ export class MessageQueue {
 			const started = await context.api.runAgent(head.request);
 			this.#store.update((messages) => messages.filter((message) => message.id !== head.id));
 
-			this.#awaitingRuns.set(threadId, lifecycle.run?.runId ?? null);
+			if (lifecycle.run?.runId !== started.runId) {
+				this.#awaitingRuns.set(threadId, lifecycle.run?.runId ?? null);
+			}
 
 			if (this.#context?.userId === context.userId) context.onStarted(started);
 		} catch (error) {

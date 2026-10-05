@@ -163,6 +163,22 @@ describe('MessageQueue', () => {
 		expect(runAgent.mock.calls[2]?.[0].submissionId).toBe('second');
 	});
 
+	it('continues after retrying a launch whose acknowledgement was lost but whose run already finished', async () => {
+		const { queue, runAgent, update } = fixture();
+		runAgent.mockRejectedValueOnce(new Error('Response lost'));
+		queue.enqueue(request('first'), []);
+		queue.enqueue(request('second'), []);
+		await update('completed');
+		await update('completed', 'run-first');
+		queue.retry('first');
+		await Promise.resolve();
+		expect(runAgent.mock.calls.map(([args]) => args.submissionId)).toEqual([
+			'first',
+			'first',
+			'second'
+		]);
+	});
+
 	it.each(['failed', 'cancelled'] as const)('dispatches after a run becomes %s', async (phase) => {
 		const { queue, runAgent, update } = fixture();
 		queue.enqueue(request('first'), []);
