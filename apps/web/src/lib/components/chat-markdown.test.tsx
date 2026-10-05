@@ -288,7 +288,7 @@ describe('images', () => {
 			window.location.href
 		);
 
-		expect(url.searchParams.get('workspacePath')).toBeNull();
+		expect(url.searchParams.get('workspacePath')).toBe('/workspace');
 		expect(url.searchParams.get('path')).toBe(decodeURIComponent(path.replace(/^\.\//, '')));
 		expect(url.searchParams.get('userId')).toBe('user');
 		expect(url.searchParams.get('threadId')).toBe('first-thread');

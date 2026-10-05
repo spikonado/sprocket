@@ -62,10 +62,11 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 
 		expect(imageUrl().searchParams.get('userId')).toBe('image-user');
 		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
-		expect(imageUrl().searchParams.get('workspacePath')).toBeNull();
+		expect(imageUrl().searchParams.get('workspacePath')).toBe('/workspace');
 		expect(imageUrl().searchParams.get('path')).toBe('parse_file/screenshot.png');
 		rerender(<ThreadTranscript {...props} project={null} />);
 		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
+		expect(imageUrl().searchParams.get('workspacePath')).toBeNull();
 	}
 );
 

@@ -46,7 +46,9 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 	if (transcript) {
 		query.set('userId', transcript.userId);
 		query.set('threadId', transcript.threadId);
-	} else if (scope?.workspacePath) {
+	}
+
+	if (scope?.workspacePath) {
 		query.set('workspacePath', scope.workspacePath);
 	}
 

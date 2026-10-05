@@ -119,7 +119,10 @@ async fn local_image(
                 .await
                 .map_err(ApiError::unauthorized)?;
             validate_thread_image_path(thread_id, &payload.path).map_err(ApiError::bad_request)?;
-            LocalImageRoot::Thread(state.transcript.thread_dir(user_id, thread_id))
+            LocalImageRoot::Thread(
+                state.transcript.thread_dir(user_id, thread_id),
+                payload.workspace_path,
+            )
         }
         _ => {
             return Err(ApiError::bad_request(anyhow::anyhow!(
@@ -185,7 +188,7 @@ struct LocalImage {
 
 enum LocalImageRoot {
     Workspace(Option<PathBuf>),
-    Thread(PathBuf),
+    Thread(PathBuf, Option<PathBuf>),
 }
 
 fn validate_thread_image_path(thread_id: &str, image_path: &str) -> anyhow::Result<()> {
@@ -250,18 +253,26 @@ fn open_local_image(
                     .join(image_path)
             }
         }
-        LocalImageRoot::Thread(thread_dir) => {
+        LocalImageRoot::Thread(thread_dir, workspace_path) => {
+            let resolved_image = match thread_dir.join(image_path).canonicalize() {
+                Ok(path) => path,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound && workspace_path.is_some() =>
+                {
+                    return open_local_image(
+                        LocalImageRoot::Workspace(workspace_path),
+                        image_path.to_string_lossy().into_owned(),
+                    );
+                }
+                Err(error) => return Err(error).context("failed to resolve thread image"),
+            };
             let thread_dir = thread_dir
                 .canonicalize()
                 .context("failed to resolve transcript directory")?;
-            let image_path = thread_dir
-                .join(image_path)
-                .canonicalize()
-                .context("failed to resolve thread image")?;
-            if !image_path.starts_with(&thread_dir) {
+            if !resolved_image.starts_with(&thread_dir) {
                 anyhow::bail!("thread image must remain inside its transcript directory");
             }
-            image_path
+            resolved_image
         }
     };
     if !image_path.is_absolute() {
@@ -787,7 +798,7 @@ mod tests {
             let missing = app
                 .clone()
                 .oneshot(image_request_with_options(
-                    Some(workspace.path()),
+                    None,
                     path,
                     Some(&token),
                     &[
@@ -804,6 +815,56 @@ mod tests {
                 assert_eq!(body.as_ref(), b"null");
             } else {
                 assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn local_image_falls_back_to_workspace_when_the_thread_cache_file_is_missing() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+        let thread_dir = transcript.thread_dir("test-user", "thread-1");
+        let path = "parse_file/board.png";
+        let contents = b"\x89PNG\r\n\x1a\nworkspace";
+        std::fs::create_dir(workspace.path().join("parse_file")).unwrap();
+        std::fs::write(workspace.path().join(path), contents).unwrap();
+        let (app, token) = image_test_app(data.path()).await;
+
+        for cache_directory_exists in [false, true] {
+            if cache_directory_exists {
+                std::fs::create_dir_all(thread_dir.join("parse_file")).unwrap();
+            }
+            for revision_only in ["false", "true"] {
+                let response = app
+                    .clone()
+                    .oneshot(image_request_with_options(
+                        Some(workspace.path()),
+                        path,
+                        Some(&token),
+                        &[
+                            ("userId", "test-user"),
+                            ("threadId", "thread-1"),
+                            ("revisionOnly", revision_only),
+                        ],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = to_bytes(response.into_body(), 1024).await.unwrap();
+                if revision_only == "true" {
+                    let revision = serde_json::from_slice::<String>(&body).unwrap();
+                    let metadata = std::fs::metadata(workspace.path().join(path)).unwrap();
+                    let nanos = metadata
+                        .modified()
+                        .unwrap()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos();
+                    assert_eq!(revision, format!("{}-{nanos}", contents.len()));
+                } else {
+                    assert_eq!(body.as_ref(), contents);
+                }
             }
         }
     }
