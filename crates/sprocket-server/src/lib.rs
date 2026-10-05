@@ -1,3 +1,4 @@
+mod agent_launch;
 mod artifact_watch;
 mod auth;
 mod chatgpt_credentials;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use sprocket_agent::subagents::{SharedSubagentLauncher, SubagentLaunchRequest, SubagentLauncher};
 
 use crate::AppState;
-use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
+use crate::agent_launch::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
 
 struct NativeSubagentLauncher {
     state: AppState,

@@ -11,7 +11,7 @@ use tokio::time::{MissedTickBehavior, interval, timeout};
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_recovery};
+use crate::agent_launch::{RunAgentApiRequest, WorkspaceAccess, launch_recovery};
 
 const MAX_RECOVERIES: u8 = 3;
 const MAX_RECORDS: usize = 256;
