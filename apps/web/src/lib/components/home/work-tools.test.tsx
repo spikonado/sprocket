@@ -187,23 +187,23 @@ describe('tool rows', () => {
 		expect(document.activeElement).toBe(row);
 	});
 
-	it('places the tooltip above a row when there is not enough room below', () => {
+	it('places a long tooltip above its row and keeps it inside a smaller conversation viewport', () => {
 		vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
 			this: HTMLElement
 		) {
-			return this.getAttribute('role') === 'tooltip' ? 80 : 24;
+			return this.getAttribute('role') === 'tooltip' ? 600 : 24;
 		});
-		vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200);
+		vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(500);
 		vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(760);
 		vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(800);
 		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 			this: HTMLElement
 		) {
-			if (this.getAttribute('role') === 'tooltip') {
-				return new DOMRect(10, Number.parseFloat(this.style.top) || 0, 200, 80);
+			if (this.hasAttribute('data-conversation-viewport')) {
+				return new DOMRect(100, 100, 300, 400);
 			}
 
-			return new DOMRect(10, 700, 300, 24);
+			return new DOMRect(110, 440, 280, 24);
 		});
 
 		const tool: AssistantTimelineTool = {
@@ -214,9 +214,19 @@ describe('tool rows', () => {
 			output: {}
 		};
 
-		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		const view = render(
+			<div data-conversation-viewport>
+				<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />
+			</div>
+		);
+
 		fireEvent.mouseEnter(view.container.querySelector('[data-tool-row]')!);
-		expect(view.getByRole('tooltip').style.top).toBe('612px');
+		const tooltip = view.getByRole('tooltip');
+
+		expect(tooltip.style.top).toBe('108px');
+		expect(tooltip.style.left).toBe('108px');
+		expect(tooltip.style.maxHeight).toBe('324px');
+		expect(tooltip.style.maxWidth).toBe('284px');
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {

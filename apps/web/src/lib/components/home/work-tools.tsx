@@ -22,7 +22,7 @@ type Props = {
 	commands: ReadonlyMap<string, string>;
 };
 
-type TooltipAnchor = { top: number; left: number; maxHeight: number };
+type TooltipAnchor = { top: number; left: number; maxHeight: number; maxWidth: number };
 
 const TOOLTIP_GAP = 8;
 
@@ -31,28 +31,38 @@ function placeTooltip(row: HTMLElement, tooltip?: HTMLElement | null): TooltipAn
 	const viewport = row.closest('[data-conversation-viewport]')?.getBoundingClientRect();
 	const visibleTop = Math.max(0, viewport?.top ?? 0);
 	const visibleBottom = Math.min(window.innerHeight, viewport?.bottom ?? window.innerHeight);
+	const visibleLeft = Math.max(0, viewport?.left ?? 0);
+	const visibleRight = Math.min(window.innerWidth, viewport?.right ?? window.innerWidth);
 
 	if (rowRect.bottom < visibleTop || rowRect.top > visibleBottom) return null;
 
 	const tooltipHeight = tooltip?.scrollHeight ?? 0;
-	const tooltipWidth = tooltip?.offsetWidth ?? 0;
-	const spaceBelow = window.innerHeight - rowRect.bottom - TOOLTIP_GAP * 2;
-	const spaceAbove = rowRect.top - TOOLTIP_GAP * 2;
+	const maxWidth = Math.max(0, Math.min(448, visibleRight - visibleLeft - TOOLTIP_GAP * 2));
+	const tooltipWidth = Math.min(tooltip?.offsetWidth ?? 0, maxWidth);
+	const spaceBelow = visibleBottom - rowRect.bottom - TOOLTIP_GAP * 2;
+	const spaceAbove = rowRect.top - visibleTop - TOOLTIP_GAP * 2;
 	const placeAbove = tooltipHeight > spaceBelow && spaceAbove > spaceBelow;
 	const maxHeight = Math.max(placeAbove ? spaceAbove : spaceBelow, 0);
 	const height = Math.min(tooltipHeight || maxHeight, maxHeight);
 	const top = placeAbove ? rowRect.top - height - TOOLTIP_GAP : rowRect.bottom + TOOLTIP_GAP;
-	const maxLeft = window.innerWidth - (tooltipWidth || 0) - TOOLTIP_GAP;
+	const maxLeft = visibleRight - tooltipWidth - TOOLTIP_GAP;
+	const minLeft = visibleLeft + TOOLTIP_GAP;
 
 	return {
-		top: Math.max(TOOLTIP_GAP, top),
-		left: Math.min(Math.max(rowRect.left, TOOLTIP_GAP), Math.max(TOOLTIP_GAP, maxLeft)),
-		maxHeight
+		top: Math.max(visibleTop + TOOLTIP_GAP, top),
+		left: Math.min(Math.max(rowRect.left, minLeft), Math.max(minLeft, maxLeft)),
+		maxHeight,
+		maxWidth
 	};
 }
 
 function sameAnchor(left: TooltipAnchor, right: TooltipAnchor) {
-	return left.top === right.top && left.left === right.left && left.maxHeight === right.maxHeight;
+	return (
+		left.top === right.top &&
+		left.left === right.left &&
+		left.maxHeight === right.maxHeight &&
+		left.maxWidth === right.maxWidth
+	);
 }
 
 function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNode }) {
@@ -182,13 +192,14 @@ function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNod
 							ref={tooltipRef}
 							id={tooltipId}
 							role="tooltip"
-							className="bg-tooltip text-tooltip-foreground ring-border fixed z-100 w-max max-w-[min(28rem,calc(100vw-16px))] overflow-y-auto overscroll-contain rounded-md px-2.5 py-1.5 text-[12px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap shadow-lg ring-1"
+							className="bg-tooltip text-tooltip-foreground ring-border fixed z-100 w-max overflow-y-auto overscroll-contain rounded-md px-2.5 py-1.5 text-[12px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap shadow-lg ring-1"
 							onMouseEnter={onMouseEnter}
 							onMouseLeave={onMouseLeave}
 							style={{
 								top: anchor?.top ?? 0,
 								left: anchor?.left ?? 0,
 								maxHeight: anchor?.maxHeight,
+								maxWidth: anchor?.maxWidth,
 								visibility: anchor ? 'visible' : 'hidden'
 							}}
 						>
