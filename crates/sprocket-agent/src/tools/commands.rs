@@ -95,7 +95,7 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_workdir")]
     pub(crate) workdir: String,
-    /// Shell binary to launch; resolved to the user's shell when omitted.
+    /// Shell binary to launch; resolved to an available shell when omitted.
     #[serde(
         default = "default_command_shell",
         skip_serializing_if = "is_default_shell"
@@ -301,7 +301,7 @@ mod tests {
         let shell = &schema["properties"]["shell"];
         assert_eq!(
             shell["description"],
-            "Shell binary to launch; resolved to the user's shell when omitted."
+            "Shell binary to launch; resolved to an available shell when omitted."
         );
         assert!(shell.get("default").is_none());
     }

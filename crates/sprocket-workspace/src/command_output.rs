@@ -112,6 +112,17 @@ impl CapturedOutput {
         })
     }
 
+    pub(crate) async fn discard(&mut self) -> Result<()> {
+        self.log.take();
+        self.events.take();
+        let directory = Path::new(&self.log_path)
+            .parent()
+            .expect("log has a directory");
+        tokio::fs::remove_dir_all(directory)
+            .await
+            .context("failed to remove unstarted command logs")
+    }
+
     pub(crate) async fn append(&mut self, channel: OutputChannel, bytes: &[u8]) -> Result<()> {
         let event = OutputEvent {
             sequence: self.sequence,
