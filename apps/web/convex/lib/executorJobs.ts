@@ -2,18 +2,27 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
-import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	vMandateChargeResult,
+	type ExecutorJobResult
+} from '@convex/lib/validators';
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
+import type { Infer } from 'convex/values';
+
+function isMandateChargeResult(
+	result: ExecutorJobResult
+): result is Infer<typeof vMandateChargeResult> {
+	return (
+		result !== null && !Array.isArray(result) && 'chargeId' in result && 'transactionId' in result
+	);
+}
 
 export function persistExecutorJobResult(
 	kind: string,
 	result: ExecutorJobResult
 ): ExecutorJobResult {
-	if (kind !== 'mandate_charge') return result;
-
-	if (typeof result !== 'object' || result === null || Array.isArray(result)) return result;
-
-	if (!('chargeId' in result) || !('transactionId' in result)) return result;
+	if (kind !== 'mandate_charge' || !isMandateChargeResult(result)) return result;
 
 	return {
 		chargeId: result.chargeId,

@@ -700,6 +700,7 @@ describe('executor', () => {
 
 	it('stores mandate_charge handles without payment credentials', async () => {
 		const t = initConvexTest();
+
 		const { asUser, runId, jobId, claimId, executionSecret, subject } = await seedRunWithJob(t, {
 			executionSecret: 'mandate-charge-secret'
 		});
@@ -781,6 +782,7 @@ describe('executor', () => {
 			threadId: run.threadId,
 			numbers: [0, 1, 2, 3, 4]
 		});
+
 		const chargePart = parts.parts.find((part) => part.tool?.name === 'mandate_charge');
 
 		expect(chargePart?.tool?.output).toEqual({ chargeId, transactionId: 'txn_live' });
