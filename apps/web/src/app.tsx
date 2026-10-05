@@ -71,6 +71,7 @@ import {
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
+import { useMessageQueue } from '$lib/home/use-message-queue';
 import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -986,8 +987,31 @@ export default function App({
 
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 
+	const { queue: messageQueue, messages: queuedMessages } = useMessageQueue({
+		client: convexClient,
+		desktopApi,
+		userId: authReady ? signedInUserId : null,
+		onStarted: (started) => {
+			if (currentThreadId === started.threadId && runState?.runId !== started.runId) {
+				setPendingAgentLaunches((launches) =>
+					beginPendingAgentLaunch(launches, started.threadId, {
+						launchId: ++nextAgentLaunchId.current,
+						previousRunId: runState?.runId ?? null
+					})
+				);
+			}
+
+			void refreshDesktopProjectAttachments().catch(() => {});
+		}
+	});
+
+	const currentQueuedMessages = queuedMessages.filter(
+		(message) =>
+			message.request.threadId === currentThreadId && message.request.userId === signedInUserId
+	);
+
 	const latestRunResumeKind =
-		hasPendingAgentLaunch || isRunInProgress
+		hasPendingAgentLaunch || isRunInProgress || currentQueuedMessages.length > 0
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.lastError);
 
@@ -1008,7 +1032,7 @@ export default function App({
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
 		!hasPendingAgentLaunch &&
-		((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
+		(isLatestRunReady || pendingAgentQuestion)
 	);
 
 	const recentProjectDirectories = useMemo(() => {
@@ -1668,6 +1692,36 @@ export default function App({
 		const submittedCompletionProvider = selectedCompletionProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
+
+		if (
+			selectedThreadId &&
+			!options?.answeredQuestionId &&
+			(isRunInProgress || currentQueuedMessages.length > 0)
+		) {
+			messageQueue.enqueue(
+				{
+					userId: submittedUserId,
+					threadId: selectedThreadId,
+					submissionId: crypto.randomUUID(),
+					executionSecret: crypto.randomUUID() + crypto.randomUUID(),
+					workspacePath,
+					prompt: submittedPrompt,
+					storageIds: submittedStorageIds,
+					selectedModel: submittedModel,
+					completionProvider: submittedCompletionProvider,
+					reasoningEffort: submittedReasoningEffort,
+					fastMode: submittedFastMode
+				},
+				submittedAttachments.map((attachment) => attachment.name)
+			);
+			setPrompt('');
+			composerAttachments.clear({ discard: false });
+			setComposerContinuationOfRunId(null);
+			setAutoSubmitComposerContinuation(false);
+			setCurrentError(null);
+
+			return;
+		}
 
 		const submittedContinuationOfRunId =
 			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
@@ -2796,6 +2850,16 @@ export default function App({
 										}
 										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
+										isQueuing={isRunInProgress || currentQueuedMessages.length > 0}
+										queuedMessages={currentQueuedMessages.map((message) => ({
+											id: message.id,
+											prompt: message.request.prompt,
+											attachmentNames: message.attachmentNames,
+											status: message.status,
+											error: message.error
+										}))}
+										onRemoveQueuedMessage={(id) => messageQueue.remove(id)}
+										onRetryQueuedMessage={(id) => messageQueue.retry(id)}
 										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}

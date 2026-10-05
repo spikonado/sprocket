@@ -1,4 +1,4 @@
-import { ArrowUp, CircleAlert, Paperclip, Square } from 'lucide-react';
+import { ArrowUp, CircleAlert, Paperclip, RotateCcw, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
@@ -42,6 +42,14 @@ export type PendingAgentQuestion = {
 	options: AgentQuestionOption[];
 };
 
+export type ComposerQueuedMessage = {
+	id: string;
+	prompt: string;
+	attachmentNames: string[];
+	status: 'queued' | 'sending' | 'failed';
+	error?: string;
+};
+
 export type PromptComposerProps = {
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
@@ -69,6 +77,11 @@ export type PromptComposerProps = {
 	isSubmitting: boolean;
 	isStarting: boolean;
 	isRunning: boolean;
+	/** Whether new sends are queued behind the current run; defaults to `isRunning`. */
+	isQueuing?: boolean;
+	queuedMessages?: ComposerQueuedMessage[];
+	onRemoveQueuedMessage?: (id: string) => void;
+	onRetryQueuedMessage?: (id: string) => void;
 	runStartedAt: number | null;
 	/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 	projectSkills?: {
@@ -131,6 +144,10 @@ export function PromptComposerView({
 	isSubmitting,
 	isStarting,
 	isRunning,
+	isQueuing,
+	queuedMessages = [],
+	onRemoveQueuedMessage,
+	onRetryQueuedMessage,
 	runStartedAt,
 	projectSkills = null,
 	projectPaths = null,
@@ -202,7 +219,9 @@ export function PromptComposerView({
 	const [trackedPendingQuestionId, setTrackedPendingQuestionId] = useState<string | null>(null);
 
 	const answeringQuestion = pendingQuestion != null;
-	const composerLocked = (isRunning && !answeringQuestion) || isSubmitting;
+	const queuingActive = (isQueuing ?? isRunning) && !answeringQuestion;
+	const composerLocked = isSubmitting;
+	const canAttachMore = !composerLocked && !answeringQuestion;
 
 	// Unknown policies count as metered, matching backend enforcement.
 	const selectedModelUnmetered = selectedCatalogModel?.usagePolicy === 'unlimited';
@@ -247,7 +266,6 @@ export function PromptComposerView({
 
 	const canSubmitContent = answeringQuestion ? canAnswerQuestion : hasMessageContent;
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
-	const canAttachMore = !composerLocked && !answeringQuestion;
 	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
 	const atMention = getActiveAtMention(prompt, caretPosition);
 	const atQuery = atMention?.query ?? null;
@@ -539,7 +557,6 @@ export function PromptComposerView({
 			(!answeringQuestion && !canSubmitWithModel) ||
 			(!answeringQuestion && usageBlocked) ||
 			isSubmitting ||
-			composerLocked ||
 			!canSubmitContent ||
 			(!answeringQuestion && attachmentsPending)
 		) {
@@ -744,6 +761,63 @@ export function PromptComposerView({
 						</div>
 					) : null}
 
+					{queuedMessages.length > 0 ? (
+						<ol
+							aria-label="Queued messages"
+							className="mx-auto mb-3 flex w-full max-w-[48rem] flex-col gap-1.5 px-4"
+						>
+							{queuedMessages.map((message) => (
+								<li
+									key={message.id}
+									className="border-hairline bg-surface/80 flex items-center gap-2 rounded-xl border px-3 py-2"
+								>
+									<div className="min-w-0 flex-1">
+										<p className="text-foreground truncate text-[13px] leading-5">
+											{message.prompt}
+										</p>
+										{message.attachmentNames.length > 0 ? (
+											<p className="text-muted-foreground truncate text-[11px] leading-4">
+												{message.attachmentNames.join(', ')}
+											</p>
+										) : null}
+										{message.status === 'failed' && message.error ? (
+											<p className="text-destructive truncate text-[11px] leading-4">
+												{message.error}
+											</p>
+										) : null}
+									</div>
+									<span className="text-muted-foreground shrink-0 text-[11px] capitalize">
+										{message.status}
+									</span>
+									{message.status === 'failed' ? (
+										<button
+											type="button"
+											className="text-muted-foreground enabled:hover:text-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition enabled:cursor-pointer disabled:opacity-40"
+											aria-label={`Retry queued message: ${message.prompt}`}
+											title="Retry"
+											disabled={!onRetryQueuedMessage}
+											onClick={() => onRetryQueuedMessage?.(message.id)}
+										>
+											<RotateCcw className="size-3.5" aria-hidden="true" />
+										</button>
+									) : null}
+									{message.status !== 'sending' ? (
+										<button
+											type="button"
+											className="text-muted-foreground enabled:hover:text-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition enabled:cursor-pointer disabled:opacity-40"
+											aria-label={`Remove queued message: ${message.prompt}`}
+											title="Remove"
+											disabled={!onRemoveQueuedMessage}
+											onClick={() => onRemoveQueuedMessage?.(message.id)}
+										>
+											<X className="size-3.5" aria-hidden="true" />
+										</button>
+									) : null}
+								</li>
+							))}
+						</ol>
+					) : null}
+
 					<div
 						className={COMPOSER_SHELL_CLASS}
 						role="group"
@@ -834,7 +908,9 @@ export function PromptComposerView({
 										placeholder={
 											answeringQuestion
 												? 'Add detail, or type a custom answer'
-												: 'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
+												: queuingActive
+													? 'Message sends when the current run finishes'
+													: 'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
 										}
 										disabled={isSubmitting}
 										role="combobox"
@@ -955,7 +1031,25 @@ export function PromptComposerView({
 												<Square className="size-3.5 fill-current" />
 											</button>
 										) : null}
-										{answeringQuestion || !isRunning ? (
+										{queuingActive ? (
+											<button
+												type="button"
+												className="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 items-center justify-center rounded-full px-4 text-[13px] font-medium transition-all duration-150 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30"
+												onClick={onSubmit}
+												disabled={
+													!canSend ||
+													!canSubmitWithModel ||
+													usageBlocked ||
+													isSubmitting ||
+													!canSubmitContent ||
+													attachmentsPending
+												}
+												aria-label="Queue message"
+											>
+												Queue message
+											</button>
+										) : null}
+										{answeringQuestion || !queuingActive ? (
 											<button
 												type="button"
 												className="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"

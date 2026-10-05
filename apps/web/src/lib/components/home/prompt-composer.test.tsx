@@ -209,14 +209,28 @@ describe('PromptComposer file drag and drop', () => {
 		expect(document.querySelector('[role="status"]')).toBeNull();
 	});
 
-	it('clears the drop target and rejects files when attachments become disabled', () => {
+	it('keeps accepting dropped files while a run is in progress for queuing', () => {
 		const { composer, props, rerender } = renderComposer();
 		const transfer = dataTransfer(['Files'], [new File(['data'], 'notes.txt')]);
 
 		dispatchDrag(composer, 'dragenter', transfer);
 		expect(document.querySelector('[role="status"]')).not.toBeNull();
 		rerender({ ...props, isRunning: true });
-		expect(document.querySelector('[role="status"]')).toBeNull();
+
+		dispatchDrag(composer, 'dragover', transfer);
+		expect(transfer.dropEffect).toBe('copy');
+		dispatchDrag(composer, 'drop', transfer);
+		expect(props.onAttachFiles).toHaveBeenCalled();
+	});
+
+	it('clears the drop target and rejects files while submitting', () => {
+		const { composer, props, rerender } = renderComposer();
+		const transfer = dataTransfer(['Files'], [new File(['data'], 'notes.txt')]);
+
+		dispatchDrag(composer, 'dragenter', transfer);
+		expect(document.body.textContent).toContain('Drop files to attach');
+		rerender({ ...props, isSubmitting: true });
+		expect(document.body.textContent).not.toContain('Drop files to attach');
 
 		dispatchDrag(composer, 'dragover', transfer);
 		expect(transfer.dropEffect).toBe('none');
@@ -765,5 +779,161 @@ describe('PromptComposer attach tooltip', () => {
 			attachButton?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
 		});
 		expect(document.querySelector('[role="tooltip"]')).toBeNull();
+	});
+});
+
+describe('PromptComposer message queue', () => {
+	const queuedMessages = [
+		{
+			id: 'queued-1',
+			prompt: 'Fix the footprint',
+			attachmentNames: ['board.kicad_sch', 'notes.txt'],
+			status: 'queued' as const
+		},
+		{
+			id: 'sending-1',
+			prompt: 'Now the schematic',
+			attachmentNames: [],
+			status: 'sending' as const
+		},
+		{
+			id: 'failed-1',
+			prompt: 'Run ERC',
+			attachmentNames: [],
+			status: 'failed' as const,
+			error: 'Connection lost'
+		}
+	];
+
+	it('renders the FIFO queue with status, error, remove, and retry actions', async () => {
+		const onRemoveQueuedMessage = vi.fn();
+		const onRetryQueuedMessage = vi.fn();
+
+		renderComposer({
+			isRunning: true,
+			queuedMessages,
+			onRemoveQueuedMessage,
+			onRetryQueuedMessage
+		});
+
+		const list = document.querySelector('[aria-label="Queued messages"]');
+		expect(list).not.toBeNull();
+		const items = Array.from(list?.querySelectorAll('li') ?? []);
+		expect(items).toHaveLength(3);
+		expect(items[0]?.textContent).toContain('Fix the footprint');
+		expect(items[0]?.textContent).toContain('board.kicad_sch, notes.txt');
+		expect(items[1]?.textContent).toContain('Now the schematic');
+		expect(items[2]?.textContent).toContain('Connection lost');
+
+		expect(
+			document.querySelector('[aria-label="Remove queued message: Now the schematic"]')
+		).toBeNull();
+		expect(
+			document.querySelector('[aria-label="Retry queued message: Fix the footprint"]')
+		).toBeNull();
+
+		await click(
+			document.querySelector<HTMLButtonElement>(
+				'[aria-label="Remove queued message: Fix the footprint"]'
+			)
+		);
+		expect(onRemoveQueuedMessage).toHaveBeenCalledWith('queued-1');
+
+		await click(
+			document.querySelector<HTMLButtonElement>('[aria-label="Retry queued message: Run ERC"]')
+		);
+		expect(onRetryQueuedMessage).toHaveBeenCalledWith('failed-1');
+		await click(
+			document.querySelector<HTMLButtonElement>('[aria-label="Remove queued message: Run ERC"]')
+		);
+		expect(onRemoveQueuedMessage).toHaveBeenCalledWith('failed-1');
+	});
+
+	it('queues on Enter while running and shows Stop generation alongside Queue message', async () => {
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			prompt: 'Follow-up task',
+			isRunning: true,
+			runStartedAt: Date.now() - 5_000,
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		expect(textarea.getAttribute('placeholder')).toBe(
+			'Message sends when the current run finishes'
+		);
+		expect(textarea.disabled).toBe(false);
+		expect(document.querySelector('[aria-label="Send message"]')).toBeNull();
+		expect(
+			document.querySelector<HTMLButtonElement>('[aria-label="Queue message"]')?.disabled
+		).toBe(false);
+		expect(document.querySelector('[aria-label="Stop generation"]')).not.toBeNull();
+		expect(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]')?.disabled).toBe(
+			false
+		);
+
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+
+		await click(document.querySelector<HTMLButtonElement>('[aria-label="Queue message"]'));
+		expect(props.onSubmit).toHaveBeenCalledTimes(2);
+
+		await click(document.querySelector<HTMLButtonElement>('[aria-label="Stop generation"]'));
+		expect(props.onCancel).toHaveBeenCalledOnce();
+	});
+
+	it('treats isQueuing separately from Stop availability', async () => {
+		renderComposer({
+			prompt: 'Follow-up task',
+			isRunning: false,
+			isQueuing: true
+		});
+
+		expect(document.querySelector('[aria-label="Stop generation"]')).toBeNull();
+		expect(document.querySelector('[aria-label="Queue message"]')).not.toBeNull();
+		expect(document.querySelector('[aria-label="Send message"]')).toBeNull();
+	});
+
+	it('keeps question answering while a run is in progress', async () => {
+		const { props, textarea } = renderComposer({
+			isRunning: true,
+			pendingQuestion: {
+				questionId: 'question-1',
+				question: 'Which board should I target?',
+				options: [
+					{ id: 'option-a', label: 'Option A' },
+					{ id: 'option-b', label: 'Option B' }
+				]
+			}
+		});
+
+		expect(textarea.getAttribute('placeholder')).toBe('Add detail, or type a custom answer');
+		expect(document.querySelector('[aria-label="Queue message"]')).toBeNull();
+		expect(
+			document.querySelector<HTMLButtonElement>('[aria-label="Stop generation"]')
+		).not.toBeNull();
+
+		await click(findButton('Option A'));
+		const submit = document.querySelector<HTMLButtonElement>('[aria-label="Submit answer"]');
+		expect(submit?.disabled).toBe(false);
+		await click(submit);
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
+	it('blocks queuing while submission is locked', async () => {
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			prompt: 'Follow-up task',
+			isRunning: true,
+			isSubmitting: true,
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		expect(
+			document.querySelector<HTMLButtonElement>('[aria-label="Queue message"]')?.disabled
+		).toBe(true);
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 });

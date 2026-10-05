@@ -92,6 +92,7 @@ export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;
 export type AgentRunRequest = {
 	userId: string;
 	submissionId: string;
+	executionSecret?: string;
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
