@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Search, Zap } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
 	type CatalogModel,
@@ -30,13 +30,11 @@ export default function ModelSelector({
 	onFastModeChange?: (fastMode: boolean) => void;
 }) {
 	const [isOpen, setIsOpen] = useState(false);
-	const [searchQuery, setSearchQuery] = useState('');
 	const [previewId, setPreviewId] = useState<string | null>(null);
 	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
 	const [reasoningTop, setReasoningTop] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
-	const searchRef = useRef<HTMLInputElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const modelButtons = useRef(new Map<string, HTMLButtonElement>());
 	const reasoningRef = useRef<HTMLDivElement>(null);
@@ -44,11 +42,7 @@ export default function ModelSelector({
 	const selectedModel = models.find((model) => model.id === modelId);
 	const fastModeAvailable = allowsFastMode && selectedModel?.supportsFastMode;
 
-	const filteredModels = models.filter((model) =>
-		model.label.toLocaleLowerCase().includes(searchQuery.trim().toLocaleLowerCase())
-	);
-
-	const previewModel = filteredModels.find((model) => model.id === previewId);
+	const previewModel = models.find((model) => model.id === previewId);
 
 	const summary = [
 		selectedModel && showsReasoningControl(selectedModel)
@@ -61,7 +55,6 @@ export default function ModelSelector({
 
 	function closeMenu() {
 		setIsOpen(false);
-		setSearchQuery('');
 		setPreviewId(null);
 	}
 
@@ -72,7 +65,7 @@ export default function ModelSelector({
 	}
 
 	function focusModel(index: number) {
-		const model = filteredModels[(index + filteredModels.length) % filteredModels.length];
+		const model = models[(index + models.length) % models.length];
 
 		if (model) modelButtons.current.get(model.id)?.focus();
 	}
@@ -121,11 +114,11 @@ export default function ModelSelector({
 			window.removeEventListener('resize', updatePosition);
 			menu?.removeEventListener('scroll', updatePosition, true);
 		};
-	}, [isOpen, previewId, searchQuery, fastModeAvailable, position.maxHeight]);
+	}, [isOpen, previewId, fastModeAvailable, position.maxHeight]);
 
 	useEffect(() => {
 		if (!isOpen) return;
-		searchRef.current?.focus();
+		(modelButtons.current.get(modelId) ?? modelButtons.current.values().next().value)?.focus();
 
 		return listenOpenMenuDismiss({
 			getRoot: () => rootRef.current,
@@ -135,7 +128,7 @@ export default function ModelSelector({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen]);
+	}, [isOpen, modelId]);
 
 	useEffect(() => {
 		if (disabled) closeMenu();
@@ -172,40 +165,15 @@ export default function ModelSelector({
 					ref={menuRef}
 					role="dialog"
 					aria-label="Model"
-					className="fixed z-50 w-[min(23.75rem,calc(100vw-1rem))]"
+					className="fixed z-50 flex w-[min(19rem,calc(100vw-1rem))] flex-col gap-1 sm:block sm:w-[30.75rem]"
 					style={position}
 				>
 					<div
-						className="bg-popover/96 flex w-[calc(100%-9.75rem)] flex-col overflow-hidden rounded-xl border border-[var(--hairline)] p-1 shadow-[var(--composer-shadow)] backdrop-blur-xl"
+						className="bg-popover/96 flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:w-[19rem]"
 						style={{ maxHeight: position.maxHeight }}
 					>
-						<label className="text-muted-foreground flex h-9 shrink-0 items-center gap-2 border-b border-[var(--hairline)] px-2">
-							<Search className="size-3.5 shrink-0" />
-							<span className="sr-only">Search model</span>
-							<input
-								ref={searchRef}
-								value={searchQuery}
-								onChange={(event) => {
-									setSearchQuery(event.target.value);
-									setPreviewId(null);
-								}}
-								className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none"
-								placeholder="Search model…"
-								onKeyDown={(event) => {
-									if (event.nativeEvent.isComposing || filteredModels.length === 0) return;
-
-									if (event.key === 'ArrowDown') {
-										event.preventDefault();
-										focusModel(0);
-									} else if (event.key === 'Enter' && searchQuery.trim()) {
-										event.preventDefault();
-										selectModel(filteredModels[0]);
-									}
-								}}
-							/>
-						</label>
-						<div role="group" aria-label="Models" className="min-h-0 overflow-y-auto py-1">
-							{filteredModels.map((model, index) => (
+						<div role="group" aria-label="Models" className="min-h-0 space-y-0.5 overflow-y-auto">
+							{models.map((model, index) => (
 								<button
 									key={model.id}
 									ref={(button) => {
@@ -217,7 +185,7 @@ export default function ModelSelector({
 									aria-pressed={model.id === modelId}
 									aria-haspopup={showsReasoningControl(model) ? 'true' : undefined}
 									className={cn(
-										'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2',
+										'text-foreground focus-visible:ring-ring/60 hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2',
 										model.id === previewId && 'bg-hover-fill'
 									)}
 									onMouseEnter={() => setPreviewId(model.id)}
@@ -250,10 +218,7 @@ export default function ModelSelector({
 										}
 									}}
 								>
-									<ProviderLogo
-										provider={model.provider}
-										className="hidden size-4 shrink-0 sm:block"
-									/>
+									<ProviderLogo provider={model.provider} className="size-4 shrink-0" />
 									<span className="min-w-0 flex-1 truncate font-medium">{model.label}</span>
 									{model.id === modelId ? (
 										<Check className="text-accent-strong size-3.5 shrink-0" />
@@ -263,11 +228,6 @@ export default function ModelSelector({
 									) : null}
 								</button>
 							))}
-							{filteredModels.length === 0 ? (
-								<p className="text-muted-foreground px-2 py-3 text-center text-sm">
-									No matches found
-								</p>
-							) : null}
 						</div>
 						{fastModeAvailable ? (
 							<div
@@ -278,7 +238,7 @@ export default function ModelSelector({
 								<button
 									type="button"
 									role="switch"
-									className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2"
+									className="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2"
 									aria-checked={fastMode}
 									onClick={() => onFastModeChange?.(!fastMode)}
 								>
@@ -307,7 +267,7 @@ export default function ModelSelector({
 							ref={reasoningRef}
 							role="group"
 							aria-label={`Reasoning for ${previewModel.label}`}
-							className="bg-popover/96 absolute right-0 w-38 rounded-xl border border-[var(--hairline)] p-1 shadow-[var(--composer-shadow)] backdrop-blur-xl"
+							className="bg-popover/96 max-h-[50vh] shrink-0 overflow-y-auto rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl sm:absolute sm:right-0 sm:w-46"
 							style={{ top: reasoningTop }}
 							onKeyDown={(event) => {
 								if (event.key === 'ArrowLeft') {
