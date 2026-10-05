@@ -14,7 +14,6 @@ import {
 	getCatalogModel,
 	modelOptionsForCompletionProvider,
 	resolveModelForCompletionProvider,
-	showsReasoningControl,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
@@ -29,7 +28,7 @@ import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-pa
 import type { CommandApi } from '$lib/home/running-commands';
 import OptionSelector from '$lib/components/option-selector';
 import ProviderLogo from '$lib/components/provider-logo';
-import ReasoningSelector from '$lib/components/reasoning-selector';
+import ModelSelector from '$lib/components/model-selector';
 import type {
 	SkillSummary,
 	TranscriptScopeRequest,
@@ -169,10 +168,6 @@ export function PromptComposerView({
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
-
-	// Fast mode only runs through Spikonado's gateway; other providers never offer it.
-	const selectedFastModeAvailable =
-		selectedCompletionProvider === 'spikonado' && selectedCatalogModel?.supportsFastMode === true;
 
 	const canSubmitWithModel =
 		(selectedCompletionProvider === 'spikonado' ||
@@ -564,12 +559,12 @@ export function PromptComposerView({
 		onSelectedQuestionOptionIdChange?.(selectedQuestionOptionId === optionId ? null : optionId);
 	}
 
-	function handleModelChange(modelId: CatalogModelId) {
+	function handleModelChange(modelId: CatalogModelId, effort: string) {
 		if (!modelCatalog) return;
 		onSelectedModelChange?.(modelId);
 		const model = getCatalogModel(modelCatalog, modelId);
 
-		if (model) onSelectedReasoningEffortChange?.(model.defaultReasoningEffort);
+		if (model) onSelectedReasoningEffortChange?.(effort);
 	}
 
 	function handleProviderChange(provider: CompletionProvider) {
@@ -634,10 +629,20 @@ export function PromptComposerView({
 	useEffect(() => {
 		if (!selectedCatalogModel) return;
 
+		if (!selectedCatalogModel.reasoningEfforts.includes(selectedReasoningEffort)) {
+			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
+		}
+
 		if (fastMode && !selectedCatalogModel.supportsFastMode) {
 			onFastModeChange?.(false);
 		}
-	}, [selectedCatalogModel, fastMode, onFastModeChange]);
+	}, [
+		selectedCatalogModel,
+		selectedReasoningEffort,
+		onSelectedReasoningEffortChange,
+		fastMode,
+		onFastModeChange
+	]);
 
 	useEffect(() => {
 		syncComposerHeight();
@@ -865,7 +870,7 @@ export function PromptComposerView({
 								</div>
 
 								<div className="flex min-w-0 flex-nowrap items-center justify-between gap-3 overflow-visible px-0 pt-2.5 pb-0">
-									<div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1">
+									<div className="-m-1 flex min-w-0 flex-1 flex-wrap items-center gap-1 overflow-visible p-1 sm:flex-nowrap">
 										<input
 											ref={attachmentInput}
 											type="file"
@@ -892,39 +897,20 @@ export function PromptComposerView({
 
 										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
-										<OptionSelector
-											value={selectedModel}
-											options={modelOptions}
-											ariaLabel="Select model"
-											menuTitle="Model"
+										<ModelSelector
+											modelId={selectedModel}
+											models={
+												modelCatalog?.models.filter((model) =>
+													modelOptions.some((option) => option.id === model.id)
+												) ?? []
+											}
+											reasoningEffort={selectedReasoningEffort}
+											fastMode={fastMode}
+											allowsFastMode={selectedCompletionProvider === 'spikonado'}
 											disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
-											searchable
-											onValueChange={handleModelChange}
-											className="z-20 shrink-0"
-											triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
-											optionIcon={(option) => (
-												<ProviderLogo provider={option.provider} className="size-4 shrink-0" />
-											)}
+											onSelect={handleModelChange}
+											onFastModeChange={onFastModeChange}
 										/>
-
-										{selectedCatalogModel ? (
-											<>
-												{showsReasoningControl(selectedCatalogModel) ||
-												selectedFastModeAvailable ? (
-													<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-												) : null}
-												<ReasoningSelector
-													model={selectedCatalogModel}
-													reasoningEffort={selectedReasoningEffort}
-													fastMode={fastMode}
-													fastModeAvailable={selectedFastModeAvailable}
-													disabled={composerLocked || answeringQuestion}
-													className="z-20 shrink-0"
-													onReasoningEffortChange={onSelectedReasoningEffortChange}
-													onFastModeChange={onFastModeChange}
-												/>
-											</>
-										) : null}
 
 										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
