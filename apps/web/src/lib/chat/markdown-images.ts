@@ -55,9 +55,19 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 		image.setAttribute('decoding', 'async');
 		image.setAttribute('referrerpolicy', 'no-referrer');
 		image.removeAttribute('srcset');
+		image.removeAttribute('data-local-image-url');
 
-		if (url) image.src = url;
-		else {
+		if (url) {
+			image.src = url;
+			const parsed = new URL(url, window.location.href);
+
+			if (
+				parsed.pathname === '/api/workspace/image' &&
+				parsed.origin === resolveLocalApiBaseUrl()
+			) {
+				image.setAttribute('data-local-image-url', url);
+			}
+		} else {
 			image.removeAttribute('src');
 			image.alt = `${image.alt || 'Image'} (unavailable)`;
 		}

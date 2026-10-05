@@ -6,7 +6,7 @@ use axum::Json;
 use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +58,8 @@ struct WorkspaceSearchRequest {
 struct LocalImageRequest {
     workspace_path: Option<PathBuf>,
     path: String,
+    #[serde(default)]
+    revision_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +109,21 @@ async fn local_image(
         .acquire()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
+    if payload.revision_only {
+        let revision = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let (_, metadata) = open_local_image(payload.workspace_path, payload.path).ok()?;
+            let modified = metadata.modified().ok()?;
+            let nanos = modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_nanos();
+            Some(format!("{}-{nanos}", metadata.len()))
+        })
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?;
+        return Ok(([(header::CACHE_CONTROL, "no-store")], Json(revision)).into_response());
+    }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         read_local_image(payload.workspace_path, payload.path)
@@ -148,6 +165,27 @@ fn read_local_image(
     workspace_path: Option<PathBuf>,
     image_path: String,
 ) -> anyhow::Result<LocalImage> {
+    let (file, metadata) = open_local_image(workspace_path, image_path)?;
+    let mut contents = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_LOCAL_IMAGE_BYTES + 1)
+        .read_to_end(&mut contents)
+        .with_context(|| "failed to read local image")?;
+    if contents.len() as u64 > MAX_LOCAL_IMAGE_BYTES {
+        anyhow::bail!("local image exceeds the 20 MiB limit");
+    }
+
+    let media_type = detect_image_media_type(&contents)
+        .ok_or_else(|| anyhow::anyhow!("local file is not a supported image"))?;
+    Ok(LocalImage {
+        contents,
+        media_type,
+    })
+}
+
+fn open_local_image(
+    workspace_path: Option<PathBuf>,
+    image_path: String,
+) -> anyhow::Result<(std::fs::File, std::fs::Metadata)> {
     let image_path = Path::new(&image_path);
     let image_path = if image_path.is_absolute() {
         image_path.to_path_buf()
@@ -180,20 +218,7 @@ fn read_local_image(
         anyhow::bail!("local image exceeds the 20 MiB limit");
     }
 
-    let mut contents = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_LOCAL_IMAGE_BYTES + 1)
-        .read_to_end(&mut contents)
-        .with_context(|| "failed to read local image")?;
-    if contents.len() as u64 > MAX_LOCAL_IMAGE_BYTES {
-        anyhow::bail!("local image exceeds the 20 MiB limit");
-    }
-
-    let media_type = detect_image_media_type(&contents)
-        .ok_or_else(|| anyhow::anyhow!("local file is not a supported image"))?;
-    Ok(LocalImage {
-        contents,
-        media_type,
-    })
+    Ok((file, metadata))
 }
 
 fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {
@@ -595,6 +620,65 @@ mod tests {
             svg.headers().get("content-security-policy").unwrap(),
             "sandbox; default-src 'none'"
         );
+    }
+
+    #[tokio::test]
+    async fn local_image_revision_tracks_overwrites_and_missing_files_without_reading_contents() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let path = workspace.path().join("board.png");
+        let (app, token) = image_test_app(data.path()).await;
+        let revision_request = |token: Option<&str>| {
+            let mut request = image_request(Some(workspace.path()), "board.png", token);
+            *request.uri_mut() = format!("{}&revisionOnly=true", request.uri())
+                .parse()
+                .unwrap();
+            request
+        };
+        let denied = app.clone().oneshot(revision_request(None)).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        let missing = app
+            .clone()
+            .oneshot(revision_request(Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::OK);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
+        let contents = to_bytes(missing.into_body(), 1024).await.unwrap();
+        assert_eq!(contents.as_ref(), b"null");
+
+        let mut revisions = Vec::new();
+        for (contents, seconds) in [(b"first", 1), (b"other", 2)] {
+            std::fs::write(&path, contents).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(
+                    std::fs::FileTimes::new().set_modified(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+                    ),
+                )
+                .unwrap();
+            let response = app
+                .clone()
+                .oneshot(revision_request(Some(&token)))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 1024).await.unwrap();
+            revisions.push(serde_json::from_slice::<String>(&body).unwrap());
+        }
+        assert_ne!(revisions[0], revisions[1]);
+        let image = app
+            .oneshot(image_request(
+                Some(workspace.path()),
+                "board.png",
+                Some(&token),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(image.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
