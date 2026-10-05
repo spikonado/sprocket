@@ -1,9 +1,10 @@
 import {
+	useEffect,
 	useId,
+	useLayoutEffect,
+	useRef,
 	useState,
-	type FocusEvent,
 	type KeyboardEvent,
-	type MouseEvent,
 	type ReactNode
 } from 'react';
 import {
@@ -20,53 +21,105 @@ type Props = {
 	commands: ReadonlyMap<string, string>;
 };
 
-type TooltipAnchor = { top: number; left: number };
+type TooltipAnchor = { top: number; left: number; maxHeight: number };
 
-function tooltipAnchor(target: HTMLElement): TooltipAnchor {
-	const rect = target.getBoundingClientRect();
+const TOOLTIP_GAP = 8;
 
-	return { top: rect.bottom + 8, left: rect.left };
+function placeTooltip(row: HTMLElement, tooltip?: HTMLElement | null): TooltipAnchor {
+	const rowRect = row.getBoundingClientRect();
+	const tooltipHeight = tooltip?.offsetHeight ?? 0;
+	const tooltipWidth = tooltip?.offsetWidth ?? 0;
+	const spaceBelow = window.innerHeight - rowRect.bottom - TOOLTIP_GAP;
+	const spaceAbove = rowRect.top - TOOLTIP_GAP;
+	const placeAbove = tooltipHeight > spaceBelow && spaceAbove > spaceBelow;
+	const maxHeight = Math.max(placeAbove ? spaceAbove : spaceBelow, 0);
+	const height = Math.min(tooltipHeight || maxHeight, maxHeight);
+	const top = placeAbove ? rowRect.top - height - TOOLTIP_GAP : rowRect.bottom + TOOLTIP_GAP;
+	const maxLeft = window.innerWidth - (tooltipWidth || 0) - TOOLTIP_GAP;
+
+	return {
+		top: Math.max(TOOLTIP_GAP, top),
+		left: Math.min(Math.max(rowRect.left, TOOLTIP_GAP), Math.max(TOOLTIP_GAP, maxLeft)),
+		maxHeight
+	};
+}
+
+function sameAnchor(left: TooltipAnchor, right: TooltipAnchor) {
+	return left.top === right.top && left.left === right.left && left.maxHeight === right.maxHeight;
 }
 
 function ToolLogRow({ tooltip, children }: { tooltip: string; children: ReactNode }) {
 	const tooltipId = useId();
+	const rowRef = useRef<HTMLDivElement>(null);
+	const tooltipRef = useRef<HTMLParagraphElement>(null);
+	const [hovered, setHovered] = useState(false);
+	const [focused, setFocused] = useState(false);
 	const [anchor, setAnchor] = useState<TooltipAnchor | null>(null);
+	const open = hovered || focused;
 
-	function show(event: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) {
-		setAnchor(tooltipAnchor(event.currentTarget));
-	}
+	useLayoutEffect(() => {
+		if (!open) {
+			setAnchor(null);
 
-	function hide() {
-		setAnchor(null);
-	}
+			return;
+		}
+
+		const row = rowRef.current;
+
+		if (!row) return;
+
+		const next = placeTooltip(row, tooltipRef.current);
+		setAnchor((current) => (current && sameAnchor(current, next) ? current : next));
+	}, [open, tooltip]);
+
+	useEffect(() => {
+		if (!open) return;
+
+		function onScroll() {
+			setHovered(false);
+			setFocused(false);
+			rowRef.current?.blur();
+		}
+
+		window.addEventListener('scroll', onScroll, true);
+
+		return () => window.removeEventListener('scroll', onScroll, true);
+	}, [open]);
 
 	function onKeyDown(event: KeyboardEvent<HTMLElement>) {
-		if (event.key !== 'Escape' || !anchor) return;
+		if (event.key !== 'Escape' || !open) return;
 
+		setHovered(false);
 		event.currentTarget.blur();
-		hide();
 	}
 
 	return (
 		<div
+			ref={rowRef}
 			data-tool-row
 			data-work-detail
 			tabIndex={0}
-			aria-describedby={anchor ? tooltipId : undefined}
+			aria-describedby={open ? tooltipId : undefined}
 			className="focus-visible:ring-ring/60 relative flex min-w-0 items-start gap-1.5 rounded-sm focus-visible:ring-2 focus-visible:outline-none"
-			onMouseEnter={show}
-			onMouseLeave={hide}
-			onFocus={show}
-			onBlur={hide}
+			onMouseEnter={() => setHovered(true)}
+			onMouseLeave={() => setHovered(false)}
+			onFocus={() => setFocused(true)}
+			onBlur={() => setFocused(false)}
 			onKeyDown={onKeyDown}
 		>
 			{children}
-			{anchor && tooltip ? (
+			{open && tooltip ? (
 				<p
+					ref={tooltipRef}
 					id={tooltipId}
 					role="tooltip"
-					className="bg-tooltip text-tooltip-foreground ring-border pointer-events-none fixed z-100 max-w-md rounded-md px-2.5 py-1.5 text-[12px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap shadow-lg ring-1"
-					style={{ top: anchor.top, left: anchor.left }}
+					className="bg-tooltip text-tooltip-foreground ring-border pointer-events-none fixed z-100 max-w-md overflow-hidden rounded-md px-2.5 py-1.5 text-[12px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap shadow-lg ring-1"
+					style={{
+						top: anchor?.top ?? 0,
+						left: anchor?.left ?? 0,
+						maxHeight: anchor?.maxHeight,
+						visibility: anchor ? 'visible' : 'hidden'
+					}}
 				>
 					{tooltip}
 				</p>

@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react';
 import { fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 describe('tool rows', () => {
 	it('reveals the full tool log in a tooltip on hover and closes it with Escape', () => {
@@ -33,6 +38,76 @@ describe('tool rows', () => {
 
 		fireEvent.keyDown(rows[0]!, { key: 'Escape' });
 		expect(view.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('keeps a focused tooltip open after the pointer leaves, then closes it on scroll', () => {
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'cmd',
+			name: 'exec_command',
+			input: { cmd: 'sleep 10' },
+			output: {}
+		};
+
+		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		const row = view.container.querySelector('[data-tool-row]')!;
+
+		fireEvent.focus(row);
+		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
+		fireEvent.mouseLeave(row);
+		expect(view.getByRole('tooltip').textContent).toContain('sleep 10');
+
+		act(() => {
+			window.dispatchEvent(new Event('scroll'));
+		});
+		expect(view.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('places the tooltip above a row when there is not enough room below', () => {
+		const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+		const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+
+		Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+			configurable: true,
+			get() {
+				return this.getAttribute('role') === 'tooltip' ? 80 : 24;
+			}
+		});
+		Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+			configurable: true,
+			get() {
+				return 200;
+			}
+		});
+		vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(760);
+		vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(800);
+		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: HTMLElement
+		) {
+			if (this.getAttribute('role') === 'tooltip') {
+				return new DOMRect(10, Number.parseFloat(this.style.top) || 0, 200, 80);
+			}
+
+			return new DOMRect(10, 700, 300, 24);
+		});
+
+		try {
+			const tool: AssistantTimelineTool = {
+				type: 'tool',
+				callId: 'cmd',
+				name: 'exec_command',
+				input: { cmd: 'sleep 10' },
+				output: {}
+			};
+
+			const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+			fireEvent.mouseEnter(view.container.querySelector('[data-tool-row]')!);
+			expect(view.getByRole('tooltip').style.top).toBe('612px');
+		} finally {
+			if (height) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', height);
+
+			if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width);
+		}
 	});
 
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
