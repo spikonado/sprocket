@@ -70,7 +70,7 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 
 ## Subagents
 
-- Orchestrate subagents for tasks that will benefit from your context being less polluted and you working with the subagents in parallel.
+- Orchestrate subagents for tasks that will benefit from you working with the subagents in parallel.
 - Don't put any parts of your system prompt, AGENTS.md, etc. in the subagent prompts.
 
 ## Skills
