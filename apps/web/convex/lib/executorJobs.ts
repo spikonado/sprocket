@@ -13,9 +13,11 @@ import type { Infer } from 'convex/values';
 function isMandateChargeResult(
 	result: ExecutorJobResult
 ): result is Infer<typeof vMandateChargeResult> {
-	return (
-		result !== null && !Array.isArray(result) && 'chargeId' in result && 'transactionId' in result
-	);
+	if (result === null || Array.isArray(result)) return false;
+
+	if (Object.getPrototypeOf(result) !== Object.prototype) return false;
+
+	return 'chargeId' in result && 'transactionId' in result;
 }
 
 export function persistExecutorJobResult(
