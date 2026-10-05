@@ -90,6 +90,12 @@ struct CommandsRequest {
     thread_id: String,
 }
 
+impl UserScoped for CommandsRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TerminateCommandRequest {
@@ -98,15 +104,16 @@ struct TerminateCommandRequest {
     session_id: String,
 }
 
+impl UserScoped for TerminateCommandRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 async fn commands_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<CommandsRequest>,
+    AuthorizedJson(payload): AuthorizedJson<CommandsRequest>,
 ) -> Result<axum::response::Response, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let commands = match state
         .command_sessions
         .get(&payload.user_id, &payload.thread_id)
@@ -122,13 +129,8 @@ async fn commands_handler(
 
 async fn terminate_command_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TerminateCommandRequest>,
+    AuthorizedJson(payload): AuthorizedJson<TerminateCommandRequest>,
 ) -> Result<axum::response::Response, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let terminated = match state
         .command_sessions
         .get(&payload.user_id, &payload.thread_id)

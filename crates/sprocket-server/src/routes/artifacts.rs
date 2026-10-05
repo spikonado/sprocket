@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use anyhow::anyhow;
+use axum::Json;
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
@@ -42,6 +43,12 @@ impl UserScoped for ArtifactWatchRequest {
     }
 }
 
+impl UserScoped for ArtifactDeleteRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/artifacts/watch", post(watch_handler))
@@ -50,13 +57,8 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn delete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ArtifactDeleteRequest>,
+    AuthorizedJson(payload): AuthorizedJson<ArtifactDeleteRequest>,
 ) -> Result<Json<()>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     let artifact_id = payload.artifact_id.trim();
