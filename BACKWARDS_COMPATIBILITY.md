@@ -2,6 +2,17 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Development tooling compatibility
+
+### TypeScript compiler API
+
+The web workspace aliases `typescript` to `@typescript/typescript6` for ESLint
+and other tools that use the JavaScript compiler API. `@typescript/native`
+aliases TypeScript 7 and provides the existing `tsc` command for type checks.
+Remove the TypeScript 6 alias and restore the ordinary TypeScript dependency
+once typescript-eslint and the other compiler API consumers support TypeScript
+7's API. Released clients and stored data are unaffected.
+
 ## Provider SDK backwards compatibility
 
 ### SIWC streaming content type
