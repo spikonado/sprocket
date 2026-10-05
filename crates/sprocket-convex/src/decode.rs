@@ -219,6 +219,24 @@ mod tests {
     }
 
     #[test]
+    fn labeled_convex_error_uses_string_data_when_production_redacts_the_message() {
+        let err = decode_labeled_function_result::<serde_json::Value>(
+            FunctionResult::ConvexError(ConvexError {
+                message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+                data: Value::String(
+                    "Finish or cancel the active run before sending another message.".to_string(),
+                ),
+            }),
+            "subagents:createOrSend",
+        )
+        .expect_err("should fail");
+        assert_eq!(
+            err.to_string(),
+            "subagents:createOrSend: Finish or cancel the active run before sending another message."
+        );
+    }
+
+    #[test]
     fn deserialize_convex_u64_accepts_integer_floats() {
         #[derive(Deserialize)]
         struct Row {
