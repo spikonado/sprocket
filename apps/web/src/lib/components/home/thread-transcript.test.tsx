@@ -275,14 +275,14 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 
-			const files = [...viewport.querySelectorAll('[data-tool-kind="apply_patch"] p[title]')];
+			const files = [...viewport.querySelectorAll('[data-tool-kind="apply_patch"] summary[title]')];
 			expect(files.map((row) => row.textContent)).toEqual(['a.txt', 'b.txt', 'c.txt']);
 			expect(files.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
 			expect(viewport.textContent).toContain('a.txt');
 			expect(viewport.textContent).toContain('b.txt');
 			expect(viewport.textContent).toContain('c.txt');
 
-			const failures = [...viewport.querySelectorAll('[data-tool-kind] p[title]')].filter(
+			const failures = [...viewport.querySelectorAll('[data-tool-kind] summary[title]')].filter(
 				(row) =>
 					row.textContent?.includes('(cancelled)') || row.textContent?.includes('(interrupted)')
 			);
@@ -345,10 +345,13 @@ describe('transcript viewport paging', () => {
 			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
 			expect(rows).toHaveLength(calls.length);
 			expect(
-				rows.every((row) => row.querySelector('p[title]')?.firstElementChild?.tagName === 'svg')
+				rows.every(
+					(row) => row.querySelector('summary[title]')?.firstElementChild?.tagName === 'svg'
+				)
 			).toBe(true);
 			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(2);
-			expect(viewport.querySelector('details')).toBeNull();
+			expect(viewport.querySelectorAll('[data-tool-kind] details')).toHaveLength(calls.length);
+			expect(viewport.querySelector('details[open]')).toBeNull();
 
 			for (let index = 0; index < 3; index += 1) {
 				expect(viewport.textContent).toContain(`echo command-${index}`);
@@ -383,7 +386,9 @@ describe('transcript viewport paging', () => {
 		click(work);
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
 		expect(
-			[...viewport.querySelectorAll('[data-tool-kind] p[title]')].map((row) => row.textContent)
+			[...viewport.querySelectorAll('[data-tool-kind] summary[title]')].map(
+				(row) => row.textContent
+			)
 		).toEqual(['sleep 1', 'sleep 2', 'sleep 3']);
 		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
 

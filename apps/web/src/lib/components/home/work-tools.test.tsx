@@ -1,9 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { render, within } from '@testing-library/react';
+import { fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
 
 describe('tool rows', () => {
+	it('reveals each full filename on activation and closes it with Escape', () => {
+		const paths = [
+			'/home/ubuntu/sprocket/.worktrees/composer-hover-reasoning/apps/web/src/lib/components/model-reasoning-options.tsx',
+			'/home/ubuntu/sprocket/.worktrees/composer-hover-reasoning/apps/web/src/lib/components/model-selector.tsx'
+		];
+
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'patch',
+			name: 'apply_patch',
+			input: { patch: paths.map((path) => `*** Update File: ${path}`).join('\n') },
+			output: { status: 'failed', error: 'The patch did not apply.' }
+		};
+
+		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		const details = [...view.container.querySelectorAll('details')];
+		expect(details).toHaveLength(paths.length);
+
+		for (const [index, detail] of details.entries()) {
+			expect(detail.open).toBe(false);
+			const summary = detail.querySelector('summary')!;
+			fireEvent.click(summary);
+			expect(detail.open).toBe(true);
+			expect(detail.querySelector('p')?.textContent).toBe(paths[index]);
+			fireEvent.keyDown(summary, { key: 'Escape' });
+			expect(detail.open).toBe(false);
+		}
+	});
+
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
 		const tools: AssistantTimelineTool[] = [
 			{
@@ -54,7 +83,7 @@ describe('tool rows', () => {
 
 		const settledTools = tools.map((tool) => ({ ...tool, output: tool.output ?? {} }));
 		const view = render(<WorkTools tools={settledTools} inProgress={false} commands={new Map()} />);
-		const rows = [...view.container.querySelectorAll('p[title]')];
+		const rows = [...view.container.querySelectorAll('summary[title]')];
 
 		expect(rows.map((row) => row.textContent)).toEqual([
 			'a.ts',
@@ -91,10 +120,9 @@ describe('tool rows', () => {
 
 		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
 
-		expect([...view.container.querySelectorAll('p[title]')].map((row) => row.textContent)).toEqual([
-			'a.ts',
-			'b.ts(failed)'
-		]);
+		expect(
+			[...view.container.querySelectorAll('summary[title]')].map((row) => row.textContent)
+		).toEqual(['a.ts', 'b.ts(failed)']);
 		expect(
 			within(view.container)
 				.getAllByRole('status')
