@@ -23,6 +23,8 @@
 - No matter where it comes from, every requirement's need should be questioned.
 - Don’t over-engineer for unlikely or low-impact edge cases.
 - Many parts of a project are often over-engineered; explicitly tell the user instead of silently working around them.
+- Deleting code/parts often fixes more problems than creating them does.
+- Sometimes creating code/parts introduces problems.
 
 ## Ask questions
 
@@ -65,6 +67,11 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 - Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.
 - Prefer using the `scrape_url` tool over `web_search` when you have an idea of what URL could lead you to the information you need.
 - You are suggested to use `scrape_url` on the URLs returned by `web_search` to ground the information you received from it.
+
+## Subagents
+
+- Orchestrate subagents for tasks that will benefit from your context being less polluted and you working with the subagents in parallel.
+- Don't put any parts of your system prompt, AGENTS.md, etc. in the subagent prompts.
 
 ## Skills
 
