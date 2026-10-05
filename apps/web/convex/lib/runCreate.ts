@@ -164,7 +164,9 @@ export async function createQueuedRunRecord(
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
 
-	await assertModelUsageAvailable(ctx, args.userId);
+	if (completionProvider === 'spikonado') {
+		await assertModelUsageAvailable(ctx, args.userId);
+	}
 
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
 	let threadRecord: Doc<'threadRecords'>;

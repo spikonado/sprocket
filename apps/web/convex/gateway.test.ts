@@ -181,6 +181,34 @@ describe('gateway quota', () => {
 		expect(runs).toHaveLength(0);
 	}, 15_000);
 
+	it('still creates a direct-provider run when Sprocket quota is exhausted', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const { asUser, threadId, subject } = await seedOwnedThread(t);
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subject,
+			count: 6 * UNITS_PER_DOLLAR
+		});
+
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'direct-openai-exhausted',
+			threadId,
+			prompt: 'Ship it',
+			storageIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			completionProvider: 'openai',
+			reasoningEffort: 'medium',
+			fastMode: false,
+			executionSecret: 'direct-openai-exhausted'
+		});
+
+		expect(created.created).toBe(true);
+
+		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
+
+		expect(run?.completionProvider).toBe('openai');
+	}, 15_000);
+
 	it('enforces a paid tier when the free tier row is missing', async () => {
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
