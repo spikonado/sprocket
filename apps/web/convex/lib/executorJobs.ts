@@ -5,6 +5,22 @@ import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
 import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 
+export function persistExecutorJobResult(
+	kind: string,
+	result: ExecutorJobResult
+): ExecutorJobResult {
+	if (kind !== 'mandate_charge') return result;
+
+	if (typeof result !== 'object' || result === null || Array.isArray(result)) return result;
+
+	if (!('chargeId' in result) || !('transactionId' in result)) return result;
+
+	return {
+		chargeId: result.chargeId,
+		transactionId: result.transactionId
+	};
+}
+
 export async function applyExecutorJobSuccess(
 	ctx: MutationCtx,
 	args: {
@@ -37,15 +53,17 @@ export async function applyExecutorJobSuccess(
 		return false;
 	}
 
+	const result = persistExecutorJobResult(args.job.kind, args.result);
+
 	const settledJob = {
 		...args.job,
 		status: 'completed' as const,
-		result: args.result
+		result
 	};
 
 	await ctx.db.patch('executorJobs', args.job._id, {
 		status: settledJob.status,
-		result: args.result,
+		result,
 		completedAt: Date.now()
 	});
 

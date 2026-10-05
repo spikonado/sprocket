@@ -697,4 +697,94 @@ describe('executor', () => {
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: failCase.jobId });
 	});
+
+	it('stores mandate_charge handles without payment credentials', async () => {
+		const t = initConvexTest();
+		const { asUser, runId, jobId, claimId, executionSecret, subject } = await seedRunWithJob(t, {
+			executionSecret: 'mandate-charge-secret'
+		});
+
+		const chargeId = await t.run(async (ctx) => {
+			const mandateId = await ctx.db.insert('mandates', {
+				userId: subject,
+				pravaSessionId: 'session',
+				amountCap: 100,
+				currency: 'USD',
+				frequency: 'one_time',
+				scope: 'any',
+				status: 'active',
+				description: 'Test purchase',
+				approvalUrl: 'https://example.test/approve',
+				createdAt: Date.now(),
+				updatedAt: Date.now()
+			});
+
+			await ctx.db.patch('executorJobs', jobId, {
+				kind: 'mandate_charge',
+				payload: {
+					mandateId,
+					amount: '1.00',
+					currency: 'USD',
+					description: 'Test purchase'
+				}
+			});
+
+			return await ctx.db.insert('mandateCharges', {
+				mandateId,
+				runId,
+				userId: subject,
+				pravaTransactionId: 'txn_live',
+				amount: 100,
+				currency: 'USD',
+				description: 'Test purchase',
+				status: 'awaiting_result',
+				createdAt: Date.now(),
+				updatedAt: Date.now()
+			});
+		});
+
+		const result = {
+			chargeId,
+			transactionId: 'txn_live',
+			token: 'tok_live',
+			dynamicCvv: '737',
+			expiryMonth: '12',
+			expiryYear: '2030'
+		};
+
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result,
+				runId,
+				claimId,
+				executionSecret
+			})
+		).resolves.toBe(true);
+
+		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+
+		expect(stored).toMatchObject({
+			status: 'completed',
+			result: { chargeId, transactionId: 'txn_live' }
+		});
+		expect(stored?.result).not.toHaveProperty('token');
+		expect(stored?.result).not.toHaveProperty('dynamicCvv');
+		expect(JSON.stringify(stored?.result)).not.toContain('tok_live');
+		expect(JSON.stringify(stored?.result)).not.toContain('737');
+
+		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
+
+		if (!run) throw new Error('Run not found');
+
+		const parts = await asUser.query(api.transcript.getParts, {
+			threadId: run.threadId,
+			numbers: [0, 1, 2, 3, 4]
+		});
+		const chargePart = parts.parts.find((part) => part.tool?.name === 'mandate_charge');
+
+		expect(chargePart?.tool?.output).toEqual({ chargeId, transactionId: 'txn_live' });
+		expect(JSON.stringify(chargePart)).not.toContain('tok_live');
+		expect(JSON.stringify(chargePart)).not.toContain('737');
+	});
 });
