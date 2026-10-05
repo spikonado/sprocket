@@ -127,10 +127,7 @@ impl ArtifactWatchers {
                             self.deployment_url.clone(),
                             Arc::clone(&self.native_auth),
                             task_key.clone(),
-                            self.bindings(
-                                &task_key.user_id,
-                                Path::new(&task_key.workspace_path),
-                            ),
+                            self.bindings(&task_key.user_id, Path::new(&task_key.workspace_path)),
                             events,
                             latest,
                         ))
