@@ -491,10 +491,11 @@ all recoverable command inputs were backfilled; retire the shared `jobId` pairin
 shim under the Tool invocation IDs gate above.
 
 Until the migration finishes, command transcript retries hydrate an existing
-part's absent input in the same transaction before strict retry comparison.
-Other mismatches still fail and roll back the hydration. Remove this extra
-lookup once production has no recoverable command parts with absent input and
-all writers preserve command inputs.
+part's absent input using the existing append lookup. The candidate part must
+pass strict retry comparison before a patch is written; other mismatches still
+fail. Normal appends and already-hydrated retries perform no additional database
+queries or writes. Remove this hydration once production has no recoverable
+command parts with absent input and all writers preserve command inputs.
 
 Older local JSONL transcripts and derived history caches may have no command
 input, and commands whose executor job was deleted cannot be backfilled. Those

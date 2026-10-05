@@ -67,28 +67,6 @@ export function commandToolDisplayInput(name: string, input: JsonValue): JsonObj
 	return display;
 }
 
-async function appendToolTranscriptPart(
-	ctx: MutationCtx,
-	args: Parameters<typeof appendTranscriptPart>[1]
-) {
-	if (args.tool?.input !== undefined) {
-		const existing = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_sourceKey', (q) =>
-				q.eq('threadId', args.threadId).eq('sourceKey', args.sourceKey)
-			)
-			.unique();
-
-		if (existing?.kind === 'tool' && existing.tool && existing.tool.input === undefined) {
-			await ctx.db.patch('threadTranscriptParts', existing._id, {
-				tool: { ...existing.tool, input: args.tool.input }
-			});
-		}
-	}
-
-	return await appendTranscriptPart(ctx, args);
-}
-
 export async function recordPromptTranscript(
 	ctx: MutationCtx,
 	args: {
@@ -176,7 +154,7 @@ export async function recordStartedToolTranscript(
 ): Promise<void> {
 	const toolInvocationId = toolInvocationIdForJob(args.job);
 
-	const result = await appendToolTranscriptPart(ctx, {
+	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'started'),
@@ -212,7 +190,7 @@ export async function recordToolTranscript(
 
 	const toolInvocationId = toolInvocationIdForJob(args.job);
 
-	const result = await appendToolTranscriptPart(ctx, {
+	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: toolSourceKey(toolInvocationId, 'finished'),

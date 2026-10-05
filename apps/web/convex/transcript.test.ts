@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
+import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import {
 	createQueuedRun,
 	emptyCompletionAssignments,
@@ -10,6 +11,68 @@ import {
 } from './test.setup';
 
 describe('numbered transcript parts', () => {
+	it.each([false, true])(
+		'validates legacy tool retries before hydrating inputs, conflicting output: %s',
+		async (conflictingOutput) => {
+			const t = initConvexTest();
+			const { asUser, threadId, subject } = await seedOwnedThread(t);
+
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'legacy-command',
+				'legacy-command-secret',
+				'Monitor the command'
+			);
+
+			await t.run(async (ctx) => {
+				const args = {
+					threadId,
+					userId: subject,
+					runId,
+					sourceKey: 'tool:legacy:finished',
+					kind: 'tool' as const,
+					tool: {
+						callId: 'poll',
+						name: 'poll_cmd',
+						status: 'completed' as const,
+						output: { command: 'sleep 10' }
+					},
+					work: { ranges: [] }
+				};
+
+				const initial = await appendTranscriptPart(ctx, args);
+
+				const retryArgs = {
+					...args,
+					tool: {
+						...args.tool,
+						input: { sessionId: 'sleep-session' },
+						output: { command: conflictingOutput ? 'different command' : 'sleep 10' }
+					}
+				};
+
+				if (conflictingOutput) {
+					await expect(appendTranscriptPart(ctx, retryArgs)).rejects.toThrow(
+						'Conflicting transcript part retry.'
+					);
+
+					const stored = await ctx.db.get('threadTranscriptParts', initial.part._id);
+					expect(stored).toEqual(initial.part);
+				} else {
+					const retry = await appendTranscriptPart(ctx, retryArgs);
+					expect(retry).toEqual({
+						part: { ...initial.part, tool: retryArgs.tool },
+						inserted: false
+					});
+					expect(await ctx.db.get('threadTranscriptParts', initial.part._id)).toEqual(retry.part);
+					expect(await appendTranscriptPart(ctx, retryArgs)).toEqual(retry);
+				}
+			});
+		}
+	);
+
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
