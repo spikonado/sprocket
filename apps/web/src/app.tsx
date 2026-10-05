@@ -523,6 +523,7 @@ export default function App({
 	const [prompt, setPrompt] = useState('');
 	const [selectedQuestionOptionId, setSelectedQuestionOptionId] = useState<string | null>(null);
 	const [answeringAgentQuestion, setAnsweringAgentQuestion] = useState(false);
+	const answeringAgentQuestionRef = useRef(false);
 
 	const [composerContinuationOfRunId, setComposerContinuationOfRunId] = useState<Id<'runs'> | null>(
 		null
@@ -1494,10 +1495,11 @@ export default function App({
 		const threadId = currentThreadId;
 		const userId = signedInUserIdRef.current;
 
-		if (!question || !threadId || !userId || answeringAgentQuestion) return;
+		if (!question || !threadId || !userId || answeringAgentQuestionRef.current) return;
 
 		if (!selectedQuestionOptionId && !prompt.trim()) return;
 
+		answeringAgentQuestionRef.current = true;
 		setAnsweringAgentQuestion(true);
 		setCurrentError(null);
 		const submittedPrompt = prompt;
@@ -1543,6 +1545,7 @@ export default function App({
 				setCurrentError(error instanceof Error ? error.message : String(error));
 			}
 		} finally {
+			answeringAgentQuestionRef.current = false;
 			if (signedInUserIdRef.current === userId) setAnsweringAgentQuestion(false);
 		}
 
@@ -1605,7 +1608,7 @@ export default function App({
 
 		const promptText = promptOverride ?? prompt;
 
-		if (isSubmittingPrompt) return;
+		if (currentComposerScope && submittingPromptScopes.has(currentComposerScope)) return;
 
 		if (!promptText.trim() && composerAttachments.items.length === 0) return;
 
@@ -1848,7 +1851,13 @@ export default function App({
 			if (runState?.startedAt) launch.previousStartedAt = runState.startedAt;
 
 			if (threadId) {
-				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
+				const nextPendingAgentLaunches = beginPendingAgentLaunch(
+					pendingAgentLaunchesRef.current,
+					threadId,
+					launch
+				);
+				pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+				setPendingAgentLaunches(nextPendingAgentLaunches);
 			}
 
 			await launchAgentRun({
@@ -2003,8 +2012,8 @@ export default function App({
 			!runState ||
 			!currentThreadId ||
 			!currentProjectPath ||
-			hasPendingAgentLaunch ||
-			isSubmittingPrompt
+			isAgentLaunchPending(pendingAgentLaunchesRef.current, currentThreadId) ||
+			(currentComposerScope !== null && submittingPromptScopes.has(currentComposerScope))
 		) {
 			return;
 		}
@@ -2030,7 +2039,13 @@ export default function App({
 			previousStartedAt
 		};
 
-		setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
+		const nextPendingAgentLaunches = beginPendingAgentLaunch(
+			pendingAgentLaunchesRef.current,
+			threadId,
+			launch
+		);
+		pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+		setPendingAgentLaunches(nextPendingAgentLaunches);
 
 		try {
 			if (signedInUserIdRef.current !== userId) {
