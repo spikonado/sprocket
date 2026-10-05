@@ -401,8 +401,8 @@ body::after {
 
 .chat-markdown img {
 	display: inline-block;
-	max-width: min(100%, 12rem);
-	max-height: 10rem;
+	max-width: min(100%, 24rem);
+	max-height: 20rem;
 	width: auto;
 	height: auto;
 	object-fit: contain;
