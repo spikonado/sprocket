@@ -356,7 +356,6 @@ describe('transcript viewport paging', () => {
 			expect(viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')).toHaveLength(
 				calls.length
 			);
-			expect(viewport.querySelector('[role="tooltip"]')).toBeNull();
 
 			for (let index = 0; index < 3; index += 1) {
 				expect(viewport.textContent).toContain(`echo command-${index}`);

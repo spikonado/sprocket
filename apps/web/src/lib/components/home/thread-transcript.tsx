@@ -752,7 +752,6 @@ export default function ThreadTranscript({
 	return (
 		<div className="relative min-h-0 flex-1">
 			<div
-				data-conversation-viewport
 				className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto"
 				role="region"
 				aria-label="Conversation history"
