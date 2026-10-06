@@ -71,7 +71,7 @@ pub(super) async fn fetch_github_file(
                 "summary": "Summary not generated; file was read directly from GitHub.",
                 "images": [],
             }))
-        } => result.context("Failed to read GitHub file"),
+        } => result,
     }
 }
 
@@ -80,13 +80,13 @@ async fn download_file(
     url: Url,
     mut max_bytes: u64,
 ) -> anyhow::Result<(Url, Vec<u8>)> {
-    let mut response = client.get(url).send().await?;
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?;
     let status = response.status();
-    anyhow::ensure!(
-        status == reqwest::StatusCode::OK,
-        "HTTP {status} for {}",
-        response.url()
-    );
+    anyhow::ensure!(status == reqwest::StatusCode::OK, "HTTP {status}");
     let content_length = response.content_length();
     anyhow::ensure!(
         content_length.is_none_or(|size| size <= max_bytes),
@@ -94,7 +94,11 @@ async fn download_file(
     );
     let mut bytes = Vec::new();
     let mut prefix = Vec::with_capacity(IMAGE_SNIFF_BYTES);
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(reqwest::Error::without_url)?
+    {
         let prefix_bytes = chunk.len().min(IMAGE_SNIFF_BYTES - prefix.len());
         prefix.extend_from_slice(&chunk[..prefix_bytes]);
         if sniff_supported_image_format(&prefix).is_some() {
@@ -270,44 +274,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_errors_report_the_status_and_url() {
+    async fn http_errors_report_only_the_status() {
         let cache = tempfile::tempdir().unwrap();
         for status in [404, 401, 403, 429, 503, 206] {
             let (url, server) = serve(vec![response(status, "text/plain", b"error")]).await;
-            let error = fetch_github_file(
-                url.clone(),
-                false,
-                cache.path(),
-                &WorkspaceCancellation::new(),
-            )
-            .await
-            .unwrap_err();
+            let error = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
+                .await
+                .unwrap_err();
             assert_eq!(
                 format!("{error:#}"),
-                format!(
-                    "Failed to read GitHub file: HTTP {} for {url}",
-                    reqwest::StatusCode::from_u16(status).unwrap()
-                )
+                format!("HTTP {}", reqwest::StatusCode::from_u16(status).unwrap())
             );
             assert_eq!(server.await.unwrap().len(), 1);
         }
     }
 
     #[tokio::test]
-    async fn http_errors_identify_the_url_after_redirects() {
+    async fn http_errors_report_only_the_status_after_redirects() {
         let cache = tempfile::tempdir().unwrap();
         let (url, server) = serve(vec![
             b"HTTP/1.1 302 Found\r\nLocation: /missing.rs\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
             response(404, "text/plain", b"Not Found"),
         ])
         .await;
-        let expected_url = url.join("/missing.rs").unwrap();
         let error = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
             .await
             .unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("404 Not Found"));
-        assert!(message.contains(expected_url.as_str()));
+        assert_eq!(format!("{error:#}"), "HTTP 404 Not Found");
         assert_eq!(server.await.unwrap().len(), 2);
     }
 
