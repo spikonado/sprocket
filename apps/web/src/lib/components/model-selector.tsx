@@ -6,6 +6,8 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ModelReasoningOptions from './model-reasoning-options';
+import MobileModelSelector from './mobile-model-selector';
+import { useMobileSelector } from './ui/use-mobile-selector';
 import ProviderLogo from './provider-logo';
 import { listenOpenMenuDismiss } from './ui/menu-dismiss';
 import { cn } from '$lib/utils';
@@ -30,6 +32,7 @@ export default function ModelSelector({
 	onFastModeChange?: (fastMode: boolean) => void;
 }) {
 	const [isOpen, setIsOpen] = useState(false);
+	const mobile = useMobileSelector();
 	const [previewId, setPreviewId] = useState<string | null>(null);
 	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
 	const [reasoningTop, setReasoningTop] = useState(0);
@@ -71,7 +74,7 @@ export default function ModelSelector({
 	}
 
 	useLayoutEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen || mobile) return;
 
 		function updatePosition() {
 			const trigger = triggerRef.current?.getBoundingClientRect();
@@ -113,10 +116,10 @@ export default function ModelSelector({
 			window.removeEventListener('resize', updatePosition);
 			window.removeEventListener('scroll', updatePosition, true);
 		};
-	}, [isOpen, previewId, fastModeAvailable, position.maxHeight]);
+	}, [isOpen, mobile, previewId, fastModeAvailable, position.maxHeight]);
 
 	useEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen || mobile) return;
 		(modelButtons.current.get(modelId) ?? modelButtons.current.values().next().value)?.focus();
 
 		return listenOpenMenuDismiss({
@@ -127,7 +130,7 @@ export default function ModelSelector({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen, modelId]);
+	}, [isOpen, mobile, modelId]);
 
 	useEffect(() => {
 		if (disabled) closeMenu();
@@ -160,7 +163,21 @@ export default function ModelSelector({
 					className={cn('text-muted-foreground size-3 shrink-0', isOpen && 'rotate-180')}
 				/>
 			</button>
-			{isOpen ? (
+			{isOpen && mobile ? (
+				<MobileModelSelector
+					models={models}
+					modelId={modelId}
+					reasoningEffort={reasoningEffort}
+					fastMode={fastMode}
+					allowsFastMode={allowsFastMode}
+					onDismiss={closeMenu}
+					returnFocusRef={triggerRef}
+					onApply={(model, effort, fast) => {
+						selectModel(model, effort);
+						onFastModeChange?.(fast);
+					}}
+				/>
+			) : isOpen ? (
 				<div
 					ref={menuRef}
 					role="dialog"

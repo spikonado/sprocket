@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
@@ -388,7 +388,10 @@ describe('PromptComposer submission', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it('leaves touchscreen Enter to insert a newline and sends through the button', async () => {
-		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn((query) => ({ matches: query === '(pointer: coarse)' }))
+		);
 
 		const { props, textarea } = renderComposer({
 			modelCatalog,
@@ -408,7 +411,10 @@ describe('PromptComposer submission', () => {
 	});
 
 	it('keeps touchscreen Enter as a newline while skill suggestions are open', async () => {
-		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn((query) => ({ matches: query === '(pointer: coarse)' }))
+		);
 
 		const { textarea } = renderComposer({
 			projectSkills: { workspacePath: '/work', load: async () => skills }
@@ -597,6 +603,74 @@ describe('PromptComposer skill menu', () => {
 		expect(document.getElementById('composer-skills-listbox')?.getAttribute('role')).toBe(
 			'listbox'
 		);
+	});
+});
+
+describe('PromptComposer mobile selectors', () => {
+	beforeEach(() => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('applies model, reasoning, and speed together after Done', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn(),
+			onSelectedReasoningEffortChange: vi.fn(),
+			onFastModeChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const sheet = screen.getByRole('dialog', { name: 'Model settings' });
+		await click(within(sheet).getByRole('button', { name: 'Low' }));
+		await click(within(sheet).getByRole('switch', { name: 'Fast mode' }));
+		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
+		await click(within(sheet).getByRole('button', { name: 'Done' }));
+		expect(props.onSelectedModelChange).toHaveBeenCalledWith('model-one');
+		expect(props.onSelectedReasoningEffortChange).toHaveBeenCalledWith('low');
+		expect(props.onFastModeChange).toHaveBeenCalledWith(true);
+	});
+
+	it('resets reasoning for a new model and discards edits on close', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		await click(screen.getByRole('button', { name: 'Model Two' }));
+		expect(screen.getByRole('button', { name: 'High (default)', pressed: true })).toBeTruthy();
+		expect(screen.queryByRole('switch')).toBeNull();
+		await click(screen.getByRole('button', { name: 'Close model settings' }));
+		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		expect(screen.getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
+	});
+
+	it('selects a provider from the sheet without an extra confirmation', async () => {
+		const { props } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [{ ...modelCatalog.models[0], provider: 'openai' }]
+			},
+			selectedModel: 'model-one',
+			configuredProviders: ['spikonado', 'chatgpt'],
+			onSelectedCompletionProviderChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		const sheet = screen.getByRole('dialog', { name: 'Provider' });
+		await click(within(sheet).getByRole('button', { name: 'ChatGPT Subscription' }));
+		expect(props.onSelectedCompletionProviderChange).toHaveBeenCalledWith('chatgpt');
+		expect(screen.queryByRole('dialog')).toBeNull();
 	});
 });
 

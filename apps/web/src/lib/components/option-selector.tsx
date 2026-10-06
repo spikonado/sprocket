@@ -2,6 +2,8 @@ import { Check, ChevronDown, Search } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
 import { cn } from '$lib/utils';
+import MobileSelectorSheet from './ui/mobile-selector-sheet';
+import { useMobileSelector } from './ui/use-mobile-selector';
 
 type SelectorOption = {
 	id: string;
@@ -35,6 +37,8 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	optionIcon?: (option: TOption) => ReactNode;
 }) {
 	const [isOpen, setIsOpen] = useState(false);
+	const mobile = useMobileSelector();
+	const showSheet = compactOnMobile && mobile;
 	const [searchQuery, setSearchQuery] = useState('');
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -86,7 +90,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	}
 
 	useLayoutEffect(() => {
-		if (!isOpen || !compactOnMobile) return;
+		if (!isOpen || !compactOnMobile || showSheet) return;
 
 		function updatePosition() {
 			const trigger = triggerRef.current?.getBoundingClientRect();
@@ -108,7 +112,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 			window.removeEventListener('resize', updatePosition);
 			window.removeEventListener('scroll', updatePosition, true);
 		};
-	}, [isOpen, compactOnMobile]);
+	}, [isOpen, compactOnMobile, showSheet]);
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -116,6 +120,8 @@ export default function OptionSelector<TOption extends SelectorOption>({
 
 			return;
 		}
+
+		if (showSheet) return;
 
 		return listenOpenMenuDismiss({
 			getRoot: () => rootRef.current,
@@ -127,7 +133,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen]);
+	}, [isOpen, showSheet]);
 
 	useEffect(() => {
 		if (disabled) {
@@ -164,7 +170,39 @@ export default function OptionSelector<TOption extends SelectorOption>({
 				/>
 			</button>
 
-			{isOpen ? (
+			{isOpen && showSheet ? (
+				<MobileSelectorSheet
+					title={menuTitle}
+					onDismiss={() => setIsOpen(false)}
+					returnFocusRef={triggerRef}
+				>
+					<div className="space-y-1 pb-2">
+						{options.map((option) => (
+							<button
+								key={option.id}
+								type="button"
+								aria-label={option.label}
+								aria-pressed={option.id === value}
+								className={cn(
+									'focus-visible:ring-ring flex min-h-16 w-full items-center gap-3 rounded-2xl px-4 py-3 text-left outline-none focus-visible:ring-2',
+									option.id === value ? 'bg-hover-fill' : 'hover:bg-hover-fill'
+								)}
+								onClick={() => selectOption(option.id)}
+							>
+								{optionIcon ? (
+									<span className="flex size-6 shrink-0 items-center justify-center">
+										{optionIcon(option)}
+									</span>
+								) : null}
+								<span className="min-w-0 flex-1 text-[15px] font-medium">{option.label}</span>
+								{option.id === value ? (
+									<Check className="text-accent-strong size-5 shrink-0" />
+								) : null}
+							</button>
+						))}
+					</div>
+				</MobileSelectorSheet>
+			) : isOpen ? (
 				<div
 					ref={menuRef}
 					className={cn(
