@@ -1129,14 +1129,33 @@ export async function signOut() {
 		convexAuthRetryPending.set(false);
 
 		if (isMachineApp() && !isRemoteMachineApp() && errors.length > 0) {
-			// Native credential deletion failed, so the host is still signed in.
-			// Keep the current user instead of painting a signed-out UI that a
-			// process restart would reverse.
-			authState.update((current) => ({
-				...current,
-				isLoading: false,
-				error: errors.join(' ')
-			}));
+			const generation = authGeneration;
+			const outcome = await requestNativeSessionToken(false, generation);
+
+			if (generation !== authGeneration || outcome.kind === 'stale') {
+				return;
+			}
+
+			if (outcome.kind === 'session') {
+				// Credential deletion failed and the host is still signed in.
+				authState.update((current) => ({
+					...current,
+					user: outcome.user,
+					isLoading: false,
+					nativeSession: 'ready',
+					error: errors.join(' ')
+				}));
+
+				return;
+			}
+
+			// Token delete succeeded but a later step failed, or the host is already
+			// gone. Do not keep a signed-in page that a restart would not restore.
+			authState.set(
+				signedOutState({
+					error: errors.join(' ')
+				})
+			);
 
 			return;
 		}

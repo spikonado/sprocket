@@ -279,6 +279,28 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
+	it('signs the page out when host sign-out fails after the session is already gone', async () => {
+		stubInstalledWindow();
+		let tokenCalls = 0;
+		stubFetch({
+			token: () => {
+				tokenCalls += 1;
+				return tokenCalls === 1
+					? jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
+					: jsonResponse(200, null);
+			},
+			nativeSessionDelete: () => jsonResponse(500, { error: 'failed to save sessions' })
+		});
+		await initializeAuth(convexClient);
+		await signOut();
+		expect(get(authState)).toMatchObject({
+			user: null,
+			nativeSession: 'notRequired',
+			isLoading: false,
+			error: 'failed to save sessions'
+		});
+	});
+
 	it('cancels scheduled Convex recovery when signing out', async () => {
 		vi.useFakeTimers();
 		stubInstalledWindow();
