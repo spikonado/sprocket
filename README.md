@@ -52,43 +52,10 @@ sprocket run "Fix the failing tests"
 
 Update your CLI installation with `sprocket update`. Run `sprocket --help` for more options.
 
-## Self-hosting
-
-Run the Sprocket app and agent on your own machine and access them through a browser. This still uses Sprocket's hosted sign-in and cloud services; it is not a fully offline setup.
-
-With Node.js 20.11 or newer, install the CLI and start the server:
-
-```sh
-npm install -g @spikonado/sprocket
-sprocket serve
-```
-
-Leave the server running. In another terminal on the same host, sign in by following the printed instructions:
-
-```sh
-sprocket login
-```
-
-On a headless machine without an OS credential service, use `sprocket login --credential-store file` instead. This stores your sign-in token unencrypted in a private file.
-
-Open `http://127.0.0.1:17731` on that machine. Keep `sprocket serve` running while you use the app; press Ctrl+C to stop it.
-
-### Access from another device
-
-Keep the server on its default local-only address. With [Tailscale](https://tailscale.com/) installed and signed in on both devices, run this in another terminal on the host:
-
-```sh
-tailscale serve --bg http://127.0.0.1:17731
-```
-
-Open the HTTPS URL printed by Tailscale on your other device and sign in with the same Sprocket account you used on the host. Project folders and agent tasks stay on the host machine.
-
-Remote access requires HTTPS. If you use another reverse proxy, it must connect to `127.0.0.1:17731` and preserve the browser-facing `Host` header.
-
 ## Troubleshooting
 
 - If `17731` is already occupied, set `SPROCKET_PORT` before launching.
-- If sign-in cannot save or restore your session, check that your operating system credential service is available, or use `sprocket login --credential-store file` as described above.
+- If sign-in cannot save or restore your session, check that your operating system credential service is available.
 - If `sprocket` opens the browser instead of the desktop app, install `sprocket-desktop` from [GitHub Releases](https://github.com/spikonado/sprocket/releases) onto `PATH`, or set `SPROCKET_DESKTOP_EXECUTABLE`.
 - Unsigned macOS and Windows desktop builds may need a Gatekeeper / SmartScreen override the first time you open them.
 - Contact [aarav@spikonado.com](mailto:aarav@spikonado.com) for help.
