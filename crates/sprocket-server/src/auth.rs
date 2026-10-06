@@ -328,7 +328,7 @@ impl AuthState {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         match user_id {
             None => {
-                sessions.retain(|_, session| !(session.ephemeral || session.local_browser));
+                sessions.retain(|_, session| session.ephemeral || !session.local_browser);
                 for session in sessions.values_mut() {
                     session.user_id = None;
                     session.uncommitted = false;
@@ -1108,6 +1108,30 @@ mod tests {
 
         assert!(!auth.session_state(Some(&leftover)).await.authenticated);
         auth.require_session_user(&next, "user-2").await.unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn owner_sync_on_sign_out_keeps_ephemeral_cli_sessions() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let token = Uuid::new_v4().to_string();
+        auth.create_cli_session(token.clone()).await;
+        auth.sync_sessions_with_owner(Some("user-1")).await.unwrap();
+        auth.sync_sessions_with_owner(None).await.unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        assert_eq!(
+            require_session(&auth, &headers, &CookieJar::new())
+                .await
+                .unwrap(),
+            token
+        );
 
         let _ = fs::remove_dir_all(temp_dir);
     }
