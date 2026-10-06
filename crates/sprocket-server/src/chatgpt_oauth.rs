@@ -1,25 +1,17 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::Json;
-use axum::extract::{ConnectInfo, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{Query, State};
+use axum::http::{StatusCode, header};
 use axum::response::Html;
-use axum::routing::{get, post};
-use axum_extra::extract::CookieJar;
-use serde::{Deserialize, Serialize};
+use axum::routing::get;
+use serde::Deserialize;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::AppState;
-use crate::auth::{
-    AuthState, BrowserConnection, browser_connection, cookie_request_is_csrf_safe,
-    require_session_user,
-};
-use crate::chatgpt_credentials::{ChatGptService, ServiceStatus};
-use crate::routes::api_error::ApiError;
+use crate::auth::AuthState;
+use crate::chatgpt_credentials::ChatGptService;
 
 const LOGIN_LIFETIME: Duration = Duration::from_secs(5 * 60);
 
@@ -36,6 +28,89 @@ impl PendingLogins {
             service,
             auth,
         })
+    }
+
+    pub(crate) async fn ensure_callback(self: &Arc<Self>) -> std::io::Result<String> {
+        let mut logins = self.logins.lock().await;
+        logins
+            .attempts
+            .retain(|_, login| login.expires > Instant::now());
+        if logins
+            .listener
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+        {
+            logins.listener.take();
+        }
+        if logins.listener.is_none() {
+            let (redirect_uri, listener) = bind_callback(Arc::clone(self)).await?;
+            logins.redirect_uri = redirect_uri;
+            logins.listener = Some(listener);
+            logins.generation = logins.generation.wrapping_add(1);
+            tokio::spawn(expire_logins(Arc::clone(self), logins.generation));
+        }
+        Ok(logins.redirect_uri.clone())
+    }
+
+    pub(crate) async fn insert_pending(
+        &self,
+        state: String,
+        attempt: PendingAttempt,
+    ) -> Result<(), anyhow::Error> {
+        let mut logins = self.logins.lock().await;
+        logins
+            .attempts
+            .retain(|_, login| login.user != attempt.user);
+        if logins.attempts.len() >= 64 {
+            return Err(anyhow::anyhow!("Too many pending sign-ins. Retry later."));
+        }
+        logins.attempts.insert(state, PendingLogin {
+            session: attempt.session,
+            user: attempt.user,
+            connection: attempt.connection,
+            expires: Instant::now() + LOGIN_LIFETIME,
+            nonce: attempt.nonce,
+            verifier: attempt.verifier,
+            redirect_uri: attempt.redirect_uri,
+            processing: false,
+            result: None,
+        });
+        Ok(())
+    }
+
+    pub(crate) async fn pending_result(
+        &self,
+        session: &str,
+        user: &str,
+        state: &str,
+    ) -> Option<PendingResult> {
+        let logins = self.logins.lock().await;
+        let login = logins.attempts.get(state).filter(|login| {
+            login.session == session && login.user == user && login.expires > Instant::now()
+        })?;
+        Some(match &login.result {
+            None => PendingResult::Pending,
+            Some(Ok(())) => PendingResult::Complete,
+            Some(Err(error)) => PendingResult::Error(error.clone()),
+        })
+    }
+
+    pub(crate) async fn cancel_pending(&self, session: &str, user: &str, state: &str) {
+        let mut logins = self.logins.lock().await;
+        if logins
+            .attempts
+            .get(state)
+            .is_some_and(|login| login.session == session && login.user == user)
+        {
+            logins.attempts.remove(state);
+            logins.stop_if_idle();
+        }
+    }
+
+    pub(crate) async fn drop_user_pending(&self, user: &str) {
+        let mut logins = self.logins.lock().await;
+        logins.attempts.retain(|_, login| login.user != user);
+        logins.stop_if_idle();
     }
 }
 
@@ -70,38 +145,19 @@ struct PendingLogin {
     result: Option<Result<(), String>>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StartedLogin {
-    state: String,
-    authorize_url: String,
+pub(crate) struct PendingAttempt {
+    pub session: String,
+    pub user: String,
+    pub connection: Option<String>,
+    pub nonce: String,
+    pub verifier: String,
+    pub redirect_uri: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct UserRequest {
-    user_id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct StartRequest {
-    user_id: String,
-    connection_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LoginRequest {
-    user_id: String,
-    state: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ConnectionRequest {
-    user_id: String,
-    connection_id: String,
+pub(crate) enum PendingResult {
+    Pending,
+    Complete,
+    Error(String),
 }
 
 #[derive(Deserialize)]
@@ -112,44 +168,14 @@ struct CallbackQuery {
     error: Option<String>,
 }
 
-#[derive(Serialize)]
-#[serde(tag = "status", rename_all = "camelCase")]
-enum LoginResult {
-    Pending,
-    Complete,
-    Error { error: String },
+pub(crate) fn new_secret() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProviderStatus {
-    #[serde(flatten)]
-    status: ServiceStatus,
-    login_available: bool,
-}
-
-#[derive(Serialize)]
-struct Disconnected {
-    warning: Option<String>,
-}
-
-pub(crate) fn routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/chatgpt/status", post(status))
-        .route("/chatgpt/browser/start", post(start))
-        .route("/chatgpt/browser/result", post(result))
-        .route("/chatgpt/browser/cancel", post(cancel))
-        .route("/chatgpt/select", post(select))
-        .route("/chatgpt/disconnect", post(disconnect))
-        .layer(axum::middleware::map_response(
-            |mut response: axum::response::Response| async move {
-                response.headers_mut().insert(
-                    header::CACHE_CONTROL,
-                    axum::http::HeaderValue::from_static("no-store"),
-                );
-                response
-            },
-        ))
+pub(crate) async fn shutdown(pending: &PendingLogins) {
+    let mut logins = pending.logins.lock().await;
+    logins.attempts.clear();
+    logins.stop_if_idle();
 }
 
 async fn bind_callback(
@@ -169,12 +195,6 @@ async fn bind_callback(
     ))
 }
 
-pub(crate) async fn shutdown(pending: &PendingLogins) {
-    let mut logins = pending.logins.lock().await;
-    logins.attempts.clear();
-    logins.stop_if_idle();
-}
-
 async fn expire_logins(pending: Arc<PendingLogins>, generation: u64) {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
@@ -190,237 +210,6 @@ async fn expire_logins(pending: Arc<PendingLogins>, generation: u64) {
             return;
         }
     }
-}
-
-async fn session_user(
-    state: &AppState,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    user: &str,
-) -> Result<String, ApiError> {
-    if !cookie_request_is_csrf_safe(headers) {
-        return Err(ApiError::authentication_required());
-    }
-    require_session_user(&state.auth, headers, jar, user)
-        .await
-        .map_err(|_| ApiError::authentication_required())
-}
-
-async fn local_session(
-    state: &AppState,
-    peer: SocketAddr,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    user: &str,
-) -> Result<String, ApiError> {
-    if !state.loopback_desktop_login_supported
-        || browser_connection(headers, peer) != Some(BrowserConnection::Loopback)
-    {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "ChatGPT sign-in requires Sprocket running on your own computer. Open its local settings."
-        )));
-    }
-    let session = session_user(state, headers, jar, user).await?;
-    if !state.auth.session_is_local_browser(&session).await {
-        return Err(ApiError::authentication_required());
-    }
-    Ok(session)
-}
-
-fn secret() -> String {
-    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
-}
-
-async fn start(
-    State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(request): Json<StartRequest>,
-) -> Result<Json<StartedLogin>, ApiError> {
-    let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
-    let pending = &state.chatgpt_oauth;
-    let value = secret();
-    let nonce = secret();
-    let verifier = secret();
-    let mut logins = pending.logins.lock().await;
-    logins
-        .attempts
-        .retain(|_, login| login.expires > Instant::now());
-    if logins
-        .listener
-        .as_ref()
-        .is_some_and(|task| task.is_finished())
-    {
-        logins.listener.take();
-    }
-    if logins.listener.is_none() {
-        let (redirect_uri, listener) = bind_callback(Arc::clone(pending)).await.map_err(|_| {
-            ApiError::with_status(
-                StatusCode::SERVICE_UNAVAILABLE,
-                anyhow::anyhow!("Could not open the local ChatGPT callback listener."),
-            )
-        })?;
-        logins.redirect_uri = redirect_uri;
-        logins.listener = Some(listener);
-        logins.generation = logins.generation.wrapping_add(1);
-        tokio::spawn(expire_logins(Arc::clone(pending), logins.generation));
-    }
-    let redirect_uri = logins.redirect_uri.clone();
-    let authorize_url = state
-        .chatgpt_credentials
-        .authorization(
-            &request.user_id,
-            request.connection_id.as_deref(),
-            &redirect_uri,
-            &value,
-            &nonce,
-            &verifier,
-        )
-        .await
-        .map_err(ApiError::bad_request)?;
-    logins
-        .attempts
-        .retain(|_, login| login.user != request.user_id);
-    if logins.attempts.len() >= 64 {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "Too many pending sign-ins. Retry later."
-        )));
-    }
-    logins.attempts.insert(
-        value.clone(),
-        PendingLogin {
-            session,
-            user: request.user_id,
-            connection: request.connection_id,
-            expires: Instant::now() + LOGIN_LIFETIME,
-            nonce,
-            verifier,
-            redirect_uri,
-            processing: false,
-            result: None,
-        },
-    );
-    Ok(Json(StartedLogin {
-        state: value,
-        authorize_url,
-    }))
-}
-
-async fn result(
-    State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(request): Json<LoginRequest>,
-) -> Result<Json<LoginResult>, ApiError> {
-    let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
-    let logins = state.chatgpt_oauth.logins.lock().await;
-    let login = logins
-        .attempts
-        .get(&request.state)
-        .filter(|login| {
-            login.session == session
-                && login.user == request.user_id
-                && login.expires > Instant::now()
-        })
-        .ok_or_else(ApiError::authentication_required)?;
-    Ok(Json(match &login.result {
-        None => LoginResult::Pending,
-        Some(Ok(())) => LoginResult::Complete,
-        Some(Err(error)) => LoginResult::Error {
-            error: error.clone(),
-        },
-    }))
-}
-
-async fn cancel(
-    State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(request): Json<LoginRequest>,
-) -> Result<Json<()>, ApiError> {
-    let session = local_session(&state, peer, &headers, &jar, &request.user_id).await?;
-    let mut logins = state.chatgpt_oauth.logins.lock().await;
-    if logins
-        .attempts
-        .get(&request.state)
-        .is_some_and(|login| login.session == session && login.user == request.user_id)
-    {
-        logins.attempts.remove(&request.state);
-        logins.stop_if_idle();
-    }
-    Ok(Json(()))
-}
-
-async fn status(
-    State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(request): Json<UserRequest>,
-) -> Result<Json<ProviderStatus>, ApiError> {
-    let session = session_user(&state, &headers, &jar, &request.user_id).await?;
-    let login_available = state.chatgpt_credentials.available()
-        && state.loopback_desktop_login_supported
-        && browser_connection(&headers, peer) == Some(BrowserConnection::Loopback)
-        && state.auth.session_is_local_browser(&session).await;
-    Ok(Json(ProviderStatus {
-        status: state
-            .chatgpt_credentials
-            .status(&request.user_id)
-            .await
-            .map_err(ApiError::bad_request)?,
-        login_available,
-    }))
-}
-
-async fn select(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(request): Json<ConnectionRequest>,
-) -> Result<Json<()>, ApiError> {
-    session_user(&state, &headers, &jar, &request.user_id).await?;
-    let mut logins = state.chatgpt_oauth.logins.lock().await;
-    logins
-        .attempts
-        .retain(|_, login| login.user != request.user_id);
-    logins.stop_if_idle();
-    drop(logins);
-    state
-        .chatgpt_credentials
-        .select(&request.user_id, &request.connection_id)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(()))
-}
-
-async fn disconnect(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(request): Json<ConnectionRequest>,
-) -> Result<Json<Disconnected>, ApiError> {
-    session_user(&state, &headers, &jar, &request.user_id).await?;
-    let pending = Arc::clone(&state.chatgpt_oauth);
-    let service = Arc::clone(&state.chatgpt_credentials);
-    let warning = tokio::spawn(async move {
-        let mut logins = pending.logins.lock().await;
-        logins
-            .attempts
-            .retain(|_, login| login.user != request.user_id);
-        logins.stop_if_idle();
-        drop(logins);
-        service
-            .disconnect(&request.user_id, &request.connection_id)
-            .await
-    })
-    .await
-    .map_err(|_| ApiError::internal(anyhow::anyhow!("Sign-out task stopped.")))?
-    .map_err(ApiError::bad_request)?;
-    Ok(Json(Disconnected { warning }))
 }
 
 async fn finish_callback(
@@ -523,11 +312,15 @@ async fn callback(
 
 #[cfg(test)]
 mod tests {
-    use axum::body::Body;
-    use axum::http::Request;
-    use tower::ServiceExt;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use axum::extract::{Query, State};
+    use axum::http::{StatusCode, header};
 
     use super::*;
+    use crate::AppState;
+    use crate::auth::AuthState;
 
     async fn fixture() -> (tempfile::TempDir, AppState, String) {
         let directory = tempfile::tempdir().unwrap();
@@ -550,71 +343,27 @@ mod tests {
         (directory, state, session)
     }
 
-    fn request(path: &str, session: &str, user: &str) -> Request<Body> {
-        let mut request = Request::builder()
-            .method("POST")
-            .uri(path)
-            .header(header::HOST, "127.0.0.1:7731")
-            .header(header::ORIGIN, "http://127.0.0.1:7731")
-            .header(
-                header::COOKIE,
-                format!("{}={session}", crate::SESSION_COOKIE_NAME),
-            )
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(serde_json::json!({"userId":user}).to_string()))
-            .unwrap();
-        request
-            .extensions_mut()
-            .insert(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()));
-        request
-    }
-
-    #[tokio::test]
-    async fn local_status_is_account_scoped_and_reports_login_availability() {
-        let (_directory, state, session) = fixture().await;
-        let app = crate::build_router(state, None);
-        let response = app
-            .clone()
-            .oneshot(request("/api/chatgpt/status", &session, "user-a"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 65536)
-            .await
-            .unwrap();
-        let status: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            status,
-            serde_json::json!({
-                "accounts":[], "activeConnectionId":null, "loginAvailable":true
-            })
-        );
-        let response = app
-            .oneshot(request("/api/chatgpt/status", &session, "user-b"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
     #[tokio::test]
     async fn callback_records_failure_once_without_exposing_oauth_material() {
         let (_directory, state, session) = fixture().await;
         let pending = state.chatgpt_oauth;
-        let value = secret();
-        pending.logins.lock().await.attempts.insert(
-            value.clone(),
-            PendingLogin {
+        let value = new_secret();
+        pending
+            .logins
+            .lock()
+            .await
+            .attempts
+            .insert(value.clone(), PendingLogin {
                 session,
                 user: "user-a".into(),
                 connection: None,
                 expires: Instant::now() + LOGIN_LIFETIME,
-                nonce: secret(),
-                verifier: secret(),
+                nonce: new_secret(),
+                verifier: new_secret(),
                 redirect_uri: "http://127.0.0.1:1234/auth/callback".into(),
                 processing: false,
                 result: None,
-            },
-        );
+            });
         let query = || CallbackQuery {
             state: Some(value.clone()),
             code: None,
@@ -642,10 +391,6 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(
-            serde_json::to_value(LoginResult::Complete).unwrap(),
-            serde_json::json!({"status":"complete"})
-        );
     }
 
     #[tokio::test]
