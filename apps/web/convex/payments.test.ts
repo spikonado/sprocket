@@ -440,6 +440,119 @@ describe('payments mandates', () => {
 		expect(stored?.remaining).toBe(12_000);
 	});
 
+	it('charges after Prava reports active even if the local mandate is paused', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('mandates', setup.mandateId, { status: 'paused' });
+		});
+
+		fetchMock.mockResolvedValueOnce(jsonResponse(liveListedMandate({ status: 'active' })));
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_unpaused',
+				status: 'awaiting_result',
+				credentials: {
+					token: '4111111111111111',
+					dynamicCvv: '123',
+					expiryMonth: '12',
+					expiryYear: '2030'
+				}
+			})
+		);
+
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order after unpause',
+			...auth(run)
+		});
+
+		expect(charge.transactionId).toBe('txn_unpaused');
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(true);
+	});
+
+	it('rejects a charge when the refreshed remaining is below the amount', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
+
+		fetchMock.mockResolvedValueOnce(jsonResponse(liveListedMandate({ remaining: '10.00' })));
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-low-remaining',
+				...auth(run)
+			})
+		).rejects.toThrow(/remaining/);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+	});
+
+	it('releases the reservation when mandate refresh fails so the same reference can retry', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
+
+		fetchMock.mockResolvedValueOnce(jsonResponse({ error: { message: 'temporary outage' } }, 503));
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-refresh-retry',
+				...auth(run)
+			})
+		).rejects.toThrow();
+
+		fetchMock.mockResolvedValueOnce(jsonResponse(liveListedMandate()));
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_retry',
+				status: 'awaiting_result',
+				credentials: {
+					token: '4111111111111111',
+					dynamicCvv: '123',
+					expiryMonth: '12',
+					expiryYear: '2030'
+				}
+			})
+		);
+
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-refresh-retry',
+			...auth(run)
+		});
+
+		expect(charge.transactionId).toBe('txn_retry');
+	});
+
 	it('reuses a completed charge handle without replaying credentials', async () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');

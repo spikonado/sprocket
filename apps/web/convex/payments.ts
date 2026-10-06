@@ -940,13 +940,13 @@ export const mandateCharge = action({
 				throw error;
 			}
 
-			const mandate =
-				(await ctx.runQuery(internal.payments.getOwnedMandate, {
-					mandateId: args.mandateId,
-					userId: actor.userId
-				})) ?? stored;
-
 			try {
+				const mandate =
+					(await ctx.runQuery(internal.payments.getOwnedMandate, {
+						mandateId: args.mandateId,
+						userId: actor.userId
+					})) ?? stored;
+
 				assertChargeable(mandate, args);
 
 				if (mandate.status === 'paused') {
