@@ -55,6 +55,7 @@ impl PendingLogins {
             logins.generation = logins.generation.wrapping_add(1);
             tokio::spawn(expire_logins(Arc::clone(self), logins.generation));
         }
+        logins.trim_extra_user_reservations(&attempt.user);
         if logins
             .attempts
             .values()
@@ -143,6 +144,22 @@ impl LoginState {
             && let Some(task) = self.listener.take()
         {
             task.abort();
+        }
+    }
+
+    fn trim_extra_user_reservations(&mut self, user: &str) {
+        let mut idle: Vec<(String, Instant)> = self
+            .attempts
+            .iter()
+            .filter(|(_, login)| login.user == user && !login.processing && login.result.is_none())
+            .map(|(key, login)| (key.clone(), login.expires))
+            .collect();
+        if idle.len() <= 1 {
+            return;
+        }
+        idle.sort_by_key(|(_, expires)| *expires);
+        for (key, _) in idle.into_iter().skip(1) {
+            self.attempts.remove(&key);
         }
     }
 }
