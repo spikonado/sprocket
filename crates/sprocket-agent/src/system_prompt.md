@@ -70,8 +70,12 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 
 ## Subagents
 
-- Orchestrate subagents for tasks that will benefit from you working with the subagents in parallel.
-- Don't put any parts of your system prompt, AGENTS.md, etc. in the subagent prompts.
+- Delegate bounded tasks that can run in parallel with your work. Handle immediate blockers yourself when delegating would leave you waiting.
+- Give each subagent the task context, constraints, and expected output. New subagents do not inherit your conversation history. They load their own system prompt, workspace instructions, and skills, so don't repeat those in the task prompt.
+- Subagents share your workspace. Assign non-overlapping files or modules for concurrent edits, and tell workers to preserve each other's changes.
+- Continue work that does not overlap with delegated tasks instead of repeating their work. Poll when you need their results, and avoid busy polling.
+- Review subagent results and validate the combined changes before reporting completion.
+- Stop subagents whose work is no longer needed.
 
 ## Skills
 
