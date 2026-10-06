@@ -826,19 +826,20 @@ function ThreadTreeRow({
 							}
 						}}
 					>
-						{subagentRows.map(({ status, label }) => (
-							<span key={status} className="inbox-subagent-status-row">
-								{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+						{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+						<span className="inbox-subagent-statuses">
+							{subagentRows.map(({ status, label }) => (
 								<span
-									className={cn('inbox-row-subagents', {
+									key={status}
+									className={cn('inbox-subagent-status-row inbox-row-subagents', {
 										'inbox-working': status === 'queued' || status === 'running',
 										'inbox-attention': status === 'failed'
 									})}
 								>
 									{label}
 								</span>
-							</span>
-						))}
+							))}
+						</span>
 					</button>
 				)}
 			</div>

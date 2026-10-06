@@ -572,6 +572,8 @@ it('shows each descendant status on its own counted row', async () => {
 	expect(
 		view.getByRole('button', { name: /^Expand subagents of Thread:/ }).getAttribute('aria-expanded')
 	).toBe('false');
+	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
+	expect(document.querySelector('.inbox-subagents .lucide-chevron-right')).toBeTruthy();
 
 	act(() => {
 		fireEvent.click(rows[2]);
@@ -586,6 +588,8 @@ it('shows each descendant status on its own counted row', async () => {
 		descendantStatusCounts: { queued: 0, running: 3, completed: 3, failed: 1, cancelled: 2 }
 	});
 	view.rerender(<Harness {...input} />);
+	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
+	expect(document.querySelector('.inbox-subagents .lucide-chevron-down')).toBeTruthy();
 	expect(
 		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
 	).toEqual([
