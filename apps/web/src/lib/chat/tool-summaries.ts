@@ -1,11 +1,10 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
-	assistantTimelineToolError,
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
-import { isCommandToolKind, isSessionCommandToolKind } from '$lib/chat/command-tool-kinds';
+import { isCommandToolKind, isSessionCommandToolKind } from '@convex/lib/commandToolKinds';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -368,16 +367,4 @@ export function toolItemSummary(
 	}
 
 	return summarizeTool(toolLog.name, toolLog.input);
-}
-
-export function fullToolSummary(
-	toolLog: AssistantTimelineTool,
-	isStreaming: boolean,
-	sessionCommands: ReadonlyMap<string, string>
-) {
-	const summary = toolItemSummary(toolLog, sessionCommands);
-
-	const error = assistantTimelineToolError(toolLog, isStreaming);
-
-	return error ? `${summary} (${error})` : summary;
 }

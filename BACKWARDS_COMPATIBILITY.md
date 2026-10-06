@@ -345,17 +345,36 @@ Keep `ownStatus` optional for newly ensured states until they are refreshed;
 do not initialize it before propagating the contribution. Keep the original
 summary fields until clients using them are outside the supported upgrade window.
 
+The stored `threadHierarchyStates.descendantCount` is temporary duplicate
+bookkeeping once status counts cover every descendant. Remove its writes only
+after the status backfill finishes and production checks confirm that each
+stored total equals the sum of its `descendantStatusCounts`. Then derive the
+API's `descendantCount` from that sum and remove the UI's "Status updating"
+fallback. Keep the API field for released clients until they are outside the
+supported upgrade window; removing storage does not require removing the API
+field. Ship a migration in the removal PR to strip the stored totals, retaining
+an optional schema field until the migration finishes and production checks
+confirm no rows contain it. Only then remove the schema field and migration.
+`ownActive`, `ownStatus`, and `activeDescendantCount` are not covered by this
+removal gate: they still support incremental updates and pending-question activity.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10` once the migrations component reports every migration finished.
+The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10-command-inputs` once the migrations component reports every migration finished.
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
+`backfillCommandToolInputs` (resolves retained jobs after invocation IDs migrate),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
 `removeSectionLinkedParts`, and
 `removeArtifactRegistryRekeyTargets`.
+
+The command-input backfill uses a new schedule name so completed
+`legacy-compat-backfill-2026-10` schedules do not block it. Already-finished
+migrations remain finished in the migrations component. The old schedule rows
+may be deleted after the command-input backfill completes.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
@@ -501,3 +520,43 @@ stored `closed` flags instead of rescanning each run for every section.
 
 Remove this local migration once supported installations no longer have caches
 with the session column, or a later cache migration also rebuilds these indexes.
+
+#### Command tool inputs
+
+Tool detail bodies accept optional `input`. Current started and terminal events
+preserve display inputs only for `exec_cmd`, `exec_command`, `control_cmd`,
+`control_command`, `poll_cmd`, `poll_command`, and `write_stdin`; other tool
+events omit input to avoid duplicating large payloads. Only `cmd`, `workdir`,
+`sessionId`, and `action` are copied; command and workdir strings are capped at
+8192 characters with an ellipsis, and session IDs over 128 characters are omitted
+rather than truncated. Stdin contents and execution options are never copied.
+This keeps started/terminal events and backfills small. Remote sync retains the
+field, and synthetic tool calls use it when no canonical completion call exists.
+Canonical completion inputs remain authoritative. Synthetic calls prefer their
+start input, then terminal input for mixed-version caches only when invocation
+IDs (or legacy job IDs), run, and tool kind match. Missing legacy input produces
+`null`, leaving the command session unknown rather than guessing from a call ID
+or error message.
+
+`backfillCommandToolInputs` fills only absent command inputs from retained
+`executorJobs`, pairing by run and tool invocation ID. It verifies the job's
+thread and tool kind and preserves existing inputs. The legacy runner runs it
+after invocation-ID backfills, which also translate legacy `jobId` references.
+Remove this migration after it completes and production scans confirm all
+recoverable command inputs were backfilled; retire the shared `jobId` pairing
+shim under the Tool invocation IDs gate above.
+
+Until the migration finishes, command transcript retries hydrate an existing
+part's absent input using the existing append lookup. The candidate part must
+pass strict retry comparison before a patch is written; other mismatches still
+fail. Normal appends and already-hydrated retries perform no additional database
+queries or writes. Remove this hydration once production has no recoverable
+command parts with absent input and all writers preserve command inputs.
+
+Older local JSONL transcripts and derived history caches may have no command
+input, and commands whose executor job was deleted cannot be backfilled. Those
+historical inputs remain unknown; this change does not rebuild local caches or
+invent missing payloads. Keep the optional field and missing-input fallback
+while such history is supported. They cannot be removed solely because released
+clients aged out or the Convex migration finished. Noncommand detail input stays
+optional by design.

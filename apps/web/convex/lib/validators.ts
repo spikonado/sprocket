@@ -885,6 +885,7 @@ export const vTranscriptToolBody = v.object({
 	toolInvocationId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
+	input: v.optional(vJsonValue),
 	output: v.optional(vJsonValue),
 	status: vTranscriptToolStatus
 });

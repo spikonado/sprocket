@@ -9,6 +9,8 @@ import {
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
+import { isCommandToolKind } from '@convex/lib/commandToolKinds';
+import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from '@convex/lib/json';
 import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
 import {
 	writeCompletionSectionData,
@@ -23,6 +25,7 @@ type TranscriptToolJob = Pick<
 	| 'status'
 	| 'callId'
 	| 'kind'
+	| 'payload'
 	| 'result'
 	| 'error'
 	| 'completedAt'
@@ -30,6 +33,29 @@ type TranscriptToolJob = Pick<
 	| 'sectionKey'
 	| 'sectionOrdinal'
 >;
+
+export function commandToolDisplayInput(name: string, input: JsonValue): JsonObject | undefined {
+	if (!isCommandToolKind(name) || !isJsonObject(input)) return undefined;
+
+	const display: JsonObject = {};
+
+	for (const key of ['cmd', 'workdir']) {
+		const value = input[key];
+
+		if (isJsonString(value)) {
+			display[key] =
+				value.length > 8192 ? `${value.slice(0, 8192).replace(/[\uD800-\uDBFF]$/u, '')}…` : value;
+		}
+	}
+
+	if (isJsonString(input.sessionId) && input.sessionId.length <= 128) {
+		display.sessionId = input.sessionId;
+	}
+
+	if (input.action === 'write' || input.action === 'terminate') display.action = input.action;
+
+	return display;
+}
 
 export async function recordPromptTranscript(
 	ctx: MutationCtx,
@@ -226,6 +252,10 @@ function progressToolBody(
 		name: job.kind,
 		status: args.status
 	};
+
+	const input = commandToolDisplayInput(job.kind, job.payload);
+
+	if (input !== undefined) body.input = input;
 
 	if (args.output !== undefined) {
 		body.output = args.output;

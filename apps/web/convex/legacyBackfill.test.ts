@@ -207,9 +207,159 @@ describe('legacy compat backfill migrations', () => {
 		});
 
 		await t.mutation(internal.migrations.migrateToolPartJobIds, oneBatch);
+		await t.mutation(internal.migrations.backfillCommandToolInputs, oneBatch);
 		const part = await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId));
-		expect(part?.tool).toMatchObject({ toolInvocationId: jobId, callId: 'call-1' });
+		expect(part?.tool).toMatchObject({
+			toolInvocationId: jobId,
+			callId: 'call-1',
+			input: { cmd: 'echo hi' }
+		});
 		expect(part?.tool).not.toHaveProperty('jobId');
+	});
+
+	it('backfills command inputs by run and invocation without pairing reused call ids', async () => {
+		const t = initConvexTest();
+		const { threadId, subject } = await seedOwnedThread(t);
+
+		const cases = [
+			{ kind: 'exec_cmd', payload: { cmd: 'echo current' } },
+			{ kind: 'exec_command', payload: { cmd: 'echo legacy' } },
+			{ kind: 'control_cmd', payload: { sessionId: 'current', action: 'terminate' } },
+			{
+				kind: 'control_command',
+				payload: { sessionId: 'legacy', action: 'write', chars: 'hi' },
+				expected: { sessionId: 'legacy', action: 'write' }
+			},
+			{
+				kind: 'poll_cmd',
+				payload: { sessionId: 'current', yieldTimeMs: 0 },
+				expected: { sessionId: 'current' }
+			},
+			{ kind: 'poll_command', payload: { sessionId: 'legacy' } },
+			{
+				kind: 'write_stdin',
+				payload: { sessionId: 'oldest', chars: 'hi', terminate: false },
+				expected: { sessionId: 'oldest' }
+			}
+		] as const;
+
+		const partIds = await t.run(async (ctx) => {
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.unique();
+
+			if (!run) throw new Error('Missing test fixture.');
+			const ids = [];
+
+			for (const [index, { kind, payload }] of cases.entries()) {
+				const toolInvocationId = `command-${index}`;
+				await ctx.db.insert('executorJobs', {
+					threadId,
+					runId: run._id,
+					kind,
+					payload,
+					callId: 'reused-call',
+					toolInvocationId,
+					status: 'failed',
+					enqueuedAt: 1,
+					sequence: index
+				});
+				ids.push(
+					await ctx.db.insert('threadTranscriptParts', {
+						threadId,
+						userId: subject,
+						runId: run._id,
+						number: index,
+						sourceKey: `tool:${toolInvocationId}:finished`,
+						kind: 'tool',
+						tool: { toolInvocationId, name: kind, callId: 'reused-call', status: 'failed' },
+						work: { ranges: [] }
+					})
+				);
+			}
+
+			return ids;
+		});
+
+		await t.mutation(internal.migrations.backfillCommandToolInputs, oneBatch);
+		await t.mutation(internal.migrations.backfillCommandToolInputs, oneBatch);
+
+		for (const [index, partId] of partIds.entries()) {
+			expect(
+				(await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId)))?.tool?.input
+			).toEqual('expected' in cases[index] ? cases[index].expected : cases[index].payload);
+		}
+	});
+
+	it('keeps supplied inputs and leaves unmatched or noncommand history unknown', async () => {
+		const t = initConvexTest();
+		const { threadId, subject } = await seedOwnedThread(t);
+		const { threadId: otherThreadId } = await seedOwnedThread(t, 'other-user');
+
+		const partIds = await t.run(async (ctx) => {
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.unique();
+
+			if (!run) throw new Error('Missing test fixture.');
+
+			await ctx.db.insert('executorJobs', {
+				threadId,
+				runId: run._id,
+				kind: 'poll_cmd',
+				payload: { sessionId: 'retained' },
+				callId: 'reused-call',
+				toolInvocationId: 'retained',
+				status: 'completed',
+				enqueuedAt: 1,
+				sequence: 0
+			});
+
+			const tools = [
+				{ name: 'poll_cmd', toolInvocationId: 'retained', input: { sessionId: 'supplied' } },
+				{ name: 'poll_cmd', toolInvocationId: 'retained', input: null },
+				{ name: 'poll_cmd', toolInvocationId: 'missing' },
+				{ name: 'read_file', toolInvocationId: 'retained' },
+				{ name: 'control_cmd', toolInvocationId: 'retained' },
+				{ name: 'poll_cmd', toolInvocationId: 'retained' }
+			];
+
+			const ids = [];
+
+			for (const [index, tool] of tools.entries()) {
+				ids.push(
+					await ctx.db.insert('threadTranscriptParts', {
+						threadId: index === 5 ? otherThreadId : threadId,
+						userId: subject,
+						runId: run._id,
+						number: index,
+						sourceKey: `tool:test-${index}`,
+						kind: 'tool',
+						tool: { ...tool, callId: 'reused-call', status: 'started' },
+						work: { ranges: [] }
+					})
+				);
+			}
+
+			return ids;
+		});
+
+		await t.mutation(internal.migrations.backfillCommandToolInputs, oneBatch);
+
+		const parts = await t.run(async (ctx) =>
+			Promise.all(partIds.map((id) => ctx.db.get('threadTranscriptParts', id)))
+		);
+
+		expect(parts.map((part) => part?.tool?.input)).toEqual([
+			{ sessionId: 'supplied' },
+			null,
+			undefined,
+			undefined,
+			undefined,
+			undefined
+		]);
 	});
 
 	it('normalizes missing completion timing to null', async () => {
@@ -367,12 +517,48 @@ describe('legacy compat backfill migrations', () => {
 		expect(registry).not.toHaveProperty('rekeyTo');
 	});
 
-	it('records completion through the automatic schedule', async () => {
+	it('backfills command inputs after the previous schedule completed', async () => {
 		vi.useFakeTimers();
 
 		try {
 			const t = initConvexTest();
 			const { threadId } = await seedOwnedThread(t);
+
+			const commandPartId = await t.run(async (ctx) => {
+				const run = await ctx.db
+					.query('runs')
+					.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+					.unique();
+
+				if (!run) throw new Error('Missing test fixture.');
+				await ctx.db.insert('executorJobs', {
+					threadId,
+					runId: run._id,
+					kind: 'poll_cmd',
+					payload: { sessionId: 'scheduled' },
+					toolInvocationId: 'scheduled-command',
+					status: 'failed',
+					enqueuedAt: 1,
+					sequence: 0
+				});
+
+				return await ctx.db.insert('threadTranscriptParts', {
+					threadId,
+					userId: run.userId,
+					runId: run._id,
+					number: 0,
+					sourceKey: 'tool:scheduled-command:finished',
+					kind: 'tool',
+					tool: {
+						toolInvocationId: 'scheduled-command',
+						name: 'poll_cmd',
+						callId: 'scheduled',
+						status: 'failed'
+					},
+					work: { ranges: [] }
+				});
+			});
+
 			await t.run((ctx) =>
 				ctx.db.insert('threadTranscriptStates', {
 					threadId,
@@ -382,16 +568,35 @@ describe('legacy compat backfill migrations', () => {
 				})
 			);
 
+			const previousScheduleId = await t.run((ctx) =>
+				ctx.db.insert('migrationSchedules', {
+					name: 'legacy-compat-backfill-2026-10',
+					notBefore: 1,
+					startedAt: 1,
+					completedAt: 2
+				})
+			);
+
 			await t.mutation(internal.migrations.runLegacyCompatBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runLegacyCompatBackfillAutomatically, {});
 
 			const schedule = await t.run((ctx) =>
-				ctx.db.query('migrationSchedules').withIndex('by_name').unique()
+				ctx.db
+					.query('migrationSchedules')
+					.withIndex('by_name', (q) =>
+						q.eq('name', 'legacy-compat-backfill-2026-10-command-inputs')
+					)
+					.unique()
 			);
 
-			expect(schedule).toMatchObject({ name: 'legacy-compat-backfill-2026-10' });
 			expect(schedule?.completedAt).toBeDefined();
+			expect(
+				(await t.run((ctx) => ctx.db.get('migrationSchedules', previousScheduleId)))?.completedAt
+			).toBe(2);
+			expect(
+				(await t.run((ctx) => ctx.db.get('threadTranscriptParts', commandPartId)))?.tool?.input
+			).toEqual({ sessionId: 'scheduled' });
 
 			const states = await t.run((ctx) =>
 				ctx.db.query('threadTranscriptStates').withIndex('by_threadId').collect()

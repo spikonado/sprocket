@@ -178,7 +178,25 @@ pub(super) fn detail(
             parts.push(value);
         }
     } else if let Some(tool) = &source.tool {
-        parts.push(json!({"type":"tool-call", "callId":tool.call_id, "name":tool.name, "input":null, "startedAt":item.started_at}));
+        let input = tool
+            .input
+            .as_ref()
+            .or_else(|| {
+                let part = result?;
+                let terminal = part.tool.as_ref()?;
+                let invocation = tool.tool_invocation_id.as_ref().or(tool.job_id.as_ref())?;
+                (part.run_id == source.run_id
+                    && terminal.name == tool.name
+                    && terminal
+                        .tool_invocation_id
+                        .as_ref()
+                        .or(terminal.job_id.as_ref())
+                        == Some(invocation))
+                .then_some(terminal.input.as_ref())
+                .flatten()
+            })
+            .unwrap_or(&Value::Null);
+        parts.push(json!({"type":"tool-call", "callId":tool.call_id, "name":tool.name, "input":input, "startedAt":item.started_at}));
     }
     if let Some(tool) = result.and_then(|part| part.tool.as_ref()) {
         let output = tool.output.as_ref().unwrap_or(&Value::Null);

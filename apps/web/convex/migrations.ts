@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
+import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -144,6 +146,36 @@ export const migrateToolPartJobIds = migrations.define({
 	}
 });
 
+export const backfillCommandToolInputs = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (ctx, part) => {
+		const tool = part.tool;
+
+		if (
+			part.kind !== 'tool' ||
+			!tool ||
+			tool.input !== undefined ||
+			!tool.toolInvocationId ||
+			!isCommandToolKind(tool.name)
+		) {
+			return;
+		}
+
+		const toolInvocationId = tool.toolInvocationId;
+
+		const job = await ctx.db
+			.query('executorJobs')
+			.withIndex('by_runId_and_toolInvocationId', (q) =>
+				q.eq('runId', part.runId).eq('toolInvocationId', toolInvocationId)
+			)
+			.unique();
+
+		if (!job || job.threadId !== part.threadId || job.kind !== tool.name) return;
+
+		return { tool: { ...tool, input: commandToolDisplayInput(job.kind, job.payload) } };
+	}
+});
+
 export const normalizeTranscriptCompletionTiming = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: async (_ctx, part) => {
@@ -230,6 +262,7 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 	internal.migrations.normalizeScrapeUrlResults,
 	internal.migrations.backfillExecutorJobToolInvocationId,
 	internal.migrations.migrateToolPartJobIds,
+	internal.migrations.backfillCommandToolInputs,
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
 	internal.migrations.removeSectionLinkedParts,
@@ -238,7 +271,7 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 
 export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMigrations);
 
-const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10';
+const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10-command-inputs';
 
 const projectArtifactMigrations: FunctionReference<'mutation', 'internal'>[] = [
 	internal.migrations.promoteThreadArtifacts
