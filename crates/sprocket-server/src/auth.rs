@@ -326,20 +326,28 @@ impl AuthState {
         user_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
-        for session in sessions.values_mut() {
-            if session.ephemeral || session.local_browser {
-                if user_id.is_none() {
+        match user_id {
+            None => {
+                sessions.retain(|_, session| !(session.ephemeral || session.local_browser));
+                for session in sessions.values_mut() {
                     session.user_id = None;
                     session.uncommitted = false;
-                } else if session.user_id.is_none() {
-                    session.user_id = user_id.map(str::to_owned);
-                    session.uncommitted = false;
-                } else if session.user_id.as_deref() == user_id {
-                    session.uncommitted = false;
                 }
-            } else if session.user_id.as_deref() != user_id {
-                session.user_id = None;
-                session.uncommitted = false;
+            }
+            Some(user_id) => {
+                for session in sessions.values_mut() {
+                    if session.ephemeral || session.local_browser {
+                        if session.user_id.is_none() {
+                            session.user_id = Some(user_id.to_owned());
+                            session.uncommitted = false;
+                        } else if session.user_id.as_deref() == Some(user_id) {
+                            session.uncommitted = false;
+                        }
+                    } else if session.user_id.as_deref() != Some(user_id) {
+                        session.user_id = None;
+                        session.uncommitted = false;
+                    }
+                }
             }
         }
         self.save_sessions(sessions).await
@@ -407,7 +415,8 @@ impl AuthState {
             .await
             .get(session_token)
             .is_some_and(|session| {
-                !session_is_expired(session) && (session.ephemeral || session.user_id.is_some())
+                !session_is_expired(session)
+                    && (session.ephemeral || (session.user_id.is_some() && !session.uncommitted))
             })
     }
 
@@ -1071,7 +1080,71 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("sign in again")
+                .contains("authentication required")
+        );
+        assert!(!auth.session_state(Some(&session_token)).await.authenticated);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn owner_sync_on_sign_out_drops_local_cookies_so_the_next_user_cannot_inherit_them() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, leftover) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("leftover local cookie");
+        auth.bind_session_user(&leftover, "user-1").await.unwrap();
+        auth.sync_sessions_with_owner(None).await.unwrap();
+        assert!(!auth.session_state(Some(&leftover)).await.authenticated);
+
+        let (_, next) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("next local cookie");
+        auth.bind_session_user(&next, "user-2").await.unwrap();
+        auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
+
+        assert!(!auth.session_state(Some(&leftover)).await.authenticated);
+        auth.require_session_user(&next, "user-2").await.unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn pending_login_claim_cannot_access_machine_routes() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap should succeed");
+        assert!(
+            auth.claim_session_user(&session_token, "user-1")
+                .await
+                .unwrap()
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {session_token}").parse().unwrap(),
+        );
+        assert!(
+            require_session(&auth, &headers, &CookieJar::new())
+                .await
+                .is_err()
+        );
+
+        auth.bind_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            require_session(&auth, &headers, &CookieJar::new())
+                .await
+                .unwrap(),
+            session_token
         );
 
         let _ = fs::remove_dir_all(temp_dir);
