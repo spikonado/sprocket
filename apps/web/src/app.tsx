@@ -1983,7 +1983,6 @@ export default function App({
 		draftWorkspacePathRef.current = draftWorkspacePath;
 		pendingAgentQuestionRef.current = pendingAgentQuestion;
 		runStateRef.current = runState;
-		pendingAgentLaunchesRef.current = pendingAgentLaunches;
 		composerContinuationOfRunIdRef.current = composerContinuationOfRunId;
 	}, [
 		config,
@@ -1995,7 +1994,6 @@ export default function App({
 		draftWorkspacePath,
 		pendingAgentQuestion,
 		runState,
-		pendingAgentLaunches,
 		composerContinuationOfRunId
 	]);
 
@@ -2430,19 +2428,17 @@ export default function App({
 	]);
 
 	useEffect(() => {
-		let nextPendingAgentLaunches = pendingAgentLaunches;
+		if (!currentThreadId || !runState?.runId) return;
 
-		if (currentThreadId && runState?.runId) {
-			nextPendingAgentLaunches = resolvePendingAgentLaunch(
-				nextPendingAgentLaunches,
-				currentThreadId,
-				runState.runId,
-				undefined,
-				runState.startedAt
-			);
-		}
+		const nextPendingAgentLaunches = resolvePendingAgentLaunch(
+			pendingAgentLaunchesRef.current,
+			currentThreadId,
+			runState.runId,
+			undefined,
+			runState.startedAt
+		);
 
-		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+		if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
 			pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
 			setPendingAgentLaunches(nextPendingAgentLaunches);
 		}
