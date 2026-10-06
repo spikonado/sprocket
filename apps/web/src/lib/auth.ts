@@ -1149,13 +1149,25 @@ export async function signOut() {
 				return;
 			}
 
-			// Token delete succeeded but a later step failed, or the host is already
-			// gone. Do not keep a signed-in page that a restart would not restore.
-			authState.set(
-				signedOutState({
-					error: errors.join(' ')
-				})
-			);
+			if (outcome.kind === 'signedOut') {
+				// Token delete succeeded but a later step failed, or the host is already
+				// gone. Do not keep a signed-in page that a restart would not restore.
+				authState.set(
+					signedOutState({
+						error: errors.join(' ')
+					})
+				);
+
+				return;
+			}
+
+			// Timeout, 503, or another check failure does not mean the host signed out.
+			authState.update((current) => ({
+				...current,
+				isLoading: false,
+				nativeSession: current.user ? 'ready' : current.nativeSession,
+				error: errors.join(' ')
+			}));
 
 			return;
 		}

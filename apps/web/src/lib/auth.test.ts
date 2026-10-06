@@ -279,6 +279,29 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
+	it('keeps the native user when the follow-up host check fails after a stuck sign-out', async () => {
+		stubInstalledWindow();
+		let tokenCalls = 0;
+		stubFetch({
+			token: () => {
+				tokenCalls += 1;
+
+				return tokenCalls === 1
+					? jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
+					: jsonResponse(503, { error: 'Temporarily unavailable' });
+			},
+			nativeSessionDelete: () => jsonResponse(500, { error: 'credential deletion failed' })
+		});
+		await initializeAuth(convexClient);
+		await signOut();
+		expect(get(authState)).toMatchObject({
+			user: nativeUser,
+			nativeSession: 'ready',
+			isLoading: false,
+			error: 'credential deletion failed'
+		});
+	});
+
 	it('signs the page out when host sign-out fails after the session is already gone', async () => {
 		stubInstalledWindow();
 		let tokenCalls = 0;
