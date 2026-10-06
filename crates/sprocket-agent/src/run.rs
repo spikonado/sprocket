@@ -1241,18 +1241,20 @@ mod tests {
 
     #[test]
     fn initial_context_renders_user_instructions_before_workspace_instructions() {
+        let user_instructions = "Use the user's preferred test runner.";
+        let workspace_instructions = "Keep generated board files in hardware/output.";
         let instructions = [
             WorkspaceInstruction {
                 path: "/home/user/.agents/AGENTS.md".to_string(),
                 directory: "/home/user/.agents".to_string(),
-                contents: "user instructions".to_string(),
+                contents: user_instructions.to_string(),
                 truncated: false,
                 source: WorkspaceInstructionSource::User,
             },
             WorkspaceInstruction {
                 path: "/tmp/project/AGENTS.md".to_string(),
                 directory: "/tmp/project".to_string(),
-                contents: "workspace instructions".to_string(),
+                contents: workspace_instructions.to_string(),
                 truncated: false,
                 source: WorkspaceInstructionSource::Workspace,
             },
@@ -1267,6 +1269,8 @@ mod tests {
         assert!(initial_context.contains(agents_heading));
         assert!(initial_context.contains(user_heading));
         assert!(initial_context.contains(workspace_heading));
+        assert!(initial_context.contains(user_instructions));
+        assert!(initial_context.contains(workspace_instructions));
         assert!(
             initial_context
                 .find(agents_heading)
@@ -1279,15 +1283,11 @@ mod tests {
                     .find(workspace_heading)
                     .expect("workspace heading")
         );
+        assert!(!prompt_context.base_instructions.contains(user_instructions));
         assert!(
             !prompt_context
                 .base_instructions
-                .contains("user instructions")
-        );
-        assert!(
-            !prompt_context
-                .base_instructions
-                .contains("workspace instructions")
+                .contains(workspace_instructions)
         );
     }
 }
