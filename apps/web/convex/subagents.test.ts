@@ -544,41 +544,7 @@ describe('subagent tool job results', () => {
 			const caller = await startCallerRun(t);
 			const child = await createChild(t, caller);
 
-			const kind =
-				action === 'spawn' || action === 'legacy follow-up'
-					? 'spawn_subagent'
-					: action === 'poll'
-						? 'poll_subagent'
-						: 'control_subagent';
-
 			const followUp = { threadId: child.threadId, prompt: 'Follow-up task', yieldTimeMs: 0 };
-
-			const payloads = {
-				spawn: { prompt: 'Delegate work', yieldTimeMs: 0 },
-				'legacy follow-up': followUp,
-				send: { ...followUp, action: 'send' as const },
-				'send with options': {
-					...followUp,
-					action: 'send' as const,
-					model: 'gpt-5.6-sol',
-					reasoning: 'high',
-					fast: true,
-					timeoutMs: 30_000
-				},
-				stop: { threadId: child.threadId, action: 'stop' as const, yieldTimeMs: 0 },
-				poll: { threadId: child.threadId, yieldTimeMs: 0 }
-			};
-
-			const payload = payloads[action];
-
-			const job = await t.mutation(api.agentRuntime.beginToolJob, {
-				runId: caller.runId,
-				claimId: caller.claimId,
-				executionSecret: caller.executionSecret,
-				...toolTranscriptAssignment(caller.runId, caller.claimId),
-				kind,
-				payload
-			});
 
 			const metadata = {
 				status: 'running' as const,
@@ -595,16 +561,53 @@ describe('subagent tool job results', () => {
 
 			const sendResult = { ...metadata, threadId: child.threadId, settings: child.settings };
 
-			const results = {
-				spawn: sendResult,
-				'legacy follow-up': sendResult,
-				send: sendResult,
-				'send with options': { ...sendResult, ...snapshot },
-				stop: { ...metadata, status: 'cancelled' as const },
-				poll: snapshot
-			};
+			const cases = {
+				spawn: {
+					kind: 'spawn_subagent',
+					payload: { prompt: 'Delegate work', yieldTimeMs: 0 },
+					result: sendResult
+				},
+				'legacy follow-up': { kind: 'spawn_subagent', payload: followUp, result: sendResult },
+				send: {
+					kind: 'control_subagent',
+					payload: { ...followUp, action: 'send' },
+					result: sendResult
+				},
+				'send with options': {
+					kind: 'control_subagent',
+					payload: {
+						...followUp,
+						action: 'send',
+						yieldTimeMs: 10_000,
+						model: 'gpt-5.6-sol',
+						reasoning: 'high',
+						fast: true,
+						timeoutMs: 30_000
+					},
+					result: { ...sendResult, ...snapshot }
+				},
+				stop: {
+					kind: 'control_subagent',
+					payload: { threadId: child.threadId, action: 'stop', yieldTimeMs: 0 },
+					result: { ...metadata, status: 'cancelled' }
+				},
+				poll: {
+					kind: 'poll_subagent',
+					payload: { threadId: child.threadId, yieldTimeMs: 0 },
+					result: snapshot
+				}
+			} as const;
 
-			const result = results[action];
+			const { kind, payload, result } = cases[action];
+
+			const job = await t.mutation(api.agentRuntime.beginToolJob, {
+				runId: caller.runId,
+				claimId: caller.claimId,
+				executionSecret: caller.executionSecret,
+				...toolTranscriptAssignment(caller.runId, caller.claimId),
+				kind,
+				payload
+			});
 
 			await expect(
 				t.mutation(api.executor.complete, {

@@ -297,8 +297,8 @@ fn control_subagent_parameters() -> serde_json::Value {
     schema
 }
 
-fn prepare_subagent_prompt(prompt: &str) -> Result<String, ToolExecutionError> {
-    let prompt = prompt.trim().to_string();
+fn prepare_subagent_prompt(prompt: &str) -> Result<&str, ToolExecutionError> {
+    let prompt = prompt.trim();
     if prompt.is_empty() {
         return Err(tool_failure(
             "prompt is required when creating or prompting a subagent",
@@ -379,20 +379,15 @@ impl rig::tool::Tool for SpawnSubagentTool {
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
-        args: Self::Args,
+        mut args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        let prompt = prepare_subagent_prompt(&args.prompt)?;
+        args.prompt = prepare_subagent_prompt(&args.prompt)?.to_string();
         execute_tool_job_with_id(
             &self.context,
             Self::NAME,
             payload,
-            |cancellation, job_id| {
-                let tool = self.clone();
-                async move {
-                    run_subagent(&tool.context, args, None, prompt, job_id, cancellation).await
-                }
-            },
+            |cancellation, job_id| run_subagent(&self.context, args, None, job_id, cancellation),
         )
         .await
     }
@@ -484,7 +479,6 @@ async fn run_subagent(
     context: &AgentToolContext,
     args: SpawnSubagentArgs,
     thread_id: Option<String>,
-    prompt: String,
     job_id: String,
     cancellation: WorkspaceCancellation,
 ) -> Result<serde_json::Value, ToolExecutionError> {
@@ -499,9 +493,10 @@ async fn run_subagent(
     let (created, prompt) = if let Some(recovered) = recovered {
         (recovered.run, recovered.prompt)
     } else {
+        let prompt = args.prompt;
         let overrides = SubagentSettingsOverrides {
-            model: args.model.clone(),
-            reasoning: args.reasoning.clone(),
+            model: args.model,
+            reasoning: args.reasoning,
             fast: args.fast,
         };
         let resolved = cancelled_read(&cancellation, async {
@@ -686,10 +681,7 @@ impl rig::tool::Tool for ControlSubagentTool {
             &self.context,
             Self::NAME,
             payload,
-            |cancellation, job_id| {
-                let tool = self.clone();
-                async move { tool.control(args, job_id, cancellation).await }
-            },
+            |cancellation, job_id| self.control(args, job_id, cancellation),
         )
         .await
     }
@@ -703,11 +695,11 @@ impl ControlSubagentTool {
         cancellation: WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
         if matches!(args.action, SubagentControlAction::Send) {
-            let prompt = prepare_subagent_prompt(args.prompt.as_deref().unwrap_or_default())?;
             return run_subagent(
                 &self.context,
                 SpawnSubagentArgs {
-                    prompt: prompt.clone(),
+                    prompt: prepare_subagent_prompt(args.prompt.as_deref().unwrap_or_default())?
+                        .to_string(),
                     model: args.model,
                     reasoning: args.reasoning,
                     fast: args.fast,
@@ -715,7 +707,6 @@ impl ControlSubagentTool {
                     timeout_ms: args.timeout_ms,
                 },
                 Some(args.thread_id),
-                prompt,
                 job_id,
                 cancellation,
             )
@@ -1365,7 +1356,7 @@ mod tests {
         for payload in [json!({}), json!({"prompt": "  "})] {
             let result = serde_json::from_value::<SpawnSubagentArgs>(payload)
                 .map_err(|error| tool_failure(error.to_string()))
-                .and_then(|args| prepare_subagent_prompt(&args.prompt));
+                .and_then(|args| prepare_subagent_prompt(&args.prompt).map(|_| ()));
             assert!(result.unwrap_err().to_string().contains("prompt"));
         }
     }
