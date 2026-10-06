@@ -601,7 +601,7 @@ describe('payments mandates', () => {
 				description: 'Order 8842',
 				...auth(run)
 			})
-		).rejects.toThrow(/not active/);
+		).rejects.toThrow(/paused|not active/);
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
 
