@@ -413,6 +413,60 @@ it('keeps a closed callback window from discarding a completed sign-in', async (
 	expect(screen.queryByText('Signing in…')).toBeNull();
 });
 
+it('keeps a closed-popup login poll alive across Refresh', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const disconnectedStatus = statusFixture();
+
+	const connectedStatus = statusFixture({
+		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+		activeConnectionId: 'conn-1'
+	});
+
+	let statusCalls = 0;
+
+	const view = mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			fetchChatGptStatus: async () => {
+				statusCalls += 1;
+
+				return statusCalls === 1 ? disconnectedStatus : connectedStatus;
+			},
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(disconnectedStatus);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(cancel).toHaveBeenCalledTimes(0);
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(connectedStatus);
+});
+
 it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();

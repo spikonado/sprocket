@@ -56,6 +56,7 @@ export default function SettingsProviders({
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
 	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
+	const loginGenerationRef = useRef(0);
 
 	const activeAccount =
 		chatGptStatus?.accounts.find(
@@ -86,6 +87,8 @@ export default function SettingsProviders({
 
 	function cancelLogin() {
 		generationRef.current += 1;
+		loginGenerationRef.current += 1;
+
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
 		setBrowserLoginActive(false);
@@ -103,6 +106,8 @@ export default function SettingsProviders({
 
 		return () => {
 			generationRef.current += 1;
+			loginGenerationRef.current += 1;
+
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
 			closeLoginWindow();
@@ -125,7 +130,7 @@ export default function SettingsProviders({
 		for (;;) {
 			await new Promise((resolve) => setTimeout(resolve, 1_500));
 
-			if (generation !== generationRef.current) return;
+			if (generation !== loginGenerationRef.current) return;
 
 			try {
 				const result = await api.fetchChatGptBrowserLoginResult({
@@ -133,7 +138,7 @@ export default function SettingsProviders({
 					state: pending.login.state
 				});
 
-				if (generation !== generationRef.current) return;
+				if (generation !== loginGenerationRef.current) return;
 
 				if (result.status === 'pending') {
 					if (loginWindowRef.current?.closed) {
@@ -163,13 +168,14 @@ export default function SettingsProviders({
 
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
-				if (generation !== generationRef.current || api !== desktopApi) return;
+				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
 
+				generationRef.current += 1;
 				onChatGptStatusChange(status);
 
 				return;
 			} catch (error) {
-				if (generation !== generationRef.current) return;
+				if (generation !== loginGenerationRef.current) return;
 
 				if (closedPendingPolls >= 2) return;
 
@@ -198,7 +204,9 @@ export default function SettingsProviders({
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
-		const generation = ++generationRef.current;
+
+		generationRef.current += 1;
+		const generation = ++loginGenerationRef.current;
 		const bridge = window.sprocketDesktopBridge;
 		let loginWindow: Window | null = null;
 		let pending: PendingBrowserLogin | null = null;
@@ -219,7 +227,7 @@ export default function SettingsProviders({
 
 			pending = { userId: userIdAtStart, login };
 
-			if (generation !== generationRef.current) {
+			if (generation !== loginGenerationRef.current) {
 				cancelLoginOnServer(pending);
 
 				return;
@@ -231,7 +239,7 @@ export default function SettingsProviders({
 				loginWindow?.location.replace(login.authorizeUrl);
 			}
 
-			if (generation !== generationRef.current) {
+			if (generation !== loginGenerationRef.current) {
 				cancelLoginOnServer(pending);
 
 				return;
@@ -244,7 +252,7 @@ export default function SettingsProviders({
 
 			if (pending) cancelLoginOnServer(pending);
 
-			if (generation !== generationRef.current) return;
+			if (generation !== loginGenerationRef.current) return;
 			setBrowserLoginActive(false);
 			setChatGptError(
 				errorMessage(
