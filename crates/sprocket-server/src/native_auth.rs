@@ -491,6 +491,15 @@ impl NativeAuthManager {
             .context("native session task failed")?
     }
 
+    pub(crate) async fn signed_in_as(&self, user_id: &str) -> bool {
+        let session = self.session.lock().await;
+        session.user.as_ref().is_some_and(|user| user.id == user_id)
+            && session
+                .access_token
+                .as_ref()
+                .is_some_and(|token| token.expires_at > unix_time_secs())
+    }
+
     async fn browser_session_inner(
         &self,
         force_refresh: bool,

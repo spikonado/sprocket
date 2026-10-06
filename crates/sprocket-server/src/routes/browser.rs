@@ -29,7 +29,11 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/browser/dashboard/{*path}", any(proxy))
 }
 
-async fn user(state: &AppState, headers: &HeaderMap, jar: &CookieJar) -> Result<String, ApiError> {
+async fn user(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> Result<(String, String), ApiError> {
     let token = require_session(&state.auth, headers, jar)
         .await
         .map_err(ApiError::unauthorized)?;
@@ -44,7 +48,7 @@ async fn user(state: &AppState, headers: &HeaderMap, jar: &CookieJar) -> Result<
         .require_session_user(&token, &session.user.id)
         .await
         .map_err(ApiError::unauthorized)?;
-    Ok(session.user.id)
+    Ok((session.user.id, token))
 }
 
 fn require_same_origin(headers: &HeaderMap) -> Result<(), ApiError> {
@@ -62,7 +66,7 @@ async fn status(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Response, ApiError> {
-    let user_id = user(&state, &headers, &jar).await?;
+    let (user_id, _) = user(&state, &headers, &jar).await?;
     Ok(no_store(Json(state.browsers.status(&user_id).await)))
 }
 
@@ -71,7 +75,7 @@ async fn start(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Response, ApiError> {
-    let user_id = user(&state, &headers, &jar).await?;
+    let (user_id, _) = user(&state, &headers, &jar).await?;
     require_same_origin(&headers)?;
     Ok(no_store(Json(state.browsers.start(&user_id).await)))
 }
@@ -85,7 +89,7 @@ async fn proxy(
     websocket: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     body: Body,
 ) -> Result<Response, ApiError> {
-    let user_id = user(&state, &headers, &jar).await?;
+    let (user_id, token) = user(&state, &headers, &jar).await?;
     let websocket = websocket.ok();
     if websocket.is_some() || !matches!(method, Method::GET | Method::HEAD) {
         require_same_origin(&headers)?;
@@ -128,7 +132,7 @@ async fn proxy(
         .map_err(|error| ApiError::internal(error.into()))?;
         return Ok(websocket
             .max_message_size(MAX_ASSET_BYTES)
-            .on_upgrade(move |socket| relay(socket, upstream))
+            .on_upgrade(move |socket| relay(socket, upstream, state, user_id, token))
             .into_response());
     }
 
@@ -170,8 +174,7 @@ async fn proxy(
                     .install_lightpanda()
                     .await
                     .map_err(ApiError::internal)?;
-                args.push(Value::String("--executable-path".into()));
-                args.push(Value::String(executable.to_string_lossy().into_owned()));
+                append_executable(args, &executable);
             }
         }
         bytes = serde_json::to_vec(&payload)
@@ -243,6 +246,11 @@ fn upstream_path(path: &str) -> anyhow::Result<String> {
     Ok(format!("/{suffix}"))
 }
 
+fn append_executable(args: &mut Vec<Value>, executable: &std::path::Path) {
+    args.push(Value::String("--executable-path".into()));
+    args.push(Value::String(executable.to_string_lossy().into_owned()));
+}
+
 fn rewrite_asset(source: &str) -> String {
     source
         .replace("/api/", &format!("{DASHBOARD_PATH}api/"))
@@ -255,12 +263,18 @@ async fn relay(
     upstream: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
+    state: AppState,
+    user_id: String,
+    token: String,
 ) {
     use tokio_tungstenite::tungstenite::Message as UpstreamMessage;
     let (mut browser_tx, mut browser_rx) = browser.split();
     let (mut upstream_tx, mut upstream_rx) = upstream.split();
     let to_upstream = async {
         while let Some(Ok(message)) = browser_rx.next().await {
+            if !stream_access(&state, &user_id, &token).await {
+                break;
+            }
             let message = match message {
                 Message::Text(value) => UpstreamMessage::Text(value.to_string().into()),
                 Message::Binary(value) => UpstreamMessage::Binary(value),
@@ -275,6 +289,9 @@ async fn relay(
     };
     let to_browser = async {
         while let Some(Ok(message)) = upstream_rx.next().await {
+            if !stream_access(&state, &user_id, &token).await {
+                break;
+            }
             let message = match message {
                 UpstreamMessage::Text(value) => Message::Text(value.to_string().into()),
                 UpstreamMessage::Binary(value) => Message::Binary(value),
@@ -288,7 +305,24 @@ async fn relay(
             }
         }
     };
-    tokio::select! { _ = to_upstream => {}, _ = to_browser => {} }
+    let revoked = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if !stream_access(&state, &user_id, &token).await {
+                break;
+            }
+        }
+    };
+    tokio::select! { _ = to_upstream => {}, _ = to_browser => {}, _ = revoked => {} }
+}
+
+async fn stream_access(state: &AppState, user_id: &str, token: &str) -> bool {
+    state
+        .auth
+        .require_session_user(token, user_id)
+        .await
+        .is_ok()
+        && state.native_auth.signed_in_as(user_id).await
 }
 
 #[cfg(test)]
@@ -322,6 +356,27 @@ mod tests {
         ] {
             assert!(upstream_path(path).is_err());
         }
+    }
+
+    #[test]
+    fn lightpanda_selection_passes_managed_executable_as_one_argument() {
+        let mut args = vec![
+            Value::String("--engine".into()),
+            Value::String("lightpanda".into()),
+        ];
+        append_executable(
+            &mut args,
+            std::path::Path::new("/tools/browser with spaces/lightpanda"),
+        );
+        assert_eq!(
+            serde_json::to_value(args).unwrap(),
+            serde_json::json!([
+                "--engine",
+                "lightpanda",
+                "--executable-path",
+                "/tools/browser with spaces/lightpanda"
+            ])
+        );
     }
 }
 
@@ -494,8 +549,11 @@ mod proxy_tests {
                         .send(Message::Binary(vec![1, 2, 3].into()))
                         .await
                         .unwrap();
-                    let input = socket.recv().await.unwrap().unwrap();
-                    socket.send(input).await.unwrap();
+                    while let Some(Ok(input)) = socket.recv().await {
+                        if socket.send(input).await.is_err() {
+                            break;
+                        }
+                    }
                 })
             }),
         );
@@ -506,6 +564,7 @@ mod proxy_tests {
             .use_test_dashboard("browser-user", upstream_port)
             .await;
         let browsers = Arc::clone(&state.browsers);
+        let auth = Arc::clone(&state.auth);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let app = crate::build_router(state, None);
@@ -543,6 +602,14 @@ mod proxy_tests {
             socket.next().await.unwrap().unwrap(),
             UpstreamMessage::Text("pointer-input".into())
         );
+        auth.end_session(&token).await.unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(3), socket.next())
+            .await
+            .unwrap();
+        assert!(matches!(
+            ended,
+            None | Some(Err(_)) | Some(Ok(UpstreamMessage::Close(_)))
+        ));
         request.headers_mut().remove(header::COOKIE);
         assert!(
             matches!(tokio_tungstenite::connect_async(request).await, Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status() == StatusCode::UNAUTHORIZED)
@@ -550,5 +617,69 @@ mod proxy_tests {
         browsers.shutdown().await;
         task.abort();
         upstream_task.abort();
+    }
+
+    #[tokio::test]
+    async fn translates_session_creation_and_preserves_upstream_result() {
+        let (state, token, _directory) = state().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let upstream = axum::Router::new().route(
+            "/api/exec",
+            post(|Json(payload): Json<Value>| async move {
+                assert_eq!(
+                    payload,
+                    serde_json::json!({"args":["open","about:blank","--session","created-session"]})
+                );
+                Json(serde_json::json!({"success":true,"stdout":"created","exit_code":0}))
+            }),
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        state
+            .browsers
+            .use_test_dashboard("browser-user", port)
+            .await;
+        let browsers = Arc::clone(&state.browsers);
+        let mut request = request(
+            "/api/browser/dashboard/api/sessions",
+            Some(&token),
+            Some("http://127.0.0.1:7731"),
+            Method::POST,
+        );
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        *request.body_mut() = Body::from(r#"{"session":"created-session"}"#);
+        let response = crate::build_router(state, None)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            serde_json::json!({"success":true,"stdout":"created","exit_code":0})
+        );
+        browsers.shutdown().await;
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn stream_access_tracks_native_sign_out_and_user_changes() {
+        let (state, token, _directory) = state().await;
+        assert!(stream_access(&state, "browser-user", &token).await);
+        state
+            .native_auth
+            .authenticate_for_test("another-user")
+            .await;
+        assert!(!stream_access(&state, "browser-user", &token).await);
+        state
+            .native_auth
+            .authenticate_for_test("browser-user")
+            .await;
+        state.native_auth.sign_out().await.unwrap();
+        assert!(!stream_access(&state, "browser-user", &token).await);
     }
 }

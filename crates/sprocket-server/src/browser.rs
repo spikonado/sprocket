@@ -8,6 +8,7 @@ use anyhow::{Context, bail};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sprocket_workspace::WorkspaceCancellation;
+use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
@@ -35,21 +36,18 @@ struct UserBrowser {
 pub(crate) struct BrowserManager {
     installer: Arc<BrowserInstaller>,
     data_dir: PathBuf,
-    socket_dir: PathBuf,
     users: Mutex<HashMap<String, UserBrowser>>,
     shutdown: WorkspaceCancellation,
 }
 
 impl BrowserManager {
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Arc<Self>> {
-        let socket_dir = socket_directory(&data_dir)?;
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(
                 data_dir.clone(),
                 std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH").map(PathBuf::from),
             )?,
             data_dir,
-            socket_dir,
             users: Mutex::new(HashMap::new()),
             shutdown: WorkspaceCancellation::new(),
         }))
@@ -163,16 +161,34 @@ impl BrowserManager {
             .env_remove("AI_GATEWAY_API_KEY")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         let mut child = command.spawn().context("start agent-browser dashboard")?;
+        let mut stderr = child.stderr.take().context("dashboard stderr")?;
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&errors);
+        let drain = tokio::spawn(async move {
+            let mut chunk = [0; 4096];
+            while let Ok(read) = stderr.read(&mut chunk).await {
+                if read == 0 {
+                    break;
+                }
+                let mut errors = captured.lock().await;
+                let retained = read.min(8192usize.saturating_sub(errors.len()));
+                errors.extend_from_slice(&chunk[..retained]);
+            }
+        });
         let client = reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(1))
             .build()?;
         for _ in 0..50 {
             if let Some(status) = child.try_wait()? {
-                bail!("agent-browser dashboard exited: {status}");
+                let _ = tokio::time::timeout(Duration::from_secs(1), drain).await;
+                bail!(
+                    "agent-browser dashboard exited: {status}: {}",
+                    String::from_utf8_lossy(&errors.lock().await[..])
+                );
             }
             if client
                 .get(format!("http://127.0.0.1:{port}/"))
@@ -184,7 +200,10 @@ impl BrowserManager {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        bail!("agent-browser dashboard did not become ready");
+        bail!(
+            "agent-browser dashboard did not become ready: {}",
+            String::from_utf8_lossy(&errors.lock().await[..])
+        );
     }
 
     pub async fn port(&self, user_id: &str) -> anyhow::Result<u16> {
@@ -225,7 +244,7 @@ impl BrowserManager {
             ),
             (
                 "AGENT_BROWSER_SOCKET_DIR".into(),
-                self.socket_dir.clone().into_os_string(),
+                socket_directory(&self.data_dir)?.into_os_string(),
             ),
         ];
         if let Some(chromium) = chromium {
