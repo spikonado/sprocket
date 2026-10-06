@@ -266,6 +266,94 @@ only after the migration finishes and production scans find no legacy rows.
 Historical executor tool payloads/results retain optional scope/thread metadata
 permanently because conversation history describes the original calls.
 
+### Billing (Dodo) backwards compatibility
+
+#### Legacy subscription rows without access/projection fields
+
+Subscription rows written before the durable-billing projection may omit
+`projectionRevision`, `payloadEventAt`, `termEventAt`, `accessPhase`, and
+`accessEndsAt`. Readers treat missing access fields as `paid`/`none` per the
+legacy `billingPeriodEnded` flag, and missing watermarks as the row's
+`eventAt`. `backfillSubscriptionAccess` fills the materialized access
+phase/deadline and projection revision, and `backfillSubscriptionExpiry`
+reschedules boundary checks fenced by the new revision. Both are idempotent.
+
+Removal gate: after `runSubscriptionAccessBackfill` and
+`runSubscriptionExpiryBackfill` have run to completion in production, the
+legacy fallbacks in `lib/tiers.ts` and `subscriptionExpiry.ts` can be removed
+and the fields made required.
+
+#### Legacy usage-generation key (`quotaResetAt`)
+
+Usage buckets key off the subscription's usage generation. Rows written
+before the monotonic `quotaGeneration` counter carry `quotaResetAt`, an event
+timestamp used as the same key. While released gateway readers still use that
+timestamp, current readers prefer `quotaResetAt` too; otherwise old and new
+servers would charge different buckets. New writes retain `quotaResetAt` as the
+transition timestamp, advancing it by 1ms when distinct winning tier transitions
+share a timestamp, while `quotaGeneration` counts the durable transitions;
+`backfillSubscriptionAccess` derives the initial generation from the
+legacy timestamp so the migration neither resets usage nor mints allowance.
+
+Removal gate: after released readers that key directly on `quotaResetAt` age
+out, migrate outstanding usage into generation-keyed buckets before changing
+the key preference. A subscription backfill alone does not migrate consumed
+allowance. Keep the timestamp field until that migration completes.
+
+#### Usage display time
+
+New clients pass `now` to `usage.getMyUsage` and refresh it each minute. The
+optional argument preserves released clients calling with `{}`; that legacy
+display-only path retains its wall-clock fallback until those clients age out.
+Entitlement and charge mutations never trust the browser's display time.
+
+Removal gate: after all supported clients pass `now`, require the argument and
+remove the query clock fallback.
+
+#### Checkout attempt retention
+
+`billingCheckoutSessions` keeps the current selection; superseded attempts
+live in `billingCheckoutAttempts` so already-created payment links stay
+payable and their provider idempotency keys survive. Legacy attempts used the
+attempt id as the provider idempotency key but did not always persist it.
+Recovery requires a persisted key, frozen body, and first-create timestamp
+inside an operator-confirmed provider idempotency window; it never invents a
+key for an ambiguous attempt. Missing proof fails closed for support repair.
+The 24h reservation TTL is not provider expiry. All retained selections count
+toward the 25-row account limit, including locally expired payable links.
+Terminal rows lose hosted URLs/create bodies immediately and are removed after
+30 days; never-sent reservations are removed 30 days after local expiry.
+Unresolved/payable records remain until authoritative resolution. Subscription
+and superseded-identity records retain purchase identity after checkout cleanup.
+
+Legacy ambiguous creates without a frozen request cannot safely reconstruct
+the old return origin/customer. They require provider reconciliation instead
+of a speculative create with changed parameters. Legacy subscription rows
+without `checkoutAttemptId` never prove activation of a specific attempt.
+
+Removal gate: after all pre-freeze ambiguous attempts resolve and legacy
+uncorrelated subscriptions terminate, remove these fail-closed recovery paths.
+
+#### Checkout creation-order indexes
+
+The checkout tables retain `by_userId` alongside the attempt/session indexes
+because released readers use it and bounded history iteration needs creation
+order. Remove the current-session shim only after released readers age out and
+all current lookups use the compound indexes. Keep the history index while
+creation-order iteration remains necessary.
+
+#### Webhook dedup retention
+
+`dodoWebhookEvents` keeps identity/outcome rows for the 14-day provider replay
+horizon; settled payloads are pruned after 48h while outcome/duplicate
+counts persist for dedup. Pending, failed, unresolved, competing, and unsupported
+payloads remain replayable until the 14-day horizon, when the full row expires.
+Cleanup chains bounded batches over a fixed ingestion snapshot on each run.
+The legacy `dodoWebhookCleanup` cursor remains diagnostic; scheduled continuation
+arguments carry progress. Remove that table after released cleanup callers age out
+and its diagnostic rows have been migrated or deleted. Payload secrets and customer
+details are never logged.
+
 ### Retired cloud-held ChatGPT sign-in
 
 Cloud-held ChatGPT/Codex OAuth is retired in favor of local sign in with
@@ -294,6 +382,14 @@ emptied it and released clients have aged out; then drop the table, the
 retired ChatGPT stubs, `chatGptConnection`, and the retirement cron and
 helpers. Keep `chatgpt` in `completionProviderIds` and the run and thread
 validators. Local SIWC runs use the same provider ID as historical Codex runs.
+
+### Calendar usage windows
+
+Dodo subscriptions may omit `billingPeriodEnded` and `billingPeriodCheckId`. The clock check still enforces their access deadline. `backfillSubscriptionExpiry` schedules a database update at each existing Dodo deadline, or marks an elapsed period immediately, so subscribed queries refresh without changing provider status. An hourly cron starts or resumes the migration. Operator grants remain unchanged. Remove the backfill and its cron after it has completed on every deployment. The fields stay optional while operator grants exist.
+
+Old rate-limiter rows use seven-day or thirty-day windows with randomized starts. The current quota reader carries usage from an old row into the current UTC calendar window only if the old window began inside that calendar window. The old rows do not record charge timestamps, so usage from a window that began before the new calendar boundary cannot be safely attributed to the current window. On first charge, the current window records eligible old usage along with the new charge. New paid terms never inherit an old window. Existing operator-managed subscriptions may omit billing dates and continue to use calendar months; Dodo subscriptions created by the new webhook persist their billing dates.
+
+Remove the old rate-limiter read path once every deployment has been running calendar windows for at least 30 days. Old component rows are removed by the 62-day retention job. Leave the optional subscription fields in place until any older subscription rows have billing dates or have ended.
 
 ### Retired repository rekey calls
 
