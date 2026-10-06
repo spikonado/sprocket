@@ -1954,10 +1954,9 @@ mod tests {
         );
         assert!(manager.session.lock().await.access_token.is_some());
         assert_eq!(store.token().as_deref(), Some("refresh-current"));
-        assert_eq!(
-            manager.browser_session(false).await.unwrap().unwrap().user.id,
-            "user_123"
-        );
+
+        let session = manager.browser_session(false).await.unwrap().unwrap();
+        assert_eq!(session.user.id, "user_123");
     }
 
     #[tokio::test]

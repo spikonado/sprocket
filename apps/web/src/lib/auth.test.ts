@@ -285,6 +285,7 @@ describe('installed and hosted auth', () => {
 		stubFetch({
 			token: () => {
 				tokenCalls += 1;
+
 				return tokenCalls === 1
 					? jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
 					: jsonResponse(200, null);
