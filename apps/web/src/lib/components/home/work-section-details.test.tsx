@@ -159,23 +159,37 @@ describe('scrolling work details', () => {
 		const { viewport, edges, props, setProps } = await render(load, true);
 		expect(load.mock.calls[0][1]).toEqual({});
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
-		const originalTool = viewport.querySelector('[title="echo 2"]');
+
+		const originalTool = [...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
+			row.textContent?.includes('echo 2')
+		);
+
 		expect(originalTool).not.toBeNull();
 		expect(viewport.querySelector('button')).toBeNull();
 		edges.newer = 1_500;
 		act(() => intersection());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 3 });
-		expect(viewport.querySelector('[title="echo 2"]')).toBe(originalTool);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
+				row.textContent?.includes('echo 2')
+			)
+		).toBe(originalTool);
 		expect(viewport.textContent).toContain('echo 6');
 		expect(
-			[...viewport.querySelectorAll<HTMLElement>('[title^="echo "]')].map((item) => item.title)
+			[...viewport.querySelectorAll('[data-tool-row]')].map(
+				(item) => item.querySelector('.truncate')?.textContent
+			)
 		).toEqual(['echo 2', 'echo 3', 'echo 4', 'echo 5', 'echo 6', 'echo 7']);
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 		load.mockResolvedValue(tools([2, 3, 4, 5, 6, 7]));
 		setProps({ row: { ...props.row, revision: 2 } });
 		await settle();
-		expect(viewport.querySelector('[title="echo 2"]')).toBe(originalTool);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
+				row.textContent?.includes('echo 2')
+			)
+		).toBe(originalTool);
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(6);
 	});
 

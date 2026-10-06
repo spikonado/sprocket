@@ -275,14 +275,17 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 
-			const files = [...viewport.querySelectorAll('[data-tool-kind="apply_patch"] summary[title]')];
+			const files = [
+				...viewport.querySelectorAll('[data-tool-kind="apply_patch"] [data-tool-row]')
+			];
+
 			expect(files.map((row) => row.textContent)).toEqual(['a.txt', 'b.txt', 'c.txt']);
 			expect(files.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
 			expect(viewport.textContent).toContain('a.txt');
 			expect(viewport.textContent).toContain('b.txt');
 			expect(viewport.textContent).toContain('c.txt');
 
-			const failures = [...viewport.querySelectorAll('[data-tool-kind] summary[title]')].filter(
+			const failures = [...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].filter(
 				(row) =>
 					row.textContent?.includes('(cancelled)') || row.textContent?.includes('(interrupted)')
 			);
@@ -346,12 +349,14 @@ describe('transcript viewport paging', () => {
 			expect(rows).toHaveLength(calls.length);
 			expect(
 				rows.every(
-					(row) => row.querySelector('summary[title]')?.firstElementChild?.tagName === 'svg'
+					(row) => row.querySelector('[data-tool-row]')?.firstElementChild?.tagName === 'svg'
 				)
 			).toBe(true);
 			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(2);
-			expect(viewport.querySelectorAll('[data-tool-kind] details')).toHaveLength(calls.length);
-			expect(viewport.querySelector('details[open]')).toBeNull();
+			expect(viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')).toHaveLength(
+				calls.length
+			);
+			expect(viewport.querySelector('[role="tooltip"]')).toBeNull();
 
 			for (let index = 0; index < 3; index += 1) {
 				expect(viewport.textContent).toContain(`echo command-${index}`);
@@ -386,7 +391,7 @@ describe('transcript viewport paging', () => {
 		click(work);
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
 		expect(
-			[...viewport.querySelectorAll('[data-tool-kind] summary[title]')].map(
+			[...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].map(
 				(row) => row.textContent
 			)
 		).toEqual(['sleep 1', 'sleep 2', 'sleep 3']);
@@ -449,7 +454,11 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector('button[aria-expanded]'));
 			await settle();
 
-			expect(viewport.querySelector('[title="sleep 10"]') !== null).toBe(withAsync);
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -470,7 +479,11 @@ describe('transcript viewport paging', () => {
 			await settle();
 
 			expect(viewport.textContent).toContain('hidden-skill');
-			expect(viewport.querySelector('[title="sleep 10"]') !== null).toBe(withAsync);
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -559,7 +572,11 @@ describe('transcript viewport paging', () => {
 
 			expect(viewport.textContent).not.toContain(group);
 			expect(viewport.querySelector('.animate-spin')).toBeNull();
-			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(true);
 		}
 	);
 
@@ -611,7 +628,11 @@ describe('transcript viewport paging', () => {
 		click(transcript.getByRole('button', { name: /^Worked/ }));
 		await settle();
 
-		expect(transcript.getAllByTitle('npm run dev')).toHaveLength(2);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].filter((row) =>
+				row.textContent?.includes('npm run dev')
+			)
+		).toHaveLength(2);
 	});
 
 	it.each(['live', 'persisted'] as const)(

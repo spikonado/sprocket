@@ -6,6 +6,8 @@ import {
 	showsReasoningControl
 } from '$lib/chat/model-catalog';
 import ModelReasoningOptions from './model-reasoning-options';
+import MobileModelSelector from './mobile-model-selector';
+import { useMobileSelector } from './ui/use-mobile-selector';
 import ProviderLogo from './provider-logo';
 import { listenOpenMenuDismiss } from './ui/menu-dismiss';
 import { cn } from '$lib/utils';
@@ -30,6 +32,7 @@ export default function ModelSelector({
 	onFastModeChange?: (fastMode: boolean) => void;
 }) {
 	const [isOpen, setIsOpen] = useState(false);
+	const mobile = useMobileSelector();
 	const [previewId, setPreviewId] = useState<string | null>(null);
 	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
 	const [reasoningTop, setReasoningTop] = useState(0);
@@ -71,7 +74,7 @@ export default function ModelSelector({
 	}
 
 	useLayoutEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen || mobile) return;
 
 		function updatePosition() {
 			const trigger = triggerRef.current?.getBoundingClientRect();
@@ -81,7 +84,7 @@ export default function ModelSelector({
 			setPosition({
 				left: Math.max(8, Math.min(trigger.left, window.innerWidth - menu.width - 8)),
 				bottom: window.innerHeight - trigger.top + 12,
-				maxHeight: Math.max(120, trigger.top - 20)
+				maxHeight: Math.max(0, trigger.top - 20)
 			});
 			const row = previewId ? modelButtons.current.get(previewId)?.getBoundingClientRect() : null;
 			const options = reasoningRef.current;
@@ -107,17 +110,16 @@ export default function ModelSelector({
 
 		updatePosition();
 		window.addEventListener('resize', updatePosition);
-		const menu = menuRef.current;
-		menu?.addEventListener('scroll', updatePosition, true);
+		window.addEventListener('scroll', updatePosition, true);
 
 		return () => {
 			window.removeEventListener('resize', updatePosition);
-			menu?.removeEventListener('scroll', updatePosition, true);
+			window.removeEventListener('scroll', updatePosition, true);
 		};
-	}, [isOpen, previewId, fastModeAvailable, position.maxHeight]);
+	}, [isOpen, mobile, previewId, fastModeAvailable, position.maxHeight]);
 
 	useEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen || mobile) return;
 		(modelButtons.current.get(modelId) ?? modelButtons.current.values().next().value)?.focus();
 
 		return listenOpenMenuDismiss({
@@ -128,7 +130,7 @@ export default function ModelSelector({
 				triggerRef.current?.focus();
 			}
 		});
-	}, [isOpen, modelId]);
+	}, [isOpen, mobile, modelId]);
 
 	useEffect(() => {
 		if (disabled) closeMenu();
@@ -137,13 +139,14 @@ export default function ModelSelector({
 	return (
 		<div
 			ref={rootRef}
-			className={cn('relative min-w-32 flex-1 sm:min-w-0 sm:flex-none', isOpen ? 'z-30' : 'z-20')}
+			className={cn('relative min-w-0 flex-1 sm:flex-none', isOpen ? 'z-30' : 'z-20')}
 		>
 			<button
 				ref={triggerRef}
 				type="button"
-				className="text-foreground focus-visible:ring-ring/60 inline-flex h-9 max-w-full items-center gap-2 rounded-lg px-2 text-[15px] outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
+				className="text-foreground focus-visible:ring-ring/60 inline-flex h-11 max-w-full items-center gap-2 rounded-lg px-2 text-[15px] outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 sm:h-9"
 				aria-label="Select model"
+				title={[selectedModel?.label ?? modelId, summary].filter(Boolean).join(' · ')}
 				aria-haspopup="dialog"
 				aria-expanded={isOpen}
 				disabled={disabled}
@@ -154,13 +157,27 @@ export default function ModelSelector({
 				) : null}
 				<span className="truncate">
 					{selectedModel?.label ?? modelId}
-					{summary ? ` · ${summary}` : ''}
+					{summary ? <span className="hidden sm:inline"> · {summary}</span> : null}
 				</span>
 				<ChevronDown
 					className={cn('text-muted-foreground size-3 shrink-0', isOpen && 'rotate-180')}
 				/>
 			</button>
-			{isOpen ? (
+			{isOpen && mobile ? (
+				<MobileModelSelector
+					models={models}
+					modelId={modelId}
+					reasoningEffort={reasoningEffort}
+					fastMode={fastMode}
+					allowsFastMode={allowsFastMode}
+					onDismiss={closeMenu}
+					returnFocusRef={triggerRef}
+					onApply={(model, effort, fast) => {
+						selectModel(model, effort);
+						onFastModeChange?.(fast);
+					}}
+				/>
+			) : isOpen ? (
 				<div
 					ref={menuRef}
 					role="dialog"

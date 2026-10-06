@@ -2545,7 +2545,7 @@ export default function App({
 	}
 
 	return (
-		<div className="relative h-screen overflow-hidden">
+		<div className="relative h-dvh overflow-hidden">
 			<div
 				className={cn(
 					'app-workspace-shell inbox-layout',
@@ -2630,7 +2630,7 @@ export default function App({
 				)}
 
 				<main
-					className="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
+					className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
 					inert={sidebarOpen && viewportWidth < 768}
 				>
 					{!settingsOpen && !artifactPanel.panel.open && (
@@ -2707,7 +2707,7 @@ export default function App({
 								/>
 							)}
 
-							<div className={!currentThreadId ? 'create-thread-screen' : ''}>
+							<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
 								{!currentThreadId && (
 									<>
 										<CreateThreadHeading
