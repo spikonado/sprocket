@@ -25,6 +25,13 @@ crons.interval(
 );
 
 crons.interval(
+	'backfill descendant thread status counts',
+	{ hours: 1 },
+	internal.migrations.runThreadHierarchyStatusBackfillAutomatically,
+	{}
+);
+
+crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

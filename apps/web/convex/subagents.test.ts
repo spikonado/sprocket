@@ -801,7 +801,10 @@ describe('subagents.control', () => {
 				await caller.asUser.query(api.threads.subtreeSummaryForThread, {
 					threadId: caller.threadId
 				})
-			).toMatchObject({ descendantsActive: true });
+			).toMatchObject({
+				descendantsActive: true,
+				descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+			});
 
 			const controlled = await t.mutation(api.subagents.control, {
 				...target,
@@ -837,7 +840,10 @@ describe('subagents.control', () => {
 				await caller.asUser.query(api.threads.subtreeSummaryForThread, {
 					threadId: caller.threadId
 				})
-			).toMatchObject({ descendantsActive: false });
+			).toMatchObject({
+				descendantsActive: false,
+				descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+			});
 		}
 	);
 

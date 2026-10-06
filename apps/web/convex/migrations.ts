@@ -8,6 +8,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
+import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -45,6 +46,20 @@ export const reconcileLegacyTerminalJobs = migrations.define({
 export const runTerminalJobBackfill = migrations.runner([
 	internal.migrations.reconcileLegacyTerminalJobs
 ]);
+
+export const backfillThreadHierarchyStatuses = migrations.define({
+	table: 'threadRecords',
+	batchSize: 1,
+	migrateOne: async (ctx, thread) => {
+		await refreshThreadHierarchyActivity(ctx, thread._id);
+	}
+});
+
+const threadHierarchyStatusMigrations: FunctionReference<'mutation', 'internal'>[] = [
+	internal.migrations.backfillThreadHierarchyStatuses
+];
+
+export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyStatusMigrations);
 
 export const removeTranscriptStateWorkThrough = migrations.define({
 	table: 'threadTranscriptStates',
@@ -279,4 +294,15 @@ export const runProjectArtifactBackfillAutomatically = internalMutation({
 	returns: v.null(),
 	handler: (ctx): Promise<null> =>
 		runBackfillAutomatically(ctx, 'project-artifacts-2026-10', projectArtifactMigrations)
+});
+
+export const runThreadHierarchyStatusBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: (ctx): Promise<null> =>
+		runBackfillAutomatically(
+			ctx,
+			'thread-hierarchy-status-counts-2026-10',
+			threadHierarchyStatusMigrations
+		)
 });

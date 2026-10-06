@@ -320,6 +320,31 @@ completion. Current agents send usage with `finalizeCompletionCall` and
 or a successful handoff. Keep the standalone mutation until released agents
 using it have aged out, then remove the mutation and its direct tests.
 
+### Descendant thread status counts
+
+`threads.subtreeSummaryForThread` adds `descendantStatusCounts` while retaining
+`descendantCount`, `anyActive`, and `descendantsActive` unchanged for released
+clients. Older `threadHierarchyStates` rows may omit `ownStatus` and
+`descendantStatusCounts`; missing counts read as five zeros, and missing
+`ownStatus` means the thread has not contributed a status to its ancestors yet.
+Uncounted descendants are unknown, not working; the UI labels the difference
+between `descendantCount` and the sum of known statuses as "Status updating".
+
+`runThreadHierarchyStatusBackfill` visits each `threadRecords` row through
+`refreshThreadHierarchyActivity`, atomically recording its current status and
+applying deltas to every ancestor. It is idempotent alongside live status
+changes and does not rebuild descendant counts or scan subtrees. The hourly
+`runThreadHierarchyStatusBackfillAutomatically` cron records completion under
+`thread-hierarchy-status-counts-2026-10` in `migrationSchedules`.
+
+Remove the backfill, its cron, and its schedule row only after the runner reports
+completion and production checks confirm every thread has contributed its
+status and every ancestor's counts cover its descendants. At that point,
+stored counts may become required and the missing-count fallback may be removed.
+Keep `ownStatus` optional for newly ensured states until they are refreshed;
+do not initialize it before propagating the contribution. Keep the original
+summary fields until clients using them are outside the supported upgrade window.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.

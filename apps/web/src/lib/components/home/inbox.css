@@ -307,9 +307,9 @@
 
 .inbox-subagents {
 	display: flex;
+	flex-direction: column;
 	align-self: flex-start;
-	align-items: center;
-	gap: 7px;
+	align-items: flex-start;
 	margin: 0 10px 8px;
 	background: transparent;
 	color: var(--muted-foreground);
@@ -320,8 +320,10 @@
 	flex-shrink: 0;
 }
 
-.inbox-subagents-working {
-	color: var(--accent-strong);
+.inbox-subagent-status-row {
+	display: flex;
+	align-items: center;
+	gap: 7px;
 }
 
 .inbox-children .inbox-load-more {

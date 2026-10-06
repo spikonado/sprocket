@@ -24,7 +24,7 @@ import { inboxState, type InboxState } from '@convex/lib/inboxState';
 import type { Project } from '$lib/types/sprocket';
 import type { SprocketTheme } from '$lib/theme';
 import type { InboxSectionData } from '$lib/project/inbox';
-import { isRootThread, subagentBadgeLabel } from '$lib/project/subagents';
+import { isRootThread, subagentStatusRows } from '$lib/project/subagents';
 import type { UseExpandedThreads, ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
 import { useThreadTreeSummary } from '$lib/project/useThreadTree';
 import { cn } from '$lib/utils';
@@ -693,9 +693,9 @@ function ThreadTreeRow({
 
 	const status = inboxRunStatus(thread);
 
-	const badge = subagentBadgeLabel(
+	const subagentRows = subagentStatusRows(
 		summary?.descendantCount ?? 0,
-		summary?.descendantsActive ?? false
+		summary?.descendantStatusCounts
 	);
 
 	const expanded = expansion.isExpanded(thread._id);
@@ -812,12 +812,12 @@ function ThreadTreeRow({
 						)}
 					</div>
 				)}
-				{badge && !renaming && (
+				{subagentRows.length > 0 && !renaming && (
 					<button
 						className="inbox-subagents"
 						type="button"
 						aria-expanded={expanded}
-						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}: ${badge}`}
+						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}: ${subagentRows.map((row) => row.label).join(', ')}`}
 						onClick={() => {
 							if (expanded) {
 								expansion.collapse(thread._id);
@@ -826,14 +826,19 @@ function ThreadTreeRow({
 							}
 						}}
 					>
-						{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-						<span
-							className={cn('inbox-row-subagents', {
-								'inbox-subagents-working': summary?.descendantsActive === true
-							})}
-						>
-							{badge}
-						</span>
+						{subagentRows.map(({ status, label }) => (
+							<span key={status} className="inbox-subagent-status-row">
+								{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+								<span
+									className={cn('inbox-row-subagents', {
+										'inbox-working': status === 'queued' || status === 'running',
+										'inbox-attention': status === 'failed'
+									})}
+								>
+									{label}
+								</span>
+							</span>
+						))}
 					</button>
 				)}
 			</div>

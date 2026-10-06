@@ -16,6 +16,7 @@ import {
 	vAskQuestionAnswer,
 	vAskQuestionOption,
 	vCompletionProvider,
+	vDescendantStatusCounts,
 	vStoredExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
@@ -126,8 +127,10 @@ export default defineSchema({
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
 		ownActive: v.boolean(),
+		ownStatus: v.optional(vRunStatus),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number()
+		activeDescendantCount: v.number(),
+		descendantStatusCounts: v.optional(vDescendantStatusCounts)
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({

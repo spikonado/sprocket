@@ -25,10 +25,41 @@ export function collapseThreadBranch(
 	return expandedThreadIds.filter((threadId) => !collapsed.has(threadId));
 }
 
-export function subagentBadgeLabel(descendantCount: number, subtreeActive: boolean): string | null {
-	if (descendantCount === 0) return null;
+type SubagentStatus = Doc<'threadRecords'>['status'];
 
-	const count = descendantCount === 1 ? '1 subagent' : `${descendantCount} subagents`;
+const subagentStatuses = [
+	{ status: 'queued', label: 'Starting' },
+	{ status: 'running', label: 'Working' },
+	{ status: 'completed', label: 'Completed' },
+	{ status: 'failed', label: 'Failed' },
+	{ status: 'cancelled', label: 'Cancelled' }
+] satisfies { status: SubagentStatus; label: string }[];
 
-	return subtreeActive ? `${count} · Working` : count;
+export function subagentStatusRows(
+	descendantCount: number,
+	counts?: Record<SubagentStatus, number>
+): { status: SubagentStatus | 'unknown'; label: string }[] {
+	const rows: { status: SubagentStatus | 'unknown'; label: string }[] = [];
+	let counted = 0;
+
+	for (const { status, label } of subagentStatuses) {
+		const count = counts?.[status] ?? 0;
+
+		if (count === 0) continue;
+		counted += count;
+		rows.push({ status, label: subagentStatusLabel(count, label) });
+	}
+
+	if (counted < descendantCount) {
+		rows.push({
+			status: 'unknown',
+			label: subagentStatusLabel(descendantCount - counted, 'Status updating')
+		});
+	}
+
+	return rows;
+}
+
+function subagentStatusLabel(count: number, label: string): string {
+	return `${count} ${count === 1 ? 'subagent' : 'subagents'} · ${label}`;
 }
