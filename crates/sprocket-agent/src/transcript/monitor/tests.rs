@@ -59,6 +59,7 @@ fn tool_part_in_run(
             tool_invocation_id: invocation.map(str::to_owned),
             call_id: call_id.into(),
             name: name.into(),
+            input: None,
             output,
             status: status.into(),
         }),
