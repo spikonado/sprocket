@@ -359,9 +359,54 @@ it('cancels sign-in when the browser popup is closed', async () => {
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(1_500);
 	});
+	expect(cancel).toHaveBeenCalledTimes(0);
+	expect(fetchResult).toHaveBeenCalledTimes(1);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
-	expect(fetchResult).toHaveBeenCalledTimes(0);
+	expect(fetchResult).toHaveBeenCalledTimes(2);
 	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
+	expect(screen.queryByText('Signing in…')).toBeNull();
+});
+
+it('keeps a closed callback window from discarding a completed sign-in', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+	const connectedStatus = statusFixture({
+		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+		activeConnectionId: 'conn-1'
+	});
+
+	const view = mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			fetchChatGptStatus: async () => connectedStatus,
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(cancel).toHaveBeenCalledTimes(0);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(cancel).toHaveBeenCalledTimes(0);
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(connectedStatus);
 	expect(screen.queryByText('Signing in…')).toBeNull();
 });
 

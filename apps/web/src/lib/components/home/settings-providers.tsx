@@ -120,18 +120,12 @@ export default function SettingsProviders({
 		api: DesktopApi,
 		generation: number
 	) {
+		let closedPendingPolls = 0;
+
 		for (;;) {
 			await new Promise((resolve) => setTimeout(resolve, 1_500));
 
 			if (generation !== generationRef.current) return;
-
-			if (loginWindowRef.current?.closed) {
-				const closed = cancelLogin();
-
-				if (closed) cancelLoginOnServer(closed);
-
-				return;
-			}
 
 			try {
 				const result = await api.fetchChatGptBrowserLoginResult({
@@ -141,7 +135,22 @@ export default function SettingsProviders({
 
 				if (generation !== generationRef.current) return;
 
-				if (result.status === 'pending') continue;
+				if (result.status === 'pending') {
+					if (loginWindowRef.current?.closed) {
+						closedPendingPolls += 1;
+
+						if (closedPendingPolls >= 2) {
+							const closed = cancelLogin();
+
+							if (closed) cancelLoginOnServer(closed);
+
+							return;
+						}
+					}
+
+					continue;
+				}
+
 				setBrowserLogin(pending.userId, null);
 				setChatGptPending(false);
 
