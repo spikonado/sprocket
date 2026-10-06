@@ -1270,12 +1270,28 @@ mod tests {
             .unwrap()
             .unwrap();
         let session = manager.browser_session(false).await.unwrap().unwrap();
+        assert!(
+            local
+                .require_session_user(&desktop_session, &session.user.id)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        assert!(
+            local
+                .require_session_user(&browser_session, &session.user.id)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
         local
-            .require_session_user(&desktop_session, &session.user.id)
+            .inherit_session_user(&desktop_session, &session.user.id)
             .await
             .unwrap();
         local
-            .require_session_user(&browser_session, &session.user.id)
+            .require_session_user(&desktop_session, &session.user.id)
             .await
             .unwrap();
         assert_eq!(
