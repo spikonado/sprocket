@@ -278,6 +278,16 @@ describe('project thread helpers', () => {
 		expect(isAgentLaunchPending(afterThreadAError, threadB)).toBe(true);
 	});
 
+	it('does not restore a failed thread when another thread begins from the live map', () => {
+		const live = { current: beginLaunch({}, threadA, 1) };
+
+		live.current = clearPendingAgentLaunch(live.current, threadA, 1);
+		live.current = beginLaunch(live.current, threadB, 2);
+
+		expect(isAgentLaunchPending(live.current, threadA)).toBe(false);
+		expect(isAgentLaunchPending(live.current, threadB)).toBe(true);
+	});
+
 	it('rejects stale thread-scoped query data', () => {
 		const thread = makeThreadSummary();
 

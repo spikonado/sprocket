@@ -1784,9 +1784,14 @@ export default function App({
 			const pendingLaunchId = agentLaunchId;
 
 			if (pendingThreadId && pendingLaunchId !== null) {
-				setPendingAgentLaunches((launches) =>
-					clearPendingAgentLaunch(launches, pendingThreadId, pendingLaunchId)
+				const nextPendingAgentLaunches = clearPendingAgentLaunch(
+					pendingAgentLaunchesRef.current,
+					pendingThreadId,
+					pendingLaunchId
 				);
+
+				pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+				setPendingAgentLaunches(nextPendingAgentLaunches);
 			}
 
 			clearSubmittingPrompt(submissionScope, submissionSequence);
@@ -1880,9 +1885,8 @@ export default function App({
 							launchId
 						);
 
-						if (nextPendingAgentLaunches !== pendingAgentLaunchesRef.current) {
-							setPendingAgentLaunches(nextPendingAgentLaunches);
-						}
+						pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+						setPendingAgentLaunches(nextPendingAgentLaunches);
 					}
 
 					recoverSubmission(
@@ -1931,9 +1935,14 @@ export default function App({
 			});
 		} catch (error) {
 			if (launchedThreadId && agentLaunchId !== null) {
-				setPendingAgentLaunches(
-					clearPendingAgentLaunch(pendingAgentLaunchesRef.current, launchedThreadId, agentLaunchId)
+				const nextPendingAgentLaunches = clearPendingAgentLaunch(
+					pendingAgentLaunchesRef.current,
+					launchedThreadId,
+					agentLaunchId
 				);
+
+				pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+				setPendingAgentLaunches(nextPendingAgentLaunches);
 			}
 
 			if (!isSubmissionCurrent()) return;
@@ -2064,9 +2073,14 @@ export default function App({
 				userId,
 				desktopApi,
 				onError: (error) => {
-					setPendingAgentLaunches((launches) =>
-						clearPendingAgentLaunch(launches, threadId, launchId)
+					const nextPendingAgentLaunches = clearPendingAgentLaunch(
+						pendingAgentLaunchesRef.current,
+						threadId,
+						launchId
 					);
+
+					pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+					setPendingAgentLaunches(nextPendingAgentLaunches);
 
 					if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId)
 						return;
@@ -2085,7 +2099,14 @@ export default function App({
 				continuationOfRunId: previousRunId
 			});
 		} catch (error) {
-			setPendingAgentLaunches((launches) => clearPendingAgentLaunch(launches, threadId, launchId));
+			const nextPendingAgentLaunches = clearPendingAgentLaunch(
+				pendingAgentLaunchesRef.current,
+				threadId,
+				launchId
+			);
+
+			pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
+			setPendingAgentLaunches(nextPendingAgentLaunches);
 
 			if (signedInUserIdRef.current !== userId || currentThreadIdRef.current !== threadId) return;
 			setCurrentError(error instanceof Error ? error.message : 'Failed to continue the run.');
@@ -2422,6 +2443,7 @@ export default function App({
 		}
 
 		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+			pendingAgentLaunchesRef.current = nextPendingAgentLaunches;
 			setPendingAgentLaunches(nextPendingAgentLaunches);
 		}
 	}, [currentThreadId, runState, pendingAgentLaunches]);
