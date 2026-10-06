@@ -335,9 +335,10 @@ it('cancels a stalled sign-in start and closes its reserved popup immediately', 
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
 });
 
-it('cancels sign-in when the browser popup is closed', async () => {
+it('dismisses sign-in when the browser popup is closed without cancelling the server login', async () => {
 	vi.useFakeTimers();
 	const cancel = vi.fn(async () => {});
+
 	const fetchResult = vi.fn(async () => ({ status: 'pending' as const }));
 
 	mount(new ConvexTestClient(), {
@@ -364,7 +365,7 @@ it('cancels sign-in when the browser popup is closed', async () => {
 	await act(async () => {
 		await vi.advanceTimersByTimeAsync(1_500);
 	});
-	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(cancel).toHaveBeenCalledTimes(0);
 	expect(fetchResult).toHaveBeenCalledTimes(2);
 	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
 	expect(screen.queryByText('Signing in…')).toBeNull();
@@ -373,10 +374,12 @@ it('cancels sign-in when the browser popup is closed', async () => {
 it('keeps a closed callback window from discarding a completed sign-in', async () => {
 	vi.useFakeTimers();
 	const cancel = vi.fn(async () => {});
+
 	const fetchResult = vi
 		.fn()
 		.mockResolvedValueOnce({ status: 'pending' as const })
 		.mockResolvedValueOnce({ status: 'complete' as const });
+
 	const connectedStatus = statusFixture({
 		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
 		activeConnectionId: 'conn-1'

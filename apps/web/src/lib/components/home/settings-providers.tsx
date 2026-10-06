@@ -139,12 +139,10 @@ export default function SettingsProviders({
 					if (loginWindowRef.current?.closed) {
 						closedPendingPolls += 1;
 
-						if (closedPendingPolls >= 2) {
-							const closed = cancelLogin();
+						if (closedPendingPolls === 2) {
+							setBrowserLogin(pending.userId, null);
 
-							if (closed) cancelLoginOnServer(closed);
-
-							return;
+							setChatGptPending(false);
 						}
 					}
 
@@ -152,10 +150,13 @@ export default function SettingsProviders({
 				}
 
 				setBrowserLogin(pending.userId, null);
+
 				setChatGptPending(false);
 
 				if (result.status === 'error') {
-					setChatGptError(result.error ?? 'ChatGPT sign-in failed.');
+					if (closedPendingPolls < 2) {
+						setChatGptError(result.error ?? 'ChatGPT sign-in failed.');
+					}
 
 					return;
 				}
@@ -163,13 +164,19 @@ export default function SettingsProviders({
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
 				if (generation !== generationRef.current || api !== desktopApi) return;
+
 				onChatGptStatusChange(status);
 
 				return;
 			} catch (error) {
 				if (generation !== generationRef.current) return;
+
+				if (closedPendingPolls >= 2) return;
+
 				setBrowserLogin(pending.userId, null);
+
 				setChatGptPending(false);
+
 				setChatGptError(
 					errorMessage(
 						z.instanceof(Error).catch(new Error()).parse(error),
