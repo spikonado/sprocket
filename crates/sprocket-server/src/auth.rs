@@ -79,6 +79,9 @@ struct SessionRecord {
     user_id: Option<String>,
     #[serde(skip)]
     uncommitted: bool,
+    /// Leftover cookies unbound by native sign-out must not inherit the next owner.
+    #[serde(default = "inherit_native_owner_default")]
+    inherit_native_owner: bool,
 }
 
 impl SessionRecord {
@@ -101,6 +104,10 @@ where
     D: serde::Deserializer<'de>,
 {
     Option::deserialize(deserializer)
+}
+
+fn inherit_native_owner_default() -> bool {
+    true
 }
 
 impl AuthState {
@@ -154,6 +161,7 @@ impl AuthState {
                 created_at: crate::now_ms(),
                 user_id: None,
                 uncommitted: false,
+                inherit_native_owner: true,
             },
         );
     }
@@ -225,6 +233,7 @@ impl AuthState {
                 created_at: crate::now_ms(),
                 user_id: None,
                 uncommitted: false,
+                inherit_native_owner: true,
             },
         );
         self.save_sessions(sessions).await?;
@@ -328,19 +337,16 @@ impl AuthState {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         match user_id {
             None => {
-                sessions.retain(|_, session| session.ephemeral || !session.local_browser);
                 for session in sessions.values_mut() {
                     session.user_id = None;
                     session.uncommitted = false;
+                    session.inherit_native_owner = false;
                 }
             }
             Some(user_id) => {
                 for session in sessions.values_mut() {
                     if session.ephemeral || session.local_browser {
-                        if session.user_id.is_none() {
-                            session.user_id = Some(user_id.to_owned());
-                            session.uncommitted = false;
-                        } else if session.user_id.as_deref() == Some(user_id) {
+                        if session.user_id.as_deref() == Some(user_id) {
                             session.uncommitted = false;
                         }
                     } else if session.user_id.as_deref() != Some(user_id) {
@@ -407,6 +413,14 @@ impl AuthState {
             .await
             .get(session_token)
             .is_some_and(|session| !session_is_expired(session) && session.user_id.is_some())
+    }
+
+    pub async fn session_may_inherit_native_owner(&self, session_token: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(session_token)
+            .is_some_and(|session| !session_is_expired(session) && session.inherit_native_owner)
     }
 
     async fn session_may_access_machine(&self, session_token: &str) -> bool {
@@ -937,6 +951,7 @@ mod tests {
                         created_at: now.saturating_sub(10_000 - index as u64),
                         user_id: Some("user-1".into()),
                         uncommitted: false,
+                        inherit_native_owner: true,
                     },
                 );
             }
@@ -949,6 +964,7 @@ mod tests {
                     created_at: now.saturating_sub(20_000),
                     user_id: None,
                     uncommitted: false,
+                    inherit_native_owner: true,
                 },
             );
         }
@@ -1080,15 +1096,15 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("authentication required")
+                .contains("sign in again")
         );
-        assert!(!auth.session_state(Some(&session_token)).await.authenticated);
+        assert!(auth.session_state(Some(&session_token)).await.authenticated);
 
         let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[tokio::test]
-    async fn owner_sync_on_sign_out_drops_local_cookies_so_the_next_user_cannot_inherit_them() {
+    async fn owner_sync_on_sign_out_keeps_local_cookies_but_the_next_user_cannot_inherit_them() {
         let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
         let auth = AuthState::load(&temp_dir).expect("auth state");
         let (_, leftover) = auth
@@ -1097,7 +1113,15 @@ mod tests {
             .expect("leftover local cookie");
         auth.bind_session_user(&leftover, "user-1").await.unwrap();
         auth.sync_sessions_with_owner(None).await.unwrap();
-        assert!(!auth.session_state(Some(&leftover)).await.authenticated);
+        assert!(auth.session_state(Some(&leftover)).await.authenticated);
+        assert!(
+            auth.require_session_user(&leftover, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        assert!(!auth.session_may_inherit_native_owner(&leftover).await);
 
         let (_, next) = auth
             .bootstrap_browser_session(true)
@@ -1106,8 +1130,29 @@ mod tests {
         auth.bind_session_user(&next, "user-2").await.unwrap();
         auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
 
-        assert!(!auth.session_state(Some(&leftover)).await.authenticated);
+        assert!(
+            auth.require_session_user(&leftover, "user-2")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
         auth.require_session_user(&next, "user-2").await.unwrap();
+
+        let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
+        reloaded
+            .sync_sessions_with_owner(Some("user-2"))
+            .await
+            .unwrap();
+        assert!(
+            reloaded
+                .require_session_user(&leftover, "user-2")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        assert!(!reloaded.session_may_inherit_native_owner(&leftover).await);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

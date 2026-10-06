@@ -469,6 +469,12 @@ async fn native_session_token_response(
                 .require_session_user(&session_token, &session.user.id)
                 .await
                 .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
+        } else if !state
+            .auth
+            .session_may_inherit_native_owner(&session_token)
+            .await
+        {
+            return Ok(Json(None));
         } else {
             state
                 .auth
@@ -1089,6 +1095,54 @@ mod tests {
         auth.require_session_user(&session_token, "user-a")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn leftover_loopback_cookie_does_not_inherit_the_next_native_user() {
+        let (state, leftover, _) = test_state(true).await;
+        let auth = Arc::clone(&state.auth);
+        let native_auth = Arc::clone(&state.native_auth);
+        auth.bind_session_user(&leftover, "user-a").await.unwrap();
+        native_auth.authenticate_for_test("user-a").await;
+        auth.sync_sessions_with_owner(None).await.unwrap();
+        native_auth.authenticate_for_test("user-b").await;
+
+        let (_, next) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("next local cookie");
+        let app = router(state);
+        let leftover_response = app
+            .clone()
+            .oneshot(with_peer(
+                native_token_request(Some(&leftover), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(leftover_response.status(), StatusCode::OK);
+        assert!(read_json(leftover_response).await.is_null());
+        assert!(
+            auth.require_session_user(&leftover, "user-b")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+
+        let next_response = app
+            .oneshot(with_peer(
+                native_token_request(Some(&next), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(next_response.status(), StatusCode::OK);
+        assert_eq!(
+            read_json(next_response).await["accessToken"],
+            "test-access-token"
+        );
+        auth.require_session_user(&next, "user-b").await.unwrap();
     }
 
     #[tokio::test]
