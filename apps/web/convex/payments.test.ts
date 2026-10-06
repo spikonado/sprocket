@@ -400,6 +400,46 @@ describe('payments mandates', () => {
 		expect(stored).not.toHaveProperty('expiryYear');
 	});
 
+	it('charges after Prava restores remaining even if the local remaining is zero', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('mandates', setup.mandateId, { remaining: 0 });
+		});
+
+		fetchMock.mockResolvedValueOnce(jsonResponse(liveListedMandate({ remaining: '120.00' })));
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_renewed',
+				status: 'awaiting_result',
+				credentials: {
+					token: '4111111111111111',
+					dynamicCvv: '123',
+					expiryMonth: '12',
+					expiryYear: '2030'
+				}
+			})
+		);
+
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order after renewal',
+			...auth(run)
+		});
+
+		expect(charge.transactionId).toBe('txn_renewed');
+		const stored = await t.run(async (ctx) => ctx.db.get('mandates', setup.mandateId));
+		expect(stored?.remaining).toBe(12_000);
+	});
+
 	it('reuses a completed charge handle without replaying credentials', async () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');

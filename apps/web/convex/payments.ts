@@ -893,26 +893,25 @@ export const mandateCharge = action({
 		try {
 			const actor = await activeActor(ctx, args);
 
-			const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
+			const stored = await ctx.runQuery(internal.payments.getOwnedMandate, {
 				mandateId: args.mandateId,
 				userId: actor.userId
 			});
 
-			if (!mandate) throw new Error('Mandate not found.');
-			assertChargeable(mandate, args);
+			if (!stored) throw new Error('Mandate not found.');
 
-			if (mandate.status === 'paused') {
-				throw new Error('Mandate is paused and cannot be charged.');
-			}
+			// Amount/currency/cap are local invariants. Remaining and paused
+			// come from Prava and can be stale until resolve syncs them.
+			assertChargeable(stored, args, { remaining: false });
 
 			const reference = args.reference?.trim() || undefined;
 
 			const reservation = await ctx.runMutation(internal.payments.reserveCharge, {
-				mandateId: mandate._id,
+				mandateId: stored._id,
 				runId: args.runId,
 				userId: actor.userId,
 				amount: args.amount,
-				currency: mandate.currency,
+				currency: stored.currency,
 				description: args.description,
 				reference
 			});
@@ -929,14 +928,40 @@ export const mandateCharge = action({
 				throw new Error('A charge with this reference is already in progress. Retry shortly.');
 			}
 
-			const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
+			let prava: Awaited<ReturnType<typeof resolvePravaMandate>>;
 
-			if ((prava.status ?? '').toLowerCase() !== 'active') {
+			try {
+				prava = await resolvePravaMandate(ctx, actor.userId, stored);
+			} catch (error) {
 				await ctx.runMutation(internal.payments.releaseChargeReservation, {
 					chargeId: reservation.chargeId,
 					userId: actor.userId
 				});
-				throw new Error('Mandate is not active and cannot be charged.');
+				throw error;
+			}
+
+			const mandate =
+				(await ctx.runQuery(internal.payments.getOwnedMandate, {
+					mandateId: args.mandateId,
+					userId: actor.userId
+				})) ?? stored;
+
+			try {
+				assertChargeable(mandate, args);
+
+				if (mandate.status === 'paused') {
+					throw new Error('Mandate is paused and cannot be charged.');
+				}
+
+				if ((prava.status ?? '').toLowerCase() !== 'active') {
+					throw new Error('Mandate is not active and cannot be charged.');
+				}
+			} catch (error) {
+				await ctx.runMutation(internal.payments.releaseChargeReservation, {
+					chargeId: reservation.chargeId,
+					userId: actor.userId
+				});
+				throw error;
 			}
 
 			let result: {

@@ -67,7 +67,8 @@ export type MandateReportRequest = {
  * only stop clearly wrong requests from producing misleading local records. */
 export function assertChargeable(
 	mandate: Doc<'mandates'>,
-	args: { amount: string; currency: string }
+	args: { amount: string; currency: string },
+	options: { remaining?: boolean } = {}
 ): void {
 	if (args.currency.trim().toUpperCase() !== mandate.currency.toUpperCase()) {
 		throw new Error(`Charge currency must match the mandate's ${mandate.currency}.`);
@@ -85,7 +86,11 @@ export function assertChargeable(
 		);
 	}
 
-	if (mandate.remaining !== undefined && amount > mandate.remaining) {
+	if (
+		options.remaining !== false &&
+		mandate.remaining !== undefined &&
+		amount > mandate.remaining
+	) {
 		throw new Error(
 			`Charge amount exceeds the mandate's remaining ${formatMoneyMinor(mandate.remaining)}.`
 		);
