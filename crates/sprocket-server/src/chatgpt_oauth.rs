@@ -66,17 +66,20 @@ impl PendingLogins {
             return Err(ReserveError::TooMany);
         }
         let redirect_uri = logins.redirect_uri.clone();
-        logins.attempts.insert(state, PendingLogin {
-            session: attempt.session,
-            user: attempt.user,
-            connection: attempt.connection,
-            expires: Instant::now() + LOGIN_LIFETIME,
-            nonce: attempt.nonce,
-            verifier: attempt.verifier,
-            redirect_uri: redirect_uri.clone(),
-            processing: false,
-            result: None,
-        });
+        logins.attempts.insert(
+            state,
+            PendingLogin {
+                session: attempt.session,
+                user: attempt.user,
+                connection: attempt.connection,
+                expires: Instant::now() + LOGIN_LIFETIME,
+                nonce: attempt.nonce,
+                verifier: attempt.verifier,
+                redirect_uri: redirect_uri.clone(),
+                processing: false,
+                result: None,
+            },
+        );
         Ok(redirect_uri)
     }
 
@@ -384,12 +387,9 @@ mod tests {
         let (_directory, state, session) = fixture().await;
         let pending = state.chatgpt_oauth;
         let value = new_secret();
-        pending
-            .logins
-            .lock()
-            .await
-            .attempts
-            .insert(value.clone(), PendingLogin {
+        pending.logins.lock().await.attempts.insert(
+            value.clone(),
+            PendingLogin {
                 session,
                 user: "user-a".into(),
                 connection: None,
@@ -399,7 +399,8 @@ mod tests {
                 redirect_uri: "http://127.0.0.1:1234/auth/callback".into(),
                 processing: false,
                 result: None,
-            });
+            },
+        );
         let query = || CallbackQuery {
             state: Some(value.clone()),
             code: None,

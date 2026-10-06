@@ -140,13 +140,16 @@ async fn start(
     let user_id = request.user_id;
     let connection_id = request.connection_id;
     let redirect_uri = pending
-        .reserve_pending(value.clone(), PendingAttempt {
-            session: session.clone(),
-            user: user_id.clone(),
-            connection: connection_id.clone(),
-            nonce: nonce.clone(),
-            verifier: verifier.clone(),
-        })
+        .reserve_pending(
+            value.clone(),
+            PendingAttempt {
+                session: session.clone(),
+                user: user_id.clone(),
+                connection: connection_id.clone(),
+                nonce: nonce.clone(),
+                verifier: verifier.clone(),
+            },
+        )
         .await
         .map_err(|error| match error {
             ReserveError::Listener(_) => ApiError::with_status(
