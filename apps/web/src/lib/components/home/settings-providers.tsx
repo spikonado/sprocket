@@ -125,6 +125,14 @@ export default function SettingsProviders({
 
 			if (generation !== generationRef.current) return;
 
+			if (loginWindowRef.current?.closed) {
+				const closed = cancelLogin();
+
+				if (closed) cancelLoginOnServer(closed);
+
+				return;
+			}
+
 			try {
 				const result = await api.fetchChatGptBrowserLoginResult({
 					userId: pending.userId,

@@ -9,6 +9,7 @@ import SettingsProviders from './settings-providers';
 
 const loginWindow = {
 	opener: null,
+	closed: false,
 	close: vi.fn(),
 	location: { replace: vi.fn() }
 };
@@ -17,6 +18,7 @@ const openLoginWindow = vi.fn<() => typeof loginWindow | null>(() => loginWindow
 
 beforeEach(() => {
 	openLoginWindow.mockReset().mockReturnValue(loginWindow);
+	loginWindow.closed = false;
 	loginWindow.close.mockReset();
 	loginWindow.location.replace.mockReset();
 	vi.stubGlobal('open', openLoginWindow);
@@ -331,6 +333,36 @@ it('cancels a stalled sign-in start and closes its reserved popup immediately', 
 		started.resolve({ state: 'state-1', authorizeUrl: 'https://auth.openai.test/authorize' });
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+});
+
+it('cancels sign-in when the browser popup is closed', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+	const fetchResult = vi.fn(async () => ({ status: 'pending' as const }));
+
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	expect(screen.getByText('Signing in…')).toBeTruthy();
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(fetchResult).toHaveBeenCalledTimes(0);
+	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
+	expect(screen.queryByText('Signing in…')).toBeNull();
 });
 
 it('surfaces server-side login errors from the result poll', async () => {
