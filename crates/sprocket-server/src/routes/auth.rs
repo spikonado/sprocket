@@ -469,18 +469,25 @@ async fn native_session_token_response(
                 .require_session_user(&session_token, &session.user.id)
                 .await
                 .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
-        } else if !state
-            .auth
-            .session_may_inherit_native_owner(&session_token)
-            .await
-        {
-            return Ok(Json(None));
         } else {
-            state
+            match state
                 .auth
-                .bind_session_user(&session_token, &session.user.id)
+                .inherit_session_user(&session_token, &session.user.id)
                 .await
-                .map_err(ApiError::internal)?;
+            {
+                Ok(_) => {}
+                Err(error) => {
+                    let message = error.to_string();
+
+                    if message.contains("sign in again")
+                        || message.contains("authentication required")
+                    {
+                        return Ok(Json(None));
+                    }
+
+                    return Err(ApiError::internal(error));
+                }
+            }
         }
     }
     Ok(Json(session))

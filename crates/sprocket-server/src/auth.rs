@@ -272,7 +272,17 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<bool> {
-        self.assign_session_user(session_token, user_id, true).await
+        self.assign_session_user(session_token, user_id, true, false)
+            .await
+    }
+
+    pub async fn inherit_session_user(
+        &self,
+        session_token: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool> {
+        self.assign_session_user(session_token, user_id, true, true)
+            .await
     }
 
     pub async fn claim_session_user(
@@ -280,7 +290,7 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<bool> {
-        self.assign_session_user(session_token, user_id, false)
+        self.assign_session_user(session_token, user_id, false, false)
             .await
     }
 
@@ -289,6 +299,7 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
         persist: bool,
+        require_inherit: bool,
     ) -> anyhow::Result<bool> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         {
@@ -302,6 +313,9 @@ impl AuthState {
             let already_assigned = session.user_id.as_deref() == Some(user_id);
             if already_assigned && (!persist || !session.uncommitted) {
                 return Ok(false);
+            }
+            if require_inherit && !session.inherit_native_owner {
+                anyhow::bail!("local session is not bound to a user; sign in again");
             }
             if !persist {
                 session.user_id = Some(user_id.to_string());
@@ -1153,6 +1167,32 @@ mod tests {
                 .contains("sign in again")
         );
         assert!(!reloaded.session_may_inherit_native_owner(&leftover).await);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn inherit_session_user_refuses_after_sign_out_while_explicit_bind_still_works() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, leftover) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("leftover local cookie");
+        auth.bind_session_user(&leftover, "user-1").await.unwrap();
+        auth.sync_sessions_with_owner(None).await.unwrap();
+
+        assert!(
+            auth.inherit_session_user(&leftover, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        auth.bind_session_user(&leftover, "user-1").await.unwrap();
+        auth.require_session_user(&leftover, "user-1")
+            .await
+            .unwrap();
 
         let _ = fs::remove_dir_all(temp_dir);
     }
