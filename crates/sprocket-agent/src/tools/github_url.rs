@@ -94,11 +94,7 @@ async fn download_file(
     );
     let mut bytes = Vec::new();
     let mut prefix = Vec::with_capacity(IMAGE_SNIFF_BYTES);
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(reqwest::Error::without_url)?
-    {
+    while let Some(chunk) = response.chunk().await? {
         let prefix_bytes = chunk.len().min(IMAGE_SNIFF_BYTES - prefix.len());
         prefix.extend_from_slice(&chunk[..prefix_bytes]);
         if sniff_supported_image_format(&prefix).is_some() {
@@ -305,6 +301,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn request_errors_return_the_failure_without_the_url() {
+        let cache = tempfile::tempdir().unwrap();
+        let (url, server) = serve(vec![b"invalid HTTP response\r\n\r\n".to_vec()]).await;
+        let error = fetch_github_file(
+            url.clone(),
+            false,
+            cache.path(),
+            &WorkspaceCancellation::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "error sending request");
+        assert!(!format!("{error:#}").contains(url.as_str()));
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn truncated_bodies_return_the_failure_without_the_url() {
+        let cache = tempfile::tempdir().unwrap();
+        let (url, server) = serve(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial".to_vec(),
+        ])
+        .await;
+        let error = fetch_github_file(
+            url.clone(),
+            false,
+            cache.path(),
+            &WorkspaceCancellation::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "error decoding response body");
+        assert!(!format!("{error:#}").contains(url.as_str()));
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn errors_are_returned_instead_of_allowing_hosted_fallback() {
         let cache = tempfile::tempdir().unwrap();
         for bytes in [
@@ -316,7 +349,6 @@ mod tests {
             response(200, "application/octet-stream", &[0xff, 0xfe]),
             response(200, "text/plain", b"binary\0content"),
             response(200, "text/plain", b""),
-            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial".to_vec(),
         ] {
             let (url, server) = serve(vec![bytes]).await;
             assert!(
