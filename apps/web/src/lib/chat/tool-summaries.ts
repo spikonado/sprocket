@@ -90,6 +90,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'spawn_subagent':
 			return jsonString(fields?.prompt) ?? 'Child agent';
 		case 'control_subagent':
+			if (fields?.action === 'send') return jsonString(fields.prompt) ?? 'Message child agent';
+
 			if (fields?.action === 'stop') return 'Stop child agent';
 
 			if (fields?.action === 'answer_question') return 'Answered question';

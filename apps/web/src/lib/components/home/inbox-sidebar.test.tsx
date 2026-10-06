@@ -559,7 +559,7 @@ it('shows each descendant status on its own counted row', async () => {
 		'2 subagents · Working',
 		'3 subagents · Completed',
 		'1 subagent · Failed',
-		'2 subagents · Cancelled'
+		'2 subagents · Stopped'
 	]);
 	expect(
 		[...document.querySelectorAll('.inbox-row-subagents.inbox-working')].map(
@@ -570,7 +570,11 @@ it('shows each descendant status on its own counted row', async () => {
 		'1 subagent · Failed'
 	);
 	expect(
-		view.getByRole('button', { name: /^Expand subagents of Thread:/ }).getAttribute('aria-expanded')
+		view
+			.getByRole('button', {
+				name: 'Expand subagents of Thread: 1 subagent · Starting, 2 subagents · Working, 3 subagents · Completed, 1 subagent · Failed, 2 subagents · Stopped'
+			})
+			.getAttribute('aria-expanded')
 	).toBe('false');
 	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
 	expect(document.querySelector('.inbox-subagents .lucide-chevron-right')).toBeTruthy();
@@ -596,7 +600,7 @@ it('shows each descendant status on its own counted row', async () => {
 		'3 subagents · Working',
 		'3 subagents · Completed',
 		'1 subagent · Failed',
-		'2 subagents · Cancelled'
+		'2 subagents · Stopped'
 	]);
 });
 

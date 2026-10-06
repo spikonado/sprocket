@@ -32,7 +32,7 @@ const subagentStatuses = [
 	{ status: 'running', label: 'Working' },
 	{ status: 'completed', label: 'Completed' },
 	{ status: 'failed', label: 'Failed' },
-	{ status: 'cancelled', label: 'Cancelled' }
+	{ status: 'cancelled', label: 'Stopped' }
 ] satisfies { status: SubagentStatus; label: string }[];
 
 export function subagentStatusRows(

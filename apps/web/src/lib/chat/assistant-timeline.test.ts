@@ -181,6 +181,21 @@ describe('assistant timeline', () => {
 		]);
 	});
 
+	it('describes stopped tools while preserving their cancelled status and supplied errors', () => {
+		const stopped = tool('call-1', 'exec_command', {
+			job: executorJob('job-1', 1, { status: 'cancelled' })
+		});
+
+		expect(assistantTimelineToolFailureKind(stopped, false)).toBe('cancelled');
+		expect(assistantTimelineToolError(stopped, false)).toBe('Tool stopped before completion.');
+		expect(
+			assistantTimelineToolError(
+				{ ...stopped, output: { status: 'cancelled', error: 'stopped by user' } },
+				false
+			)
+		).toBe('stopped by user');
+	});
+
 	it('preserves cancelled vs failed from persisted tool-result status after jobs leave the timeline', () => {
 		const [cancelled, failed] = buildAssistantTimeline(
 			[

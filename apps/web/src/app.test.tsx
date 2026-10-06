@@ -863,6 +863,33 @@ it('enables run-bound Stop after the lifecycle arrives behind a pending question
 	);
 });
 
+it.each([
+	{ error: null, message: 'Failed to stop run.' },
+	{ error: new Error('Server unavailable.'), message: 'Server unavailable.' }
+])('shows "$message" when stopping a run fails', async ({ error, message }) => {
+	const { client, thread } = await renderThreadLaunch();
+	await flushPendingWork();
+
+	const mutation = vi.spyOn(client, 'mutation').mockRejectedValueOnce(error);
+
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			run: { runId: 'run-1' as Id<'runs'>, startedAt: 1 }
+		});
+	});
+	const stop = await screen.findByRole('button', { name: 'Stop generation' });
+
+	await act(async () => {
+		fireEvent.click(stop);
+	});
+
+	await waitFor(() => expect(screen.getByRole('alert')).toHaveProperty('textContent', message));
+	expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId: 'run-1' });
+});
+
 it('launches the continuation prompt after an agent question is answered', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');

@@ -113,9 +113,6 @@ impl SubagentPolls {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SpawnSubagentArgs {
     pub(crate) prompt: String,
-    /// Omit to create a new subagent; include to send a follow-up.
-    #[serde(rename = "threadId", default, skip_serializing_if = "Option::is_none")]
-    pub(crate) thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +155,7 @@ pub(crate) struct PollSubagentArgs {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SubagentControlAction {
+    Send,
     Stop,
     AnswerQuestion,
 }
@@ -169,6 +167,18 @@ pub(crate) struct ControlSubagentArgs {
     #[serde(rename = "threadId")]
     pub(crate) thread_id: String,
     pub(crate) action: SubagentControlAction,
+    /// Follow-up prompt for send. Stop the current run or wait for it to finish before sending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fast: Option<bool>,
+    /// Maximum execution runtime for send. Without a limit, the subagent runs until it completes or is stopped.
+    #[serde(rename = "timeoutMs", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) timeout_ms: Option<u64>,
     #[serde(
         rename = "questionId",
         default,
@@ -230,7 +240,7 @@ fn control_subagent_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ControlSubagentArgs));
     schema["properties"]["action"] = json!({
         "type": "string",
-        "enum": ["stop", "answer_question"]
+        "enum": ["send", "stop", "answer_question"]
     });
     if let Some(definitions) = schema["$defs"].as_object_mut() {
         definitions.remove("SubagentControlAction");
@@ -241,11 +251,28 @@ fn control_subagent_parameters() -> serde_json::Value {
     );
     schema["anyOf"] = json!([
         {
-            "properties": { "action": { "type": "string", "enum": ["stop"] } },
+            "properties": {
+                "action": { "type": "string", "enum": ["send"] },
+                "prompt": { "type": "string", "minLength": 1 }
+            },
+            "required": ["prompt"],
             "not": { "anyOf": [
                 { "required": ["questionId"] },
                 { "required": ["optionId"] },
                 { "required": ["text"] }
+            ] }
+        },
+        {
+            "properties": { "action": { "type": "string", "enum": ["stop"] } },
+            "not": { "anyOf": [
+                { "required": ["questionId"] },
+                { "required": ["optionId"] },
+                { "required": ["text"] },
+                { "required": ["prompt"] },
+                { "required": ["model"] },
+                { "required": ["reasoning"] },
+                { "required": ["fast"] },
+                { "required": ["timeoutMs"] }
             ] }
         },
         {
@@ -254,6 +281,13 @@ fn control_subagent_parameters() -> serde_json::Value {
                 "questionId": { "type": "string", "minLength": 1 }
             },
             "required": ["questionId"],
+            "not": { "anyOf": [
+                { "required": ["prompt"] },
+                { "required": ["model"] },
+                { "required": ["reasoning"] },
+                { "required": ["fast"] },
+                { "required": ["timeoutMs"] }
+            ] },
             "anyOf": [
                 { "properties": { "optionId": { "type": "string", "minLength": 1 } }, "required": ["optionId"] },
                 { "properties": { "text": { "type": "string", "minLength": 1 } }, "required": ["text"] }
@@ -263,15 +297,8 @@ fn control_subagent_parameters() -> serde_json::Value {
     schema
 }
 
-fn prepare_subagent(args: &SpawnSubagentArgs) -> Result<String, ToolExecutionError> {
-    if args
-        .thread_id
-        .as_ref()
-        .is_some_and(|id| id.trim().is_empty())
-    {
-        return Err(tool_failure("threadId cannot be empty"));
-    }
-    let prompt = args.prompt.trim().to_string();
+fn prepare_subagent_prompt(prompt: &str) -> Result<String, ToolExecutionError> {
+    let prompt = prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(tool_failure(
             "prompt is required when creating or prompting a subagent",
@@ -284,14 +311,29 @@ fn validate_control(args: &ControlSubagentArgs) -> Result<(), ToolExecutionError
     if args.thread_id.trim().is_empty() {
         return Err(tool_failure("threadId cannot be empty"));
     }
+    if !matches!(args.action, SubagentControlAction::Send)
+        && (args.prompt.is_some()
+            || args.model.is_some()
+            || args.reasoning.is_some()
+            || args.fast.is_some()
+            || args.timeout_ms.is_some())
+    {
+        return Err(tool_failure(
+            "prompt, model, reasoning, fast, and timeoutMs require send",
+        ));
+    }
+    if !matches!(args.action, SubagentControlAction::AnswerQuestion)
+        && (args.question_id.is_some() || args.option_id.is_some() || args.text.is_some())
+    {
+        return Err(tool_failure(
+            "questionId, optionId, and text require answer_question",
+        ));
+    }
     match args.action {
-        SubagentControlAction::Stop => {
-            if args.question_id.is_some() || args.option_id.is_some() || args.text.is_some() {
-                return Err(tool_failure(
-                    "questionId, optionId, and text require answer_question",
-                ));
-            }
+        SubagentControlAction::Send => {
+            prepare_subagent_prompt(args.prompt.as_deref().unwrap_or_default())?;
         }
+        SubagentControlAction::Stop => {}
         SubagentControlAction::AnswerQuestion => {
             if args
                 .question_id
@@ -326,7 +368,8 @@ impl rig::tool::Tool for SpawnSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        String::new()
+        "Create a new subagent. Use control_subagent to send a follow-up to an existing subagent."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -339,14 +382,16 @@ impl rig::tool::Tool for SpawnSubagentTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        let prompt = prepare_subagent(&args)?;
+        let prompt = prepare_subagent_prompt(&args.prompt)?;
         execute_tool_job_with_id(
             &self.context,
             Self::NAME,
             payload,
             |cancellation, job_id| {
                 let tool = self.clone();
-                async move { tool.run(args, prompt, job_id, cancellation).await }
+                async move {
+                    run_subagent(&tool.context, args, None, prompt, job_id, cancellation).await
+                }
             },
         )
         .await
@@ -435,82 +480,81 @@ async fn submit_child(
     }
 }
 
-impl SpawnSubagentTool {
-    async fn run(
-        &self,
-        args: SpawnSubagentArgs,
-        prompt: String,
-        job_id: String,
-        cancellation: WorkspaceCancellation,
-    ) -> Result<serde_json::Value, ToolExecutionError> {
-        let launcher = require_launcher(&self.context)?;
-        let (submission_id, child_execution_secret) = child_credentials(&self.context, &job_id);
-        let recovered = cancelled_read(&cancellation, async {
-            recover_submission(&self.context, &submission_id, &child_execution_secret)
-                .await
-                .map_err(tool_error)
+async fn run_subagent(
+    context: &AgentToolContext,
+    args: SpawnSubagentArgs,
+    thread_id: Option<String>,
+    prompt: String,
+    job_id: String,
+    cancellation: WorkspaceCancellation,
+) -> Result<serde_json::Value, ToolExecutionError> {
+    let launcher = require_launcher(context)?;
+    let (submission_id, child_execution_secret) = child_credentials(context, &job_id);
+    let recovered = cancelled_read(&cancellation, async {
+        recover_submission(context, &submission_id, &child_execution_secret)
+            .await
+            .map_err(tool_error)
+    })
+    .await?;
+    let (created, prompt) = if let Some(recovered) = recovered {
+        (recovered.run, recovered.prompt)
+    } else {
+        let overrides = SubagentSettingsOverrides {
+            model: args.model.clone(),
+            reasoning: args.reasoning.clone(),
+            fast: args.fast,
+        };
+        let resolved = cancelled_read(&cancellation, async {
+            resolve_child_settings(context, thread_id.as_deref(), &overrides).await
         })
         .await?;
-        let (created, prompt) = if let Some(recovered) = recovered {
-            (recovered.run, recovered.prompt)
-        } else {
-            let overrides = SubagentSettingsOverrides {
-                model: args.model.clone(),
-                reasoning: args.reasoning.clone(),
-                fast: args.fast,
-            };
-            let resolved = cancelled_read(&cancellation, async {
-                resolve_child_settings(&self.context, args.thread_id.as_deref(), &overrides).await
-            })
-            .await?;
 
-            let mut fields = BTreeMap::new();
-            if let Some(thread_id) = &args.thread_id {
-                fields.insert("threadId".to_string(), thread_id.clone().into());
-            }
-            fields.insert("prompt".to_string(), prompt.clone().into());
-            fields.insert("model".to_string(), resolved.model.clone().into());
-            fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
-            fields.insert("fast".to_string(), resolved.fast.into());
-            if let Some(timeout_ms) = args.timeout_ms {
-                fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
-            }
-            let created = submit_child(
-                &self.context,
-                fields,
-                args.thread_id.as_deref(),
-                &cancellation,
-                &submission_id,
-                &child_execution_secret,
-            )
-            .await?;
-            (created, prompt)
-        };
-
-        if created.status == "queued" {
-            launch_queued_child(
-                launcher,
-                &self.context,
-                &created,
-                &submission_id,
-                &child_execution_secret,
-                &prompt,
-            )
-            .await?;
+        let mut fields = BTreeMap::new();
+        if let Some(thread_id) = &thread_id {
+            fields.insert("threadId".to_string(), thread_id.clone().into());
         }
-
-        let mut result = action_settlement_result(
-            &self.context,
-            &created.thread_id,
-            YieldMode::Action.normalize(args.yield_time_ms),
+        fields.insert("prompt".to_string(), prompt.clone().into());
+        fields.insert("model".to_string(), resolved.model.clone().into());
+        fields.insert("reasoning".to_string(), resolved.reasoning.clone().into());
+        fields.insert("fast".to_string(), resolved.fast.into());
+        if let Some(timeout_ms) = args.timeout_ms {
+            fields.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
+        }
+        let created = submit_child(
+            context,
+            fields,
+            thread_id.as_deref(),
             &cancellation,
+            &submission_id,
+            &child_execution_secret,
         )
         .await?;
-        result["threadId"] = json!(created.thread_id);
-        result["settings"] =
-            serde_json::to_value(&created.settings).map_err(|e| tool_error(e.into()))?;
-        Ok(result)
+        (created, prompt)
+    };
+
+    if created.status == "queued" {
+        launch_queued_child(
+            launcher,
+            context,
+            &created,
+            &submission_id,
+            &child_execution_secret,
+            &prompt,
+        )
+        .await?;
     }
+
+    let mut result = action_settlement_result(
+        context,
+        &created.thread_id,
+        YieldMode::Action.normalize(args.yield_time_ms),
+        &cancellation,
+    )
+    .await?;
+    result["threadId"] = json!(created.thread_id);
+    result["settings"] =
+        serde_json::to_value(&created.settings).map_err(|e| tool_error(e.into()))?;
+    Ok(result)
 }
 
 async fn launch_queued_child(
@@ -623,7 +667,8 @@ impl rig::tool::Tool for ControlSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        String::new()
+        "Send a follow-up, stop work, or answer a question on an existing subagent. Stop the current run or wait for it to finish before sending another message."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -657,6 +702,25 @@ impl ControlSubagentTool {
         job_id: String,
         cancellation: WorkspaceCancellation,
     ) -> Result<serde_json::Value, ToolExecutionError> {
+        if matches!(args.action, SubagentControlAction::Send) {
+            let prompt = prepare_subagent_prompt(args.prompt.as_deref().unwrap_or_default())?;
+            return run_subagent(
+                &self.context,
+                SpawnSubagentArgs {
+                    prompt: prompt.clone(),
+                    model: args.model,
+                    reasoning: args.reasoning,
+                    fast: args.fast,
+                    yield_time_ms: args.yield_time_ms,
+                    timeout_ms: args.timeout_ms,
+                },
+                Some(args.thread_id),
+                prompt,
+                job_id,
+                cancellation,
+            )
+            .await;
+        }
         let mut fields = BTreeMap::from([
             ("threadId".to_string(), args.thread_id.clone().into()),
             (
@@ -664,6 +728,7 @@ impl ControlSubagentTool {
                 match args.action {
                     SubagentControlAction::Stop => "stop",
                     SubagentControlAction::AnswerQuestion => "answer_question",
+                    SubagentControlAction::Send => unreachable!(),
                 }
                 .into(),
             ),
@@ -679,6 +744,7 @@ impl ControlSubagentTool {
             fields.insert("text".to_string(), text.clone().into());
         }
         let response = match args.action {
+            SubagentControlAction::Send => unreachable!(),
             SubagentControlAction::AnswerQuestion => {
                 control_mutation_with_retry(&args.thread_id, &cancellation, || {
                     self.context
@@ -687,7 +753,7 @@ impl ControlSubagentTool {
                 })
                 .await?
             }
-            // Retrying Stop could cancel replacement work rather than the original run.
+            // Retrying Stop could stop replacement work rather than the original run.
             SubagentControlAction::Stop => {
                 cancelled_read(&cancellation, async {
                     timeout(
@@ -1247,30 +1313,59 @@ mod tests {
     use crate::transcript::RemoteTranscriptState;
 
     #[test]
-    fn prompts_create_or_target_a_child_without_an_action() {
-        for thread_id in [None, Some("child-thread")] {
-            let mut payload = json!({"prompt": "  implement the task  ", "yieldTimeMs": 0});
-            if let Some(thread_id) = thread_id {
-                payload["threadId"] = json!(thread_id);
-            }
-            let args: SpawnSubagentArgs = serde_json::from_value(payload).unwrap();
-            let prompt = prepare_subagent(&args).unwrap();
-            assert_eq!(args.thread_id.as_deref(), thread_id);
-            assert_eq!(prompt, "implement the task");
-            assert_eq!(args.yield_time_ms, 0);
-        }
+    fn spawn_accepts_only_creation_payloads() {
+        let args: SpawnSubagentArgs =
+            serde_json::from_value(json!({"prompt": "  implement the task  ", "yieldTimeMs": 0}))
+                .unwrap();
+        assert_eq!(
+            prepare_subagent_prompt(&args.prompt).unwrap(),
+            "implement the task"
+        );
+        assert_eq!(args.yield_time_ms, 0);
+        let error = serde_json::from_value::<SpawnSubagentArgs>(json!({
+            "threadId": "child-thread",
+            "prompt": "implement the next task"
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field `threadId`"));
     }
 
     #[test]
-    fn promptless_followups_require_an_explicit_task() {
-        for payload in [
-            json!({}),
-            json!({"threadId": "child-thread"}),
-            json!({"threadId": "child-thread", "prompt": "  "}),
-        ] {
+    fn spawn_schema_only_advertises_child_creation() {
+        let schema = spawn_subagent_parameters();
+        assert!(schema["properties"].get("threadId").is_none());
+        assert_eq!(schema["additionalProperties"], false);
+    }
+
+    #[test]
+    fn control_sends_followups_with_execution_overrides() {
+        let args: ControlSubagentArgs = serde_json::from_value(json!({
+            "action": "send",
+            "threadId": "child-thread",
+            "prompt": "  implement the next task  ",
+            "model": "gpt-6.1-sol",
+            "reasoning": "high",
+            "fast": true,
+            "timeoutMs": 60_000,
+            "yieldTimeMs": 0
+        }))
+        .unwrap();
+        validate_control(&args).unwrap();
+        assert_eq!(
+            prepare_subagent_prompt(args.prompt.as_deref().unwrap()).unwrap(),
+            "implement the next task"
+        );
+        assert_eq!(args.thread_id, "child-thread");
+        assert_eq!(args.timeout_ms, Some(60_000));
+        assert_eq!(args.yield_time_ms, 0);
+    }
+
+    #[test]
+    fn creation_requires_an_explicit_task() {
+        for payload in [json!({}), json!({"prompt": "  "})] {
             let result = serde_json::from_value::<SpawnSubagentArgs>(payload)
                 .map_err(|error| tool_failure(error.to_string()))
-                .and_then(|args| prepare_subagent(&args));
+                .and_then(|args| prepare_subagent_prompt(&args.prompt));
             assert!(result.unwrap_err().to_string().contains("prompt"));
         }
     }
@@ -1278,6 +1373,10 @@ mod tests {
     #[test]
     fn control_fields_and_execution_options_are_action_specific() {
         for payload in [
+            json!({"action": "send", "threadId": "child"}),
+            json!({"action": "send", "threadId": "child", "prompt": " "}),
+            json!({"action": "send", "threadId": "child", "prompt": "task", "questionId": "q"}),
+            json!({"action": "send", "threadId": "child", "prompt": "task", "text": "answer"}),
             json!({"action": "stop"}),
             json!({"action": "stop", "threadId": " "}),
             json!({"action": "stop", "threadId": "child", "prompt": "task"}),

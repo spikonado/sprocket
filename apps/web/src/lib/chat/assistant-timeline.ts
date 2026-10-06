@@ -323,7 +323,7 @@ export function assistantTimelineToolError(
 
 	if (item.job) {
 		if (item.job.status === 'cancelled') {
-			return item.job.error ?? outputError ?? 'Executor job cancelled before completion.';
+			return item.job.error ?? outputError ?? 'Tool stopped before completion.';
 		}
 
 		if (item.job.status === 'failed') {

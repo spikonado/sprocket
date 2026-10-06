@@ -352,7 +352,9 @@ describe('subagents.createOrSend', () => {
 					model: 'other-model'
 				})
 			)
-		).rejects.toThrow(/Finish or cancel the active run/);
+		).rejects.toThrow(
+			'Stop the current run or wait for it to finish before sending another message.'
+		);
 
 		const after = await t.run((ctx) => ctx.db.get('threadRecords', child.threadId));
 		expect(after?.selectedModel).toBe(before?.selectedModel);
@@ -535,19 +537,39 @@ describe('subagents.createOrSend', () => {
 });
 
 describe('subagent tool job results', () => {
-	it.each(['spawn_subagent', 'control_subagent', 'poll_subagent'] as const)(
-		'commits and retrieves the %s result through the executor lifecycle',
-		async (kind) => {
+	it.each(['spawn', 'legacy follow-up', 'send', 'send with options', 'stop', 'poll'] as const)(
+		'commits and retrieves the %s payload and result through the executor lifecycle',
+		async (action) => {
 			const t = initConvexTest();
 			const caller = await startCallerRun(t);
 			const child = await createChild(t, caller);
 
-			const payload =
-				kind === 'spawn_subagent'
-					? { prompt: 'Delegate work', yieldTimeMs: 0 }
-					: kind === 'control_subagent'
-						? { threadId: child.threadId, action: 'stop' as const, yieldTimeMs: 0 }
-						: { threadId: child.threadId, yieldTimeMs: 0 };
+			const kind =
+				action === 'spawn' || action === 'legacy follow-up'
+					? 'spawn_subagent'
+					: action === 'poll'
+						? 'poll_subagent'
+						: 'control_subagent';
+
+			const followUp = { threadId: child.threadId, prompt: 'Follow-up task', yieldTimeMs: 0 };
+
+			const payloads = {
+				spawn: { prompt: 'Delegate work', yieldTimeMs: 0 },
+				'legacy follow-up': followUp,
+				send: { ...followUp, action: 'send' as const },
+				'send with options': {
+					...followUp,
+					action: 'send' as const,
+					model: 'gpt-5.6-sol',
+					reasoning: 'high',
+					fast: true,
+					timeoutMs: 30_000
+				},
+				stop: { threadId: child.threadId, action: 'stop' as const, yieldTimeMs: 0 },
+				poll: { threadId: child.threadId, yieldTimeMs: 0 }
+			};
+
+			const payload = payloads[action];
 
 			const job = await t.mutation(api.agentRuntime.beginToolJob, {
 				runId: caller.runId,
@@ -564,17 +586,25 @@ describe('subagent tool job results', () => {
 				pendingQuestions: []
 			};
 
-			const result =
-				kind === 'poll_subagent'
-					? {
-							...metadata,
-							entries: [{ type: 'text' as const, id: 'part-1', text: 'Progress' }],
-							nextCursor: 'cursor-1',
-							hasMore: false
-						}
-					: kind === 'spawn_subagent'
-						? { ...metadata, threadId: child.threadId, settings: child.settings }
-						: { ...metadata, status: 'cancelled' as const };
+			const snapshot = {
+				...metadata,
+				entries: [{ type: 'text' as const, id: 'part-1', text: 'Progress' }],
+				nextCursor: 'cursor-1',
+				hasMore: false
+			};
+
+			const sendResult = { ...metadata, threadId: child.threadId, settings: child.settings };
+
+			const results = {
+				spawn: sendResult,
+				'legacy follow-up': sendResult,
+				send: sendResult,
+				'send with options': { ...sendResult, ...snapshot },
+				stop: { ...metadata, status: 'cancelled' as const },
+				poll: snapshot
+			};
+
+			const result = results[action];
 
 			await expect(
 				t.mutation(api.executor.complete, {
@@ -592,6 +622,11 @@ describe('subagent tool job results', () => {
 					jobId: job.jobId
 				})
 			).resolves.toMatchObject({ status: 'completed', result });
+			expect(await t.run((ctx) => ctx.db.get('executorJobs', job.jobId))).toMatchObject({
+				kind,
+				payload,
+				result
+			});
 		}
 	);
 });

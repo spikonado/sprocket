@@ -278,7 +278,7 @@ function settledToolBody(job: TranscriptToolJob): TranscriptToolBody {
 					error:
 						job.error ??
 						(job.status === 'cancelled'
-							? 'Executor job cancelled before completion.'
+							? 'Tool stopped before completion.'
 							: 'Executor job failed.'),
 					status
 				};

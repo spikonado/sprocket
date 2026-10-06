@@ -515,7 +515,11 @@ describe('numbered transcript parts', () => {
 			tool: {
 				toolInvocationId: invocationId,
 				callId: 'c-cancel',
-				status: 'cancelled'
+				status: 'cancelled',
+				output: {
+					status: 'cancelled',
+					error: 'Run was stopped before executor job completed.'
+				}
 			}
 		});
 		await asUser.mutation(api.executor.complete, {

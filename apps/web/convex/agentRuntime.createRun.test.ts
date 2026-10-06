@@ -469,7 +469,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 				fastMode: false,
 				executionSecret: 'active-second-secret'
 			})
-		).rejects.toThrow('Finish or cancel the active run before sending another message.');
+		).rejects.toThrow(
+			'Stop the current run or wait for it to finish before sending another message.'
+		);
 	});
 
 	it('marks an abandoned claimed run as failed when a new submission arrives', async () => {
@@ -539,7 +541,9 @@ describe('agentRuntime.insertGatewayRun', () => {
 				fastMode: false,
 				executionSecret: 'during-active-claim-secret'
 			})
-		).rejects.toThrow('Finish or cancel the active run before sending another message.');
+		).rejects.toThrow(
+			'Stop the current run or wait for it to finish before sending another message.'
+		);
 	});
 
 	it('allows a new run after the previous run reaches a final status', async () => {

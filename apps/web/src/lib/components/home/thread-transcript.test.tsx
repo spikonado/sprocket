@@ -287,11 +287,11 @@ describe('transcript viewport paging', () => {
 
 			const failures = [...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].filter(
 				(row) =>
-					row.textContent?.includes('(cancelled)') || row.textContent?.includes('(interrupted)')
+					row.textContent?.includes('(stopped)') || row.textContent?.includes('(interrupted)')
 			);
 
 			expect(failures.map((row) => row.textContent)).toEqual([
-				expect.stringContaining('(cancelled)'),
+				expect.stringContaining('(stopped)'),
 				expect.stringContaining('(interrupted)')
 			]);
 			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
