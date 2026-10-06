@@ -601,6 +601,20 @@ describe('PromptComposer skill menu', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it('keeps the provider menu anchored when a parent scrolls', async () => {
+		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
+		const trigger = screen.getByRole('button', { name: 'Select provider' });
+		const rect = vi.spyOn(trigger, 'getBoundingClientRect');
+		rect.mockReturnValue(new DOMRect(100, 400, 44, 44));
+		await click(trigger);
+		const menu = screen.getByRole('dialog', { name: 'Provider' });
+		expect(menu.style.bottom).toBe(`${window.innerHeight - 400 + 12}px`);
+
+		rect.mockReturnValue(new DOMRect(100, 280, 44, 44));
+		fireEvent.scroll(composer.parentElement!);
+		expect(menu.style.bottom).toBe(`${window.innerHeight - 280 + 12}px`);
+	});
+
 	it('previews a hovered model and selects its reasoning without changing models on hover', async () => {
 		const onSelectedModelChange = vi.fn();
 		const onSelectedReasoningEffortChange = vi.fn();

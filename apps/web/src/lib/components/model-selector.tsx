@@ -107,12 +107,11 @@ export default function ModelSelector({
 
 		updatePosition();
 		window.addEventListener('resize', updatePosition);
-		const menu = menuRef.current;
-		menu?.addEventListener('scroll', updatePosition, true);
+		window.addEventListener('scroll', updatePosition, true);
 
 		return () => {
 			window.removeEventListener('resize', updatePosition);
-			menu?.removeEventListener('scroll', updatePosition, true);
+			window.removeEventListener('scroll', updatePosition, true);
 		};
 	}, [isOpen, previewId, fastModeAvailable, position.maxHeight]);
 
