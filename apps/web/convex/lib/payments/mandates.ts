@@ -222,6 +222,7 @@ export async function resolvePravaMandate(
 		const found = await pravaRequest<PravaMandate>(
 			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}`
 		);
+
 		const resolved = { ...found, id: mandate.pravaMandateId };
 		await ctx.runMutation(
 			internal.payments.syncMandate,
