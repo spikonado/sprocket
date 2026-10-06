@@ -1127,6 +1127,20 @@ export async function signOut() {
 		}
 
 		convexAuthRetryPending.set(false);
+
+		if (isMachineApp() && !isRemoteMachineApp() && errors.length > 0) {
+			// Native credential deletion failed, so the host is still signed in.
+			// Keep the current user instead of painting a signed-out UI that a
+			// process restart would reverse.
+			authState.update((current) => ({
+				...current,
+				isLoading: false,
+				error: errors.join(' ')
+			}));
+
+			return;
+		}
+
 		authState.set(
 			signedOutState({
 				user: browserSignOutFailed ? remainingBrowserUser : null,

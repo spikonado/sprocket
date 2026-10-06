@@ -263,6 +263,22 @@ describe('installed and hosted auth', () => {
 		expect(window.open).not.toHaveBeenCalled();
 	});
 
+	it('keeps the native user when host sign-out cannot clear credentials', async () => {
+		stubInstalledWindow();
+		stubFetch({
+			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser }),
+			nativeSessionDelete: () => jsonResponse(500, { error: 'credential deletion failed' })
+		});
+		await initializeAuth(convexClient);
+		await signOut();
+		expect(get(authState)).toMatchObject({
+			user: nativeUser,
+			nativeSession: 'ready',
+			isLoading: false,
+			error: 'credential deletion failed'
+		});
+	});
+
 	it('cancels scheduled Convex recovery when signing out', async () => {
 		vi.useFakeTimers();
 		stubInstalledWindow();
