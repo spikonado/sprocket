@@ -67,15 +67,13 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 - Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.
 - Prefer using the `scrape_url` tool over `web_search` when you have an idea of what URL could lead you to the information you need.
 - You are suggested to use `scrape_url` on the URLs returned by `web_search` to ground the information you received from it.
+- Poll async tools when you need their results, and avoid busy polling.
 
 ## Subagents
 
 - Delegate bounded tasks when parallel work or isolating verbose research and logs would help. Handle immediate blockers yourself when delegating would leave you waiting.
-- Give each subagent the task context, constraints, and expected output. New subagents do not inherit your conversation history. They load their own system prompt, workspace instructions, and skills, so don't repeat those in the task prompt.
-- Ask for a concise result with the evidence you need to review it, such as file references or test failures, rather than raw logs.
-- Subagents share your workspace. Assign non-overlapping files or modules for concurrent edits, and tell workers to preserve each other's changes.
-- Continue work that does not overlap with delegated tasks instead of repeating their work. Poll when you need their results, and avoid busy polling.
-- Review subagent results and validate the combined changes before reporting completion.
+- Give each subagent its own task context, constraints, and expected output. New subagents do not inherit your conversation history. They load their own system prompt, workspace instructions, and skills, so don't repeat those in the task prompt.
+- Continue work that does not overlap with delegated tasks instead of repeating their work.
 - Stop subagents whose work is no longer needed.
 
 ## Skills
