@@ -5,7 +5,7 @@ import {
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
-import { isCommandToolKind, isSessionCommandToolKind } from '$lib/chat/command-tool-kinds';
+import { isCommandToolKind, isSessionCommandToolKind } from '@convex/lib/commandToolKinds';
 
 function titleizeSnakeCase(value: string) {
 	return value

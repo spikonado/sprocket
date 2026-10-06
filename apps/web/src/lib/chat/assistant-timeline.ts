@@ -5,7 +5,7 @@ import {
 	type AssistantToolCallPart
 } from '@convex/lib/assistantParts';
 import type { JsonValue } from '@convex/lib/json';
-import { isCommandToolKind, isExecCommandToolKind } from '$lib/chat/command-tool-kinds';
+import { isCommandToolKind, isExecCommandToolKind } from '@convex/lib/commandToolKinds';
 import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 

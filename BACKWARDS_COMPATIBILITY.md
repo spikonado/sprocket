@@ -323,7 +323,7 @@ using it have aged out, then remove the mutation and its direct tests.
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10` once the migrations component reports every migration finished.
+The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10-command-inputs` once the migrations component reports every migration finished.
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
@@ -333,9 +333,10 @@ part's job, so it runs after the job backfill),
 `removeSectionLinkedParts`, and
 `removeArtifactRegistryRekeyTargets`.
 
-The runner checks the current migration list even when the schedule already
-records completion, so adding a backfill reopens that schedule until the new
-migration finishes.
+The command-input backfill uses a new schedule name so completed
+`legacy-compat-backfill-2026-10` schedules do not block it. Already-finished
+migrations remain finished in the migrations component. The old schedule rows
+may be deleted after the command-input backfill completes.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
@@ -498,11 +499,11 @@ Canonical completion inputs remain authoritative. Missing legacy input produces
 or error message.
 
 `backfillCommandToolInputs` fills only absent command inputs from retained
-`executorJobs`, pairing by run and tool invocation ID, with legacy `jobId` as a
-fallback. It verifies the job's run, thread, and tool kind and preserves existing
-inputs. The legacy runner runs it after invocation-ID backfills. Remove that
-migration and its `jobId` lookup after it completes and production scans confirm
-all recoverable command inputs were backfilled; retire the shared `jobId` pairing
+`executorJobs`, pairing by run and tool invocation ID. It verifies the job's
+thread and tool kind and preserves existing inputs. The legacy runner runs it
+after invocation-ID backfills, which also translate legacy `jobId` references.
+Remove this migration after it completes and production scans confirm all
+recoverable command inputs were backfilled; retire the shared `jobId` pairing
 shim under the Tool invocation IDs gate above.
 
 Until the migration finishes, command transcript retries hydrate an existing

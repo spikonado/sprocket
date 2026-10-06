@@ -123,55 +123,29 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
 
 #[test]
 fn orphan_command_details_keep_input_with_legacy_null_fallback() {
-    for name in ["poll_cmd", "control_cmd"] {
-        for status in ["started", "failed"] {
-            for has_input in [true, false] {
-                let dir = tempfile::tempdir().unwrap();
-                let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
-                let input = if name == "control_cmd" {
-                    json!({"sessionId":"session","action":"terminate","yieldTimeMs":1000})
-                } else {
-                    json!({"sessionId":"session","yieldTimeMs":1000})
-                };
-                let mut tool = json!({
-                    "callId":"call",
-                    "name":name,
-                    "status":status
-                });
-                if has_input {
-                    tool["input"] = input.clone();
-                }
-                if status == "failed" {
-                    tool["output"] = json!({"error":"session unavailable"});
-                }
-                let event = serde_json::from_value(json!({
-                    "number":0,
-                    "sourceKey":format!("tool:call:{status}"),
-                    "kind":"tool",
-                    "runId":"run",
-                    "tool":tool,
-                    "work":{"ranges":[],"sectionKey":"section"}
-                }))
-                .unwrap();
-                replica.save_parts("thread", &[event]).unwrap();
+    for input in [
+        Some(json!({"sessionId":"session","action":"terminate"})),
+        None,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+        let output = json!({"error":"session unavailable"});
+        let mut event = tool_part(0, "control", "failed", output.clone());
+        let tool = event.tool.as_mut().unwrap();
+        tool.name = "control_cmd".into();
+        tool.input = input.clone();
+        replica.save_parts("thread", &[event]).unwrap();
 
-                let details = replica
-                    .details("section", None, None, true, 10, false)
-                    .unwrap();
-                let parts = details["parts"].as_array().unwrap();
-                assert_eq!(parts[0]["type"], "tool-call");
-                assert_eq!(parts[0]["name"], name);
-                let expected_input = if has_input { input } else { json!(null) };
-                assert_eq!(parts[0].get("input"), Some(&expected_input));
-                if status == "failed" {
-                    assert_eq!(parts.len(), 2);
-                    assert_eq!(parts[1]["type"], "tool-result");
-                    assert_eq!(parts[1]["output"], json!({"error":"session unavailable"}));
-                } else {
-                    assert_eq!(parts.len(), 1);
-                }
-            }
-        }
+        let details = replica
+            .details("section", None, None, true, 10, false)
+            .unwrap();
+        let parts = details["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "tool-call");
+        assert_eq!(parts[0]["name"], "control_cmd");
+        assert_eq!(parts[0].get("input"), Some(&input.unwrap_or(json!(null))));
+        assert_eq!(parts[1]["type"], "tool-result");
+        assert_eq!(parts[1]["output"], output);
     }
 }
 

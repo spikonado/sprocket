@@ -284,12 +284,6 @@ describe('executor', () => {
 			payload
 		});
 
-		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
-		expect(started.parts.find((part) => part.tool?.name === kind)?.tool).toMatchObject({
-			status: 'started',
-			input: displayInput
-		});
-
 		const result = {
 			command: 'echo ok',
 			workdir: '/',

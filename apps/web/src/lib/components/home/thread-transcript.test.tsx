@@ -695,15 +695,21 @@ describe('transcript viewport paging', () => {
 			click(buttons[1]);
 			await settle();
 			const pollRow = viewport.querySelector('[data-tool-kind="poll_cmd"]');
-			expect(pollRow?.querySelector('summary')?.textContent).toContain('Session checks-session');
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'Session checks-session'
+			);
 
 			click(buttons[0]);
 			await settle();
-			expect(pollRow?.querySelector('summary')?.textContent).toContain('gh pr checks 567 --watch');
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'gh pr checks 567 --watch'
+			);
 
 			click(buttons[0]);
 			await settle();
-			expect(pollRow?.querySelector('summary')?.textContent).toContain('gh pr checks 567 --watch');
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'gh pr checks 567 --watch'
+			);
 		}
 	);
 
@@ -741,7 +747,7 @@ describe('transcript viewport paging', () => {
 		await settle();
 		click(within(viewport).getByRole('button', { name: /^Working/ }));
 		await settle();
-		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] summary')?.textContent).toBe(
+		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
 			'sleep 10'
 		);
 
@@ -749,7 +755,7 @@ describe('transcript viewport paging', () => {
 			messages: [{ ...message(2), kind: 'work', id: 'launch-work', itemCount: 1 }, poll]
 		});
 		await settle();
-		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] summary')?.textContent).toBe(
+		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
 			'sleep 10'
 		);
 	});

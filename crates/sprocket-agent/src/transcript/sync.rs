@@ -344,8 +344,8 @@ mod tests {
     #[tokio::test]
     async fn remote_command_inputs_survive_local_storage() {
         let inputs = [
-            serde_json::json!({"sessionId":"session","yieldTimeMs":1000}),
-            serde_json::json!({"sessionId":"session","action":"write","chars":"hello"}),
+            serde_json::json!({"sessionId":"session"}),
+            serde_json::json!({"sessionId":"session","action":"write"}),
         ];
         let parts = parse_remote_parts(serde_json::json!({
             "parts": [

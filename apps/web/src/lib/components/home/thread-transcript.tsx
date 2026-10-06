@@ -15,8 +15,7 @@ import {
 	groupAssistantTimelineSections,
 	isAssistantResponseStreaming,
 	partitionWorkSectionTools,
-	workSectionTimingAnchor,
-	type AssistantTimelineTool
+	workSectionTimingAnchor
 } from '$lib/chat/assistant-timeline';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -147,14 +146,9 @@ export default function ThreadTranscript({
 		const tools = [
 			...buildAssistantTimeline([], actions),
 			...messages.flatMap((message) =>
-				message.kind === 'live'
-					? buildAssistantTimeline(
-							message.parts,
-							actions.filter((job) => job.runId === message.runId)
-						)
-					: []
+				message.kind === 'live' ? buildAssistantTimeline(message.parts, []) : []
 			)
-		].filter((item): item is AssistantTimelineTool => item.type === 'tool');
+		].filter((item) => item.type === 'tool');
 
 		return buildCommandSessionCommandMap(tools);
 	}, [messages, actions]);
@@ -174,7 +168,7 @@ export default function ThreadTranscript({
 
 						if (!signal.aborted) {
 							const tools = buildAssistantTimeline(details.parts, []).filter(
-								(item): item is AssistantTimelineTool => item.type === 'tool'
+								(item) => item.type === 'tool'
 							);
 
 							rememberCommands(buildCommandSessionCommandMap(tools));
@@ -216,8 +210,7 @@ export default function ThreadTranscript({
 		return {
 			timeline,
 			sections,
-			isStreaming,
-			commands
+			isStreaming
 		};
 	}
 
@@ -546,16 +539,12 @@ export default function ThreadTranscript({
 							key={renderKey}
 							tools={block.tools}
 							inProgress={state.isStreaming}
-							commands={state.commands}
+							commands={commands}
 						/>
 					);
 				})}
 				{work.runningTools.length > 0 ? (
-					<WorkTools
-						tools={work.runningTools}
-						inProgress={state.isStreaming}
-						commands={state.commands}
-					/>
+					<WorkTools tools={work.runningTools} inProgress={state.isStreaming} commands={commands} />
 				) : null}
 			</>
 		);

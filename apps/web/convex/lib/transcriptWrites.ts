@@ -9,6 +9,7 @@ import {
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
+import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from '@convex/lib/json';
 import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
 import {
@@ -33,20 +34,8 @@ type TranscriptToolJob = Pick<
 	| 'sectionOrdinal'
 >;
 
-export function isCommandToolName(name: string): boolean {
-	return (
-		name === 'exec_cmd' ||
-		name === 'exec_command' ||
-		name === 'control_cmd' ||
-		name === 'control_command' ||
-		name === 'poll_cmd' ||
-		name === 'poll_command' ||
-		name === 'write_stdin'
-	);
-}
-
 export function commandToolDisplayInput(name: string, input: JsonValue): JsonObject | undefined {
-	if (!isCommandToolName(name) || !isJsonObject(input)) return undefined;
+	if (!isCommandToolKind(name) || !isJsonObject(input)) return undefined;
 
 	const display: JsonObject = {};
 
