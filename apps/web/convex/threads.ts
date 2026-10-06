@@ -4,7 +4,7 @@ import { paginationOptsValidator, paginationResultValidator } from 'convex/serve
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { vCompletionProvider } from '@convex/lib/validators';
+import { vCompletionProvider, vDescendantStatusCounts } from '@convex/lib/validators';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import schema from '@convex/schema';
@@ -172,6 +172,7 @@ export const listChildren = query({
 
 const vSubtreeSummary = v.object({
 	descendantCount: v.number(),
+	descendantStatusCounts: vDescendantStatusCounts,
 	anyActive: v.boolean(),
 	descendantsActive: v.boolean()
 });

@@ -497,6 +497,16 @@ export const vRunStatus = v.union(
 	v.literal('cancelled')
 );
 
+export const vDescendantStatusCounts = v.object({
+	queued: v.number(),
+	running: v.number(),
+	completed: v.number(),
+	failed: v.number(),
+	cancelled: v.number()
+});
+
+export type DescendantStatusCounts = Record<Infer<typeof vRunStatus>, number>;
+
 export const vSubagentSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,
