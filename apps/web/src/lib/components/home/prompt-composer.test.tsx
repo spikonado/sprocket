@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
@@ -385,7 +385,53 @@ describe('PromptComposer workspace path mentions', () => {
 });
 
 describe('PromptComposer submission', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('leaves touchscreen Enter to insert a newline and sends through the button', async () => {
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn((query) => ({ matches: query === '(pointer: coarse)' }))
+		);
+
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			prompt: 'Hello',
+			onPromptChange: vi.fn(),
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		const event = await pressKey(textarea, { key: 'Enter' });
+		expect(event.defaultPrevented).toBe(false);
+		await typeInComposer(textarea, 'Hello\nAnother line');
+		expect(props.onPromptChange).toHaveBeenCalledWith('Hello\nAnother line');
+		expect(textarea.value).toBe('Hello\nAnother line');
+		await click(screen.getByRole('button', { name: 'Send message' }));
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
+	it('keeps touchscreen Enter as a newline while skill suggestions are open', async () => {
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn((query) => ({ matches: query === '(pointer: coarse)' }))
+		);
+
+		const { textarea } = renderComposer({
+			projectSkills: { workspacePath: '/work', load: async () => skills }
+		});
+
+		await typeInComposer(textarea, '$ki');
+		await screen.findByRole('option', { name: /kicad/ });
+		const event = await pressKey(textarea, { key: 'Enter' });
+		expect(event.defaultPrevented).toBe(false);
+		await typeInComposer(textarea, '$ki\n');
+		expect(textarea.value).toBe('$ki\n');
+		await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+	});
+
 	it('submits on Enter, ignores Shift+Enter, and ignores Enter while composing', async () => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
+
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
@@ -560,7 +606,91 @@ describe('PromptComposer skill menu', () => {
 	});
 });
 
+describe('PromptComposer mobile selectors', () => {
+	beforeEach(() => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('applies model, reasoning, and speed together after Done', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn(),
+			onSelectedReasoningEffortChange: vi.fn(),
+			onFastModeChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const sheet = screen.getByRole('dialog', { name: 'Model settings' });
+		expect(within(sheet).getByText('Default: Medium')).toBeTruthy();
+		await click(within(sheet).getByRole('button', { name: 'Low' }));
+		await click(within(sheet).getByRole('switch', { name: 'Fast mode' }));
+		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
+		await click(within(sheet).getByRole('button', { name: 'Done' }));
+		expect(props.onSelectedModelChange).toHaveBeenCalledWith('model-one');
+		expect(props.onSelectedReasoningEffortChange).toHaveBeenCalledWith('low');
+		expect(props.onFastModeChange).toHaveBeenCalledWith(true);
+	});
+
+	it('resets reasoning for a new model and discards edits on close', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		await click(screen.getByRole('button', { name: 'Model Two' }));
+		expect(screen.getByText('Default: High')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'High', pressed: true })).toBeTruthy();
+		expect(screen.queryByRole('switch')).toBeNull();
+		await click(screen.getByRole('button', { name: 'Close model settings' }));
+		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		expect(screen.getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
+	});
+
+	it('selects a provider from the sheet without an extra confirmation', async () => {
+		const { props } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [{ ...modelCatalog.models[0], provider: 'openai' }]
+			},
+			selectedModel: 'model-one',
+			configuredProviders: ['spikonado', 'chatgpt'],
+			onSelectedCompletionProviderChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		const sheet = screen.getByRole('dialog', { name: 'Provider' });
+		await click(within(sheet).getByRole('button', { name: 'ChatGPT Subscription' }));
+		expect(props.onSelectedCompletionProviderChange).toHaveBeenCalledWith('chatgpt');
+		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+});
+
 describe('PromptComposer model selection', () => {
+	it('keeps the provider menu anchored when a parent scrolls', async () => {
+		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
+		const trigger = screen.getByRole('button', { name: 'Select provider' });
+		const rect = vi.spyOn(trigger, 'getBoundingClientRect');
+		rect.mockReturnValue(new DOMRect(100, 400, 44, 44));
+		await click(trigger);
+		const menu = screen.getByRole('dialog', { name: 'Provider' });
+		expect(menu.style.bottom).toBe(`${window.innerHeight - 400 + 12}px`);
+
+		rect.mockReturnValue(new DOMRect(100, 280, 44, 44));
+		fireEvent.scroll(composer.parentElement!);
+		expect(menu.style.bottom).toBe(`${window.innerHeight - 280 + 12}px`);
+	});
+
 	it('previews a hovered model and selects its reasoning without changing models on hover', async () => {
 		const onSelectedModelChange = vi.fn();
 		const onSelectedReasoningEffortChange = vi.fn();

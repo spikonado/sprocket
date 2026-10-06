@@ -28,9 +28,10 @@
 	.create-thread-screen {
 		justify-content: flex-start;
 		padding-top: min(20dvh, 140px);
+		overflow-y: auto;
 	}
 
 	.create-thread-composer {
-		padding: 0 12px;
+		padding: 0;
 	}
 }
