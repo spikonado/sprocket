@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Search } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
 import { cn } from '$lib/utils';
 
@@ -18,6 +18,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	className = '',
 	triggerClassName = '',
 	searchable = false,
+	compactOnMobile = false,
 	onValueChange,
 	optionIcon
 }: {
@@ -29,6 +30,7 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	className?: string;
 	triggerClassName?: string;
 	searchable?: boolean;
+	compactOnMobile?: boolean;
 	onValueChange?: (value: TOption['id']) => void;
 	optionIcon?: (option: TOption) => ReactNode;
 }) {
@@ -37,6 +39,8 @@ export default function OptionSelector<TOption extends SelectorOption>({
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const searchRef = useRef<HTMLInputElement | null>(null);
+	const menuRef = useRef<HTMLDivElement | null>(null);
+	const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 0 });
 	const selectedOption = options.find((option) => option.id === value) ?? options[0] ?? null;
 
 	const filteredOptions =
@@ -81,6 +85,27 @@ export default function OptionSelector<TOption extends SelectorOption>({
 		selectOption(filteredOptions[0].id);
 	}
 
+	useLayoutEffect(() => {
+		if (!isOpen || !compactOnMobile) return;
+
+		function updatePosition() {
+			const trigger = triggerRef.current?.getBoundingClientRect();
+			const menu = menuRef.current?.getBoundingClientRect();
+
+			if (!trigger || !menu) return;
+			setPosition({
+				left: Math.max(8, Math.min(trigger.left, window.innerWidth - menu.width - 8)),
+				bottom: window.innerHeight - trigger.top + 12,
+				maxHeight: Math.max(0, trigger.top - 20)
+			});
+		}
+
+		updatePosition();
+		window.addEventListener('resize', updatePosition);
+
+		return () => window.removeEventListener('resize', updatePosition);
+	}, [isOpen, compactOnMobile]);
+
 	useEffect(() => {
 		if (!isOpen) {
 			setSearchQuery('');
@@ -119,11 +144,12 @@ export default function OptionSelector<TOption extends SelectorOption>({
 				aria-haspopup="dialog"
 				aria-expanded={isOpen}
 				aria-label={ariaLabel}
+				title={compactOnMobile ? (selectedOption?.label ?? value) : undefined}
 				disabled={disabled}
 				onClick={toggleMenu}
 			>
 				{optionIcon && selectedOption ? optionIcon(selectedOption) : null}
-				<span className="truncate">
+				<span className={cn('truncate', compactOnMobile && 'hidden sm:inline')}>
 					{selectedOption?.triggerLabel ?? selectedOption?.label ?? value}
 				</span>
 				<ChevronDown
@@ -136,7 +162,14 @@ export default function OptionSelector<TOption extends SelectorOption>({
 
 			{isOpen ? (
 				<div
-					className="bg-popover/96 absolute bottom-[calc(100%+0.75rem)] left-0 z-50 min-w-[19rem] rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl"
+					ref={menuRef}
+					className={cn(
+						'bg-popover/96 z-50 rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl',
+						compactOnMobile
+							? 'fixed w-[min(19rem,calc(100vw-1rem))] overflow-y-auto'
+							: 'absolute bottom-[calc(100%+0.75rem)] left-0 min-w-[19rem]'
+					)}
+					style={compactOnMobile ? position : undefined}
 					role="dialog"
 					aria-label={menuTitle}
 				>

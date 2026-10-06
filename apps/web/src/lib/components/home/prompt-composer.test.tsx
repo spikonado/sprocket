@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
@@ -385,7 +385,47 @@ describe('PromptComposer workspace path mentions', () => {
 });
 
 describe('PromptComposer submission', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('leaves touchscreen Enter to insert a newline and sends through the button', async () => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			prompt: 'Hello',
+			onPromptChange: vi.fn(),
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		const event = await pressKey(textarea, { key: 'Enter' });
+		expect(event.defaultPrevented).toBe(false);
+		await typeInComposer(textarea, 'Hello\nAnother line');
+		expect(props.onPromptChange).toHaveBeenCalledWith('Hello\nAnother line');
+		expect(textarea.value).toBe('Hello\nAnother line');
+		await click(screen.getByRole('button', { name: 'Send message' }));
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
+	it('keeps touchscreen Enter as a newline while skill suggestions are open', async () => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+
+		const { textarea } = renderComposer({
+			projectSkills: { workspacePath: '/work', load: async () => skills }
+		});
+
+		await typeInComposer(textarea, '$ki');
+		await screen.findByRole('option', { name: /kicad/ });
+		const event = await pressKey(textarea, { key: 'Enter' });
+		expect(event.defaultPrevented).toBe(false);
+		await typeInComposer(textarea, '$ki\n');
+		expect(textarea.value).toBe('$ki\n');
+		await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+	});
+
 	it('submits on Enter, ignores Shift+Enter, and ignores Enter while composing', async () => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
+
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
