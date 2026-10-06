@@ -55,10 +55,13 @@ impl PendingLogins {
             logins.generation = logins.generation.wrapping_add(1);
             tokio::spawn(expire_logins(Arc::clone(self), logins.generation));
         }
-        logins
+        if logins
             .attempts
-            .retain(|_, login| login.user != attempt.user);
-        if logins.attempts.len() >= 64 {
+            .values()
+            .filter(|login| login.user != attempt.user)
+            .count()
+            >= 64
+        {
             return Err(ReserveError::TooMany);
         }
         let redirect_uri = logins.redirect_uri.clone();
@@ -103,6 +106,20 @@ impl PendingLogins {
             logins.attempts.remove(state);
             logins.stop_if_idle();
         }
+    }
+
+    pub(crate) async fn commit_pending(&self, session: &str, user: &str, state: &str) -> bool {
+        let mut logins = self.logins.lock().await;
+        let valid = logins.attempts.get(state).is_some_and(|login| {
+            login.session == session && login.user == user && login.expires > Instant::now()
+        });
+        if !valid {
+            return false;
+        }
+        logins
+            .attempts
+            .retain(|key, login| login.user != user || key == state);
+        true
     }
 
     pub(crate) async fn drop_user_pending(&self, user: &str) {

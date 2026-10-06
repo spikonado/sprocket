@@ -175,11 +175,7 @@ async fn start(
             return Err(ApiError::bad_request(error));
         }
     };
-    if pending
-        .pending_result(&session, &user_id, &value)
-        .await
-        .is_none()
-    {
+    if !pending.commit_pending(&session, &user_id, &value).await {
         return Err(ApiError::authentication_required());
     }
     Ok(Json(StartedLogin {
