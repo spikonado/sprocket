@@ -467,6 +467,72 @@ it('keeps a closed-popup login poll alive across Refresh', async () => {
 	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(connectedStatus);
 });
 
+it('clears ChatGPT pending when login status finishes before an overlapping Refresh', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+	const loginStatus = Promise.withResolvers<ChatGptStatus>();
+	const refreshStatus = Promise.withResolvers<ChatGptStatus>();
+	let statusCalls = 0;
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const connectedStatus = statusFixture({
+		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+		activeConnectionId: 'conn-1'
+	});
+
+	const disconnectedStatus = statusFixture();
+
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			fetchChatGptStatus: () => {
+				statusCalls += 1;
+
+				return statusCalls === 1 ? loginStatus.promise : refreshStatus.promise;
+			},
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', false);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(statusCalls).toBe(1);
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+	});
+	expect(statusCalls).toBe(2);
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', true);
+	await act(async () => {
+		loginStatus.resolve(connectedStatus);
+	});
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', true);
+	await act(async () => {
+		refreshStatus.resolve(disconnectedStatus);
+	});
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', false);
+	expect(screen.getByRole('button', { name: 'Add account' })).toHaveProperty('disabled', false);
+	expect(screen.getByRole('button', { name: 'Sign out' })).toHaveProperty('disabled', false);
+	expect(cancel).toHaveBeenCalledTimes(0);
+});
+
 it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();

@@ -57,6 +57,7 @@ export default function SettingsProviders({
 	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
 	const loginGenerationRef = useRef(0);
+	const pendingGenerationRef = useRef(0);
 
 	const activeAccount =
 		chatGptStatus?.accounts.find(
@@ -85,9 +86,22 @@ export default function SettingsProviders({
 			.catch(() => {});
 	}
 
+	function beginChatGptPending(generation: number) {
+		pendingGenerationRef.current = generation;
+		setChatGptPending(true);
+	}
+
+	function endChatGptPending(generation: number) {
+		if (pendingGenerationRef.current !== generation) return;
+
+		pendingGenerationRef.current = 0;
+		setChatGptPending(false);
+	}
+
 	function cancelLogin() {
 		generationRef.current += 1;
 		loginGenerationRef.current += 1;
+		pendingGenerationRef.current = 0;
 
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
@@ -107,6 +121,7 @@ export default function SettingsProviders({
 		return () => {
 			generationRef.current += 1;
 			loginGenerationRef.current += 1;
+			pendingGenerationRef.current = 0;
 
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
@@ -274,11 +289,12 @@ export default function SettingsProviders({
 		const api = desktopApi;
 
 		if (!api || chatGptPending) return;
-		setChatGptPending(true);
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
+
+		beginChatGptPending(generation);
 
 		try {
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
@@ -295,7 +311,7 @@ export default function SettingsProviders({
 				)
 			);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			endChatGptPending(generation);
 		}
 	}
 
@@ -304,7 +320,8 @@ export default function SettingsProviders({
 
 		if (!api || chatGptPending) return;
 		const generation = ++generationRef.current;
-		setChatGptPending(true);
+
+		beginChatGptPending(generation);
 		setChatGptError(null);
 
 		try {
@@ -320,7 +337,7 @@ export default function SettingsProviders({
 					)
 				);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			endChatGptPending(generation);
 		}
 	}
 
@@ -331,11 +348,12 @@ export default function SettingsProviders({
 		const pendingLogin = cancelLogin();
 
 		if (pendingLogin) cancelLoginOnServer(pendingLogin);
-		setChatGptPending(true);
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
+
+		beginChatGptPending(generation);
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
@@ -374,7 +392,7 @@ export default function SettingsProviders({
 				)
 			);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			endChatGptPending(generation);
 		}
 	}
 
