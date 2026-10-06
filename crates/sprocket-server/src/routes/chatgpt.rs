@@ -13,7 +13,7 @@ use crate::auth::{
     BrowserConnection, browser_connection, cookie_request_is_csrf_safe, require_session_user,
 };
 use crate::chatgpt_credentials::ServiceStatus;
-use crate::chatgpt_oauth::{PendingAttempt, PendingResult, new_secret};
+use crate::chatgpt_oauth::{PendingAttempt, PendingResult, ReserveError, new_secret};
 use crate::routes::api_error::ApiError;
 
 #[derive(Serialize)]
@@ -137,35 +137,51 @@ async fn start(
     let value = new_secret();
     let nonce = new_secret();
     let verifier = new_secret();
-    let redirect_uri = pending.ensure_callback().await.map_err(|_| {
-        ApiError::with_status(
-            StatusCode::SERVICE_UNAVAILABLE,
-            anyhow::anyhow!("Could not open the local ChatGPT callback listener."),
-        )
-    })?;
-    let authorize_url = state
+    let user_id = request.user_id;
+    let connection_id = request.connection_id;
+    let redirect_uri = pending
+        .reserve_pending(value.clone(), PendingAttempt {
+            session: session.clone(),
+            user: user_id.clone(),
+            connection: connection_id.clone(),
+            nonce: nonce.clone(),
+            verifier: verifier.clone(),
+        })
+        .await
+        .map_err(|error| match error {
+            ReserveError::Listener(_) => ApiError::with_status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                anyhow::anyhow!("Could not open the local ChatGPT callback listener."),
+            ),
+            ReserveError::TooMany => {
+                ApiError::bad_request(anyhow::anyhow!("Too many pending sign-ins. Retry later."))
+            }
+        })?;
+    let authorize_url = match state
         .chatgpt_credentials
         .authorization(
-            &request.user_id,
-            request.connection_id.as_deref(),
+            &user_id,
+            connection_id.as_deref(),
             &redirect_uri,
             &value,
             &nonce,
             &verifier,
         )
         .await
-        .map_err(ApiError::bad_request)?;
-    pending
-        .insert_pending(value.clone(), PendingAttempt {
-            session,
-            user: request.user_id,
-            connection: request.connection_id,
-            nonce,
-            verifier,
-            redirect_uri,
-        })
+    {
+        Ok(authorize_url) => authorize_url,
+        Err(error) => {
+            pending.cancel_pending(&session, &user_id, &value).await;
+            return Err(ApiError::bad_request(error));
+        }
+    };
+    if pending
+        .pending_result(&session, &user_id, &value)
         .await
-        .map_err(ApiError::bad_request)?;
+        .is_none()
+    {
+        return Err(ApiError::authentication_required());
+    }
     Ok(Json(StartedLogin {
         state: value,
         authorize_url,

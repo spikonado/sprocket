@@ -30,7 +30,11 @@ impl PendingLogins {
         })
     }
 
-    pub(crate) async fn ensure_callback(self: &Arc<Self>) -> std::io::Result<String> {
+    pub(crate) async fn reserve_pending(
+        self: &Arc<Self>,
+        state: String,
+        attempt: PendingAttempt,
+    ) -> Result<String, ReserveError> {
         let mut logins = self.logins.lock().await;
         logins
             .attempts
@@ -43,27 +47,21 @@ impl PendingLogins {
             logins.listener.take();
         }
         if logins.listener.is_none() {
-            let (redirect_uri, listener) = bind_callback(Arc::clone(self)).await?;
+            let (redirect_uri, listener) = bind_callback(Arc::clone(self))
+                .await
+                .map_err(ReserveError::Listener)?;
             logins.redirect_uri = redirect_uri;
             logins.listener = Some(listener);
             logins.generation = logins.generation.wrapping_add(1);
             tokio::spawn(expire_logins(Arc::clone(self), logins.generation));
         }
-        Ok(logins.redirect_uri.clone())
-    }
-
-    pub(crate) async fn insert_pending(
-        &self,
-        state: String,
-        attempt: PendingAttempt,
-    ) -> Result<(), anyhow::Error> {
-        let mut logins = self.logins.lock().await;
         logins
             .attempts
             .retain(|_, login| login.user != attempt.user);
         if logins.attempts.len() >= 64 {
-            return Err(anyhow::anyhow!("Too many pending sign-ins. Retry later."));
+            return Err(ReserveError::TooMany);
         }
+        let redirect_uri = logins.redirect_uri.clone();
         logins.attempts.insert(state, PendingLogin {
             session: attempt.session,
             user: attempt.user,
@@ -71,11 +69,11 @@ impl PendingLogins {
             expires: Instant::now() + LOGIN_LIFETIME,
             nonce: attempt.nonce,
             verifier: attempt.verifier,
-            redirect_uri: attempt.redirect_uri,
+            redirect_uri: redirect_uri.clone(),
             processing: false,
             result: None,
         });
-        Ok(())
+        Ok(redirect_uri)
     }
 
     pub(crate) async fn pending_result(
@@ -151,7 +149,11 @@ pub(crate) struct PendingAttempt {
     pub connection: Option<String>,
     pub nonce: String,
     pub verifier: String,
-    pub redirect_uri: String,
+}
+
+pub(crate) enum ReserveError {
+    Listener(std::io::Error),
+    TooMany,
 }
 
 pub(crate) enum PendingResult {
