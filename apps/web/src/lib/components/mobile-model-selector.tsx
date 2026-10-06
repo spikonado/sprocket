@@ -86,19 +86,21 @@ export default function MobileModelSelector({
 					aria-label={`Reasoning for ${model.label}`}
 					className="border-t border-[var(--hairline)] px-1 py-4"
 				>
-					<h3 className="mb-1 text-sm font-semibold">Reasoning</h3>
-					<p className="text-muted-foreground mb-3 text-[13px]">
-						How much time the model spends thinking.
-					</p>
+					<div className="mb-3 flex items-center justify-between gap-3">
+						<h3 className="text-sm font-semibold">Reasoning</h3>
+						<span className="text-muted-foreground text-xs">
+							Default: {reasoningEffortLabel(model.defaultReasoningEffort)}
+						</span>
+					</div>
 					<div className="grid grid-cols-3 gap-2">
 						{model.reasoningEfforts.map((effort) => (
 							<button
 								key={effort}
 								type="button"
-								aria-label={`${reasoningEffortLabel(effort)}${effort === model.defaultReasoningEffort ? ' (default)' : ''}`}
+								aria-label={reasoningEffortLabel(effort)}
 								aria-pressed={effort === draftEffort}
 								className={cn(
-									'focus-visible:ring-ring flex min-h-14 flex-col items-center justify-center rounded-xl border px-2 py-2 text-sm outline-none focus-visible:ring-2',
+									'focus-visible:ring-ring flex min-h-11 items-center justify-center rounded-xl border px-2 py-2 text-sm outline-none focus-visible:ring-2',
 									effort === draftEffort
 										? 'border-accent-strong bg-accent/15'
 										: 'hover:bg-hover-fill border-[var(--hairline)]'
@@ -106,9 +108,6 @@ export default function MobileModelSelector({
 								onClick={() => setDraftEffort(effort)}
 							>
 								<span>{reasoningEffortLabel(effort)}</span>
-								{effort === model.defaultReasoningEffort ? (
-									<span className="text-muted-foreground text-[11px]">Default</span>
-								) : null}
 							</button>
 						))}
 					</div>
@@ -120,14 +119,11 @@ export default function MobileModelSelector({
 					role="switch"
 					aria-checked={draftFast}
 					aria-label="Fast mode"
-					className="focus-visible:ring-ring flex min-h-18 w-full items-center gap-3 border-t border-[var(--hairline)] px-1 py-4 text-left outline-none focus-visible:ring-2"
+					className="focus-visible:ring-ring flex min-h-14 w-full items-center gap-3 border-t border-[var(--hairline)] px-1 py-4 text-left outline-none focus-visible:ring-2"
 					onClick={() => setDraftFast(!draftFast)}
 				>
 					<Zap className="size-5 shrink-0 text-amber-500" />
-					<span className="flex-1">
-						<span className="block text-sm font-semibold">Fast mode</span>
-						<span className="text-muted-foreground text-[13px]">Prefer faster responses.</span>
-					</span>
+					<span className="flex-1 text-sm font-semibold">Fast mode</span>
 					<span
 						className={cn(
 							'inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5',

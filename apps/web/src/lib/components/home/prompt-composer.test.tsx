@@ -628,6 +628,7 @@ describe('PromptComposer mobile selectors', () => {
 
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		const sheet = screen.getByRole('dialog', { name: 'Model settings' });
+		expect(within(sheet).getByText('Default: Medium')).toBeTruthy();
 		await click(within(sheet).getByRole('button', { name: 'Low' }));
 		await click(within(sheet).getByRole('switch', { name: 'Fast mode' }));
 		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
@@ -647,7 +648,8 @@ describe('PromptComposer mobile selectors', () => {
 
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		await click(screen.getByRole('button', { name: 'Model Two' }));
-		expect(screen.getByRole('button', { name: 'High (default)', pressed: true })).toBeTruthy();
+		expect(screen.getByText('Default: High')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'High', pressed: true })).toBeTruthy();
 		expect(screen.queryByRole('switch')).toBeNull();
 		await click(screen.getByRole('button', { name: 'Close model settings' }));
 		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
