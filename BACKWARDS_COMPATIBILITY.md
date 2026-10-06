@@ -495,7 +495,8 @@ rather than truncated. Stdin contents and execution options are never copied.
 This keeps started/terminal events and backfills small. Remote sync retains the
 field, and synthetic tool calls use it when no canonical completion call exists.
 Canonical completion inputs remain authoritative. Synthetic calls prefer their
-start input, then terminal input for mixed-version caches. Missing legacy input produces
+start input, then terminal input for mixed-version caches only when invocation
+IDs (or legacy job IDs), run, and tool kind match. Missing legacy input produces
 `null`, leaving the command session unknown rather than guessing from a call ID
 or error message.
 

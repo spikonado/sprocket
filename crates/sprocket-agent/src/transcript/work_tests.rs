@@ -124,10 +124,15 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
 #[test]
 fn orphan_command_details_keep_input_with_legacy_null_fallback() {
     let input = json!({"sessionId":"session","action":"terminate"});
-    for (started_input, finished_input) in [
-        (Some(input.clone()), Some(json!({"sessionId":"other"}))),
-        (None, Some(input)),
-        (None, None),
+    for (started_input, finished_input, has_invocation) in [
+        (
+            Some(input.clone()),
+            Some(json!({"sessionId":"other"})),
+            true,
+        ),
+        (None, Some(input.clone()), true),
+        (None, None, true),
+        (None, Some(input), false),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
@@ -136,10 +141,16 @@ fn orphan_command_details_keep_input_with_legacy_null_fallback() {
         let tool = started.tool.as_mut().unwrap();
         tool.name = "control_cmd".into();
         tool.input = started_input.clone();
+        if !has_invocation {
+            tool.tool_invocation_id = None;
+        }
         let mut finished = tool_part(1, "control", "failed", output.clone());
         let tool = finished.tool.as_mut().unwrap();
         tool.name = "control_cmd".into();
         tool.input = finished_input.clone();
+        if !has_invocation {
+            tool.tool_invocation_id = None;
+        }
         replica.save_parts("thread", &[started, finished]).unwrap();
 
         let details = replica
@@ -151,7 +162,11 @@ fn orphan_command_details_keep_input_with_legacy_null_fallback() {
         assert_eq!(parts[0]["name"], "control_cmd");
         assert_eq!(
             parts[0].get("input"),
-            Some(&started_input.or(finished_input).unwrap_or(json!(null)))
+            Some(
+                &started_input
+                    .or(finished_input.filter(|_| has_invocation))
+                    .unwrap_or(json!(null))
+            )
         );
         assert_eq!(parts[1]["type"], "tool-result");
         assert_eq!(parts[1]["output"], output);
