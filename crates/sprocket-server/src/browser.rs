@@ -248,7 +248,7 @@ impl BrowserManager {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub async fn use_test_dashboard(&self, user_id: &str, port: u16) {
         let child = Command::new("sh")
             .args(["-c", "sleep 60"])
@@ -285,7 +285,7 @@ fn socket_directory(data_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt};
         let _ = data_dir;
         let uid = unsafe { libc::geteuid() };
-        let path = std::env::temp_dir().join(format!("sprocket-browser-{uid}"));
+        let path = PathBuf::from("/tmp").join(format!("sprocket-browser-{uid}"));
         match std::fs::DirBuilder::new().mode(0o700).create(&path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}

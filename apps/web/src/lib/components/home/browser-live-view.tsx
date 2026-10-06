@@ -32,8 +32,8 @@ export default function BrowserLiveView({ browserApi }: Props) {
 				if (controller.signal.aborted) return;
 				setStatus(next);
 
-				if (next.state === 'installing') {
-					timer = setTimeout(() => void refresh(false), 1000);
+				if (next.state !== 'error') {
+					timer = setTimeout(() => void refresh(false), next.state === 'installing' ? 1000 : 5000);
 				}
 			} catch (error) {
 				if (controller.signal.aborted) return;

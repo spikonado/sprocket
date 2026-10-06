@@ -46,7 +46,7 @@ it('starts setup on mount, polls installing status, and embeds the ready dashboa
 	expect(external.getAttribute('target')).toBe('_blank');
 
 	await act(() => vi.advanceTimersByTimeAsync(10_000));
-	expect(api.fetchBrowserStatus).toHaveBeenCalledTimes(2);
+	expect(api.fetchBrowserStatus).toHaveBeenCalledTimes(4);
 });
 
 it('embeds an already-ready dashboard directly from the start response', async () => {
@@ -57,6 +57,19 @@ it('embeds an already-ready dashboard directly from the start response', async (
 	expect(screen.getByTitle('Agent browser dashboard').getAttribute('src')).toBe(
 		api.browserDashboardUrl
 	);
+});
+
+it('shows a stopped dashboard and allows restarting it', async () => {
+	const api = createBrowserApi();
+	api.startBrowser.mockResolvedValue({ state: 'ready', error: null });
+	api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'error', error: 'Dashboard stopped.' });
+	render(<BrowserLiveView browserApi={api} />);
+	await act(async () => {});
+	await act(() => vi.advanceTimersByTimeAsync(5000));
+	expect(screen.getByRole('alert').textContent).toBe('Dashboard stopped.');
+	fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
+	await act(async () => {});
+	expect(screen.getByTitle('Agent browser dashboard')).toBeTruthy();
 });
 
 it('reports a setup error and restarts setup when retried', async () => {
