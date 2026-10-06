@@ -1,6 +1,5 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
-	assistantTimelineToolError,
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
@@ -368,16 +367,4 @@ export function toolItemSummary(
 	}
 
 	return summarizeTool(toolLog.name, toolLog.input);
-}
-
-export function fullToolSummary(
-	toolLog: AssistantTimelineTool,
-	isStreaming: boolean,
-	sessionCommands: ReadonlyMap<string, string>
-) {
-	const summary = toolItemSummary(toolLog, sessionCommands);
-
-	const error = assistantTimelineToolError(toolLog, isStreaming);
-
-	return error ? `${summary} (${error})` : summary;
 }

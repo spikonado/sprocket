@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
-import { fullToolSummary, toolItemSummary } from '$lib/chat/tool-summaries';
+import { toolItemSummary } from '$lib/chat/tool-summaries';
 import type { JsonValue } from '@convex/lib/json';
 
 describe('command tool summaries', () => {
@@ -64,7 +64,7 @@ describe('command tool summaries', () => {
 	});
 
 	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command', 'write_stdin'])(
-		'keeps a returned %s snapshot distinct from an in-flight tool call',
+		'resolves the %s command from returned output without a session-map entry',
 		(name) => {
 			const tool: AssistantTimelineTool = {
 				type: 'tool',
@@ -74,7 +74,7 @@ describe('command tool summaries', () => {
 				output: { command: 'bun run build', workdir: '/repo', running: true, output: '' }
 			};
 
-			expect(fullToolSummary(tool, true, new Map())).toBe('bun run build');
+			expect(toolItemSummary(tool, new Map())).toBe('bun run build');
 		}
 	);
 });
