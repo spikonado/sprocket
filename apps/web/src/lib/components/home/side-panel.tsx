@@ -2,9 +2,9 @@ import ArtifactMenu from '$lib/components/artifact-menu';
 import { Expand, FileCode, FileText, Fullscreen, Globe, Shrink, X } from 'lucide-react';
 import { useEffect, type KeyboardEvent } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
-import BrowserLiveView from '$lib/components/home/browser-live-view';
+import BrowserLiveView, { type BrowserApi } from '$lib/components/home/browser-live-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import type { BrowserLiveViewState, SidePanelTab } from '$lib/chat/side-panel';
+import type { SidePanelTab } from '$lib/chat/side-panel';
 import type { ArtifactType } from '@convex/lib/validators';
 
 type Props = {
@@ -13,10 +13,7 @@ type Props = {
 	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 	selectedKey: string | null;
 	tab: SidePanelTab;
-	/** undefined while the query is loading, null when no session exists. */
-	liveView: BrowserLiveViewState | null | undefined;
-	/** Whether the agent is actively working in the browser. */
-	liveActive: boolean;
+	browserApi: BrowserApi | null;
 	/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 	expanded: boolean;
 	stale?: boolean;
@@ -47,8 +44,7 @@ export default function SidePanel({
 	onDeleteArtifact,
 	selectedKey,
 	tab,
-	liveView,
-	liveActive,
+	browserApi,
 	expanded,
 	stale = false,
 	error = null,
@@ -129,15 +125,7 @@ export default function SidePanel({
 							onClick={() => onTabChange(item.id)}
 							onKeyDown={onTabKeydown}
 						>
-							<span className="inline-flex items-center gap-1.5">
-								{item.id === 'live' && liveActive && tab !== 'live' ? (
-									<span
-										className="size-1.5 animate-pulse rounded-full bg-emerald-500"
-										aria-hidden="true"
-									></span>
-								) : null}
-								{item.label}
-							</span>
+							{item.label}
 						</button>
 					))}
 				</div>
@@ -172,7 +160,7 @@ export default function SidePanel({
 				className="flex min-h-0 flex-1 flex-col"
 			>
 				{tab === 'live' ? (
-					<BrowserLiveView liveView={liveView} active={liveActive} />
+					<BrowserLiveView browserApi={browserApi} />
 				) : (
 					<>
 						{error || stale ? (

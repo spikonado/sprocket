@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
-import type { ChatGptStatus } from '$lib/types/sprocket';
+import type { BrowserStatus, ChatGptStatus } from '$lib/types/sprocket';
 import {
 	createLocalClient,
 	ensureLocalSession,
@@ -65,6 +65,81 @@ describe('workspace launch fragments', () => {
 
 		expect(hash).toBe('#workspace=%2Frobots%2Farm+%26+gripper');
 		expect(readWorkspaceLaunchFromHash()).toBe(workspacePath);
+	});
+});
+
+describe('managed browser dashboard', () => {
+	it.each(['http://127.0.0.1:7731', 'https://sprocket.test/local'])(
+		'resolves the dashboard URL using client base URL %s',
+		(baseUrl) => {
+			expect(createLocalClient(baseUrl).browserDashboardUrl).toBe(
+				`${baseUrl}/api/browser/dashboard/`
+			);
+		}
+	);
+
+	describe.each([
+		{ method: 'fetchBrowserStatus' as const, pathname: '/api/browser/status', verb: 'GET' },
+		{ method: 'startBrowser' as const, pathname: '/api/browser/start', verb: 'POST' }
+	])('$method', ({ method, pathname, verb }) => {
+		it.each<BrowserStatus>([
+			{ state: 'installing', error: null },
+			{ state: 'ready', error: null },
+			{ state: 'error', error: 'Chromium installation failed.' }
+		])('returns the server status $state and error unchanged', async (status) => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => Response.json(status))
+			);
+
+			await expect(createLocalClient('http://127.0.0.1:7731')[method]()).resolves.toEqual(status);
+		});
+
+		it.each([false, true])(
+			'sends an authenticated bodyless request with cancellation enabled: %s',
+			async (withSignal) => {
+				const fetch = vi.fn(async () => Response.json({ state: 'ready', error: null }));
+				vi.stubGlobal('fetch', fetch);
+				const signal = withSignal ? new AbortController().signal : undefined;
+
+				await createLocalClient('http://127.0.0.1:7731')[method](signal);
+
+				expect(fetch).toHaveBeenCalledExactlyOnceWith(`http://127.0.0.1:7731${pathname}`, {
+					method: verb,
+					signal,
+					credentials: 'include',
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+		);
+
+		it.each([
+			{ state: 'pending', error: null },
+			{ state: 'ready' },
+			{ state: 'error', error: 123 },
+			{ error: null }
+		])('validates the status response %j', async (payload) => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => Response.json(payload))
+			);
+
+			await expect(createLocalClient('http://127.0.0.1:7731')[method]()).rejects.toThrow(
+				'Local API returned an unexpected response.'
+			);
+		});
+
+		it.each([
+			{ status: 401, error: 'Authentication required.' },
+			{ status: 503, error: 'Browser manager unavailable.' }
+		])('propagates HTTP $status errors', async ({ status, error }) => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => Response.json({ error }, { status }))
+			);
+
+			await expect(createLocalClient('http://127.0.0.1:7731')[method]()).rejects.toThrow(error);
+		});
 	});
 });
 

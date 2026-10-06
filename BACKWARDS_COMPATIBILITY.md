@@ -4,6 +4,18 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Development tooling compatibility
 
+### agent-browser dashboard mount point
+
+The pinned agent-browser dashboard assumes root-relative `/api/`, `/_next/`,
+and favicon URLs. The local proxy rewrites only HTML, JavaScript, and CSS assets
+to `/api/browser/dashboard/`; JSON and stream traffic remain unchanged. It also
+maps the legacy session-creation endpoint to upstream `/api/exec`, whose CLI
+child clears dashboard-only environment variables. Revalidate dashboard loading,
+dynamic chunks, session creation, and live input when updating the pinned release.
+Remove these adapters once upstream supports a configurable dashboard base path
+and clears dashboard mode for all CLI child launches. Stored data and released
+client APIs are unaffected.
+
 ### TypeScript compiler API
 
 The web workspace aliases `typescript` to `@typescript/typescript6` for ESLint

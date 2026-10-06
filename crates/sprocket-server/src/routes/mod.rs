@@ -3,6 +3,7 @@ pub(crate) mod api_error;
 pub mod artifacts;
 mod attachment_upload;
 pub mod auth;
+pub(crate) mod browser;
 pub(crate) mod cli;
 pub mod config;
 pub mod health;

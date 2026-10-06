@@ -1,5 +1,7 @@
 mod artifact_watch;
 mod auth;
+mod browser;
+mod browser_install;
 mod chatgpt_credentials;
 mod chatgpt_oauth;
 pub mod cli_protocol;
@@ -112,6 +114,7 @@ pub struct AppState {
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
     pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
     pub package_updates: Arc<package_update::PackageUpdateManager>,
+    pub(crate) browsers: Arc<browser::BrowserManager>,
 }
 
 impl AppState {
@@ -173,6 +176,7 @@ impl AppState {
                 .expect("ChatGPT credential service");
         let chatgpt_oauth =
             chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
+        let browsers = browser::BrowserManager::new(data_dir).expect("browser manager");
         Self {
             lifetime: cli_sessions::ServerLifetime::new(false),
             auth,
@@ -198,6 +202,7 @@ impl AppState {
             desktop_bootstrap_token: None,
             machine_identity,
             package_updates,
+            browsers,
         }
     }
 }
@@ -214,6 +219,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::transcript::routes())
         .merge(routes::threads::routes())
         .merge(routes::update::routes())
+        .merge(routes::browser::routes())
         .merge(routes::artifacts::routes())
         .fallback(api_not_found)
         .with_state(state);
@@ -292,6 +298,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         desktop_bootstrap_token,
         machine_identity,
         package_updates: package_update::PackageUpdateManager::from_env(),
+        browsers: browser::BrowserManager::new(data_dir.clone())?,
     };
 
     let startup = StartupInfo {
@@ -327,6 +334,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     }
 
     profile.publish(http_base_url.clone())?;
+    state.browsers.prepare_tools();
 
     if options.open_browser {
         let open_target =
@@ -373,6 +381,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     });
     let lease_auth = Arc::clone(&state.auth);
+    let browsers = Arc::clone(&state.browsers);
     let router = build_router(state, static_dir);
     let shutdown_machines = Arc::clone(&machines);
 
@@ -412,6 +421,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     command_cleanup.abort();
     let _ = command_cleanup.await;
     command_sessions.stop_all().await;
+    browsers.shutdown().await;
     command_sync.abort();
     let _ = command_sync.await;
     if let Err(error) = tokio::time::timeout(

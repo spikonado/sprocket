@@ -23,7 +23,8 @@ export default defineConfig({
 		proxy: {
 			'/api': {
 				target: DEV_API_URL,
-				changeOrigin: false
+				changeOrigin: false,
+				ws: true
 			}
 		}
 	},

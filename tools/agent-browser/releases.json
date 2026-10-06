@@ -1,0 +1,67 @@
+{
+	"skillData": {
+		"url": "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/refs/tags/v0.38.2",
+		"asset": "source.tar.gz",
+		"bytes": 2168456,
+		"sha256": "a3a347ed468fcc2e593e3ae95a6a08df1efeb94d57b33fbc48627b889ea0ec48"
+	},
+	"agentBrowser": {
+		"version": "0.38.2",
+		"repository": "vercel-labs/agent-browser",
+		"tag": "v0.38.2",
+		"platforms": {
+			"darwin-arm64": {
+				"asset": "agent-browser-darwin-arm64",
+				"bytes": 15570496,
+				"sha256": "8168b86ab5d94be8f670992dfe4fe1445016518a864b48bda105e64142e7cbf9"
+			},
+			"darwin-x64": {
+				"asset": "agent-browser-darwin-x64",
+				"bytes": 17210352,
+				"sha256": "787cb40e086a188d0bb13ff29a99a0b2380aff3aa5e8600b8f8131a0b98ca69c"
+			},
+			"linux-musl-arm64": {
+				"asset": "agent-browser-linux-musl-arm64",
+				"bytes": 15418440,
+				"sha256": "eafeca9ca0fdb2fa2aa60c4554723348c739656b0ddba0d82ff654d4d33311b1"
+			},
+			"linux-musl-x64": {
+				"asset": "agent-browser-linux-musl-x64",
+				"bytes": 17863544,
+				"sha256": "993d462f4dcfc19860d93a6521a452eba4502bfc449fe0120303c2ccb998e675"
+			},
+			"win32-x64": {
+				"asset": "agent-browser-win32-x64.exe",
+				"bytes": 17694720,
+				"sha256": "a6a9a3654c41ee19c05961b73489db98cff9eae88a77436986df08a7a7a73786"
+			}
+		}
+	},
+	"lightpanda": {
+		"version": "1.0.0",
+		"repository": "lightpanda-io/browser",
+		"tag": "1.0.0",
+		"platforms": {
+			"darwin-arm64": {
+				"asset": "lightpanda-aarch64-macos",
+				"bytes": 90354360,
+				"sha256": "955440053a84754dd64c62f970449a56a2b350cdf43ea5f2e809a73047b8173d"
+			},
+			"darwin-x64": {
+				"asset": "lightpanda-x86_64-macos",
+				"bytes": 94122817,
+				"sha256": "e510299683b37a203912eac0ee00732224b2ef9b07fe58e69c467f5255be45e2"
+			},
+			"linux-arm64": {
+				"asset": "lightpanda-aarch64-linux",
+				"bytes": 192757248,
+				"sha256": "69791924bcee43b13b224af4c845622c5fe66fdbc1b8143bfaa39ca8f85244f5"
+			},
+			"linux-x64": {
+				"asset": "lightpanda-x86_64-linux",
+				"bytes": 188268424,
+				"sha256": "aa5a4b8ed53d1e38b3c73f5b2647d0a84a82e6744557f45f9a9c85858aa031c3"
+			}
+		}
+	}
+}

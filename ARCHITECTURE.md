@@ -377,6 +377,26 @@ fetcher. The `/agent/run` request no longer contains a WorkOS token.
 Workspace patches and shell commands are not sandboxed: both run with the
 permissions of the local Sprocket process, confined only by the OS user.
 
+### Agent browser dashboard
+
+The local server prepares checksum-pinned agent-browser binaries and injects a
+per-user namespace, socket directory, and managed tool paths into agent shell
+commands. Browser downloads run independently of agent launch. Chromium-family
+executables are reused before invoking the upstream installer.
+
+The Browser panel embeds the upstream dashboard through authenticated HTTP and
+WebSocket routes under `/api/browser/dashboard/`. Each user's dashboard is a
+server-owned loopback child process; Sprocket credentials are not forwarded.
+Mutations and streams require same-origin browser provenance. A pinned asset
+adapter rewrites upstream root-relative URLs for this mount point. Lightpanda is
+installed on dashboard selection, with an explicit executable path passed to the
+upstream CLI. Dashboard AI chat receives no gateway API key.
+
+Browser sessions are owned and cleaned up by agent-browser, not Sprocket. No
+Convex browser records, session locks, login synchronization, or persistence UI
+are introduced. Server shutdown cancels setup and stops its dashboard children,
+without closing independently managed browser sessions.
+
 ## Reliability model
 
 The distributed run protocol assumes that requests can time out after either

@@ -41,6 +41,9 @@ const recoveredSubmission = {
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
+		fetchBrowserStatus: unusedDesktopCall,
+		startBrowser: unusedDesktopCall,
+		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
 		listRunningCommands: vi.fn(async () => ({ commands: [] })),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unusedDesktopCall,
