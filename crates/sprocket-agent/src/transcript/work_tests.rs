@@ -123,18 +123,24 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
 
 #[test]
 fn orphan_command_details_keep_input_with_legacy_null_fallback() {
-    for input in [
-        Some(json!({"sessionId":"session","action":"terminate"})),
-        None,
+    let input = json!({"sessionId":"session","action":"terminate"});
+    for (started_input, finished_input) in [
+        (Some(input.clone()), Some(json!({"sessionId":"other"}))),
+        (None, Some(input)),
+        (None, None),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
         let output = json!({"error":"session unavailable"});
-        let mut event = tool_part(0, "control", "failed", output.clone());
-        let tool = event.tool.as_mut().unwrap();
+        let mut started = tool_part(0, "control", "started", json!(null));
+        let tool = started.tool.as_mut().unwrap();
         tool.name = "control_cmd".into();
-        tool.input = input.clone();
-        replica.save_parts("thread", &[event]).unwrap();
+        tool.input = started_input.clone();
+        let mut finished = tool_part(1, "control", "failed", output.clone());
+        let tool = finished.tool.as_mut().unwrap();
+        tool.name = "control_cmd".into();
+        tool.input = finished_input.clone();
+        replica.save_parts("thread", &[started, finished]).unwrap();
 
         let details = replica
             .details("section", None, None, true, 10, false)
@@ -143,7 +149,10 @@ fn orphan_command_details_keep_input_with_legacy_null_fallback() {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0]["type"], "tool-call");
         assert_eq!(parts[0]["name"], "control_cmd");
-        assert_eq!(parts[0].get("input"), Some(&input.unwrap_or(json!(null))));
+        assert_eq!(
+            parts[0].get("input"),
+            Some(&started_input.or(finished_input).unwrap_or(json!(null)))
+        );
         assert_eq!(parts[1]["type"], "tool-result");
         assert_eq!(parts[1]["output"], output);
     }
