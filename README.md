@@ -21,7 +21,7 @@ Download the installer for your OS from the [latest release](https://github.com/
 
 ### Run without installing
 
-With [Node.js](https://nodejs.org/) 20 or newer installed:
+With [Node.js](https://nodejs.org/) 20.11 or newer installed:
 
 ```sh
 npx @spikonado/sprocket
@@ -56,12 +56,17 @@ Update your CLI installation with `sprocket update`. Run `sprocket --help` for m
 
 Run the Sprocket app and agent on your own machine and access them through a browser. This still uses Sprocket's hosted sign-in and cloud services; it is not a fully offline setup.
 
-With Node.js 20 or newer, install the CLI, sign in by following the printed instructions, and start the server:
+With Node.js 20.11 or newer, install the CLI and start the server:
 
 ```sh
 npm install -g @spikonado/sprocket
-sprocket login
 sprocket serve
+```
+
+Leave the server running. In another terminal on the same host, sign in by following the printed instructions:
+
+```sh
+sprocket login
 ```
 
 On a headless machine without an OS credential service, use `sprocket login --credential-store file` instead. This stores your sign-in token unencrypted in a private file.
