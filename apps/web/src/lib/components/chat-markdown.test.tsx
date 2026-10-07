@@ -60,6 +60,85 @@ describe('math', () => {
 });
 
 describe('links', () => {
+	it.each([
+		['parse_file/screenshot.png', undefined, 'parse_file/screenshot.png', 'thread'],
+		['./screenshot_url/board%20layout.PNG', undefined, 'screenshot_url/board layout.PNG', 'thread'],
+		['scrape_url/board.webp', undefined, 'scrape_url/board.webp', 'thread'],
+		['parse_file/board.png?download=1#preview', undefined, 'parse_file/board.png', 'thread'],
+		['assets/board.svg', undefined, 'assets/board.svg', null],
+		['/tmp/board.jpg', undefined, '/tmp/board.jpg', null],
+		['parse_file/board.png', 'docs/notes.md', 'docs/parse_file/board.png', null]
+	])(
+		'resolves local image link %s using its Markdown scope',
+		(source, documentPath, path, threadId) => {
+			const { getByRole } = render(
+				<ChatMarkdown
+					content={`[Rendering screenshot](${source})`}
+					openLinksInNewTab
+					imageScope={{
+						workspacePath: '/workspace',
+						documentPath,
+						transcript: { userId: 'user', threadId: 'thread' }
+					}}
+				/>
+			);
+
+			const link = getByRole('link', { name: 'Rendering screenshot' });
+			const url = new URL(link.getAttribute('href') ?? '', window.location.href);
+
+			expect(url.pathname).toBe('/api/workspace/image');
+			expect(url.searchParams.get('path')).toBe(path);
+			expect(url.searchParams.get('workspacePath')).toBe('/workspace');
+			expect(url.searchParams.get('threadId')).toBe(threadId);
+			expect(url.searchParams.get('userId')).toBe(threadId ? 'user' : null);
+			expect(link.getAttribute('target')).toBe('_blank');
+			expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+			expect(link.getAttribute('referrerpolicy')).toBe('no-referrer');
+		}
+	);
+
+	it('uses the configured machine API for image links and updates their thread scope', () => {
+		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
+
+		try {
+			const { getByRole, rerender } = render(
+				<ChatMarkdown
+					content="[Screenshot](parse_file/screenshot.png)"
+					imageScope={{ transcript: { userId: 'user', threadId: 'first' } }}
+				/>
+			);
+
+			const url = () => new URL(getByRole('link').getAttribute('href') ?? '');
+			expect(url().origin).toBe('https://machine.example.com');
+			expect(url().searchParams.get('threadId')).toBe('first');
+
+			rerender(
+				<ChatMarkdown
+					content="[Screenshot](parse_file/screenshot.png)"
+					imageScope={{ transcript: { userId: 'user', threadId: 'second' } }}
+				/>
+			);
+			expect(url().searchParams.get('threadId')).toBe('second');
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it.each([
+		'https://example.com/board.png',
+		'//example.com/board.png',
+		'docs/notes.md',
+		'assets/archive.zip',
+		'docs/notes.md?image=board.png',
+		'#diagram.png'
+	])('preserves ordinary link %s', (source) => {
+		const { getByRole } = render(
+			<ChatMarkdown content={`[Link](${source})`} imageScope={{ workspacePath: '/workspace' }} />
+		);
+
+		expect(getByRole('link').getAttribute('href')).toBe(source);
+	});
+
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
 			content: '[Sprocket](https://sprocket.dev)',

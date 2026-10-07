@@ -66,6 +66,21 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 	const template = document.createElement('template');
 	template.innerHTML = html;
 
+	for (const link of template.content.querySelectorAll('a[href]')) {
+		const source = link.getAttribute('href') ?? '';
+
+		if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(source) && !isWindowsImagePath(source)) continue;
+
+		if (!/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(source.split(/[?#]/, 1)[0])) continue;
+
+		const url = markdownImageUrl(source, scope);
+
+		if (url) {
+			link.setAttribute('href', url);
+			link.setAttribute('referrerpolicy', 'no-referrer');
+		}
+	}
+
 	for (const image of template.content.querySelectorAll('img')) {
 		const source = image.getAttribute('src') ?? '';
 		const url = markdownImageUrl(source, scope);
