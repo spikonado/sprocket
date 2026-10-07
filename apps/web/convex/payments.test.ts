@@ -347,10 +347,13 @@ describe('payments mandates', () => {
 			...setupArgs(run),
 			description: '  Monthly budget  '
 		});
+
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
 		expect(body.description).toBe('Monthly budget');
 		expect(body.purchase_context.custom[0].product_details[0].description).toBe('Monthly budget');
+
 		const stored = await t.run(async (ctx) => ctx.db.get('mandates', result.mandateId));
+
 		expect(stored?.description).toBe('Monthly budget');
 	});
 
