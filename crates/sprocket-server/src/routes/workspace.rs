@@ -5,7 +5,7 @@ use anyhow::Context;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
