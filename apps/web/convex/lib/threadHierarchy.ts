@@ -100,77 +100,136 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 
 	const initial: Omit<Doc<'threadHierarchyStates'>, '_id' | '_creationTime'> = {
 		threadId,
-		ownActive: false,
-		ownWorking: false,
 		descendantCount: 0,
 		activeDescendantCount: 0,
 		workingDescendantCount: 0
 	};
 
-	return { ...initial, _id: await ctx.db.insert('threadHierarchyStates', initial) };
+	const state = { ...initial, _id: await ctx.db.insert('threadHierarchyStates', initial) };
+	const thread = await ctx.db.get('threadRecords', threadId);
+
+	if (!thread) throw new Error('Thread not found.');
+
+	// A newly initialized ancestor has no stored contribution to reconcile later.
+	await applyAncestorCountChanges(ctx, thread, {
+		total: 0,
+		active: Number(await threadOwnActivity(ctx.db, threadId)),
+		working: Number(thread.status === 'running')
+	});
+
+	return state;
 }
 
-export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+type ThreadActivity = {
+	thread: Doc<'threadRecords'>;
+	active: boolean;
+};
+
+async function applyAncestorCountChanges(
+	ctx: MutationCtx,
+	thread: Doc<'threadRecords'>,
+	changes: { total: number; active: number; working: number }
+): Promise<void> {
+	if (changes.total === 0 && changes.active === 0 && changes.working === 0) return;
+
 	for (const ancestor of await ancestorThreads(ctx.db, thread)) {
-		const parentState = await ensureHierarchyState(ctx, ancestor._id);
-		await ctx.db.patch('threadHierarchyStates', parentState._id, {
-			descendantCount: parentState.descendantCount + 1
+		const state = await ensureHierarchyState(ctx, ancestor._id);
+		const descendantCount = state.descendantCount + changes.total;
+		const activeDescendantCount = state.activeDescendantCount + changes.active;
+		const workingCount = workingDescendantCount(state) + changes.working;
+
+		if (descendantCount < 0 || activeDescendantCount < 0 || workingCount < 0) {
+			throw new Error('Invalid thread activity aggregate.');
+		}
+
+		await ctx.db.patch('threadHierarchyStates', state._id, {
+			descendantCount,
+			activeDescendantCount,
+			workingDescendantCount: workingCount,
+			descendantStatusCounts: undefined
 		});
 	}
 
-	await refreshThreadHierarchyActivity(ctx, thread._id);
+	if (changes.active > 0) await unsettleRootOfThread(ctx, thread);
 }
 
-export async function refreshThreadHierarchyActivity(
+export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadRecords'>) {
+	await ensureHierarchyState(ctx, thread._id);
+	await applyAncestorCountChanges(ctx, thread, {
+		total: 1,
+		active: 0,
+		working: 0
+	});
+}
+
+/** Capture source activity before changing runs or questions, in the same mutation. */
+export async function captureThreadActivityBeforeChange(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
-): Promise<void> {
+): Promise<ThreadActivity | null> {
 	const thread = await ctx.db.get('threadRecords', threadId);
+
+	if (!thread) return null;
+
+	const before = { thread, active: await threadOwnActivity(ctx.db, threadId) };
+	const state = await hierarchyState(ctx.db, threadId);
+
+	if (!state) {
+		await ensureHierarchyState(ctx, threadId);
+
+		return before;
+	}
+
+	// Convert released contribution markers before applying a live transition.
+	if (
+		state.ownActive !== undefined ||
+		state.ownWorking !== undefined ||
+		state.ownStatus !== undefined ||
+		state.descendantStatusCounts !== undefined ||
+		state.workingDescendantCount === undefined
+	) {
+		await applyAncestorCountChanges(ctx, thread, {
+			total: 0,
+			active: Number(before.active) - Number(state.ownActive ?? false),
+			working:
+				Number(thread.status === 'running') -
+				Number(state.ownWorking ?? state.ownStatus === 'running')
+		});
+		await ctx.db.patch('threadHierarchyStates', state._id, {
+			workingDescendantCount: workingDescendantCount(state),
+			ownActive: undefined,
+			ownWorking: undefined,
+			ownStatus: undefined,
+			descendantStatusCounts: undefined
+		});
+	}
+
+	return before;
+}
+
+/** Apply only the before/after difference; retries observe their already-written source state. */
+export async function updateThreadHierarchyAfterChange(
+	ctx: MutationCtx,
+	before: ThreadActivity | null
+): Promise<void> {
+	if (!before) return;
+
+	const thread = await ctx.db.get('threadRecords', before.thread._id);
 
 	if (!thread) return;
 
-	const state = await ensureHierarchyState(ctx, threadId);
-	const active = await threadOwnActivity(ctx.db, threadId);
-	const activityDelta = Number(active) - Number(state.ownActive);
-	const working = thread.status === 'running';
-
-	const workingDelta = Number(working) - Number(state.ownWorking ?? state.ownStatus === 'running');
-
-	const needsMigration =
-		state.ownWorking === undefined ||
-		state.workingDescendantCount === undefined ||
-		state.ownStatus !== undefined ||
-		state.descendantStatusCounts !== undefined;
-
-	if (activityDelta === 0 && workingDelta === 0 && !needsMigration) return;
-
-	if (activityDelta !== 0 || workingDelta !== 0) {
-		for (const ancestor of await ancestorThreads(ctx.db, thread)) {
-			const parentState = await ensureHierarchyState(ctx, ancestor._id);
-			const activeCount = parentState.activeDescendantCount + activityDelta;
-			const workingCount = workingDescendantCount(parentState) + workingDelta;
-
-			if (activeCount < 0 || workingCount < 0) {
-				throw new Error('Invalid thread activity aggregate.');
-			}
-
-			await ctx.db.patch('threadHierarchyStates', parentState._id, {
-				activeDescendantCount: activeCount,
-				workingDescendantCount: workingCount,
-				descendantStatusCounts: undefined
-			});
-		}
-	}
-
-	await ctx.db.patch('threadHierarchyStates', state._id, {
-		ownActive: active,
-		ownWorking: working,
-		workingDescendantCount: workingDescendantCount(state),
-		ownStatus: undefined,
-		descendantStatusCounts: undefined
+	await applyAncestorCountChanges(ctx, thread, {
+		total: 0,
+		active: Number(await threadOwnActivity(ctx.db, thread._id)) - Number(before.active),
+		working: Number(thread.status === 'running') - Number(before.thread.status === 'running')
 	});
+}
 
-	if (activityDelta > 0) await unsettleRootOfThread(ctx, thread);
+export async function migrateThreadHierarchyState(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<void> {
+	await captureThreadActivityBeforeChange(ctx, threadId);
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {

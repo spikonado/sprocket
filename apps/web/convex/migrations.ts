@@ -8,7 +8,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
-import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import { migrateThreadHierarchyState } from '@convex/lib/threadHierarchy';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
@@ -51,22 +51,24 @@ export const runTerminalJobBackfill = migrations.runner([
 	internal.migrations.reconcileLegacyTerminalJobs
 ]);
 
-export const backfillThreadHierarchyWorkingCounts = migrations.define({
+export const backfillThreadHierarchyCounters = migrations.define({
 	table: 'threadRecords',
 	batchSize: 1,
 	migrateOne: async (ctx, thread) => {
-		await refreshThreadHierarchyActivity(ctx, thread._id);
+		await migrateThreadHierarchyState(ctx, thread._id);
 	}
 });
 
 // Keep the former entrypoint for migration batches scheduled before this deploy.
-export const backfillThreadHierarchyStatuses = backfillThreadHierarchyWorkingCounts;
+export const backfillThreadHierarchyStatuses = backfillThreadHierarchyCounters;
 
-const threadHierarchyWorkingMigrations: FunctionReference<'mutation', 'internal'>[] = [
-	internal.migrations.backfillThreadHierarchyWorkingCounts
+export const backfillThreadHierarchyWorkingCounts = backfillThreadHierarchyCounters;
+
+const threadHierarchyCounterMigrations: FunctionReference<'mutation', 'internal'>[] = [
+	internal.migrations.backfillThreadHierarchyCounters
 ];
 
-export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyWorkingMigrations);
+export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyCounterMigrations);
 
 export const backfillSubscriptionExpiry = migrations.define({
 	table: 'subscriptions',
@@ -439,7 +441,7 @@ export const runThreadHierarchyStatusBackfillAutomatically = internalMutation({
 	handler: (ctx): Promise<null> =>
 		runBackfillAutomatically(
 			ctx,
-			'thread-hierarchy-working-counts-2026-10',
-			threadHierarchyWorkingMigrations
+			'thread-hierarchy-counters-2026-10',
+			threadHierarchyCounterMigrations
 		)
 });

@@ -475,32 +475,35 @@ using it have aged out, then remove the mutation and its direct tests.
 
 ### Descendant thread working counts
 
-Hierarchy states now store only `ownWorking` and `workingDescendantCount` for
-status aggregation. `ownActive` and `activeDescendantCount` still include queued
-runs and actionable questions; `descendantCount` still counts all descendants.
-Transitions between non-running statuses do not update hierarchy states unless
-activity changes. The inbox shows the working count while descendants are
-running, or the total without a status label when the subtree is inactive.
+Hierarchy states now store only `descendantCount`, `activeDescendantCount`, and
+`workingDescendantCount`, keyed by `threadId`. Run and question mutations capture
+the thread's source activity before changing it and apply the difference to
+ancestor counters in the same transaction. Running status comes from the thread
+record; activity includes queued runs and actionable questions. Transitions
+with no activity or working-status change do not write hierarchy counters.
+The inbox shows the working count while descendants are running, or the total
+without a status label when the subtree is inactive.
 
-Older states may contain `ownStatus` and `descendantStatusCounts`, or omit both.
-Readers use the legacy running count until the scalar is populated. Writers
-compare against `ownStatus === 'running'` until `ownWorking` is populated, so
-already-counted running threads are not counted twice. Missing legacy fields
-mean no running contribution yet. Live writes and the migration atomically
-convert scalars and remove obsolete fields without scanning subtrees.
+Released states may contain `ownActive`, `ownWorking`, `ownStatus`, and
+`descendantStatusCounts`, or lack the working scalar. These fields remain optional
+in the schema only for migration compatibility. Readers fall back to the legacy
+running bucket. Before a live mutation changes source activity, writers reconcile
+the stored contribution flags with the current source state, populate the scalar,
+and remove the old fields. This prevents double-counting during the backfill.
+New states never store contribution flags.
 
-`backfillThreadHierarchyWorkingCounts` visits every thread through
-`refreshThreadHierarchyActivity` in resumable batches. The existing
-`runThreadHierarchyStatusBackfill` runner and hourly
+`backfillThreadHierarchyCounters` performs the same conversion in resumable
+batches. The existing `runThreadHierarchyStatusBackfill` runner and hourly
 `runThreadHierarchyStatusBackfillAutomatically` cron run this new migration.
-The old `backfillThreadHierarchyStatuses` entrypoint remains an alias for batches
-scheduled before this deploy; remove it once no such scheduled jobs remain.
-Its new migration identity and `thread-hierarchy-working-counts-2026-10`
-schedule ensure it runs even if the former status backfill already finished.
-Remove the legacy schema fields, reader/writer fallbacks, migration, cron and
-schedule only after completion and production checks confirm all states have
-both new fields and no legacy fields. The former
-`thread-hierarchy-status-counts-2026-10` schedule can then be deleted too.
+Both `backfillThreadHierarchyStatuses` and `backfillThreadHierarchyWorkingCounts`
+remain aliases for batches scheduled before this deploy; remove them once no such
+scheduled jobs remain. Its fresh migration identity and
+`thread-hierarchy-counters-2026-10` schedule ensure it runs even if both previous
+backfills finished. Remove the legacy schema fields, reader/writer fallbacks,
+migration, cron and schedule only after completion and production checks confirm
+all states have the three counters and no contribution flags or status buckets.
+The former `thread-hierarchy-status-counts-2026-10` and
+`thread-hierarchy-working-counts-2026-10` schedules can then be deleted too.
 
 `threads.subtreeSummaryForThread` adds `workingDescendantCount` and retains
 `descendantCount`, `anyActive`, and `descendantsActive`. Its legacy

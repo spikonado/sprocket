@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
-	refreshThreadHierarchyActivity,
+	migrateThreadHierarchyState,
+	threadOwnActivity,
 	registerChildThread,
 	subtreeSummary
 } from '@convex/lib/threadHierarchy';
@@ -29,7 +30,7 @@ async function thread(
 		if (parentThreadId) {
 			await registerChildThread(ctx, (await ctx.db.get('threadRecords', threadId))!);
 		} else {
-			await refreshThreadHierarchyActivity(ctx, threadId);
+			await migrateThreadHierarchyState(ctx, threadId);
 		}
 
 		return run._id;
@@ -42,6 +43,7 @@ async function makeLegacy(t: ConvexTestInstance) {
 	await t.run(async (ctx) => {
 		for (const row of await ctx.db.query('threadHierarchyStates').collect()) {
 			await ctx.db.patch('threadHierarchyStates', row._id, {
+				ownActive: await threadOwnActivity(ctx.db, row.threadId),
 				ownStatus: undefined,
 				ownWorking: undefined,
 				workingDescendantCount: undefined,
@@ -56,6 +58,7 @@ async function makeStatusCountsLegacy(t: ConvexTestInstance) {
 		for (const state of await ctx.db.query('threadHierarchyStates').collect()) {
 			const record = (await ctx.db.get('threadRecords', state.threadId))!;
 			await ctx.db.patch('threadHierarchyStates', state._id, {
+				ownActive: await threadOwnActivity(ctx.db, state.threadId),
 				ownStatus: record.status,
 				descendantStatusCounts: {
 					queued: 0,
@@ -85,7 +88,7 @@ async function summary(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
 }
 
 async function oneBatch(t: ConvexTestInstance, cursor: string | null) {
-	return await t.mutation(internal.migrations.backfillThreadHierarchyWorkingCounts, {
+	return await t.mutation(internal.migrations.backfillThreadHierarchyCounters, {
 		cursor,
 		dryRun: false,
 		oneBatchOnly: true
@@ -107,7 +110,7 @@ async function transition(t: ConvexTestInstance, runId: Id<'runs'>, status: Doc<
 	);
 }
 
-describe('thread hierarchy working count backfill', () => {
+describe('thread hierarchy counter migration', () => {
 	it('fills legacy nested counts while preserving existing fields and remains idempotent', async () => {
 		const t = initConvexTest();
 		const root = await thread(t, 'completed');
@@ -150,10 +153,14 @@ describe('thread hierarchy working count backfill', () => {
 		for (const previous of before.states) {
 			const row = after.states.find((state) => state._id === previous._id)!;
 
-			expect(row).toMatchObject(previous);
-			expect(row.ownWorking).toBe(
-				after.threads.find((record) => record._id === row.threadId)!.status === 'running'
-			);
+			expect(row).toMatchObject({
+				_id: previous._id,
+				threadId: previous.threadId,
+				descendantCount: previous.descendantCount,
+				activeDescendantCount: previous.activeDescendantCount
+			});
+			expect(row.ownActive).toBeUndefined();
+			expect(row.ownWorking).toBeUndefined();
 			expect(row.workingDescendantCount).toBeDefined();
 			expect(row.ownStatus).toBeUndefined();
 			expect(row.descendantStatusCounts).toBeUndefined();
@@ -231,7 +238,7 @@ describe('thread hierarchy working count backfill', () => {
 		});
 	});
 
-	it('converts legacy states after the old migration finished and leaves completed schedules unchanged', async () => {
+	it('converts legacy states after both old migrations finished and leaves completed schedules unchanged', async () => {
 		vi.useFakeTimers();
 
 		try {
@@ -239,26 +246,40 @@ describe('thread hierarchy working count backfill', () => {
 			const root = await thread(t, 'completed');
 			await thread(t, 'running', root.threadId);
 			await thread(t, 'cancelled', root.threadId);
-			await t.run((ctx) =>
-				migrations.runOne(ctx, internal.migrations.backfillThreadHierarchyStatuses)
-			);
-			await t.finishAllScheduledFunctions(vi.runAllTimers);
-			expect(
-				await t.run((ctx) =>
-					migrations.getStatus(ctx, {
-						migrations: [internal.migrations.backfillThreadHierarchyStatuses]
-					})
-				)
-			).toMatchObject([{ isDone: true }]);
-			await makeStatusCountsLegacy(t);
-			await t.run((ctx) =>
-				ctx.db.insert('migrationSchedules', {
-					name: 'thread-hierarchy-status-counts-2026-10',
-					notBefore: 0,
-					startedAt: 0,
-					completedAt: 1
-				})
-			);
+
+			for (const migration of [
+				internal.migrations.backfillThreadHierarchyStatuses,
+				internal.migrations.backfillThreadHierarchyWorkingCounts
+			]) {
+				await t.run((ctx) => migrations.runOne(ctx, migration));
+				await t.finishAllScheduledFunctions(vi.runAllTimers);
+				expect(
+					await t.run((ctx) => migrations.getStatus(ctx, { migrations: [migration] }))
+				).toMatchObject([{ isDone: true }]);
+			}
+
+			await t.run(async (ctx) => {
+				for (const state of await ctx.db.query('threadHierarchyStates').collect()) {
+					const record = (await ctx.db.get('threadRecords', state.threadId))!;
+					await ctx.db.patch('threadHierarchyStates', state._id, {
+						ownActive: await threadOwnActivity(ctx.db, state.threadId),
+						ownWorking: record.status === 'running'
+					});
+				}
+			});
+			await t.run(async (ctx) => {
+				for (const name of [
+					'thread-hierarchy-status-counts-2026-10',
+					'thread-hierarchy-working-counts-2026-10'
+				]) {
+					await ctx.db.insert('migrationSchedules', {
+						name,
+						notBefore: 0,
+						startedAt: 0,
+						completedAt: 1
+					});
+				}
+			});
 			await t.mutation(internal.migrations.runThreadHierarchyStatusBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runThreadHierarchyStatusBackfillAutomatically, {});
@@ -266,12 +287,12 @@ describe('thread hierarchy working count backfill', () => {
 			const schedule = await t.run((ctx) =>
 				ctx.db
 					.query('migrationSchedules')
-					.withIndex('by_name', (q) => q.eq('name', 'thread-hierarchy-working-counts-2026-10'))
+					.withIndex('by_name', (q) => q.eq('name', 'thread-hierarchy-counters-2026-10'))
 					.unique()
 			);
 
 			expect(schedule).toMatchObject({
-				name: 'thread-hierarchy-working-counts-2026-10',
+				name: 'thread-hierarchy-counters-2026-10',
 				startedAt: expect.any(Number),
 				completedAt: expect.any(Number)
 			});
@@ -280,9 +301,8 @@ describe('thread hierarchy working count backfill', () => {
 			const after = await snapshot(t);
 
 			for (const state of after.states) {
-				expect(state.ownWorking).toBe(
-					after.threads.find((record) => record._id === state.threadId)!.status === 'running'
-				);
+				expect(state.ownActive).toBeUndefined();
+				expect(state.ownWorking).toBeUndefined();
 				expect(state.workingDescendantCount).toBe(state.threadId === root.threadId ? 1 : 0);
 				expect(state.ownStatus).toBeUndefined();
 				expect(state.descendantStatusCounts).toBeUndefined();
@@ -295,7 +315,7 @@ describe('thread hierarchy working count backfill', () => {
 				await t.run((ctx) =>
 					ctx.db
 						.query('migrationSchedules')
-						.withIndex('by_name', (q) => q.eq('name', 'thread-hierarchy-working-counts-2026-10'))
+						.withIndex('by_name', (q) => q.eq('name', 'thread-hierarchy-counters-2026-10'))
 						.unique()
 				)
 			).toEqual(schedule);
