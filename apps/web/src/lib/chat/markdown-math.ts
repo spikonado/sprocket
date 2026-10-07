@@ -3,10 +3,10 @@ import { Tokenizer, type MarkedExtension, type Tokens } from 'marked';
 
 const BLOCK_MATH = /^ {0,3}(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])[ \t]*(?:\n|$)/;
 
-const INLINE_MATH = /^\$(?![\s$])((?:\\[^\n]|[^\\$\n])+?)(?<!\s)\$(?![\d$])/;
+const INLINE_MATH = /^\$(?![\s$])((?:\\[^`\n]|[^\\$`\n])+?)(?<!\s)\$(?![\d$])/;
 
 const MATH_MASK =
-	/\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?![\s$])(?:\\[^\n]|[^\\$\n])+?(?<!\s)\$(?![\d$])/g;
+	/(`+)[\s\S]*?\1(?!`)|(?<math>\$\$[^`]+?\$\$|\\\[[^`]+?\\\]|\\\([^`]+?\\\)|\$(?![\s$])(?:\\[^`\n]|[^\\$`\n])+?(?<!\s)\$(?![\d$]))|\\[^\n]/g;
 
 const tokenizer = new Tokenizer();
 
@@ -16,6 +16,8 @@ function maskMath(source: string, maskedSource: string) {
 	let cursor = 0;
 
 	for (const match of source.matchAll(MATH_MASK)) {
+		if (!match.groups?.math) continue;
+
 		const start = offset + match.index;
 
 		masked += maskedSource.slice(cursor, start) + 'a'.repeat(match[0].length);
@@ -79,8 +81,8 @@ export const markdownMath: MarkedExtension = {
 			tokenizer(source) {
 				if (this.lexer.state.inRawBlock) return;
 
-				const display = /^(?:\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\])/.exec(source);
-				const match = display ?? /^\\\(([\s\S]+?)\\\)/.exec(source) ?? INLINE_MATH.exec(source);
+				const display = /^(?:\$\$([^`]+?)\$\$|\\\[([^`]+?)\\\])/.exec(source);
+				const match = display ?? /^\\\(([^`]+?)\\\)/.exec(source) ?? INLINE_MATH.exec(source);
 
 				if (!match) return;
 

@@ -19,14 +19,29 @@ describe('renderMarkdown', () => {
 	});
 
 	it.each([
-		String.raw`*before $a*b$ after*`,
-		String.raw`**before \(a*b\) after**`,
-		String.raw`_before $a_b$ after_`,
-		String.raw`~~before $a~~b$ after~~`
-	])('preserves math within Markdown emphasis: %s', (markdown) => {
+		[String.raw`*before $a*b$ after*`, 'em'],
+		[String.raw`**before \(a*b\) after**`, 'strong'],
+		[String.raw`_before $a_b$ after_`, 'em'],
+		[String.raw`~~before $a~~b$ after~~`, 'del']
+	])('preserves math within Markdown emphasis: %s', (markdown, tag) => {
 		const html = renderMarkdown(markdown);
 
-		expect(html).toContain('class="katex"');
+		expect(html).toContain(`<${tag}>before <span class="katex">`);
+		expect(html).toContain(` after</${tag}>`);
+	});
+
+	it('preserves currency next to code and formatting around literal dollars', () => {
+		expect(renderMarkdown('Costs $5; use `$HOME` for the path.')).toBe(
+		'<p>Costs $5; use <code>$HOME</code> for the path.</p>\n'
+		);
+
+		const html = renderMarkdown('*before `$x`* and **$y$**');
+
+		expect(html).toContain('<em>before <code>$x</code></em> and <strong><span class="katex">');
+		expect(html).toContain('</span></strong>');
+		expect(renderMarkdown(String.raw`*before \$x* and **$y$**`)).toContain(
+		'<em>before $x</em> and <strong><span class="katex">'
+		);
 	});
 
 	it.each([
