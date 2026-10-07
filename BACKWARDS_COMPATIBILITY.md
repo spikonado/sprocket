@@ -15,6 +15,15 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Rig 0.43 upstream revision
+
+Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
+first merged post-0.43 revision removing an unconditional partial-conversation
+stderr dump from invalid-tool recovery. This revision retains 0.43's history
+types but unifies streamed and awaited run errors as `PromptError`.
+Return to a registry release only once it contains that fix and the provider,
+replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+
 ### SIWC streaming content type
 
 The ChatGPT SIWC route can omit `Content-Type` on a successful streaming
@@ -37,20 +46,58 @@ service tier allowed for released clients that require them. Remove the gateway
 response fields only after clients that validate or apply them are outside the
 supported upgrade window. Model selections and Convex data need no migration.
 
-### OpenAI BYOK response item replay
+### Stateless OpenAI reasoning replay
 
-Rig 0.42 can drop contentless reasoning items and regroup streamed output before
-the next completion. OpenAI rejects the surviving message or function item IDs
-when their required reasoning items are missing. `OpenAiReplayClient` clears
-assistant message IDs and function item IDs on outgoing BYOK requests and sets
-`store: false`. It requests and replays encrypted reasoning, and keeps function
-call IDs used to pair tool results. Reasoning without encrypted content cannot
-be replayed without server storage, so the adapter omits it. Stored transcripts
-remain unchanged. Repairing older history is outside this fix's scope.
+Rig 0.43 preserves and inlines Responses message and function items with their
+native IDs, so the old `OpenAiReplayClient` ID-clearing workaround is removed.
+Sprocket's `StatelessResponses` wire sets `store: false`, requests encrypted
+reasoning, and omits reasoning without a nonempty encrypted payload. Summary-only
+reasoning cannot be replayed without server storage. Function call IDs continue
+to pair tool results; existing transcript formats remain unchanged.
 
-Remove this adapter only after the installed Rig version preserves complete
-response item relationships through streaming and replay, and the BYOK
-multi-turn regression passes with native item IDs.
+Remove this wire wrapper once Rig exposes an equivalent stateless Responses
+configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
+
+### Rig history identities
+
+Released Sprocket history records carry separate `id` and optional `callId`
+fields and omit tool names on results. The Rust history reader reconstructs
+Rig 0.43's unified `CallId`, preserving a distinct item ID when present, and
+resolves each result's required name from its preceding call. Historical
+OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
+No stored data is rewritten: local JSONL and Convex transcript formats remain
+compatible with released clients.
+
+New reasoning items retain summaries as display text, one opaque encrypted
+replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
+ID in `providerMetadata.openai.itemId`, and the issuer in
+`providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
+are not persisted. Encrypted payload bytes are preserved verbatim without
+duplication. The Rust reader reconstructs summary/encrypted blocks; missing
+issuers default to `openai` for released histories. The history fields remain
+`id` and `blocksJson`; issuer-aware histories encode sealed projected reasoning
+inside `blocksJson`, while the reader still accepts released block arrays.
+This additive metadata format needs no backfill. Keep the existing replay
+fields, array reader and missing-issuer default until supported clients age out
+or a versioned migration rewrites all supported histories. Stateless BYOK/SIWC
+replay still requires a nonempty encrypted payload.
+
+New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
+the opaque signature in `providerMetadata.signature`, and native additional
+parameters in `providerMetadata.toolCallAdditionalParams`. `callId` stays the
+provider's tool-result correlator. Explicit `null` additional parameters mean
+the native call had none. Released readers ignore the added metadata;
+new readers fall back to `callId` and the historical metadata shape for old
+items. This additive format widening needs no backfill; IDs already discarded
+by older releases cannot be recovered.
+
+Text items preserve Rig's `openai_responses` extras, including their message ID
+and phase. Single-message completions add the call's message ID there when Rig
+only reports it on the terminal response; multi-message item IDs take precedence.
+
+Keep this boundary conversion while Sprocket's transcript protocol uses these
+fields. Remove it only with a versioned protocol migration that rewrites all
+supported histories and supports direct upgrades from released clients.
 
 ## Local data directory backwards compatibility
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rig::message::{Reasoning, ReasoningContent};
+use rig::message::{Reasoning, ReasoningContent, Sealed};
 use serde_json::Value as JsonValue;
 
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
@@ -11,7 +11,7 @@ pub(crate) fn openai_reasoning_metadata(
     item_id: Option<&str>,
     encrypted: Option<&str>,
 ) -> Option<JsonValue> {
-    let item_id = item_id.map(str::trim).filter(|id| !id.is_empty());
+    let item_id = item_id.filter(|id| !id.is_empty());
     let encrypted = opaque_encrypted(encrypted);
     if item_id.is_none() && encrypted.is_none() {
         return None;
@@ -33,13 +33,23 @@ pub(crate) fn opaque_encrypted(value: Option<&str>) -> Option<&str> {
     value.filter(|content| !content.is_empty())
 }
 
-pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
-    opaque_encrypted(reasoning.encrypted_content())
+fn opened_reasoning(reasoning: &Sealed<Reasoning>) -> Option<&Reasoning> {
+    reasoning.open(reasoning.issuer())
+}
+
+pub(crate) fn opaque_reasoning_blob(reasoning: &Sealed<Reasoning>) -> Option<&str> {
+    opaque_encrypted(opened_reasoning(reasoning)?.encrypted_content())
 }
 
 /// Live display is summary blocks only. Rig's `display_text` also joins
 /// `Text` and `Redacted`, which must not become transcript text.
-pub(crate) fn reasoning_summary_text(reasoning: &Reasoning) -> String {
+pub(crate) fn reasoning_summary_text(reasoning: &Sealed<Reasoning>) -> String {
+    opened_reasoning(reasoning)
+        .map(summary_text)
+        .unwrap_or_default()
+}
+
+fn summary_text(reasoning: &Reasoning) -> String {
     reasoning
         .content
         .iter()
@@ -56,13 +66,21 @@ pub(crate) fn apply_completed_reasoning(
     provider_metadata: &mut HashMap<String, JsonValue>,
     stream_id: &str,
     correlator: &str,
-    reasoning: &Reasoning,
+    reasoning: &Sealed<Reasoning>,
 ) {
     let id = format!("{stream_id}:{correlator}");
     let key = format!("reasoning:{id}");
-    let text = reasoning_summary_text(reasoning);
-    let metadata =
-        openai_reasoning_metadata(reasoning.id.as_deref(), opaque_reasoning_blob(reasoning));
+    let inner = opened_reasoning(reasoning);
+    let text = inner.map(summary_text).unwrap_or_default();
+    let metadata = inner.map(|value| {
+        let mut metadata = openai_reasoning_metadata(
+            value.id.as_deref(),
+            opaque_encrypted(value.encrypted_content()),
+        )
+        .unwrap_or_else(|| serde_json::json!({}));
+        metadata["reasoningIssuer"] = serde_json::json!(reasoning.issuer());
+        metadata
+    });
     if let Some(metadata) = metadata {
         provider_metadata.insert(key, metadata);
     } else {
@@ -90,11 +108,12 @@ mod tests {
     use super::*;
     use rig::message::ReasoningContent;
 
-    fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Reasoning {
+    fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Sealed<Reasoning> {
         Reasoning {
             id: id.map(str::to_string),
             content,
         }
+        .sealed("openai")
     }
 
     #[test]
@@ -104,7 +123,11 @@ mod tests {
             metadata,
             Some(serde_json::json!({ "openai": { "itemId": "rs_empty" } }))
         );
-        assert!(openai_reasoning_metadata(Some("  "), Some("")).is_none());
+        assert!(openai_reasoning_metadata(Some(""), Some("")).is_none());
+        assert_eq!(
+            openai_reasoning_metadata(Some("  rs_1  "), None),
+            Some(serde_json::json!({ "openai": { "itemId": "  rs_1  " } }))
+        );
         assert!(opaque_encrypted(Some("")).is_none());
         assert!(opaque_encrypted(None).is_none());
     }
@@ -179,7 +202,8 @@ mod tests {
                 "openai": {
                     "itemId": "rs_123",
                     "reasoningEncryptedContent": "envelope"
-                }
+                },
+                "reasoningIssuer": "openai"
             })
         );
     }
@@ -271,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_reasoning_without_opaque_state_clears_metadata() {
+    fn completed_reasoning_replaces_metadata_without_stale_opaque_state() {
         let mut parts = LiveAssistantParts::default();
         let mut provider_metadata = HashMap::new();
         apply_completed_reasoning(
@@ -293,7 +317,12 @@ mod tests {
             "corr",
             &reasoning_with(None, vec![ReasoningContent::Summary("visible".to_string())]),
         );
-        assert!(!provider_metadata.contains_key("reasoning:stream:corr"));
+        assert_eq!(
+            provider_metadata["reasoning:stream:corr"],
+            serde_json::json!({
+                "reasoningIssuer": "openai"
+            })
+        );
         match &parts.parts[0] {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "visible"),
             other => panic!("expected updated reasoning, got {other:?}"),

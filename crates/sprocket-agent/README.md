@@ -219,10 +219,36 @@ in the backend.
 - `tools/`: model tools and durable job coordination.
 - `convex.rs`: run-control communication.
 - `types.rs`: history and context wire types.
-- `hooks.rs`: tool-call correlation, invalid-call handling, and OpenAI additional params.
+- `hooks.rs`: durable tool-call assignments, dispatch correlation, and invalid-call recovery.
 
 Changes to run state, history, cancellation, or tool shapes usually require a
 matching Convex change.
+
+## Rig 0.43 integration
+
+The dependency is pinned to upstream `e02ddcc6` rather than the published 0.43
+tarball, which leaks partial conversation content to stderr on invalid-tool
+recovery. The pin includes the upstream removal and unified run errors without
+the later item-shaped history API rewrite.
+
+Provider construction uses native `DynModel<Completion>` and `Wire` APIs. Rig
+owns Responses decoding, stream termination, reasoning seals, item replay, and
+per-call optional usage. Gateway credentials refresh through transport middleware
+rather than rebuilding completion models. Unknown usage does not overwrite the
+last observed context size.
+
+The completion boundary records assignments from the actual durable parts before
+tool dispatch, including repaired calls. Every completion is checked for an
+incomplete finish reason before tools execute. A terminal empty answer stays
+empty; streamed commentary is not a substitute for a missing final response.
+
+Sprocket retains its stateless request policy, SIWC connection pinning and tool
+namespace, and durable context handoff. Rig's native ChatGPT provider targets a
+different endpoint; its resumable runs do not replace versioned Sprocket
+transcripts and idempotent external jobs. Gemini caching, ECS, other modalities,
+and new provider/model constants do not affect the current Responses-only routes.
+Replay metadata remains additive to the existing transcript format; see
+`BACKWARDS_COMPATIBILITY.md` for legacy-reader behavior and removal gates.
 
 ## Validation
 
