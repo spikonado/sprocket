@@ -169,6 +169,26 @@ describe('links', () => {
 		);
 	});
 
+	it('opens the full-size local image from an explicitly linked thumbnail', () => {
+		const { getByRole } = render(
+			<ChatMarkdown
+				content="[![Thumbnail](thumb.png)](full.png)"
+				imageScope={{ workspacePath: '/workspace' }}
+			/>
+		);
+
+		const link = new URL(getByRole('link').getAttribute('href') ?? '', window.location.href);
+		const image = new URL(
+			getByRole('img', { name: 'Thumbnail' }).getAttribute('src') ?? '',
+			window.location.href
+		);
+
+		expect(link.pathname).toBe('/api/workspace/image');
+		expect(link.searchParams.get('workspacePath')).toBe('/workspace');
+		expect(link.searchParams.get('path')).toBe('full.png');
+		expect(image.searchParams.get('path')).toBe('thumb.png');
+	});
+
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
 			content: '[Sprocket](https://sprocket.dev)',

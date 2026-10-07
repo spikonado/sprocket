@@ -71,8 +71,6 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 	for (const link of template.content.querySelectorAll('a[href]')) {
 		const source = link.getAttribute('href') ?? '';
 
-		if (link.querySelector('img')) continue;
-
 		if (
 			/^[a-z][a-z\d+.-]*:/i.test(source) &&
 			!/^https?:/i.test(source) &&
@@ -81,6 +79,14 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 			continue;
 
 		if (!/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(decodeImagePath(source))) continue;
+
+		if (link.querySelector('img')) {
+			const url = markdownImageUrl(source, scope);
+
+			if (url) link.setAttribute('href', url);
+
+			continue;
+		}
 
 		const image = document.createElement('img');
 		image.setAttribute('src', source);
