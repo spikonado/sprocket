@@ -354,6 +354,7 @@ it('opens the managed browser dashboard without a thread and keeps it mounted wh
 	await renderApp(createConvexFixtures(), createRuntime(desktopApi));
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	expect(startBrowser).not.toHaveBeenCalled();
 	fireEvent.click(screen.getByRole('tab', { name: 'Live view' }));
 	const iframe = await screen.findByTitle('Agent browser dashboard');
 	expect(iframe.getAttribute('src')).toBe(desktopApi.browserDashboardUrl);

@@ -16,7 +16,7 @@ use crate::browser_install::BrowserInstaller;
 
 pub(crate) const DASHBOARD_PATH: &str = "/api/browser/dashboard/";
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserStatus {
     pub state: &'static str,
@@ -28,13 +28,38 @@ struct Dashboard {
     port: u16,
 }
 
-struct UserBrowser {
-    status: BrowserStatus,
-    dashboard: Option<Dashboard>,
+enum UserBrowser {
+    Installing,
+    Ready(Dashboard),
+    Error(String),
+}
+
+impl UserBrowser {
+    fn status(&mut self) -> BrowserStatus {
+        if let Self::Ready(dashboard) = self
+            && !matches!(dashboard.child.try_wait(), Ok(None))
+        {
+            *self = Self::Error("The browser dashboard stopped. Retry setup to restart it.".into());
+        }
+        match self {
+            Self::Installing => BrowserStatus {
+                state: "installing",
+                error: None,
+            },
+            Self::Ready(_) => BrowserStatus {
+                state: "ready",
+                error: None,
+            },
+            Self::Error(error) => BrowserStatus {
+                state: "error",
+                error: Some(error.clone()),
+            },
+        }
+    }
 }
 
 pub(crate) struct BrowserManager {
-    installer: Arc<BrowserInstaller>,
+    installer: BrowserInstaller,
     data_dir: PathBuf,
     users: Mutex<HashMap<String, UserBrowser>>,
     shutdown: WorkspaceCancellation,
@@ -45,7 +70,9 @@ impl BrowserManager {
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(
                 data_dir.clone(),
-                std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH").map(PathBuf::from),
+                std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from),
             )?,
             data_dir,
             users: Mutex::new(HashMap::new()),
@@ -73,22 +100,10 @@ impl BrowserManager {
 
     pub async fn status(&self, user_id: &str) -> BrowserStatus {
         let mut users = self.users.lock().await;
-        let Some(browser) = users.get_mut(user_id) else {
-            return BrowserStatus {
-                state: "installing",
-                error: None,
-            };
-        };
-        if let Some(dashboard) = &mut browser.dashboard {
-            if !matches!(dashboard.child.try_wait(), Ok(None)) {
-                browser.dashboard = None;
-                browser.status = BrowserStatus {
-                    state: "error",
-                    error: Some("The browser dashboard stopped. Retry setup to restart it.".into()),
-                };
-            }
+        match users.get_mut(user_id) {
+            Some(browser) => browser.status(),
+            None => UserBrowser::Installing.status(),
         }
-        browser.status.clone()
     }
 
     pub async fn start(self: &Arc<Self>, user_id: &str) -> BrowserStatus {
@@ -98,24 +113,14 @@ impl BrowserManager {
                 error: Some("Sprocket is shutting down".into()),
             };
         }
-        self.status(user_id).await;
         let mut users = self.users.lock().await;
-        if let Some(browser) = users.get(user_id)
-            && browser.status.state != "error"
-        {
-            return browser.status.clone();
+        if let Some(browser) = users.get_mut(user_id) {
+            let status = browser.status();
+            if !matches!(browser, UserBrowser::Error(_)) {
+                return status;
+            }
         }
-        let status = BrowserStatus {
-            state: "installing",
-            error: None,
-        };
-        users.insert(
-            user_id.to_owned(),
-            UserBrowser {
-                status: status.clone(),
-                dashboard: None,
-            },
-        );
+        users.insert(user_id.to_owned(), UserBrowser::Installing);
         let manager = Arc::clone(self);
         let user_id = user_id.to_owned();
         tokio::spawn(async move {
@@ -127,23 +132,12 @@ impl BrowserManager {
             let Some(browser) = users.get_mut(&user_id) else {
                 return;
             };
-            match result {
-                Ok(dashboard) => {
-                    browser.dashboard = Some(dashboard);
-                    browser.status = BrowserStatus {
-                        state: "ready",
-                        error: None,
-                    };
-                }
-                Err(error) => {
-                    browser.status = BrowserStatus {
-                        state: "error",
-                        error: Some(format!("{error:#}")),
-                    };
-                }
-            }
+            *browser = match result {
+                Ok(dashboard) => UserBrowser::Ready(dashboard),
+                Err(error) => UserBrowser::Error(format!("{error:#}")),
+            };
         });
-        status
+        UserBrowser::Installing.status()
     }
 
     async fn launch_dashboard(&self, user_id: &str) -> anyhow::Result<Dashboard> {
@@ -207,16 +201,14 @@ impl BrowserManager {
     }
 
     pub async fn port(&self, user_id: &str) -> anyhow::Result<u16> {
-        if self.status(user_id).await.state != "ready" {
-            bail!("Browser dashboard is not ready. Retry setup.");
+        let mut users = self.users.lock().await;
+        if let Some(browser) = users.get_mut(user_id) {
+            browser.status();
+            if let UserBrowser::Ready(dashboard) = browser {
+                return Ok(dashboard.port);
+            }
         }
-        self.users
-            .lock()
-            .await
-            .get(user_id)
-            .and_then(|browser| browser.dashboard.as_ref())
-            .map(|dashboard| dashboard.port)
-            .context("browser dashboard is not running")
+        bail!("Browser dashboard is not ready. Retry setup.")
     }
 
     pub async fn environment(&self, user_id: &str) -> anyhow::Result<Vec<(OsString, OsString)>> {
@@ -260,7 +252,7 @@ impl BrowserManager {
         self.shutdown.cancel();
         let users = std::mem::take(&mut *self.users.lock().await);
         for (_, browser) in users {
-            if let Some(mut dashboard) = browser.dashboard {
+            if let UserBrowser::Ready(mut dashboard) = browser {
                 let _ = dashboard.child.kill().await;
                 let _ = dashboard.child.wait().await;
             }
@@ -276,13 +268,7 @@ impl BrowserManager {
             .unwrap();
         self.users.lock().await.insert(
             user_id.into(),
-            UserBrowser {
-                status: BrowserStatus {
-                    state: "ready",
-                    error: None,
-                },
-                dashboard: Some(Dashboard { child, port }),
-            },
+            UserBrowser::Ready(Dashboard { child, port }),
         );
     }
 }
@@ -320,5 +306,33 @@ fn socket_directory(data_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
     #[cfg(not(unix))]
     {
         Ok(data_dir.join("browser-run"))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reuses_a_running_dashboard_and_rejects_a_stopped_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = BrowserManager::new(directory.path().into()).unwrap();
+        manager.use_test_dashboard("user", 1234).await;
+        assert_eq!(manager.start("user").await.state, "ready");
+        assert_eq!(manager.port("user").await.unwrap(), 1234);
+
+        {
+            let mut users = manager.users.lock().await;
+            let Some(UserBrowser::Ready(dashboard)) = users.get_mut("user") else {
+                panic!("dashboard is not running");
+            };
+            dashboard.child.kill().await.unwrap();
+        }
+        // Port lookup must detect the exit without waiting for a status poll.
+        assert!(manager.port("user").await.is_err());
+        let status = manager.status("user").await;
+        assert_eq!(status.state, "error");
+        assert!(status.error.unwrap().contains("dashboard stopped"));
+        manager.shutdown().await;
     }
 }

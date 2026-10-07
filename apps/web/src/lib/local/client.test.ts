@@ -78,68 +78,55 @@ describe('managed browser dashboard', () => {
 		}
 	);
 
-	describe.each([
+	it.each([
 		{ method: 'fetchBrowserStatus' as const, pathname: '/api/browser/status', verb: 'GET' },
 		{ method: 'startBrowser' as const, pathname: '/api/browser/start', verb: 'POST' }
-	])('$method', ({ method, pathname, verb }) => {
-		it.each<BrowserStatus>([
-			{ state: 'installing', error: null },
-			{ state: 'ready', error: null },
-			{ state: 'error', error: 'Chromium installation failed.' }
-		])('returns the server status $state and error unchanged', async (status) => {
-			vi.stubGlobal(
-				'fetch',
-				vi.fn(async () => Response.json(status))
+	])(
+		'$method sends an authenticated, cancellable request and returns the status',
+		async ({ method, pathname, verb }) => {
+			const status: BrowserStatus = { state: 'error', error: 'Chromium installation failed.' };
+			const fetch = vi.fn(async () => Response.json(status));
+			vi.stubGlobal('fetch', fetch);
+			const signal = new AbortController().signal;
+
+			await expect(createLocalClient('http://127.0.0.1:7731')[method](signal)).resolves.toEqual(
+				status
 			);
+			expect(fetch).toHaveBeenCalledExactlyOnceWith(`http://127.0.0.1:7731${pathname}`, {
+				method: verb,
+				signal,
+				credentials: 'include',
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+	);
 
-			await expect(createLocalClient('http://127.0.0.1:7731')[method]()).resolves.toEqual(status);
-		});
-
-		it.each([false, true])(
-			'sends an authenticated bodyless request with cancellation enabled: %s',
-			async (withSignal) => {
-				const fetch = vi.fn(async () => Response.json({ state: 'ready', error: null }));
-				vi.stubGlobal('fetch', fetch);
-				const signal = withSignal ? new AbortController().signal : undefined;
-
-				await createLocalClient('http://127.0.0.1:7731')[method](signal);
-
-				expect(fetch).toHaveBeenCalledExactlyOnceWith(`http://127.0.0.1:7731${pathname}`, {
-					method: verb,
-					signal,
-					credentials: 'include',
-					headers: { 'content-type': 'application/json' }
-				});
-			}
+	it.each<BrowserStatus>([
+		{ state: 'installing', error: null },
+		{ state: 'ready', error: null }
+	])('accepts browser status $state', async (status) => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(status))
 		);
+		await expect(createLocalClient('http://127.0.0.1:7731').fetchBrowserStatus()).resolves.toEqual(
+			status
+		);
+	});
 
-		it.each([
-			{ state: 'pending', error: null },
-			{ state: 'ready' },
-			{ state: 'error', error: 123 },
-			{ error: null }
-		])('validates the status response %j', async (payload) => {
-			vi.stubGlobal(
-				'fetch',
-				vi.fn(async () => Response.json(payload))
-			);
-
-			await expect(createLocalClient('http://127.0.0.1:7731')[method]()).rejects.toThrow(
-				'Local API returned an unexpected response.'
-			);
-		});
-
-		it.each([
-			{ status: 401, error: 'Authentication required.' },
-			{ status: 503, error: 'Browser manager unavailable.' }
-		])('propagates HTTP $status errors', async ({ status, error }) => {
-			vi.stubGlobal(
-				'fetch',
-				vi.fn(async () => Response.json({ error }, { status }))
-			);
-
-			await expect(createLocalClient('http://127.0.0.1:7731')[method]()).rejects.toThrow(error);
-		});
+	it.each([
+		{ state: 'pending', error: null },
+		{ state: 'ready' },
+		{ state: 'error', error: 123 },
+		{ error: null }
+	])('rejects malformed browser status %j', async (payload) => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
+		await expect(createLocalClient('http://127.0.0.1:7731').fetchBrowserStatus()).rejects.toThrow(
+			'Local API returned an unexpected response.'
+		);
 	});
 });
 

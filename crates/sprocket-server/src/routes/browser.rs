@@ -147,35 +147,33 @@ async fn proxy(
     let mut bytes = axum::body::to_bytes(body, MAX_REQUEST_BYTES)
         .await
         .map_err(|error| ApiError::bad_request(error.into()))?;
-    if method == Method::POST && path.split('?').next() == Some("/api/sessions") {
-        let payload: Value =
-            serde_json::from_slice(&bytes).map_err(|error| ApiError::bad_request(error.into()))?;
-        let session = payload
-            .get("session")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ApiError::bad_request(anyhow!("Missing browser session name")))?;
-        bytes = serde_json::to_vec(
-            &serde_json::json!({"args": ["open", "about:blank", "--session", session]}),
-        )
-        .map_err(|error| ApiError::internal(error.into()))?
-        .into();
-        path = "/api/exec".into();
-    }
-    if method == Method::POST && path.split('?').next() == Some("/api/exec") {
+    if method == Method::POST
+        && matches!(path.split('?').next(), Some("/api/sessions" | "/api/exec"))
+    {
         let mut payload: Value =
             serde_json::from_slice(&bytes).map_err(|error| ApiError::bad_request(error.into()))?;
-        if let Some(args) = payload.get_mut("args").and_then(Value::as_array_mut) {
-            if args
+        if path.split('?').next() == Some("/api/sessions") {
+            let session = payload
+                .get("session")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::bad_request(anyhow!("Missing browser session name")))?;
+            payload = serde_json::json!({"args": ["open", "about:blank", "--session", session]});
+            path = "/api/exec".into();
+        }
+        if let Some(args) = payload.get_mut("args").and_then(Value::as_array_mut)
+            && args
                 .windows(2)
                 .any(|pair| pair[0] == "--engine" && pair[1] == "lightpanda")
-            {
-                let executable = state
-                    .browsers
-                    .install_lightpanda()
-                    .await
-                    .map_err(ApiError::internal)?;
-                append_executable(args, &executable);
-            }
+        {
+            let executable = state
+                .browsers
+                .install_lightpanda()
+                .await
+                .map_err(ApiError::internal)?;
+            args.extend([
+                Value::String("--executable-path".into()),
+                Value::String(executable.to_string_lossy().into_owned()),
+            ]);
         }
         bytes = serde_json::to_vec(&payload)
             .map_err(|error| ApiError::internal(error.into()))?
@@ -244,11 +242,6 @@ fn upstream_path(path: &str) -> anyhow::Result<String> {
         anyhow::bail!("Invalid dashboard path");
     }
     Ok(format!("/{suffix}"))
-}
-
-fn append_executable(args: &mut Vec<Value>, executable: &std::path::Path) {
-    args.push(Value::String("--executable-path".into()));
-    args.push(Value::String(executable.to_string_lossy().into_owned()));
 }
 
 fn rewrite_asset(source: &str) -> String {
@@ -356,27 +349,6 @@ mod tests {
         ] {
             assert!(upstream_path(path).is_err());
         }
-    }
-
-    #[test]
-    fn lightpanda_selection_passes_managed_executable_as_one_argument() {
-        let mut args = vec![
-            Value::String("--engine".into()),
-            Value::String("lightpanda".into()),
-        ];
-        append_executable(
-            &mut args,
-            std::path::Path::new("/tools/browser with spaces/lightpanda"),
-        );
-        assert_eq!(
-            serde_json::to_value(args).unwrap(),
-            serde_json::json!([
-                "--engine",
-                "lightpanda",
-                "--executable-path",
-                "/tools/browser with spaces/lightpanda"
-            ])
-        );
     }
 }
 

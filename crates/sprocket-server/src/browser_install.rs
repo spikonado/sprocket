@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
@@ -19,36 +18,27 @@ const MAX_COMMAND_OUTPUT: u64 = 64 * 1024;
 const LINUX_ARM64_REMEDY: &str = "This agent-browser release cannot download Chrome for Linux ARM64. Install Chromium with your system package manager, then set AGENT_BROWSER_EXECUTABLE_PATH to its absolute path (for example /usr/bin/chromium). Sprocket never installs system packages or runs sudo.";
 
 #[derive(Debug, Clone)]
-pub struct BrowserInstallation {
+pub(crate) struct BrowserInstallation {
     pub cli: PathBuf,
-    pub chromium: PathBuf,
+    chromium: PathBuf,
 }
 
-pub struct BrowserInstaller {
+pub(crate) struct BrowserInstaller {
     tools_dir: PathBuf,
     configured_chromium: Option<PathBuf>,
     releases: Releases,
     client: reqwest::Client,
-    cli: Mutex<Option<PathBuf>>,
     browser: Mutex<Option<BrowserInstallation>>,
     lightpanda: Mutex<Option<PathBuf>>,
 }
 
 impl BrowserInstaller {
-    pub fn new(
-        data_dir: PathBuf,
-        configured_chromium: Option<PathBuf>,
-    ) -> anyhow::Result<Arc<Self>> {
+    pub fn new(data_dir: PathBuf, configured_chromium: Option<PathBuf>) -> anyhow::Result<Self> {
         let releases: Releases = serde_json::from_str(RELEASES)?;
-        Ok(Arc::new(Self {
+        Ok(Self {
             tools_dir: data_dir.join("tools"),
-            configured_chromium: configured_chromium.or_else(|| {
-                std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH")
-                    .filter(|value| !value.is_empty())
-                    .map(PathBuf::from)
-            }),
+            configured_chromium,
             browser: Mutex::new(None),
-            cli: Mutex::new(None),
             lightpanda: Mutex::new(None),
             releases,
             client: reqwest::Client::builder()
@@ -56,34 +46,22 @@ impl BrowserInstaller {
                 .connect_timeout(Duration::from_secs(30))
                 .timeout(DOWNLOAD_TIMEOUT)
                 .build()?,
-        }))
+        })
     }
 
-    pub async fn ensure_ready(self: &Arc<Self>) -> anyhow::Result<BrowserInstallation> {
+    pub async fn ensure_ready(&self) -> anyhow::Result<BrowserInstallation> {
         let mut browser = self.browser.lock().await;
         if let Some(installed) = browser.as_ref() {
             if executable_file(&installed.cli).await && executable_file(&installed.chromium).await {
                 return Ok(installed.clone());
             }
         }
-        let cli = self.ensure_cli().await?;
+        let cli = self.install_tool(Tool::AgentBrowser).await?;
+        self.ensure_skills().await?;
         let chromium = self.ensure_chromium(&cli).await?;
         let installed = BrowserInstallation { cli, chromium };
         *browser = Some(installed.clone());
         Ok(installed)
-    }
-
-    pub async fn ensure_cli(&self) -> anyhow::Result<PathBuf> {
-        let mut cli = self.cli.lock().await;
-        if let Some(path) = cli.as_ref()
-            && executable_file(path).await
-        {
-            return Ok(path.clone());
-        }
-        let path = self.install_tool(Tool::AgentBrowser).await?;
-        self.ensure_skills().await?;
-        *cli = Some(path.clone());
-        Ok(path)
     }
 
     pub fn cli_directory(&self) -> anyhow::Result<PathBuf> {
@@ -115,7 +93,6 @@ impl BrowserInstaller {
         let archive = parent.join("source.tar.gz");
         let release = &self.releases.skill_data;
         download_atomic(&self.client, &release.url, &release.asset, &archive).await?;
-        let destination = destination.clone();
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let temporary =
                 tempfile::tempdir_in(destination.parent().context("skills directory")?)?;
@@ -169,7 +146,7 @@ impl BrowserInstaller {
         find_chromium().await
     }
 
-    pub async fn ensure_lightpanda(self: &Arc<Self>) -> anyhow::Result<PathBuf> {
+    pub async fn ensure_lightpanda(&self) -> anyhow::Result<PathBuf> {
         let mut lightpanda = self.lightpanda.lock().await;
         if let Some(path) = lightpanda.as_ref() {
             return Ok(path.clone());

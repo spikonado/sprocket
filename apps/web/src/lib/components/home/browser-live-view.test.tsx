@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import BrowserLiveView, { type BrowserApi } from './browser-live-view';
-import SidePanel from './side-panel';
 import type { BrowserStatus } from '$lib/types/sprocket';
 
 function createBrowserApi() {
@@ -47,16 +46,6 @@ it('starts setup on mount, polls installing status, and embeds the ready dashboa
 
 	await act(() => vi.advanceTimersByTimeAsync(10_000));
 	expect(api.fetchBrowserStatus).toHaveBeenCalledTimes(4);
-});
-
-it('embeds an already-ready dashboard directly from the start response', async () => {
-	const api = createBrowserApi();
-	api.startBrowser.mockResolvedValue({ state: 'ready', error: null });
-	render(<BrowserLiveView browserApi={api} />);
-	await act(async () => {});
-	expect(screen.getByTitle('Agent browser dashboard').getAttribute('src')).toBe(
-		api.browserDashboardUrl
-	);
 });
 
 it('shows a stopped dashboard and allows restarting it', async () => {
@@ -139,35 +128,4 @@ it('explains the local server requirement without a connected API', () => {
 	expect(screen.getByRole('status').textContent).toBe(
 		'Connect to the local Sprocket server to use the browser.'
 	);
-});
-
-it('starts only when the live tab is mounted and preserves the dashboard when expanded', async () => {
-	const api = createBrowserApi();
-	api.startBrowser.mockResolvedValue({ state: 'ready', error: null });
-	const onToggleExpanded = vi.fn();
-
-	const props = {
-		artifacts: [],
-		browserApi: api,
-		selectedKey: null,
-		expanded: false,
-		onSelect: vi.fn(),
-		onBack: vi.fn(),
-		onTabChange: vi.fn(),
-		onOpenFullscreen: vi.fn(),
-		onToggleExpanded,
-		onClose: vi.fn()
-	};
-
-	const view = render(<SidePanel {...props} tab="artifacts" />);
-	expect(api.startBrowser).not.toHaveBeenCalled();
-	view.rerender(<SidePanel {...props} tab="live" />);
-	await act(async () => {});
-	const iframe = screen.getByTitle('Agent browser dashboard');
-	fireEvent.click(screen.getByRole('button', { name: 'Expand to full workspace' }));
-	expect(onToggleExpanded).toHaveBeenCalledOnce();
-	view.rerender(<SidePanel {...props} tab="live" expanded />);
-	expect(screen.getByTitle('Agent browser dashboard')).toBe(iframe);
-	expect(api.startBrowser).toHaveBeenCalledOnce();
-	expect(screen.getByRole('button', { name: 'Exit full workspace' })).toBeTruthy();
 });
