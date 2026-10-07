@@ -481,6 +481,23 @@ describe('PromptComposer submission', () => {
 		await pressKey(textarea, { key: 'Enter' });
 		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
+
+	it('allows retrying and switching providers after a run failure', async () => {
+		const { props, composer, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			prompt: 'Try again',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
+			notices: <div role="alert">A previous run failed.</div>
+		});
+
+		expect(composer.querySelector('[role="alert"]')?.textContent).toBe('A previous run failed.');
+		expect(
+			composer.querySelector<HTMLButtonElement>('[aria-label="Select provider"]')?.disabled
+		).toBe(false);
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
 });
 
 describe('PromptComposer attachments', () => {
