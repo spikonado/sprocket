@@ -33,9 +33,8 @@ export class PravaHttpError extends Error {
 /** Client errors that mean Prava rejected the request without creating a
  * charge. Timeouts (408), conflicts (409), and rate limits (429) stay
  * ambiguous because a later retry could double-submit. */
-export function isDefinitivePravaRejection(error: unknown): boolean {
+export function isDefinitivePravaRejection(error: PravaHttpError): boolean {
 	return (
-		error instanceof PravaHttpError &&
 		error.status >= 400 &&
 		error.status < 500 &&
 		error.status !== 408 &&

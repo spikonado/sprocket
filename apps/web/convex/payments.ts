@@ -27,6 +27,7 @@ import { requireMoneyMinor } from '@convex/lib/payments/money';
 import {
 	isDefinitivePravaRejection,
 	pravaRequest,
+	PravaHttpError,
 	type PravaMandate
 } from '@convex/lib/payments/prava';
 import {
@@ -979,7 +980,7 @@ export const mandateCharge = action({
 					)
 				});
 			} catch (error) {
-				if (isDefinitivePravaRejection(error)) {
+				if (error instanceof PravaHttpError && isDefinitivePravaRejection(error)) {
 					// Prava rejected the body; the idempotency key is unused and
 					// a later same-reference retry is safe.
 					await ctx.runMutation(internal.payments.updateChargeStatus, {
@@ -993,6 +994,7 @@ export const mandateCharge = action({
 						userId: actor.userId
 					});
 				}
+
 				throw error;
 			}
 
