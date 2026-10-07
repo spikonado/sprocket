@@ -329,6 +329,31 @@ describe('payments mandates', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(0);
 	});
 
+	it('sends and stores a trimmed description when setup input is padded', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			jsonResponse({
+				session_id: 'prava-session-1',
+				iframe_url: 'https://pay.prava.space/approve/1',
+				session_token: 'session-token-1',
+				expires_at: '2026-08-01T10:15:00Z'
+			})
+		);
+
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		const result = await run.asUser.action(api.payments.mandateSetup, {
+			...setupArgs(run),
+			description: '  Monthly budget  '
+		});
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+		expect(body.description).toBe('Monthly budget');
+		expect(body.purchase_context.custom[0].product_details[0].description).toBe('Monthly budget');
+		const stored = await t.run(async (ctx) => ctx.db.get('mandates', result.mandateId));
+		expect(stored?.description).toBe('Monthly budget');
+	});
+
 	it('resolves the synced account email without a caller identity', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
