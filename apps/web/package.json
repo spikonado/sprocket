@@ -31,6 +31,7 @@
 		"convex-helpers": "^0.1.123",
 		"dodopayments": "^2.51.0",
 		"isomorphic-dompurify": "^4.0.0",
+		"katex": "^0.16.47",
 		"lucide-react": "^1.48.0",
 		"marked": "^18.0.3",
 		"react": "^19.3.0",
