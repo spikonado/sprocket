@@ -484,6 +484,7 @@ body::after {
 
 .markdown-code-copy {
 	display: inline-flex;
+	min-width: 8rem;
 	align-items: center;
 	gap: 0.35rem;
 	border-radius: 0.35rem;
