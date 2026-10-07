@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, ObservationAction, StepEventKind,
-    ToolCallDelta,
+    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
+    OutcomeEvent, StepEventKind, ToolCallDelta,
 };
 use rig::completion::{Message, Usage};
 use rig::message::AssistantContent;
@@ -12,6 +12,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub(crate) const HANDOFF_PROMPT: &str = "Your context is filled up; write a handoff document (to the `handoff_context` tool) summarising the current conversation so a fresh agent can continue the work. Don't talk about the handoff document itself. Include the user's last request, your decisions and the reasoning behind them, and a summary of the work you have completed. Do not duplicate content already captured in other artifacts (specs, plans, issues, commits, diffs). Reference them by path or URL instead. Redact any sensitive information, such as API keys, passwords, or personally identifiable information.";
+pub(crate) const HANDOFF_SUBMITTED: &str = "SPROCKET_CONTEXT_HANDOFF_SUBMITTED";
 const HANDOFF_REQUESTED: &str = "SPROCKET_CONTEXT_HANDOFF_REQUESTED";
 const MAX_COMPLETION_CALLS: usize = 1_000;
 
@@ -146,6 +147,18 @@ impl ContextHandoffHook {
 }
 
 impl AgentHook for ContextHandoffHook {
+    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        if event.tool_name() == Some(HandoffTool::NAME)
+            && self
+                .state
+                .lock()
+                .is_ok_and(|state| state.writing && state.summary.is_some())
+        {
+            return OutcomeAction::stop(HANDOFF_SUBMITTED);
+        }
+        OutcomeAction::Proceed
+    }
+
     async fn on_tool_call_delta(
         &self,
         _context: &HookContext,
@@ -234,6 +247,7 @@ impl AgentHook for ContextHandoffHook {
                 | StepEventKind::ModelTurnFinished
                 | StepEventKind::InvalidToolCall
                 | StepEventKind::ToolCallDelta
+                | StepEventKind::ToolDispatch
         )
     }
 }
@@ -255,7 +269,6 @@ pub(crate) struct HandoffTool {
 
 #[derive(Deserialize, JsonSchema)]
 pub(crate) struct HandoffArgs {
-    /// Handoff document for the next agent. Reference existing artifacts and redact secrets and PII.
     document: String,
 }
 

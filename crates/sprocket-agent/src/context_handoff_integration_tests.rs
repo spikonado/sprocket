@@ -16,8 +16,8 @@ use rig::tool::{DynamicTool, Tool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HandoffRequest, HandoffTool,
-    context_summary_text,
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffRequest,
+    HandoffTool, context_summary_text,
 };
 use crate::hooks::{AGENT_TOOL_NAMES, available_agent_tool_names};
 
@@ -517,6 +517,10 @@ async fn drive(
                     let reason = cancelled_reason(error);
                     return if reason == HANDOFF_REQUESTED {
                         DriveEnd::HandoffNeeded
+                    } else if reason == HANDOFF_SUBMITTED {
+                        DriveEnd::Submitted(
+                            hook.take_summary().expect("submitted handoff document"),
+                        )
                     } else {
                         DriveEnd::Stopped(reason)
                     };
@@ -584,6 +588,51 @@ async fn assert_unsolicited_handoff_rejected(body: String) {
     .expect("unsolicited handoff stream timed out");
     assert!(hook.take_summary().is_none());
     assert_eq!(server.join().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
+    let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let agent = test_agent(&base_url, &hook);
+    hook.start_handoff();
+    let mut stream = agent.prompt(HANDOFF_PROMPT).add_hook(hook.clone()).stream();
+    let mut completion_calls = 0;
+    let mut stopped = false;
+    tokio::time::timeout(DRIVE_TIMEOUT, async {
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(MultiTurnStreamItem::CompletionCall(_)) => completion_calls += 1,
+                Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. })
+                | Ok(MultiTurnStreamItem::StreamUserItem(_))
+                | Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                    panic!(
+                        "an accepted handoff must stop before committing or emitting its result"
+                    );
+                }
+                Err(PromptError::Cancelled {
+                    reason,
+                    chat_history,
+                }) => {
+                    assert_eq!(reason, HANDOFF_SUBMITTED);
+                    assert!(!chat_history.iter().any(|message| matches!(
+                        message,
+                        Message::User { content, .. }
+                            if content.iter().any(|part| matches!(part, UserContent::ToolResult(_)))
+                    )));
+                    stopped = true;
+                }
+                Err(error) => panic!("unexpected handoff error: {error}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("handoff termination timed out");
+    assert!(stopped);
+    assert_eq!(completion_calls, 1);
+    assert_eq!(hook.take_summary().as_deref(), Some(FIRST_SUMMARY));
+    assert_eq!(server.join().expect("responses mock thread").len(), 1);
 }
 
 #[tokio::test]
