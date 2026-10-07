@@ -22,6 +22,43 @@ function renderChatMarkdown(props: {
 	render(<ChatMarkdown {...props} />);
 }
 
+describe('math', () => {
+	it('renders completed formulas as a transcript message streams', () => {
+		const { container, rerender } = render(
+			<ChatMarkdown content={String.raw`Result: $\frac{1}`} />
+		);
+
+		expect(container.textContent).toBe(String.raw`Result: $\frac{1}` + '\n');
+
+		rerender(<ChatMarkdown content={String.raw`Result: $\frac{1}{2}$` + '\n\n\\[x^2\\]'} />);
+
+		expect(container.querySelectorAll('.katex')).toHaveLength(2);
+		expect(container.querySelector('.katex-display math')?.getAttribute('display')).toBe('block');
+		expect(container.querySelector('math mfrac')?.textContent).toBe('12');
+		expect(container.querySelector('.frac-line')?.getAttribute('style')).toContain(
+			'border-bottom-width'
+		);
+	});
+
+	it('preserves sanitized math, nested Markdown, and literal code together', () => {
+		const content = [
+			String.raw`- **Voltage:** $V = IR$`,
+			String.raw`> \[\sqrt{x^2 + y^2}\]`,
+			'Example: `$x^2$`',
+			String.raw`$\href{javascript:alert(1)}{click}$`,
+			'<img src=x onerror="alert(1)"><script>alert(1)</script>'
+		].join('\n\n');
+
+		const { container } = render(<ChatMarkdown content={content} />);
+
+		expect(container.querySelector('li .katex')).not.toBeNull();
+		expect(container.querySelector('blockquote .katex-display')).not.toBeNull();
+		expect(container.querySelector('code')?.textContent).toBe('$x^2$');
+		expect(container.querySelector('.katex-html .mord.text')?.textContent).toBe(String.raw`\href`);
+		expect(container.querySelector('script, [onerror], a[href^="javascript:"]')).toBeNull();
+	});
+});
+
 describe('links', () => {
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
