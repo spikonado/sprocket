@@ -8,6 +8,17 @@ export const MESSAGE_QUEUE_LIMIT = 256;
 
 export const MESSAGE_QUEUE_LEASE_MS = 120_000;
 
+export const queuedContinuationFields = {
+	submissionId: v.string(),
+	executionSecret: v.string(),
+	continuationOfRunId: v.id('runs'),
+	prompt: v.string(),
+	selectedModel: v.string(),
+	completionProvider: vCompletionProvider,
+	reasoningEffort: vReasoningEffort,
+	fastMode: v.boolean()
+};
+
 export const queuedMessageFields = {
 	userId: v.string(),
 	machineId: v.string(),
@@ -22,6 +33,7 @@ export const queuedMessageFields = {
 	completionProvider: vCompletionProvider,
 	reasoningEffort: vReasoningEffort,
 	fastMode: v.boolean(),
+	continuation: v.optional(v.object(queuedContinuationFields)),
 	status: v.union(v.literal('queued'), v.literal('sending'), v.literal('failed')),
 	claimId: v.optional(v.string()),
 	claimExpiresAt: v.optional(v.number()),
@@ -49,7 +61,7 @@ export async function deleteQueuedMessage(ctx: MutationCtx, message: Doc<'queued
 
 export async function queuedSubmission(
 	ctx: QueryCtx | MutationCtx,
-	message: Doc<'queuedMessages'>
+	message: Pick<Doc<'queuedMessages'>, 'userId' | 'submissionId'>
 ) {
 	return await ctx.db
 		.query('runs')
@@ -62,17 +74,33 @@ export async function queuedSubmission(
 export async function isDurableQueuedRun(ctx: MutationCtx, run: Doc<'runs'>) {
 	if (run.status !== 'queued' || run.cancellationRequestedAt !== undefined) return false;
 
-	const message = await ctx.db
+	let message = await ctx.db
 		.query('queuedMessages')
 		.withIndex('by_userId_submissionId', (q) =>
 			q.eq('userId', run.userId).eq('submissionId', run.submissionId)
 		)
 		.unique();
 
+	if (!message && run.continuationOfRunId) {
+		message = await ctx.db
+			.query('queuedMessages')
+			.withIndex('by_threadId', (q) => q.eq('threadId', run.threadId))
+			.first();
+	}
+
+	const capability =
+		message?.submissionId === run.submissionId
+			? message
+			: message?.continuation?.submissionId === run.submissionId
+				? message.continuation
+				: null;
+
 	return (
 		message !== null &&
+		message.userId === run.userId &&
 		message.threadId === run.threadId &&
 		message.machineId === run.machineId &&
-		(await executionSecretHash(message.executionSecret)) === run.executionSecretHash
+		capability !== null &&
+		(await executionSecretHash(capability.executionSecret)) === run.executionSecretHash
 	);
 }

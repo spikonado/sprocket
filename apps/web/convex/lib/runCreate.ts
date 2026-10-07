@@ -172,7 +172,8 @@ export async function createQueuedRunRecord(
 
 		if (
 			queuedHead &&
-			(queuedHead.submissionId !== args.submissionId ||
+			(queuedHead.continuation !== undefined ||
+				queuedHead.submissionId !== args.submissionId ||
 				queuedHead.userId !== args.userId ||
 				queuedHead.machineId !== args.machineId ||
 				queuedHead.executionSecret !== args.executionSecret ||

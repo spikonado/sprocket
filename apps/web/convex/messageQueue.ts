@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import schema from './schema';
 import { executionSecretHash, getUserId } from './lib/auth';
 import { getOwnedThreadRecord } from './lib/access';
@@ -17,6 +17,7 @@ import {
 	hasAnsweredQuestionContinuation
 } from './lib/agentQuestions';
 import { submissionReadiness } from './lib/runCreate';
+import { questionContinuation } from './agentQuestions';
 import { getRunWithExecution } from './lib/runExecution';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from './lib/runLease';
 import {
@@ -249,7 +250,9 @@ export const claim = mutation({
 		messageId: v.id('queuedMessages'),
 		machineId: v.string(),
 		credential: v.string(),
-		claimId: v.string()
+		claimId: v.string(),
+		continuationSubmissionId: v.string(),
+		continuationExecutionSecret: v.string()
 	},
 	returns: v.union(schema.doc('queuedMessages'), v.null()),
 	handler: async (ctx, args) => {
@@ -285,16 +288,33 @@ export const claim = mutation({
 			return null;
 		}
 
+		const latest = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', message.threadId))
+			.order('desc')
+			.first();
+
+		const continuationRun = message.continuation
+			? await queuedSubmission(ctx, { userId, submissionId: message.continuation.submissionId })
+			: null;
+
+		if (
+			message.continuation &&
+			((continuationRun && continuationRun.status !== 'queued') ||
+				(!continuationRun &&
+					(latest?._id !== message.continuation.continuationOfRunId ||
+						latest.status === 'cancelled' ||
+						latest.cancellationRequestedAt !== undefined)))
+		) {
+			await clearContinuation(ctx, message);
+
+			return null;
+		}
+
 		if (message.status === 'failed') return null;
 
-		if (!existingRun) {
+		if (!existingRun && !continuationRun) {
 			if (machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) return null;
-
-			const latest = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', message.threadId))
-				.order('desc')
-				.first();
 
 			const execution = latest ? await getRunWithExecution(ctx.db, latest._id) : null;
 
@@ -312,7 +332,42 @@ export const claim = mutation({
 
 			if (await headActionablePendingQuestion(ctx.db, message.threadId)) return null;
 
-			if (latest && (await hasAnsweredQuestionContinuation(ctx.db, latest._id))) return null;
+			if (latest && (await hasAnsweredQuestionContinuation(ctx.db, latest._id))) {
+				const continuation = await questionContinuation(ctx, {
+					threadId: message.threadId,
+					runId: latest._id
+				});
+
+				if (continuation && !message.continuation) {
+					if (
+						!args.continuationSubmissionId.trim() ||
+						!args.continuationExecutionSecret.trim() ||
+						args.continuationExecutionSecret === message.executionSecret ||
+						(await ownedMessage(ctx, userId, args.continuationSubmissionId)) ||
+						(await queuedSubmission(ctx, {
+							userId,
+							submissionId: args.continuationSubmissionId
+						}))
+					) {
+						throw new Error('Question continuation requires a fresh submission and capability.');
+					}
+
+					// Commit the recovery inputs with the lease before the worker launches.
+					// The follow-up and its attachments remain untouched until this run finishes.
+					await ctx.db.patch('queuedMessages', message._id, {
+						continuation: {
+							submissionId: args.continuationSubmissionId,
+							executionSecret: args.continuationExecutionSecret,
+							continuationOfRunId: latest._id,
+							prompt: continuation.prompt,
+							selectedModel: latest.selectedModel,
+							completionProvider: latest.completionProvider ?? 'spikonado',
+							reasoningEffort: latest.reasoningEffort,
+							fastMode: latest.fastMode
+						}
+					});
+				}
+			}
 		}
 
 		await ctx.db.patch('queuedMessages', message._id, {
@@ -338,10 +393,15 @@ export const finishAttempt = mutation({
 		const message = await ctx.db.get('queuedMessages', args.messageId);
 
 		if (!message || message.userId !== userId || message.claimId !== args.claimId) return null;
-		const run = await queuedSubmission(ctx, message);
+
+		const run = await queuedSubmission(ctx, {
+			userId,
+			submissionId: message.continuation?.submissionId ?? message.submissionId
+		});
 
 		if (run && run.status !== 'queued') {
-			await deleteQueuedMessage(ctx, message);
+			if (message.continuation) await clearContinuation(ctx, message);
+			else await deleteQueuedMessage(ctx, message);
 		} else if (args.error && !run) {
 			await ctx.db.patch('queuedMessages', message._id, {
 				status: 'failed',
@@ -356,6 +416,16 @@ export const finishAttempt = mutation({
 		return null;
 	}
 });
+
+async function clearContinuation(ctx: MutationCtx, message: Doc<'queuedMessages'>) {
+	await ctx.db.patch('queuedMessages', message._id, {
+		continuation: undefined,
+		status: 'queued',
+		claimId: undefined,
+		claimExpiresAt: undefined,
+		error: undefined
+	});
+}
 
 async function ownedMessage(ctx: MutationCtx, userId: string, submissionId: string) {
 	return await ctx.db

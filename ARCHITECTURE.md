@@ -267,6 +267,11 @@ machine is stopped or signed out and resume when it returns.
 Only a thread's first queued message can acquire a renewable dispatch lease.
 Run creation also enforces this order, including submissions from other tabs.
 Answers that require a question continuation finish that work before follow-ups.
+If the browser closes after saving an answer, the native worker stores a separate
+continuation submission and capability on the queue head before launching it.
+It inherits the interrupted run's model settings, retains the follow-up and its
+attachments, and recovers that continuation through the same durable lease.
+An already-started browser continuation wins without launching a second run.
 After a crash, a worker reuses the submission ID and capability to recover an
 unclaimed run, or removes the queue entry if that run already started or ended.
 An unclaimed run held by the queue survives machine shutdown and startup

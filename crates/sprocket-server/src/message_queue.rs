@@ -20,6 +20,38 @@ struct ClaimedMessage {
     id: String,
     #[serde(flatten)]
     request: QueueRunRequest,
+    continuation: Option<QueuedContinuation>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QueuedContinuation {
+    submission_id: String,
+    execution_secret: String,
+    continuation_of_run_id: String,
+    prompt: String,
+    selected_model: String,
+    completion_provider: sprocket_agent::CompletionProvider,
+    reasoning_effort: String,
+    fast_mode: bool,
+}
+
+impl ClaimedMessage {
+    fn into_launch(self) -> (String, RunAgentApiRequest) {
+        let mut request: RunAgentApiRequest = self.request.into();
+        if let Some(continuation) = self.continuation {
+            request.submission_id = continuation.submission_id;
+            request.execution_secret = Some(continuation.execution_secret);
+            request.continuation_of_run_id = Some(continuation.continuation_of_run_id);
+            request.prompt = continuation.prompt;
+            request.storage_ids.clear();
+            request.selected_model = continuation.selected_model;
+            request.completion_provider = continuation.completion_provider;
+            request.reasoning_effort = continuation.reasoning_effort;
+            request.fast_mode = continuation.fast_mode;
+        }
+        (self.id, request)
+    }
 }
 
 // Convex documents also contain queue bookkeeping. Keep it outside the strict
@@ -122,6 +154,14 @@ async fn send(
                 ("messageId".into(), message_id.into()),
                 ("claimId".into(), claim_id.clone().into()),
                 (
+                    "continuationSubmissionId".into(),
+                    Uuid::new_v4().to_string().into(),
+                ),
+                (
+                    "continuationExecutionSecret".into(),
+                    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()).into(),
+                ),
+                (
                     "machineId".into(),
                     state.machine_identity.installation_id.clone().into(),
                 ),
@@ -136,12 +176,13 @@ async fn send(
     let Some(message) = message else {
         return Ok(());
     };
-    let user_id = message.request.user_id.clone();
+    let (message_id, request) = message.into_launch();
+    let user_id = request.user_id.clone();
     let result = tokio::time::timeout(
         START_TIMEOUT,
         launch_agent(
             state.clone(),
-            message.request.into(),
+            request,
             WorkspaceAccess::Attached,
             true,
             Default::default(),
@@ -150,7 +191,7 @@ async fn send(
     )
     .await;
     let mut args = BTreeMap::from([
-        ("messageId".into(), message.id.into()),
+        ("messageId".into(), message_id.into()),
         ("claimId".into(), claim_id.into()),
     ]);
     // A timeout leaves a detached launch running. Retain the durable lease;
@@ -214,6 +255,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn launches_saved_continuations_without_consuming_follow_up_attachments() {
+        let message: ClaimedMessage = serde_json::from_value(serde_json::json!({
+            "_id": "queue-a", "userId": "user-a", "threadId": "thread-a",
+            "submissionId": "follow-up", "executionSecret": "follow-up-secret",
+            "prompt": "Build it", "storageIds": ["file-a"], "selectedModel": "new-model",
+            "completionProvider": "openai", "reasoningEffort": "high", "fastMode": true,
+            "workspacePath": "/project",
+            "continuation": {
+                "submissionId": "saved-answer", "executionSecret": "saved-answer-secret",
+                "continuationOfRunId": "parent-run", "prompt": "Board A",
+                "selectedModel": "parent-model", "completionProvider": "chatgpt",
+                "reasoningEffort": "medium", "fastMode": false
+            }
+        }))
+        .unwrap();
+        let (id, request) = message.into_launch();
+        assert_eq!(id, "queue-a");
+        assert_eq!(request.submission_id, "saved-answer");
+        assert_eq!(
+            request.execution_secret.as_deref(),
+            Some("saved-answer-secret")
+        );
+        assert_eq!(
+            request.continuation_of_run_id.as_deref(),
+            Some("parent-run")
+        );
+        assert_eq!(request.prompt, "Board A");
+        assert!(request.storage_ids.is_empty());
+        assert_eq!(request.selected_model, "parent-model");
+        assert_eq!(
+            request.completion_provider,
+            sprocket_agent::CompletionProvider::Chatgpt
+        );
+        assert_eq!(request.reasoning_effort, "medium");
+        assert!(!request.fast_mode);
+        assert_eq!(request.workspace_path, "/project");
+    }
+
+    #[test]
     fn decodes_queue_bookkeeping_without_relaxing_the_http_decoder() {
         let message: ClaimedMessage = serde_json::from_value(serde_json::json!({
             "_id": "queue-a", "_creationTime": 1.0, "machineId": "machine-a",
@@ -224,7 +304,7 @@ mod tests {
             "reasoningEffort": "high", "fastMode": true, "workspacePath": "/project"
         }))
         .unwrap();
-        let request: RunAgentApiRequest = message.request.into();
+        let (_, request) = message.into_launch();
         assert_eq!(request.execution_secret.as_deref(), Some("secret-a"));
         assert_eq!(request.thread_id.as_deref(), Some("thread-a"));
         assert_eq!(request.storage_ids, vec!["file-a"]);
