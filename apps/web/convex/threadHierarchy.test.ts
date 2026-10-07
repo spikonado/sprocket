@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { FunctionReturnType } from 'convex/server';
 import {
 	assertDescendantThreadAccess,
-	refreshThreadHierarchyActivity,
+	captureThreadActivityBeforeChange,
+	updateThreadHierarchyAfterChange,
 	registerChildThread,
 	subtreeSummary
 } from '@convex/lib/threadHierarchy';
 import { initConvexTest, seedOwnedThread } from '@convex/test.setup';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
+import { requestRunCancellation } from '@convex/runLifecycle';
 
 type Backend = ReturnType<typeof initConvexTest>;
 
@@ -57,6 +59,7 @@ describe('thread hierarchy', () => {
 		const grandchild = await child(t, children[0], 'grandchild');
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
@@ -65,6 +68,7 @@ describe('thread hierarchy', () => {
 		const before = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		await asUser.mutation(api.threads.settle, { threadId });
 		await t.run(async (ctx) => {
+			const activityBefore = await captureThreadActivityBeforeChange(ctx, grandchild);
 			await ctx.db.insert('runs', {
 				threadId: grandchild,
 				userId: 'user_alice',
@@ -76,18 +80,19 @@ describe('thread hierarchy', () => {
 				fastMode: false,
 				startedAt: Date.now()
 			});
-			await refreshThreadHierarchyActivity(ctx, grandchild);
-			await refreshThreadHierarchyActivity(ctx, grandchild);
+			await updateThreadHierarchyAfterChange(ctx, activityBefore);
 		});
 
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
 		});
 		expect(await summary(t, children[0])).toEqual({
 			descendantCount: 1,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
@@ -105,6 +110,142 @@ describe('thread hierarchy', () => {
 
 		expect(inbox.page.map((thread) => thread._id)).toEqual([threadId]);
 	});
+
+	it('accounts for an active legacy parent when a new child initializes its missing hierarchy row', async () => {
+		const t = initConvexTest();
+		const root = await seedOwnedThread(t);
+		const branch = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			const run = (await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', branch.threadId))
+				.unique())!;
+
+			await ctx.db.patch('threadRecords', branch.threadId, {
+				parentThreadId: root.threadId,
+				status: 'running'
+			});
+			await ctx.db.patch('runs', run._id, { status: 'running' });
+			await ctx.db.insert('threadHierarchyStates', {
+				threadId: root.threadId,
+				descendantCount: 1,
+				activeDescendantCount: 0,
+				ownActive: false
+			});
+		});
+		await child(t, branch.threadId, 'running-child', 'running');
+		expect(await summary(t, root.threadId)).toMatchObject({
+			descendantCount: 2,
+			workingDescendantCount: 2,
+			descendantsActive: true
+		});
+		expect(await summary(t, branch.threadId)).toMatchObject({
+			descendantCount: 1,
+			workingDescendantCount: 1,
+			descendantsActive: false,
+			anyActive: true
+		});
+		await t.run((ctx) => captureThreadActivityBeforeChange(ctx, branch.threadId));
+		expect((await summary(t, root.threadId)).workingDescendantCount).toBe(2);
+		expect(
+			await t.run((ctx) =>
+				ctx.db
+					.query('threadHierarchyStates')
+					.withIndex('by_threadId', (q) => q.eq('threadId', root.threadId))
+					.unique()
+			)
+		).toMatchObject({ activeDescendantCount: 1 });
+	});
+
+	it.each(['request', 'finalize'] as const)(
+		'updates ancestor activity when an older run with the last pending question is cancelled via %s',
+		async (method) => {
+			vi.useFakeTimers();
+
+			try {
+				const t = initConvexTest();
+				const root = await seedOwnedThread(t);
+				const leaf = await child(t, root.threadId, 'completed-child');
+
+				const olderRunId = await t.run(async (ctx) => {
+					const before = await captureThreadActivityBeforeChange(ctx, leaf);
+					const record = (await ctx.db.get('threadRecords', leaf))!;
+
+					const run = {
+						threadId: leaf,
+						userId: record.userId,
+						submissionId: 'older-run',
+						executionSecretHash: 'fixture',
+						selectedModel: record.selectedModel,
+						reasoningEffort: record.reasoningEffort,
+						fastMode: record.fastMode,
+						startedAt: Date.now() - 1
+					};
+
+					const runId = await ctx.db.insert('runs', { ...run, status: 'queued' });
+					await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+					await ctx.db.insert('runs', {
+						...run,
+						submissionId: 'newer-run',
+						status: 'completed',
+						startedAt: Date.now()
+					});
+
+					const jobId = await ctx.db.insert('executorJobs', {
+						threadId: leaf,
+						runId,
+						kind: 'ask_question',
+						payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] },
+						status: 'completed',
+						enqueuedAt: Date.now(),
+						sequence: 0
+					});
+
+					await ctx.db.insert('agentQuestions', {
+						threadId: leaf,
+						runId,
+						jobId,
+						question: 'Continue?',
+						options: [{ id: 'yes', label: 'Yes' }],
+						status: 'pending',
+						createdAt: Date.now(),
+						sequence: 0
+					});
+					await updateThreadHierarchyAfterChange(ctx, before);
+
+					return runId;
+				});
+
+				expect(await summary(t, root.threadId)).toMatchObject({
+					workingDescendantCount: 0,
+					descendantsActive: true
+				});
+
+				const cancel = () =>
+					t.run(async (ctx) => {
+						const run = (await ctx.db.get('runs', olderRunId))!;
+
+						if (method === 'request') {
+							await requestRunCancellation(ctx, run);
+						} else {
+							await setRunAndThreadStatus(ctx, run, 'cancelled');
+						}
+					});
+
+				await cancel();
+				expect(await summary(t, root.threadId)).toMatchObject({
+					descendantCount: 1,
+					workingDescendantCount: 0,
+					descendantsActive: false
+				});
+				expect((await t.run((ctx) => ctx.db.get('threadRecords', leaf)))?.status).toBe('completed');
+				await cancel();
+				expect((await summary(t, root.threadId)).descendantsActive).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
+		}
+	);
 
 	it('allows strict same-user descendant access and rejects self, sibling, ancestor, and foreign targets', async () => {
 		const t = initConvexTest();
@@ -156,6 +297,7 @@ describe('thread hierarchy', () => {
 		expect(new Set(seen)).toEqual(new Set(children));
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 8,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 8, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
@@ -178,18 +320,18 @@ describe('thread hierarchy', () => {
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
 				.first();
 
-			await ctx.db.patch('runs', run!._id, { status: 'running' });
-			await refreshThreadHierarchyActivity(ctx, threadId);
+			await setRunAndThreadStatus(ctx, run!, 'running');
 		});
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 1,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false
 		});
 	});
 
-	it('aggregates mixed statuses at every depth and propagates active-to-active transitions idempotently', async () => {
+	it('counts only running descendants at every depth and propagates active-to-active transitions idempotently', async () => {
 		const t = initConvexTest();
 		const { threadId, asUser } = await seedOwnedThread(t);
 		const queued = await child(t, threadId, 'queued', 'queued');
@@ -202,6 +344,7 @@ describe('thread hierarchy', () => {
 			const ids = [];
 
 			for (const id of [queued, running]) {
+				const activityBefore = await captureThreadActivityBeforeChange(ctx, id);
 				const thread = (await ctx.db.get('threadRecords', id))!;
 				ids.push(
 					await ctx.db.insert('runs', {
@@ -216,35 +359,25 @@ describe('thread hierarchy', () => {
 						startedAt: Date.now()
 					})
 				);
-				await refreshThreadHierarchyActivity(ctx, id);
+				await updateThreadHierarchyAfterChange(ctx, activityBefore);
 			}
 
+			const activityBefore = await captureThreadActivityBeforeChange(ctx, threadId);
 			await ctx.db.patch('threadRecords', threadId, { status: 'failed' });
-			await refreshThreadHierarchyActivity(ctx, threadId);
+			await updateThreadHierarchyAfterChange(ctx, activityBefore);
 
 			return ids;
 		});
 
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 5,
-			descendantStatusCounts: { queued: 1, running: 1, completed: 1, failed: 1, cancelled: 1 },
+			workingDescendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 1, completed: 4, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
 		});
-		expect((await summary(t, queued)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 1,
-			completed: 0,
-			failed: 0,
-			cancelled: 0
-		});
-		expect((await summary(t, running)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 0,
-			completed: 0,
-			failed: 0,
-			cancelled: 0
-		});
+		expect((await summary(t, queued)).workingDescendantCount).toBe(1);
+		expect((await summary(t, running)).workingDescendantCount).toBe(0);
 
 		const transition = (runId: Id<'runs'>, status: Doc<'runs'>['status']) =>
 			t.run(async (ctx) => {
@@ -252,13 +385,7 @@ describe('thread hierarchy', () => {
 			});
 
 		await transition(runIds[0], 'running');
-		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 2,
-			completed: 1,
-			failed: 1,
-			cancelled: 1
-		});
+		expect((await summary(t, threadId)).workingDescendantCount).toBe(2);
 		expect(
 			await t.run((ctx) =>
 				ctx.db
@@ -269,16 +396,11 @@ describe('thread hierarchy', () => {
 		).toMatchObject({ activeDescendantCount: 2 });
 
 		await transition(runIds[1], 'failed');
-		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 1,
-			completed: 1,
-			failed: 2,
-			cancelled: 1
-		});
+		expect((await summary(t, threadId)).workingDescendantCount).toBe(1);
 		expect(await summary(t, queued)).toMatchObject({
 			descendantCount: 1,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 1, cancelled: 0 },
+			workingDescendantCount: 0,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false
 		});
@@ -286,32 +408,28 @@ describe('thread hierarchy', () => {
 		await transition(runIds[0], 'cancelled');
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 5,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 2, cancelled: 2 },
+			workingDescendantCount: 0,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 5, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
 		});
 
+		const beforeTerminalTransition = await t.run((ctx) =>
+			ctx.db.query('threadHierarchyStates').collect()
+		);
+
 		await transition(runIds[1], 'completed');
-		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 0,
-			completed: 2,
-			failed: 1,
-			cancelled: 2
-		});
-		expect((await summary(t, queued)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 0,
-			completed: 1,
-			failed: 0,
-			cancelled: 0
-		});
+		expect((await summary(t, threadId)).workingDescendantCount).toBe(0);
+		expect((await summary(t, queued)).workingDescendantCount).toBe(0);
+		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(
+			beforeTerminalTransition
+		);
 
 		const states = await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect());
 		await t.run(async (ctx) => {
 			for (const id of [threadId, queued, running]) {
-				await refreshThreadHierarchyActivity(ctx, id);
-				await refreshThreadHierarchyActivity(ctx, id);
+				await captureThreadActivityBeforeChange(ctx, id);
+				await captureThreadActivityBeforeChange(ctx, id);
 			}
 		});
 		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(states);

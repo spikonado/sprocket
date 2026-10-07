@@ -24,7 +24,7 @@ import { inboxState, type InboxState } from '@convex/lib/inboxState';
 import type { Project } from '$lib/types/sprocket';
 import type { SprocketTheme } from '$lib/theme';
 import type { InboxSectionData } from '$lib/project/inbox';
-import { isRootThread, subagentStatusRows } from '$lib/project/subagents';
+import { isRootThread, subagentSummaryLabel } from '$lib/project/subagents';
 import type { UseExpandedThreads, ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
 import { useThreadTreeSummary } from '$lib/project/useThreadTree';
 import { cn } from '$lib/utils';
@@ -693,8 +693,13 @@ function ThreadTreeRow({
 
 	const status = inboxRunStatus(thread);
 	const descendantCount = summary?.descendantCount ?? 0;
-	const subagentRows = subagentStatusRows(descendantCount, summary?.descendantStatusCounts);
-	const subagentSummary = subagentRows.map((row) => row.label).join(', ');
+	const workingCount = summary?.workingDescendantCount ?? 0;
+
+	const subagentSummary = subagentSummaryLabel(
+		descendantCount,
+		workingCount,
+		summary?.descendantsActive ?? false
+	);
 
 	const expanded = expansion.isExpanded(thread._id);
 	const isRoot = isRootThread(thread);
@@ -825,18 +830,11 @@ function ThreadTreeRow({
 						}}
 					>
 						{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-						<span className="inbox-subagent-statuses">
-							{subagentRows.map(({ status, label }) => (
-								<span
-									key={status}
-									className={cn('inbox-subagent-status-row inbox-row-subagents', {
-										'inbox-working': status === 'running'
-									})}
-								>
-									{label}
-								</span>
-							))}
-						</span>
+						{subagentSummary && (
+							<span className={cn('inbox-row-subagents', { 'inbox-working': workingCount > 0 })}>
+								{subagentSummary}
+							</span>
+						)}
 					</button>
 				)}
 			</div>

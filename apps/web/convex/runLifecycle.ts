@@ -9,7 +9,10 @@ import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { cancelPendingQuestionsForThread } from '@convex/agentQuestions';
-import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import {
+	captureThreadActivityBeforeChange,
+	updateThreadHierarchyAfterChange
+} from '@convex/lib/threadHierarchy';
 
 export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Promise<void> {
 	const run = await ctx.db.get('runs', runId);
@@ -80,8 +83,6 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			? await cancelPendingQuestionsForThread(ctx, current.threadId)
 			: false;
 
-	if (latest?._id === current._id) await refreshThreadHierarchyActivity(ctx, current.threadId);
-
 	if (isRunFinalStatus(current.status)) {
 		return cancelledQuestions;
 	}
@@ -90,11 +91,13 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 		return true;
 	}
 
+	const before = await captureThreadActivityBeforeChange(ctx, current.threadId);
 	const now = Date.now();
 	await ctx.db.patch('runs', current._id, {
 		cancellationRequestedAt: now,
 		cancellationDeadlineAt: now + CANCELLATION_FORCE_AFTER_MS
 	});
+	await updateThreadHierarchyAfterChange(ctx, before);
 	await ctx.scheduler.runAfter(CANCELLATION_FORCE_AFTER_MS, internal.runLifecycle.forceCancelRun, {
 		runId: current._id
 	});

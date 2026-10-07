@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FunctionArgs } from 'convex/server';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
@@ -884,6 +884,35 @@ describe('subagents.control', () => {
 			});
 		}
 	);
+
+	it('clears ancestor activity when the last question of a completed child times out', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { caller, child, childRun, questionId } = await childWithPendingQuestion(t);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: child.runId,
+			text: 'Waiting',
+			status: 'completed',
+			executionSecret: childRun.executionSecret
+		});
+
+		const summary = () =>
+			caller.asUser.query(api.threads.subtreeSummaryForThread, { threadId: caller.threadId });
+
+		expect(await summary()).toMatchObject({
+			workingDescendantCount: 0,
+			descendantsActive: true
+		});
+		vi.setSystemTime(Date.now() + 60_000);
+		await t.mutation(internal.agentQuestions.timeout, { questionId });
+		expect(await summary()).toMatchObject({
+			descendantCount: 1,
+			workingDescendantCount: 0,
+			descendantsActive: false
+		});
+		await t.mutation(internal.agentQuestions.timeout, { questionId });
+		expect((await summary()).descendantsActive).toBe(false);
+	});
 
 	it('parent discovers and answers a child question; first answer wins', async () => {
 		const t = initConvexTest();

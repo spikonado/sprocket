@@ -2,7 +2,10 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
-import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import {
+	captureThreadActivityBeforeChange,
+	updateThreadHierarchyAfterChange
+} from '@convex/lib/threadHierarchy';
 
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
@@ -13,6 +16,8 @@ export async function setRunAndThreadStatus(
 	const current = await ctx.db.get('runs', run._id);
 
 	if (!current) throw new Error('Run not found.');
+
+	const before = await captureThreadActivityBeforeChange(ctx, current.threadId);
 
 	if (
 		current.status !== status ||
@@ -37,5 +42,5 @@ export async function setRunAndThreadStatus(
 		await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
 	}
 
-	await refreshThreadHierarchyActivity(ctx, run.threadId);
+	await updateThreadHierarchyAfterChange(ctx, before);
 }
