@@ -352,11 +352,16 @@ async fn local_image_prefers_workspace_images_and_scopes_missing_paths_to_transc
     for revision_only in [false, true] {
         let missing = app
             .clone()
-            .oneshot(image_request_with_options(None, path, Some(&token), &[
-                ("userId", "test-user"),
-                ("threadId", "missing-thread"),
-                ("revisionOnly", if revision_only { "true" } else { "false" }),
-            ]))
+            .oneshot(image_request_with_options(
+                None,
+                path,
+                Some(&token),
+                &[
+                    ("userId", "test-user"),
+                    ("threadId", "missing-thread"),
+                    ("revisionOnly", if revision_only { "true" } else { "false" }),
+                ],
+            ))
             .await
             .unwrap();
         if revision_only {
@@ -432,10 +437,12 @@ async fn local_image_serves_each_thread_image_tool_cache() {
         std::fs::write(thread_dir.join(&path), contents).unwrap();
         let response = app
             .clone()
-            .oneshot(image_request_with_options(None, &path, Some(&token), &[
-                ("userId", "test-user"),
-                ("threadId", "thread-1"),
-            ]))
+            .oneshot(image_request_with_options(
+                None,
+                &path,
+                Some(&token),
+                &[("userId", "test-user"), ("threadId", "thread-1")],
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
