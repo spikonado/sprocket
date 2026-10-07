@@ -1,11 +1,10 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
-	assistantTimelineToolError,
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
-import { isCommandToolKind, isSessionCommandToolKind } from '$lib/chat/command-tool-kinds';
+import { isCommandToolKind, isSessionCommandToolKind } from '@convex/lib/commandToolKinds';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -91,6 +90,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'spawn_subagent':
 			return jsonString(fields?.prompt) ?? 'Child agent';
 		case 'control_subagent':
+			if (fields?.action === 'send') return jsonString(fields.prompt) ?? 'Message child agent';
+
 			if (fields?.action === 'stop') return 'Stop child agent';
 
 			if (fields?.action === 'answer_question') return 'Answered question';
@@ -164,13 +165,6 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		default:
 			return titleizeSnakeCase(name);
 	}
-}
-
-/** Patch summaries list one path per line; give them room to wrap instead of truncating. */
-export function toolSummaryClass(toolLog: AssistantTimelineTool) {
-	return (toolLog.job?.kind ?? toolLog.name) === 'apply_patch'
-		? 'whitespace-pre-wrap [overflow-wrap:anywhere]'
-		: 'truncate';
 }
 
 /** "Merchant · 120.00 USD monthly" from a mandate setup payload. */
@@ -375,16 +369,4 @@ export function toolItemSummary(
 	}
 
 	return summarizeTool(toolLog.name, toolLog.input);
-}
-
-export function fullToolSummary(
-	toolLog: AssistantTimelineTool,
-	isStreaming: boolean,
-	sessionCommands: ReadonlyMap<string, string>
-) {
-	const summary = toolItemSummary(toolLog, sessionCommands);
-
-	const error = assistantTimelineToolError(toolLog, isStreaming);
-
-	return error ? `${summary} (${error})` : summary;
 }

@@ -5,7 +5,7 @@ import {
 	type AssistantToolCallPart
 } from '@convex/lib/assistantParts';
 import type { JsonValue } from '@convex/lib/json';
-import { isCommandToolKind, isExecCommandToolKind } from '$lib/chat/command-tool-kinds';
+import { isCommandToolKind, isExecCommandToolKind } from '@convex/lib/commandToolKinds';
 import { jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 
@@ -323,7 +323,7 @@ export function assistantTimelineToolError(
 
 	if (item.job) {
 		if (item.job.status === 'cancelled') {
-			return item.job.error ?? outputError ?? 'Executor job cancelled before completion.';
+			return item.job.error ?? outputError ?? 'Tool stopped before completion.';
 		}
 
 		if (item.job.status === 'failed') {

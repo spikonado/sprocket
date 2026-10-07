@@ -3,12 +3,7 @@ import {
 	assistantTimelineToolFailureKind,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
-import {
-	fullToolSummary,
-	toolItemLabel,
-	toolItemSummary,
-	toolSummaryClass
-} from '$lib/chat/tool-summaries';
+import { toolItemLabel, toolItemSummary } from '$lib/chat/tool-summaries';
 import { toolLogIcon } from '$lib/chat/tool-icons';
 
 type Props = {
@@ -35,11 +30,11 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 				return (
 					<div key={tool.callId} data-tool-kind={kind} className="min-w-0 space-y-1.5">
 						{summaries.map((item, index) => (
-							<p
+							<div
 								key={index}
+								data-tool-row
 								data-work-detail
 								className="flex min-w-0 items-start gap-1.5"
-								title={fullToolSummary(tool, inProgress, commands)}
 							>
 								<Icon className="mt-1 size-3.5 shrink-0" aria-hidden="true" />
 								{label ? (
@@ -48,11 +43,13 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 										{item ? ':' : ''}
 									</span>
 								) : null}
-								{item ? <span className={`min-w-0 ${toolSummaryClass(tool)}`}>{item}</span> : null}
+								{item ? <span className="min-w-0 truncate">{item}</span> : null}
 								{error && failure && index === summaries.length - 1 ? (
-									<span className={`shrink-0 ${errorClass}`}>({failure})</span>
+									<span className={`shrink-0 ${errorClass}`}>
+										({failure === 'cancelled' ? 'stopped' : failure})
+									</span>
 								) : null}
-							</p>
+							</div>
 						))}
 						{error && failure ? (
 							<p

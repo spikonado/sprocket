@@ -2,12 +2,13 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rig::client::CompletionClient;
-use rig::completion::{
-    CompletionError, CompletionModel, CompletionRequest, CompletionResponse, ProviderCapabilities,
+use rig::DynModel;
+use rig::http_client::{
+    self, DynHttpClient, HeaderMap, HttpMiddleware, Method, ReqwestClient, Uri, bearer_auth_header,
 };
-use rig::providers::openai;
-use rig::streaming::StreamingCompletionResponse;
+use rig::operation::Completion;
+use rig::providers::openai::OpenAIConfig;
+use rig::wasm_compat::WasmBoxedFuture;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
@@ -15,113 +16,111 @@ use crate::live::now_ms;
 use crate::types::GatewayCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
+const GATEWAY_MANAGED_KEY: &str = "gateway-managed-by-transport";
 
-struct CachedClient {
-    client: openai::Client,
+struct CachedCredential {
+    token: String,
     expires_at: u64,
     refresh_at: Instant,
 }
 
 #[derive(Clone)]
-pub(crate) struct GatewayClient<F> {
-    base_url: String,
+struct GatewayAuth<F> {
     issue_credential: F,
-    http: reqwest::Client,
-    cached: Arc<Mutex<Option<CachedClient>>>,
+    cached: Arc<Mutex<Option<CachedCredential>>>,
 }
 
-impl<F> GatewayClient<F> {
-    pub(crate) fn new(base_url: String, issue_credential: F) -> Self {
-        Self {
-            base_url,
-            issue_credential,
-            http: reqwest::Client::new(),
-            cached: Arc::default(),
-        }
-    }
-}
-
-impl<F, Fut> CompletionClient for GatewayClient<F>
-where
-    F: Fn() -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send,
-{
-    type CompletionModel = GatewayModel<F>;
-
-    fn completion_model(&self, model: impl Into<String>) -> Self::CompletionModel {
-        GatewayModel {
-            client: self.clone(),
-            model: model.into(),
-        }
-    }
-}
-
-pub(crate) struct GatewayModel<F> {
-    client: GatewayClient<F>,
-    model: String,
-}
-
-impl<F, Fut> GatewayModel<F>
+impl<F, Fut> GatewayAuth<F>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<GatewayCredential>>,
 {
-    async fn responses_model(
-        &self,
-    ) -> Result<openai::responses_api::ResponsesCompletionModel, CompletionError> {
-        let mut cached = self.client.cached.lock().await;
+    fn new(issue_credential: F) -> Self {
+        Self {
+            issue_credential,
+            cached: Arc::default(),
+        }
+    }
+
+    async fn resolve_credential(&self) -> http_client::Result<String> {
+        let mut cached = self.cached.lock().await;
         if let Some(cached) = cached.as_ref()
             && Instant::now() < cached.refresh_at
             && cached.expires_at.saturating_sub(now_ms()) > REFRESH_HEADROOM_MS
         {
-            return Ok(cached.client.completion_model(&self.model));
+            return Ok(cached.token.clone());
         }
-        let credential = (self.client.issue_credential)()
+        let credential = (self.issue_credential)()
             .await
-            .map_err(|error| CompletionError::RequestError(error.into_boxed_dyn_error()))?;
+            .map_err(|error| http_client::Error::Instance(error.into()))?;
         let remaining_ms = credential.expires_at.saturating_sub(now_ms());
         if remaining_ms <= REFRESH_HEADROOM_MS {
-            return Err(CompletionError::RequestError(
+            return Err(http_client::Error::Instance(
                 "Gateway returned a credential too close to expiry.".into(),
             ));
         }
-        let client = openai::Client::builder()
-            .api_key(credential.token)
-            .base_url(&self.client.base_url)
-            .http_client(self.client.http.clone())
-            .build()
-            .map_err(|error| CompletionError::RequestError(error.into()))?;
-        let model = client.completion_model(&self.model);
-        *cached = Some(CachedClient {
-            client,
+        let token = credential.token.clone();
+        *cached = Some(CachedCredential {
+            token: token.clone(),
             expires_at: credential.expires_at,
             refresh_at: Instant::now() + Duration::from_millis(remaining_ms - REFRESH_HEADROOM_MS),
         });
-        Ok(model)
+        Ok(token)
     }
 }
 
-impl<F, Fut> CompletionModel for GatewayModel<F>
+impl<F, Fut> HttpMiddleware for GatewayAuth<F>
 where
-    F: Fn() -> Fut + Send + Sync,
-    Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send,
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
 {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::default().with_native_output_tool_composition(true)
+    fn before_request_headers<'a>(
+        &'a self,
+        _method: &'a Method,
+        _uri: &'a Uri,
+        headers: &'a mut HeaderMap,
+    ) -> WasmBoxedFuture<'a, http_client::Result<()>> {
+        Box::pin(async move {
+            let token = self.resolve_credential().await?;
+            bearer_auth_header(headers, token)?;
+            Ok(())
+        })
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct GatewayClient {
+    base_url: String,
+    http: DynHttpClient,
+    #[cfg(test)]
+    cached: Arc<Mutex<Option<CachedCredential>>>,
+}
+
+impl GatewayClient {
+    pub(crate) fn new<F, Fut>(base_url: String, issue_credential: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
+    {
+        let auth = GatewayAuth::new(issue_credential);
+        #[cfg(test)]
+        let cached = Arc::clone(&auth.cached);
+        let http =
+            DynHttpClient::new(ReqwestClient::from(reqwest::Client::new())).with_middleware(auth);
+        Self {
+            base_url,
+            http,
+            #[cfg(test)]
+            cached,
+        }
     }
 
-    async fn completion(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<CompletionResponse, CompletionError> {
-        self.responses_model().await?.completion(request).await
-    }
-
-    async fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse, CompletionError> {
-        self.responses_model().await?.stream(request).await
+    pub(crate) fn completion_model(&self, model: impl Into<String>) -> DynModel<Completion> {
+        OpenAIConfig::new(GATEWAY_MANAGED_KEY)
+            .with_base_url(&self.base_url)
+            .connect(self.http.clone())
+            .responses(model)
+            .erase()
     }
 }
 
@@ -132,6 +131,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::StreamExt;
+    use rig::completion::CompletionRequest;
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -142,19 +142,7 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn request() -> CompletionRequest {
-        CompletionRequest {
-            model: None,
-            preamble: None,
-            chat_history: vec![rig::completion::Message::user("hello")],
-            documents: vec![],
-            tools: vec![],
-            temperature: None,
-            max_tokens: None,
-            tool_choice: None,
-            additional_params: None,
-            output_schema: None,
-            record_telemetry_content: false,
-        }
+        CompletionRequest::new("hello")
     }
 
     #[tokio::test]
@@ -227,7 +215,7 @@ mod tests {
             move || {
                 let number = issued.fetch_add(1, Ordering::SeqCst) + 1;
                 async move {
-                    Ok(GatewayCredential {
+                    Ok::<_, anyhow::Error>(GatewayCredential {
                         token: format!("token-{number}"),
                         expires_at: now_ms() + 36 * 60 * 60 * 1000,
                     })
@@ -235,17 +223,17 @@ mod tests {
             }
         });
         let model = client.completion_model("test-model");
-        timeout(TEST_TIMEOUT, model.completion(request()))
+        timeout(TEST_TIMEOUT, model.call(request()))
             .await
             .unwrap()
             .unwrap();
-        timeout(TEST_TIMEOUT, model.completion(request()))
+        timeout(TEST_TIMEOUT, model.call(request()))
             .await
             .unwrap()
             .unwrap();
         client.cached.lock().await.as_mut().unwrap().refresh_at = Instant::now();
         timeout(TEST_TIMEOUT, async {
-            let mut stream = model.stream(request()).await.unwrap();
+            let mut stream = model.stream(request()).unwrap();
             while let Some(item) = stream.next().await {
                 item.unwrap();
             }
@@ -275,7 +263,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn concurrent_requests_reuse_the_cache_and_refresh_before_expiry() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let issued = issued.clone();
@@ -289,31 +277,31 @@ mod tests {
                 }
             }
         });
-        let first = client.completion_model("first");
-        let second = client.clone().completion_model("second");
-        let (a, b) = tokio::join!(first.responses_model(), second.responses_model());
+        let cloned = auth.clone();
+        let (a, b) = tokio::join!(auth.resolve_credential(), cloned.resolve_credential());
         a.unwrap();
         b.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 1);
-        let refresh_at = client.cached.lock().await.as_ref().unwrap().refresh_at;
+        let refresh_at = auth.cached.lock().await.as_ref().unwrap().refresh_at;
         tokio::time::advance(refresh_at.duration_since(Instant::now()) - Duration::from_millis(1))
             .await;
-        first.responses_model().await.unwrap();
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 1);
         tokio::time::advance(Duration::from_millis(1)).await;
-        let (a, b) = tokio::join!(first.responses_model(), second.responses_model());
+        let cloned = auth.clone();
+        let (a, b) = tokio::join!(auth.resolve_credential(), cloned.resolve_credential());
         a.unwrap();
         b.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 2);
         tokio::time::advance(Duration::from_secs(37 * 60 * 60)).await;
-        first.responses_model().await.unwrap();
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn failed_refresh_can_retry_without_using_the_stale_credential() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let attempt = issued.fetch_add(1, Ordering::SeqCst);
@@ -328,18 +316,17 @@ mod tests {
                 }
             }
         });
-        let model = client.completion_model("test-model");
-        model.responses_model().await.unwrap();
-        client.cached.lock().await.as_mut().unwrap().refresh_at = Instant::now();
-        assert!(model.responses_model().await.is_err());
-        model.responses_model().await.unwrap();
+        auth.resolve_credential().await.unwrap();
+        auth.cached.lock().await.as_mut().unwrap().refresh_at = Instant::now();
+        assert!(auth.resolve_credential().await.is_err());
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn credentials_within_the_refresh_headroom_are_rejected() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let issued = issued.clone();
@@ -355,19 +342,18 @@ mod tests {
                 }
             }
         });
-        let model = client.completion_model("test-model");
         for _ in 0..2 {
-            let error = model.responses_model().await.err().unwrap();
+            let error = auth.resolve_credential().await.err().unwrap();
             assert!(error.to_string().contains("too close to expiry"));
         }
         assert_eq!(issued.load(Ordering::SeqCst), 2);
-        assert!(client.cached.lock().await.is_none());
+        assert!(auth.cached.lock().await.is_none());
     }
 
     #[tokio::test(start_paused = true)]
     async fn wall_clock_expired_cache_entry_is_not_reused() {
         let issued = Arc::new(AtomicUsize::new(0));
-        let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), {
+        let auth = GatewayAuth::new({
             let issued = issued.clone();
             move || {
                 let issued = issued.clone();
@@ -380,26 +366,26 @@ mod tests {
                 }
             }
         });
-        let model = client.completion_model("test-model");
-        model.responses_model().await.unwrap();
+        auth.resolve_credential().await.unwrap();
         // A wall-clock jump past expiry must force a refresh even though the
         // monotonic refresh deadline is still far ahead.
-        client.cached.lock().await.as_mut().unwrap().expires_at = now_ms() - 1;
-        model.responses_model().await.unwrap();
+        auth.cached.lock().await.as_mut().unwrap().expires_at = now_ms() - 1;
+        auth.resolve_credential().await.unwrap();
         assert_eq!(issued.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn credential_failures_reach_both_inference_paths() {
         let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), || async {
-            Err(anyhow::anyhow!("Run is no longer active."))
+            Err::<GatewayCredential, _>(anyhow::anyhow!("Run is no longer active."))
         });
         let model = client.completion_model("test-model");
-        let error = model.completion(request()).await.unwrap_err();
+        let error = model.call(request()).await.unwrap_err();
         assert!(error.to_string().contains("Run is no longer active."));
-        match model.stream(request()).await {
-            Err(error) => assert!(error.to_string().contains("Run is no longer active.")),
-            Ok(_) => panic!("a cancelled claim cannot start inference"),
+        let mut stream = model.stream(request()).unwrap();
+        match stream.next().await {
+            Some(Err(error)) => assert!(error.to_string().contains("Run is no longer active.")),
+            other => panic!("a cancelled claim cannot start inference: {other:?}"),
         }
     }
 }

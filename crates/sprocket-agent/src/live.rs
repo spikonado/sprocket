@@ -185,6 +185,37 @@ impl LiveAssistantParts {
         }
     }
 
+    pub fn apply_completed_text(
+        &mut self,
+        id: String,
+        text: String,
+        turn_id: Option<String>,
+        now_ms: u64,
+    ) -> String {
+        let key = format!("text:{id}");
+        if let Some(&index) = self.text_index.get(&key)
+            && let LiveAssistantPart::Text {
+                text: existing,
+                completed_at,
+                turn_id: existing_turn,
+                ..
+            } = &mut self.parts[index]
+        {
+            *completed_at = Some(now_ms);
+            *existing_turn = turn_id;
+            return std::mem::replace(existing, text);
+        }
+        self.text_index.insert(key, self.parts.len());
+        self.parts.push(LiveAssistantPart::Text {
+            id,
+            text,
+            started_at: Some(now_ms),
+            completed_at: Some(now_ms),
+            turn_id,
+        });
+        String::new()
+    }
+
     pub fn apply_completed_reasoning(
         &mut self,
         id: String,
@@ -426,6 +457,37 @@ mod tests {
             serde_json::to_value(&parts.parts).unwrap()[0]["startedAt"],
             serde_json::json!(10)
         );
+    }
+
+    #[test]
+    fn completed_text_replaces_deltas_even_when_the_authoritative_text_is_empty() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta("text", "t".into(), "partial", Some("turn".into()), 10);
+        parts.apply_text_delta("reasoning", "r".into(), "thinking", Some("turn".into()), 20);
+
+        assert_eq!(
+            parts.apply_completed_text("t".into(), "done".into(), Some("turn".into()), 30),
+            "partial"
+        );
+        assert_eq!(
+            parts.apply_completed_text("t".into(), String::new(), Some("turn".into()), 40),
+            "done"
+        );
+        assert_eq!(
+            parts.parts[0],
+            LiveAssistantPart::Text {
+                id: "t".into(),
+                text: String::new(),
+                started_at: Some(10),
+                completed_at: Some(40),
+                turn_id: Some("turn".into()),
+            }
+        );
+        assert_eq!(parts.parts.len(), 2);
+        assert!(matches!(
+            &parts.parts[1],
+            LiveAssistantPart::Reasoning { text, .. } if text == "thinking"
+        ));
     }
 
     #[test]

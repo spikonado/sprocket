@@ -20,12 +20,28 @@ export const vCompletionProvider = v.union(...literals(completionProviderIds));
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();
 
+export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'));
+
+// Public checkout mode surfaced to the website; never exposes raw provider
+// environment naming.
+export const vDodoMode = v.union(v.literal('test'), v.literal('live'));
+
 export const vSubscriptionStatus = v.union(
 	v.literal('active'),
 	v.literal('on_hold'),
 	v.literal('cancelled'),
 	v.literal('expired'),
 	v.literal('failed')
+);
+
+// Neutral provider-backed attempt status; never asserts entitlement by itself.
+export const vCheckoutAttemptStatus = v.union(
+	v.literal('awaiting_payment'),
+	v.literal('pending'),
+	v.literal('succeeded'),
+	v.literal('failed'),
+	v.literal('expired'),
+	v.literal('unknown')
 );
 
 export const vWorkspaceInstruction = v.object({
@@ -221,13 +237,12 @@ export const vSubagentPayload = v.object({
 	timeoutMs: v.optional(v.number())
 });
 
-export const vControlSubagentPayload = v.object({
+export const vControlSubagentPayload = vSubagentPayload.partial().extend({
 	threadId: v.id('threadRecords'),
-	action: v.union(v.literal('stop'), v.literal('answer_question')),
+	action: v.union(v.literal('send'), v.literal('stop'), v.literal('answer_question')),
 	questionId: v.optional(v.id('agentQuestions')),
 	optionId: v.optional(v.string()),
-	text: v.optional(v.string()),
-	yieldTimeMs: v.optional(v.number())
+	text: v.optional(v.string())
 });
 
 export const vPollSubagentPayload = v.object({
@@ -497,6 +512,16 @@ export const vRunStatus = v.union(
 	v.literal('cancelled')
 );
 
+export const vDescendantStatusCounts = v.object({
+	queued: v.number(),
+	running: v.number(),
+	completed: v.number(),
+	failed: v.number(),
+	cancelled: v.number()
+});
+
+export type DescendantStatusCounts = Record<Infer<typeof vRunStatus>, number>;
+
 export const vSubagentSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,
@@ -551,6 +576,7 @@ const vControlSubagentFields = {
 };
 
 export const vControlSubagentResult = v.union(
+	vSpawnSubagentResult,
 	vSubagentActionResult.extend(vControlSubagentFields),
 	vSubagentSnapshotResult.extend(vControlSubagentFields)
 );
@@ -875,6 +901,7 @@ export const vTranscriptToolBody = v.object({
 	toolInvocationId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
+	input: v.optional(vJsonValue),
 	output: v.optional(vJsonValue),
 	status: vTranscriptToolStatus
 });

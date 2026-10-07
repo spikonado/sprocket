@@ -2,10 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
-    AgentHook, HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelTurnAction,
-    ModelTurnFinished, StepEventKind, ToolCallAction,
+    AgentHook, DispatchAction, DispatchEvent, HookContext, InvalidToolCallAction,
+    InvalidToolCallContext, InvalidToolCallReason, StepEventKind,
 };
-use rig::message::AssistantContent;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -114,11 +113,7 @@ pub(crate) struct SectionAssignment {
 enum OrderedContent {
     Text(bool),
     Reasoning(bool),
-    Tool {
-        model_call_id: String,
-        call_id: String,
-    },
-    Other,
+    Tool { call_id: String },
 }
 
 #[derive(Debug)]
@@ -129,7 +124,6 @@ struct ToolCallState {
     stream_id: String,
     next_section_ordinal: u64,
     open_section: Option<SectionAssignment>,
-    streamed_internal_ids: HashMap<String, VecDeque<String>>,
     invocations_by_internal_id: HashMap<String, ToolInvocationAssignment>,
     unbound_invocations: HashMap<String, VecDeque<ToolInvocationAssignment>>,
     dispatches_by_tool: HashMap<String, VecDeque<PendingDispatch>>,
@@ -154,7 +148,6 @@ impl ToolCallTracker {
             stream_id: format!("agent:{run_id}:{claim_id}:1"),
             next_section_ordinal: 1,
             open_section: None,
-            streamed_internal_ids: HashMap::new(),
             invocations_by_internal_id: HashMap::new(),
             unbound_invocations: HashMap::new(),
             dispatches_by_tool: HashMap::new(),
@@ -166,21 +159,10 @@ impl ToolCallTracker {
         if let Ok(mut state) = self.0.lock() {
             state.attempt_seq = attempt_seq;
             state.stream_id = stream_id.to_owned();
-            state.streamed_internal_ids.clear();
             state.invocations_by_internal_id.clear();
             state.unbound_invocations.clear();
             state.dispatches_by_tool.clear();
             state.completion = CompletionAssignments::default();
-        }
-    }
-
-    pub(crate) fn observe_streamed_call(&self, model_call_id: &str, internal_call_id: &str) {
-        if let Ok(mut state) = self.0.lock() {
-            state
-                .streamed_internal_ids
-                .entry(model_call_id.to_owned())
-                .or_default()
-                .push_back(internal_call_id.to_owned());
         }
     }
 
@@ -189,6 +171,26 @@ impl ToolCallTracker {
             .lock()
             .map(|state| state.completion.clone())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn record_parts(&self, parts: &[crate::live::LiveAssistantPart]) {
+        use crate::live::LiveAssistantPart;
+
+        let content = parts
+            .iter()
+            .map(|part| match part {
+                LiveAssistantPart::Text { text, .. } => {
+                    OrderedContent::Text(!text.trim().is_empty())
+                }
+                LiveAssistantPart::Reasoning { text, .. } => {
+                    OrderedContent::Reasoning(!text.trim().is_empty())
+                }
+                LiveAssistantPart::ToolCall { call_id, .. } => OrderedContent::Tool {
+                    call_id: call_id.clone(),
+                },
+            })
+            .collect::<Vec<_>>();
+        self.record_turn(&content);
     }
 
     pub(crate) fn assignment_for_dispatch(
@@ -265,10 +267,7 @@ impl ToolCallTracker {
                         &section.section_key,
                     );
                 }
-                OrderedContent::Tool {
-                    model_call_id,
-                    call_id,
-                } => {
+                OrderedContent::Tool { call_id } => {
                     let section = ensure_section(&mut state);
                     touched_sections.push(section.clone());
                     push_range(
@@ -290,26 +289,14 @@ impl ToolCallTracker {
                         attempt_seq: state.attempt_seq,
                         stream_id: state.stream_id.clone(),
                     };
-                    let internal_id = state
-                        .streamed_internal_ids
-                        .get_mut(model_call_id)
-                        .and_then(VecDeque::pop_front);
-                    if let Some(internal_id) = internal_id {
-                        state
-                            .invocations_by_internal_id
-                            .insert(internal_id, assignment.clone());
-                    } else {
-                        state
-                            .unbound_invocations
-                            .entry(call_id.clone())
-                            .or_default()
-                            .push_back(assignment.clone());
-                    }
+                    state
+                        .unbound_invocations
+                        .entry(call_id.clone())
+                        .or_default()
+                        .push_back(assignment.clone());
                     state.completion.tool_invocations.push(assignment);
                 }
-                OrderedContent::Text(false)
-                | OrderedContent::Reasoning(false)
-                | OrderedContent::Other => {}
+                OrderedContent::Text(false) | OrderedContent::Reasoning(false) => {}
             }
         }
         touched_sections.sort_by_key(|section| section.section_ordinal);
@@ -372,31 +359,6 @@ fn stable_id(kind: &str, run_id: &str, claim_id: &str, attempt_seq: u64, index: 
     format!("agent-{kind}-{}", hex::encode(hash.finalize()))
 }
 
-fn ordered_content(content: &[AssistantContent]) -> Vec<OrderedContent> {
-    content
-        .iter()
-        .map(|item| match item {
-            AssistantContent::Text(text) => OrderedContent::Text(!text.text.trim().is_empty()),
-            AssistantContent::Reasoning(reasoning) => {
-                // Must match what is persisted: summary blocks only. `display_text`
-                // also joins Text/Redacted, which never become transcript text.
-                // Empty (encrypted-only) reasoning is stored for replay but carries
-                // no work assignment; the server rejects work covering it.
-                OrderedContent::Reasoning(
-                    !crate::reasoning::reasoning_summary_text(reasoning)
-                        .trim()
-                        .is_empty(),
-                )
-            }
-            AssistantContent::ToolCall(call) => OrderedContent::Tool {
-                model_call_id: call.id.as_str().to_owned(),
-                call_id: call.wire_call_id().to_owned(),
-            },
-            _ => OrderedContent::Other,
-        })
-        .collect()
-}
-
 #[derive(Clone)]
 pub(crate) struct AgentPromptHook {
     tracker: ToolCallTracker,
@@ -409,29 +371,23 @@ impl AgentPromptHook {
 }
 
 impl AgentHook for AgentPromptHook {
-    async fn on_tool_call(
+    async fn on_dispatch(
         &self,
         _context: &HookContext,
-        event: rig::agent::ToolCall<'_>,
-    ) -> ToolCallAction {
-        if AGENT_TOOL_NAMES.contains(&event.tool_name) {
+        event: DispatchEvent<'_>,
+    ) -> DispatchAction {
+        if let Some(tool_name) = event.tool_name()
+            && AGENT_TOOL_NAMES.contains(&tool_name)
+        {
+            let call_id = event.call_id.map(|id| id.wire());
             self.tracker.prepare_dispatch(
-                event.tool_name,
-                event.internal_call_id,
-                event.tool_call_id,
-                event.args,
+                tool_name,
+                &event.id.to_string(),
+                call_id.as_deref(),
+                event.tool_args().unwrap_or_default(),
             );
         }
-        ToolCallAction::Run
-    }
-
-    async fn on_model_turn_finished(
-        &self,
-        _context: &HookContext,
-        event: ModelTurnFinished<'_>,
-    ) -> ModelTurnAction {
-        self.tracker.record_turn(&ordered_content(event.content));
-        ModelTurnAction::Continue
+        DispatchAction::proceed()
     }
 
     async fn on_invalid_tool_call(
@@ -445,9 +401,7 @@ impl AgentHook for AgentPromptHook {
     fn observes(&self, kind: StepEventKind) -> bool {
         matches!(
             kind,
-            StepEventKind::InvalidToolCall
-                | StepEventKind::ToolCall
-                | StepEventKind::ModelTurnFinished
+            StepEventKind::InvalidToolCall | StepEventKind::ToolDispatch
         )
     }
 }
@@ -472,6 +426,12 @@ fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Val
 }
 
 pub(crate) fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> InvalidToolCallAction {
+    if let InvalidToolCallReason::MalformedArguments { error } = &context.reason {
+        return InvalidToolCallAction::retry(format!(
+            "Tool `{}` received malformed arguments: {error}. Submit valid JSON matching its schema.",
+            context.tool_name,
+        ));
+    }
     resolve_invalid_tool_name(&context.tool_name, &context.available_tools)
 }
 
@@ -660,17 +620,35 @@ mod tests {
     }
 
     #[test]
-    fn tracker_associates_identical_parallel_calls_by_internal_identity() {
+    fn malformed_arguments_retry_without_repairing_a_valid_tool_name() {
+        let action = resolve_invalid_tool_call(&InvalidToolCallContext {
+            tool_name: "exec_command".into(),
+            tool_call_id: None,
+            args: Some("{broken".into()),
+            available_tools: vec!["exec_command".into()],
+            allowed_tools: vec!["exec_command".into()],
+            tool_choice: None,
+            chat_history: Vec::new(),
+            is_streaming: true,
+            reason: InvalidToolCallReason::MalformedArguments {
+                error: "expected quoted key".into(),
+            },
+        });
+        let InvalidToolCallAction::Retry { feedback } = action else {
+            panic!("malformed arguments must be retried, not repaired");
+        };
+        assert!(feedback.contains("valid JSON"));
+        assert!(feedback.contains("expected quoted key"));
+    }
+
+    #[test]
+    fn tracker_associates_parallel_calls_by_dispatch_identity() {
         let tracker = ToolCallTracker::new("run", "claim");
-        tracker.observe_streamed_call("model-1", "internal-1");
-        tracker.observe_streamed_call("model-2", "internal-2");
         tracker.record_turn(&[
             OrderedContent::Tool {
-                model_call_id: "model-1".into(),
                 call_id: "call-1".into(),
             },
             OrderedContent::Tool {
-                model_call_id: "model-2".into(),
                 call_id: "call-2".into(),
             },
         ]);
@@ -715,11 +693,9 @@ mod tests {
             .collect::<Vec<_>>();
         tracker.record_turn(&[
             OrderedContent::Tool {
-                model_call_id: "model-1".into(),
                 call_id: "call-1".into(),
             },
             OrderedContent::Tool {
-                model_call_id: "model-2".into(),
                 call_id: "call-2".into(),
             },
         ]);
@@ -738,7 +714,6 @@ mod tests {
         tracker.record_turn(&[
             OrderedContent::Reasoning(true),
             OrderedContent::Tool {
-                model_call_id: "one".into(),
                 call_id: "one".into(),
             },
         ]);
@@ -753,7 +728,6 @@ mod tests {
             OrderedContent::Text(true),
             OrderedContent::Reasoning(true),
             OrderedContent::Tool {
-                model_call_id: "two".into(),
                 call_id: "two".into(),
             },
         ]);
@@ -767,36 +741,5 @@ mod tests {
             second.tool_invocations[0].section_key,
             second.work.ranges[1].section_key
         );
-    }
-
-    #[test]
-    fn non_summary_reasoning_blocks_carry_no_work() {
-        use rig::message::{AssistantContent, Reasoning, ReasoningContent};
-
-        // Summary text is what gets persisted, so only it counts as work.
-        // Text/Redacted never become transcript text; Encrypted is replay-only.
-        let summary = ordered_content(&[AssistantContent::Reasoning(Reasoning {
-            id: Some("rs_1".into()),
-            content: vec![ReasoningContent::Summary("plan".into())],
-        })]);
-        assert_eq!(summary, vec![OrderedContent::Reasoning(true)]);
-
-        for content in [
-            vec![ReasoningContent::Encrypted("envelope".into())],
-            vec![ReasoningContent::Text {
-                text: "raw".into(),
-                signature: None,
-            }],
-            vec![ReasoningContent::Redacted {
-                data: "redacted".into(),
-            }],
-            vec![ReasoningContent::Summary("  \n ".into())],
-        ] {
-            let mapped = ordered_content(&[AssistantContent::Reasoning(Reasoning {
-                id: Some("rs_1".into()),
-                content,
-            })]);
-            assert_eq!(mapped, vec![OrderedContent::Reasoning(false)]);
-        }
     }
 }

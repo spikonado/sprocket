@@ -1,5 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
+import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import {
@@ -16,12 +18,14 @@ import {
 	vAskQuestionAnswer,
 	vAskQuestionOption,
 	vCompletionProvider,
+	vDescendantStatusCounts,
 	vStoredExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
 	vReasoningEffort,
 	vRunStatus,
+	vBillingInterval,
 	vSubscriptionStatus,
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
@@ -58,15 +62,251 @@ export default defineSchema({
 		tierId: v.string(),
 		label: v.string(),
 		weekly: v.number(),
-		monthly: v.number()
-	}).index('by_tierId', ['tierId']),
+		monthly: v.number(),
+		description: v.optional(v.string()),
+		features: v.optional(v.array(v.string())),
+		displayOrder: v.optional(v.number()),
+		highlighted: v.optional(v.boolean()),
+		monthlyProductId: v.optional(v.string()),
+		annualProductId: v.optional(v.string())
+	})
+		.index('by_tierId', ['tierId'])
+		.index('by_monthlyProductId', ['monthlyProductId'])
+		.index('by_annualProductId', ['annualProductId']),
+	billingCustomers: defineTable({
+		userId: v.string(),
+		dodoCustomerId: v.string(),
+		// Provider environment the customer was created in. Legacy rows lack it;
+		// checkout rejects them when the current environment differs.
+		dodoEnvironment: v.optional(v.string())
+	})
+		.index('by_userId', ['userId'])
+		.index('by_dodoCustomerId', ['dodoCustomerId']),
+	billingCheckoutSessions: defineTable({
+		userId: v.string(),
+		attemptId: v.string(),
+		tierId: v.string(),
+		interval: vBillingInterval,
+		productId: v.string(),
+		checkoutUrl: v.optional(v.string()),
+		dodoSessionId: v.optional(v.string()),
+		// Idempotency key for the provider create call. Attempts created before
+		// this field existed minted no key, so it is absent on legacy rows.
+		idempotencyKey: v.optional(v.string()),
+		outcome: v.optional(
+			v.union(
+				v.literal('reserved'),
+				v.literal('created'),
+				v.literal('create_ambiguous'),
+				v.literal('recovered'),
+				v.literal('paid'),
+				v.literal('failed')
+			)
+		),
+		// Wall time of the last outcome transition; retry pacing reads this
+		// instead of inferring it from expiresAt.
+		outcomeUpdatedAt: v.optional(v.number()),
+		createStartedAt: v.optional(v.number()),
+		// Frozen provider create body for an ambiguous attempt: retries must
+		// reissue byte-identical parameters under the same idempotency key.
+		createRequest: v.optional(
+			v.object({
+				productId: v.string(),
+				returnUrl: v.string(),
+				cancelUrl: v.string(),
+				dodoCustomerId: v.string()
+			})
+		),
+		dodoEnvironment: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Released readers use this index; retain until their removal gate passes.
+		.index('by_userId', ['userId'])
+		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
+		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
+	// Older checkout attempts kept after a selection change so their provider
+	// idempotency keys survive and already-created links stay payable.
+	billingCheckoutAttempts: defineTable({
+		userId: v.string(),
+		attemptId: v.string(),
+		tierId: v.string(),
+		interval: vBillingInterval,
+		productId: v.string(),
+		checkoutUrl: v.optional(v.string()),
+		dodoSessionId: v.optional(v.string()),
+		idempotencyKey: v.optional(v.string()),
+		outcome: v.optional(v.string()),
+		outcomeUpdatedAt: v.optional(v.number()),
+		createStartedAt: v.optional(v.number()),
+		createRequest: v.optional(
+			v.object({
+				productId: v.string(),
+				returnUrl: v.string(),
+				cancelUrl: v.string(),
+				dodoCustomerId: v.string()
+			})
+		),
+		dodoEnvironment: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		// eslint-disable-next-line @convex-dev/no-duplicate-indexes -- Checkout history readers require creation-order iteration.
+		.index('by_userId', ['userId'])
+		.index('by_userId_and_attemptId', ['userId', 'attemptId'])
+		.index('by_userId_and_dodoSessionId', ['userId', 'dodoSessionId']),
+	dodoPricingCache: defineTable({
+		// One row per provider environment + product id. Legacy rows key an
+		// entire tier set under cacheKey; new rows set environment/productId.
+		cacheKey: v.string(),
+		environment: v.optional(v.string()),
+		productId: v.optional(v.string()),
+		tierPrices: v.optional(v.array(vTierPrice)),
+		price: v.optional(vDodoPublicPrice),
+		// Set on rows whose last refresh failed: transient errors retry after
+		// retryAt; definitive failures (missing/invalid/ambiguous) hold the
+		// null price until expiresAt.
+		refreshFailed: v.optional(v.boolean()),
+		retryAt: v.optional(v.number()),
+		// Wall time the cached price was last confirmed by the provider. Stale
+		// display is bounded from this, never from retry deadlines, so repeated
+		// transient failures cannot extend display indefinitely.
+		validatedAt: v.optional(v.number()),
+		leaseOwner: v.optional(v.string()),
+		leaseExpiresAt: v.optional(v.number()),
+		expiresAt: v.number()
+	})
+		.index('by_cacheKey', ['cacheKey'])
+		.index('by_environment_and_productId', ['environment', 'productId'])
+		.index('by_environment_and_leaseExpiresAt', ['environment', 'leaseExpiresAt']),
+	subscriptionReconciliations: defineTable({
+		subscriptionId: v.id('subscriptions'),
+		dodoSubscriptionId: v.string(),
+		projectionRevision: v.number(),
+		attempt: v.number(),
+		accessPhase: v.string(),
+		workId: v.string(),
+		state: v.union(v.literal('pending'), v.literal('completed'), v.literal('exhausted')),
+		updatedAt: v.number()
+	}).index('by_subscriptionId', ['subscriptionId']),
 	subscriptions: defineTable({
 		userId: v.string(),
 		// Operator-managed tier id (see the `tiers` table).
 		tier: v.string(),
 		status: vSubscriptionStatus,
-		eventAt: v.number()
-	}).index('by_userId', ['userId']),
+		eventAt: v.number(),
+		// Monotonic per-subscription projection revision. Scheduled expiry
+		// checks and reconciliation fetches fence on it so stale results
+		// cannot overwrite a newer projection.
+		projectionRevision: v.optional(v.number()),
+		observedAt: v.optional(v.number()),
+		providerStatus: v.optional(v.string()),
+		scheduleEventAt: v.optional(v.number()),
+		checkoutAttemptId: v.optional(v.string()),
+		// Paid-access phase and the wall-clock deadline it ends at. The expiry
+		// scheduler advances it; enforcement re-checks `accessEndsAt` so a
+		// delayed scheduler cannot extend access. Undefined rows predate the
+		// field and behave like 'paid'/'none' per subscriptionIsActive.
+		accessPhase: v.optional(
+			v.union(v.literal('paid'), v.literal('renewal_processing'), v.literal('none'))
+		),
+		accessEndsAt: v.optional(v.number()),
+		// Pending provider-scheduled product change. Kept separate from the
+		// effective tier and applied only once provider state confirms it.
+		scheduledChange: v.optional(
+			v.object({
+				id: v.string(),
+				productId: v.string(),
+				effectiveAt: v.number()
+			})
+		),
+		// Distinct ordering watermark for product/term payloads. Status
+		// transitions fence on `eventAt`; payload (tier/term/scheduled change)
+		// transitions fence on this.
+		payloadEventAt: v.optional(v.number()),
+		// Paid-term confirmations fence on their own watermark so a historical
+		// failure cannot override a newer successful term.
+		termEventAt: v.optional(v.number()),
+		billingInterval: v.optional(vBillingInterval),
+		billingPeriodStart: v.optional(v.number()),
+		billingPeriodEnd: v.optional(v.number()),
+		billingPeriodEnded: v.optional(v.boolean()),
+		billingPeriodCheckId: v.optional(v.id('_scheduled_functions')),
+		cancelAtNextBillingDate: v.optional(v.boolean()),
+		// Retained as the bucket key until released timestamp-keyed gateways
+		// age out and consumed buckets are migrated to counter-only keys.
+		quotaResetAt: v.optional(v.number()),
+		// Durable transition counter; released meters still key on quotaResetAt.
+		quotaGeneration: v.optional(v.number()),
+		// Provider event time of the latest usage-generation transition. A
+		// redelivered or older plan-change event never mints a second
+		// generation for the same change.
+		quotaTransitionAt: v.optional(v.number()),
+		// Set by the projection once the provider state is authoritatively
+		// terminal (cancelled/expired past term, non-recoverable). Purchase
+		// eligibility reads this: only terminal rows unblock a new purchase.
+		terminalConfirmed: v.optional(v.boolean()),
+		dodoSubscriptionId: v.optional(v.string()),
+		dodoProductId: v.optional(v.string())
+	})
+		.index('by_userId', ['userId'])
+		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
+	// Provider subscriptions that once held the projection slot. Events from
+	// these identities must not reclaim the current projection.
+	supersededSubscriptions: defineTable({
+		userId: v.string(),
+		dodoSubscriptionId: v.string(),
+		supersededAt: v.number()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_dodoSubscriptionId', ['dodoSubscriptionId']),
+	// Verified Dodo webhook events. One row per (environment, webhook-id);
+	// deduplication and replay both go through this ledger.
+	dodoWebhookEvents: defineTable({
+		// Monotonic ingestion sequence, separate from receivedAt so cleanup
+		// cursors never starve behind same-receiptAt inserts.
+		seq: v.optional(v.number()),
+		environment: v.string(),
+		webhookId: v.string(),
+		eventType: v.string(),
+		// Provider event time; `receivedAt` is local receipt time.
+		eventAt: v.optional(v.number()),
+		receivedAt: v.number(),
+		subscriptionId: v.optional(v.string()),
+		productId: v.optional(v.string()),
+		customerId: v.optional(v.string()),
+		// Sanitized payload kept for replay; dropped by retention cleanup
+		// while identity/outcome fields persist for dedup.
+		payload: v.optional(v.string()),
+		attempts: v.number(),
+		// Duplicate deliveries after the first persisted record. The original
+		// processing outcome is never overwritten by a duplicate.
+		duplicateCount: v.optional(v.number()),
+		nextAttemptAt: v.optional(v.number()),
+		outcome: v.union(
+			v.literal('pending'),
+			v.literal('applied'),
+			v.literal('duplicate'),
+			v.literal('stale'),
+			v.literal('noop'),
+			v.literal('unsupported'),
+			v.literal('unresolved'),
+			v.literal('competing'),
+			v.literal('failed')
+		),
+		outcomeDetail: v.optional(v.string()),
+		processedAt: v.optional(v.number()),
+		// Workpool work id of the currently queued processing run.
+		workId: v.optional(v.string())
+	})
+		.index('by_seq', ['seq'])
+		.index('by_environment_and_webhookId', ['environment', 'webhookId'])
+		.index('by_outcome_and_nextAttemptAt', ['outcome', 'nextAttemptAt'])
+		.index('by_receivedAt', ['receivedAt']),
+	// Singleton bookkeeping for bounded ledger retention: the cleanup cursor
+	// prevents rescanning the newest rows and starving the older remainder.
+	dodoWebhookCleanup: defineTable({
+		key: v.string(),
+		cursor: v.number()
+	}).index('by_key', ['key']),
 	uiPreferences: defineTable({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark'))
@@ -126,8 +366,10 @@ export default defineSchema({
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
 		ownActive: v.boolean(),
+		ownStatus: v.optional(vRunStatus),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number()
+		activeDescendantCount: v.number(),
+		descendantStatusCounts: v.optional(vDescendantStatusCounts)
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({

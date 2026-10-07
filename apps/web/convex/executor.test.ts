@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Infer } from 'convex/values';
 import { vAskQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -10,6 +11,23 @@ import {
 	toolTranscriptAssignment,
 	type ConvexTestInstance
 } from './test.setup';
+
+describe('command display inputs', () => {
+	it.each(['', 'a'])('keeps bounded labels at whole code points after prefix "%s"', (prefix) => {
+		const input = commandToolDisplayInput('exec_cmd', {
+			cmd: `${prefix}${'😀'.repeat(10_000)}`,
+			workdir: '/repo',
+			chars: 'x'.repeat(500_000),
+			yieldTimeMs: 0
+		});
+
+		expect(input).toEqual({
+			cmd: `${prefix}${'😀'.repeat(prefix ? 4095 : 4096)}…`,
+			workdir: '/repo'
+		});
+		expect(commandToolDisplayInput('poll_cmd', { sessionId: 'x'.repeat(500_000) })).toEqual({});
+	});
+});
 
 async function seedRunWithJob(
 	t: ConvexTestInstance,
@@ -152,6 +170,10 @@ describe('executor', () => {
 					(part) => part.tool?.name === 'parse_file' && part.tool.status === 'completed'
 				)
 			).toBe(true);
+
+			for (const part of parts.parts.filter((part) => part.kind === 'tool')) {
+				expect(part.tool).not.toHaveProperty('input');
+			}
 		}
 	);
 
@@ -211,132 +233,182 @@ describe('executor', () => {
 		}
 	);
 
-	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command'] as const)(
-		'persists %s jobs and flat command results without a sessionId',
-		async (kind) => {
-			const t = initConvexTest();
-			const { asUser, threadId } = await seedOwnedThread(t);
-			const executionSecret = `command-${kind}-secret`;
-			const claimId = `command-${kind}-claim`;
+	it.each([
+		'exec_cmd',
+		'exec_command',
+		'control_cmd',
+		'poll_cmd',
+		'control_command',
+		'poll_command',
+		'write_stdin'
+	] as const)('persists %s jobs and flat command results without a sessionId', async (kind) => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = `command-${kind}-secret`;
+		const claimId = `command-${kind}-claim`;
 
-			const { runId } = await createQueuedRun(
-				t,
-				asUser,
-				threadId,
-				`command-${kind}`,
-				executionSecret,
-				'Control the command'
-			);
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			`command-${kind}`,
+			executionSecret,
+			'Control the command'
+		);
 
-			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
 
-			const payload =
-				kind === 'control_cmd' || kind === 'control_command'
-					? { sessionId: '1', action: 'write' as const, chars: 'yes\n' }
-					: { sessionId: '1', yieldTimeMs: 0 };
+		const payload =
+			kind === 'exec_cmd' || kind === 'exec_command'
+				? { cmd: 'echo ok', workdir: '/workspace', yieldTimeMs: 0 }
+				: kind === 'control_cmd' || kind === 'control_command'
+					? { sessionId: '1', action: 'write' as const, chars: 'x'.repeat(500_000) }
+					: kind === 'write_stdin'
+						? { sessionId: '1', chars: 'x'.repeat(500_000), terminate: false }
+						: { sessionId: '1', yieldTimeMs: 0 };
 
-			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+		const displayInput =
+			kind === 'exec_cmd' || kind === 'exec_command'
+				? { cmd: 'echo ok', workdir: '/workspace' }
+				: kind === 'control_cmd' || kind === 'control_command'
+					? { sessionId: '1', action: 'write' }
+					: { sessionId: '1' };
+
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			...toolTranscriptAssignment(runId, claimId),
+			executionSecret,
+			kind,
+			callId: `call-${kind}`,
+			payload
+		});
+
+		const result = {
+			command: 'echo ok',
+			workdir: '/',
+			output: 'ok\n',
+			exitCode: 0,
+			success: true,
+			running: false,
+			timedOut: false,
+			completeLogPath: '/transcripts/command/output.log',
+			eventsPath: '/transcripts/command/events.jsonl'
+		};
+
+		await expect(
+			asUser.mutation(api.executor.complete, {
 				runId,
 				claimId,
-				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
-				kind,
-				callId: `call-${kind}`,
-				payload
-			});
+				jobId,
+				result
+			})
+		).resolves.toBe(true);
 
-			const result = {
-				command: 'echo ok',
-				workdir: '/',
-				output: 'ok\n',
-				exitCode: 0,
-				success: true,
-				running: false,
-				timedOut: false,
-				completeLogPath: '/transcripts/command/output.log',
-				eventsPath: '/transcripts/command/events.jsonl'
-			};
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job).toMatchObject({ kind, payload, status: 'completed', result });
+		expect(job?.result).not.toHaveProperty('sessionId');
 
-			await expect(
-				asUser.mutation(api.executor.complete, {
-					runId,
-					claimId,
-					executionSecret,
-					jobId,
-					result
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		expect(parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)).toEqual(
+			[
+				expect.objectContaining({ status: 'started', input: displayInput, callId: `call-${kind}` }),
+				expect.objectContaining({
+					status: 'completed',
+					input: displayInput,
+					callId: `call-${kind}`
 				})
-			).resolves.toBe(true);
+			]
+		);
 
-			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-			expect(job).toMatchObject({ kind, payload, status: 'completed', result });
-			expect(job?.result).not.toHaveProperty('sessionId');
+		await t.run(async (ctx) => {
+			const finished = parts.parts.find((part) => part.tool?.status === 'completed');
 
-			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-			expect(
-				parts.parts.some(
-					(part) =>
-						part.tool?.name === kind &&
-						part.tool.status === 'completed' &&
-						part.tool.callId === `call-${kind}`
-				)
-			).toBe(true);
-		}
-	);
-
-	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command'] as const)(
-		'fails %s jobs',
-		async (kind) => {
-			const t = initConvexTest();
-			const { asUser, threadId } = await seedOwnedThread(t);
-			const executionSecret = `command-${kind}-fail-secret`;
-			const claimId = `command-${kind}-fail-claim`;
-
-			const { runId } = await createQueuedRun(
-				t,
-				asUser,
-				threadId,
-				`command-${kind}-fail`,
-				executionSecret,
-				'Control the command'
-			);
-
-			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
-
-			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			if (!finished?.tool) throw new Error('Missing terminal transcript part.');
+			const legacyTool = { ...finished.tool };
+			delete legacyTool.input;
+			await ctx.db.patch('threadTranscriptParts', finished._id, { tool: legacyTool });
+		});
+		await expect(
+			asUser.mutation(api.executor.complete, {
 				runId,
 				claimId,
-				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
-				kind,
-				payload:
-					kind === 'control_cmd' || kind === 'control_command'
-						? { sessionId: '1', action: 'terminate' as const }
-						: { sessionId: '1' }
-			});
+				jobId,
+				result
+			})
+		).resolves.toBe(true);
+		const retried = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
+		expect(retried.parts[0].tool?.input).toEqual(displayInput);
+	});
 
-			await expect(
-				asUser.mutation(api.executor.fail, {
-					runId,
-					claimId,
-					executionSecret,
-					jobId,
-					error: 'unknown command session: 1'
-				})
-			).resolves.toBe(true);
+	it.each([
+		'exec_cmd',
+		'exec_command',
+		'control_cmd',
+		'poll_cmd',
+		'control_command',
+		'poll_command',
+		'write_stdin'
+	] as const)('fails %s jobs', async (kind) => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = `command-${kind}-fail-secret`;
+		const claimId = `command-${kind}-fail-claim`;
 
-			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-			expect(job).toMatchObject({
-				kind,
-				status: 'failed',
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			`command-${kind}-fail`,
+			executionSecret,
+			'Control the command'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
+		const payload =
+			kind === 'exec_cmd' || kind === 'exec_command'
+				? { cmd: 'missing-command' }
+				: kind === 'control_cmd' || kind === 'control_command'
+					? { sessionId: '1', action: 'terminate' as const }
+					: { sessionId: '1' };
+
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			...toolTranscriptAssignment(runId, claimId),
+			executionSecret,
+			kind,
+			payload
+		});
+
+		await expect(
+			asUser.mutation(api.executor.fail, {
+				runId,
+				claimId,
+				executionSecret,
+				jobId,
 				error: 'unknown command session: 1'
-			});
+			})
+		).resolves.toBe(true);
 
-			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-			expect(
-				parts.parts.some((part) => part.tool?.name === kind && part.tool.status === 'failed')
-			).toBe(true);
-		}
-	);
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job).toMatchObject({
+			kind,
+			status: 'failed',
+			error: 'unknown command session: 1'
+		});
+
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		expect(parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)).toEqual(
+			[
+				expect.objectContaining({ status: 'started', input: payload }),
+				expect.objectContaining({ status: 'failed', input: payload })
+			]
+		);
+	});
 
 	it.each(['pending', 'answered', 'timedOut'] as const)(
 		'persists compact question results for %s questions',

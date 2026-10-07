@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { FunctionReturnType } from 'convex/server';
 import {
 	assertDescendantThreadAccess,
@@ -9,10 +9,16 @@ import {
 	subtreeSummary
 } from '@convex/lib/threadHierarchy';
 import { initConvexTest, seedOwnedThread } from '@convex/test.setup';
+import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 
 type Backend = ReturnType<typeof initConvexTest>;
 
-async function child(t: Backend, parentId: Id<'threadRecords'>, title: string) {
+async function child(
+	t: Backend,
+	parentId: Id<'threadRecords'>,
+	title: string,
+	status: Doc<'threadRecords'>['status'] = 'completed'
+) {
 	return await t.run(async (ctx) => {
 		const parent = (await ctx.db.get('threadRecords', parentId))!;
 
@@ -21,7 +27,7 @@ async function child(t: Backend, parentId: Id<'threadRecords'>, title: string) {
 			submissionId: title,
 			parentThreadId: parentId,
 			repositoryKey: parent.repositoryKey,
-			status: 'completed',
+			status,
 			title,
 			selectedModel: parent.selectedModel,
 			reasoningEffort: parent.reasoningEffort,
@@ -51,6 +57,7 @@ describe('thread hierarchy', () => {
 		const grandchild = await child(t, children[0], 'grandchild');
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
 		});
@@ -75,11 +82,13 @@ describe('thread hierarchy', () => {
 
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
 		});
 		expect(await summary(t, children[0])).toEqual({
 			descendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
 		});
@@ -147,6 +156,7 @@ describe('thread hierarchy', () => {
 		expect(new Set(seen)).toEqual(new Set(children));
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 8,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 8, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
 		});
@@ -173,8 +183,137 @@ describe('thread hierarchy', () => {
 		});
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false
 		});
+	});
+
+	it('aggregates mixed statuses at every depth and propagates active-to-active transitions idempotently', async () => {
+		const t = initConvexTest();
+		const { threadId, asUser } = await seedOwnedThread(t);
+		const queued = await child(t, threadId, 'queued', 'queued');
+		await child(t, threadId, 'completed');
+		await child(t, threadId, 'failed', 'failed');
+		await child(t, threadId, 'cancelled', 'cancelled');
+		const running = await child(t, queued, 'running', 'running');
+
+		const runIds = await t.run(async (ctx) => {
+			const ids = [];
+
+			for (const id of [queued, running]) {
+				const thread = (await ctx.db.get('threadRecords', id))!;
+				ids.push(
+					await ctx.db.insert('runs', {
+						threadId: id,
+						userId: thread.userId,
+						submissionId: thread.submissionId,
+						status: thread.status,
+						executionSecretHash: 'fixture',
+						selectedModel: thread.selectedModel,
+						reasoningEffort: thread.reasoningEffort,
+						fastMode: thread.fastMode,
+						startedAt: Date.now()
+					})
+				);
+				await refreshThreadHierarchyActivity(ctx, id);
+			}
+
+			await ctx.db.patch('threadRecords', threadId, { status: 'failed' });
+			await refreshThreadHierarchyActivity(ctx, threadId);
+
+			return ids;
+		});
+
+		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
+			descendantCount: 5,
+			descendantStatusCounts: { queued: 1, running: 1, completed: 1, failed: 1, cancelled: 1 },
+			anyActive: true,
+			descendantsActive: true
+		});
+		expect((await summary(t, queued)).descendantStatusCounts).toEqual({
+			queued: 0,
+			running: 1,
+			completed: 0,
+			failed: 0,
+			cancelled: 0
+		});
+		expect((await summary(t, running)).descendantStatusCounts).toEqual({
+			queued: 0,
+			running: 0,
+			completed: 0,
+			failed: 0,
+			cancelled: 0
+		});
+
+		const transition = (runId: Id<'runs'>, status: Doc<'runs'>['status']) =>
+			t.run(async (ctx) => {
+				await setRunAndThreadStatus(ctx, (await ctx.db.get('runs', runId))!, status);
+			});
+
+		await transition(runIds[0], 'running');
+		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
+			queued: 0,
+			running: 2,
+			completed: 1,
+			failed: 1,
+			cancelled: 1
+		});
+		expect(
+			await t.run((ctx) =>
+				ctx.db
+					.query('threadHierarchyStates')
+					.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+					.unique()
+			)
+		).toMatchObject({ activeDescendantCount: 2 });
+
+		await transition(runIds[1], 'failed');
+		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
+			queued: 0,
+			running: 1,
+			completed: 1,
+			failed: 2,
+			cancelled: 1
+		});
+		expect(await summary(t, queued)).toMatchObject({
+			descendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 1, cancelled: 0 },
+			anyActive: true,
+			descendantsActive: false
+		});
+
+		await transition(runIds[0], 'cancelled');
+		expect(await summary(t, threadId)).toEqual({
+			descendantCount: 5,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 2, cancelled: 2 },
+			anyActive: false,
+			descendantsActive: false
+		});
+
+		await transition(runIds[1], 'completed');
+		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
+			queued: 0,
+			running: 0,
+			completed: 2,
+			failed: 1,
+			cancelled: 2
+		});
+		expect((await summary(t, queued)).descendantStatusCounts).toEqual({
+			queued: 0,
+			running: 0,
+			completed: 1,
+			failed: 0,
+			cancelled: 0
+		});
+
+		const states = await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect());
+		await t.run(async (ctx) => {
+			for (const id of [threadId, queued, running]) {
+				await refreshThreadHierarchyActivity(ctx, id);
+				await refreshThreadHierarchyActivity(ctx, id);
+			}
+		});
+		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(states);
 	});
 });

@@ -275,20 +275,23 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 
-			const files = [...viewport.querySelectorAll('[data-tool-kind="apply_patch"] p[title]')];
+			const files = [
+				...viewport.querySelectorAll('[data-tool-kind="apply_patch"] [data-tool-row]')
+			];
+
 			expect(files.map((row) => row.textContent)).toEqual(['a.txt', 'b.txt', 'c.txt']);
 			expect(files.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
 			expect(viewport.textContent).toContain('a.txt');
 			expect(viewport.textContent).toContain('b.txt');
 			expect(viewport.textContent).toContain('c.txt');
 
-			const failures = [...viewport.querySelectorAll('[data-tool-kind] p[title]')].filter(
+			const failures = [...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].filter(
 				(row) =>
-					row.textContent?.includes('(cancelled)') || row.textContent?.includes('(interrupted)')
+					row.textContent?.includes('(stopped)') || row.textContent?.includes('(interrupted)')
 			);
 
 			expect(failures.map((row) => row.textContent)).toEqual([
-				expect.stringContaining('(cancelled)'),
+				expect.stringContaining('(stopped)'),
 				expect.stringContaining('(interrupted)')
 			]);
 			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
@@ -345,10 +348,14 @@ describe('transcript viewport paging', () => {
 			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
 			expect(rows).toHaveLength(calls.length);
 			expect(
-				rows.every((row) => row.querySelector('p[title]')?.firstElementChild?.tagName === 'svg')
+				rows.every(
+					(row) => row.querySelector('[data-tool-row]')?.firstElementChild?.tagName === 'svg'
+				)
 			).toBe(true);
 			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(2);
-			expect(viewport.querySelector('details')).toBeNull();
+			expect(viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')).toHaveLength(
+				calls.length
+			);
 
 			for (let index = 0; index < 3; index += 1) {
 				expect(viewport.textContent).toContain(`echo command-${index}`);
@@ -383,7 +390,9 @@ describe('transcript viewport paging', () => {
 		click(work);
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
 		expect(
-			[...viewport.querySelectorAll('[data-tool-kind] p[title]')].map((row) => row.textContent)
+			[...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].map(
+				(row) => row.textContent
+			)
 		).toEqual(['sleep 1', 'sleep 2', 'sleep 3']);
 		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
 
@@ -444,7 +453,11 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector('button[aria-expanded]'));
 			await settle();
 
-			expect(viewport.querySelector('[title="sleep 10"]') !== null).toBe(withAsync);
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -465,7 +478,11 @@ describe('transcript viewport paging', () => {
 			await settle();
 
 			expect(viewport.textContent).toContain('hidden-skill');
-			expect(viewport.querySelector('[title="sleep 10"]') !== null).toBe(withAsync);
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(withAsync);
 			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
 			expect(viewport.textContent).toContain('Reasoned');
 			expect(viewport.textContent).not.toContain('Reasoning');
@@ -554,7 +571,11 @@ describe('transcript viewport paging', () => {
 
 			expect(viewport.textContent).not.toContain(group);
 			expect(viewport.querySelector('.animate-spin')).toBeNull();
-			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(true);
 		}
 	);
 
@@ -606,7 +627,136 @@ describe('transcript viewport paging', () => {
 		click(transcript.getByRole('button', { name: /^Worked/ }));
 		await settle();
 
-		expect(transcript.getAllByTitle('npm run dev')).toHaveLength(2);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].filter((row) =>
+				row.textContent?.includes('npm run dev')
+			)
+		).toHaveLength(2);
+	});
+
+	it.each(['live', 'persisted'] as const)(
+		'reuses a command from an earlier run in %s monitoring rows',
+		async (kind) => {
+			const launchParts: LiveTranscriptMessage['parts'] = [
+				{
+					type: 'tool-call',
+					callId: 'launch',
+					name: 'exec_cmd',
+					input: { cmd: 'gh pr checks 567 --watch' }
+				},
+				{
+					type: 'tool-result',
+					callId: 'launch',
+					name: 'exec_cmd',
+					output: { sessionId: 'checks-session', running: true }
+				}
+			];
+
+			const pollParts: LiveTranscriptMessage['parts'] = [
+				{
+					type: 'tool-call',
+					callId: 'poll',
+					name: 'poll_cmd',
+					input: { sessionId: 'checks-session' }
+				},
+				{
+					type: 'tool-result',
+					callId: 'poll',
+					name: 'poll_cmd',
+					output: { status: 'failed', error: 'Connection interrupted' }
+				}
+			];
+
+			const launch: TranscriptDisplayRow = {
+				...message(2),
+				kind: 'work',
+				id: 'launch-work',
+				itemCount: 1
+			};
+
+			const poll: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), parts: pollParts }
+					: { ...message(3), kind: 'work', id: 'poll-work', itemCount: 1 };
+
+			const { viewport, setProps } = await renderTranscript([launch, poll]);
+			setProps({
+				loadSectionDetails: vi.fn().mockImplementation(async (row: TranscriptDisplayRow) => ({
+					parts: row.id === launch.id ? launchParts : pollParts,
+					revision: 1,
+					stale: false,
+					indexing: false
+				}))
+			});
+			await settle();
+
+			const buttons = within(viewport).getAllByRole('button', { name: /^Worked/ });
+			click(buttons[1]);
+			await settle();
+			const pollRow = viewport.querySelector('[data-tool-kind="poll_cmd"]');
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'Session checks-session'
+			);
+
+			click(buttons[0]);
+			await settle();
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'gh pr checks 567 --watch'
+			);
+
+			click(buttons[0]);
+			await settle();
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'gh pr checks 567 --watch'
+			);
+		}
+	);
+
+	it('keeps a live command label when the launch moves into collapsed persisted history', async () => {
+		const launch: LiveTranscriptMessage = {
+			...liveMessage(),
+			id: 'launch-response',
+			runId: message(2).runId,
+			parts: [
+				{ type: 'tool-call', callId: 'launch', name: 'exec_cmd', input: { cmd: 'sleep 10' } },
+				{
+					type: 'tool-result',
+					callId: 'launch',
+					name: 'exec_cmd',
+					output: { sessionId: 'sleep-session', running: true }
+				}
+			]
+		};
+
+		const poll: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [
+				{
+					type: 'tool-call',
+					callId: 'poll',
+					name: 'poll_cmd',
+					input: { sessionId: 'sleep-session' }
+				}
+			]
+		};
+
+		const { viewport, setProps } = await renderTranscript([launch, poll]);
+		setProps({ activeRunId: poll.runId });
+		await settle();
+		click(within(viewport).getByRole('button', { name: /^Working/ }));
+		await settle();
+		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
+			'sleep 10'
+		);
+
+		setProps({
+			messages: [{ ...message(2), kind: 'work', id: 'launch-work', itemCount: 1 }, poll]
+		});
+		await settle();
+		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
+			'sleep 10'
+		);
 	});
 
 	it('continues persisted work in the same disclosure while the next model turn streams', async () => {

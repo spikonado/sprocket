@@ -4,6 +4,7 @@ import CodeCopyButton from './code-copy-button';
 import ImageViewer, { type ViewerImage } from './image-viewer';
 import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
+import { watchMarkdownImage } from '$lib/chat/markdown-image-watch';
 
 type CodeControl = { target: HTMLElement; wrapper: HTMLDivElement; pre: HTMLElement; code: string };
 
@@ -16,14 +17,52 @@ export default function MarkdownHtml({
 }) {
 	const workspacePath = imageScope?.workspacePath;
 	const documentPath = imageScope?.documentPath;
+	const userId = imageScope?.transcript?.userId;
+	const threadId = imageScope?.transcript?.threadId;
 
 	const html = useMemo(
-		() => prepareMarkdownImages(sourceHtml, { workspacePath, documentPath }),
-		[sourceHtml, workspacePath, documentPath]
+		() =>
+			prepareMarkdownImages(sourceHtml, {
+				workspacePath,
+				documentPath,
+				transcript: userId && threadId ? { userId, threadId } : undefined
+			}),
+		[sourceHtml, workspacePath, documentPath, userId, threadId]
 	);
 
 	const ref = useRef<HTMLDivElement>(null);
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
+
+	useEffect(() => {
+		const images = ref.current?.querySelectorAll<HTMLImageElement>('img[data-local-image-url]');
+
+		const stops = [...(images ?? [])].map((image) => {
+			const source = image.getAttribute('data-local-image-url');
+
+			if (!source) return () => {};
+
+			const alt = image.alt;
+
+			return watchMarkdownImage(source, (url) => {
+				const previousUrl = image.src;
+				image.classList.remove('markdown-image-error');
+				image.alt = alt;
+
+				if (!image.closest('a')) {
+					image.tabIndex = 0;
+					image.setAttribute('role', 'button');
+					image.setAttribute('aria-label', `View ${alt || 'image'}`);
+				}
+
+				image.src = url;
+				setViewerImage((current) => (current?.url === previousUrl ? { ...current, url } : current));
+			});
+		});
+
+		return () => {
+			for (const stop of stops) stop();
+		};
+	}, [html]);
 
 	const [controls, setControls] = useState<{ html: string; blocks: CodeControl[] }>({
 		html,

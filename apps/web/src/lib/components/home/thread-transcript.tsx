@@ -1,6 +1,7 @@
 import {
 	useCallback,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 	type KeyboardEvent,
@@ -14,8 +15,7 @@ import {
 	groupAssistantTimelineSections,
 	isAssistantResponseStreaming,
 	partitionWorkSectionTools,
-	workSectionTimingAnchor,
-	type AssistantTimelineTool
+	workSectionTimingAnchor
 } from '$lib/chat/assistant-timeline';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -44,6 +44,7 @@ import type {
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
+	userId?: string;
 	currentError: string | null;
 	runError: string | null;
 	messages: TranscriptMessage[];
@@ -95,6 +96,7 @@ function laterTimestamp(left: number | undefined, right: number | undefined) {
 }
 
 export default function ThreadTranscript({
+	userId,
 	currentError,
 	runError,
 	messages,
@@ -124,7 +126,59 @@ export default function ThreadTranscript({
 	const [viewerImage, setViewerImage] = useState<ViewerImage | null>(null);
 	const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const imageScope = project ? { workspacePath: project.workspacePath } : undefined;
+
+	const [rememberedCommands, setRememberedCommands] = useState<ReadonlyMap<string, string>>(
+		() => new Map()
+	);
+
+	const rememberCommands = useCallback((added: ReadonlyMap<string, string>) => {
+		if (added.size === 0) return;
+		setRememberedCommands((previous) => {
+			if ([...added].every(([session, command]) => previous.get(session) === command)) {
+				return previous;
+			}
+
+			return new Map([...previous, ...added]);
+		});
+	}, []);
+
+	const liveCommands = useMemo(() => {
+		const tools = [
+			...buildAssistantTimeline([], actions),
+			...messages.flatMap((message) =>
+				message.kind === 'live' ? buildAssistantTimeline(message.parts, []) : []
+			)
+		].filter((item) => item.type === 'tool');
+
+		return buildCommandSessionCommandMap(tools);
+	}, [messages, actions]);
+
+	useLayoutEffect(() => rememberCommands(liveCommands), [liveCommands, rememberCommands]);
+
+	const commands = useMemo(
+		() => new Map([...rememberedCommands, ...liveCommands]),
+		[rememberedCommands, liveCommands]
+	);
+
+	const loadWorkDetails = useMemo<Props['loadSectionDetails']>(
+		() =>
+			loadSectionDetails
+				? async (row, cursor, signal) => {
+						const details = await loadSectionDetails(row, cursor, signal);
+
+						if (!signal.aborted) {
+							const tools = buildAssistantTimeline(details.parts, []).filter(
+								(item) => item.type === 'tool'
+							);
+
+							rememberCommands(buildCommandSessionCommandMap(tools));
+						}
+
+						return details;
+					}
+				: undefined,
+		[loadSectionDetails, rememberCommands]
+	);
 
 	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
 
@@ -145,7 +199,6 @@ export default function ThreadTranscript({
 		);
 
 		const timeline = buildAssistantTimeline(message.parts, messageActions);
-		const tools = timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool');
 
 		const sections = sectionKeys.reconcile(
 			message.id,
@@ -157,8 +210,7 @@ export default function ThreadTranscript({
 		return {
 			timeline,
 			sections,
-			isStreaming,
-			commands: buildCommandSessionCommandMap(tools)
+			isStreaming
 		};
 	}
 
@@ -487,22 +539,23 @@ export default function ThreadTranscript({
 							key={renderKey}
 							tools={block.tools}
 							inProgress={state.isStreaming}
-							commands={state.commands}
+							commands={commands}
 						/>
 					);
 				})}
 				{work.runningTools.length > 0 ? (
-					<WorkTools
-						tools={work.runningTools}
-						inProgress={state.isStreaming}
-						commands={state.commands}
-					/>
+					<WorkTools tools={work.runningTools} inProgress={state.isStreaming} commands={commands} />
 				) : null}
 			</>
 		);
 	}
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
+		const imageScope = {
+			workspacePath: project?.workspacePath,
+			transcript: userId ? { userId, threadId: message.threadId } : undefined
+		};
+
 		if (message.kind === 'prompt') {
 			return (
 				<TranscriptPromptMessage
@@ -555,10 +608,11 @@ export default function ThreadTranscript({
 						startedAtMs={startedAt}
 						completedAtMs={completedAt}
 					>
-						{loadSectionDetails ? (
+						{loadWorkDetails ? (
 							<WorkSectionDetails
 								row={row}
-								load={loadSectionDetails}
+								load={loadWorkDetails}
+								commands={commands}
 								inProgress={inProgress}
 								viewport={viewport}
 								beforeChange={beforeDetailChange}

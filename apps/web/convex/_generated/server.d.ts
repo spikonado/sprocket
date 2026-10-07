@@ -30,6 +30,10 @@ import type { DataModel } from "./dataModel.js";
 type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
+  readonly DODO_CHECKOUT_IDEMPOTENCY_WINDOW_MS: string | undefined;
+  readonly DODO_PAYMENTS_API_KEY: string | undefined;
+  readonly DODO_PAYMENTS_ENVIRONMENT: string | undefined;
+  readonly DODO_PAYMENTS_WEBHOOK_SECRET: string | undefined;
   readonly EXA_API_KEY: string;
   readonly FIRECRAWL_API_KEY: string;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
@@ -37,6 +41,8 @@ type Env = {
   readonly PRAVA_BACKEND_URL:
     "https://sandbox.api.prava.space" | "https://api.prava.space";
   readonly PRAVA_SECRET_KEY: string | undefined;
+  readonly SPROCKET_BILLING_STAGING_ORIGIN: string | undefined;
+  readonly SPROCKET_MARKETING_ORIGIN: string | undefined;
   readonly WORKOS_API_KEY: string | undefined;
   readonly WORKOS_CLIENT_ID: string;
 };

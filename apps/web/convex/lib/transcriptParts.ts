@@ -192,6 +192,14 @@ export async function appendTranscriptPart(
 		.unique();
 
 	if (existing) {
+		const tool =
+			existing.kind === 'tool' &&
+			existing.tool &&
+			existing.tool.input === undefined &&
+			args.tool?.input !== undefined
+				? { ...existing.tool, input: args.tool.input }
+				: existing.tool;
+
 		const expected = {
 			kind: args.kind,
 			runId: args.runId,
@@ -206,12 +214,18 @@ export async function appendTranscriptPart(
 			runId: existing.runId,
 			prompt: promptWithoutLegacyUploadIds(existing.prompt),
 			completion: existing.completion,
-			tool: existing.tool,
+			tool,
 			work: existing.work
 		};
 
 		if (!sameValue(persisted, expected)) {
 			throw new Error('Conflicting transcript part retry.');
+		}
+
+		if (tool !== existing.tool) {
+			await ctx.db.patch('threadTranscriptParts', existing._id, { tool });
+
+			return { part: { ...existing, tool }, inserted: false };
 		}
 
 		return { part: existing, inserted: false };

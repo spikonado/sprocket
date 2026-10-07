@@ -54,7 +54,7 @@ describe('tool rows', () => {
 
 		const settledTools = tools.map((tool) => ({ ...tool, output: tool.output ?? {} }));
 		const view = render(<WorkTools tools={settledTools} inProgress={false} commands={new Map()} />);
-		const rows = [...view.container.querySelectorAll('p[title]')];
+		const rows = [...view.container.querySelectorAll('[data-tool-row]')];
 
 		expect(rows.map((row) => row.textContent)).toEqual([
 			'a.ts',
@@ -91,10 +91,9 @@ describe('tool rows', () => {
 
 		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
 
-		expect([...view.container.querySelectorAll('p[title]')].map((row) => row.textContent)).toEqual([
-			'a.ts',
-			'b.ts(failed)'
-		]);
+		expect(
+			[...view.container.querySelectorAll('[data-tool-row]')].map((row) => row.textContent)
+		).toEqual(['a.ts', 'b.ts(failed)']);
 		expect(
 			within(view.container)
 				.getAllByRole('status')

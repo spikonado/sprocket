@@ -15,6 +15,15 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Rig 0.43 upstream revision
+
+Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
+first merged post-0.43 revision removing an unconditional partial-conversation
+stderr dump from invalid-tool recovery. This revision retains 0.43's history
+types but unifies streamed and awaited run errors as `PromptError`.
+Return to a registry release only once it contains that fix and the provider,
+replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+
 ### SIWC streaming content type
 
 The ChatGPT SIWC route can omit `Content-Type` on a successful streaming
@@ -37,22 +46,75 @@ service tier allowed for released clients that require them. Remove the gateway
 response fields only after clients that validate or apply them are outside the
 supported upgrade window. Model selections and Convex data need no migration.
 
-### OpenAI BYOK response item replay
+### Stateless OpenAI reasoning replay
 
-Rig 0.42 can drop contentless reasoning items and regroup streamed output before
-the next completion. OpenAI rejects the surviving message or function item IDs
-when their required reasoning items are missing. `OpenAiReplayClient` clears
-assistant message IDs and function item IDs on outgoing BYOK requests and sets
-`store: false`. It requests and replays encrypted reasoning, and keeps function
-call IDs used to pair tool results. Reasoning without encrypted content cannot
-be replayed without server storage, so the adapter omits it. Stored transcripts
-remain unchanged. Repairing older history is outside this fix's scope.
+Rig 0.43 preserves and inlines Responses message and function items with their
+native IDs, so the old `OpenAiReplayClient` ID-clearing workaround is removed.
+Sprocket's `StatelessResponses` wire sets `store: false`, requests encrypted
+reasoning, and omits reasoning without a nonempty encrypted payload. Summary-only
+reasoning cannot be replayed without server storage. Function call IDs continue
+to pair tool results; existing transcript formats remain unchanged.
 
-Remove this adapter only after the installed Rig version preserves complete
-response item relationships through streaming and replay, and the BYOK
-multi-turn regression passes with native item IDs.
+Remove this wire wrapper once Rig exposes an equivalent stateless Responses
+configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
+
+### Rig history identities
+
+Released Sprocket history records carry separate `id` and optional `callId`
+fields and omit tool names on results. The Rust history reader reconstructs
+Rig 0.43's unified `CallId`, preserving a distinct item ID when present, and
+resolves each result's required name from its preceding call. Historical
+OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
+No stored data is rewritten: local JSONL and Convex transcript formats remain
+compatible with released clients.
+
+New reasoning items retain summaries as display text, one opaque encrypted
+replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
+ID in `providerMetadata.openai.itemId`, and the issuer in
+`providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
+are not persisted. Encrypted payload bytes are preserved verbatim without
+duplication. The Rust reader reconstructs summary/encrypted blocks; missing
+issuers default to `openai` for released histories. The history fields remain
+`id` and `blocksJson`; issuer-aware histories encode sealed projected reasoning
+inside `blocksJson`, while the reader still accepts released block arrays.
+This additive metadata format needs no backfill. Keep the existing replay
+fields, array reader and missing-issuer default until supported clients age out
+or a versioned migration rewrites all supported histories. Stateless BYOK/SIWC
+replay still requires a nonempty encrypted payload.
+
+New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
+the opaque signature in `providerMetadata.signature`, and native additional
+parameters in `providerMetadata.toolCallAdditionalParams`. `callId` stays the
+provider's tool-result correlator. Explicit `null` additional parameters mean
+the native call had none. Released readers ignore the added metadata;
+new readers fall back to `callId` and the historical metadata shape for old
+items. This additive format widening needs no backfill; IDs already discarded
+by older releases cannot be recovered.
+
+Text items preserve Rig's `openai_responses` extras, including their message ID
+and phase. Single-message completions add the call's message ID there when Rig
+only reports it on the terminal response; multi-message item IDs take precedence.
+
+Keep this boundary conversion while Sprocket's transcript protocol uses these
+fields. Remove it only with a versioned protocol migration that rewrites all
+supported histories and supports direct upgrades from released clients.
 
 ## Local data directory backwards compatibility
+
+### Thread-relative model images
+
+Stored model messages can reference `parse_file/…`, `screenshot_url/…`, or
+`scrape_url/…` images relative to their transcript directory. Chat rendering
+passes the message's user/thread scope to `/workspace/image` for those paths.
+The workspace takes precedence; missing workspace files fall back to the
+thread cache so existing images in tool-named project folders keep working.
+Other workspace/document-relative and absolute paths retain their behavior.
+The optional scope also applies to revision checks. Existing clients may omit
+it, and no transcript or Convex data is rewritten.
+
+Remove this path-resolution shim only after a migration replaces every stored
+tool-cache image reference with a durable image reference and supported agents
+no longer emit thread-relative tool-cache paths.
 
 ### Legacy artifact binding scopes
 
@@ -129,6 +191,16 @@ direct-upgrade window, remove the raw JSON field-presence check and its legacy
 JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
+
+### Subagent follow-up tool routing
+
+`spawn_subagent` creates children and rejects `threadId` at runtime. Follow-ups
+use `control_subagent` with `action: "send"`. Stored executor payload validation
+and UI rendering retain historical `spawn_subagent(threadId)` calls without
+rewriting their tool names or identities. That historical shape remains
+permanently for readable transcripts, not for execution; no data migration is
+needed. The shared Convex submission endpoint handles creation and follow-ups
+without interpreting or translating legacy tool schemas.
 
 ### Legacy agent question expiry
 
@@ -251,6 +323,94 @@ only after the migration finishes and production scans find no legacy rows.
 Historical executor tool payloads/results retain optional scope/thread metadata
 permanently because conversation history describes the original calls.
 
+### Billing (Dodo) backwards compatibility
+
+#### Legacy subscription rows without access/projection fields
+
+Subscription rows written before the durable-billing projection may omit
+`projectionRevision`, `payloadEventAt`, `termEventAt`, `accessPhase`, and
+`accessEndsAt`. Readers treat missing access fields as `paid`/`none` per the
+legacy `billingPeriodEnded` flag, and missing watermarks as the row's
+`eventAt`. `backfillSubscriptionAccess` fills the materialized access
+phase/deadline and projection revision, and `backfillSubscriptionExpiry`
+reschedules boundary checks fenced by the new revision. Both are idempotent.
+
+Removal gate: after `runSubscriptionAccessBackfill` and
+`runSubscriptionExpiryBackfill` have run to completion in production, the
+legacy fallbacks in `lib/tiers.ts` and `subscriptionExpiry.ts` can be removed
+and the fields made required.
+
+#### Legacy usage-generation key (`quotaResetAt`)
+
+Usage buckets key off the subscription's usage generation. Rows written
+before the monotonic `quotaGeneration` counter carry `quotaResetAt`, an event
+timestamp used as the same key. While released gateway readers still use that
+timestamp, current readers prefer `quotaResetAt` too; otherwise old and new
+servers would charge different buckets. New writes retain `quotaResetAt` as the
+transition timestamp, advancing it by 1ms when distinct winning tier transitions
+share a timestamp, while `quotaGeneration` counts the durable transitions;
+`backfillSubscriptionAccess` derives the initial generation from the
+legacy timestamp so the migration neither resets usage nor mints allowance.
+
+Removal gate: after released readers that key directly on `quotaResetAt` age
+out, migrate outstanding usage into generation-keyed buckets before changing
+the key preference. A subscription backfill alone does not migrate consumed
+allowance. Keep the timestamp field until that migration completes.
+
+#### Usage display time
+
+New clients pass `now` to `usage.getMyUsage` and refresh it each minute. The
+optional argument preserves released clients calling with `{}`; that legacy
+display-only path retains its wall-clock fallback until those clients age out.
+Entitlement and charge mutations never trust the browser's display time.
+
+Removal gate: after all supported clients pass `now`, require the argument and
+remove the query clock fallback.
+
+#### Checkout attempt retention
+
+`billingCheckoutSessions` keeps the current selection; superseded attempts
+live in `billingCheckoutAttempts` so already-created payment links stay
+payable and their provider idempotency keys survive. Legacy attempts used the
+attempt id as the provider idempotency key but did not always persist it.
+Recovery requires a persisted key, frozen body, and first-create timestamp
+inside an operator-confirmed provider idempotency window; it never invents a
+key for an ambiguous attempt. Missing proof fails closed for support repair.
+The 24h reservation TTL is not provider expiry. All retained selections count
+toward the 25-row account limit, including locally expired payable links.
+Terminal rows lose hosted URLs/create bodies immediately and are removed after
+30 days; never-sent reservations are removed 30 days after local expiry.
+Unresolved/payable records remain until authoritative resolution. Subscription
+and superseded-identity records retain purchase identity after checkout cleanup.
+
+Legacy ambiguous creates without a frozen request cannot safely reconstruct
+the old return origin/customer. They require provider reconciliation instead
+of a speculative create with changed parameters. Legacy subscription rows
+without `checkoutAttemptId` never prove activation of a specific attempt.
+
+Removal gate: after all pre-freeze ambiguous attempts resolve and legacy
+uncorrelated subscriptions terminate, remove these fail-closed recovery paths.
+
+#### Checkout creation-order indexes
+
+The checkout tables retain `by_userId` alongside the attempt/session indexes
+because released readers use it and bounded history iteration needs creation
+order. Remove the current-session shim only after released readers age out and
+all current lookups use the compound indexes. Keep the history index while
+creation-order iteration remains necessary.
+
+#### Webhook dedup retention
+
+`dodoWebhookEvents` keeps identity/outcome rows for the 14-day provider replay
+horizon; settled payloads are pruned after 48h while outcome/duplicate
+counts persist for dedup. Pending, failed, unresolved, competing, and unsupported
+payloads remain replayable until the 14-day horizon, when the full row expires.
+Cleanup chains bounded batches over a fixed ingestion snapshot on each run.
+The legacy `dodoWebhookCleanup` cursor remains diagnostic; scheduled continuation
+arguments carry progress. Remove that table after released cleanup callers age out
+and its diagnostic rows have been migrated or deleted. Payload secrets and customer
+details are never logged.
+
 ### Retired cloud-held ChatGPT sign-in
 
 Cloud-held ChatGPT/Codex OAuth is retired in favor of local sign in with
@@ -280,6 +440,14 @@ retired ChatGPT stubs, `chatGptConnection`, and the retirement cron and
 helpers. Keep `chatgpt` in `completionProviderIds` and the run and thread
 validators. Local SIWC runs use the same provider ID as historical Codex runs.
 
+### Calendar usage windows
+
+Dodo subscriptions may omit `billingPeriodEnded` and `billingPeriodCheckId`. The clock check still enforces their access deadline. `backfillSubscriptionExpiry` schedules a database update at each existing Dodo deadline, or marks an elapsed period immediately, so subscribed queries refresh without changing provider status. An hourly cron starts or resumes the migration. Operator grants remain unchanged. Remove the backfill and its cron after it has completed on every deployment. The fields stay optional while operator grants exist.
+
+Old rate-limiter rows use seven-day or thirty-day windows with randomized starts. The current quota reader carries usage from an old row into the current UTC calendar window only if the old window began inside that calendar window. The old rows do not record charge timestamps, so usage from a window that began before the new calendar boundary cannot be safely attributed to the current window. On first charge, the current window records eligible old usage along with the new charge. New paid terms never inherit an old window. Existing operator-managed subscriptions may omit billing dates and continue to use calendar months; Dodo subscriptions created by the new webhook persist their billing dates.
+
+Remove the old rate-limiter read path once every deployment has been running calendar windows for at least 30 days. Old component rows are removed by the 62-day retention job. Leave the optional subscription fields in place until any older subscription rows have billing dates or have ended.
+
 ### Retired repository rekey calls
 
 Released local servers may still call `threads.rekeyRepository`, and deployments
@@ -305,17 +473,61 @@ completion. Current agents send usage with `finalizeCompletionCall` and
 or a successful handoff. Keep the standalone mutation until released agents
 using it have aged out, then remove the mutation and its direct tests.
 
+### Descendant thread status counts
+
+`threads.subtreeSummaryForThread` adds `descendantStatusCounts` while retaining
+`descendantCount`, `anyActive`, and `descendantsActive` unchanged for released
+clients. Older `threadHierarchyStates` rows may omit `ownStatus` and
+`descendantStatusCounts`; missing counts read as five zeros, and missing
+`ownStatus` means the thread has not contributed a status to its ancestors yet.
+Uncounted descendants are unknown, not working; the UI labels the difference
+between `descendantCount` and the sum of known statuses as "Status updating".
+
+`runThreadHierarchyStatusBackfill` visits each `threadRecords` row through
+`refreshThreadHierarchyActivity`, atomically recording its current status and
+applying deltas to every ancestor. It is idempotent alongside live status
+changes and does not rebuild descendant counts or scan subtrees. The hourly
+`runThreadHierarchyStatusBackfillAutomatically` cron records completion under
+`thread-hierarchy-status-counts-2026-10` in `migrationSchedules`.
+
+Remove the backfill, its cron, and its schedule row only after the runner reports
+completion and production checks confirm every thread has contributed its
+status and every ancestor's counts cover its descendants. At that point,
+stored counts may become required and the missing-count fallback may be removed.
+Keep `ownStatus` optional for newly ensured states until they are refreshed;
+do not initialize it before propagating the contribution. Keep the original
+summary fields until clients using them are outside the supported upgrade window.
+
+The stored `threadHierarchyStates.descendantCount` is temporary duplicate
+bookkeeping once status counts cover every descendant. Remove its writes only
+after the status backfill finishes and production checks confirm that each
+stored total equals the sum of its `descendantStatusCounts`. Then derive the
+API's `descendantCount` from that sum and remove the UI's "Status updating"
+fallback. Keep the API field for released clients until they are outside the
+supported upgrade window; removing storage does not require removing the API
+field. Ship a migration in the removal PR to strip the stored totals, retaining
+an optional schema field until the migration finishes and production checks
+confirm no rows contain it. Only then remove the schema field and migration.
+`ownActive`, `ownStatus`, and `activeDescendantCount` are not covered by this
+removal gate: they still support incremental updates and pending-question activity.
+
 ### Current Migrations
 
 `convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10` once the migrations component reports every migration finished.
+The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10-command-inputs` once the migrations component reports every migration finished.
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
+`backfillCommandToolInputs` (resolves retained jobs after invocation IDs migrate),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
 `removeSectionLinkedParts`, and
 `removeArtifactRegistryRekeyTargets`.
+
+The command-input backfill uses a new schedule name so completed
+`legacy-compat-backfill-2026-10` schedules do not block it. Already-finished
+migrations remain finished in the migrations component. The old schedule rows
+may be deleted after the command-input backfill completes.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
@@ -461,3 +673,43 @@ stored `closed` flags instead of rescanning each run for every section.
 
 Remove this local migration once supported installations no longer have caches
 with the session column, or a later cache migration also rebuilds these indexes.
+
+#### Command tool inputs
+
+Tool detail bodies accept optional `input`. Current started and terminal events
+preserve display inputs only for `exec_cmd`, `exec_command`, `control_cmd`,
+`control_command`, `poll_cmd`, `poll_command`, and `write_stdin`; other tool
+events omit input to avoid duplicating large payloads. Only `cmd`, `workdir`,
+`sessionId`, and `action` are copied; command and workdir strings are capped at
+8192 characters with an ellipsis, and session IDs over 128 characters are omitted
+rather than truncated. Stdin contents and execution options are never copied.
+This keeps started/terminal events and backfills small. Remote sync retains the
+field, and synthetic tool calls use it when no canonical completion call exists.
+Canonical completion inputs remain authoritative. Synthetic calls prefer their
+start input, then terminal input for mixed-version caches only when invocation
+IDs (or legacy job IDs), run, and tool kind match. Missing legacy input produces
+`null`, leaving the command session unknown rather than guessing from a call ID
+or error message.
+
+`backfillCommandToolInputs` fills only absent command inputs from retained
+`executorJobs`, pairing by run and tool invocation ID. It verifies the job's
+thread and tool kind and preserves existing inputs. The legacy runner runs it
+after invocation-ID backfills, which also translate legacy `jobId` references.
+Remove this migration after it completes and production scans confirm all
+recoverable command inputs were backfilled; retire the shared `jobId` pairing
+shim under the Tool invocation IDs gate above.
+
+Until the migration finishes, command transcript retries hydrate an existing
+part's absent input using the existing append lookup. The candidate part must
+pass strict retry comparison before a patch is written; other mismatches still
+fail. Normal appends and already-hydrated retries perform no additional database
+queries or writes. Remove this hydration once production has no recoverable
+command parts with absent input and all writers preserve command inputs.
+
+Older local JSONL transcripts and derived history caches may have no command
+input, and commands whose executor job was deleted cannot be backfilled. Those
+historical inputs remain unknown; this change does not rebuild local caches or
+invent missing payloads. Keep the optional field and missing-input fallback
+while such history is supported. They cannot be removed solely because released
+clients aged out or the Convex migration finished. Noncommand detail input stays
+optional by design.

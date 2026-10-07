@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::async_tools::{YieldMode, ZeroPollCooldown};
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
+use crate::command_shell::resolve_command_shell;
 use crate::paths::expand_home;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -266,6 +267,7 @@ impl CommandSessionManager {
         }
 
         let cwd = resolve_command_workdir(&self.workspace_root, workdir)?;
+        let shell = resolve_command_shell(shell, &cwd)?;
         let output = Arc::new(Mutex::new(
             CapturedOutput::create_with_limits(
                 &self.log_directory,
@@ -274,7 +276,7 @@ impl CommandSessionManager {
             )
             .await?,
         ));
-        let mut process = build_shell_command(command, shell);
+        let mut process = build_shell_command(command, &shell);
         process
             .current_dir(&cwd)
             .stdin(Stdio::piped())
@@ -329,10 +331,15 @@ impl CommandSessionManager {
         let (mut child, lifetime_guard) = match launch {
             Ok(launched) => launched,
             Err(error) => {
-                if let Err(cleanup_error) = tokio::fs::remove_file(&history_path).await {
+                let history_cleanup = tokio::fs::remove_file(&history_path).await;
+                let log_cleanup = output.lock().await.discard().await;
+                if let Err(cleanup_error) = history_cleanup {
                     return Err(error.context(format!(
                         "failed to remove unstarted command history: {cleanup_error}"
                     )));
+                }
+                if let Err(cleanup_error) = log_cleanup {
+                    return Err(error.context(cleanup_error));
                 }
                 return Err(error);
             }
@@ -1009,17 +1016,6 @@ fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
     stop_remaining_processes(process_id)
 }
 
-pub fn default_command_shell() -> String {
-    #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
-    }
-    #[cfg(windows)]
-    {
-        "powershell.exe".to_string()
-    }
-}
-
 #[cfg(not(windows))]
 fn build_shell_command(command: &str, shell: &str) -> Command {
     let mut process = Command::new(shell);
@@ -1104,8 +1100,9 @@ mod tests {
     use super::{
         CapturedOutput, CommandAction, CommandCompletion, CommandObservation, CommandOutput,
         CommandSession, CommandSessionManager, ObservationMode, OutputChannel,
-        WorkspaceCancellation, default_command_shell,
+        WorkspaceCancellation,
     };
+    use crate::default_command_shell;
     use crate::test_support::temp_workspace;
     use tokio::sync::{Mutex, mpsc, watch};
 
@@ -1813,6 +1810,35 @@ mod tests {
             ))]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_process_launch_removes_unstarted_logs_and_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let logs = root.join("logs");
+        let sessions = CommandSessionManager::new(root, logs.clone()).with_lifetime_guard_factory(
+            || -> anyhow::Result<()> { anyhow::bail!("host unavailable") },
+        );
+        let error = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "echo ready",
+                ".",
+                &default_command_shell(),
+                Some(5_000),
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("host unavailable"));
+        let entries = fs::read_dir(&logs)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(entries, vec![std::ffi::OsString::from("sessions")]);
+        assert_eq!(fs::read_dir(logs.join("sessions")).unwrap().count(), 0);
     }
 
     #[tokio::test]

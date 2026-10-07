@@ -16,7 +16,7 @@ http = "1"
 image = { version = "0.25.8", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 percent-encoding = "2.3.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
-rig = { version = "0.42.0", default-features = false, features = ["agent", "reqwest", "rustls"] }
+rig = { version = "0.43.0", git = "https://github.com/0xPlaygrounds/rig", rev = "e02ddcc6bd39e54e96bb5f48693896a6ebf26546", default-features = false, features = ["agent", "reqwest", "rustls"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 schemars = "1"
 serde = { version = "1.0.228", features = ["derive"] }

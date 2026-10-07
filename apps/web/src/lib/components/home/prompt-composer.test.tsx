@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
@@ -399,7 +399,53 @@ describe('PromptComposer workspace path mentions', () => {
 });
 
 describe('PromptComposer submission', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('leaves touchscreen Enter to insert a newline and sends through the button', async () => {
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn((query) => ({ matches: query === '(pointer: coarse)' }))
+		);
+
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			prompt: 'Hello',
+			onPromptChange: vi.fn(),
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		const event = await pressKey(textarea, { key: 'Enter' });
+		expect(event.defaultPrevented).toBe(false);
+		await typeInComposer(textarea, 'Hello\nAnother line');
+		expect(props.onPromptChange).toHaveBeenCalledWith('Hello\nAnother line');
+		expect(textarea.value).toBe('Hello\nAnother line');
+		await click(screen.getByRole('button', { name: 'Send message' }));
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
+	it('keeps touchscreen Enter as a newline while skill suggestions are open', async () => {
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn((query) => ({ matches: query === '(pointer: coarse)' }))
+		);
+
+		const { textarea } = renderComposer({
+			projectSkills: { workspacePath: '/work', load: async () => skills }
+		});
+
+		await typeInComposer(textarea, '$ki');
+		await screen.findByRole('option', { name: /kicad/ });
+		const event = await pressKey(textarea, { key: 'Enter' });
+		expect(event.defaultPrevented).toBe(false);
+		await typeInComposer(textarea, '$ki\n');
+		expect(textarea.value).toBe('$ki\n');
+		await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+	});
+
 	it('submits on Enter, ignores Shift+Enter, and ignores Enter while composing', async () => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
+
 		const { props, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
@@ -574,7 +620,239 @@ describe('PromptComposer skill menu', () => {
 	});
 });
 
+describe('PromptComposer mobile selectors', () => {
+	beforeEach(() => {
+		vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('applies model, reasoning, and speed together after Done', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn(),
+			onSelectedReasoningEffortChange: vi.fn(),
+			onFastModeChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const sheet = screen.getByRole('dialog', { name: 'Model settings' });
+		expect(within(sheet).getByText('Default: Medium')).toBeTruthy();
+		await click(within(sheet).getByRole('button', { name: 'Low' }));
+		await click(within(sheet).getByRole('switch', { name: 'Fast mode' }));
+		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
+		await click(within(sheet).getByRole('button', { name: 'Done' }));
+		expect(props.onSelectedModelChange).toHaveBeenCalledWith('model-one');
+		expect(props.onSelectedReasoningEffortChange).toHaveBeenCalledWith('low');
+		expect(props.onFastModeChange).toHaveBeenCalledWith(true);
+	});
+
+	it('resets reasoning for a new model and discards edits on close', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		await click(screen.getByRole('button', { name: 'Model Two' }));
+		expect(screen.getByText('Default: High')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'High', pressed: true })).toBeTruthy();
+		expect(screen.queryByRole('switch')).toBeNull();
+		await click(screen.getByRole('button', { name: 'Close model settings' }));
+		expect(props.onSelectedModelChange).not.toHaveBeenCalled();
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		expect(screen.getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
+	});
+
+	it('selects a provider from the sheet without an extra confirmation', async () => {
+		const { props } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [{ ...modelCatalog.models[0], provider: 'openai' }]
+			},
+			selectedModel: 'model-one',
+			configuredProviders: ['spikonado', 'chatgpt'],
+			onSelectedCompletionProviderChange: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		const sheet = screen.getByRole('dialog', { name: 'Provider' });
+		await click(within(sheet).getByRole('button', { name: 'ChatGPT Subscription' }));
+		expect(props.onSelectedCompletionProviderChange).toHaveBeenCalledWith('chatgpt');
+		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+});
+
 describe('PromptComposer model selection', () => {
+	it('keeps the provider menu anchored when a parent scrolls', async () => {
+		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
+		const trigger = screen.getByRole('button', { name: 'Select provider' });
+		const rect = vi.spyOn(trigger, 'getBoundingClientRect');
+		rect.mockReturnValue(new DOMRect(100, 400, 44, 44));
+		await click(trigger);
+		const menu = screen.getByRole('dialog', { name: 'Provider' });
+		expect(menu.style.bottom).toBe(`${window.innerHeight - 400 + 12}px`);
+
+		rect.mockReturnValue(new DOMRect(100, 280, 44, 44));
+		fireEvent.scroll(composer.parentElement!);
+		expect(menu.style.bottom).toBe(`${window.innerHeight - 280 + 12}px`);
+	});
+
+	it('previews a hovered model and selects its reasoning without changing models on hover', async () => {
+		const onSelectedModelChange = vi.fn();
+		const onSelectedReasoningEffortChange = vi.fn();
+		renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange,
+			onSelectedReasoningEffortChange
+		});
+		const trigger = screen.getByRole('button', { name: 'Select model' });
+		expect(trigger.textContent).toBe('Model One · Medium');
+		await click(trigger);
+		const menu = screen.getByRole('dialog', { name: 'Model' });
+		const modelTwo = within(menu).getByRole('button', { name: 'Model Two' });
+		fireEvent.mouseEnter(modelTwo);
+		expect(onSelectedModelChange).not.toHaveBeenCalled();
+		expect(trigger.textContent).toBe('Model One · Medium');
+		const settings = within(menu).getByRole('group', { name: 'Reasoning for Model Two' });
+		await click(within(settings).getByRole('button', { name: 'High (default)' }));
+		expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
+		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
+		expect(trigger.textContent).toBe('Model Two · High');
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		await click(trigger);
+		await pressKey(document, { key: 'Escape' });
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		expect(document.activeElement).toBe(trigger);
+		await click(trigger);
+		await act(async () => {
+			document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+		});
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+	});
+
+	it('offers a selectable default alongside the other reasoning choices', async () => {
+		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'low' });
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const model = screen.getByRole('button', { name: 'Model One' });
+		fireEvent.mouseEnter(model);
+		const settings = screen.getByRole('group', { name: 'Reasoning for Model One' });
+		expect(within(settings).getByRole('button', { name: 'Low', pressed: true })).toBeTruthy();
+		expect(within(settings).getByText('Default')).toBeTruthy();
+		await click(within(settings).getByRole('button', { name: 'Medium (default)', pressed: false }));
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model One · Medium'
+		);
+	});
+
+	it('navigates from model rows to reasoning with the keyboard', async () => {
+		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'medium' });
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Model One' }));
+		await pressKey(document.activeElement!, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Model Two' }));
+		await pressKey(document.activeElement!, { key: 'ArrowRight' });
+		const high = screen.getByRole('button', { name: /^High/ });
+		expect(document.activeElement).toBe(high);
+		await pressKey(high, { key: 'ArrowLeft' });
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Model Two' }));
+		await pressKey(document.activeElement!, { key: 'ArrowUp' });
+		await pressKey(document.activeElement!, { key: 'ArrowRight' });
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Medium (default)' }));
+		await pressKey(document.activeElement!, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Low' }));
+	});
+
+	it('opens reasoning on touch before selecting a model and effort', async () => {
+		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'medium' });
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const model = screen.getByRole('button', { name: 'Model Two' });
+		const touch = new Event('pointerdown', { bubbles: true });
+		Object.defineProperty(touch, 'pointerType', { value: 'touch' });
+		fireEvent(model, touch);
+		await click(model);
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model One · Medium'
+		);
+		await click(screen.getByRole('button', { name: /^High/ }));
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model Two · High'
+		);
+	});
+
+	it('focuses the selected model on open and selects a model with its default reasoning', async () => {
+		renderComposer({ modelCatalog, selectedModel: 'model-one', selectedReasoningEffort: 'medium' });
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const menu = screen.getByRole('dialog', { name: 'Model' });
+		expect(document.activeElement).toBe(within(menu).getByRole('button', { name: 'Model One' }));
+		await click(within(menu).getByRole('button', { name: 'Model Two', pressed: false }));
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model Two · High'
+		);
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const reopenedMenu = screen.getByRole('dialog', { name: 'Model' });
+		expect(document.activeElement).toBe(
+			within(reopenedMenu).getByRole('button', { name: 'Model Two', pressed: true })
+		);
+	});
+
+	it.each([true, false])(
+		'shows provider-managed models with only their supported speed controls (Fast: %s)',
+		async (supportsFastMode) => {
+			renderComposer({
+				modelCatalog: {
+					...modelCatalog,
+					models: [
+						{
+							...modelCatalog.models[0],
+							reasoningEfforts: ['none'],
+							defaultReasoningEffort: 'none',
+							supportsFastMode
+						}
+					]
+				},
+				selectedModel: 'model-one',
+				selectedReasoningEffort: 'none'
+			});
+			const trigger = screen.getByRole('button', { name: 'Select model' });
+			expect(trigger.textContent).toBe('Model One');
+			await click(trigger);
+			const menu = screen.getByRole('dialog', { name: 'Model' });
+			expect(within(menu).getAllByRole('button')).toHaveLength(1);
+
+			if (supportsFastMode) {
+				fireEvent.mouseEnter(within(menu).getByRole('button', { name: 'Model One' }));
+				await click(within(menu).getByRole('switch', { name: 'Fast' }));
+				expect(trigger.textContent).toBe('Model One · Fast');
+			} else {
+				expect(within(menu).getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
+			}
+		}
+	);
+
+	it('normalizes unsupported reasoning before the model menu is opened', () => {
+		const onSelectedReasoningEffortChange = vi.fn();
+		renderComposer({
+			modelCatalog,
+			selectedModel: 'model-two',
+			selectedReasoningEffort: 'medium',
+			onSelectedReasoningEffortChange
+		});
+		expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model Two · High'
+		);
+	});
+
 	it('offers ChatGPT gateway models and allows sending when connected', async () => {
 		const onSelectedModelChange = vi.fn();
 
@@ -599,12 +877,15 @@ describe('PromptComposer model selection', () => {
 			onSelectedModelChange
 		});
 
-		await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
-		const menu = document.querySelector('[role="dialog"][aria-label="Model"]');
-		expect(
-			Array.from(menu?.querySelectorAll('button') ?? [], (button) => button.textContent)
-		).toEqual([expect.stringContaining('GPT-6.1 Sol'), expect.stringContaining('GPT-6 Luna')]);
-		await click(findButton('GPT-6 Luna'));
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const menu = screen.getByRole('dialog', { name: 'Model' });
+		expect(within(menu).getByRole('button', { name: /GPT-6\.1 Sol/ })).toBeTruthy();
+		expect(within(menu).getByRole('button', { name: /GPT-6 Luna/ })).toBeTruthy();
+		expect(within(menu).queryByRole('button', { name: /Model One/ })).toBeNull();
+		fireEvent.mouseEnter(within(menu).getByRole('button', { name: /GPT-6\.1 Sol/ }));
+		expect(within(menu).getByRole('button', { name: 'Low' })).toBeTruthy();
+		expect(within(menu).queryByRole('switch')).toBeNull();
+		await click(within(menu).getByRole('button', { name: /GPT-6 Luna/ }));
 		expect(onSelectedModelChange).toHaveBeenCalledWith('gpt-6-luna');
 		await pressKey(textarea, { key: 'Enter' });
 		expect(props.onSubmit).toHaveBeenCalledOnce();
@@ -624,8 +905,12 @@ describe('PromptComposer model selection', () => {
 				onSelectedReasoningEffortChange
 			});
 
-			await click(document.querySelector<HTMLButtonElement>('[aria-label="Select model"]'));
-			await click(findButton('Model Two'));
+			await click(screen.getByRole('button', { name: 'Select model' }));
+			await click(
+				within(screen.getByRole('dialog', { name: 'Model' })).getByRole('button', {
+					name: 'Model Two'
+				})
+			);
 
 			expect(onSelectedModelChange).toHaveBeenCalledWith('model-two');
 			expect(onSelectedReasoningEffortChange).toHaveBeenCalledWith('high');
@@ -673,15 +958,34 @@ describe('PromptComposer Fast mode', () => {
 			onFastModeChange
 		});
 
-		await click(
-			document.querySelector<HTMLButtonElement>(
-				'[aria-label="Select reasoning effort and Fast mode"]'
-			)
-		);
-		const toggle = document.querySelector<HTMLButtonElement>('[role="switch"]');
-		expect(toggle?.getAttribute('aria-checked')).toBe('false');
+		const trigger = screen.getByRole('button', { name: 'Select model' });
+		await click(trigger);
+		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model One' }));
+		const toggle = screen.getByRole('switch', { name: 'Fast' });
+		const models = screen.getByRole('group', { name: 'Models' });
+		expect(models.nextElementSibling).toBe(toggle.parentElement);
+		expect(toggle.getAttribute('aria-checked')).toBe('false');
 		await click(toggle);
 		expect(onFastModeChange).toHaveBeenCalledWith(true);
+		expect(toggle.getAttribute('aria-checked')).toBe('true');
+		expect(trigger.textContent).toBe('Model One · Medium · Fast');
+	});
+
+	it('toggles speed without selecting the hovered model', async () => {
+		const onSelectedModelChange = vi.fn();
+		renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'medium',
+			onSelectedModelChange
+		});
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		fireEvent.mouseEnter(screen.getByRole('button', { name: 'Model Two' }));
+		await click(screen.getByRole('switch', { name: 'Fast' }));
+		expect(screen.getByRole('button', { name: 'Select model' }).textContent).toBe(
+			'Model One · Medium · Fast'
+		);
+		expect(onSelectedModelChange).not.toHaveBeenCalled();
 	});
 
 	it('keeps Fast on when the subscription tier loads and changes', async () => {
@@ -717,7 +1021,8 @@ describe('PromptComposer Fast mode', () => {
 		});
 
 		expect(onFastModeChange).toHaveBeenCalledWith(false);
-		expect(document.querySelector('[role="switch"]')).toBeNull();
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		expect(screen.queryByRole('switch')).toBeNull();
 	});
 
 	it('blocks submit when the free usage quota is exhausted even with Fast off', async () => {

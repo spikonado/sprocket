@@ -482,30 +482,59 @@ function childThread(id: string, title: string, status: ThreadStatus = 'complete
 	};
 }
 
-it('shows descendant activity inside the thread button with a separate expansion control', async () => {
-	treeSummaries.set('thread', { descendantCount: 5, anyActive: true, descendantsActive: true });
+it('expands subagents from the status text without selecting the thread', async () => {
+	treeSummaries.set('thread', {
+		descendantCount: 5,
+		anyActive: true,
+		descendantsActive: true,
+		descendantStatusCounts: { queued: 0, running: 5, completed: 0, failed: 0, cancelled: 0 }
+	});
 	const input = props([thread()]);
-	renderView(<Harness {...input} />);
+	const view = renderView(<Harness {...input} />);
 	await flush();
 
 	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
 
 	const main = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
 
-	expect(main.querySelector('.inbox-row-subagents')?.textContent).toBe('5 subagents · Working');
+	const badge = expansion.querySelector<HTMLElement>('.inbox-row-subagents')!;
+
+	expect(badge.textContent).toBe('5 subagents · Working');
 	expect(expansion.closest('.inbox-row')).toBe(main.closest('.inbox-row'));
 	expect(main.contains(expansion)).toBe(false);
 	expect(expansion.getAttribute('aria-expanded')).toBe('false');
-	expect(expansion.getAttribute('aria-label')).toBe('Expand subagents of Thread');
+	expect(
+		view.getByRole('button', { name: 'Expand subagents of Thread: 5 subagents · Working' })
+	).toBe(expansion);
 	expect(expansion.querySelector('.lucide-chevron-right')).toBeTruthy();
 	expect(document.querySelector('.inbox-children')).toBeNull();
 	expect(input.resolveChildren).not.toHaveBeenCalled();
 
 	act(() => {
-		expansion.click();
+		badge.click();
 	});
 
 	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+	view.rerender(<Harness {...input} />);
+	expect(expansion.getAttribute('aria-expanded')).toBe('true');
+	expect(
+		view.getByRole('button', { name: 'Collapse subagents of Thread: 5 subagents · Working' })
+	).toBe(expansion);
+	expect(document.querySelector('.inbox-children')).toBeTruthy();
+	act(() => {
+		fireEvent.click(expansion.querySelector('.lucide-chevron-down')!);
+	});
+	expect(input.expansion.collapse).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+	view.rerender(<Harness {...input} />);
+	expect(expansion.getAttribute('aria-expanded')).toBe('false');
+	expect(document.querySelector('.inbox-children')).toBeNull();
+	act(() => {
+		fireEvent.click(expansion.querySelector('.lucide-chevron-right')!);
+	});
+	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.expansion.expand).toHaveBeenCalledTimes(2);
 	expect(input.onSelect).not.toHaveBeenCalled();
 	act(() => {
 		main.click();
@@ -513,19 +542,98 @@ it('shows descendant activity inside the thread button with a separate expansion
 	expect(input.onSelect).toHaveBeenCalledWith(expect.objectContaining({ _id: 'thread' }));
 });
 
+it('shows each descendant status on its own counted row', async () => {
+	treeSummaries.set('thread', {
+		descendantCount: 9,
+		anyActive: true,
+		descendantsActive: true,
+		descendantStatusCounts: { queued: 1, running: 2, completed: 3, failed: 1, cancelled: 2 }
+	});
+	const input = props([thread()]);
+	const view = renderView(<Harness {...input} />);
+	await flush();
+
+	const rows = [...document.querySelectorAll('.inbox-subagent-status-row')];
+	expect(rows.map((row) => row.textContent)).toEqual([
+		'1 subagent · Starting',
+		'2 subagents · Working',
+		'3 subagents · Completed',
+		'1 subagent · Failed',
+		'2 subagents · Stopped'
+	]);
+	expect(
+		[...document.querySelectorAll('.inbox-row-subagents.inbox-working')].map(
+			(row) => row.textContent
+		)
+	).toEqual(['1 subagent · Starting', '2 subagents · Working']);
+	expect(document.querySelector('.inbox-row-subagents.inbox-attention')?.textContent).toBe(
+		'1 subagent · Failed'
+	);
+	expect(
+		view.getByRole('button', { name: /^Expand subagents of Thread:/ }).getAttribute('aria-expanded')
+	).toBe('false');
+	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
+	expect(document.querySelector('.inbox-subagents .lucide-chevron-right')).toBeTruthy();
+
+	act(() => {
+		fireEvent.click(rows[2]);
+	});
+	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+
+	treeSummaries.set('thread', {
+		descendantCount: 9,
+		anyActive: true,
+		descendantsActive: true,
+		descendantStatusCounts: { queued: 0, running: 3, completed: 3, failed: 1, cancelled: 2 }
+	});
+	view.rerender(<Harness {...input} />);
+	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
+	expect(document.querySelector('.inbox-subagents .lucide-chevron-down')).toBeTruthy();
+	expect(
+		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
+	).toEqual([
+		'3 subagents · Working',
+		'3 subagents · Completed',
+		'1 subagent · Failed',
+		'2 subagents · Stopped'
+	]);
+});
+
+it('keeps uncounted descendants explicit while their statuses are backfilled', async () => {
+	treeSummaries.set('thread', {
+		descendantCount: 5,
+		anyActive: true,
+		descendantsActive: true,
+		descendantStatusCounts: { queued: 0, running: 1, completed: 2, failed: 0, cancelled: 0 }
+	});
+	await render([thread()]);
+	expect(
+		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
+	).toEqual(['1 subagent · Working', '2 subagents · Completed', '2 subagents · Status updating']);
+});
+
 it('uses singular for one subagent and omits the row without descendants', async () => {
-	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
+	treeSummaries.set('thread', {
+		descendantCount: 1,
+		anyActive: false,
+		descendantsActive: false,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+	});
 	const oneChild = props([thread()]);
 	const oneChildView = renderView(<Harness {...oneChild} />);
 	await flush();
 
 	const badge = document.querySelector('.inbox-row-subagents')!;
 
-	expect(badge.textContent).toBe('1 subagent');
-	expect(badge.textContent).not.toContain('Working');
-	expect(document.querySelector('.inbox-subagents-working')).toBeNull();
+	expect(badge.textContent).toBe('1 subagent · Completed');
 
-	treeSummaries.set('thread', { descendantCount: 0, anyActive: false, descendantsActive: false });
+	treeSummaries.set('thread', {
+		descendantCount: 0,
+		anyActive: false,
+		descendantsActive: false,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+	});
 	oneChildView.unmount();
 	renderView(<Harness {...props([thread()])} />);
 	await flush();
@@ -543,8 +651,18 @@ it('renders and selects nested children with increasing indentation', async () =
 		parentThreadId: 'child' as Id<'threadRecords'>
 	};
 
-	treeSummaries.set('thread', { descendantCount: 2, anyActive: false, descendantsActive: false });
-	treeSummaries.set('child', { descendantCount: 1, anyActive: false, descendantsActive: false });
+	treeSummaries.set('thread', {
+		descendantCount: 2,
+		anyActive: false,
+		descendantsActive: false,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 2, failed: 0, cancelled: 0 }
+	});
+	treeSummaries.set('child', {
+		descendantCount: 1,
+		anyActive: false,
+		descendantsActive: false,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+	});
 
 	const input = props([thread()]);
 	input.expansion = expansionStub(['thread', 'child']);
@@ -558,7 +676,7 @@ it('renders and selects nested children with increasing indentation', async () =
 		expansionRows.map(
 			(row) => row.closest('.inbox-row')?.querySelector('.inbox-row-subagents')?.textContent
 		)
-	).toEqual(['2 subagents', '1 subagent']);
+	).toEqual(['2 subagents · Completed', '1 subagent · Completed']);
 	expect(expansionRows.every((row) => row.getAttribute('aria-expanded') === 'true')).toBe(true);
 
 	const titles = [...document.querySelectorAll('.inbox-row-title')].map((row) => row.textContent);
@@ -589,7 +707,12 @@ it('renders and selects nested children with increasing indentation', async () =
 });
 
 it('collapses an expanded branch through the expansion control', async () => {
-	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
+	treeSummaries.set('thread', {
+		descendantCount: 1,
+		anyActive: false,
+		descendantsActive: false,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+	});
 	const input = props([thread()]);
 	input.expansion = expansionStub(['thread']);
 	renderView(<Harness {...input} />);
@@ -597,11 +720,13 @@ it('collapses an expanded branch through the expansion control', async () => {
 
 	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
 
-	expect(expansion.getAttribute('aria-label')).toBe('Collapse subagents of Thread');
+	expect(expansion.getAttribute('aria-label')).toBe(
+		'Collapse subagents of Thread: 1 subagent · Completed'
+	);
 	expect(expansion.querySelector('.lucide-chevron-down')).toBeTruthy();
 
 	act(() => {
-		expansion.click();
+		expansion.querySelector<HTMLElement>('.inbox-row-subagents')!.click();
 	});
 
 	expect(input.expansion.collapse).toHaveBeenCalledWith('thread');
@@ -609,7 +734,12 @@ it('collapses an expanded branch through the expansion control', async () => {
 
 it('hides settle and unsettle controls for child threads', async () => {
 	const child = childThread('child', 'Child thread');
-	treeSummaries.set('thread', { descendantCount: 1, anyActive: false, descendantsActive: false });
+	treeSummaries.set('thread', {
+		descendantCount: 1,
+		anyActive: false,
+		descendantsActive: false,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 }
+	});
 
 	const input = props([thread()]);
 	input.expansion = expansionStub(['thread']);
@@ -644,7 +774,12 @@ it.each([
 		descendantsActive: true,
 		badge: '2 subagents · Working'
 	},
-	{ status: 'running', descendantCount: 2, descendantsActive: false, badge: '2 subagents' },
+	{
+		status: 'running',
+		descendantCount: 2,
+		descendantsActive: false,
+		badge: '2 subagents · Completed'
+	},
 	{ status: 'running', descendantCount: 0, descendantsActive: false, badge: undefined },
 	{ status: 'queued', descendantCount: 0, descendantsActive: false, badge: undefined }
 ] satisfies {
@@ -656,12 +791,25 @@ it.each([
 	'blocks settling a $status root with descendant activity $descendantsActive',
 	async ({ status, descendantCount, descendantsActive, badge }) => {
 		if (descendantCount) {
-			treeSummaries.set('thread', { descendantCount, anyActive: true, descendantsActive });
+			treeSummaries.set('thread', {
+				descendantCount,
+				anyActive: true,
+				descendantsActive,
+				descendantStatusCounts: {
+					queued: 0,
+					running: descendantsActive ? descendantCount : 0,
+					completed: descendantsActive ? 0 : descendantCount,
+					failed: 0,
+					cancelled: 0
+				}
+			});
 		}
 
 		await render([thread(false, status)]);
 		expect(document.querySelector('.inbox-row-subagents')?.textContent).toBe(badge);
-		expect(document.querySelector('.inbox-subagents-working') !== null).toBe(descendantsActive);
+		expect(document.querySelector('.inbox-row-subagents.inbox-working') !== null).toBe(
+			descendantsActive
+		);
 		expect(
 			document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')?.disabled
 		).toBe(true);
