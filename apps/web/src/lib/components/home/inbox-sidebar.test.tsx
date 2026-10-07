@@ -599,12 +599,34 @@ it('hides starting counts while still letting starting-only trees expand', async
 		descendantsActive: true,
 		descendantStatusCounts: { queued: 2, running: 0, completed: 0, failed: 0, cancelled: 0 }
 	});
-	const view = renderView(<Harness {...props([thread()])} />);
+	const input = props([thread()]);
+	input.resolveChildren = childrenResolverStub({
+		thread: [
+			childThread('child-a', 'Child A', 'queued'),
+			childThread('child-b', 'Child B', 'queued')
+		]
+	});
+	const view = renderView(<Harness {...input} />);
 	await flush();
 
+	const expansion = view.getByRole('button', { name: 'Expand subagents of Thread' });
 	expect(document.querySelectorAll('.inbox-subagent-status-row')).toHaveLength(0);
-	expect(view.getByRole('button', { name: 'Expand subagents of Thread' })).toBeTruthy();
 	expect(document.body.textContent).not.toContain('Starting');
+	expect(document.querySelector('.inbox-children')).toBeNull();
+
+	act(() => {
+		fireEvent.click(expansion.querySelector('.lucide-chevron-right')!);
+	});
+	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
+	expect(input.onSelect).not.toHaveBeenCalled();
+
+	view.rerender(<Harness {...input} />);
+	expect(expansion.getAttribute('aria-expanded')).toBe('true');
+	expect([...document.querySelectorAll('.inbox-row-title')].map((row) => row.textContent)).toEqual([
+		'Thread',
+		'Child A',
+		'Child B'
+	]);
 });
 
 it('counts uncounted descendants as completed while their statuses are backfilled', async () => {
