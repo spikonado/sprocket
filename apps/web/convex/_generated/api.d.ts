@@ -36,6 +36,7 @@ import type * as lib_auth from "../lib/auth.js";
 import type * as lib_billingWindows from "../lib/billingWindows.js";
 import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_commandSessions from "../lib/commandSessions.js";
+import type * as lib_commandToolKinds from "../lib/commandToolKinds.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_dodoProducts from "../lib/dodoProducts.js";
@@ -135,6 +136,7 @@ declare const fullApi: ApiFromModules<{
   "lib/billingWindows": typeof lib_billingWindows;
   "lib/claimedWebJob": typeof lib_claimedWebJob;
   "lib/commandSessions": typeof lib_commandSessions;
+  "lib/commandToolKinds": typeof lib_commandToolKinds;
   "lib/contextHandoff": typeof lib_contextHandoff;
   "lib/docs": typeof lib_docs;
   "lib/dodoProducts": typeof lib_dodoProducts;
