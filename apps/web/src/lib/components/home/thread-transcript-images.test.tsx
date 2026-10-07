@@ -11,7 +11,9 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 		const threadId = 'image-thread' as Id<'threadRecords'>;
 		// SAFETY: Fixture IDs never leave the mounted component.
 		const runId = 'image-run' as Id<'runs'>;
-		const text = '![Model screenshot](parse_file/screenshot.png)';
+
+		const text =
+			'![Model screenshot](parse_file/screenshot.png)\n\n[Rendering screenshot](parse_file/screenshot.png)';
 
 		const message: TranscriptMessage =
 			kind === 'persisted'
@@ -47,7 +49,7 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 			activeRunId: null
 		};
 
-		const { getByRole, rerender } = render(
+		const { getByRole, queryByRole, rerender } = render(
 			<ThreadTranscript
 				{...props}
 				project={{ repositoryKey: 'repo', displayName: 'Repo', workspacePath: '/workspace' }}
@@ -64,9 +66,16 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
 		expect(imageUrl().searchParams.get('workspacePath')).toBe('/workspace');
 		expect(imageUrl().searchParams.get('path')).toBe('parse_file/screenshot.png');
+		expect(getByRole('button', { name: 'View Rendering screenshot' }).getAttribute('src')).toBe(
+			getByRole('button', { name: 'View Model screenshot' }).getAttribute('src')
+		);
+		expect(queryByRole('link')).toBeNull();
 		rerender(<ThreadTranscript {...props} project={null} />);
 		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
 		expect(imageUrl().searchParams.get('workspacePath')).toBeNull();
+		expect(getByRole('button', { name: 'View Rendering screenshot' }).getAttribute('src')).toBe(
+			getByRole('button', { name: 'View Model screenshot' }).getAttribute('src')
+		);
 	}
 );
 

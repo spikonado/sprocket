@@ -60,6 +60,136 @@ describe('math', () => {
 });
 
 describe('links', () => {
+	it.each([
+		['parse_file/screenshot.png', undefined, 'parse_file/screenshot.png', 'thread'],
+		['parse_file/screenshot%2Epng', undefined, 'parse_file/screenshot.png', 'thread'],
+		['./screenshot_url/board%20layout.PNG', undefined, 'screenshot_url/board layout.PNG', 'thread'],
+		['scrape_url/board.webp', undefined, 'scrape_url/board.webp', 'thread'],
+		['parse_file/board.png?download=1#preview', undefined, 'parse_file/board.png', 'thread'],
+		['assets/board.svg', undefined, 'assets/board.svg', null],
+		['/tmp/board.jpg', undefined, '/tmp/board.jpg', null],
+		['parse_file/board.png', 'docs/notes.md', 'docs/parse_file/board.png', null]
+	])(
+		'renders local image link %s inline using its Markdown scope',
+		(source, documentPath, path, threadId) => {
+			const { getByRole } = render(
+				<ChatMarkdown
+					content={`[Rendering screenshot](${source})`}
+					openLinksInNewTab
+					imageScope={{
+						workspacePath: '/workspace',
+						documentPath,
+						transcript: { userId: 'user', threadId: 'thread' }
+					}}
+				/>
+			);
+
+			const image = getByRole('button', { name: 'View Rendering screenshot' });
+			const url = new URL(image.getAttribute('src') ?? '', window.location.href);
+
+			expect(url.pathname).toBe('/api/workspace/image');
+			expect(url.searchParams.get('path')).toBe(path);
+			expect(url.searchParams.get('workspacePath')).toBe('/workspace');
+			expect(url.searchParams.get('threadId')).toBe(threadId);
+			expect(url.searchParams.get('userId')).toBe(threadId ? 'user' : null);
+			expect(image.getAttribute('alt')).toBe('Rendering screenshot');
+			expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
+		}
+	);
+
+	it('uses the configured machine API for image links and updates their thread scope', () => {
+		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
+
+		try {
+			const { getByRole, rerender } = render(
+				<ChatMarkdown
+					content="[Screenshot](parse_file/screenshot.png)"
+					imageScope={{ transcript: { userId: 'user', threadId: 'first' } }}
+				/>
+			);
+
+			const url = () => new URL(getByRole('button').getAttribute('src') ?? '');
+			expect(url().origin).toBe('https://machine.example.com');
+			expect(url().searchParams.get('threadId')).toBe('first');
+
+			rerender(
+				<ChatMarkdown
+					content="[Screenshot](parse_file/screenshot.png)"
+					imageScope={{ transcript: { userId: 'user', threadId: 'second' } }}
+				/>
+			);
+			expect(url().searchParams.get('threadId')).toBe('second');
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it.each(['docs/notes.md', 'assets/archive.zip', 'docs/notes.md?image=board.png', '#diagram.png'])(
+		'preserves ordinary link %s',
+		(source) => {
+			const { getByRole } = render(
+				<ChatMarkdown content={`[Link](${source})`} imageScope={{ workspacePath: '/workspace' }} />
+			);
+
+			expect(getByRole('link').getAttribute('href')).toBe(source);
+		}
+	);
+
+	it.each(['https://example.com/board.png', '//example.com/board.png'])(
+		'renders remote image link %s inline and opens the image viewer',
+		(source) => {
+			const { getByRole, container } = render(
+				<ChatMarkdown
+					content={`Before [**Board**](${source} "Board layout") after.`}
+					openLinksInNewTab
+				/>
+			);
+
+			const image = getByRole('button', { name: 'View Board' });
+			expect(image.getAttribute('src')).toBe(source);
+			expect(image.getAttribute('alt')).toBe('Board');
+			expect(image.getAttribute('title')).toBe('Board layout');
+			expect(container.querySelector('a')).toBeNull();
+			expect(container.textContent?.trim()).toBe('Before  after.');
+			fireEvent.click(image);
+			expect(getByRole('dialog', { name: 'Image preview: Board' }).querySelector('img')?.src).toBe(
+				new URL(source, window.location.href).href
+			);
+		}
+	);
+
+	it('preserves an explicitly linked image', () => {
+		const { getByRole } = render(
+			<ChatMarkdown content="[![Thumbnail](https://example.com/thumb.png)](https://example.com/full.png)" />
+		);
+
+		expect(getByRole('link').getAttribute('href')).toBe('https://example.com/full.png');
+		expect(getByRole('img', { name: 'Thumbnail' }).getAttribute('src')).toBe(
+			'https://example.com/thumb.png'
+		);
+	});
+
+	it('opens the full-size local image from an explicitly linked thumbnail', () => {
+		const { getByRole } = render(
+			<ChatMarkdown
+				content="[![Thumbnail](thumb.png)](full.png)"
+				imageScope={{ workspacePath: '/workspace' }}
+			/>
+		);
+
+		const link = new URL(getByRole('link').getAttribute('href') ?? '', window.location.href);
+
+		const image = new URL(
+			getByRole('img', { name: 'Thumbnail' }).getAttribute('src') ?? '',
+			window.location.href
+		);
+
+		expect(link.pathname).toBe('/api/workspace/image');
+		expect(link.searchParams.get('workspacePath')).toBe('/workspace');
+		expect(link.searchParams.get('path')).toBe('full.png');
+		expect(image.searchParams.get('path')).toBe('thumb.png');
+	});
+
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
 			content: '[Sprocket](https://sprocket.dev)',
