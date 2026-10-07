@@ -55,7 +55,7 @@ Update your CLI installation with `sprocket update`. Run `sprocket --help` for m
 ## Troubleshooting
 
 - If `17731` is already occupied, set `SPROCKET_PORT` before launching.
-- If sign-in cannot save or restore your session, check that your operating system credential service is available.
+- If sign-in cannot save or restore your session, check that your operating system credential service is available, or use `sprocket login --credential-store file`.
 - If `sprocket` opens the browser instead of the desktop app, install `sprocket-desktop` from [GitHub Releases](https://github.com/spikonado/sprocket/releases) onto `PATH`, or set `SPROCKET_DESKTOP_EXECUTABLE`.
 - Unsigned macOS and Windows desktop builds may need a Gatekeeper / SmartScreen override the first time you open them.
 - Contact [aarav@spikonado.com](mailto:aarav@spikonado.com) for help.
