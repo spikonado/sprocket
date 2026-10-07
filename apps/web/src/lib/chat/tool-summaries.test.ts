@@ -83,13 +83,33 @@ describe('subagent summaries', () => {
 	it.each<{ name: string; input: JsonValue; expected: string }>([
 		{
 			name: 'spawn_subagent',
+			input: { prompt: 'Implement the design' },
+			expected: 'Implement the design'
+		},
+		{
+			name: 'spawn_subagent',
 			input: { threadId: 'child', prompt: 'Implement the design' },
 			expected: 'Implement the design'
 		},
 		{
 			name: 'control_subagent',
+			input: { action: 'send', threadId: 'child', prompt: 'Refine the design' },
+			expected: 'Refine the design'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'send', threadId: 'child' },
+			expected: 'Message child agent'
+		},
+		{
+			name: 'control_subagent',
 			input: { action: 'stop', threadId: 'child' },
 			expected: 'Stop child agent'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'answer_question', threadId: 'child', questionId: 'question', text: 'Yes' },
+			expected: 'Answered question'
 		},
 		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' }
 	])('summarizes $name as "$expected"', ({ name, input, expected }) => {

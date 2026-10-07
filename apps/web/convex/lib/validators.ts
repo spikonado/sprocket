@@ -237,13 +237,12 @@ export const vSubagentPayload = v.object({
 	timeoutMs: v.optional(v.number())
 });
 
-export const vControlSubagentPayload = v.object({
+export const vControlSubagentPayload = vSubagentPayload.partial().extend({
 	threadId: v.id('threadRecords'),
-	action: v.union(v.literal('stop'), v.literal('answer_question')),
+	action: v.union(v.literal('send'), v.literal('stop'), v.literal('answer_question')),
 	questionId: v.optional(v.id('agentQuestions')),
 	optionId: v.optional(v.string()),
-	text: v.optional(v.string()),
-	yieldTimeMs: v.optional(v.number())
+	text: v.optional(v.string())
 });
 
 export const vPollSubagentPayload = v.object({
@@ -577,6 +576,7 @@ const vControlSubagentFields = {
 };
 
 export const vControlSubagentResult = v.union(
+	vSpawnSubagentResult,
 	vSubagentActionResult.extend(vControlSubagentFields),
 	vSubagentSnapshotResult.extend(vControlSubagentFields)
 );

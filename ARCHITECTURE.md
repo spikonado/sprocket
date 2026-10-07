@@ -260,9 +260,9 @@ that order and keeps no cross-thread transcript cache.
 
 ### Native subagent threads
 
-The `spawn_subagent` tool requires a nonempty prompt for delegation: no `threadId`
-creates a child, while a supplied `threadId` sends a follow-up.
-`control_subagent` stops a descendant or answers its pending question, while
+The `spawn_subagent` tool creates a child with a nonempty prompt and rejects
+`threadId`. `control_subagent` sends a follow-up with `action: "send"`, stops a
+descendant, or answers its pending question, while
 `poll_subagent` observes its lifecycle and pages its transcript. Discovery uses
 `list_subagents`, with 32 children per page. `list_subagent_models` exposes
 provider-compatible model settings. Actions and polls share the timing policy of `exec_cmd`,
@@ -274,8 +274,12 @@ the existing sidebar thread tree, not a separate dashboard.
 Stop waits for confirmed termination of the run it targeted, even with a zero
 yield time. A replacement run cannot extend that wait. Tool outputs report run
 status rather than the UI lifecycle phase, with pending questions separately.
-Only spawn and child listings return thread IDs. Activity flags, question
+Spawn, send, and child listings return thread IDs. Activity flags, question
 deadlines, creation flags, and transcript directories remain internal.
+Sending to a running child fails with guidance to stop it or wait for it to
+finish; only cleanup of an ended run is waited out automatically. Historical
+`spawn_subagent(threadId)` payloads remain valid only for stored history and UI
+rendering, not runtime execution.
 
 Delegation creates ordinary persistent threads linked by an immutable optional
 `parentThreadId`. Only agents create children; humans can select and control

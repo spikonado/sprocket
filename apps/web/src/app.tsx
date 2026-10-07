@@ -1985,7 +1985,7 @@ export default function App({
 				runStateRef.current?.runId !== expectedRunId
 			)
 				return;
-			setCurrentError(error instanceof Error ? error.message : 'Failed to cancel run.');
+			setCurrentError(error instanceof Error ? error.message : 'Failed to stop run.');
 		}
 	}
 

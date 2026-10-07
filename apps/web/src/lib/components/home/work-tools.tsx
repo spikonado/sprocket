@@ -45,7 +45,9 @@ export default function WorkTools({ tools, inProgress, commands }: Props) {
 								) : null}
 								{item ? <span className="min-w-0 truncate">{item}</span> : null}
 								{error && failure && index === summaries.length - 1 ? (
-									<span className={`shrink-0 ${errorClass}`}>({failure})</span>
+									<span className={`shrink-0 ${errorClass}`}>
+										({failure === 'cancelled' ? 'stopped' : failure})
+									</span>
 								) : null}
 							</div>
 						))}

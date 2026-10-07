@@ -559,7 +559,7 @@ it('shows each descendant status on its own counted row', async () => {
 		'2 subagents · Working',
 		'3 subagents · Completed',
 		'1 subagent · Failed',
-		'2 subagents · Cancelled'
+		'2 subagents · Stopped'
 	]);
 	expect(
 		[...document.querySelectorAll('.inbox-row-subagents.inbox-working')].map(
@@ -596,7 +596,7 @@ it('shows each descendant status on its own counted row', async () => {
 		'3 subagents · Working',
 		'3 subagents · Completed',
 		'1 subagent · Failed',
-		'2 subagents · Cancelled'
+		'2 subagents · Stopped'
 	]);
 });
 

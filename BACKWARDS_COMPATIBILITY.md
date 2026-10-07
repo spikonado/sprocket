@@ -192,6 +192,16 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Subagent follow-up tool routing
+
+`spawn_subagent` creates children and rejects `threadId` at runtime. Follow-ups
+use `control_subagent` with `action: "send"`. Stored executor payload validation
+and UI rendering retain historical `spawn_subagent(threadId)` calls without
+rewriting their tool names or identities. That historical shape remains
+permanently for readable transcripts, not for execution; no data migration is
+needed. The shared Convex submission endpoint handles creation and follow-ups
+without interpreting or translating legacy tool schemas.
+
 ### Legacy agent question expiry
 
 Released agents call `agentQuestions:create`, which keeps its original
