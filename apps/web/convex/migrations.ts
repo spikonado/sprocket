@@ -8,7 +8,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
-import { migrateThreadHierarchyState } from '@convex/lib/threadHierarchy';
+import { captureThreadActivityBeforeChange } from '@convex/lib/threadHierarchy';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
@@ -55,14 +55,12 @@ export const backfillThreadHierarchyCounters = migrations.define({
 	table: 'threadRecords',
 	batchSize: 1,
 	migrateOne: async (ctx, thread) => {
-		await migrateThreadHierarchyState(ctx, thread._id);
+		await captureThreadActivityBeforeChange(ctx, thread._id);
 	}
 });
 
 // Keep the former entrypoint for migration batches scheduled before this deploy.
 export const backfillThreadHierarchyStatuses = backfillThreadHierarchyCounters;
-
-export const backfillThreadHierarchyWorkingCounts = backfillThreadHierarchyCounters;
 
 const threadHierarchyCounterMigrations: FunctionReference<'mutation', 'internal'>[] = [
 	internal.migrations.backfillThreadHierarchyCounters

@@ -25,20 +25,20 @@ export function collapseThreadBranch(
 	return expandedThreadIds.filter((threadId) => !collapsed.has(threadId));
 }
 
-export function subagentStatusRows(
+export function subagentSummaryLabel(
 	descendantCount: number,
 	workingCount: number,
 	descendantsActive: boolean
-): { status: 'running' | 'completed'; label: string }[] {
+): string | null {
 	if (workingCount > 0) {
-		return [{ status: 'running', label: `${subagentCountLabel(workingCount)} · Working` }];
+		return `${subagentCountLabel(workingCount)} · Working`;
 	}
 
 	if (descendantCount > 0 && !descendantsActive) {
-		return [{ status: 'completed', label: subagentCountLabel(descendantCount) }];
+		return subagentCountLabel(descendantCount);
 	}
 
-	return [];
+	return null;
 }
 
 function subagentCountLabel(count: number): string {

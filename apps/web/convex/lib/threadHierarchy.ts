@@ -162,7 +162,6 @@ export async function registerChildThread(ctx: MutationCtx, thread: Doc<'threadR
 	});
 }
 
-/** Capture source activity before changing runs or questions, in the same mutation. */
 export async function captureThreadActivityBeforeChange(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
@@ -183,7 +182,6 @@ export async function captureThreadActivityBeforeChange(
 	// Convert released contribution markers before applying a live transition.
 	if (
 		state.ownActive !== undefined ||
-		state.ownWorking !== undefined ||
 		state.ownStatus !== undefined ||
 		state.descendantStatusCounts !== undefined ||
 		state.workingDescendantCount === undefined
@@ -191,14 +189,11 @@ export async function captureThreadActivityBeforeChange(
 		await applyAncestorCountChanges(ctx, thread, {
 			total: 0,
 			active: Number(before.active) - Number(state.ownActive ?? false),
-			working:
-				Number(thread.status === 'running') -
-				Number(state.ownWorking ?? state.ownStatus === 'running')
+			working: Number(thread.status === 'running') - Number(state.ownStatus === 'running')
 		});
 		await ctx.db.patch('threadHierarchyStates', state._id, {
 			workingDescendantCount: workingDescendantCount(state),
 			ownActive: undefined,
-			ownWorking: undefined,
 			ownStatus: undefined,
 			descendantStatusCounts: undefined
 		});
@@ -207,7 +202,6 @@ export async function captureThreadActivityBeforeChange(
 	return before;
 }
 
-/** Apply only the before/after difference; retries observe their already-written source state. */
 export async function updateThreadHierarchyAfterChange(
 	ctx: MutationCtx,
 	before: ThreadActivity | null
@@ -223,13 +217,6 @@ export async function updateThreadHierarchyAfterChange(
 		active: Number(await threadOwnActivity(ctx.db, thread._id)) - Number(before.active),
 		working: Number(thread.status === 'running') - Number(before.thread.status === 'running')
 	});
-}
-
-export async function migrateThreadHierarchyState(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<void> {
-	await captureThreadActivityBeforeChange(ctx, threadId);
 }
 
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {

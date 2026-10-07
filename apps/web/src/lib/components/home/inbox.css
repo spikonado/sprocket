@@ -321,12 +321,6 @@
 	margin-top: 3.5px;
 }
 
-.inbox-subagent-statuses {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-}
-
 .inbox-children .inbox-load-more {
 	padding: 4px 10px;
 	text-align: left;

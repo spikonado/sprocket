@@ -475,46 +475,28 @@ using it have aged out, then remove the mutation and its direct tests.
 
 ### Descendant thread working counts
 
-Hierarchy states now store only `descendantCount`, `activeDescendantCount`, and
-`workingDescendantCount`, keyed by `threadId`. Run and question mutations capture
-the thread's source activity before changing it and apply the difference to
-ancestor counters in the same transaction. Running status comes from the thread
-record; activity includes queued runs and actionable questions. Transitions
-with no activity or working-status change do not write hierarchy counters.
-The inbox shows the working count while descendants are running, or the total
-without a status label when the subtree is inactive.
+Released hierarchy states may contain `ownActive`, `ownStatus`, and
+`descendantStatusCounts`, or lack `workingDescendantCount`. Readers fall back to
+the legacy running bucket. Live mutations reconcile stored contributions before
+changing source activity, populate the scalar, and remove the old fields.
+`backfillThreadHierarchyCounters` performs the same conversion in resumable batches.
+Its new identity and `thread-hierarchy-counters-2026-10` schedule ensure it runs
+even if the status backfill finished. Keep `backfillThreadHierarchyStatuses` as
+an alias until no batches scheduled before this deploy remain.
 
-Released states may contain `ownActive`, `ownWorking`, `ownStatus`, and
-`descendantStatusCounts`, or lack the working scalar. These fields remain optional
-in the schema only for migration compatibility. Readers fall back to the legacy
-running bucket. Before a live mutation changes source activity, writers reconcile
-the stored contribution flags with the current source state, populate the scalar,
-and remove the old fields. This prevents double-counting during the backfill.
-New states never store contribution flags.
+Remove the legacy schema fields, reader/writer fallbacks, counter migration,
+`runThreadHierarchyStatusBackfill` runner, hourly
+`runThreadHierarchyStatusBackfillAutomatically` cron, and both hierarchy schedule
+rows only after completion and production checks confirm all states have the
+three counters and no contribution flags or status buckets.
 
-`backfillThreadHierarchyCounters` performs the same conversion in resumable
-batches. The existing `runThreadHierarchyStatusBackfill` runner and hourly
-`runThreadHierarchyStatusBackfillAutomatically` cron run this new migration.
-Both `backfillThreadHierarchyStatuses` and `backfillThreadHierarchyWorkingCounts`
-remain aliases for batches scheduled before this deploy; remove them once no such
-scheduled jobs remain. Its fresh migration identity and
-`thread-hierarchy-counters-2026-10` schedule ensure it runs even if both previous
-backfills finished. Remove the legacy schema fields, reader/writer fallbacks,
-migration, cron and schedule only after completion and production checks confirm
-all states have the three counters and no contribution flags or status buckets.
-The former `thread-hierarchy-status-counts-2026-10` and
-`thread-hierarchy-working-counts-2026-10` schedules can then be deleted too.
-
-`threads.subtreeSummaryForThread` adds `workingDescendantCount` and retains
-`descendantCount`, `anyActive`, and `descendantsActive`. Its legacy
-`descendantStatusCounts` response is derived without storing status buckets:
-`running` is the working count, `completed` is the remaining total, and the other
-buckets are zero. This preserves released inbox clients' combined Completed
-row, including their previous treatment of unknown descendants as completed;
-queued descendants now also appear in that combined row. Remove this response
-shim and validator only after clients consuming it are outside the supported
-upgrade window. The total count remains necessary for tree expansion and the
-inactive subagent label and has no storage removal gate.
+`threads.subtreeSummaryForThread` retains its original fields and adds
+`workingDescendantCount`. The legacy `descendantStatusCounts` response derives
+`running` from the working count and `completed` from the remaining total, with
+other buckets zero. Released inbox clients combine non-running descendants into
+Completed; queued descendants now also appear there. Remove this response shim
+and validator only after those clients are outside the supported upgrade window.
+Keep the total counter for expansion and inactive subagent labels.
 
 ### Current Migrations
 

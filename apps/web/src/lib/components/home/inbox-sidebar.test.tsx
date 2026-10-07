@@ -555,7 +555,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 	const view = renderView(<Harness {...input} />);
 	await flush();
 
-	const rows = [...document.querySelectorAll('.inbox-subagent-status-row')];
+	const rows = [...document.querySelectorAll('.inbox-row-subagents')];
 	expect(rows.map((row) => row.textContent)).toEqual(['2 subagents · Working']);
 	expect(document.querySelector('.inbox-row-subagents.inbox-working')?.textContent).toBe(
 		'2 subagents · Working'
@@ -588,7 +588,7 @@ it('shows only the working count for mixed descendant statuses', async () => {
 	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
 	expect(document.querySelector('.inbox-subagents .lucide-chevron-down')).toBeTruthy();
 	expect(
-		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
+		[...document.querySelectorAll('.inbox-row-subagents')].map((row) => row.textContent)
 	).toEqual(['3 subagents · Working']);
 });
 
@@ -611,7 +611,7 @@ it('hides starting counts while still letting starting-only trees expand', async
 	await flush();
 
 	const expansion = view.getByRole('button', { name: 'Expand subagents of Thread' });
-	expect(document.querySelectorAll('.inbox-subagent-status-row')).toHaveLength(0);
+	expect(document.querySelectorAll('.inbox-row-subagents')).toHaveLength(0);
 	expect(document.body.textContent).not.toContain('Starting');
 	expect(document.querySelector('.inbox-children')).toBeNull();
 
@@ -640,7 +640,7 @@ it('shows only counted working descendants during backfill', async () => {
 	});
 	await render([thread()]);
 	expect(
-		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
+		[...document.querySelectorAll('.inbox-row-subagents')].map((row) => row.textContent)
 	).toEqual(['1 subagent · Working']);
 });
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
-	migrateThreadHierarchyState,
+	captureThreadActivityBeforeChange,
 	threadOwnActivity,
 	registerChildThread,
 	subtreeSummary
@@ -30,7 +30,7 @@ async function thread(
 		if (parentThreadId) {
 			await registerChildThread(ctx, (await ctx.db.get('threadRecords', threadId))!);
 		} else {
-			await migrateThreadHierarchyState(ctx, threadId);
+			await captureThreadActivityBeforeChange(ctx, threadId);
 		}
 
 		return run._id;
@@ -45,7 +45,6 @@ async function makeLegacy(t: ConvexTestInstance) {
 			await ctx.db.patch('threadHierarchyStates', row._id, {
 				ownActive: await threadOwnActivity(ctx.db, row.threadId),
 				ownStatus: undefined,
-				ownWorking: undefined,
 				workingDescendantCount: undefined,
 				descendantStatusCounts: undefined
 			});
@@ -67,7 +66,6 @@ async function makeStatusCountsLegacy(t: ConvexTestInstance) {
 					failed: 0,
 					cancelled: 0
 				},
-				ownWorking: undefined,
 				workingDescendantCount: undefined
 			});
 		}
@@ -160,7 +158,6 @@ describe('thread hierarchy counter migration', () => {
 				activeDescendantCount: previous.activeDescendantCount
 			});
 			expect(row.ownActive).toBeUndefined();
-			expect(row.ownWorking).toBeUndefined();
 			expect(row.workingDescendantCount).toBeDefined();
 			expect(row.ownStatus).toBeUndefined();
 			expect(row.descendantStatusCounts).toBeUndefined();
@@ -238,7 +235,7 @@ describe('thread hierarchy counter migration', () => {
 		});
 	});
 
-	it('converts legacy states after both old migrations finished and leaves completed schedules unchanged', async () => {
+	it('converts legacy states after the status migration finished and leaves completed schedules unchanged', async () => {
 		vi.useFakeTimers();
 
 		try {
@@ -247,39 +244,22 @@ describe('thread hierarchy counter migration', () => {
 			await thread(t, 'running', root.threadId);
 			await thread(t, 'cancelled', root.threadId);
 
-			for (const migration of [
-				internal.migrations.backfillThreadHierarchyStatuses,
-				internal.migrations.backfillThreadHierarchyWorkingCounts
-			]) {
-				await t.run((ctx) => migrations.runOne(ctx, migration));
-				await t.finishAllScheduledFunctions(vi.runAllTimers);
-				expect(
-					await t.run((ctx) => migrations.getStatus(ctx, { migrations: [migration] }))
-				).toMatchObject([{ isDone: true }]);
-			}
+			const migration = internal.migrations.backfillThreadHierarchyStatuses;
+			await t.run((ctx) => migrations.runOne(ctx, migration));
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			expect(
+				await t.run((ctx) => migrations.getStatus(ctx, { migrations: [migration] }))
+			).toMatchObject([{ isDone: true }]);
 
-			await t.run(async (ctx) => {
-				for (const state of await ctx.db.query('threadHierarchyStates').collect()) {
-					const record = (await ctx.db.get('threadRecords', state.threadId))!;
-					await ctx.db.patch('threadHierarchyStates', state._id, {
-						ownActive: await threadOwnActivity(ctx.db, state.threadId),
-						ownWorking: record.status === 'running'
-					});
-				}
-			});
-			await t.run(async (ctx) => {
-				for (const name of [
-					'thread-hierarchy-status-counts-2026-10',
-					'thread-hierarchy-working-counts-2026-10'
-				]) {
-					await ctx.db.insert('migrationSchedules', {
-						name,
-						notBefore: 0,
-						startedAt: 0,
-						completedAt: 1
-					});
-				}
-			});
+			await makeStatusCountsLegacy(t);
+			await t.run((ctx) =>
+				ctx.db.insert('migrationSchedules', {
+					name: 'thread-hierarchy-status-counts-2026-10',
+					notBefore: 0,
+					startedAt: 0,
+					completedAt: 1
+				})
+			);
 			await t.mutation(internal.migrations.runThreadHierarchyStatusBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runThreadHierarchyStatusBackfillAutomatically, {});
@@ -302,7 +282,6 @@ describe('thread hierarchy counter migration', () => {
 
 			for (const state of after.states) {
 				expect(state.ownActive).toBeUndefined();
-				expect(state.ownWorking).toBeUndefined();
 				expect(state.workingDescendantCount).toBe(state.threadId === root.threadId ? 1 : 0);
 				expect(state.ownStatus).toBeUndefined();
 				expect(state.descendantStatusCounts).toBeUndefined();

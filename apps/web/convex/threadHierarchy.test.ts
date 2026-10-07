@@ -6,7 +6,6 @@ import {
 	assertDescendantThreadAccess,
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange,
-	migrateThreadHierarchyState,
 	registerChildThread,
 	subtreeSummary
 } from '@convex/lib/threadHierarchy';
@@ -146,7 +145,7 @@ describe('thread hierarchy', () => {
 			descendantsActive: false,
 			anyActive: true
 		});
-		await t.run((ctx) => migrateThreadHierarchyState(ctx, branch.threadId));
+		await t.run((ctx) => captureThreadActivityBeforeChange(ctx, branch.threadId));
 		expect((await summary(t, root.threadId)).workingDescendantCount).toBe(2);
 		expect(
 			await t.run((ctx) =>
@@ -427,13 +426,10 @@ describe('thread hierarchy', () => {
 		);
 
 		const states = await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect());
-		expect(
-			states.every((state) => state.ownActive === undefined && state.ownWorking === undefined)
-		).toBe(true);
 		await t.run(async (ctx) => {
 			for (const id of [threadId, queued, running]) {
-				await migrateThreadHierarchyState(ctx, id);
-				await migrateThreadHierarchyState(ctx, id);
+				await captureThreadActivityBeforeChange(ctx, id);
+				await captureThreadActivityBeforeChange(ctx, id);
 			}
 		});
 		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(states);
