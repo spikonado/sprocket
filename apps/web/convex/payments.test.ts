@@ -247,21 +247,48 @@ describe('payments mandates', () => {
 	});
 
 	it('refuses payment tools after cancellation is requested while the lease is still live', async () => {
-		const fetchMock = vi.fn();
-		vi.stubGlobal('fetch', fetchMock);
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		const chargeId = await t.run((ctx) =>
+			ctx.db.insert('mandateCharges', {
+				mandateId: setup.mandateId,
+				runId: run.runId,
+				userId: 'user_alice',
+				pravaTransactionId: 'txn_cancel',
+				amount: 100,
+				currency: 'USD',
+				description: 'Root purchase',
+				status: 'awaiting_result',
+				createdAt: Date.now(),
+				updatedAt: Date.now()
+			})
+		);
 
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', run.runId, { cancellationRequestedAt: Date.now() });
 		});
+		fetchMock.mockClear();
+		const caller = auth(run);
 
 		await expect(run.asUser.action(api.payments.mandateSetup, setupArgs(run))).rejects.toThrow(
 			/Run is no longer active/
 		);
-		await expect(run.asUser.action(api.payments.mandateList, auth(run))).rejects.toThrow(
+		await expect(run.asUser.action(api.payments.mandateList, caller)).rejects.toThrow(
 			/Run is no longer active/
 		);
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				...caller,
+				mandateId: setup.mandateId,
+				amount: '1.00',
+				currency: 'USD',
+				description: 'After cancel'
+			})
+		).rejects.toThrow(/Run is no longer active/);
+		await expect(
+			run.asUser.action(api.payments.mandateReport, { ...caller, chargeId, outcome: 'approved' })
+		).rejects.toThrow(/Run is no longer active/);
 		expect(fetchMock).toHaveBeenCalledTimes(0);
 	});
 
