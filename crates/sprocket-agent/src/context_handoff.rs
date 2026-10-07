@@ -2,10 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, RequestPatch, StepEventKind,
+    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, ObservationAction, StepEventKind,
+    ToolCallDelta,
 };
 use rig::completion::{Message, Usage};
-use rig::message::{AssistantContent, ToolChoice};
+use rig::message::AssistantContent;
 use rig::tool::{Tool, ToolExecutionError};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -38,23 +39,9 @@ struct HandoffState {
 }
 
 impl HandoffState {
-    fn prepare(
-        &mut self,
-        event: CompletionCallEvent<'_>,
-        limit: u64,
-        active_tools: &[&'static str],
-        supports_required_tool_choice: bool,
-    ) -> CompletionCallAction {
+    fn prepare(&mut self, event: CompletionCallEvent<'_>, limit: u64) -> CompletionCallAction {
         if self.writing {
-            return CompletionCallAction::patch(
-                RequestPatch::new()
-                    .active_tools([HandoffTool::NAME])
-                    .tool_choice(if supports_required_tool_choice {
-                        ToolChoice::Required
-                    } else {
-                        ToolChoice::Auto
-                    }),
-            );
+            return CompletionCallAction::Continue;
         }
         if self.context_tokens >= limit && self.context_tokens > 0 {
             let before_prompt = self.first_call && self.defer_prompt;
@@ -73,7 +60,7 @@ impl HandoffState {
             return CompletionCallAction::stop(HANDOFF_REQUESTED);
         }
         self.first_call = false;
-        CompletionCallAction::patch(RequestPatch::new().active_tools(active_tools.iter().copied()))
+        CompletionCallAction::Continue
     }
 
     fn submit(&mut self, document: String) -> Result<(), ToolExecutionError> {
@@ -93,23 +80,13 @@ impl HandoffState {
 #[derive(Clone)]
 pub(crate) struct ContextHandoffHook {
     token_limit: u64,
-    active_tools: Arc<[&'static str]>,
-    supports_required_tool_choice: bool,
     state: Arc<Mutex<HandoffState>>,
 }
 
 impl ContextHandoffHook {
-    pub(crate) fn new(
-        token_limit: u64,
-        context_tokens: u64,
-        defer_prompt: bool,
-        active_tools: Vec<&'static str>,
-        supports_required_tool_choice: bool,
-    ) -> Self {
+    pub(crate) fn new(token_limit: u64, context_tokens: u64, defer_prompt: bool) -> Self {
         Self {
             token_limit,
-            active_tools: active_tools.into(),
-            supports_required_tool_choice,
             state: Arc::new(Mutex::new(HandoffState {
                 context_tokens,
                 first_call: true,
@@ -169,6 +146,17 @@ impl ContextHandoffHook {
 }
 
 impl AgentHook for ContextHandoffHook {
+    async fn on_tool_call_delta(
+        &self,
+        _context: &HookContext,
+        event: ToolCallDelta<'_>,
+    ) -> ObservationAction {
+        if event.tool_name == HandoffTool::NAME && !self.is_writing() {
+            return ObservationAction::stop("No context handoff is pending.");
+        }
+        ObservationAction::Continue
+    }
+
     async fn on_invalid_tool_call(
         &self,
         _context: &HookContext,
@@ -190,12 +178,7 @@ impl AgentHook for ContextHandoffHook {
                         "The agent reached its completion call limit.",
                     );
                 }
-                let action = state.prepare(
-                    event,
-                    self.token_limit,
-                    &self.active_tools,
-                    self.supports_required_tool_choice,
-                );
+                let action = state.prepare(event, self.token_limit);
                 if !matches!(action, CompletionCallAction::Stop(_)) {
                     state.calls += 1;
                 }
@@ -210,15 +193,15 @@ impl AgentHook for ContextHandoffHook {
         _context: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
+        let calls: Vec<_> = event
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                AssistantContent::ToolCall(call) => Some(call),
+                _ => None,
+            })
+            .collect();
         if self.is_writing() {
-            let calls: Vec<_> = event
-                .content
-                .iter()
-                .filter_map(|content| match content {
-                    AssistantContent::ToolCall(call) => Some(call),
-                    _ => None,
-                })
-                .collect();
             if event
                 .finish_reason
                 .is_some_and(|reason| reason.truncated_output())
@@ -229,6 +212,11 @@ impl AgentHook for ContextHandoffHook {
                     "Context handoff failed: the agent must submit one complete handoff document.",
                 );
             }
+        } else if calls
+            .iter()
+            .any(|call| call.function.name.as_str() == HandoffTool::NAME)
+        {
+            return ModelTurnAction::stop("No context handoff is pending.");
         }
         ModelTurnAction::Continue
     }
@@ -239,6 +227,7 @@ impl AgentHook for ContextHandoffHook {
             StepEventKind::CompletionCall
                 | StepEventKind::ModelTurnFinished
                 | StepEventKind::InvalidToolCall
+                | StepEventKind::ToolCallDelta
         )
     }
 }
@@ -271,7 +260,7 @@ impl Tool for HandoffTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Submit the handoff document for a fresh agent to continue this conversation.".to_string()
+        "Submit the handoff document for a fresh agent to continue this conversation. Only use this tool when explicitly asked to write a context handoff document; never initiate a handoff yourself.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -315,7 +304,7 @@ mod tests {
 
     #[test]
     fn missing_usage_preserves_the_last_observation_until_restart() {
-        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        let hook = ContextHandoffHook::new(100, 120, true);
         assert_eq!(hook.record_usage(Usage::default()), None);
         assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
         hook.restart();
@@ -324,7 +313,7 @@ mod tests {
 
     #[test]
     fn partial_usage_preserves_context_without_persisting_an_incomplete_total() {
-        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        let hook = ContextHandoffHook::new(100, 120, true);
         assert_eq!(
             hook.record_usage(Usage {
                 output_tokens: Some(30),
@@ -337,7 +326,7 @@ mod tests {
 
     #[test]
     fn reported_total_updates_context_without_individual_counters() {
-        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        let hook = ContextHandoffHook::new(100, 120, true);
         assert_eq!(
             hook.record_usage(Usage {
                 total_tokens: Some(150),
@@ -350,7 +339,7 @@ mod tests {
 
     #[test]
     fn reported_zero_replaces_the_last_context_observation() {
-        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"], true);
+        let hook = ContextHandoffHook::new(100, 120, true);
         assert_eq!(
             hook.record_usage(Usage {
                 input_tokens: Some(0),
@@ -380,8 +369,6 @@ mod tests {
                     turn: 1
                 },
                 100,
-                &["exec_command"],
-                true,
             ),
             CompletionCallAction::Stop(_)
         ));
@@ -406,8 +393,6 @@ mod tests {
                 turn: 2,
             },
             100,
-            &["exec_command"],
-            true,
         );
         let request = state.request.unwrap();
         assert_eq!(request.history, vec![history[0].clone(), prompt]);
@@ -428,10 +413,8 @@ mod tests {
                     turn: 1
                 },
                 100,
-                &["exec_command"],
-                true,
             ),
-            CompletionCallAction::Patch(_)
+            CompletionCallAction::Continue
         ));
         assert!(state.request.is_none());
     }

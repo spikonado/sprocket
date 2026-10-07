@@ -19,7 +19,7 @@ use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
 use crate::gateway::GatewayClient;
-use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
+use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -100,7 +100,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
-    pub(crate) supports_required_tool_choice: bool,
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
@@ -260,12 +259,6 @@ async fn run_with_completion_model(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
-        available_agent_tool_names(
-            request.allow_interaction,
-            request.supports_images,
-            request.is_child,
-        ),
-        request.supports_required_tool_choice,
     );
     let agent = AgentBuilder::new(model)
         .preamble(&request.base_instructions)

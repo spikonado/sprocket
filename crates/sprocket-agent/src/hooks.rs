@@ -38,6 +38,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
 ];
 
 /// Payment-related tools. Children never receive these, at any depth.
+#[cfg(test)]
 pub(crate) const PAYMENT_TOOL_NAMES: &[&str] = &[
     "mandate_charge",
     "mandate_list",
@@ -46,8 +47,10 @@ pub(crate) const PAYMENT_TOOL_NAMES: &[&str] = &[
     "mandate_status",
 ];
 
+#[cfg(test)]
 const INTERACTION_TOOL_NAMES: &[&str] = &["ask_question", "poll_question", "mandate_setup"];
 
+#[cfg(test)]
 pub(crate) fn available_agent_tool_names(
     allow_interaction: bool,
     supports_images: bool,
