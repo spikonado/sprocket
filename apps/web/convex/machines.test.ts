@@ -155,7 +155,7 @@ describe('machines', () => {
 		});
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
 			status: 'failed',
-			lastError: 'The machine stopped before this run finished.'
+			lastError: 'The local agent stopped responding before this run finished.'
 		});
 	});
 
