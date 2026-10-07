@@ -692,11 +692,9 @@ function ThreadTreeRow({
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
 	const status = inboxRunStatus(thread);
-
-	const subagentRows = subagentStatusRows(
-		summary?.descendantCount ?? 0,
-		summary?.descendantStatusCounts
-	);
+	const descendantCount = summary?.descendantCount ?? 0;
+	const subagentRows = subagentStatusRows(descendantCount, summary?.descendantStatusCounts);
+	const subagentSummary = subagentRows.map((row) => row.label).join(', ');
 
 	const expanded = expansion.isExpanded(thread._id);
 	const isRoot = isRootThread(thread);
@@ -812,12 +810,12 @@ function ThreadTreeRow({
 						)}
 					</div>
 				)}
-				{subagentRows.length > 0 && !renaming && (
+				{descendantCount > 0 && !renaming && (
 					<button
 						className="inbox-subagents"
 						type="button"
 						aria-expanded={expanded}
-						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}: ${subagentRows.map((row) => row.label).join(', ')}`}
+						aria-label={`${expanded ? 'Collapse' : 'Expand'} subagents of ${thread.title ?? 'thread'}${subagentSummary ? `: ${subagentSummary}` : ''}`}
 						onClick={() => {
 							if (expanded) {
 								expansion.collapse(thread._id);
@@ -832,8 +830,7 @@ function ThreadTreeRow({
 								<span
 									key={status}
 									className={cn('inbox-subagent-status-row inbox-row-subagents', {
-										'inbox-working': status === 'queued' || status === 'running',
-										'inbox-attention': status === 'failed'
+										'inbox-working': status === 'running'
 									})}
 								>
 									{label}
