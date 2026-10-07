@@ -202,7 +202,7 @@ pub(crate) fn enqueue_args(
         ("selectedModel".into(), payload.selected_model.into()),
         (
             "completionProvider".into(),
-            payload.completion_provider.as_str().to_string().into(),
+            Value::try_from(serde_json::to_value(payload.completion_provider)?)?,
         ),
         ("reasoningEffort".into(), payload.reasoning_effort.into()),
         ("fastMode".into(), Value::Boolean(payload.fast_mode)),
@@ -233,6 +233,10 @@ mod tests {
             sprocket_agent::CompletionProvider::Openai
         );
         assert!(request.fast_mode);
-        assert!(enqueue_args(request, "machine-a".into(), "credential-a".into()).is_ok());
+        let args = enqueue_args(request, "machine-a".into(), "credential-a".into()).unwrap();
+        assert_eq!(
+            args.get("completionProvider"),
+            Some(&Value::String("openai".into()))
+        );
     }
 }
