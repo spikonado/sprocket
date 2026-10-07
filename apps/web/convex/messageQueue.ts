@@ -278,15 +278,6 @@ export const claim = mutation({
 		if (head?._id !== message._id) return null;
 
 		if ((message.claimExpiresAt ?? 0) > Date.now()) return null;
-		const existingRun = await queuedSubmission(ctx, message);
-
-		// The transcript and run commit together. A lost launch acknowledgement
-		// must never insert or execute the same user message again.
-		if (existingRun && existingRun.status !== 'queued') {
-			await deleteQueuedMessage(ctx, message);
-
-			return null;
-		}
 
 		const latest = await ctx.db
 			.query('runs')
@@ -295,6 +286,38 @@ export const claim = mutation({
 			.first();
 
 		let continuation = message.continuation;
+		let existingRun = continuation?.deliversMessage ? null : await queuedSubmission(ctx, message);
+
+		if (existingRun && existingRun.status !== 'queued') {
+			if (await failedBeforeStart(ctx, existingRun)) {
+				if (message.status !== 'queued' || latest?._id !== existingRun._id) {
+					if (message.status !== 'failed') await failMessage(ctx, message, existingRun);
+
+					return null;
+				}
+
+				await assertFreshContinuation(ctx, message, args);
+				continuation = {
+					submissionId: args.continuationSubmissionId,
+					executionSecret: args.continuationExecutionSecret,
+					continuationOfRunId: existingRun._id,
+					prompt: '',
+					selectedModel: message.selectedModel,
+					completionProvider: message.completionProvider,
+					reasoningEffort: message.reasoningEffort,
+					fastMode: message.fastMode,
+					deliversMessage: true
+				};
+				await ctx.db.patch('queuedMessages', message._id, { continuation });
+				existingRun = null;
+			} else {
+				// A claimed or completed run has accepted the message, even if
+				// its acknowledgement was lost. Never execute that message again.
+				await deleteQueuedMessage(ctx, message);
+
+				return null;
+			}
+		}
 
 		let continuationRun = continuation
 			? await queuedSubmission(ctx, { userId, submissionId: continuation.submissionId })
@@ -305,10 +328,10 @@ export const claim = mutation({
 			continuationRun &&
 			latest?._id === continuationRun._id &&
 			latest.cancellationRequestedAt === undefined &&
-			(await continuationFailedBeforeStart(ctx, continuationRun))
+			(await failedBeforeStart(ctx, continuationRun))
 		) {
 			if (message.status !== 'queued') {
-				if (message.status !== 'failed') await failContinuation(ctx, message, continuationRun);
+				if (message.status !== 'failed') await failMessage(ctx, message, continuationRun);
 
 				return null;
 			}
@@ -335,7 +358,8 @@ export const claim = mutation({
 						latest.status === 'cancelled' ||
 						latest.cancellationRequestedAt !== undefined)))
 		) {
-			await clearContinuation(ctx, message);
+			if (continuation.deliversMessage) await deleteQueuedMessage(ctx, message);
+			else await clearContinuation(ctx, message);
 
 			return null;
 		}
@@ -418,9 +442,10 @@ export const finishAttempt = mutation({
 		});
 
 		if (run && run.status !== 'queued') {
-			if (message.continuation && (await continuationFailedBeforeStart(ctx, run))) {
-				await failContinuation(ctx, message, run);
-			} else if (message.continuation) await clearContinuation(ctx, message);
+			if (await failedBeforeStart(ctx, run)) {
+				await failMessage(ctx, message, run);
+			} else if (message.continuation && !message.continuation.deliversMessage)
+				await clearContinuation(ctx, message);
 			else await deleteQueuedMessage(ctx, message);
 		} else if (args.error && !run) {
 			await ctx.db.patch('queuedMessages', message._id, {
@@ -437,21 +462,17 @@ export const finishAttempt = mutation({
 	}
 });
 
-async function continuationFailedBeforeStart(ctx: MutationCtx, run: Doc<'runs'>) {
+async function failedBeforeStart(ctx: MutationCtx, run: Doc<'runs'>) {
 	if (run.status !== 'failed' || run.cancellationRequestedAt !== undefined) return false;
 	const execution = await getRunWithExecution(ctx.db, run._id);
 
 	return execution?.claimId === undefined;
 }
 
-async function failContinuation(
-	ctx: MutationCtx,
-	message: Doc<'queuedMessages'>,
-	run: Doc<'runs'>
-) {
+async function failMessage(ctx: MutationCtx, message: Doc<'queuedMessages'>, run: Doc<'runs'>) {
 	await ctx.db.patch('queuedMessages', message._id, {
 		status: 'failed',
-		error: (run.lastError ?? 'Question continuation failed before starting.').slice(0, 2_000),
+		error: (run.lastError ?? 'Run failed before starting.').slice(0, 2_000),
 		claimId: undefined,
 		claimExpiresAt: undefined
 	});

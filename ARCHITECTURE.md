@@ -275,6 +275,10 @@ An already-started browser continuation wins without launching a second run.
 If a continuation fails before an executor claims it, the queue retains it as
 failed. Retry continues that failed run with a fresh capability and replays its
 saved answer from transcript history without recording another answer prompt.
+Ordinary follow-ups that fail before an executor claim also remain available for
+Retry or Remove and block later messages. Retry continues their failed run from
+transcript history, including attachments, and delivers the original queue head
+once the retried executor claims it.
 After a crash, a worker reuses the submission ID and capability to recover an
 unclaimed run, or removes the queue entry if that run already started or ended.
 An unclaimed run held by the queue survives machine shutdown and startup

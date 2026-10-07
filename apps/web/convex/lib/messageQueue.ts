@@ -16,7 +16,9 @@ export const queuedContinuationFields = {
 	selectedModel: v.string(),
 	completionProvider: vCompletionProvider,
 	reasoningEffort: vReasoningEffort,
-	fastMode: v.boolean()
+	fastMode: v.boolean(),
+	// Question recovery leaves the head pending; retrying the follow-up delivers it.
+	deliversMessage: v.optional(v.boolean())
 };
 
 export const queuedMessageFields = {

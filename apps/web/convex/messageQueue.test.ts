@@ -485,6 +485,11 @@ describe('durable message queue', () => {
 			await enqueue('second');
 			await claim(first);
 			const run = await createRun('first');
+			await asUser.mutation(api.agentRuntime.start, {
+				runId: run.runId,
+				executionSecret: 'secret-first',
+				claimId: 'executor'
+			});
 			await t.run(async (ctx) => {
 				await ctx.db.patch('runs', run.runId, { status });
 			});
@@ -508,6 +513,133 @@ describe('durable message queue', () => {
 				fastMode: true
 			});
 			expect(await t.run(async (ctx) => ctx.db.query('queuedMessages').collect())).toHaveLength(1);
+		}
+	);
+	it.each(['acknowledged', 'lost acknowledgement', 'remove'])(
+		'retains an ordinary follow-up after failed startup: %s',
+		async (scenario) => {
+			vi.useFakeTimers();
+
+			const { t, asUser, subject, threadId, machineId, request, enqueue, claim, advanceLease } =
+				await fixture();
+
+			const { storageId, imageUploadId } = await t.run(async (ctx) => {
+				const storageId = await ctx.storage.store(new Blob(['board'], { type: 'image/png' }));
+
+				const imageUploadId = await ctx.db.insert('imageUploads', {
+					userId: subject,
+					storageId,
+					name: 'board.png',
+					mediaType: 'image/png',
+					size: 5,
+					attached: false
+				});
+
+				return { storageId, imageUploadId };
+			});
+
+			let capability = { ...request('first'), storageIds: [storageId] };
+			await asUser.mutation(api.messageQueue.enqueue, capability);
+			const [first] = await asUser.query(api.messageQueue.candidates, { machineId });
+			const second = await enqueue('second');
+			await claim(first, 'original-worker');
+
+			let run = await insertQueuedRun(t, asUser, {
+				...capability,
+				imageUploadIds: [imageUploadId]
+			});
+
+			for (let attempt = 0; attempt < 2; attempt++) {
+				await asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+					threadId,
+					submissionId: capability.submissionId,
+					executionSecret: capability.executionSecret,
+					prompt: capability.prompt,
+					storageIds: capability.storageIds,
+					selectedModel: capability.selectedModel,
+					completionProvider: capability.completionProvider,
+					reasoningEffort: capability.reasoningEffort,
+					fastMode: capability.fastMode,
+					text: 'Run failed before starting.',
+					lastError: 'Provider unavailable'
+				});
+
+				if (scenario === 'lost acknowledgement') {
+					await advanceLease();
+					expect(await claim(first)).toBeNull();
+				} else {
+					await asUser.mutation(api.messageQueue.finishAttempt, {
+						messageId: first,
+						claimId: attempt === 0 ? 'original-worker' : 'retry-worker-0',
+						error: 'Provider unavailable'
+					});
+				}
+
+				expect((await asUser.query(api.messageQueue.list, {}))[0]).toMatchObject({
+					id: 'first',
+					prompt: 'first',
+					attachmentNames: ['board.png'],
+					status: 'failed',
+					error: 'Provider unavailable'
+				});
+				expect(await claim(first)).toBeNull();
+				expect(await claim(second)).toBeNull();
+				expect(await asUser.mutation(api.imageUploads.discardFile, { storageId })).toBe(false);
+
+				if (scenario === 'remove') {
+					await asUser.mutation(api.messageQueue.remove, { submissionId: 'first' });
+					expect(await claim(second)).not.toBeNull();
+
+					return;
+				}
+
+				await asUser.mutation(api.messageQueue.retry, { submissionId: 'first' });
+				const retry = await claim(first, `retry-worker-${attempt}`);
+				expect(retry?.continuation).toMatchObject({
+					continuationOfRunId: run.runId,
+					prompt: '',
+					deliversMessage: true
+				});
+				capability = { ...request('first'), ...retry!.continuation!, storageIds: [] };
+				run = await insertQueuedRun(t, asUser, { ...capability, imageUploadIds: [] });
+			}
+
+			await asUser.mutation(api.agentRuntime.start, {
+				runId: run.runId,
+				executionSecret: capability.executionSecret,
+				claimId: 'executor'
+			});
+
+			if (scenario === 'lost acknowledgement') {
+				await advanceLease();
+				expect(await claim(first)).toBeNull();
+			} else {
+				await asUser.mutation(api.messageQueue.finishAttempt, {
+					messageId: first,
+					claimId: 'retry-worker-1'
+				});
+			}
+
+			expect((await asUser.query(api.messageQueue.list, {})).map((message) => message.id)).toEqual([
+				'second'
+			]);
+
+			const parts = await asUser.query(api.transcript.getParts, {
+				threadId,
+				numbers: [0, 1, 2, 3, 4, 5]
+			});
+
+			expect(parts.parts.filter((part) => part.prompt?.text === 'first')).toHaveLength(1);
+			expect(
+				parts.parts.find((part) => part.prompt?.text === 'first')?.prompt?.imageUploads[0].storageId
+			).toBe(storageId);
+			await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: run.runId,
+				executionSecret: capability.executionSecret,
+				text: '',
+				status: 'completed'
+			});
+			expect(await claim(second)).not.toBeNull();
 		}
 	);
 
