@@ -25,30 +25,22 @@ export function collapseThreadBranch(
 	return expandedThreadIds.filter((threadId) => !collapsed.has(threadId));
 }
 
-type SubagentStatus = Doc<'threadRecords'>['status'];
-
 export function subagentStatusRows(
 	descendantCount: number,
-	counts?: Record<SubagentStatus, number>
+	workingCount: number,
+	descendantsActive: boolean
 ): { status: 'running' | 'completed'; label: string }[] {
-	const queued = counts?.queued ?? 0;
-	const running = counts?.running ?? 0;
-	const finished = (counts?.completed ?? 0) + (counts?.failed ?? 0) + (counts?.cancelled ?? 0);
-	const unknown = Math.max(0, descendantCount - queued - running - finished);
-	const completed = finished + unknown;
-	const rows: { status: 'running' | 'completed'; label: string }[] = [];
-
-	if (running > 0) {
-		rows.push({ status: 'running', label: subagentStatusLabel(running, 'Working') });
+	if (workingCount > 0) {
+		return [{ status: 'running', label: `${subagentCountLabel(workingCount)} · Working` }];
 	}
 
-	if (completed > 0) {
-		rows.push({ status: 'completed', label: subagentStatusLabel(completed, 'Completed') });
+	if (descendantCount > 0 && !descendantsActive) {
+		return [{ status: 'completed', label: subagentCountLabel(descendantCount) }];
 	}
 
-	return rows;
+	return [];
 }
 
-function subagentStatusLabel(count: number, label: string): string {
-	return `${count} ${count === 1 ? 'subagent' : 'subagents'} · ${label}`;
+function subagentCountLabel(count: number): string {
+	return `${count} ${count === 1 ? 'subagent' : 'subagents'}`;
 }

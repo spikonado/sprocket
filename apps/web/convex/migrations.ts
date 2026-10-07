@@ -51,7 +51,7 @@ export const runTerminalJobBackfill = migrations.runner([
 	internal.migrations.reconcileLegacyTerminalJobs
 ]);
 
-export const backfillThreadHierarchyStatuses = migrations.define({
+export const backfillThreadHierarchyWorkingCounts = migrations.define({
 	table: 'threadRecords',
 	batchSize: 1,
 	migrateOne: async (ctx, thread) => {
@@ -59,11 +59,14 @@ export const backfillThreadHierarchyStatuses = migrations.define({
 	}
 });
 
-const threadHierarchyStatusMigrations: FunctionReference<'mutation', 'internal'>[] = [
-	internal.migrations.backfillThreadHierarchyStatuses
+// Keep the former entrypoint for migration batches scheduled before this deploy.
+export const backfillThreadHierarchyStatuses = backfillThreadHierarchyWorkingCounts;
+
+const threadHierarchyWorkingMigrations: FunctionReference<'mutation', 'internal'>[] = [
+	internal.migrations.backfillThreadHierarchyWorkingCounts
 ];
 
-export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyStatusMigrations);
+export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyWorkingMigrations);
 
 export const backfillSubscriptionExpiry = migrations.define({
 	table: 'subscriptions',
@@ -436,7 +439,7 @@ export const runThreadHierarchyStatusBackfillAutomatically = internalMutation({
 	handler: (ctx): Promise<null> =>
 		runBackfillAutomatically(
 			ctx,
-			'thread-hierarchy-status-counts-2026-10',
-			threadHierarchyStatusMigrations
+			'thread-hierarchy-working-counts-2026-10',
+			threadHierarchyWorkingMigrations
 		)
 });

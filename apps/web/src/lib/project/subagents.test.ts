@@ -1,58 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { subagentStatusRows } from './subagents';
 
-const emptyCounts = {
-	queued: 0,
-	running: 0,
-	completed: 0,
-	failed: 0,
-	cancelled: 0
-};
-
 describe('subagentStatusRows', () => {
-	it('counts running subagents as working and every other known status as completed', () => {
-		expect(
-			subagentStatusRows(9, {
-				queued: 1,
-				running: 2,
-				completed: 3,
-				failed: 1,
-				cancelled: 2
-			})
-		).toEqual([
-			{ status: 'running', label: '2 subagents · Working' },
-			{ status: 'completed', label: '6 subagents · Completed' }
+	it('shows only working descendants while work is active', () => {
+		expect(subagentStatusRows(9, 2, true)).toEqual([
+			{ status: 'running', label: '2 subagents · Working' }
 		]);
 	});
 
-	it('omits starting counts from the inbox rows', () => {
-		expect(
-			subagentStatusRows(3, {
-				...emptyCounts,
-				queued: 3
-			})
-		).toEqual([]);
+	it('omits counts while descendants are only queued or awaiting an answer', () => {
+		expect(subagentStatusRows(3, 0, true)).toEqual([]);
 	});
 
-	it('folds uncounted descendants into completed instead of a separate status', () => {
-		expect(
-			subagentStatusRows(5, {
-				...emptyCounts,
-				running: 1,
-				completed: 2
-			})
-		).toEqual([
-			{ status: 'running', label: '1 subagent · Working' },
-			{ status: 'completed', label: '4 subagents · Completed' }
+	it('shows the total without a status after all descendant work ends', () => {
+		expect(subagentStatusRows(5, 0, false)).toEqual([
+			{ status: 'completed', label: '5 subagents' }
 		]);
 	});
 
-	it('uses singular copy for a single completed subagent', () => {
-		expect(
-			subagentStatusRows(1, {
-				...emptyCounts,
-				completed: 1
-			})
-		).toEqual([{ status: 'completed', label: '1 subagent · Completed' }]);
+	it('uses singular copy and omits empty trees', () => {
+		expect(subagentStatusRows(1, 1, true)).toEqual([
+			{ status: 'running', label: '1 subagent · Working' }
+		]);
+		expect(subagentStatusRows(1, 0, false)).toEqual([{ status: 'completed', label: '1 subagent' }]);
+		expect(subagentStatusRows(0, 0, false)).toEqual([]);
 	});
 });

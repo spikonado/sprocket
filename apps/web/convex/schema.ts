@@ -367,6 +367,8 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		ownActive: v.boolean(),
 		ownStatus: v.optional(vRunStatus),
+		ownWorking: v.optional(v.boolean()),
+		workingDescendantCount: v.optional(v.number()),
 		descendantCount: v.number(),
 		activeDescendantCount: v.number(),
 		descendantStatusCounts: v.optional(vDescendantStatusCounts)

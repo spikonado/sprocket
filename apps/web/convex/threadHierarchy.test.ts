@@ -57,6 +57,7 @@ describe('thread hierarchy', () => {
 		const grandchild = await child(t, children[0], 'grandchild');
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
@@ -82,12 +83,14 @@ describe('thread hierarchy', () => {
 
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 71,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 71, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
 		});
 		expect(await summary(t, children[0])).toEqual({
 			descendantCount: 1,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
@@ -156,6 +159,7 @@ describe('thread hierarchy', () => {
 		expect(new Set(seen)).toEqual(new Set(children));
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 8,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 8, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
@@ -183,13 +187,14 @@ describe('thread hierarchy', () => {
 		});
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 1,
+			workingDescendantCount: 0,
 			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false
 		});
 	});
 
-	it('aggregates mixed statuses at every depth and propagates active-to-active transitions idempotently', async () => {
+	it('counts only running descendants at every depth and propagates active-to-active transitions idempotently', async () => {
 		const t = initConvexTest();
 		const { threadId, asUser } = await seedOwnedThread(t);
 		const queued = await child(t, threadId, 'queued', 'queued');
@@ -227,24 +232,13 @@ describe('thread hierarchy', () => {
 
 		expect(await asUser.query(api.threads.subtreeSummaryForThread, { threadId })).toEqual({
 			descendantCount: 5,
-			descendantStatusCounts: { queued: 1, running: 1, completed: 1, failed: 1, cancelled: 1 },
+			workingDescendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 1, completed: 4, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: true
 		});
-		expect((await summary(t, queued)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 1,
-			completed: 0,
-			failed: 0,
-			cancelled: 0
-		});
-		expect((await summary(t, running)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 0,
-			completed: 0,
-			failed: 0,
-			cancelled: 0
-		});
+		expect((await summary(t, queued)).workingDescendantCount).toBe(1);
+		expect((await summary(t, running)).workingDescendantCount).toBe(0);
 
 		const transition = (runId: Id<'runs'>, status: Doc<'runs'>['status']) =>
 			t.run(async (ctx) => {
@@ -252,13 +246,7 @@ describe('thread hierarchy', () => {
 			});
 
 		await transition(runIds[0], 'running');
-		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 2,
-			completed: 1,
-			failed: 1,
-			cancelled: 1
-		});
+		expect((await summary(t, threadId)).workingDescendantCount).toBe(2);
 		expect(
 			await t.run((ctx) =>
 				ctx.db
@@ -269,16 +257,11 @@ describe('thread hierarchy', () => {
 		).toMatchObject({ activeDescendantCount: 2 });
 
 		await transition(runIds[1], 'failed');
-		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 1,
-			completed: 1,
-			failed: 2,
-			cancelled: 1
-		});
+		expect((await summary(t, threadId)).workingDescendantCount).toBe(1);
 		expect(await summary(t, queued)).toMatchObject({
 			descendantCount: 1,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 1, cancelled: 0 },
+			workingDescendantCount: 0,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
 			anyActive: true,
 			descendantsActive: false
 		});
@@ -286,26 +269,22 @@ describe('thread hierarchy', () => {
 		await transition(runIds[0], 'cancelled');
 		expect(await summary(t, threadId)).toEqual({
 			descendantCount: 5,
-			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 2, cancelled: 2 },
+			workingDescendantCount: 0,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 5, failed: 0, cancelled: 0 },
 			anyActive: false,
 			descendantsActive: false
 		});
 
+		const beforeTerminalTransition = await t.run((ctx) =>
+			ctx.db.query('threadHierarchyStates').collect()
+		);
+
 		await transition(runIds[1], 'completed');
-		expect((await summary(t, threadId)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 0,
-			completed: 2,
-			failed: 1,
-			cancelled: 2
-		});
-		expect((await summary(t, queued)).descendantStatusCounts).toEqual({
-			queued: 0,
-			running: 0,
-			completed: 1,
-			failed: 0,
-			cancelled: 0
-		});
+		expect((await summary(t, threadId)).workingDescendantCount).toBe(0);
+		expect((await summary(t, queued)).workingDescendantCount).toBe(0);
+		expect(await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect())).toEqual(
+			beforeTerminalTransition
+		);
 
 		const states = await t.run((ctx) => ctx.db.query('threadHierarchyStates').collect());
 		await t.run(async (ctx) => {

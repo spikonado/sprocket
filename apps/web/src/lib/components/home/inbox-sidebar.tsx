@@ -693,7 +693,13 @@ function ThreadTreeRow({
 
 	const status = inboxRunStatus(thread);
 	const descendantCount = summary?.descendantCount ?? 0;
-	const subagentRows = subagentStatusRows(descendantCount, summary?.descendantStatusCounts);
+
+	const subagentRows = subagentStatusRows(
+		descendantCount,
+		summary?.workingDescendantCount ?? 0,
+		summary?.descendantsActive ?? false
+	);
+
 	const subagentSummary = subagentRows.map((row) => row.label).join(', ');
 
 	const expanded = expansion.isExpanded(thread._id);

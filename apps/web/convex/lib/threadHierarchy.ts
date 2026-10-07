@@ -2,16 +2,17 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader, MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { paginationOptsValidator } from 'convex/server';
 import type { Infer } from 'convex/values';
-import { isRunFinalStatus, type DescendantStatusCounts } from '@convex/lib/validators';
+import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 
-const EMPTY_DESCENDANT_STATUS_COUNTS: DescendantStatusCounts = {
-	queued: 0,
-	running: 0,
-	completed: 0,
-	failed: 0,
-	cancelled: 0
-};
+function workingDescendantCount(
+	state: Pick<
+		Doc<'threadHierarchyStates'>,
+		'workingDescendantCount' | 'descendantStatusCounts'
+	> | null
+): number {
+	return state?.workingDescendantCount ?? state?.descendantStatusCounts?.running ?? 0;
+}
 
 export async function threadOwnActivity(
 	db: DatabaseReader,
@@ -100,9 +101,10 @@ async function ensureHierarchyState(ctx: MutationCtx, threadId: Id<'threadRecord
 	const initial: Omit<Doc<'threadHierarchyStates'>, '_id' | '_creationTime'> = {
 		threadId,
 		ownActive: false,
+		ownWorking: false,
 		descendantCount: 0,
 		activeDescendantCount: 0,
-		descendantStatusCounts: EMPTY_DESCENDANT_STATUS_COUNTS
+		workingDescendantCount: 0
 	};
 
 	return { ...initial, _id: await ctx.db.insert('threadHierarchyStates', initial) };
@@ -130,42 +132,42 @@ export async function refreshThreadHierarchyActivity(
 	const state = await ensureHierarchyState(ctx, threadId);
 	const active = await threadOwnActivity(ctx.db, threadId);
 	const activityDelta = Number(active) - Number(state.ownActive);
-	const statusChanged = state.ownStatus !== thread.status;
+	const working = thread.status === 'running';
 
-	if (activityDelta === 0 && !statusChanged) return;
+	const workingDelta = Number(working) - Number(state.ownWorking ?? state.ownStatus === 'running');
 
-	for (const ancestor of await ancestorThreads(ctx.db, thread)) {
-		const parentState = await ensureHierarchyState(ctx, ancestor._id);
-		const count = parentState.activeDescendantCount + activityDelta;
+	const needsMigration =
+		state.ownWorking === undefined ||
+		state.workingDescendantCount === undefined ||
+		state.ownStatus !== undefined ||
+		state.descendantStatusCounts !== undefined;
 
-		const statusCounts: DescendantStatusCounts = {
-			...(parentState.descendantStatusCounts ?? EMPTY_DESCENDANT_STATUS_COUNTS)
-		};
+	if (activityDelta === 0 && workingDelta === 0 && !needsMigration) return;
 
-		if (count < 0) throw new Error('Invalid thread activity aggregate.');
+	if (activityDelta !== 0 || workingDelta !== 0) {
+		for (const ancestor of await ancestorThreads(ctx.db, thread)) {
+			const parentState = await ensureHierarchyState(ctx, ancestor._id);
+			const activeCount = parentState.activeDescendantCount + activityDelta;
+			const workingCount = workingDescendantCount(parentState) + workingDelta;
 
-		if (statusChanged) {
-			if (state.ownStatus !== undefined) {
-				statusCounts[state.ownStatus] -= 1;
-
-				if (statusCounts[state.ownStatus] < 0) {
-					throw new Error('Invalid thread status aggregate.');
-				}
+			if (activeCount < 0 || workingCount < 0) {
+				throw new Error('Invalid thread activity aggregate.');
 			}
 
-			statusCounts[thread.status] += 1;
+			await ctx.db.patch('threadHierarchyStates', parentState._id, {
+				activeDescendantCount: activeCount,
+				workingDescendantCount: workingCount,
+				descendantStatusCounts: undefined
+			});
 		}
-
-		await ctx.db.patch('threadHierarchyStates', parentState._id, {
-			activeDescendantCount: count,
-			descendantStatusCounts: statusCounts
-		});
 	}
 
 	await ctx.db.patch('threadHierarchyStates', state._id, {
 		ownActive: active,
-		ownStatus: thread.status,
-		descendantStatusCounts: state.descendantStatusCounts ?? EMPTY_DESCENDANT_STATUS_COUNTS
+		ownWorking: working,
+		workingDescendantCount: workingDescendantCount(state),
+		ownStatus: undefined,
+		descendantStatusCounts: undefined
 	});
 
 	if (activityDelta > 0) await unsettleRootOfThread(ctx, thread);
@@ -174,10 +176,19 @@ export async function refreshThreadHierarchyActivity(
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
 	const state = await hierarchyState(db, thread._id);
 	const descendantsActive = (state?.activeDescendantCount ?? 0) > 0;
+	const workingCount = workingDescendantCount(state);
 
 	return {
 		descendantCount: state?.descendantCount ?? 0,
-		descendantStatusCounts: state?.descendantStatusCounts ?? EMPTY_DESCENDANT_STATUS_COUNTS,
+		workingDescendantCount: workingCount,
+		// Released inbox clients combine all non-running descendants into Completed.
+		descendantStatusCounts: {
+			queued: 0,
+			running: workingCount,
+			completed: Math.max(0, (state?.descendantCount ?? 0) - workingCount),
+			failed: 0,
+			cancelled: 0
+		},
 		anyActive: descendantsActive || (await threadOwnActivity(db, thread._id)),
 		descendantsActive
 	};
