@@ -267,7 +267,8 @@ async fn launch_agent_inner(
     recovery.request.workspace_path = payload.workspace_path.clone();
     let (recovery_guard, saved) = state
         .run_recovery
-        .begin(recovery)
+        // Caller-owned output is the CLI's result and cancellation lifetime.
+        .begin(recovery, output.is_some())
         .await
         .map_err(ApiError::internal)?;
     let request = RunAgentRequest {

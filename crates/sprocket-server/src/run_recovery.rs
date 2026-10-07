@@ -119,8 +119,19 @@ impl RunRecovery {
     // reconcile the same run; Convex still allows only one executor claim.
     pub(crate) async fn begin(
         self: &Arc<Self>,
-        record: RecoveryRecord,
-    ) -> anyhow::Result<(ActiveRun, RecoveryRecord)> {
+        mut record: RecoveryRecord,
+        client_bound: bool,
+    ) -> anyhow::Result<(Option<ActiveRun>, RecoveryRecord)> {
+        // CLI runs report a final result to their client and use that client's
+        // cancellation token. A detached continuation would lose both, so
+        // these runs must never enter the persistent recovery journal.
+        if client_bound {
+            record
+                .request
+                .execution_secret
+                .get_or_insert_with(new_execution_secret);
+            return Ok((None, record));
+        }
         let key = record.key();
         let guard = self
             .track(key.clone(), false)
@@ -130,7 +141,7 @@ impl RunRecovery {
             .update(key, Some(record), true)
             .await?
             .expect("begin saves a recovery record");
-        Ok((guard, saved))
+        Ok((Some(guard), saved))
     }
 
     fn track(&self, key: String, exclusive: bool) -> Option<ActiveRun> {
@@ -332,8 +343,8 @@ mod tests {
         let next = record()
             .continuation("failed".into(), "thread".into())
             .unwrap();
-        let (guard, _) = store.begin(next.clone()).await.unwrap();
-        let (duplicate, _) = store.begin(next.clone()).await.unwrap();
+        let (guard, _) = store.begin(next.clone(), false).await.unwrap();
+        let (duplicate, _) = store.begin(next.clone(), false).await.unwrap();
         assert!(store.track(next.key(), true).is_none());
         drop(guard);
         assert!(store.track(next.key(), true).is_none());
@@ -358,7 +369,7 @@ mod tests {
         assert_eq!(saved.request.workspace_path, "/work");
         assert_eq!(saved.request.reasoning_effort, "high");
         assert!(saved.request.fast_mode);
-        assert!(reloaded.begin(saved).await.is_ok());
+        assert!(reloaded.begin(saved, false).await.is_ok());
     }
 
     #[tokio::test]
@@ -374,8 +385,10 @@ mod tests {
             second.request.execution_secret = supplied_secrets.then(|| "second".into());
             // A retry must also preserve the original retry budget.
             second.recoveries = 0;
-            let (first_launch, second_launch) =
-                tokio::join!(store.begin(first.clone()), store.begin(second));
+            let (first_launch, second_launch) = tokio::join!(
+                store.begin(first.clone(), false),
+                store.begin(second, false)
+            );
             let (first_guard, first_saved) = first_launch.unwrap();
             let (second_guard, second_saved) = second_launch.unwrap();
             let persisted = RunRecovery::load(directory.path())
@@ -403,13 +416,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn client_bound_runs_never_enter_the_recovery_journal() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = RunRecovery::load(directory.path()).unwrap();
+        let mut candidate = record();
+        candidate.workspace_access = WorkspaceAccess::RunDirectory;
+        candidate.allow_interaction = false;
+        candidate.request.execution_secret = None;
+        let (guard, prepared) = store.begin(candidate.clone(), true).await.unwrap();
+        assert!(guard.is_none());
+        assert!(prepared.request.execution_secret.is_some());
+        assert!(store.records.lock().await.is_empty());
+        assert!(store.active.lock().unwrap().is_empty());
+        assert!(!directory.path().join("run-recovery.json").exists());
+        assert!(
+            RunRecovery::load(directory.path())
+                .unwrap()
+                .records
+                .lock()
+                .await
+                .is_empty()
+        );
+        // A native subagent uses the same workspace mode but has a durable
+        // cloud result, so it remains eligible for automatic recovery.
+        candidate.allow_interaction = true;
+        let (guard, _) = store.begin(candidate, false).await.unwrap();
+        assert!(guard.is_some());
+        assert_eq!(store.records.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
     async fn dropping_a_caller_does_not_interrupt_the_disk_and_memory_commit() {
         let directory = tempfile::tempdir().unwrap();
         let store = RunRecovery::load(directory.path()).unwrap();
         let held = store.records.lock().await;
         let writer = tokio::spawn({
             let store = Arc::clone(&store);
-            async move { store.begin(record()).await }
+            async move { store.begin(record(), false).await }
         });
         // Let begin reserve its submission and enqueue the detached update
         // behind our held lock before cancelling the requesting task.
@@ -435,7 +478,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = RunRecovery::load(directory.path()).unwrap();
         let original = record();
-        drop(store.begin(original.clone()).await.unwrap());
+        drop(store.begin(original.clone(), false).await.unwrap());
         let mut next = original.clone();
         for _ in 0..MAX_RECOVERIES {
             next = next.continuation("failed".into(), "thread".into()).unwrap();
