@@ -62,6 +62,7 @@ describe('math', () => {
 describe('links', () => {
 	it.each([
 		['parse_file/screenshot.png', undefined, 'parse_file/screenshot.png', 'thread'],
+		['parse_file/screenshot%2Epng', undefined, 'parse_file/screenshot.png', 'thread'],
 		['./screenshot_url/board%20layout.PNG', undefined, 'screenshot_url/board layout.PNG', 'thread'],
 		['scrape_url/board.webp', undefined, 'scrape_url/board.webp', 'thread'],
 		['parse_file/board.png?download=1#preview', undefined, 'parse_file/board.png', 'thread'],

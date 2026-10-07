@@ -11,6 +11,16 @@ export type MarkdownImageScope = {
 	transcript?: { userId: string; threadId: string };
 };
 
+function decodeImagePath(source: string) {
+	const path = source.split(/[?#]/, 1)[0];
+
+	try {
+		return decodeURIComponent(path);
+	} catch {
+		return path;
+	}
+}
+
 export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 	source = stripImageFileScheme(source);
 
@@ -20,15 +30,7 @@ export function markdownImageUrl(source: string, scope?: MarkdownImageScope) {
 
 	if (/^[a-z][a-z\d+.-]*:/i.test(source) && !isWindowsImagePath(source)) return null;
 
-	const encodedPath = source.split(/[?#]/, 1)[0];
-	let path: string;
-
-	try {
-		path = decodeURIComponent(encodedPath);
-	} catch {
-		path = encodedPath;
-	}
-
+	const path = decodeImagePath(source);
 	const documentPath = scope?.documentPath?.replaceAll('\\', '/');
 	const directory = documentPath?.slice(0, documentPath.lastIndexOf('/') + 1) ?? '';
 	const resolvedPath = isAbsoluteImagePath(path) ? path : directory + path;
@@ -78,7 +80,7 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 		)
 			continue;
 
-		if (!/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(source.split(/[?#]/, 1)[0])) continue;
+		if (!/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(decodeImagePath(source))) continue;
 
 		const image = document.createElement('img');
 		image.setAttribute('src', source);
