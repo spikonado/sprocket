@@ -250,6 +250,7 @@ describe('payments mandates', () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
 		const chargeId = await t.run((ctx) =>
 			ctx.db.insert('mandateCharges', {
 				mandateId: setup.mandateId,
