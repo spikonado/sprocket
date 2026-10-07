@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import CodeCopyButton from './code-copy-button';
+import CodeBlockControls from './code-block-controls';
 import ImageViewer, { type ViewerImage } from './image-viewer';
 import { prepareMarkdownImages, type MarkdownImageScope } from '$lib/chat/markdown-images';
 import { resolveLocalApiBaseUrl } from '$lib/local/client';
 import { watchMarkdownImage } from '$lib/chat/markdown-image-watch';
 
-type CodeControl = { target: HTMLElement; wrapper: HTMLDivElement; pre: HTMLElement; code: string };
+type CodeControl = {
+	target: HTMLElement;
+	wrapper: HTMLDivElement;
+	pre: HTMLElement;
+	code: string;
+	language?: string;
+};
 
 export default function MarkdownHtml({
 	html: sourceHtml,
@@ -89,14 +95,17 @@ export default function MarkdownHtml({
 			const wrapper = document.createElement('div');
 			wrapper.className = 'markdown-code-block';
 			const target = document.createElement('div');
+			target.className = 'markdown-code-header';
 			pre.replaceWith(wrapper);
 			wrapper.append(target, pre);
 			const code = block.textContent;
-			blocks.push({ target, wrapper, pre, code });
 
 			const language = [...block.classList]
 				.find((name) => name.startsWith('language-'))
-				?.slice('language-'.length);
+				?.slice('language-'.length)
+				.toLowerCase();
+
+			blocks.push({ target, wrapper, pre, code, language });
 
 			if (!language) continue;
 
@@ -200,8 +209,8 @@ export default function MarkdownHtml({
 				}}
 				dangerouslySetInnerHTML={{ __html: html }}
 			/>
-			{controls.blocks.map(({ target, code }, index) => (
-				<CodeCopyButton key={index} target={target} code={code} />
+			{controls.blocks.map(({ target, code, language, pre }, index) => (
+				<CodeBlockControls key={index} target={target} code={code} language={language} pre={pre} />
 			))}
 			{viewerImage
 				? createPortal(
