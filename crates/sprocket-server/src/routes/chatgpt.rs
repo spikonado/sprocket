@@ -152,9 +152,10 @@ async fn start(
         )
         .await
         .map_err(|error| match error {
-            ReserveError::Listener(_) => ApiError::with_status(
+            ReserveError::Listener(error) => ApiError::with_status(
                 StatusCode::SERVICE_UNAVAILABLE,
-                anyhow::anyhow!("Could not open the local ChatGPT callback listener."),
+                anyhow::Error::new(error)
+                    .context("Could not open the local ChatGPT callback listener."),
             ),
             ReserveError::TooMany => {
                 ApiError::bad_request(anyhow::anyhow!("Too many pending sign-ins. Retry later."))
