@@ -663,6 +663,70 @@ it('keeps a later account selection over a finishing login status', async () => 
 	expect(cancel).toHaveBeenCalledTimes(0);
 });
 
+it('does not let a late login status undo a completed account selection', async () => {
+	vi.useFakeTimers();
+	const selectedStatus = Promise.withResolvers<ChatGptStatus>();
+	const loginStatus = Promise.withResolvers<ChatGptStatus>();
+	let statusCalls = 0;
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const twoAccounts = statusFixture({
+		accounts: [
+			{ connectionId: 'conn-1', label: 'a@example.com', connected: true },
+			{ connectionId: 'conn-2', label: 'b@example.com', connected: true }
+		],
+		activeConnectionId: 'conn-1'
+	});
+
+	const stillFirst = { ...twoAccounts, activeConnectionId: 'conn-1' };
+	const switched = { ...twoAccounts, activeConnectionId: 'conn-2' };
+
+	const view = mount(new ConvexTestClient(), {
+		chatGptStatus: twoAccounts,
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			selectChatGptAccount: async () => {},
+			fetchChatGptStatus: () => {
+				statusCalls += 1;
+
+				return statusCalls === 1 ? selectedStatus.promise : loginStatus.promise;
+			}
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Add account' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+	});
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	await act(async () => {
+		selectedStatus.resolve(switched);
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(switched);
+	await act(async () => {
+		loginStatus.resolve(stillFirst);
+	});
+	expect(view.onChatGptStatusChange).not.toHaveBeenCalledWith(stillFirst);
+	expect(view.onChatGptStatusChange).toHaveBeenLastCalledWith(switched);
+});
+
 it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();

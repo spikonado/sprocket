@@ -59,6 +59,7 @@ export default function SettingsProviders({
 	const loginGenerationRef = useRef(0);
 	const pendingGenerationRef = useRef(0);
 	const pendingKindRef = useRef<'none' | 'refresh' | 'select' | 'signout'>('none');
+	const lastStatusSourceRef = useRef<'none' | 'login' | 'refresh' | 'select' | 'signout'>('none');
 
 	const activeAccount =
 		chatGptStatus?.accounts.find(
@@ -87,10 +88,7 @@ export default function SettingsProviders({
 			.catch(() => {});
 	}
 
-	function beginChatGptPending(
-		generation: number,
-		kind: 'refresh' | 'select' | 'signout'
-	) {
+	function beginChatGptPending(generation: number, kind: 'refresh' | 'select' | 'signout') {
 		pendingGenerationRef.current = generation;
 		pendingKindRef.current = kind;
 		setChatGptPending(true);
@@ -195,15 +193,20 @@ export default function SettingsProviders({
 					return;
 				}
 
+				const sourceAtFetch = lastStatusSourceRef.current;
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
 				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
 
 				const pendingKind = pendingKindRef.current;
+				const sourceNow = lastStatusSourceRef.current;
 
 				if (pendingKind === 'select' || pendingKind === 'signout') return;
+				if (sourceNow !== sourceAtFetch && (sourceNow === 'select' || sourceNow === 'signout'))
+					return;
 
 				if (pendingKind === 'refresh') generationRef.current += 1;
+				lastStatusSourceRef.current = 'login';
 				onChatGptStatusChange(status);
 
 				return;
@@ -319,6 +322,7 @@ export default function SettingsProviders({
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
+			lastStatusSourceRef.current = 'select';
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -345,7 +349,10 @@ export default function SettingsProviders({
 		try {
 			const status = await api.fetchChatGptStatus({ userId });
 
-			if (generation === generationRef.current) onChatGptStatusChange(status);
+			if (generation === generationRef.current) {
+				lastStatusSourceRef.current = 'refresh';
+				onChatGptStatusChange(status);
+			}
 		} catch (error) {
 			if (generation === generationRef.current)
 				setChatGptError(
@@ -388,6 +395,7 @@ export default function SettingsProviders({
 						? null
 						: chatGptStatus.activeConnectionId;
 
+				lastStatusSourceRef.current = 'signout';
 				onChatGptStatusChange({
 					accounts: chatGptStatus.accounts.filter(
 						(account) => account.connectionId !== connectionId
@@ -400,6 +408,7 @@ export default function SettingsProviders({
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
+			lastStatusSourceRef.current = 'signout';
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
