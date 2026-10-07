@@ -113,6 +113,7 @@ import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sp
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveDesktopApi } from '$lib/local/client';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
+	AgentRunRequest,
 	ChatGptStatus,
 	DesktopApi,
 	ExecutorJob,
@@ -987,27 +988,19 @@ export default function App({
 
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 
-	const { queue: messageQueue, messages: queuedMessages } = useMessageQueue({
+	const {
+		queue: messageQueue,
+		messages: queuedMessages,
+		isLoaded: isMessageQueueLoaded
+	} = useMessageQueue({
 		client: convexClient,
 		desktopApi,
 		userId: authReady ? signedInUserId : null,
-		onStarted: (started) => {
-			if (currentThreadId === started.threadId && runState?.runId !== started.runId) {
-				setPendingAgentLaunches((launches) =>
-					beginPendingAgentLaunch(launches, started.threadId, {
-						launchId: ++nextAgentLaunchId.current,
-						previousRunId: runState?.runId ?? null
-					})
-				);
-			}
-
-			void refreshDesktopProjectAttachments().catch(() => {});
-		}
+		onError: setCurrentError
 	});
 
 	const currentQueuedMessages = queuedMessages.filter(
-		(message) =>
-			message.request.threadId === currentThreadId && message.request.userId === signedInUserId
+		(message) => message.threadId === currentThreadId && message.userId === signedInUserId
 	);
 
 	const latestRunResumeKind =
@@ -1027,6 +1020,7 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
+		isMessageQueueLoaded &&
 		(pendingAgentQuestion || selectedCompletionProvider !== 'chatgpt' || chatGptConfigured) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
@@ -1693,27 +1687,51 @@ export default function App({
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 
+		const queuedRequest: AgentRunRequest = {
+			userId: submittedUserId,
+			threadId: selectedThreadId ?? undefined,
+			submissionId: crypto.randomUUID(),
+			executionSecret: crypto.randomUUID() + crypto.randomUUID(),
+			workspacePath,
+			prompt: submittedPrompt,
+			storageIds: submittedStorageIds,
+			selectedModel: submittedModel,
+			completionProvider: submittedCompletionProvider,
+			reasoningEffort: submittedReasoningEffort,
+			fastMode: submittedFastMode
+		};
+
 		if (
 			selectedThreadId &&
 			!options?.answeredQuestionId &&
-			(isRunInProgress || currentQueuedMessages.length > 0)
+			(isRunInProgress ||
+				currentQueuedMessages.length > 0 ||
+				messageQueue.hasPendingSubmission(queuedRequest))
 		) {
-			messageQueue.enqueue(
-				{
-					userId: submittedUserId,
-					threadId: selectedThreadId,
-					submissionId: crypto.randomUUID(),
-					executionSecret: crypto.randomUUID() + crypto.randomUUID(),
-					workspacePath,
-					prompt: submittedPrompt,
-					storageIds: submittedStorageIds,
-					selectedModel: submittedModel,
-					completionProvider: submittedCompletionProvider,
-					reasoningEffort: submittedReasoningEffort,
-					fastMode: submittedFastMode
-				},
-				submittedAttachments.map((attachment) => attachment.name)
-			);
+			const queueScope = `thread:${selectedThreadId}`;
+			const queueSequence = ++nextSubmissionSequence.current;
+			submittingPromptScopes.set(queueScope, queueSequence);
+			bumpSubmissionTracking();
+
+			try {
+				await messageQueue.enqueue(queuedRequest);
+			} catch (error) {
+				if (isSubmittedUserCurrent()) {
+					setCurrentError(error instanceof Error ? error.message : 'Failed to queue message.');
+				}
+
+				return;
+			} finally {
+				clearSubmittingPrompt(queueScope, queueSequence);
+			}
+
+			if (
+				!isSubmittedUserCurrent() ||
+				currentThreadIdRef.current !== selectedThreadId ||
+				currentWorkspacePathRef.current !== workspacePath
+			)
+				return;
+
 			setPrompt('');
 			composerAttachments.clear({ discard: false });
 			setComposerContinuationOfRunId(null);
@@ -2854,7 +2872,7 @@ export default function App({
 										isQueuing={isRunInProgress || currentQueuedMessages.length > 0}
 										queuedMessages={currentQueuedMessages.map((message) => ({
 											id: message.id,
-											prompt: message.request.prompt,
+											prompt: message.prompt,
 											attachmentNames: message.attachmentNames,
 											status: message.status,
 											error: message.error

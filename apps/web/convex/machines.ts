@@ -10,6 +10,7 @@ import {
 	MAX_ACTIVE_MACHINE_RUNS
 } from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
+import { isDurableQueuedRun } from '@convex/lib/messageQueue';
 
 const MACHINE_ENDED = 'The machine stopped before this run finished.';
 
@@ -56,10 +57,17 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 		throw new Error('Machine has too many active runs to stop safely.');
 	}
 
+	const pending: Doc<'runs'>['_id'][] = [];
+
 	for (const runId of machine.runIds) {
 		const run = await getRunWithExecution(ctx.db, runId);
 
 		if (run) {
+			if (await isDurableQueuedRun(ctx, run)) {
+				pending.push(runId);
+				continue;
+			}
+
 			await finalizeRunRecord(ctx, run, {
 				text: MACHINE_ENDED,
 				status: 'failed',
@@ -68,7 +76,7 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 		}
 	}
 
-	await ctx.db.patch('machines', machine._id, { runIds: [] });
+	await ctx.db.patch('machines', machine._id, { runIds: pending });
 }
 
 async function requireMachine(

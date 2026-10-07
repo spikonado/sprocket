@@ -162,6 +162,36 @@ export async function createQueuedRunRecord(
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
 
+	if (args.threadId && !args.continuationOfRunId) {
+		const queuedThreadId = args.threadId;
+
+		const queuedHead = await ctx.db
+			.query('queuedMessages')
+			.withIndex('by_threadId', (query) => query.eq('threadId', queuedThreadId))
+			.first();
+
+		if (
+			queuedHead &&
+			(queuedHead.submissionId !== args.submissionId ||
+				queuedHead.userId !== args.userId ||
+				queuedHead.machineId !== args.machineId ||
+				queuedHead.executionSecret !== args.executionSecret ||
+				queuedHead.status !== 'sending' ||
+				(queuedHead.claimExpiresAt ?? 0) <= Date.now() ||
+				queuedHead.prompt.trim() !== prompt ||
+				queuedHead.selectedModel !== args.selectedModel ||
+				queuedHead.completionProvider !== completionProvider ||
+				queuedHead.reasoningEffort !== args.reasoningEffort ||
+				queuedHead.fastMode !== args.fastMode ||
+				!areStorageIdsEqual(
+					queuedHead.storageIds,
+					imageUploads.map((upload) => upload.storageId)
+				))
+		) {
+			throw new Error('Send or remove queued messages before starting another run.');
+		}
+	}
+
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
 	let threadRecord: Doc<'threadRecords'>;
 

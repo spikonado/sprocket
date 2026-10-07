@@ -4,6 +4,7 @@ import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
+import { queuedMessageFields } from '@convex/lib/messageQueue';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -34,6 +35,16 @@ import {
 } from '@convex/lib/validators';
 
 export default defineSchema({
+	queuedMessages: defineTable(queuedMessageFields)
+		.index('by_userId_submissionId', ['userId', 'submissionId'])
+		.index('by_userId_machineId', ['userId', 'machineId'])
+		.index('by_threadId', ['threadId']),
+	queuedMessageAttachments: defineTable({
+		messageId: v.id('queuedMessages'),
+		storageId: v.id('_storage')
+	})
+		.index('by_messageId', ['messageId'])
+		.index('by_storageId', ['storageId']),
 	users: defineTable({
 		// WorkOS JWT subject; every owned table stores this value as `userId`.
 		subject: v.string(),

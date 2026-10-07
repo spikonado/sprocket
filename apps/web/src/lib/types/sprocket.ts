@@ -314,6 +314,7 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
+	enqueueMessage: (request: AgentRunRequest) => Promise<void>;
 	fetchTranscriptDisplay: (
 		request: TranscriptDisplayRequest,
 		signal?: AbortSignal

@@ -256,6 +256,29 @@ durable parts from the Rust replica and overlays the current Rust
 live-completion stream. Convex assigns durable part numbers; React renders
 that order and keeps no cross-thread transcript cache.
 
+### Queued follow-up messages
+
+Convex stores each follow-up's prompt, attachment references, model settings,
+submission ID, and execution capability before the composer clears the draft.
+The local server drains queues for its stable installation ID using the saved
+native session, including while the UI is closed. Queues pause while that
+machine is stopped or signed out and resume when it returns.
+
+Only a thread's first queued message can acquire a renewable dispatch lease.
+Run creation also enforces this order, including submissions from other tabs.
+Answers that require a question continuation finish that work before follow-ups.
+After a crash, a worker reuses the submission ID and capability to recover an
+unclaimed run, or removes the queue entry if that run already started or ended.
+An unclaimed run held by the queue survives machine shutdown and startup
+deadlines; active runs retain the normal failure and cancellation behavior.
+Definitive launch failures retain a failed queue entry for Retry or Remove.
+Uncertain launches retain their lease until recovery can determine the result.
+
+Attachment references are committed with enqueue and protect cloud file bytes
+from draft deletion and retention cleanup until delivery or removal. Local
+attachment caches may expire because execution can download the retained bytes.
+The queue tables are additive; existing conversation records require no migration.
+
 ## Authentication and trust boundaries
 
 ### Native subagent threads

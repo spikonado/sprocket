@@ -1,58 +1,62 @@
-import { useEffect, useEffectEvent, useState } from 'react';
-import type { ConvexReactClient } from 'convex/react';
+import { useRef } from 'react';
+import { useQuery, type ConvexReactClient } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useStore } from '$lib/store';
-import type { AgentRunStart, DesktopApi } from '$lib/types/sprocket';
-import { MessageQueue } from './message-queue';
+import type { AgentRunRequest, DesktopApi } from '$lib/types/sprocket';
 
 export function useMessageQueue({
 	client,
 	desktopApi,
 	userId,
-	onStarted
+	onError
 }: {
 	client: ConvexReactClient;
-	desktopApi: DesktopApi | null;
+	desktopApi: Pick<DesktopApi, 'enqueueMessage'> | null;
 	userId: string | null;
-	onStarted: (started: AgentRunStart) => void;
+	onError: (error: string) => void;
 }) {
-	const [queue] = useState(() => new MessageQueue());
-	const messages = useStore(queue);
-	const handleStarted = useEffectEvent(onStarted);
+	const messages = useQuery(api.messageQueue.list, userId ? {} : 'skip');
+	const pending = useRef(new Map<string, AgentRunRequest>());
 
-	useEffect(() => {
-		if (!desktopApi || !userId) {
-			queue.setContext(null);
-
-			return;
-		}
-
-		queue.setContext({
-			userId,
-			api: desktopApi,
-			onStarted: (started) => handleStarted(started),
-			watchLifecycle: (threadId, onUpdate, onError) => {
-				const watch = client.watchQuery(api.chat.selectedThreadLifecycle, { threadId });
-
-				const report = () => {
-					try {
-						const lifecycle = watch.localQueryResult();
-
-						if (lifecycle !== undefined) onUpdate(lifecycle);
-					} catch (error) {
-						onError(error instanceof Error ? error : new Error(String(error)));
-					}
-				};
-
-				const stop = watch.onUpdate(report);
-				report();
-
-				return stop;
+	return {
+		isLoaded: messages !== undefined,
+		messages: messages ?? [],
+		queue: {
+			hasPendingSubmission: (request: AgentRunRequest) =>
+				pending.current.has(submissionKey(request)),
+			enqueue: async (request: AgentRunRequest) => {
+				if (!desktopApi || request.userId !== userId) throw new Error('User session is not ready.');
+				// Preserve the submission capability if the durable enqueue committed
+				// but its HTTP response was lost and the unchanged draft is retried.
+				const key = submissionKey(request);
+				const submission = pending.current.get(key) ?? request;
+				pending.current.set(key, submission);
+				await desktopApi.enqueueMessage(submission);
+				pending.current.delete(key);
+			},
+			retry: (id: string) => {
+				void client.mutation(api.messageQueue.retry, { submissionId: id }).catch((error) => {
+					onError(error instanceof Error ? error.message : 'Failed to retry queued message.');
+				});
+			},
+			remove: (id: string) => {
+				void client.mutation(api.messageQueue.remove, { submissionId: id }).catch((error) => {
+					onError(error instanceof Error ? error.message : 'Failed to remove queued message.');
+				});
 			}
-		});
+		}
+	};
+}
 
-		return () => queue.setContext(null);
-	}, [client, desktopApi, userId, queue]);
-
-	return { queue, messages };
+function submissionKey(request: AgentRunRequest) {
+	return JSON.stringify([
+		request.userId,
+		request.threadId,
+		request.workspacePath,
+		request.prompt,
+		request.storageIds,
+		request.selectedModel,
+		request.completionProvider,
+		request.reasoningEffort,
+		request.fastMode
+	]);
 }

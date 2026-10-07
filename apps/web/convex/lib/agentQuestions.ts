@@ -58,6 +58,18 @@ export async function headActionablePendingQuestion(
 	return null;
 }
 
+export async function hasAnsweredQuestionContinuation(db: DatabaseReader, runId: Id<'runs'>) {
+	for await (const question of db
+		.query('agentQuestions')
+		.withIndex('by_runId_sequence', (query) => query.eq('runId', runId))) {
+		if (question.status === 'answered' && question.requiresContinuation && question.answer) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 export async function actionablePendingQuestionsForThread(
 	db: DatabaseReader,
 	threadId: Id<'threadRecords'>

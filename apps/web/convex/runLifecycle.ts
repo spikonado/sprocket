@@ -10,6 +10,7 @@ import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { cancelPendingQuestionsForThread } from '@convex/agentQuestions';
 import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import { isDurableQueuedRun, MESSAGE_QUEUE_LEASE_MS } from '@convex/lib/messageQueue';
 
 export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Promise<void> {
 	const run = await ctx.db.get('runs', runId);
@@ -45,6 +46,14 @@ export const checkRun = internalMutation({
 		const run = await getRunWithExecution(ctx.db, runId);
 
 		if (!run) return null;
+
+		// An unclaimed run created from the durable queue is still pending work.
+		// Preserve it while its machine is offline; the next worker reuses it.
+		if (await isDurableQueuedRun(ctx, run)) {
+			await scheduleRunLifecycleCheck(ctx, state, Date.now() + MESSAGE_QUEUE_LEASE_MS);
+
+			return null;
+		}
 
 		const deadline = runDeadline(run);
 

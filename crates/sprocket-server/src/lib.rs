@@ -9,6 +9,7 @@ mod command_sync;
 mod config;
 mod machine_identity;
 mod machines;
+mod message_queue;
 mod native_auth;
 mod package_update;
 mod profile;
@@ -372,6 +373,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
             command_cleanup_sessions.prune().await;
         }
     });
+    let message_queue = message_queue::spawn(state.clone());
     let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
     let shutdown_machines = Arc::clone(&machines);
@@ -409,6 +411,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     };
     cleanup.abort();
     let _ = cleanup.await;
+    message_queue.abort();
+    let _ = message_queue.await;
     command_cleanup.abort();
     let _ = command_cleanup.await;
     command_sessions.stop_all().await;

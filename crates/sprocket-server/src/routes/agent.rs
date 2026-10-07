@@ -73,6 +73,7 @@ pub(crate) struct RunAgentApiRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/agent/run", post(run_agent_handler))
+        .route("/agent/queue", post(queue_message_handler))
         .route("/agent/live", post(live_handler))
         .route("/agent/commands", post(commands_handler))
         .route("/agent/commands/terminate", post(terminate_command_handler))
@@ -156,6 +157,42 @@ async fn run_agent_handler(
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+async fn queue_message_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<RunAgentApiRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .require_session_user(&headers, &jar, &payload.user_id)
+        .await?;
+    state
+        .project_attachments
+        .require_available_workspace(&payload.workspace_path)
+        .await
+        .map_err(ApiError::bad_request)?;
+    state
+        .machines
+        .register(&payload.user_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let client = state
+        .convex_client_for(&payload.user_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let args = crate::message_queue::enqueue_args(
+        payload,
+        state.machine_identity.installation_id.clone(),
+        state.machine_identity.credential.clone(),
+    )
+    .map_err(ApiError::bad_request)?;
+    let _: serde_json::Value = client
+        .mutate("messageQueue:enqueue", args)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(serde_json::json!({ "queued": true })))
 }
 
 pub(crate) async fn launch_agent(
@@ -533,7 +570,13 @@ mod tests {
         let session_id = started.session_id.unwrap();
         let router = crate::build_router(state.clone(), None);
         let make_request = |path: &str, user: &str, thread: &str, authenticated: bool| {
-            let mut body = serde_json::json!({ "userId": user, "threadId": thread });
+            let mut body = if path.ends_with("/queue") {
+                base_request()
+            } else {
+                serde_json::json!({})
+            };
+            body["userId"] = user.into();
+            body["threadId"] = thread.into();
             if path.ends_with("terminate") {
                 body["sessionId"] = session_id.clone().into();
             }
@@ -551,7 +594,11 @@ mod tests {
             }
             builder.body(Body::from(body.to_string())).unwrap()
         };
-        for path in ["/api/agent/commands", "/api/agent/commands/terminate"] {
+        for path in [
+            "/api/agent/commands",
+            "/api/agent/commands/terminate",
+            "/api/agent/queue",
+        ] {
             let response = router
                 .clone()
                 .oneshot(make_request(path, "user", "thread", false))

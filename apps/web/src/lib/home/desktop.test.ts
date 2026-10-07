@@ -50,6 +50,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		listProjectAttachments: unusedDesktopCall,
 		attachProject: unusedDesktopCall,
 		runAgent,
+		enqueueMessage: async () => {},
 		fetchTranscriptDisplay: unusedDesktopCall,
 		fetchTranscriptDisplayDetails: unusedDesktopCall,
 		watchTranscript: unusedDesktopCall,
