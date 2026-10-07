@@ -59,7 +59,8 @@ export default function SettingsProviders({
 	const loginGenerationRef = useRef(0);
 	const pendingGenerationRef = useRef(0);
 	const pendingKindRef = useRef<'none' | 'refresh' | 'select' | 'signout'>('none');
-	const statusEpochRef = useRef(0);
+	const userOpEpochRef = useRef(0);
+	const loginEpochRef = useRef(0);
 
 	const activeAccount =
 		chatGptStatus?.accounts.find(
@@ -193,7 +194,7 @@ export default function SettingsProviders({
 					return;
 				}
 
-				const epochAtFetch = statusEpochRef.current;
+				const userOpAtFetch = userOpEpochRef.current;
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
 				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
@@ -202,9 +203,9 @@ export default function SettingsProviders({
 
 				if (pendingKind === 'select' || pendingKind === 'signout') return;
 
-				if (statusEpochRef.current !== epochAtFetch) return;
+				if (userOpEpochRef.current !== userOpAtFetch) return;
 
-				statusEpochRef.current += 1;
+				loginEpochRef.current += 1;
 				onChatGptStatusChange(status);
 
 				return;
@@ -320,7 +321,7 @@ export default function SettingsProviders({
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
-			statusEpochRef.current += 1;
+			userOpEpochRef.current += 1;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -340,7 +341,7 @@ export default function SettingsProviders({
 
 		if (!api || chatGptPending) return;
 		const generation = ++generationRef.current;
-		const epochAtStart = statusEpochRef.current;
+		const loginEpochAtStart = loginEpochRef.current;
 
 		beginChatGptPending(generation, 'refresh');
 		setChatGptError(null);
@@ -348,8 +349,7 @@ export default function SettingsProviders({
 		try {
 			const status = await api.fetchChatGptStatus({ userId });
 
-			if (generation === generationRef.current && statusEpochRef.current === epochAtStart) {
-				statusEpochRef.current += 1;
+			if (generation === generationRef.current && loginEpochRef.current === loginEpochAtStart) {
 				onChatGptStatusChange(status);
 			}
 		} catch (error) {
@@ -394,7 +394,7 @@ export default function SettingsProviders({
 						? null
 						: chatGptStatus.activeConnectionId;
 
-				statusEpochRef.current += 1;
+				userOpEpochRef.current += 1;
 				onChatGptStatusChange({
 					accounts: chatGptStatus.accounts.filter(
 						(account) => account.connectionId !== connectionId
@@ -407,7 +407,7 @@ export default function SettingsProviders({
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
-			statusEpochRef.current += 1;
+			userOpEpochRef.current += 1;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;

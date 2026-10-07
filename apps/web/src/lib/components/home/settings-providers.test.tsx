@@ -594,6 +594,68 @@ it('does not unlock ChatGPT controls when login completes after Refresh started'
 	expect(cancel).toHaveBeenCalledTimes(0);
 });
 
+it('applies login status even when overlapping Refresh returns first', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+	const refreshStatus = Promise.withResolvers<ChatGptStatus>();
+	const loginStatus = Promise.withResolvers<ChatGptStatus>();
+	let statusCalls = 0;
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const disconnectedStatus = statusFixture();
+
+	const connectedStatus = statusFixture({
+		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+		activeConnectionId: 'conn-1'
+	});
+
+	const view = mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			fetchChatGptStatus: () => {
+				statusCalls += 1;
+
+				return statusCalls === 1 ? refreshStatus.promise : loginStatus.promise;
+			},
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+	});
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(statusCalls).toBe(2);
+	await act(async () => {
+		refreshStatus.resolve(disconnectedStatus);
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(disconnectedStatus);
+	await act(async () => {
+		loginStatus.resolve(connectedStatus);
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenLastCalledWith(connectedStatus);
+	expect(screen.getByRole('button', { name: 'Add account' })).toBeTruthy();
+	expect(cancel).toHaveBeenCalledTimes(0);
+});
+
 it('keeps a later account selection over a finishing login status', async () => {
 	vi.useFakeTimers();
 	const cancel = vi.fn(async () => {});
