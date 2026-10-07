@@ -32,7 +32,7 @@ describe('renderMarkdown', () => {
 
 	it('preserves currency next to code and formatting around literal dollars', () => {
 		expect(renderMarkdown('Costs $5; use `$HOME` for the path.')).toBe(
-		'<p>Costs $5; use <code>$HOME</code> for the path.</p>\n'
+			'<p>Costs $5; use <code>$HOME</code> for the path.</p>\n'
 		);
 
 		const html = renderMarkdown('*before `$x`* and **$y$**');
@@ -40,7 +40,7 @@ describe('renderMarkdown', () => {
 		expect(html).toContain('<em>before <code>$x</code></em> and <strong><span class="katex">');
 		expect(html).toContain('</span></strong>');
 		expect(renderMarkdown(String.raw`*before \$x* and **$y$**`)).toContain(
-		'<em>before $x</em> and <strong><span class="katex">'
+			'<em>before $x</em> and <strong><span class="katex">'
 		);
 	});
 
