@@ -452,26 +452,37 @@ body::after {
 	white-space: pre;
 	overflow-wrap: normal;
 	word-break: normal;
-	border: 1px solid var(--hairline);
-	border-radius: 1rem;
-	background: var(--panel-elevated);
 	padding: 0.95rem 1rem;
 }
 
+.chat-markdown pre,
 .chat-markdown .markdown-code-block {
-	position: relative;
+	border: 1px solid var(--hairline);
+	border-radius: 1rem;
+	background: var(--panel-elevated);
+}
+
+.chat-markdown .markdown-code-block {
+	display: flex;
+	align-items: flex-start;
 	margin: 0.8rem 0;
+	overflow: hidden;
 }
 
 .chat-markdown .markdown-code-block pre {
+	flex: 1;
+	min-width: 0;
 	margin: 0;
-	padding-top: 2.6rem;
+	border: 0;
+	border-radius: 0;
+}
+
+.markdown-code-controls {
+	flex-shrink: 0;
+	padding: 0.85rem 0.7rem 0.85rem 0;
 }
 
 .markdown-code-copy {
-	position: absolute;
-	top: 0.55rem;
-	right: 0.7rem;
 	display: inline-flex;
 	align-items: center;
 	gap: 0.35rem;
@@ -482,6 +493,7 @@ body::after {
 	font-family: var(--font-sans);
 	font-size: 0.75rem;
 	line-height: 1.4;
+	white-space: nowrap;
 	cursor: pointer;
 }
 
@@ -495,8 +507,13 @@ body::after {
 	outline-offset: 2px;
 }
 
-[data-theme='light'] .chat-markdown pre {
+[data-theme='light'] .chat-markdown pre,
+[data-theme='light'] .chat-markdown .markdown-code-block {
 	background: color-mix(in oklab, var(--muted) 55%, var(--surface));
+}
+
+.chat-markdown .markdown-code-block pre {
+	background: transparent;
 }
 
 .chat-markdown pre code {

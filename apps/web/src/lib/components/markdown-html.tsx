@@ -89,8 +89,9 @@ export default function MarkdownHtml({
 			const wrapper = document.createElement('div');
 			wrapper.className = 'markdown-code-block';
 			const target = document.createElement('div');
+			target.className = 'markdown-code-controls';
 			pre.replaceWith(wrapper);
-			wrapper.append(target, pre);
+			wrapper.append(pre, target);
 			const code = block.textContent;
 			blocks.push({ target, wrapper, pre, code });
 
