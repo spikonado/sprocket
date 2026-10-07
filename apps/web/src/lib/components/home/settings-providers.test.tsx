@@ -533,6 +533,136 @@ it('clears ChatGPT pending when login status finishes before an overlapping Refr
 	expect(cancel).toHaveBeenCalledTimes(0);
 });
 
+it('does not unlock ChatGPT controls when login completes after Refresh started', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+	const refreshStatus = Promise.withResolvers<ChatGptStatus>();
+	const loginStatus = Promise.withResolvers<ChatGptStatus>();
+	let statusCalls = 0;
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const connectedStatus = statusFixture({
+		accounts: [{ connectionId: 'conn-1', label: 'a@example.com', connected: true }],
+		activeConnectionId: 'conn-1'
+	});
+
+	mount(new ConvexTestClient(), {
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			fetchChatGptStatus: () => {
+				statusCalls += 1;
+
+				return statusCalls === 1 ? refreshStatus.promise : loginStatus.promise;
+			},
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+	});
+	expect(statusCalls).toBe(1);
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', true);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(statusCalls).toBe(2);
+	await act(async () => {
+		loginStatus.resolve(connectedStatus);
+	});
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', true);
+	await act(async () => {
+		refreshStatus.resolve(statusFixture());
+	});
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', false);
+	expect(cancel).toHaveBeenCalledTimes(0);
+});
+
+it('keeps a later account selection over a finishing login status', async () => {
+	vi.useFakeTimers();
+	const cancel = vi.fn(async () => {});
+	const selectedStatus = Promise.withResolvers<ChatGptStatus>();
+	const loginStatus = Promise.withResolvers<ChatGptStatus>();
+	let statusCalls = 0;
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const twoAccounts = statusFixture({
+		accounts: [
+			{ connectionId: 'conn-1', label: 'a@example.com', connected: true },
+			{ connectionId: 'conn-2', label: 'b@example.com', connected: true }
+		],
+		activeConnectionId: 'conn-1'
+	});
+
+	const stillFirst = { ...twoAccounts, activeConnectionId: 'conn-1' };
+	const switched = { ...twoAccounts, activeConnectionId: 'conn-2' };
+
+	const view = mount(new ConvexTestClient(), {
+		chatGptStatus: twoAccounts,
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			selectChatGptAccount: async () => {},
+			fetchChatGptStatus: () => {
+				statusCalls += 1;
+
+				return statusCalls === 1 ? selectedStatus.promise : loginStatus.promise;
+			},
+			cancelChatGptBrowserLogin: cancel
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Add account' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+	});
+	expect(statusCalls).toBe(1);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(statusCalls).toBe(2);
+	await act(async () => {
+		loginStatus.resolve(stillFirst);
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
+	await act(async () => {
+		selectedStatus.resolve(switched);
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenCalledWith(switched);
+	expect(view.onChatGptStatusChange).not.toHaveBeenCalledWith(stillFirst);
+	expect(cancel).toHaveBeenCalledTimes(0);
+});
+
 it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();

@@ -58,6 +58,7 @@ export default function SettingsProviders({
 	const generationRef = useRef(0);
 	const loginGenerationRef = useRef(0);
 	const pendingGenerationRef = useRef(0);
+	const pendingKindRef = useRef<'none' | 'refresh' | 'select' | 'signout'>('none');
 
 	const activeAccount =
 		chatGptStatus?.accounts.find(
@@ -86,8 +87,12 @@ export default function SettingsProviders({
 			.catch(() => {});
 	}
 
-	function beginChatGptPending(generation: number) {
+	function beginChatGptPending(
+		generation: number,
+		kind: 'refresh' | 'select' | 'signout'
+	) {
 		pendingGenerationRef.current = generation;
+		pendingKindRef.current = kind;
 		setChatGptPending(true);
 	}
 
@@ -95,6 +100,13 @@ export default function SettingsProviders({
 		if (pendingGenerationRef.current !== generation) return;
 
 		pendingGenerationRef.current = 0;
+		pendingKindRef.current = 'none';
+		setChatGptPending(false);
+	}
+
+	function clearUnownedChatGptPending() {
+		if (pendingGenerationRef.current !== 0) return;
+
 		setChatGptPending(false);
 	}
 
@@ -102,6 +114,7 @@ export default function SettingsProviders({
 		generationRef.current += 1;
 		loginGenerationRef.current += 1;
 		pendingGenerationRef.current = 0;
+		pendingKindRef.current = 'none';
 
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
@@ -122,6 +135,7 @@ export default function SettingsProviders({
 			generationRef.current += 1;
 			loginGenerationRef.current += 1;
 			pendingGenerationRef.current = 0;
+			pendingKindRef.current = 'none';
 
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
@@ -162,7 +176,7 @@ export default function SettingsProviders({
 						if (closedPendingPolls === 2) {
 							setBrowserLogin(pending.userId, null);
 
-							setChatGptPending(false);
+							clearUnownedChatGptPending();
 						}
 					}
 
@@ -171,7 +185,7 @@ export default function SettingsProviders({
 
 				setBrowserLogin(pending.userId, null);
 
-				setChatGptPending(false);
+				clearUnownedChatGptPending();
 
 				if (result.status === 'error') {
 					if (closedPendingPolls < 2) {
@@ -185,7 +199,11 @@ export default function SettingsProviders({
 
 				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
 
-				generationRef.current += 1;
+				const pendingKind = pendingKindRef.current;
+
+				if (pendingKind === 'select' || pendingKind === 'signout') return;
+
+				if (pendingKind === 'refresh') generationRef.current += 1;
 				onChatGptStatusChange(status);
 
 				return;
@@ -196,7 +214,7 @@ export default function SettingsProviders({
 
 				setBrowserLogin(pending.userId, null);
 
-				setChatGptPending(false);
+				clearUnownedChatGptPending();
 
 				setChatGptError(
 					errorMessage(
@@ -294,7 +312,7 @@ export default function SettingsProviders({
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 
-		beginChatGptPending(generation);
+		beginChatGptPending(generation, 'select');
 
 		try {
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
@@ -321,7 +339,7 @@ export default function SettingsProviders({
 		if (!api || chatGptPending) return;
 		const generation = ++generationRef.current;
 
-		beginChatGptPending(generation);
+		beginChatGptPending(generation, 'refresh');
 		setChatGptError(null);
 
 		try {
@@ -353,7 +371,7 @@ export default function SettingsProviders({
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 
-		beginChatGptPending(generation);
+		beginChatGptPending(generation, 'signout');
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
