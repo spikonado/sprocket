@@ -70,7 +70,7 @@ impl RecoveryRecord {
     }
 }
 
-pub(crate) fn new_execution_secret() -> String {
+fn new_execution_secret() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
@@ -120,14 +120,17 @@ impl RunRecovery {
     pub(crate) async fn begin(
         self: &Arc<Self>,
         record: RecoveryRecord,
-    ) -> anyhow::Result<ActiveRun> {
+    ) -> anyhow::Result<(ActiveRun, RecoveryRecord)> {
         let key = record.key();
         let guard = self
             .track(key.clone(), false)
             .expect("shared run reservation");
         // A caller retry must retain the original capability and retry budget.
-        self.update(key, Some(record), true).await?;
-        Ok(guard)
+        let saved = self
+            .update(key, Some(record), true)
+            .await?
+            .expect("begin saves a recovery record");
+        Ok((guard, saved))
     }
 
     fn track(&self, key: String, exclusive: bool) -> Option<ActiveRun> {
@@ -142,7 +145,8 @@ impl RunRecovery {
         })
     }
 
-    pub(crate) async fn saved(&self, user_id: &str, submission_id: &str) -> Option<RecoveryRecord> {
+    #[cfg(test)]
+    async fn saved(&self, user_id: &str, submission_id: &str) -> Option<RecoveryRecord> {
         self.records
             .lock()
             .await
@@ -155,7 +159,9 @@ impl RunRecovery {
         key: &str,
         replacement: Option<RecoveryRecord>,
     ) -> anyhow::Result<()> {
-        self.update(key.to_string(), replacement, false).await
+        self.update(key.to_string(), replacement, false)
+            .await
+            .map(|_| ())
     }
 
     async fn update(
@@ -163,28 +169,35 @@ impl RunRecovery {
         key: String,
         replacement: Option<RecoveryRecord>,
         only_if_absent: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<RecoveryRecord>> {
         let store = Arc::clone(self);
         // Keep the lock through both the disk write and memory commit even if
         // the requesting HTTP handler or recovery worker is dropped.
         tokio::spawn(async move {
             let mut records = store.records.lock().await;
-            if only_if_absent && records.contains_key(&key) {
-                return anyhow::Ok(());
+            if only_if_absent && let Some(saved) = records.get(&key) {
+                return anyhow::Ok(Some(saved.clone()));
             }
             let mut next = records.clone();
             if !only_if_absent {
                 next.remove(&key);
             }
-            if let Some(record) = replacement {
+            let saved = if let Some(mut record) = replacement {
                 if !next.contains_key(&record.key()) && next.len() >= MAX_RECORDS {
                     anyhow::bail!("Too many runs awaiting recovery.");
                 }
-                next.entry(record.key()).or_insert(record);
-            }
+                // Select the capability while holding the journal lock, and
+                // return this same persisted value to every overlapping launch.
+                if record.request.execution_secret.is_none() {
+                    record.request.execution_secret = Some(new_execution_secret());
+                }
+                Some(next.entry(record.key()).or_insert(record).clone())
+            } else {
+                None
+            };
             store.persist(&next).await?;
             *records = next;
-            anyhow::Ok(())
+            anyhow::Ok(saved)
         })
         .await?
     }
@@ -249,11 +262,11 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
             // Persist the new id and capability before submitting it. Replaying
             // this record after a crash reconciles that exact submission.
             state.run_recovery.replace(&key, Some(next.clone())).await?;
-            return launch_recovery(state.clone(), next).await;
+            return timeout(RPC_TIMEOUT, launch_recovery(state.clone(), next)).await?;
         }
     }
     drop(reservation);
-    launch_recovery(state.clone(), record).await
+    timeout(RPC_TIMEOUT, launch_recovery(state.clone(), record)).await?
 }
 
 pub(crate) fn spawn(state: AppState) -> JoinHandle<()> {
@@ -319,8 +332,8 @@ mod tests {
         let next = record()
             .continuation("failed".into(), "thread".into())
             .unwrap();
-        let guard = store.begin(next.clone()).await.unwrap();
-        let duplicate = store.begin(next.clone()).await.unwrap();
+        let (guard, _) = store.begin(next.clone()).await.unwrap();
+        let (duplicate, _) = store.begin(next.clone()).await.unwrap();
         assert!(store.track(next.key(), true).is_none());
         drop(guard);
         assert!(store.track(next.key(), true).is_none());
@@ -346,6 +359,47 @@ mod tests {
         assert_eq!(saved.request.reasoning_effort, "high");
         assert!(saved.request.fast_mode);
         assert!(reloaded.begin(saved).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn overlapping_submissions_launch_with_the_persisted_capability() {
+        for supplied_secrets in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = RunRecovery::load(directory.path()).unwrap();
+            let mut first = record()
+                .continuation("failed".into(), "thread".into())
+                .unwrap();
+            first.request.execution_secret = supplied_secrets.then(|| "first".into());
+            let mut second = first.clone();
+            second.request.execution_secret = supplied_secrets.then(|| "second".into());
+            // A retry must also preserve the original retry budget.
+            second.recoveries = 0;
+            let (first_launch, second_launch) =
+                tokio::join!(store.begin(first.clone()), store.begin(second));
+            let (first_guard, first_saved) = first_launch.unwrap();
+            let (second_guard, second_saved) = second_launch.unwrap();
+            let persisted = RunRecovery::load(directory.path())
+                .unwrap()
+                .saved("alice", &first.request.submission_id)
+                .await
+                .unwrap();
+            assert!(persisted.request.execution_secret.is_some());
+            assert_eq!(
+                first_saved.request.execution_secret,
+                persisted.request.execution_secret
+            );
+            assert_eq!(
+                second_saved.request.execution_secret,
+                persisted.request.execution_secret
+            );
+            assert_eq!(first_saved.recoveries, persisted.recoveries);
+            assert_eq!(second_saved.recoveries, persisted.recoveries);
+            assert!(store.track(first.key(), true).is_none());
+            drop(first_guard);
+            assert!(store.track(first.key(), true).is_none());
+            drop(second_guard);
+            assert!(store.track(first.key(), true).is_some());
+        }
     }
 
     #[tokio::test]

@@ -255,19 +255,7 @@ async fn launch_agent_inner(
         reasoning: payload.reasoning_effort.clone(),
         fast: payload.fast_mode,
     };
-    if payload.execution_secret.is_none() {
-        if let Some(saved) = state
-            .run_recovery
-            .saved(&payload.user_id, &payload.submission_id)
-            .await
-        {
-            payload.execution_secret = saved.request.execution_secret;
-        }
-    }
     payload.workspace_path = workspace_path.clone();
-    if payload.execution_secret.is_none() {
-        payload.execution_secret = Some(crate::run_recovery::new_execution_secret());
-    }
     let mut recovery = recovery.unwrap_or_else(|| {
         crate::run_recovery::RecoveryRecord::new(
             payload.clone(),
@@ -277,7 +265,7 @@ async fn launch_agent_inner(
     });
     recovery.request.execution_secret = payload.execution_secret.clone();
     recovery.request.workspace_path = payload.workspace_path.clone();
-    let recovery_guard = state
+    let (recovery_guard, saved) = state
         .run_recovery
         .begin(recovery)
         .await
@@ -288,7 +276,8 @@ async fn launch_agent_inner(
         cancellation,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
-        execution_secret: payload
+        execution_secret: saved
+            .request
             .execution_secret
             .expect("the recovery record has an execution secret"),
         submission_id: payload.submission_id,
