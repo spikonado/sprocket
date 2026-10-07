@@ -20,7 +20,7 @@ static LOCAL_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LocalImageRequest {
+pub(super) struct LocalImageRequest {
     workspace_path: Option<PathBuf>,
     path: String,
     user_id: Option<String>,
