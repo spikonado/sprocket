@@ -246,6 +246,25 @@ describe('payments mandates', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(0);
 	});
 
+	it('refuses payment tools after cancellation is requested while the lease is still live', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', run.runId, { cancellationRequestedAt: Date.now() });
+		});
+
+		await expect(run.asUser.action(api.payments.mandateSetup, setupArgs(run))).rejects.toThrow(
+			/Run is no longer active/
+		);
+		await expect(run.asUser.action(api.payments.mandateList, auth(run))).rejects.toThrow(
+			/Run is no longer active/
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(0);
+	});
+
 	it('creates a mandate setup session and stores non-sensitive state', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({

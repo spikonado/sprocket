@@ -83,7 +83,11 @@ export const paymentActor = internalQuery({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+		if (
+			run.claimId !== args.claimId ||
+			run.cancellationRequestedAt !== undefined ||
+			!isRunClaimLeaseActive(run, Date.now())
+		) {
 			throw new Error('Run is no longer active.');
 		}
 
