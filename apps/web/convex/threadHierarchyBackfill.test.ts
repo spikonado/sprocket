@@ -7,6 +7,7 @@ import {
 	subtreeSummary
 } from '@convex/lib/threadHierarchy';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
+import { migrations } from '@convex/migrations';
 import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test.setup';
 
 async function thread(
@@ -45,6 +46,26 @@ async function makeLegacy(t: ConvexTestInstance) {
 				ownWorking: undefined,
 				workingDescendantCount: undefined,
 				descendantStatusCounts: undefined
+			});
+		}
+	});
+}
+
+async function makeStatusCountsLegacy(t: ConvexTestInstance) {
+	await t.run(async (ctx) => {
+		for (const state of await ctx.db.query('threadHierarchyStates').collect()) {
+			const record = (await ctx.db.get('threadRecords', state.threadId))!;
+			await ctx.db.patch('threadHierarchyStates', state._id, {
+				ownStatus: record.status,
+				descendantStatusCounts: {
+					queued: 0,
+					running: state.workingDescendantCount!,
+					completed: state.descendantCount - state.workingDescendantCount!,
+					failed: 0,
+					cancelled: 0
+				},
+				ownWorking: undefined,
+				workingDescendantCount: undefined
 			});
 		}
 	});
@@ -147,23 +168,7 @@ describe('thread hierarchy working count backfill', () => {
 		const root = await thread(t, 'completed');
 		const branch = await thread(t, 'running', root.threadId);
 		const leaf = await thread(t, 'running', branch.threadId);
-		await t.run(async (ctx) => {
-			for (const state of await ctx.db.query('threadHierarchyStates').collect()) {
-				const record = (await ctx.db.get('threadRecords', state.threadId))!;
-				await ctx.db.patch('threadHierarchyStates', state._id, {
-					ownStatus: record.status,
-					descendantStatusCounts: {
-						queued: 0,
-						running: state.workingDescendantCount!,
-						completed: state.descendantCount - state.workingDescendantCount!,
-						failed: 0,
-						cancelled: 0
-					},
-					ownWorking: undefined,
-					workingDescendantCount: undefined
-				});
-			}
-		});
+		await makeStatusCountsLegacy(t);
 
 		expect((await summary(t, root.threadId)).workingDescendantCount).toBe(2);
 		const first = await oneBatch(t, null);
@@ -226,14 +231,26 @@ describe('thread hierarchy working count backfill', () => {
 		});
 	});
 
-	it('records automatic runner completion and leaves completed schedules unchanged', async () => {
+	it('converts legacy states after the old migration finished and leaves completed schedules unchanged', async () => {
 		vi.useFakeTimers();
 
 		try {
 			const t = initConvexTest();
 			const root = await thread(t, 'completed');
+			await thread(t, 'running', root.threadId);
 			await thread(t, 'cancelled', root.threadId);
-			await makeLegacy(t);
+			await t.run((ctx) =>
+				migrations.runOne(ctx, internal.migrations.backfillThreadHierarchyStatuses)
+			);
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			expect(
+				await t.run((ctx) =>
+					migrations.getStatus(ctx, {
+						migrations: [internal.migrations.backfillThreadHierarchyStatuses]
+					})
+				)
+			).toMatchObject([{ isDone: true }]);
+			await makeStatusCountsLegacy(t);
 			await t.run((ctx) =>
 				ctx.db.insert('migrationSchedules', {
 					name: 'thread-hierarchy-status-counts-2026-10',
@@ -258,9 +275,18 @@ describe('thread hierarchy working count backfill', () => {
 				startedAt: expect.any(Number),
 				completedAt: expect.any(Number)
 			});
-			expect((await summary(t, root.threadId)).workingDescendantCount).toBe(0);
+			expect((await summary(t, root.threadId)).workingDescendantCount).toBe(1);
 
 			const after = await snapshot(t);
+
+			for (const state of after.states) {
+				expect(state.ownWorking).toBe(
+					after.threads.find((record) => record._id === state.threadId)!.status === 'running'
+				);
+				expect(state.workingDescendantCount).toBe(state.threadId === root.threadId ? 1 : 0);
+				expect(state.ownStatus).toBeUndefined();
+				expect(state.descendantStatusCounts).toBeUndefined();
+			}
 
 			vi.setSystemTime(Date.now() + 1000);
 			await t.mutation(internal.migrations.runThreadHierarchyStatusBackfillAutomatically, {});
