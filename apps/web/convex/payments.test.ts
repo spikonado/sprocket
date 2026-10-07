@@ -314,6 +314,21 @@ describe('payments mandates', () => {
 		);
 	});
 
+	it('rejects invalid amount cap and empty description before creating a Prava session', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		await expect(
+			run.asUser.action(api.payments.mandateSetup, { ...setupArgs(run), amountCap: '12.345' })
+		).rejects.toThrow(/Amount cap must be a non-negative decimal amount/);
+		await expect(
+			run.asUser.action(api.payments.mandateSetup, { ...setupArgs(run), description: '   ' })
+		).rejects.toThrow(/Mandate description is required/);
+		expect(fetchMock).toHaveBeenCalledTimes(0);
+	});
+
 	it('resolves the synced account email without a caller identity', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({

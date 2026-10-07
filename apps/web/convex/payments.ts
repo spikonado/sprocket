@@ -711,11 +711,14 @@ async function createMandateSetup(
 	userId: string,
 	args: ObjectType<typeof mandateSetupArgs>
 ): Promise<Infer<typeof vMandateSetupResult>> {
-	// Prava requires a customer email on merchant sessions. Executor actions
-	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
-	// keeps on the users row instead of ctx.auth.
-	const userEmail = await ctx.runQuery(internal.payments.getUserEmail, { userId });
 	assertMandateFrequencyAllowed(args);
+	const description = args.description.trim();
+
+	if (!description) {
+		throw new Error('Mandate description is required.');
+	}
+
+	requireMoneyMinor(args.amountCap, 'Amount cap');
 
 	// Generic (any-scope) mandates are one-time only; Prava still needs a
 	// purchase_context entry, so name a placeholder merchant for it.
@@ -741,6 +744,11 @@ async function createMandateSetup(
 		};
 	}
 
+	// Prava requires a customer email on merchant sessions. Executor actions
+	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
+	// keeps on the users row instead of ctx.auth.
+	const userEmail = await ctx.runQuery(internal.payments.getUserEmail, { userId });
+
 	const response = await pravaRequest<{
 		iframe_url: string;
 		session_id: string;
@@ -753,14 +761,12 @@ async function createMandateSetup(
 			user_email: userEmail,
 			total_amount: args.amountCap,
 			currency: args.currency,
-			description: args.description,
+			description,
 			purchase_context: {
 				custom: [
 					{
 						merchant_details: merchantDetails,
-						product_details: [
-							{ description: args.description, unit_price: args.amountCap, quantity: 1 }
-						]
+						product_details: [{ description, unit_price: args.amountCap, quantity: 1 }]
 					}
 				]
 			},
@@ -790,7 +796,7 @@ async function createMandateSetup(
 		currency: args.currency,
 		frequency: args.frequency,
 		scope: args.scope,
-		description: args.description,
+		description,
 		approvalUrl: response.iframe_url
 	});
 
