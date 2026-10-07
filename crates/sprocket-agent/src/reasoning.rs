@@ -43,6 +43,7 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Sealed<Reasoning>) -> Option<&st
 
 /// Live display is summary blocks only. Rig's `display_text` also joins
 /// `Text` and `Redacted`, which must not become transcript text.
+#[cfg(test)]
 pub(crate) fn reasoning_summary_text(reasoning: &Sealed<Reasoning>) -> String {
     opened_reasoning(reasoning)
         .map(summary_text)
