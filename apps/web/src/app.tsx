@@ -38,6 +38,7 @@ import AuthGate from '$lib/components/home/auth-gate';
 import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay';
 import CalmCentered from '$lib/components/home/calm-centered';
 import PromptComposer from '$lib/components/home/prompt-composer';
+import ConversationNotices from '$lib/components/home/conversation-notices';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
@@ -54,7 +55,6 @@ import SidePanel from '$lib/components/home/side-panel';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
-import Button from '$lib/components/ui/button/button';
 import {
 	attachLocalProject as attachLocalProjectForPath,
 	compareProjectRecency,
@@ -686,9 +686,6 @@ export default function App({
 		lifecycleQuery.error ??
 		pendingAgentQuestionQuery.error;
 
-	const createThreadError =
-		currentError ?? auth.error ?? (queryError ? convexClientErrorMessage(queryError) : null);
-
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
 	useEffect(() => {
 		if (!authReady) {
@@ -1000,6 +997,17 @@ export default function App({
 	const isSubmittingPrompt = Boolean(
 		currentComposerScope && submittingPromptScopes.has(currentComposerScope)
 	);
+
+	const conversationError =
+		(currentThreadId && transcript.threadId === currentThreadId ? transcript.error : null) ??
+		currentError ??
+		auth.error ??
+		(queryError ? convexClientErrorMessage(queryError) : null);
+
+	const runError =
+		(latestRunResumeKind === 'failed' || latestRunResumeKind === 'crash') && !isSubmittingPrompt
+			? (runState?.lastError ?? null)
+			: null;
 
 	const canSend = Boolean(
 		currentProjectPath &&
@@ -2670,14 +2678,6 @@ export default function App({
 								<ThreadTranscript
 									key={`${currentThreadId}:${transcript.windowVersion}`}
 									userId={signedInUserId ?? undefined}
-									currentError={
-										transcript.error ??
-										currentError ??
-										auth.error ??
-										(queryError ? convexClientErrorMessage(queryError) : null) ??
-										null
-									}
-									runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 									messages={visibleMessages}
 									actions={visibleActions}
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
@@ -2690,7 +2690,6 @@ export default function App({
 											selectedKey: artifactId
 										});
 									}}
-									stale={transcript.stale}
 									loadingOlder={transcript.loadingOlder}
 									nextBefore={transcript.nextBefore ?? undefined}
 									emptyStateMessage={
@@ -2730,30 +2729,10 @@ export default function App({
 												to start local work.
 											</p>
 										)}
-										{createThreadError && (
-											<p className="create-thread-message text-destructive" role="alert">
-												{createThreadError}
-											</p>
-										)}
 									</>
 								)}
 
-								{catalogError ? (
-									<div
-										role="alert"
-										className="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
-									>
-										<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
-										<Button
-											variant="outline"
-											className="h-8 px-3"
-											disabled={catalogLoading}
-											onclick={() => void loadModelCatalog()}
-										>
-											{catalogLoading ? 'Retrying…' : 'Retry'}
-										</Button>
-									</div>
-								) : catalogLoading && !modelCatalog ? (
+								{!catalogError && catalogLoading && !modelCatalog ? (
 									<div className="text-muted-foreground mb-3 text-sm">Loading models…</div>
 								) : null}
 
@@ -2762,6 +2741,20 @@ export default function App({
 									className={!currentThreadId ? 'create-thread-composer' : ''}
 								>
 									<PromptComposer
+										notices={
+											<ConversationNotices
+												error={conversationError}
+												runError={runError}
+												reconnecting={Boolean(
+													currentThreadId &&
+													transcript.threadId === currentThreadId &&
+													transcript.stale
+												)}
+												catalogError={catalogError !== null}
+												catalogLoading={catalogLoading}
+												onRetryCatalog={() => void loadModelCatalog()}
+											/>
+										}
 										prompt={prompt}
 										onPromptChange={setPrompt}
 										attachments={composerAttachments.items}

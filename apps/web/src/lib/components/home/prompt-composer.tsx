@@ -1,5 +1,5 @@
-import { ArrowUp, CircleAlert, Paperclip, Square } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, Paperclip, Square } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
@@ -25,6 +25,7 @@ import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
+import ComposerNotice from '$lib/components/home/composer-notice';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
 import OptionSelector from '$lib/components/option-selector';
@@ -43,6 +44,7 @@ export type PendingAgentQuestion = {
 };
 
 export type PromptComposerProps = {
+	notices?: ReactNode;
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
 	attachments: ComposerAttachment[];
@@ -105,6 +107,7 @@ const COMPOSER_INNER_CLASS =
 	'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
 
 export function PromptComposerView({
+	notices,
 	prompt = '',
 	onPromptChange,
 	attachments,
@@ -773,25 +776,17 @@ export function PromptComposerView({
 								</div>
 							) : null}
 							<div className="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
-								{composerNotice ? (
-									<div
-										className="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-3"
-										role="alert"
-									>
-										<CircleAlert
-											className="mt-0.5 size-4 shrink-0 text-amber-800 dark:text-amber-200"
-											aria-hidden="true"
-										/>
-										<div className="min-w-0">
-											<p className="text-[13px] leading-5 font-medium text-amber-800 dark:text-amber-200">
-												You're out of usage
-											</p>
-											<p className="text-[12.5px] leading-5 text-amber-800/90 dark:text-amber-200/90">
-												{composerNotice}
-											</p>
-										</div>
-									</div>
-								) : null}
+								<div
+									className="mb-3 max-h-[min(30vh,16rem)] space-y-2 overflow-y-auto empty:hidden"
+									role="region"
+									aria-label="Conversation notices"
+									tabIndex={0}
+								>
+									{notices}
+									{composerNotice ? (
+										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
+									) : null}
+								</div>
 								{pendingQuestion ? (
 									<AgentQuestion
 										question={pendingQuestion.question}

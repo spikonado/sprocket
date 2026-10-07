@@ -60,8 +60,6 @@ async function settle(milliseconds = 16) {
 
 async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 600) {
 	const props: Props = {
-		currentError: null,
-		runError: null,
 		messages,
 		actions: [],
 		activeRunId: null,
@@ -1108,16 +1106,6 @@ describe('transcript viewport paging', () => {
 		}
 	);
 
-	it('does not claim an empty thread has a local copy when reconnecting', async () => {
-		const { viewport, setProps } = await renderTranscript([]);
-		setProps({ stale: true });
-		await settle();
-		expect(viewport.querySelector('[role="status"]')?.textContent).toContain(
-			'Reconnecting to conversation history.'
-		);
-		expect(viewport.textContent).not.toContain('local copy');
-	});
-
 	it('keeps prefetching nearby history without rendering pagination controls', async () => {
 		const { props, viewport, setProps } = await renderTranscript([message(3)]);
 		setProps({ nextBefore: 3 });
@@ -1343,7 +1331,7 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		setProps({ loadingOlder: true });
 		await settle();
-		setProps({ stale: true, loadingOlder: false });
+		setProps({ loadingOlder: false });
 		await settle();
 		await settle(10_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
