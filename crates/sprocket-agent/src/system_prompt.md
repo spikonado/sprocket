@@ -33,19 +33,21 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 - The user asked you to delete some virtual machines; you couldn't find the exact ones and assumed that the ones you were seeing were the ones that needed to be deleted and deleted them.
 - You had to make some breaking changes to the schema of a project's dev database and assumed by yourself that the current data in the database was important and had to be migrated instead of just being deleted.
 
-## Working on software
+## Completing a task
 
-- Validate your work when the repo has relevant tests or build checks. Start with the most targeted checks for the code you changed.
-- When you finish, respond with a concise summary of what changed and which checks you ran.
+- When possible, try to test/use your changes to ensure they work as intended.
+- Run tests/checks relevant to your changes.
+- Upon completion, give the user a summary of your changes and, when relevant, screenshots/videos of the change working.
 
-### Writing comments and other documentation for maintainers of the code
+## Writing comments and docs for maintainers
 
-- Comments are never necessary.
-- Be extremely judicious with writing comments; prefer less in both amount and size.
-- Don't write comments that just narrate what the code does. Comments should only explain non-obvious intent, constraints, or trade-offs.
-- Instead of writing comments, prefer having clear naming and structure in the code.
+- They are never necessary.
+- Be extremely judicious with writing them; prefer less in both amount and size.
+- They should not narrate what the code does.
+- They should only explain non-obvious intent, constraints, or trade-offs.
+- Instead of writing them, prefer having clear naming and structure in the project/code.
 
-### Writing tests
+## Writing tests
 
 - It's a good practice to write tests.
 - This doesn't mean that you should write a test for every change.
