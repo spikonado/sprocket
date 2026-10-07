@@ -27,34 +27,23 @@ export function collapseThreadBranch(
 
 type SubagentStatus = Doc<'threadRecords'>['status'];
 
-const subagentStatuses = [
-	{ status: 'queued', label: 'Starting' },
-	{ status: 'running', label: 'Working' },
-	{ status: 'completed', label: 'Completed' },
-	{ status: 'failed', label: 'Failed' },
-	{ status: 'cancelled', label: 'Stopped' }
-] satisfies { status: SubagentStatus; label: string }[];
-
 export function subagentStatusRows(
 	descendantCount: number,
 	counts?: Record<SubagentStatus, number>
-): { status: SubagentStatus | 'unknown'; label: string }[] {
-	const rows: { status: SubagentStatus | 'unknown'; label: string }[] = [];
-	let counted = 0;
+): { status: 'running' | 'completed'; label: string }[] {
+	const queued = counts?.queued ?? 0;
+	const running = counts?.running ?? 0;
+	const finished = (counts?.completed ?? 0) + (counts?.failed ?? 0) + (counts?.cancelled ?? 0);
+	const unknown = Math.max(0, descendantCount - queued - running - finished);
+	const completed = finished + unknown;
+	const rows: { status: 'running' | 'completed'; label: string }[] = [];
 
-	for (const { status, label } of subagentStatuses) {
-		const count = counts?.[status] ?? 0;
-
-		if (count === 0) continue;
-		counted += count;
-		rows.push({ status, label: subagentStatusLabel(count, label) });
+	if (running > 0) {
+		rows.push({ status: 'running', label: subagentStatusLabel(running, 'Working') });
 	}
 
-	if (counted < descendantCount) {
-		rows.push({
-			status: 'unknown',
-			label: subagentStatusLabel(descendantCount - counted, 'Status updating')
-		});
+	if (completed > 0) {
+		rows.push({ status: 'completed', label: subagentStatusLabel(completed, 'Completed') });
 	}
 
 	return rows;

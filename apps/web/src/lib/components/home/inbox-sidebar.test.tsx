@@ -542,7 +542,7 @@ it('expands subagents from the status text without selecting the thread', async 
 	expect(input.onSelect).toHaveBeenCalledWith(expect.objectContaining({ _id: 'thread' }));
 });
 
-it('shows each descendant status on its own counted row', async () => {
+it('groups descendant statuses into working and completed counts', async () => {
 	treeSummaries.set('thread', {
 		descendantCount: 9,
 		anyActive: true,
@@ -555,28 +555,25 @@ it('shows each descendant status on its own counted row', async () => {
 
 	const rows = [...document.querySelectorAll('.inbox-subagent-status-row')];
 	expect(rows.map((row) => row.textContent)).toEqual([
-		'1 subagent · Starting',
 		'2 subagents · Working',
-		'3 subagents · Completed',
-		'1 subagent · Failed',
-		'2 subagents · Stopped'
+		'6 subagents · Completed'
 	]);
-	expect(
-		[...document.querySelectorAll('.inbox-row-subagents.inbox-working')].map(
-			(row) => row.textContent
-		)
-	).toEqual(['1 subagent · Starting', '2 subagents · Working']);
-	expect(document.querySelector('.inbox-row-subagents.inbox-attention')?.textContent).toBe(
-		'1 subagent · Failed'
+	expect(document.querySelector('.inbox-row-subagents.inbox-working')?.textContent).toBe(
+		'2 subagents · Working'
 	);
+	expect(document.querySelector('.inbox-row-subagents.inbox-attention')).toBeNull();
 	expect(
-		view.getByRole('button', { name: /^Expand subagents of Thread:/ }).getAttribute('aria-expanded')
+		view
+			.getByRole('button', {
+				name: 'Expand subagents of Thread: 2 subagents · Working, 6 subagents · Completed'
+			})
+			.getAttribute('aria-expanded')
 	).toBe('false');
 	expect(document.querySelectorAll('.inbox-subagents svg')).toHaveLength(1);
 	expect(document.querySelector('.inbox-subagents .lucide-chevron-right')).toBeTruthy();
 
 	act(() => {
-		fireEvent.click(rows[2]);
+		fireEvent.click(rows[1]);
 	});
 	expect(input.expansion.expand).toHaveBeenCalledWith('thread');
 	expect(input.onSelect).not.toHaveBeenCalled();
@@ -592,15 +589,25 @@ it('shows each descendant status on its own counted row', async () => {
 	expect(document.querySelector('.inbox-subagents .lucide-chevron-down')).toBeTruthy();
 	expect(
 		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
-	).toEqual([
-		'3 subagents · Working',
-		'3 subagents · Completed',
-		'1 subagent · Failed',
-		'2 subagents · Stopped'
-	]);
+	).toEqual(['3 subagents · Working', '6 subagents · Completed']);
 });
 
-it('keeps uncounted descendants explicit while their statuses are backfilled', async () => {
+it('hides starting counts while still letting starting-only trees expand', async () => {
+	treeSummaries.set('thread', {
+		descendantCount: 2,
+		anyActive: true,
+		descendantsActive: true,
+		descendantStatusCounts: { queued: 2, running: 0, completed: 0, failed: 0, cancelled: 0 }
+	});
+	const view = renderView(<Harness {...props([thread()])} />);
+	await flush();
+
+	expect(document.querySelectorAll('.inbox-subagent-status-row')).toHaveLength(0);
+	expect(view.getByRole('button', { name: 'Expand subagents of Thread' })).toBeTruthy();
+	expect(document.body.textContent).not.toContain('Starting');
+});
+
+it('counts uncounted descendants as completed while their statuses are backfilled', async () => {
 	treeSummaries.set('thread', {
 		descendantCount: 5,
 		anyActive: true,
@@ -610,7 +617,7 @@ it('keeps uncounted descendants explicit while their statuses are backfilled', a
 	await render([thread()]);
 	expect(
 		[...document.querySelectorAll('.inbox-subagent-status-row')].map((row) => row.textContent)
-	).toEqual(['1 subagent · Working', '2 subagents · Completed', '2 subagents · Status updating']);
+	).toEqual(['1 subagent · Working', '4 subagents · Completed']);
 });
 
 it('uses singular for one subagent and omits the row without descendants', async () => {
