@@ -578,6 +578,61 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(true);
 	});
 
+	it.each([408, 409, 429, 500])(
+		'refuses to re-POST after an HTTP %s charge response for the same reference',
+		async (status) => {
+			const t = initConvexTest();
+			const run = await startRun(t, 'user_alice');
+			const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+			fetchMock.mockResolvedValueOnce(
+				jsonResponse({ error: { code: 'UNAVAILABLE', message: 'try later' } }, status)
+			);
+			await expect(
+				run.asUser.action(api.payments.mandateCharge, {
+					mandateId: setup.mandateId,
+					amount: '40.00',
+					currency: 'USD',
+					description: 'Order 8842',
+					reference: 'order-8842',
+					...auth(run)
+				})
+			).rejects.toThrow(new RegExp(`Prava request failed \\(${status}\\)`));
+
+			const afterUncertain = await t.run(async (ctx) =>
+				ctx.db
+					.query('mandateCharges')
+					.withIndex('by_mandate_reference', (query) =>
+						query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+					)
+					.unique()
+			);
+
+			expect(afterUncertain?.providerRequestedAt).toEqual(expect.any(Number));
+			expect(afterUncertain?.pravaTransactionId).toBeUndefined();
+			expect(afterUncertain?.chargingStartedAt).toBeUndefined();
+
+			fetchMock.mockClear();
+			await t.run(async (ctx) => {
+				if (!afterUncertain) throw new Error('missing charge');
+				await ctx.db.patch('mandateCharges', afterUncertain._id, {
+					chargingStartedAt: Date.now() - 120_000
+				});
+			});
+			await expect(
+				run.asUser.action(api.payments.mandateCharge, {
+					mandateId: setup.mandateId,
+					amount: '40.00',
+					currency: 'USD',
+					description: 'Order 8842',
+					reference: 'order-8842',
+					...auth(run)
+				})
+			).rejects.toThrow(/may have already been submitted/);
+			expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+		}
+	);
+
 	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
