@@ -202,10 +202,12 @@ export default function SettingsProviders({
 				const sourceNow = lastStatusSourceRef.current;
 
 				if (pendingKind === 'select' || pendingKind === 'signout') return;
+
 				if (sourceNow !== sourceAtFetch && (sourceNow === 'select' || sourceNow === 'signout'))
 					return;
 
 				if (pendingKind === 'refresh') generationRef.current += 1;
+
 				lastStatusSourceRef.current = 'login';
 				onChatGptStatusChange(status);
 
