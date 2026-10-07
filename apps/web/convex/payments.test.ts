@@ -510,6 +510,74 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
 
+	it('allows a same-reference retry after Prava rejects the charge with HTTP 400', async () => {
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ error: { code: 'INVALID_AMOUNT', message: 'Amount is invalid' } }, 400)
+		);
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/Prava request failed \(400\)/);
+
+		const afterReject = await t.run(async (ctx) =>
+			ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+				)
+				.unique()
+		);
+
+		expect(afterReject?.status).toBe('failed');
+		expect(afterReject?.providerRequestedAt).toBeUndefined();
+		expect(afterReject?.chargingStartedAt).toBeUndefined();
+
+		fetchMock.mockClear();
+		fetchMock
+			.mockResolvedValueOnce(
+				jsonResponse({
+					id: 'mdt_1',
+					status: 'active',
+					remaining: '120.00',
+					currency: 'USD'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					transactionId: 'txn_retry',
+					status: 'awaiting_result',
+					credentials: {
+						token: '4111111111111111',
+						dynamicCvv: '123',
+						expiryMonth: '12',
+						expiryYear: '2030'
+					}
+				})
+			);
+
+		const retried = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-8842',
+			...auth(run)
+		});
+
+		expect(retried.transactionId).toBe('txn_retry');
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(true);
+	});
+
 	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');

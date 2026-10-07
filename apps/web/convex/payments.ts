@@ -24,7 +24,11 @@ import {
 	vMandateReportResult
 } from '@convex/lib/validators';
 import { requireMoneyMinor } from '@convex/lib/payments/money';
-import { pravaRequest, type PravaMandate } from '@convex/lib/payments/prava';
+import {
+	isDefinitivePravaRejection,
+	pravaRequest,
+	type PravaMandate
+} from '@convex/lib/payments/prava';
 import {
 	activeActor,
 	assertMandateFrequencyAllowed,
@@ -975,10 +979,20 @@ export const mandateCharge = action({
 					)
 				});
 			} catch (error) {
-				await ctx.runMutation(internal.payments.releaseChargeReservation, {
-					chargeId: reservation.chargeId,
-					userId: actor.userId
-				});
+				if (isDefinitivePravaRejection(error)) {
+					// Prava rejected the body; the idempotency key is unused and
+					// a later same-reference retry is safe.
+					await ctx.runMutation(internal.payments.updateChargeStatus, {
+						chargeId: reservation.chargeId,
+						userId: actor.userId,
+						status: 'failed'
+					});
+				} else {
+					await ctx.runMutation(internal.payments.releaseChargeReservation, {
+						chargeId: reservation.chargeId,
+						userId: actor.userId
+					});
+				}
 				throw error;
 			}
 

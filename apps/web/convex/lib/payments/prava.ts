@@ -18,6 +18,32 @@ export type PravaMandate = {
 	renewsAt?: string | null;
 };
 
+/** HTTP error from Prava after a response was received. Distinct from
+ * transport loss, where fetch throws and we cannot know if the POST landed. */
+export class PravaHttpError extends Error {
+	readonly status: number;
+
+	constructor(status: number, details: string) {
+		super(`Prava request failed (${status})${details ? `: ${details}` : '.'}`);
+		this.name = 'PravaHttpError';
+		this.status = status;
+	}
+}
+
+/** Client errors that mean Prava rejected the request without creating a
+ * charge. Timeouts (408), conflicts (409), and rate limits (429) stay
+ * ambiguous because a later retry could double-submit. */
+export function isDefinitivePravaRejection(error: unknown): boolean {
+	return (
+		error instanceof PravaHttpError &&
+		error.status >= 400 &&
+		error.status < 500 &&
+		error.status !== 408 &&
+		error.status !== 409 &&
+		error.status !== 429
+	);
+}
+
 function pravaConfig(): PravaConfig {
 	const secretKey = env.PRAVA_SECRET_KEY?.trim();
 
@@ -66,7 +92,7 @@ export async function pravaRequest<T>(path: string, init?: RequestInit): Promise
 			// Not JSON; surface the raw body.
 		}
 
-		throw new Error(`Prava request failed (${response.status})${message ? `: ${message}` : '.'}`);
+		throw new PravaHttpError(response.status, message);
 	}
 
 	const body = await response.text();
