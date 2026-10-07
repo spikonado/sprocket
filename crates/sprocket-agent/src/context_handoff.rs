@@ -160,10 +160,16 @@ impl AgentHook for ContextHandoffHook {
     async fn on_invalid_tool_call(
         &self,
         _context: &HookContext,
-        _event: &InvalidToolCallContext,
+        event: &InvalidToolCallContext,
     ) -> Option<InvalidToolCallAction> {
-        // Rig skips turn validation after name repair. Handoffs must not take that path.
-        self.is_writing().then(InvalidToolCallAction::fail)
+        // Rig skips delta and turn validation after name repair.
+        (self.is_writing()
+            || event.tool_name == HandoffTool::NAME
+            || matches!(
+                crate::hooks::resolve_invalid_tool_call(event),
+                InvalidToolCallAction::Repair { tool_name } if tool_name == HandoffTool::NAME
+            ))
+        .then(InvalidToolCallAction::fail)
     }
 
     async fn on_completion_call(
