@@ -763,9 +763,7 @@ mod tests {
     use std::fs;
     use std::sync::Mutex;
 
-    use super::{
-        FileSnapshot, PatchSnapshot, apply_workspace_patch, restore_snapshot, write_new_file,
-    };
+    use super::{FileSnapshot, PatchSnapshot, apply_workspace_patch, restore_snapshot};
     use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
     use crate::test_support::temp_workspace;
     use tempfile::tempdir;
@@ -1332,6 +1330,8 @@ mod tests {
     #[tokio::test]
     async fn writes_through_symlink_outside_workspace() {
         use std::os::unix::fs::symlink;
+
+        use super::write_new_file;
 
         let root = temp_workspace();
         let outside = temp_workspace();
