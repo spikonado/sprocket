@@ -294,15 +294,44 @@ export const claim = mutation({
 			.order('desc')
 			.first();
 
-		const continuationRun = message.continuation
-			? await queuedSubmission(ctx, { userId, submissionId: message.continuation.submissionId })
+		let continuation = message.continuation;
+
+		let continuationRun = continuation
+			? await queuedSubmission(ctx, { userId, submissionId: continuation.submissionId })
 			: null;
 
 		if (
-			message.continuation &&
+			continuation &&
+			continuationRun &&
+			latest?._id === continuationRun._id &&
+			latest.cancellationRequestedAt === undefined &&
+			(await continuationFailedBeforeStart(ctx, continuationRun))
+		) {
+			if (message.status !== 'queued') {
+				if (message.status !== 'failed') await failContinuation(ctx, message, continuationRun);
+
+				return null;
+			}
+
+			// Retry continues the failed startup run. Its transcript already holds
+			// the saved answer, so replay it without recording the answer again.
+			await assertFreshContinuation(ctx, message, args);
+			continuation = {
+				...continuation,
+				submissionId: args.continuationSubmissionId,
+				executionSecret: args.continuationExecutionSecret,
+				continuationOfRunId: continuationRun._id,
+				prompt: ''
+			};
+			await ctx.db.patch('queuedMessages', message._id, { continuation });
+			continuationRun = null;
+		}
+
+		if (
+			continuation &&
 			((continuationRun && continuationRun.status !== 'queued') ||
 				(!continuationRun &&
-					(latest?._id !== message.continuation.continuationOfRunId ||
+					(latest?._id !== continuation.continuationOfRunId ||
 						latest.status === 'cancelled' ||
 						latest.cancellationRequestedAt !== undefined)))
 		) {
@@ -333,24 +362,13 @@ export const claim = mutation({
 			if (await headActionablePendingQuestion(ctx.db, message.threadId)) return null;
 
 			if (latest && (await hasAnsweredQuestionContinuation(ctx.db, latest._id))) {
-				const continuation = await questionContinuation(ctx, {
+				const answerContinuation = await questionContinuation(ctx, {
 					threadId: message.threadId,
 					runId: latest._id
 				});
 
-				if (continuation && !message.continuation) {
-					if (
-						!args.continuationSubmissionId.trim() ||
-						!args.continuationExecutionSecret.trim() ||
-						args.continuationExecutionSecret === message.executionSecret ||
-						(await ownedMessage(ctx, userId, args.continuationSubmissionId)) ||
-						(await queuedSubmission(ctx, {
-							userId,
-							submissionId: args.continuationSubmissionId
-						}))
-					) {
-						throw new Error('Question continuation requires a fresh submission and capability.');
-					}
+				if (answerContinuation && !continuation) {
+					await assertFreshContinuation(ctx, message, args);
 
 					// Commit the recovery inputs with the lease before the worker launches.
 					// The follow-up and its attachments remain untouched until this run finishes.
@@ -359,7 +377,7 @@ export const claim = mutation({
 							submissionId: args.continuationSubmissionId,
 							executionSecret: args.continuationExecutionSecret,
 							continuationOfRunId: latest._id,
-							prompt: continuation.prompt,
+							prompt: answerContinuation.prompt,
 							selectedModel: latest.selectedModel,
 							completionProvider: latest.completionProvider ?? 'spikonado',
 							reasoningEffort: latest.reasoningEffort,
@@ -400,7 +418,9 @@ export const finishAttempt = mutation({
 		});
 
 		if (run && run.status !== 'queued') {
-			if (message.continuation) await clearContinuation(ctx, message);
+			if (message.continuation && (await continuationFailedBeforeStart(ctx, run))) {
+				await failContinuation(ctx, message, run);
+			} else if (message.continuation) await clearContinuation(ctx, message);
 			else await deleteQueuedMessage(ctx, message);
 		} else if (args.error && !run) {
 			await ctx.db.patch('queuedMessages', message._id, {
@@ -416,6 +436,46 @@ export const finishAttempt = mutation({
 		return null;
 	}
 });
+
+async function continuationFailedBeforeStart(ctx: MutationCtx, run: Doc<'runs'>) {
+	if (run.status !== 'failed' || run.cancellationRequestedAt !== undefined) return false;
+	const execution = await getRunWithExecution(ctx.db, run._id);
+
+	return execution?.claimId === undefined;
+}
+
+async function failContinuation(
+	ctx: MutationCtx,
+	message: Doc<'queuedMessages'>,
+	run: Doc<'runs'>
+) {
+	await ctx.db.patch('queuedMessages', message._id, {
+		status: 'failed',
+		error: (run.lastError ?? 'Question continuation failed before starting.').slice(0, 2_000),
+		claimId: undefined,
+		claimExpiresAt: undefined
+	});
+}
+
+async function assertFreshContinuation(
+	ctx: MutationCtx,
+	message: Doc<'queuedMessages'>,
+	args: { continuationSubmissionId: string; continuationExecutionSecret: string }
+) {
+	if (
+		!args.continuationSubmissionId.trim() ||
+		!args.continuationExecutionSecret.trim() ||
+		args.continuationExecutionSecret === message.executionSecret ||
+		args.continuationExecutionSecret === message.continuation?.executionSecret ||
+		(await ownedMessage(ctx, message.userId, args.continuationSubmissionId)) ||
+		(await queuedSubmission(ctx, {
+			userId: message.userId,
+			submissionId: args.continuationSubmissionId
+		}))
+	) {
+		throw new Error('Question continuation requires a fresh submission and capability.');
+	}
+}
 
 async function clearContinuation(ctx: MutationCtx, message: Doc<'queuedMessages'>) {
 	await ctx.db.patch('queuedMessages', message._id, {
