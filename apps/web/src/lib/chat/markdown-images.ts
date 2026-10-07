@@ -69,16 +69,26 @@ export function prepareMarkdownImages(html: string, scope?: MarkdownImageScope) 
 	for (const link of template.content.querySelectorAll('a[href]')) {
 		const source = link.getAttribute('href') ?? '';
 
-		if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(source) && !isWindowsImagePath(source)) continue;
+		if (link.querySelector('img')) continue;
+
+		if (
+			/^[a-z][a-z\d+.-]*:/i.test(source) &&
+			!/^https?:/i.test(source) &&
+			!isWindowsImagePath(source)
+		)
+			continue;
 
 		if (!/\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(source.split(/[?#]/, 1)[0])) continue;
 
-		const url = markdownImageUrl(source, scope);
+		const image = document.createElement('img');
+		image.setAttribute('src', source);
+		image.alt = link.textContent || 'Image';
 
-		if (url) {
-			link.setAttribute('href', url);
-			link.setAttribute('referrerpolicy', 'no-referrer');
-		}
+		const title = link.getAttribute('title');
+
+		if (title) image.title = title;
+
+		link.replaceWith(image);
 	}
 
 	for (const image of template.content.querySelectorAll('img')) {

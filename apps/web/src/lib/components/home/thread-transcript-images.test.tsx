@@ -49,7 +49,7 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 			activeRunId: null
 		};
 
-		const { getByRole, rerender } = render(
+		const { getByRole, queryByRole, rerender } = render(
 			<ThreadTranscript
 				{...props}
 				project={{ repositoryKey: 'repo', displayName: 'Repo', workspacePath: '/workspace' }}
@@ -66,13 +66,14 @@ it.each(['persisted', 'live-fallback', 'live-section'])(
 		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
 		expect(imageUrl().searchParams.get('workspacePath')).toBe('/workspace');
 		expect(imageUrl().searchParams.get('path')).toBe('parse_file/screenshot.png');
-		expect(getByRole('link', { name: 'Rendering screenshot' }).getAttribute('href')).toBe(
+		expect(getByRole('button', { name: 'View Rendering screenshot' }).getAttribute('src')).toBe(
 			getByRole('button', { name: 'View Model screenshot' }).getAttribute('src')
 		);
+		expect(queryByRole('link')).toBeNull();
 		rerender(<ThreadTranscript {...props} project={null} />);
 		expect(imageUrl().searchParams.get('threadId')).toBe(threadId);
 		expect(imageUrl().searchParams.get('workspacePath')).toBeNull();
-		expect(getByRole('link', { name: 'Rendering screenshot' }).getAttribute('href')).toBe(
+		expect(getByRole('button', { name: 'View Rendering screenshot' }).getAttribute('src')).toBe(
 			getByRole('button', { name: 'View Model screenshot' }).getAttribute('src')
 		);
 	}
