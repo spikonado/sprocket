@@ -178,6 +178,7 @@ describe('links', () => {
 		);
 
 		const link = new URL(getByRole('link').getAttribute('href') ?? '', window.location.href);
+
 		const image = new URL(
 			getByRole('img', { name: 'Thumbnail' }).getAttribute('src') ?? '',
 			window.location.href
