@@ -1132,7 +1132,7 @@ export async function signOut() {
 			const generation = authGeneration;
 			const outcome = await requestNativeSessionToken(false, generation);
 
-			if (generation !== authGeneration || outcome.kind === 'stale') {
+			if (generation !== authGeneration) {
 				return;
 			}
 
