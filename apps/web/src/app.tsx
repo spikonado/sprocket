@@ -2863,13 +2863,7 @@ export default function App({
 										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
 										isQueuing={isRunInProgress || currentQueuedMessages.length > 0}
-										queuedMessages={currentQueuedMessages.map((message) => ({
-											id: message.id,
-											prompt: message.prompt,
-											attachmentNames: message.attachmentNames,
-											status: message.status,
-											error: message.error
-										}))}
+										queuedMessages={currentQueuedMessages}
 										onRemoveQueuedMessage={(id) => messageQueue.remove(id)}
 										onRetryQueuedMessage={(id) => messageQueue.retry(id)}
 										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}

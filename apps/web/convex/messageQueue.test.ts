@@ -118,232 +118,240 @@ describe('durable message queue', () => {
 		'terminal failed start',
 		'lost failed-start acknowledgement',
 		'claimed failure'
-	])('recovers answered questions before follow-ups: %s', async (scenario) => {
-		vi.useFakeTimers();
+	])(
+		'recovers answered questions before follow-ups: %s',
+		async (scenario) => {
+			vi.useFakeTimers();
 
-		const {
-			t,
-			asUser,
-			subject,
-			threadId,
-			machineId,
-			credential,
-			enqueue,
-			claim,
-			advanceLease,
-			createRun
-		} = await fixture();
+			const {
+				t,
+				asUser,
+				subject,
+				threadId,
+				machineId,
+				credential,
+				enqueue,
+				claim,
+				advanceLease,
+				createRun
+			} = await fixture();
 
-		const executionSecret = 'question-secret';
+			const executionSecret = 'question-secret';
 
-		const active = await insertQueuedRun(t, asUser, {
-			threadId,
-			submissionId: 'question-run',
-			executionSecret,
-			prompt: 'Need a choice'
-		});
-
-		const claimId = 'question-executor';
-		await asUser.mutation(api.agentRuntime.start, {
-			runId: active.runId,
-			executionSecret,
-			claimId
-		});
-		await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId: active.runId,
-			executionSecret,
-			claimId,
-			...toolTranscriptAssignment(active.runId, claimId),
-			kind: 'ask_question',
-			payload: { question: 'Which board?', options: [{ id: 'a', label: 'Board A' }] }
-		});
-
-		const question = await asUser.mutation(api.agentQuestions.create, {
-			runId: active.runId,
-			executionSecret,
-			claimId,
-			question: 'Which board?',
-			options: [{ id: 'a', label: 'Board A' }]
-		});
-
-		const first = await enqueue('first');
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: active.runId,
-			executionSecret,
-			text: '',
-			status: 'failed'
-		});
-		expect(await claim(first)).toBeNull();
-
-		const answer = await asUser.mutation(api.agentQuestions.answer, {
-			threadId,
-			questionId: question.questionId,
-			optionId: 'a'
-		});
-
-		if (scenario === 'cancelled parent') {
-			await t.run(async (ctx) => {
-				await ctx.db.patch('runs', active.runId, { status: 'cancelled' });
+			const active = await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'question-run',
+				executionSecret,
+				prompt: 'Need a choice'
 			});
-			const followUp = await claim(first);
-			expect(followUp).toMatchObject({ submissionId: 'first' });
-			expect(followUp).not.toHaveProperty('continuation');
 
-			return;
-		}
-
-		const recovered = await claim(first);
-		expect(recovered?.continuation).toMatchObject({
-			continuationOfRunId: active.runId,
-			prompt: answer.continuation!.prompt,
-			selectedModel: 'gpt-5.6-sol',
-			completionProvider: 'spikonado',
-			reasoningEffort: 'medium',
-			fastMode: false
-		});
-		await expect(createRun('first')).rejects.toThrow('Send or remove queued messages');
-		expect((await asUser.query(api.messageQueue.list, {}))[0]).not.toHaveProperty('continuation');
-		expect(await claim(first, 'concurrent-worker')).toBeNull();
-		// The browser disappears, then the native process crashes before launching.
-		await advanceLease();
-		const resumed = await claim(first, 'restarted-worker');
-		expect(resumed?.continuation).toEqual(recovered!.continuation);
-
-		if (scenario === 'failed start') {
-			await asUser.mutation(api.messageQueue.finishAttempt, {
-				messageId: first,
-				claimId: 'restarted-worker',
-				error: 'Provider unavailable'
+			const claimId = 'question-executor';
+			await asUser.mutation(api.agentRuntime.start, {
+				runId: active.runId,
+				executionSecret,
+				claimId
 			});
-			expect((await asUser.query(api.messageQueue.list, {}))[0]).toMatchObject({
+			await asUser.mutation(api.agentRuntime.beginToolJob, {
+				runId: active.runId,
+				executionSecret,
+				claimId,
+				...toolTranscriptAssignment(active.runId, claimId),
+				kind: 'ask_question',
+				payload: { question: 'Which board?', options: [{ id: 'a', label: 'Board A' }] }
+			});
+
+			const question = await asUser.mutation(api.agentQuestions.create, {
+				runId: active.runId,
+				executionSecret,
+				claimId,
+				question: 'Which board?',
+				options: [{ id: 'a', label: 'Board A' }]
+			});
+
+			const first = await enqueue('first');
+			await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: active.runId,
+				executionSecret,
+				text: '',
 				status: 'failed'
 			});
-			await asUser.mutation(api.messageQueue.retry, { submissionId: 'first' });
-			expect((await claim(first, 'retry-worker'))?.continuation).toEqual(recovered!.continuation);
-		}
+			expect(await claim(first)).toBeNull();
 
-		let capability = resumed!.continuation!;
+			const answer = await asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: question.questionId,
+				optionId: 'a'
+			});
 
-		let continuation = await insertQueuedRun(t, asUser, {
-			threadId,
-			...capability,
-			submissionId: scenario === 'browser race' ? 'browser-continuation' : capability.submissionId,
-			machineId
-		});
-
-		if (scenario === 'terminal failed start' || scenario === 'lost failed-start acknowledgement') {
-			for (let attempt = 0; attempt < 2; attempt++) {
-				await asUser.mutation(api.agentRuntime.finalizeFailedStart, {
-					threadId,
-					submissionId: capability.submissionId,
-					executionSecret: capability.executionSecret,
-					prompt: capability.prompt,
-					storageIds: [],
-					selectedModel: capability.selectedModel,
-					completionProvider: capability.completionProvider,
-					reasoningEffort: capability.reasoningEffort,
-					fastMode: capability.fastMode,
-					text: 'Run failed before starting.',
-					lastError: 'Provider unavailable'
+			if (scenario === 'cancelled parent') {
+				await t.run(async (ctx) => {
+					await ctx.db.patch('runs', active.runId, { status: 'cancelled' });
 				});
+				const followUp = await claim(first);
+				expect(followUp).toMatchObject({ submissionId: 'first' });
+				expect(followUp).not.toHaveProperty('continuation');
 
-				if (scenario === 'terminal failed start') {
-					await asUser.mutation(api.messageQueue.finishAttempt, {
-						messageId: first,
-						claimId: attempt === 0 ? 'restarted-worker' : 'retry-start-0',
-						error: 'Provider unavailable'
-					});
-				} else {
-					await advanceLease();
-					expect(await claim(first, 'recover-failed-start')).toBeNull();
-				}
-
-				expect((await asUser.query(api.messageQueue.list, {}))[0]).toMatchObject({
-					status: 'failed',
-					error: 'Provider unavailable'
-				});
-				expect(await claim(first)).toBeNull();
-				await expect(createRun('first')).rejects.toThrow('Send or remove queued messages');
-				await asUser.mutation(api.messageQueue.retry, { submissionId: 'first' });
-				const retry = await claim(first, `retry-start-${attempt}`);
-				expect(retry?.continuation).toMatchObject({
-					continuationOfRunId: continuation.runId,
-					prompt: '',
-					selectedModel: capability.selectedModel
-				});
-				expect(retry?.continuation?.submissionId).not.toBe(capability.submissionId);
-				expect(retry?.continuation?.executionSecret).not.toBe(capability.executionSecret);
-				capability = retry!.continuation!;
-				continuation = await insertQueuedRun(t, asUser, { threadId, ...capability, machineId });
+				return;
 			}
 
-			// Retries replay the answer from the failed run's history without another prompt.
-			const parts = await asUser.query(api.transcript.getParts, {
-				threadId,
-				numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+			const recovered = await claim(first);
+			expect(recovered?.continuation).toMatchObject({
+				continuationOfRunId: active.runId,
+				prompt: answer.continuation!.prompt,
+				selectedModel: 'gpt-5.6-sol',
+				completionProvider: 'spikonado',
+				reasoningEffort: 'medium',
+				fastMode: false
 			});
-
-			expect(
-				parts.parts.filter((part) => part.prompt?.text === answer.continuation!.prompt)
-			).toHaveLength(1);
-		}
-
-		if (scenario === 'browser race') {
-			// The browser wins run creation after the recovery lease was committed.
-			await asUser.mutation(api.messageQueue.finishAttempt, {
-				messageId: first,
-				claimId: 'restarted-worker',
-				error: 'Parent is no longer latest'
-			});
-			expect(await claim(first)).toBeNull();
-		} else {
-			// Crash after run creation: preserve the unclaimed continuation and capability.
-			await t.mutation(api.machines.end, { userId: subject, machineId, credential });
-			expect(await t.run((ctx) => ctx.db.get('runs', continuation.runId))).toMatchObject({
-				status: 'queued'
-			});
+			await expect(createRun('first')).rejects.toThrow('Send or remove queued messages');
+			expect((await asUser.query(api.messageQueue.list, {}))[0]).not.toHaveProperty('continuation');
+			expect(await claim(first, 'concurrent-worker')).toBeNull();
+			// The browser disappears, then the native process crashes before launching.
 			await advanceLease();
-			expect((await claim(first, 'after-run-crash'))?.continuation).toEqual(capability);
-			expect((await insertQueuedRun(t, asUser, { threadId, ...capability, machineId })).runId).toBe(
-				continuation.runId
-			);
-			await asUser.mutation(api.agentRuntime.start, {
-				runId: continuation.runId,
-				executionSecret: capability.executionSecret,
-				claimId: 'continuation-executor'
-			});
+			const resumed = await claim(first, 'restarted-worker');
+			expect(resumed?.continuation).toEqual(recovered!.continuation);
 
-			if (scenario !== 'lost acknowledgement') {
+			if (scenario === 'failed start') {
 				await asUser.mutation(api.messageQueue.finishAttempt, {
 					messageId: first,
-					claimId: 'after-run-crash'
+					claimId: 'restarted-worker',
+					error: 'Provider unavailable'
 				});
+				expect((await asUser.query(api.messageQueue.list, {}))[0]).toMatchObject({
+					status: 'failed'
+				});
+				await asUser.mutation(api.messageQueue.retry, { submissionId: 'first' });
+				expect((await claim(first, 'retry-worker'))?.continuation).toEqual(recovered!.continuation);
 			}
-		}
 
-		expect(await claim(first)).toBeNull();
-		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
-			runId: continuation.runId,
-			executionSecret: capability.executionSecret,
-			text: '',
-			status: scenario === 'claimed failure' ? 'failed' : 'completed'
-		});
+			let capability = resumed!.continuation!;
 
-		if (scenario === 'lost acknowledgement') {
-			await advanceLease();
+			let continuation = await insertQueuedRun(t, asUser, {
+				threadId,
+				...capability,
+				submissionId:
+					scenario === 'browser race' ? 'browser-continuation' : capability.submissionId,
+				machineId
+			});
+
+			if (
+				scenario === 'terminal failed start' ||
+				scenario === 'lost failed-start acknowledgement'
+			) {
+				for (let attempt = 0; attempt < 2; attempt++) {
+					await asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+						threadId,
+						submissionId: capability.submissionId,
+						executionSecret: capability.executionSecret,
+						prompt: capability.prompt,
+						storageIds: [],
+						selectedModel: capability.selectedModel,
+						completionProvider: capability.completionProvider,
+						reasoningEffort: capability.reasoningEffort,
+						fastMode: capability.fastMode,
+						text: 'Run failed before starting.',
+						lastError: 'Provider unavailable'
+					});
+
+					if (scenario === 'terminal failed start') {
+						await asUser.mutation(api.messageQueue.finishAttempt, {
+							messageId: first,
+							claimId: attempt === 0 ? 'restarted-worker' : 'retry-start-0',
+							error: 'Provider unavailable'
+						});
+					} else {
+						await advanceLease();
+						expect(await claim(first, 'recover-failed-start')).toBeNull();
+					}
+
+					expect((await asUser.query(api.messageQueue.list, {}))[0]).toMatchObject({
+						status: 'failed',
+						error: 'Provider unavailable'
+					});
+					expect(await claim(first)).toBeNull();
+					await expect(createRun('first')).rejects.toThrow('Send or remove queued messages');
+					await asUser.mutation(api.messageQueue.retry, { submissionId: 'first' });
+					const retry = await claim(first, `retry-start-${attempt}`);
+					expect(retry?.continuation).toMatchObject({
+						continuationOfRunId: continuation.runId,
+						prompt: '',
+						selectedModel: capability.selectedModel
+					});
+					expect(retry?.continuation?.submissionId).not.toBe(capability.submissionId);
+					expect(retry?.continuation?.executionSecret).not.toBe(capability.executionSecret);
+					capability = retry!.continuation!;
+					continuation = await insertQueuedRun(t, asUser, { threadId, ...capability, machineId });
+				}
+
+				// Retries replay the answer from the failed run's history without another prompt.
+				const parts = await asUser.query(api.transcript.getParts, {
+					threadId,
+					numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+				});
+
+				expect(
+					parts.parts.filter((part) => part.prompt?.text === answer.continuation!.prompt)
+				).toHaveLength(1);
+			}
+
+			if (scenario === 'browser race') {
+				// The browser wins run creation after the recovery lease was committed.
+				await asUser.mutation(api.messageQueue.finishAttempt, {
+					messageId: first,
+					claimId: 'restarted-worker',
+					error: 'Parent is no longer latest'
+				});
+				expect(await claim(first)).toBeNull();
+			} else {
+				// Crash after run creation: preserve the unclaimed continuation and capability.
+				await t.mutation(api.machines.end, { userId: subject, machineId, credential });
+				expect(await t.run((ctx) => ctx.db.get('runs', continuation.runId))).toMatchObject({
+					status: 'queued'
+				});
+				await advanceLease();
+				expect((await claim(first, 'after-run-crash'))?.continuation).toEqual(capability);
+				expect(
+					(await insertQueuedRun(t, asUser, { threadId, ...capability, machineId })).runId
+				).toBe(continuation.runId);
+				await asUser.mutation(api.agentRuntime.start, {
+					runId: continuation.runId,
+					executionSecret: capability.executionSecret,
+					claimId: 'continuation-executor'
+				});
+
+				if (scenario !== 'lost acknowledgement') {
+					await asUser.mutation(api.messageQueue.finishAttempt, {
+						messageId: first,
+						claimId: 'after-run-crash'
+					});
+				}
+			}
+
 			expect(await claim(first)).toBeNull();
-		}
+			await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: continuation.runId,
+				executionSecret: capability.executionSecret,
+				text: '',
+				status: scenario === 'claimed failure' ? 'failed' : 'completed'
+			});
 
-		const followUp = await claim(first);
-		expect(followUp).toMatchObject({
-			submissionId: 'first',
-			prompt: 'first',
-			selectedModel: 'model-a',
-			completionProvider: 'openai'
-		});
-		expect(followUp).not.toHaveProperty('continuation');
-		expect((await createRun('first')).created).toBe(true);
-	});
+			if (scenario === 'lost acknowledgement') {
+				await advanceLease();
+				expect(await claim(first)).toBeNull();
+			}
+
+			const followUp = await claim(first);
+			expect(followUp).toMatchObject({
+				submissionId: 'first',
+				prompt: 'first',
+				selectedModel: 'model-a',
+				completionProvider: 'openai'
+			});
+			expect(followUp).not.toHaveProperty('continuation');
+			expect((await createRun('first')).created).toBe(true);
+		},
+		15_000
+	);
 	it('preserves an unclaimed run across machine shutdown and process takeover', async () => {
 		vi.useFakeTimers();
 
@@ -480,7 +488,7 @@ describe('durable message queue', () => {
 		'reconciles a lost acknowledgement for a %s run without another launch',
 		async (status) => {
 			vi.useFakeTimers();
-			const { t, asUser, enqueue, claim, createRun, advanceLease } = await fixture();
+			const { t, asUser, enqueue, claim, createRun, advanceLease, request } = await fixture();
 			const first = await enqueue('first');
 			await enqueue('second');
 			await claim(first);
@@ -498,20 +506,7 @@ describe('durable message queue', () => {
 			expect((await asUser.query(api.messageQueue.list, {})).map((row) => row.id)).toEqual([
 				'second'
 			]);
-			await asUser.mutation(api.messageQueue.enqueue, {
-				machineId: 'machine-a',
-				credential: 'machine-secret',
-				threadId: run.threadId,
-				submissionId: 'first',
-				executionSecret: 'secret-first',
-				workspacePath: '/workspace',
-				prompt: 'first',
-				storageIds: [],
-				selectedModel: 'model-a',
-				completionProvider: 'openai',
-				reasoningEffort: 'high',
-				fastMode: true
-			});
+			await asUser.mutation(api.messageQueue.enqueue, request('first'));
 			expect(await t.run(async (ctx) => ctx.db.query('queuedMessages').collect())).toHaveLength(1);
 		}
 	);

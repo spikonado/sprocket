@@ -12,10 +12,7 @@ import {
 } from './lib/imageUploads';
 import { getPromptPart } from './lib/transcriptParts';
 import { isRunFinalStatus, vCompletionProvider, vReasoningEffort } from './lib/validators';
-import {
-	headActionablePendingQuestion,
-	hasAnsweredQuestionContinuation
-} from './lib/agentQuestions';
+import { headActionablePendingQuestion } from './lib/agentQuestions';
 import { submissionReadiness } from './lib/runCreate';
 import { questionContinuation } from './agentQuestions';
 import { getRunWithExecution } from './lib/runExecution';
@@ -106,12 +103,7 @@ export const enqueue = mutation({
 		}
 
 		// A retried enqueue can arrive after the worker has already delivered it.
-		const run = await ctx.db
-			.query('runs')
-			.withIndex('by_userId_submissionId', (q) =>
-				q.eq('userId', userId).eq('submissionId', args.submissionId)
-			)
-			.unique();
+		const run = await queuedSubmission(ctx, { userId, submissionId: args.submissionId });
 
 		if (run) {
 			const prompt = await getPromptPart(ctx, run.threadId, run._id);
@@ -286,87 +278,58 @@ export const claim = mutation({
 			.first();
 
 		let continuation = message.continuation;
-		let existingRun = continuation?.deliversMessage ? null : await queuedSubmission(ctx, message);
 
-		if (existingRun && existingRun.status !== 'queued') {
-			if (await failedBeforeStart(ctx, existingRun)) {
-				if (message.status !== 'queued' || latest?._id !== existingRun._id) {
-					if (message.status !== 'failed') await failMessage(ctx, message, existingRun);
+		let run = await queuedSubmission(ctx, {
+			userId,
+			submissionId: continuation?.submissionId ?? message.submissionId
+		});
+
+		if (run && run.status !== 'queued') {
+			if ((await failedBeforeStart(ctx, run)) && (!continuation || latest?._id === run._id)) {
+				if (message.status !== 'queued' || latest?._id !== run._id) {
+					if (message.status !== 'failed') await failMessage(ctx, message, run.lastError);
 
 					return null;
 				}
 
+				// The failed run already recorded the prompt and attachments.
+				// Retry replays its history with a fresh execution capability.
 				await assertFreshContinuation(ctx, message, args);
+				const settings = continuation ?? message;
 				continuation = {
 					submissionId: args.continuationSubmissionId,
 					executionSecret: args.continuationExecutionSecret,
-					continuationOfRunId: existingRun._id,
+					continuationOfRunId: run._id,
 					prompt: '',
-					selectedModel: message.selectedModel,
-					completionProvider: message.completionProvider,
-					reasoningEffort: message.reasoningEffort,
-					fastMode: message.fastMode,
-					deliversMessage: true
+					selectedModel: settings.selectedModel,
+					completionProvider: settings.completionProvider,
+					reasoningEffort: settings.reasoningEffort,
+					fastMode: settings.fastMode,
+					deliversMessage: continuation ? continuation.deliversMessage : true
 				};
-				await ctx.db.patch('queuedMessages', message._id, { continuation });
-				existingRun = null;
+				run = null;
 			} else {
-				// A claimed or completed run has accepted the message, even if
-				// its acknowledgement was lost. Never execute that message again.
-				await deleteQueuedMessage(ctx, message);
+				await completeDispatch(ctx, message);
 
 				return null;
 			}
 		}
 
-		let continuationRun = continuation
-			? await queuedSubmission(ctx, { userId, submissionId: continuation.submissionId })
-			: null;
-
 		if (
 			continuation &&
-			continuationRun &&
-			latest?._id === continuationRun._id &&
-			latest.cancellationRequestedAt === undefined &&
-			(await failedBeforeStart(ctx, continuationRun))
+			!run &&
+			(latest?._id !== continuation.continuationOfRunId ||
+				latest.status === 'cancelled' ||
+				latest.cancellationRequestedAt !== undefined)
 		) {
-			if (message.status !== 'queued') {
-				if (message.status !== 'failed') await failMessage(ctx, message, continuationRun);
-
-				return null;
-			}
-
-			// Retry continues the failed startup run. Its transcript already holds
-			// the saved answer, so replay it without recording the answer again.
-			await assertFreshContinuation(ctx, message, args);
-			continuation = {
-				...continuation,
-				submissionId: args.continuationSubmissionId,
-				executionSecret: args.continuationExecutionSecret,
-				continuationOfRunId: continuationRun._id,
-				prompt: ''
-			};
-			await ctx.db.patch('queuedMessages', message._id, { continuation });
-			continuationRun = null;
-		}
-
-		if (
-			continuation &&
-			((continuationRun && continuationRun.status !== 'queued') ||
-				(!continuationRun &&
-					(latest?._id !== continuation.continuationOfRunId ||
-						latest.status === 'cancelled' ||
-						latest.cancellationRequestedAt !== undefined)))
-		) {
-			if (continuation.deliversMessage) await deleteQueuedMessage(ctx, message);
-			else await clearContinuation(ctx, message);
+			await completeDispatch(ctx, message);
 
 			return null;
 		}
 
 		if (message.status === 'failed') return null;
 
-		if (!existingRun && !continuationRun) {
+		if (!run) {
 			if (machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) return null;
 
 			const execution = latest ? await getRunWithExecution(ctx.db, latest._id) : null;
@@ -385,34 +348,30 @@ export const claim = mutation({
 
 			if (await headActionablePendingQuestion(ctx.db, message.threadId)) return null;
 
-			if (latest && (await hasAnsweredQuestionContinuation(ctx.db, latest._id))) {
+			if (latest && !continuation) {
 				const answerContinuation = await questionContinuation(ctx, {
 					threadId: message.threadId,
 					runId: latest._id
 				});
 
-				if (answerContinuation && !continuation) {
+				if (answerContinuation) {
 					await assertFreshContinuation(ctx, message, args);
-
-					// Commit the recovery inputs with the lease before the worker launches.
-					// The follow-up and its attachments remain untouched until this run finishes.
-					await ctx.db.patch('queuedMessages', message._id, {
-						continuation: {
-							submissionId: args.continuationSubmissionId,
-							executionSecret: args.continuationExecutionSecret,
-							continuationOfRunId: latest._id,
-							prompt: answerContinuation.prompt,
-							selectedModel: latest.selectedModel,
-							completionProvider: latest.completionProvider ?? 'spikonado',
-							reasoningEffort: latest.reasoningEffort,
-							fastMode: latest.fastMode
-						}
-					});
+					continuation = {
+						submissionId: args.continuationSubmissionId,
+						executionSecret: args.continuationExecutionSecret,
+						continuationOfRunId: latest._id,
+						prompt: answerContinuation.prompt,
+						selectedModel: latest.selectedModel,
+						completionProvider: latest.completionProvider ?? 'spikonado',
+						reasoningEffort: latest.reasoningEffort,
+						fastMode: latest.fastMode
+					};
 				}
 			}
 		}
 
 		await ctx.db.patch('queuedMessages', message._id, {
+			continuation,
 			status: 'sending',
 			claimId: args.claimId,
 			claimExpiresAt: Date.now() + MESSAGE_QUEUE_LEASE_MS,
@@ -443,17 +402,10 @@ export const finishAttempt = mutation({
 
 		if (run && run.status !== 'queued') {
 			if (await failedBeforeStart(ctx, run)) {
-				await failMessage(ctx, message, run);
-			} else if (message.continuation && !message.continuation.deliversMessage)
-				await clearContinuation(ctx, message);
-			else await deleteQueuedMessage(ctx, message);
+				await failMessage(ctx, message, run.lastError);
+			} else await completeDispatch(ctx, message);
 		} else if (args.error && !run) {
-			await ctx.db.patch('queuedMessages', message._id, {
-				status: 'failed',
-				error: args.error.slice(0, 2_000),
-				claimId: undefined,
-				claimExpiresAt: undefined
-			});
+			await failMessage(ctx, message, args.error);
 		}
 
 		// If startup or its response is still uncertain, keep the lease and
@@ -469,10 +421,10 @@ async function failedBeforeStart(ctx: MutationCtx, run: Doc<'runs'>) {
 	return execution?.claimId === undefined;
 }
 
-async function failMessage(ctx: MutationCtx, message: Doc<'queuedMessages'>, run: Doc<'runs'>) {
+async function failMessage(ctx: MutationCtx, message: Doc<'queuedMessages'>, error?: string) {
 	await ctx.db.patch('queuedMessages', message._id, {
 		status: 'failed',
-		error: (run.lastError ?? 'Run failed before starting.').slice(0, 2_000),
+		error: (error ?? 'Run failed before starting.').slice(0, 2_000),
 		claimId: undefined,
 		claimExpiresAt: undefined
 	});
@@ -498,7 +450,13 @@ async function assertFreshContinuation(
 	}
 }
 
-async function clearContinuation(ctx: MutationCtx, message: Doc<'queuedMessages'>) {
+async function completeDispatch(ctx: MutationCtx, message: Doc<'queuedMessages'>) {
+	if (!message.continuation || message.continuation.deliversMessage) {
+		await deleteQueuedMessage(ctx, message);
+
+		return;
+	}
+
 	await ctx.db.patch('queuedMessages', message._id, {
 		continuation: undefined,
 		status: 'queued',
