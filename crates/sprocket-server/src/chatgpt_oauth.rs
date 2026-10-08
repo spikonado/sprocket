@@ -151,19 +151,18 @@ impl LoginState {
     }
 
     fn trim_extra_user_reservations(&mut self, user: &str) {
-        let mut idle: Vec<(String, Instant)> = self
+        let oldest = self
             .attempts
             .iter()
             .filter(|(_, login)| login.user == user && !login.processing && login.result.is_none())
-            .map(|(key, login)| (key.clone(), login.expires))
-            .collect();
-        if idle.len() <= 1 {
-            return;
-        }
-        idle.sort_by_key(|(_, expires)| *expires);
-        for (key, _) in idle.into_iter().skip(1) {
-            self.attempts.remove(&key);
-        }
+            .min_by_key(|(_, login)| login.expires)
+            .map(|(key, _)| key.clone());
+        self.attempts.retain(|key, login| {
+            login.user != user
+                || login.processing
+                || login.result.is_some()
+                || oldest.as_ref() == Some(key)
+        });
     }
 }
 

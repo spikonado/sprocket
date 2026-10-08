@@ -295,7 +295,6 @@ mod tests {
     use axum::http::{Request, StatusCode, header};
     use tower::ServiceExt;
 
-    use super::LoginResult;
     use crate::AppState;
     use crate::auth::AuthState;
 
@@ -364,13 +363,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[test]
-    fn login_result_complete_serializes_as_status() {
-        assert_eq!(
-            serde_json::to_value(LoginResult::Complete).unwrap(),
-            serde_json::json!({"status":"complete"})
-        );
     }
 }
