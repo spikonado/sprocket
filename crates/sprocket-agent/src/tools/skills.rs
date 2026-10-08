@@ -17,7 +17,7 @@ pub(crate) struct ReadSkillTool {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ReadSkillArgs {
-    /// Skill name from the Skills section of the system instructions.
+    /// Skill name from the Available Skills section of the workspace context.
     pub(crate) name: String,
 }
 

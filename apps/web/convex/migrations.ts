@@ -8,7 +8,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
-import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import { captureThreadActivityBeforeChange } from '@convex/lib/threadHierarchy';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
 import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
@@ -51,19 +51,22 @@ export const runTerminalJobBackfill = migrations.runner([
 	internal.migrations.reconcileLegacyTerminalJobs
 ]);
 
-export const backfillThreadHierarchyStatuses = migrations.define({
+export const backfillThreadHierarchyCounters = migrations.define({
 	table: 'threadRecords',
 	batchSize: 1,
 	migrateOne: async (ctx, thread) => {
-		await refreshThreadHierarchyActivity(ctx, thread._id);
+		await captureThreadActivityBeforeChange(ctx, thread._id);
 	}
 });
 
-const threadHierarchyStatusMigrations: FunctionReference<'mutation', 'internal'>[] = [
-	internal.migrations.backfillThreadHierarchyStatuses
+// Keep the former entrypoint for migration batches scheduled before this deploy.
+export const backfillThreadHierarchyStatuses = backfillThreadHierarchyCounters;
+
+const threadHierarchyCounterMigrations: FunctionReference<'mutation', 'internal'>[] = [
+	internal.migrations.backfillThreadHierarchyCounters
 ];
 
-export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyStatusMigrations);
+export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyCounterMigrations);
 
 export const backfillSubscriptionExpiry = migrations.define({
 	table: 'subscriptions',
@@ -436,7 +439,7 @@ export const runThreadHierarchyStatusBackfillAutomatically = internalMutation({
 	handler: (ctx): Promise<null> =>
 		runBackfillAutomatically(
 			ctx,
-			'thread-hierarchy-status-counts-2026-10',
-			threadHierarchyStatusMigrations
+			'thread-hierarchy-counters-2026-10',
+			threadHierarchyCounterMigrations
 		)
 });

@@ -224,6 +224,25 @@ describe('transcript viewport paging', () => {
 		expect(links.every((link) => link.rel === 'noopener noreferrer')).toBe(true);
 	});
 
+	it('renders math in user, persisted assistant, and live assistant messages', async () => {
+		const prompt = { ...message(1), text: String.raw`Explain $E = mc^2$.` };
+
+		const response: TranscriptDisplayRow = {
+			...message(2),
+			id: 'text:2',
+			kind: 'text',
+			text: String.raw`\[\frac{1}{2}\]`
+		};
+
+		const live = { ...liveMessage(), text: String.raw`The result is \(x^2\).` };
+
+		const { viewport } = await renderTranscript([prompt, response, live]);
+
+		expect(viewport.querySelectorAll('.katex')).toHaveLength(3);
+		expect(viewport.querySelectorAll('.katex-display')).toHaveLength(1);
+		expect(viewport.querySelector('math mfrac')?.textContent).toBe('12');
+	});
+
 	it.each(['live', 'persisted'] as const)(
 		'shows patch paths and failure details inline for %s tools',
 		async (kind) => {

@@ -520,8 +520,6 @@ export const vDescendantStatusCounts = v.object({
 	cancelled: v.number()
 });
 
-export type DescendantStatusCounts = Record<Infer<typeof vRunStatus>, number>;
-
 export const vSubagentSettings = v.object({
 	model: v.string(),
 	reasoning: vReasoningEffort,

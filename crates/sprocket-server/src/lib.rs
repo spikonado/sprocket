@@ -16,6 +16,7 @@ mod profile;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
+mod run_recovery;
 mod static_dir;
 mod static_files;
 mod subagent_launcher;
@@ -112,6 +113,7 @@ pub struct AppState {
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
     pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
+    pub(crate) run_recovery: Arc<run_recovery::RunRecovery>,
     pub package_updates: Arc<package_update::PackageUpdateManager>,
 }
 
@@ -198,6 +200,7 @@ impl AppState {
             web_ui_enabled: true,
             desktop_bootstrap_token: None,
             machine_identity,
+            run_recovery: run_recovery::RunRecovery::load(&data_dir).expect("run recovery store"),
             package_updates,
         }
     }
@@ -292,6 +295,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         web_ui_enabled,
         desktop_bootstrap_token,
         machine_identity,
+        run_recovery: run_recovery::RunRecovery::load(&data_dir)?,
         package_updates: package_update::PackageUpdateManager::from_env(),
     };
 
@@ -374,6 +378,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     });
     let message_queue = message_queue::spawn(state.clone());
+    let recovery = run_recovery::spawn(state.clone());
     let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
     let shutdown_machines = Arc::clone(&machines);
@@ -410,6 +415,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     };
     cleanup.abort();
+    recovery.abort();
+    let _ = recovery.await;
     let _ = cleanup.await;
     message_queue.abort();
     let _ = message_queue.await;

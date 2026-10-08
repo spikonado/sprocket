@@ -29,11 +29,7 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { getRunWithExecution } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
-import {
-	assertDescendantThreadAccess,
-	listDirectChildrenPage,
-	refreshThreadHierarchyActivity
-} from '@convex/lib/threadHierarchy';
+import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
 import {
 	getPromptPart,
 	loadTranscriptPartsByNumbers,
@@ -395,7 +391,6 @@ export const control = mutation({
 					await requestRunCancellation(ctx, latest);
 				} else {
 					await cancelPendingQuestionsForThread(ctx, thread._id);
-					await refreshThreadHierarchyActivity(ctx, thread._id);
 				}
 
 				return { stoppedRunId: latest?._id };

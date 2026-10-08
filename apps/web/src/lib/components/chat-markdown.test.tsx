@@ -22,7 +22,174 @@ function renderChatMarkdown(props: {
 	render(<ChatMarkdown {...props} />);
 }
 
+describe('math', () => {
+	it('renders completed formulas as a transcript message streams', () => {
+		const { container, rerender } = render(
+			<ChatMarkdown content={String.raw`Result: $\frac{1}`} />
+		);
+
+		expect(container.textContent).toBe(String.raw`Result: $\frac{1}` + '\n');
+
+		rerender(<ChatMarkdown content={String.raw`Result: $\frac{1}{2}$` + '\n\n\\[x^2\\]'} />);
+
+		expect(container.querySelectorAll('.katex')).toHaveLength(2);
+		expect(container.querySelector('.katex-display math')?.getAttribute('display')).toBe('block');
+		expect(container.querySelector('math mfrac')?.textContent).toBe('12');
+		expect(container.querySelector('.frac-line')?.getAttribute('style')).toContain(
+			'border-bottom-width'
+		);
+	});
+
+	it('preserves sanitized math, nested Markdown, and literal code together', () => {
+		const content = [
+			String.raw`- **Voltage:** $V = IR$`,
+			String.raw`> \[\sqrt{x^2 + y^2}\]`,
+			'Example: `$x^2$`',
+			String.raw`$\href{javascript:alert(1)}{click}$`,
+			'<img src=x onerror="alert(1)"><script>alert(1)</script>'
+		].join('\n\n');
+
+		const { container } = render(<ChatMarkdown content={content} />);
+
+		expect(container.querySelector('li .katex')).not.toBeNull();
+		expect(container.querySelector('blockquote .katex-display')).not.toBeNull();
+		expect(container.querySelector('code')?.textContent).toBe('$x^2$');
+		expect(container.querySelector('.katex-html .mord.text')?.textContent).toBe(String.raw`\href`);
+		expect(container.querySelector('script, [onerror], a[href^="javascript:"]')).toBeNull();
+	});
+});
+
 describe('links', () => {
+	it.each([
+		['parse_file/screenshot.png', undefined, 'parse_file/screenshot.png', 'thread'],
+		['parse_file/screenshot%2Epng', undefined, 'parse_file/screenshot.png', 'thread'],
+		['./screenshot_url/board%20layout.PNG', undefined, 'screenshot_url/board layout.PNG', 'thread'],
+		['scrape_url/board.webp', undefined, 'scrape_url/board.webp', 'thread'],
+		['parse_file/board.png?download=1#preview', undefined, 'parse_file/board.png', 'thread'],
+		['assets/board.svg', undefined, 'assets/board.svg', null],
+		['/tmp/board.jpg', undefined, '/tmp/board.jpg', null],
+		['parse_file/board.png', 'docs/notes.md', 'docs/parse_file/board.png', null]
+	])(
+		'renders local image link %s inline using its Markdown scope',
+		(source, documentPath, path, threadId) => {
+			const { getByRole } = render(
+				<ChatMarkdown
+					content={`[Rendering screenshot](${source})`}
+					openLinksInNewTab
+					imageScope={{
+						workspacePath: '/workspace',
+						documentPath,
+						transcript: { userId: 'user', threadId: 'thread' }
+					}}
+				/>
+			);
+
+			const image = getByRole('button', { name: 'View Rendering screenshot' });
+			const url = new URL(image.getAttribute('src') ?? '', window.location.href);
+
+			expect(url.pathname).toBe('/api/workspace/image');
+			expect(url.searchParams.get('path')).toBe(path);
+			expect(url.searchParams.get('workspacePath')).toBe('/workspace');
+			expect(url.searchParams.get('threadId')).toBe(threadId);
+			expect(url.searchParams.get('userId')).toBe(threadId ? 'user' : null);
+			expect(image.getAttribute('alt')).toBe('Rendering screenshot');
+			expect(image.getAttribute('referrerpolicy')).toBe('no-referrer');
+		}
+	);
+
+	it('uses the configured machine API for image links and updates their thread scope', () => {
+		vi.stubEnv('VITE_LOCAL_API_URL', 'https://machine.example.com/');
+
+		try {
+			const { getByRole, rerender } = render(
+				<ChatMarkdown
+					content="[Screenshot](parse_file/screenshot.png)"
+					imageScope={{ transcript: { userId: 'user', threadId: 'first' } }}
+				/>
+			);
+
+			const url = () => new URL(getByRole('button').getAttribute('src') ?? '');
+			expect(url().origin).toBe('https://machine.example.com');
+			expect(url().searchParams.get('threadId')).toBe('first');
+
+			rerender(
+				<ChatMarkdown
+					content="[Screenshot](parse_file/screenshot.png)"
+					imageScope={{ transcript: { userId: 'user', threadId: 'second' } }}
+				/>
+			);
+			expect(url().searchParams.get('threadId')).toBe('second');
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it.each(['docs/notes.md', 'assets/archive.zip', 'docs/notes.md?image=board.png', '#diagram.png'])(
+		'preserves ordinary link %s',
+		(source) => {
+			const { getByRole } = render(
+				<ChatMarkdown content={`[Link](${source})`} imageScope={{ workspacePath: '/workspace' }} />
+			);
+
+			expect(getByRole('link').getAttribute('href')).toBe(source);
+		}
+	);
+
+	it.each(['https://example.com/board.png', '//example.com/board.png'])(
+		'renders remote image link %s inline and opens the image viewer',
+		(source) => {
+			const { getByRole, container } = render(
+				<ChatMarkdown
+					content={`Before [**Board**](${source} "Board layout") after.`}
+					openLinksInNewTab
+				/>
+			);
+
+			const image = getByRole('button', { name: 'View Board' });
+			expect(image.getAttribute('src')).toBe(source);
+			expect(image.getAttribute('alt')).toBe('Board');
+			expect(image.getAttribute('title')).toBe('Board layout');
+			expect(container.querySelector('a')).toBeNull();
+			expect(container.textContent?.trim()).toBe('Before  after.');
+			fireEvent.click(image);
+			expect(getByRole('dialog', { name: 'Image preview: Board' }).querySelector('img')?.src).toBe(
+				new URL(source, window.location.href).href
+			);
+		}
+	);
+
+	it('preserves an explicitly linked image', () => {
+		const { getByRole } = render(
+			<ChatMarkdown content="[![Thumbnail](https://example.com/thumb.png)](https://example.com/full.png)" />
+		);
+
+		expect(getByRole('link').getAttribute('href')).toBe('https://example.com/full.png');
+		expect(getByRole('img', { name: 'Thumbnail' }).getAttribute('src')).toBe(
+			'https://example.com/thumb.png'
+		);
+	});
+
+	it('opens the full-size local image from an explicitly linked thumbnail', () => {
+		const { getByRole } = render(
+			<ChatMarkdown
+				content="[![Thumbnail](thumb.png)](full.png)"
+				imageScope={{ workspacePath: '/workspace' }}
+			/>
+		);
+
+		const link = new URL(getByRole('link').getAttribute('href') ?? '', window.location.href);
+
+		const image = new URL(
+			getByRole('img', { name: 'Thumbnail' }).getAttribute('src') ?? '',
+			window.location.href
+		);
+
+		expect(link.pathname).toBe('/api/workspace/image');
+		expect(link.searchParams.get('workspacePath')).toBe('/workspace');
+		expect(link.searchParams.get('path')).toBe('full.png');
+		expect(image.searchParams.get('path')).toBe('thumb.png');
+	});
+
 	it('opens links in a new tab when requested', () => {
 		renderChatMarkdown({
 			content: '[Sprocket](https://sprocket.dev)',
@@ -64,6 +231,38 @@ describe('code blocks', () => {
 	});
 
 	afterEach(() => vi.unstubAllGlobals());
+
+	it('wraps each block independently and keeps wrapping as highlighted code streams', async () => {
+		const content = '```ts\nconst reading = 23.4;\n```\n\n```\necho ready\n```';
+
+		const { container, getAllByRole, getByRole, rerender } = render(
+			<StrictMode>
+				<ChatMarkdown content={content} />
+			</StrictMode>
+		);
+
+		fireEvent.click(getAllByRole('button', { name: 'Enable line wrapping' })[0]);
+		expect(
+			getByRole('button', { name: 'Disable line wrapping' }).getAttribute('aria-pressed')
+		).toBe('true');
+		expect(container.querySelectorAll('pre.markdown-code-wrap')).toHaveLength(1);
+
+		rerender(
+			<StrictMode>
+				<ChatMarkdown content={content.replace('23.4;', '23.4;\nconsole.log(reading);')} />
+			</StrictMode>
+		);
+		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
+		expect(container.querySelectorAll('pre.markdown-code-wrap')).toHaveLength(1);
+		expect(container.querySelector('pre.markdown-code-wrap code')?.textContent).toBe(
+			'const reading = 23.4;\nconsole.log(reading);\n'
+		);
+		expect(container.querySelectorAll('.markdown-code-header')).toHaveLength(2);
+
+		fireEvent.click(getByRole('button', { name: 'Disable line wrapping' }));
+		expect(container.querySelector('pre.markdown-code-wrap')).toBeNull();
+		expect(getAllByRole('button', { name: 'Enable line wrapping' })).toHaveLength(2);
+	});
 
 	it('highlights nested fences while preserving literal code, tabs, and blank lines', async () => {
 		const code = 'const markup = "<img src=x onerror=alert(1)>";\n\n\tconsole.log(markup);\n';
