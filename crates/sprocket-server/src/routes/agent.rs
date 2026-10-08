@@ -197,7 +197,7 @@ pub(crate) async fn launch_recovery(
 
 async fn launch_agent_inner(
     state: AppState,
-    mut payload: RunAgentApiRequest,
+    payload: RunAgentApiRequest,
     workspace_access: WorkspaceAccess,
     allow_interaction: bool,
     cancellation: sprocket_workspace::WorkspaceCancellation,
@@ -255,7 +255,6 @@ async fn launch_agent_inner(
         reasoning: payload.reasoning_effort.clone(),
         fast: payload.fast_mode,
     };
-    payload.workspace_path = workspace_path.clone();
     let mut recovery = recovery.unwrap_or_else(|| {
         crate::run_recovery::RecoveryRecord::new(
             payload.clone(),
@@ -263,8 +262,7 @@ async fn launch_agent_inner(
             allow_interaction,
         )
     });
-    recovery.request.execution_secret = payload.execution_secret.clone();
-    recovery.request.workspace_path = payload.workspace_path.clone();
+    recovery.request.workspace_path = workspace_path.clone();
     let (recovery_guard, saved) = state
         .run_recovery
         // Caller-owned output is the CLI's result and cancellation lifetime.

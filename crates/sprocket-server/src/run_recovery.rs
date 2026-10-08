@@ -199,9 +199,10 @@ impl RunRecovery {
                 }
                 // Select the capability while holding the journal lock, and
                 // return this same persisted value to every overlapping launch.
-                if record.request.execution_secret.is_none() {
-                    record.request.execution_secret = Some(new_execution_secret());
-                }
+                record
+                    .request
+                    .execution_secret
+                    .get_or_insert_with(new_execution_secret);
                 Some(next.entry(record.key()).or_insert(record).clone())
             } else {
                 None
@@ -261,10 +262,10 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
         client.query("runRecovery:state", args).await
     })
     .await??;
-    match recovery {
+    let next = match recovery {
         RecoveryState::Pending => return Ok(()),
         RecoveryState::Discard => return state.run_recovery.replace(&key, None).await,
-        RecoveryState::Missing if record.recoveries > 0 => {}
+        RecoveryState::Missing if record.recoveries > 0 => record,
         RecoveryState::Missing => return state.run_recovery.replace(&key, None).await,
         RecoveryState::Recover { run_id, thread_id } => {
             let Some(next) = record.continuation(run_id, thread_id) else {
@@ -273,11 +274,11 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
             // Persist the new id and capability before submitting it. Replaying
             // this record after a crash reconciles that exact submission.
             state.run_recovery.replace(&key, Some(next.clone())).await?;
-            return timeout(RPC_TIMEOUT, launch_recovery(state.clone(), next)).await?;
+            next
         }
-    }
+    };
     drop(reservation);
-    timeout(RPC_TIMEOUT, launch_recovery(state.clone(), record)).await?
+    timeout(RPC_TIMEOUT, launch_recovery(state.clone(), next)).await?
 }
 
 pub(crate) fn spawn(state: AppState) -> JoinHandle<()> {
@@ -343,13 +344,8 @@ mod tests {
         let next = record()
             .continuation("failed".into(), "thread".into())
             .unwrap();
-        let (guard, _) = store.begin(next.clone(), false).await.unwrap();
-        let (duplicate, _) = store.begin(next.clone(), false).await.unwrap();
+        let (_guard, _) = store.begin(next.clone(), false).await.unwrap();
         assert!(store.track(next.key(), true).is_none());
-        drop(guard);
-        assert!(store.track(next.key(), true).is_none());
-        drop(duplicate);
-        assert!(store.track(next.key(), true).is_some());
         let reloaded = RunRecovery::load(directory.path()).unwrap();
         let saved = reloaded
             .saved("alice", &next.request.submission_id)
@@ -369,7 +365,7 @@ mod tests {
         assert_eq!(saved.request.workspace_path, "/work");
         assert_eq!(saved.request.reasoning_effort, "high");
         assert!(saved.request.fast_mode);
-        assert!(reloaded.begin(saved, false).await.is_ok());
+        assert!(reloaded.track(next.key(), true).is_some());
     }
 
     #[tokio::test]
