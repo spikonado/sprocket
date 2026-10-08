@@ -18,7 +18,7 @@ const MAX_COMPLETION_CALLS: usize = 1_000;
 
 pub(crate) fn context_summary_text(summary: &str) -> String {
     format!(
-        "A handoff document was created automatically from the conversation context. Treat this document as authoritative, continue the current task from this state, and do not redo completed work.\n\n<handoff_document>\n{summary}\n</handoff_document>"
+        "A handoff document was created automatically from the conversation context.\n\n<handoff_document>\n{summary}\n</handoff_document>"
     )
 }
 

@@ -26,7 +26,7 @@ use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
 };
-use crate::openai::stateless_responses_model;
+use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
 use crate::types::{CompletionProvider, ContextBudget, RunContextResponse, gateway_api_v1_url};
@@ -164,7 +164,7 @@ impl AgentProvider {
                     },
                 );
                 run_with_completion_model(
-                    completion_client.completion_model(self.model),
+                    completion_client.completion_model(self.model, &request.base_instructions),
                     runtime,
                     request,
                 )
@@ -184,7 +184,8 @@ impl AgentProvider {
                     }
                 };
                 let model = stateless_responses_model(
-                    openai::OpenAIConfig::new(credential.api_key),
+                    openai::OpenAIConfig::new(credential.api_key)
+                        .with_instructions(&request.base_instructions),
                     self.model,
                 );
                 run_with_completion_model(model, runtime, request).await
@@ -199,7 +200,7 @@ impl AgentProvider {
                     };
                 };
                 match run_with_completion_model(
-                    completion_client.completion_model(self.model),
+                    completion_client.completion_model(self.model, &request.base_instructions),
                     runtime,
                     request,
                 )
@@ -263,7 +264,6 @@ async fn run_with_completion_model(
         request.defer_prompt_for_context_handoff,
     );
     let agent = AgentBuilder::new(model)
-        .preamble(&request.base_instructions)
         .additional_params(additional_params)
         .tool(tools.apply_patch)
         .tool(tools.control_cmd)
@@ -543,7 +543,7 @@ async fn run_with_completion_model(
                                 if let Some(handoff) = context_handoff_hook.take_request() {
                                     handoff_processed_tokens = 0;
                                     history = handoff.history;
-                                    prompt = Message::user(HANDOFF_PROMPT);
+                                    prompt = developer_message(HANDOFF_PROMPT);
                                     deferred_prompt = handoff.deferred_prompt;
                                     before_prompt = handoff.before_prompt;
                                     context_handoff_hook.start_handoff();
