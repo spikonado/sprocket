@@ -18,6 +18,11 @@ type PendingBrowserLogin = {
 	login: ChatGptBrowserLoginStart;
 };
 
+type PendingChatGptOperation = {
+	generation: number;
+	kind: 'refresh' | 'select' | 'signout';
+};
+
 export default function SettingsProviders({
 	userId,
 	desktopApi,
@@ -57,8 +62,7 @@ export default function SettingsProviders({
 	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
 	const loginGenerationRef = useRef(0);
-	const pendingGenerationRef = useRef(0);
-	const pendingKindRef = useRef<'none' | 'refresh' | 'select' | 'signout'>('none');
+	const pendingOperationRef = useRef<PendingChatGptOperation | null>(null);
 	const userOpEpochRef = useRef(0);
 	const loginEpochRef = useRef(0);
 
@@ -90,21 +94,19 @@ export default function SettingsProviders({
 	}
 
 	function beginChatGptPending(generation: number, kind: 'refresh' | 'select' | 'signout') {
-		pendingGenerationRef.current = generation;
-		pendingKindRef.current = kind;
+		pendingOperationRef.current = { generation, kind };
 		setChatGptPending(true);
 	}
 
 	function endChatGptPending(generation: number) {
-		if (pendingGenerationRef.current !== generation) return;
+		if (pendingOperationRef.current?.generation !== generation) return;
 
-		pendingGenerationRef.current = 0;
-		pendingKindRef.current = 'none';
+		pendingOperationRef.current = null;
 		setChatGptPending(false);
 	}
 
 	function clearUnownedChatGptPending() {
-		if (pendingGenerationRef.current !== 0) return;
+		if (pendingOperationRef.current) return;
 
 		setChatGptPending(false);
 	}
@@ -112,8 +114,7 @@ export default function SettingsProviders({
 	function cancelLogin() {
 		generationRef.current += 1;
 		loginGenerationRef.current += 1;
-		pendingGenerationRef.current = 0;
-		pendingKindRef.current = 'none';
+		pendingOperationRef.current = null;
 
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
@@ -133,8 +134,7 @@ export default function SettingsProviders({
 		return () => {
 			generationRef.current += 1;
 			loginGenerationRef.current += 1;
-			pendingGenerationRef.current = 0;
-			pendingKindRef.current = 'none';
+			pendingOperationRef.current = null;
 
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
@@ -199,7 +199,7 @@ export default function SettingsProviders({
 
 				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
 
-				const pendingKind = pendingKindRef.current;
+				const pendingKind = pendingOperationRef.current?.kind;
 
 				if (pendingKind === 'select' || pendingKind === 'signout') return;
 
