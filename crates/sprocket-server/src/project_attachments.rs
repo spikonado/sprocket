@@ -184,8 +184,18 @@ impl ProjectAttachmentStore {
                 .get(&resolved.workspace_path)
                 .is_some_and(|attachment| attachment.hidden);
             let existing = attachments
-                .values()
-                .find(|attachment| same_attachment_identity(attachment, &resolved))
+                .get(&resolved.workspace_path)
+                .filter(|attachment| same_attachment_identity(attachment, &resolved))
+                .or_else(|| {
+                    attachments.values().find(|attachment| {
+                        !attachment.hidden && same_attachment_identity(attachment, &resolved)
+                    })
+                })
+                .or_else(|| {
+                    attachments
+                        .values()
+                        .find(|attachment| same_attachment_identity(attachment, &resolved))
+                })
                 .cloned();
 
             match existing {
@@ -216,16 +226,19 @@ impl ProjectAttachmentStore {
         self.ensure_loaded().await?;
         let _update_guard = self.update_lock.lock().await;
         let mut attachments = self.attachments.write().await;
-        let Some(attachment) = attachments
+        let mut changed = false;
+        for attachment in attachments
             .values_mut()
-            .find(|attachment| attachment.attachment_key == attachment_key)
-        else {
-            return Ok(());
-        };
-        if sent_at <= attachment.last_message_sent_at {
+            .filter(|attachment| attachment.attachment_key == attachment_key)
+        {
+            if sent_at > attachment.last_message_sent_at {
+                attachment.last_message_sent_at = sent_at;
+                changed = true;
+            }
+        }
+        if !changed {
             return Ok(());
         }
-        attachment.last_message_sent_at = sent_at;
         drop(attachments);
         self.save_to_disk().await
     }
@@ -428,6 +441,9 @@ fn deduplicate_repository_attachments(
     let mut winners = HashMap::<String, String>::new();
 
     for (workspace_path, attachment) in attachments.iter() {
+        if attachment.hidden {
+            continue;
+        }
         let Some(current_path) = winners.get(&attachment.attachment_key) else {
             winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
             continue;
@@ -441,7 +457,7 @@ fn deduplicate_repository_attachments(
 
     let previous_len = attachments.len();
     attachments.retain(|workspace_path, attachment| {
-        winners.get(&attachment.attachment_key) == Some(workspace_path)
+        attachment.hidden || winners.get(&attachment.attachment_key) == Some(workspace_path)
     });
     attachments.len() != previous_len
 }
@@ -458,10 +474,6 @@ fn attachment_is_preferred(
     current: &ProjectAttachmentRecord,
     preferred_workspace_path: Option<&str>,
 ) -> bool {
-    if candidate.hidden != current.hidden {
-        return !candidate.hidden;
-    }
-
     match preferred_workspace_path {
         Some(path) if candidate.workspace_path == path => return true,
         Some(path) if current.workspace_path == path => return false,
@@ -876,8 +888,9 @@ mod tests {
         assert!(!listed[0].hidden);
         assert_eq!(listed[0].last_message_sent_at, 100);
         let attachments = reloaded.attachments.read().await;
-        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments.len(), 2);
         assert!(attachments.contains_key(&reattached.workspace_path));
+        assert!(attachments[&attached.workspace_path].hidden);
     }
 
     #[tokio::test]
@@ -1585,7 +1598,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_duplicate_wins_over_hidden_regardless_of_other_preferences() {
+    fn deduplication_preserves_hidden_paths_regardless_of_other_preferences() {
         for hidden_availability in [
             WorkspaceAvailability::Available,
             WorkspaceAvailability::Unavailable,
@@ -1609,21 +1622,19 @@ mod tests {
                         Some(hidden.workspace_path.as_str()),
                         Some(visible.workspace_path.as_str()),
                     ] {
-                        assert!(attachment_is_preferred(&visible, &hidden, preferred_path));
-                        assert!(!attachment_is_preferred(&hidden, &visible, preferred_path));
-
                         for records in [[&hidden, &visible], [&visible, &hidden]] {
                             let mut attachments = records
                                 .into_iter()
                                 .map(|record| (record.workspace_path.clone(), record.clone()))
                                 .collect();
 
-                            assert!(deduplicate_repository_attachments(
+                            assert!(!deduplicate_repository_attachments(
                                 &mut attachments,
                                 preferred_path,
                             ));
-                            assert_eq!(attachments.len(), 1);
+                            assert_eq!(attachments.len(), 2);
                             assert_eq!(attachments.get(&visible.workspace_path), Some(&visible));
+                            assert_eq!(attachments.get(&hidden.workspace_path), Some(&hidden));
                         }
                     }
                 }
@@ -1703,14 +1714,58 @@ mod tests {
         assert_eq!(listed[0].attachment_key, attached_second.attachment_key);
         assert!(!listed[0].hidden);
 
-        let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
-            .list()
-            .await
-            .expect("reload attachments");
+        let reloaded_store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let reloaded = reloaded_store.list().await.expect("reload attachments");
         assert_eq!(reloaded.len(), 1);
         assert_eq!(reloaded[0].workspace_path, attached_second.workspace_path);
         assert_eq!(reloaded[0].attachment_key, attached_second.attachment_key);
         assert!(!reloaded[0].hidden);
+
+        reloaded_store
+            .record_message_sent(&attached_second.attachment_key, 200)
+            .await
+            .expect("record message for shared identity");
+        for path in [
+            &attached_first.workspace_path,
+            &attached_second.workspace_path,
+        ] {
+            assert_eq!(
+                reloaded_store
+                    .get_or_error(path)
+                    .await
+                    .expect("shared identity record")
+                    .last_message_sent_at,
+                200
+            );
+        }
+
+        let recovered_second = reloaded_store
+            .resolve_run_workspace(attached_second.workspace_path.clone())
+            .await
+            .expect("recover visible workspace");
+        assert!(!recovered_second.hidden);
+        let recovered_first = reloaded_store
+            .resolve_run_workspace(attached_first.workspace_path.clone())
+            .await
+            .expect("recover removed workspace with shared origin");
+        assert!(recovered_first.hidden);
+
+        let config_path = first.join(".git/config");
+        let config = fs::read_to_string(&config_path).expect("read config");
+        fs::write(config_path, config.replace(second_origin, first_origin))
+            .expect("restore origin");
+        let recovered_first = reloaded_store
+            .resolve_run_workspace(attached_first.workspace_path.clone())
+            .await
+            .expect("recover removed workspace with restored origin");
+        assert!(recovered_first.hidden);
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("reload after recovery");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
     }
 
     #[tokio::test]

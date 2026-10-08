@@ -1196,15 +1196,24 @@ export default function App({
 		return attachment;
 	}
 
+	async function prepareProjectRemoval(workspacePath: string, signal: AbortSignal) {
+		const client = desktopApiRef.current;
+		const userId = signedInUserIdRef.current;
+
+		if (currentWorkspacePathRef.current === workspacePath) {
+			await composerAttachments.waitForUploads(signal);
+		}
+
+		if (client !== desktopApiRef.current || userId !== signedInUserIdRef.current) {
+			throw new Error('The connection or account changed. Please try again.');
+		}
+	}
+
 	async function removeProject(workspacePath: string) {
 		const client = desktopApiRef.current;
 		const userId = signedInUserIdRef.current;
 
 		if (!client || !userId) throw new Error(localServerRequiredMessage);
-
-		await composerAttachments.waitForUploads();
-
-		if (client !== desktopApiRef.current || userId !== signedInUserIdRef.current) return;
 
 		await client.removeProject({ workspacePath });
 
@@ -2945,6 +2954,7 @@ export default function App({
 				<RemoveProjectDialog
 					project={projectToRemove}
 					onClose={() => setProjectToRemove(null)}
+					onPrepareRemove={prepareProjectRemoval}
 					onRemove={removeProject}
 				/>
 			)}

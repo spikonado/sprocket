@@ -4,18 +4,23 @@ import Button from '$lib/components/ui/button/button';
 export default function RemoveProjectDialog({
 	project,
 	onClose,
+	onPrepareRemove,
 	onRemove
 }: {
 	project: { workspacePath: string; displayName: string };
 	onClose: () => void;
+	onPrepareRemove?: (workspacePath: string, signal: AbortSignal) => Promise<void>;
 	onRemove: (workspacePath: string) => Promise<void>;
 }) {
 	const titleId = useId();
 	const descriptionId = useId();
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const submittingRef = useRef(false);
+	const removingRef = useRef(false);
+	const preparationRef = useRef<AbortController | null>(null);
 	const onCloseRef = useRef(onClose);
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	const [isRemoving, setIsRemoving] = useState(false);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -33,7 +38,10 @@ export default function RemoveProjectDialog({
 				event.preventDefault();
 				event.stopPropagation();
 
-				if (!submittingRef.current) onCloseRef.current();
+				if (!removingRef.current) {
+					preparationRef.current?.abort();
+					onCloseRef.current();
+				}
 
 				return;
 			}
@@ -68,6 +76,7 @@ export default function RemoveProjectDialog({
 		window.addEventListener('keydown', handleKeydown, true);
 
 		return () => {
+			preparationRef.current?.abort();
 			window.removeEventListener('keydown', handleKeydown, true);
 
 			if (previouslyFocused?.isConnected) previouslyFocused.focus();
@@ -75,7 +84,9 @@ export default function RemoveProjectDialog({
 	}, []);
 
 	function close() {
-		if (!submittingRef.current) onClose();
+		if (removingRef.current) return;
+		preparationRef.current?.abort();
+		onClose();
 	}
 
 	async function removeProject() {
@@ -85,17 +96,27 @@ export default function RemoveProjectDialog({
 		setIsSubmitting(true);
 		setErrorMessage(null);
 		dialogRef.current?.focus();
+		const preparation = new AbortController();
+		preparationRef.current = preparation;
 
 		try {
+			if (onPrepareRemove) await onPrepareRemove(project.workspacePath, preparation.signal);
+
+			if (preparation.signal.aborted) return;
+			removingRef.current = true;
+			setIsRemoving(true);
 			await onRemove(project.workspacePath);
 		} catch (error) {
+			if (preparation.signal.aborted) return;
 			setErrorMessage(
 				error instanceof Error && error.message
 					? error.message
 					: 'Failed to remove project. Please try again.'
 			);
 			submittingRef.current = false;
+			removingRef.current = false;
 			setIsSubmitting(false);
+			setIsRemoving(false);
 
 			return;
 		}
@@ -136,7 +157,10 @@ export default function RemoveProjectDialog({
 						{project.workspacePath}
 					</code>
 					<p>Your files, threads, and artifacts will be retained. Running agents will continue.</p>
-					<p>Pending file uploads will finish before removal.</p>
+					<p>
+						Pending file uploads for this project will finish before removal. You can cancel while
+						waiting.
+					</p>
 					<p>Re-add this folder to restore its history.</p>
 				</div>
 				{errorMessage && (
@@ -145,11 +169,11 @@ export default function RemoveProjectDialog({
 					</p>
 				)}
 				<div className="mt-6 flex flex-wrap justify-end gap-3">
-					<Button variant="outline" disabled={isSubmitting} onclick={close}>
+					<Button variant="outline" disabled={isRemoving} onclick={close}>
 						Cancel
 					</Button>
 					<Button disabled={isSubmitting} onclick={() => void removeProject()}>
-						{isSubmitting ? 'Removing…' : 'Remove project'}
+						{isRemoving ? 'Removing…' : isSubmitting ? 'Waiting for uploads…' : 'Remove project'}
 					</Button>
 				</div>
 			</div>

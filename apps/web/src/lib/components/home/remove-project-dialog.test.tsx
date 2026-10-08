@@ -97,6 +97,46 @@ it('blocks double submissions and all dismissal paths while pending', async () =
 	expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+it.each(['Cancel', 'Escape', 'backdrop'])(
+	'cancels upload preparation via %s without removing the project',
+	async (dismissal) => {
+		const user = userEvent.setup();
+		const preparation = Promise.withResolvers<void>();
+
+		const onPrepareRemove = vi.fn<(workspacePath: string, signal: AbortSignal) => Promise<void>>(
+			() => preparation.promise
+		);
+
+		const onRemove = vi.fn();
+		const onClose = vi.fn();
+		render(
+			<RemoveProjectDialog
+				project={project}
+				onClose={onClose}
+				onPrepareRemove={onPrepareRemove}
+				onRemove={onRemove}
+			/>
+		);
+		await user.click(screen.getByRole('button', { name: 'Remove project' }));
+		expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Cancel' }).disabled).toBe(false);
+		expect(screen.getByRole('button', { name: 'Waiting for uploads…' })).toBeTruthy();
+
+		if (dismissal === 'Cancel') {
+			await user.click(screen.getByRole('button', { name: 'Cancel' }));
+		} else if (dismissal === 'Escape') {
+			await user.keyboard('{Escape}');
+		} else {
+			await user.click(screen.getByRole('presentation'));
+		}
+
+		expect(onClose).toHaveBeenCalledTimes(1);
+		expect(onPrepareRemove.mock.calls[0]?.[1].aborted).toBe(true);
+		await act(async () => preparation.resolve());
+		expect(onRemove).not.toHaveBeenCalled();
+		expect(onClose).toHaveBeenCalledTimes(1);
+	}
+);
+
 it.each([
 	{ error: new Error('Project list is unavailable.'), message: 'Project list is unavailable.' },
 	{ error: 'unavailable', message: 'Failed to remove project. Please try again.' }

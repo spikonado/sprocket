@@ -383,7 +383,7 @@ it('finishes a pending upload before removing a project and restores the complet
 			name: 'Remove project'
 		})
 	);
-	await screen.findByRole('button', { name: 'Removing…' });
+	await screen.findByRole('button', { name: 'Waiting for uploads…' });
 	expect(removeProject).not.toHaveBeenCalled();
 
 	await act(async () => {
@@ -418,6 +418,83 @@ it('finishes a pending upload before removing a project and restores the complet
 	expect(desktop.uploadTranscriptAttachment).toHaveBeenCalledOnce();
 	expect(discardTranscriptAttachment).not.toHaveBeenCalled();
 });
+
+it.each(['unrelated project', 'removed file', 'cancel waiting'])(
+	'keeps stalled uploads from blocking removal: %s',
+	async (scenario) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		alpha.lastUsedAt = 2;
+		const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+
+		const upload =
+			Promise.withResolvers<Awaited<ReturnType<DesktopApi['uploadTranscriptAttachment']>>>();
+
+		let attachments = [alpha, beta];
+
+		const removeProject = vi.fn<DesktopApi['removeProject']>(async ({ workspacePath }) => {
+			attachments = attachments.filter((entry) => entry.workspacePath !== workspacePath);
+		});
+
+		const desktop = createDesktopApi({
+			listProjectAttachments: async () => attachments,
+			removeProject,
+			uploadTranscriptAttachment: () => upload.promise
+		});
+
+		await renderApp(createConvexFixtures(), createRuntime(desktop));
+		await projectTrigger('Alpha');
+		fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+			target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] }
+		});
+		await screen.findByLabelText('Uploading notes.txt');
+
+		if (scenario === 'removed file') {
+			fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
+		}
+
+		fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+		const name = scenario === 'unrelated project' ? 'Beta' : 'Alpha';
+		fireEvent.click(screen.getByRole('button', { name: `Remove ${name} from project list` }));
+		const dialog = screen.getByRole('dialog', { name: 'Remove project?' });
+		fireEvent.click(within(dialog).getByRole('button', { name: 'Remove project' }));
+
+		if (scenario === 'cancel waiting') {
+			await screen.findByRole('button', { name: 'Waiting for uploads…' });
+			fireEvent.keyDown(window, { key: 'Escape' });
+		} else {
+			await waitFor(() =>
+				expect(removeProject).toHaveBeenCalledWith({
+					workspacePath: scenario === 'unrelated project' ? beta.workspacePath : alpha.workspacePath
+				})
+			);
+		}
+
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Remove project?' })).toBeNull()
+		);
+
+		if (scenario === 'cancel waiting') {
+			await projectTrigger('Alpha');
+			expect(removeProject).not.toHaveBeenCalled();
+		}
+
+		await act(async () => {
+			upload.resolve({
+				// SAFETY: fixture strings are only compared as opaque Convex document ids.
+				storageId: 'late-upload' as Id<'_storage'>,
+				name: 'notes.txt',
+				mediaType: 'text/plain',
+				size: 5,
+				url: 'https://sprocket.test/notes'
+			});
+		});
+
+		if (scenario !== 'removed file') {
+			expect(screen.queryByLabelText('Uploading notes.txt')).toBeNull();
+			expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeTruthy();
+		}
+	}
+);
 
 it('keeps an unavailable project listed when removal fails and allows retry', async () => {
 	const alpha = projectAttachment('/missing/alpha', 'repo-alpha', 'Alpha', 'unavailable');

@@ -36,7 +36,6 @@ type Dependencies = {
 export class ComposerAttachments implements Store<ComposerAttachment[]> {
 	items: ComposerAttachment[] = [];
 	readonly #listeners = new Set<() => void>();
-	readonly #uploads = new Map<string, Promise<void>>();
 
 	constructor(private readonly dependencies: Dependencies) {}
 
@@ -69,16 +68,32 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 				}
 			]);
 
-			const upload = this.#upload(localId, file, name).finally(() => {
-				this.#uploads.delete(localId);
-			});
-
-			this.#uploads.set(localId, upload);
+			void this.#upload(localId, file, name);
 		}
 	}
 
-	async waitForUploads() {
-		await Promise.all(this.#uploads.values());
+	waitForUploads(signal: AbortSignal) {
+		return new Promise<void>((resolve, reject) => {
+			const check = () => {
+				if (signal.aborted) {
+					cleanup();
+					reject(signal.reason);
+				} else if (!this.items.some((entry) => entry.status === 'uploading')) {
+					cleanup();
+					resolve();
+				}
+			};
+
+			const unsubscribe = this.subscribe(check);
+
+			const cleanup = () => {
+				unsubscribe();
+				signal.removeEventListener('abort', check);
+			};
+
+			signal.addEventListener('abort', check, { once: true });
+			check();
+		});
 	}
 
 	remove(localId: string) {
