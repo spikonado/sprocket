@@ -803,6 +803,58 @@ it.each(['before', 'after'])(
 	}
 );
 
+it('shows the completed login after an account switch fails', async () => {
+	vi.useFakeTimers();
+
+	const connectedStatus = statusFixture({
+		accounts: [{ connectionId: 'conn-new', label: 'new@example.com', connected: true }],
+		activeConnectionId: 'conn-new'
+	});
+
+	const fetchResult = vi
+		.fn()
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'pending' as const })
+		.mockResolvedValueOnce({ status: 'complete' as const });
+
+	const view = mount(new ConvexTestClient(), {
+		chatGptStatus: statusFixture({
+			accounts: [
+				{ connectionId: 'conn-1', label: 'a@example.com', connected: true },
+				{ connectionId: 'conn-2', label: 'b@example.com', connected: true }
+			],
+			activeConnectionId: 'conn-1'
+		}),
+		desktopApi: createChatGptApi({
+			startChatGptBrowserLogin: async () => ({
+				state: 'state-1',
+				authorizeUrl: 'https://auth.openai.test/authorize'
+			}),
+			fetchChatGptBrowserLoginResult: fetchResult,
+			selectChatGptAccount: async () => {
+				throw new Error('Could not switch account.');
+			},
+			fetchChatGptStatus: async () => connectedStatus
+		})
+	});
+
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Add account' }));
+	});
+	loginWindow.closed = true;
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(3_000);
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+	});
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_500);
+	});
+	expect(view.onChatGptStatusChange).toHaveBeenLastCalledWith(connectedStatus);
+	expect(screen.getByRole('button', { name: 'Refresh' })).toHaveProperty('disabled', false);
+});
+
 it('surfaces server-side login errors from the result poll', async () => {
 	vi.useFakeTimers();
 	const client = new ConvexTestClient();

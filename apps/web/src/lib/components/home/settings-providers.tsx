@@ -305,11 +305,13 @@ export default function SettingsProviders({
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 
-		selectionEpochRef.current += 1;
 		beginChatGptPending(generation);
 
 		try {
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
+
+			if (generation !== generationRef.current || api !== desktopApi) return;
+			selectionEpochRef.current += 1;
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
