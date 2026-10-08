@@ -178,7 +178,7 @@ impl AppState {
                 .expect("ChatGPT credential service");
         let chatgpt_oauth =
             chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
-        let browsers = browser::BrowserManager::new(data_dir).expect("browser manager");
+        let browsers = browser::BrowserManager::new(data_dir.clone()).expect("browser manager");
         Self {
             lifetime: cli_sessions::ServerLifetime::new(false),
             auth,

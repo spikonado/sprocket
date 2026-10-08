@@ -141,11 +141,11 @@ impl BrowserManager {
     }
 
     async fn launch_dashboard(&self, user_id: &str) -> anyhow::Result<Dashboard> {
-        let installed = self.installer.ensure_ready().await?;
+        let cli = self.installer.ensure_ready().await?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
         drop(listener);
-        let mut command = Command::new(&installed.cli);
+        let mut command = Command::new(cli);
         command
             .envs(self.environment(user_id).await?)
             .env("AGENT_BROWSER_DASHBOARD", "1")

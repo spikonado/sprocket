@@ -48,51 +48,34 @@ it('starts setup on mount, polls installing status, and embeds the ready dashboa
 	expect(api.fetchBrowserStatus).toHaveBeenCalledTimes(4);
 });
 
-it('shows a stopped dashboard and allows restarting it', async () => {
-	const api = createBrowserApi();
-	api.startBrowser.mockResolvedValue({ state: 'ready', error: null });
-	api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'error', error: 'Dashboard stopped.' });
-	render(<BrowserLiveView browserApi={api} />);
-	await act(async () => {});
-	await act(() => vi.advanceTimersByTimeAsync(5000));
-	expect(screen.getByRole('alert').textContent).toBe('Dashboard stopped.');
-	fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
-	await act(async () => {});
-	expect(screen.getByTitle('Agent browser dashboard')).toBeTruthy();
-});
+it.each<BrowserStatus['state']>(['error', 'installing', 'ready'])(
+	'reports a dashboard error after starting in %s and retries through setup',
+	async (state) => {
+		const api = createBrowserApi();
+		const error = 'Browser setup failed.';
 
-it('reports a setup error and restarts setup when retried', async () => {
-	const api = createBrowserApi();
-	api.startBrowser
-		.mockResolvedValueOnce({ state: 'error', error: 'Browser installation failed.' })
-		.mockResolvedValueOnce({ state: 'ready', error: null });
-	render(<BrowserLiveView browserApi={api} />);
-	await act(async () => {});
-	expect(screen.getByRole('alert').textContent).toBe('Browser installation failed.');
-	fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
-	await act(async () => {});
-	expect(api.startBrowser).toHaveBeenCalledTimes(2);
-	expect(screen.getByRole('status').textContent).toBe('Browser ready');
-});
+		api.startBrowser.mockResolvedValueOnce({ state, error: state === 'error' ? error : null });
 
-it('reports an error discovered while polling and retries through start', async () => {
-	const api = createBrowserApi();
-	api.fetchBrowserStatus.mockResolvedValueOnce({
-		state: 'error',
-		error: 'Dashboard failed to start.'
-	});
-	render(<BrowserLiveView browserApi={api} />);
-	await act(async () => {});
-	await act(() => vi.advanceTimersByTimeAsync(1000));
-	expect(screen.getByRole('alert').textContent).toBe('Dashboard failed to start.');
+		if (state !== 'error') {
+			api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'error', error });
+		}
 
-	fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
-	await act(async () => {});
-	expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
-	await act(() => vi.advanceTimersByTimeAsync(1000));
-	expect(api.startBrowser).toHaveBeenCalledTimes(2);
-	expect(screen.getByTitle('Agent browser dashboard')).toBeTruthy();
-});
+		render(<BrowserLiveView browserApi={api} />);
+		await act(async () => {});
+
+		if (state !== 'error') {
+			await act(() => vi.advanceTimersByTimeAsync(state === 'installing' ? 1000 : 5000));
+		}
+
+		expect(screen.getByRole('alert').textContent).toBe(error);
+		fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
+		await act(async () => {});
+		expect(api.startBrowser).toHaveBeenCalledTimes(2);
+		expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
+		await act(() => vi.advanceTimersByTimeAsync(1000));
+		expect(screen.getByTitle('Agent browser dashboard')).toBeTruthy();
+	}
+);
 
 it.each(['startBrowser', 'fetchBrowserStatus'] as const)(
 	'exposes %s request failures with a retry action',

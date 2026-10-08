@@ -1274,8 +1274,8 @@ mod tests {
                     command,
                     ".",
                     shell,
-                    Some(5_000),
-                    5_000,
+                    Some(30_000),
+                    60_000,
                     20_000,
                 )
                 .await

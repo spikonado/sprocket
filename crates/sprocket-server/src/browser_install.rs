@@ -17,9 +17,8 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_COMMAND_OUTPUT: u64 = 64 * 1024;
 const LINUX_ARM64_REMEDY: &str = "This agent-browser release cannot download Chrome for Linux ARM64. Install Chromium with your system package manager, then set AGENT_BROWSER_EXECUTABLE_PATH to its absolute path (for example /usr/bin/chromium). Sprocket never installs system packages or runs sudo.";
 
-#[derive(Debug, Clone)]
-pub(crate) struct BrowserInstallation {
-    pub cli: PathBuf,
+struct BrowserInstallation {
+    cli: PathBuf,
     chromium: PathBuf,
 }
 
@@ -49,19 +48,21 @@ impl BrowserInstaller {
         })
     }
 
-    pub async fn ensure_ready(&self) -> anyhow::Result<BrowserInstallation> {
+    pub async fn ensure_ready(&self) -> anyhow::Result<PathBuf> {
         let mut browser = self.browser.lock().await;
         if let Some(installed) = browser.as_ref() {
             if executable_file(&installed.cli).await && executable_file(&installed.chromium).await {
-                return Ok(installed.clone());
+                return Ok(installed.cli.clone());
             }
         }
         let cli = self.install_tool(Tool::AgentBrowser).await?;
         self.ensure_skills().await?;
         let chromium = self.ensure_chromium(&cli).await?;
-        let installed = BrowserInstallation { cli, chromium };
-        *browser = Some(installed.clone());
-        Ok(installed)
+        *browser = Some(BrowserInstallation {
+            cli: cli.clone(),
+            chromium,
+        });
+        Ok(cli)
     }
 
     pub fn cli_directory(&self) -> anyhow::Result<PathBuf> {
