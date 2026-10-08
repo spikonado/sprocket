@@ -43,6 +43,9 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 /// apps/web/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
 const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
+// Must match convex/lib/agentErrors.ts so executor-reported lease loss and
+// lifecycle-detected abandonment have the same automatic recovery policy.
+const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
@@ -294,7 +297,7 @@ async fn abort_after_claim(
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
     // After claim (including mid-run lease loss); not the pre-start phrasing.
-    let text = format!("Run aborted: {error}");
+    let text = format!("Run aborted: {error:#}");
     match finalize_claim_failure(runtime, run_id, claim_id, &error, &text).await {
         Ok(()) => Err(error),
         Err(cleanup_error) => Err(anyhow!(
@@ -556,8 +559,11 @@ where
                         lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
                         next_renewal_at = renewal_started_at + RUN_CLAIM_RENEW_INTERVAL;
                     }
-                    Ok((false, _)) => return Err(anyhow!("claim lease for run {run_id} was lost")),
-                    Err(error) => return Err(error),
+                    Ok((false, _)) => return Err(
+                        anyhow!("claim lease for run {run_id} was lost")
+                            .context(RUN_ABANDONED_BY_AGENT)
+                    ),
+                    Err(error) => return Err(error.context(RUN_ABANDONED_BY_AGENT)),
                 }
             }
             result = &mut operation => return Ok(result),
@@ -1300,8 +1306,9 @@ mod claim_lease_tests {
     use tokio::time::{Instant, sleep};
 
     use super::{
-        RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
-        RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
+        RUN_ABANDONED_BY_AGENT, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION,
+        RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease,
+        renew_claim_with,
     };
 
     /// Regression: a starved renewal tick (CPU saturation, slow reconnect)
@@ -1411,7 +1418,34 @@ mod claim_lease_tests {
             std::future::pending(),
         )
         .await;
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("was lost"), "{error}");
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
+        assert!(format!("{error:#}").contains("was lost"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn renewal_failure_is_abandonment_and_keeps_the_diagnostic() {
+        let result: anyhow::Result<()> = drive_claim_lease(
+            "run-disconnected",
+            Instant::now(),
+            |_lease_deadline| async { Err(anyhow!("claim renewal timed out")) },
+            std::future::pending(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
+        assert!(format!("{error:#}").contains("claim renewal timed out"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn operation_failure_is_not_classified_as_abandonment() {
+        let result = drive_claim_lease(
+            "run-provider-error",
+            Instant::now(),
+            |_lease_deadline| async { Ok((true, Instant::now())) },
+            async { Err::<(), _>(anyhow!("provider failure")) },
+        )
+        .await;
+        assert_eq!(result.unwrap().unwrap_err().to_string(), "provider failure");
     }
 }
