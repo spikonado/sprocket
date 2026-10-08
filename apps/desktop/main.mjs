@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
+import { parseDesktopBootstrap } from './desktop-bootstrap.mjs';
 import { waitForServerReady } from './local-server.mjs';
 import { shouldDenyUntrustedNavigation } from './navigation-guard.mjs';
 import { parsePairingProof } from './pairing-proof.mjs';
@@ -91,16 +92,6 @@ function parseNonEmptyString(value) {
 	const trimmed = value.trim();
 
 	return trimmed.length > 0 ? trimmed : null;
-}
-
-function parseDesktopBootstrap(value) {
-	if (!isPlainObject(value)) {
-		return null;
-	}
-
-	return {
-		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl)
-	};
 }
 
 function reportFatalError(title, error) {
@@ -329,7 +320,7 @@ async function startLocalServer() {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
 
-	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
+	serverBaseUrl = bootstrap.httpBaseUrl;
 
 	return serverBaseUrl;
 }

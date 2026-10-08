@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderMarkdown, renderMarkdownBlocks } from '$lib/chat/markdown';
 
@@ -8,7 +8,12 @@ describe('renderMarkdown', () => {
 		['parenthesis inline', String.raw`The result is \(x^2 + y_1\).`, false],
 		['dollar display', String.raw`$$\frac{1}{2}$$`, true],
 		['bracket display', String.raw`\[\frac{1}{2}\]`, true],
-		['multiline display', '$$\n\\begin{aligned}x &= 1 \\\\\ny &= 2\\end{aligned}\n$$', true]
+		['multiline display', '$$\n\\begin{aligned}x &= 1 \\\\\ny &= 2\\end{aligned}\n$$', true],
+		['matrix', String.raw`\[\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}\]`, true],
+		['nested radicals', String.raw`$\sqrt{1 + \sqrt{x}}$`, false],
+		['limits', String.raw`\[\sum_{n=1}^{\infty}\frac{1}{n^2} = \frac{\pi^2}{6}\]`, true],
+		['reflected text', String.raw`$\reflectbox{ABC}$`, false],
+		['maps from', String.raw`$A \mapsfrom B$`, false]
 	])('renders %s math with accessible markup', (_case, markdown, display) => {
 		const html = renderMarkdown(markdown);
 
@@ -16,6 +21,23 @@ describe('renderMarkdown', () => {
 		expect(html).toContain('<math');
 		expect(html).toContain('class="katex-html" aria-hidden="true"');
 		expect(html.includes('class="katex-display"')).toBe(display);
+		expect(html).not.toContain('class="katex-error"');
+		expect(html).not.toContain('<annotation');
+	});
+
+	it('keeps Unicode text readable when KaTeX warns about missing font metrics', () => {
+		const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		try {
+			const html = renderMarkdown(String.raw`$\text{λ}$ and $x^2$`);
+
+			expect(html).toContain('<mtext>λ</mtext>');
+			expect(html.match(/class="katex"/g)).toHaveLength(2);
+			expect(html).not.toContain('class="katex-error"');
+			expect(warning).toHaveBeenCalledWith(expect.stringContaining('[symbolNotInFont]'));
+		} finally {
+			warning.mockRestore();
+		}
 	});
 
 	it.each([

@@ -1,24 +1,5 @@
-function isPlainObject(value) {
-	return value !== null && !Array.isArray(value) && value === Object(value);
-}
+import { parseDesktopBootstrap } from './desktop-bootstrap.mjs';
 
-export function parseNonEmptyString(value) {
-	// Accepts only primitive non-empty strings (no boxed strings/arrays/objects).
-	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {
-		return null;
-	}
-
-	if (value !== `${value}`) {
-		return null;
-	}
-
-	const trimmed = value.trim();
-
-	return trimmed.length > 0 ? trimmed : null;
-}
-
-// HMAC-SHA256 proofs are exactly 32 bytes. Anything else is rejected here so
-// a hostile pairing response fails closed instead of throwing in Buffer.from.
 function isProofBytes(value) {
 	return (
 		Array.isArray(value) &&
@@ -28,14 +9,10 @@ function isProofBytes(value) {
 }
 
 export function parsePairingProof(value) {
-	if (!isPlainObject(value)) {
-		return null;
-	}
-
-	const httpBaseUrl = parseNonEmptyString(value.httpBaseUrl);
+	const bootstrap = parseDesktopBootstrap(value);
 
 	if (
-		httpBaseUrl === null ||
+		bootstrap === null ||
 		(value.webUiEnabled !== true && value.webUiEnabled !== false) ||
 		!isProofBytes(value.proof)
 	) {
@@ -43,7 +20,7 @@ export function parsePairingProof(value) {
 	}
 
 	return {
-		httpBaseUrl,
+		httpBaseUrl: bootstrap.httpBaseUrl,
 		webUiEnabled: value.webUiEnabled,
 		proof: value.proof
 	};

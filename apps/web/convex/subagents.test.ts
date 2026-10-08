@@ -3,10 +3,13 @@ import type { FunctionArgs } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
+import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
+import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
 import {
 	createQueuedRun,
 	initConvexTest,
+	insertQueuedRun,
 	seedOwnedThread,
 	toolTranscriptAssignment,
 	type ConvexTestInstance
@@ -1010,6 +1013,55 @@ describe('subagents.control', () => {
 		const grandchildRun = await t.run((ctx) => ctx.db.get('runs', grandchild.runId));
 		expect(grandchildRun?.cancellationRequestedAt).toBeUndefined();
 		expect(grandchildRun?.status).toBe('queued');
+	});
+
+	it('stop on an abandoned child prevents automatic recovery', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const args = createArgs(caller);
+		const child = await t.mutation(api.subagents.createOrSend, args);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: child.runId,
+			executionSecret: args.childExecutionSecret,
+			text: '',
+			status: 'failed',
+			lastError: RUN_ABANDONED_BY_AGENT
+		});
+		const queryArgs = { submissionId: args.submissionId, machineId: machine.machineId };
+		expect(await caller.asUser.query(api.runRecovery.state, queryArgs)).toMatchObject({
+			state: 'recover'
+		});
+
+		const stopArgs = {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			threadId: child.threadId,
+			action: 'stop' as const
+		};
+
+		expect(await t.mutation(api.subagents.control, stopArgs)).toEqual({
+			stoppedRunId: child.runId
+		});
+		const stopped = await t.run((ctx) => ctx.db.get('runs', child.runId));
+		expect(stopped?.cancellationRequestedAt).toBeDefined();
+		expect(stopped?.status).toBe('failed');
+		expect(stopped?.cancellationDeadlineAt).toBeUndefined();
+		await t.mutation(api.subagents.control, stopArgs);
+		expect(await t.run((ctx) => ctx.db.get('runs', child.runId))).toEqual(stopped);
+		expect(await caller.asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'discard'
+		});
+		await expect(
+			insertQueuedRun(t, caller.asUser, {
+				threadId: child.threadId,
+				submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}stopped-child`,
+				executionSecret: 'recovery-secret',
+				prompt: '',
+				machineId: machine.machineId,
+				continuationOfRunId: child.runId
+			})
+		).rejects.toThrow('This run cannot recover automatically.');
 	});
 
 	it('observes the stopped run even after replacement work starts', async () => {
