@@ -1162,6 +1162,7 @@ mod tests {
             .await
             .expect("remote session");
         let auth = Arc::clone(&state.auth);
+        let native_auth = Arc::clone(&state.native_auth);
         let app = router(state);
         let request = |session_token: &str| {
             Request::builder()
@@ -1205,6 +1206,7 @@ mod tests {
             "local session belongs to a different user"
         );
         let still_owner = app
+            .clone()
             .oneshot(with_peer(request(&remote_session), loopback_peer()))
             .await
             .unwrap();
@@ -1213,6 +1215,14 @@ mod tests {
             read_json(still_owner).await["accessToken"],
             "test-access-token"
         );
+
+        native_auth.authenticate_for_test("user-b").await;
+        let foreign_owner = app
+            .oneshot(with_peer(request(&remote_session), loopback_peer()))
+            .await
+            .unwrap();
+        assert_eq!(foreign_owner.status(), StatusCode::UNAUTHORIZED);
+        assert!(read_json(foreign_owner).await.get("accessToken").is_none());
     }
 
     #[test]

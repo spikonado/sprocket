@@ -72,6 +72,18 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
             .0,
         StatusCode::OK
     );
+    state.auth.sync_sessions_with_owner(None).await.unwrap();
+    state
+        .auth
+        .bind_session_user(&token, "other-user")
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&state, &token, "output", &request, "127.0.0.1:1000")
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
