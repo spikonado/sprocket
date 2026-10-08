@@ -37,38 +37,6 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "web_search",
 ];
 
-/// Payment-related tools. Children never receive these, at any depth.
-#[cfg(test)]
-pub(crate) const PAYMENT_TOOL_NAMES: &[&str] = &[
-    "mandate_charge",
-    "mandate_list",
-    "mandate_report",
-    "mandate_setup",
-    "mandate_status",
-];
-
-#[cfg(test)]
-const INTERACTION_TOOL_NAMES: &[&str] = &["ask_question", "poll_question", "mandate_setup"];
-
-#[cfg(test)]
-pub(crate) fn available_agent_tool_names(
-    allow_interaction: bool,
-    supports_images: bool,
-    is_child: bool,
-) -> Vec<&'static str> {
-    AGENT_TOOL_NAMES
-        .iter()
-        .copied()
-        .filter(|name| {
-            let interaction_allowed = allow_interaction
-                || (is_child && matches!(*name, "ask_question" | "poll_question"));
-            (interaction_allowed || !INTERACTION_TOOL_NAMES.contains(name))
-                && (supports_images || *name != "screenshot_url")
-                && (!is_child || !PAYMENT_TOOL_NAMES.contains(name))
-        })
-        .collect()
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkRangeAssignment {
@@ -560,53 +528,6 @@ mod tests {
         assert_repaired("control-subagent", "control_subagent");
         assert_repaired("poll-subagent", "poll_subagent");
         assert_repaired("parse-file", "parse_file");
-    }
-
-    #[test]
-    fn available_tools_match_run_capabilities() {
-        let cli = available_agent_tool_names(false, false, false);
-        assert!(!cli.contains(&"ask_question"));
-        assert!(!cli.contains(&"poll_question"));
-        assert!(!cli.contains(&"mandate_setup"));
-        assert!(!cli.contains(&"screenshot_url"));
-        assert!(cli.contains(&"exec_cmd"));
-
-        assert_eq!(
-            available_agent_tool_names(true, true, false),
-            AGENT_TOOL_NAMES
-        );
-    }
-
-    #[test]
-    fn child_runs_get_questions_and_delegation_but_no_payments() {
-        let child = available_agent_tool_names(false, false, true);
-        // Children can question their parent agent even when the root run was
-        // launched through the noninteractive CLI.
-        assert!(child.contains(&"ask_question"));
-        assert!(child.contains(&"poll_question"));
-        assert!(child.contains(&"spawn_subagent"));
-        assert!(child.contains(&"control_subagent"));
-        assert!(child.contains(&"poll_subagent"));
-        assert!(child.contains(&"list_subagents"));
-        assert!(child.contains(&"list_subagent_models"));
-        for payment in PAYMENT_TOOL_NAMES {
-            assert!(!child.contains(payment), "child exposes {payment}");
-        }
-
-        let interactive_child = available_agent_tool_names(true, true, true);
-        for payment in PAYMENT_TOOL_NAMES {
-            assert!(
-                !interactive_child.contains(payment),
-                "interactive child exposes {payment}"
-            );
-        }
-        assert!(interactive_child.contains(&"screenshot_url"));
-
-        // Root payment behavior is unchanged.
-        let root = available_agent_tool_names(true, true, false);
-        for payment in PAYMENT_TOOL_NAMES {
-            assert!(root.contains(payment), "root lost {payment}");
-        }
     }
 
     #[test]

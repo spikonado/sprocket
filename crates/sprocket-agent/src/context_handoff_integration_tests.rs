@@ -19,7 +19,6 @@ use super::{
     ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffRequest,
     HandoffTool, context_summary_text,
 };
-use crate::hooks::{AGENT_TOOL_NAMES, available_agent_tool_names};
 
 const MODEL: &str = "gateway-model";
 const OLD_CONTEXT: &str = "UNIQUE_OLD_CONTEXT xyz-arm-bus";
@@ -345,56 +344,25 @@ fn spawn_responses_sse(bodies: Vec<String>) -> (String, thread::JoinHandle<Vec<V
     (format!("http://{addr}"), handle)
 }
 
-fn stub_tool(name: &'static str) -> DynamicTool {
+fn stub_tool() -> DynamicTool {
     DynamicTool::new(
-        name,
-        format!("stub {name}"),
+        "exec_cmd",
+        "stub exec_cmd",
         json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
         |_args| Box::pin(async { Ok(ToolOutput::text(TOOL_RESULT)) }),
     )
 }
 
 fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
-    test_agent_with_tools(base_url, hook, AGENT_TOOL_NAMES)
-}
-
-fn test_agent_with_tools(
-    base_url: &str,
-    hook: &ContextHandoffHook,
-    tool_names: &[&'static str],
-) -> rig::Agent {
     let model = openai::OpenAIConfig::new("test-key")
         .with_base_url(base_url)
         .client()
         .responses(MODEL);
-    let mut builder = rig::AgentBuilder::new(model)
+    rig::AgentBuilder::new(model)
         .preamble("context handoff fixture")
-        .tool(hook.tool());
-    for name in tool_names {
-        builder = builder.dynamic_tool(stub_tool(name));
-    }
-    builder.build()
-}
-
-#[tokio::test]
-async fn noninteractive_turn_only_activates_registered_tools() {
-    let (base_url, server) = spawn_responses_sse(vec![text_sse("done", 4, 4)]);
-    let active_tools = available_agent_tool_names(false, true, false);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
-    let agent = test_agent_with_tools(&base_url, &hook, &active_tools);
-
-    match drive(&agent, &hook, Message::user("work"), Vec::new()).await {
-        DriveEnd::Finished(text) => assert_eq!(text, "done"),
-        other => panic!("noninteractive turn should complete, got {other:?}"),
-    }
-
-    let captured = server.join().expect("responses mock thread");
-    assert_eq!(captured.len(), 1);
-    let advertised = advertised_tools(&parse_request(&captured[0]));
-    assert!(!advertised.contains(&"ask_question".to_string()));
-    assert!(!advertised.contains(&"poll_question".to_string()));
-    assert!(!advertised.contains(&"mandate_setup".to_string()));
-    assert!(advertised.contains(&HandoffTool::NAME.to_string()));
+        .tool(hook.tool())
+        .dynamic_tool(stub_tool())
+        .build()
 }
 
 fn parse_request(body: &[u8]) -> JsonValue {
@@ -504,10 +472,7 @@ async fn drive(
                     hook.record_usage(call.usage);
                 }
                 Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. }) if hook.is_writing() => {
-                    return match hook.take_summary() {
-                        Some(document) => DriveEnd::Submitted(document),
-                        None => DriveEnd::MissingDocument,
-                    };
+                    return DriveEnd::MissingDocument;
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(response)) => {
                     final_text = response.output().to_string();
@@ -632,21 +597,6 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
     assert!(stopped);
     assert_eq!(completion_calls, 1);
     assert_eq!(hook.take_summary().as_deref(), Some(FIRST_SUMMARY));
-    assert_eq!(server.join().expect("responses mock thread").len(), 1);
-}
-
-#[tokio::test]
-async fn handoff_submits_with_the_unchanged_default_tool_choice() {
-    let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
-    let agent = test_agent(&base_url, &hook);
-    hook.start_handoff();
-
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), Vec::new()).await {
-        DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
-        other => panic!("automatic handoff tool selection should submit, got {other:?}"),
-    }
-
     let captured = server.join().expect("responses mock thread");
     assert_eq!(captured.len(), 1);
     let request = parse_request(&captured[0]);

@@ -212,29 +212,24 @@ impl AgentHook for ContextHandoffHook {
         _context: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
-        let calls: Vec<_> = event
-            .content
-            .iter()
-            .filter_map(|content| match content {
-                AssistantContent::ToolCall(call) => Some(call),
-                _ => None,
-            })
-            .collect();
+        let mut calls = event.content.iter().filter_map(|content| match content {
+            AssistantContent::ToolCall(call) => Some(call),
+            _ => None,
+        });
         if self.is_writing() {
             if event
                 .finish_reason
                 .is_some_and(|reason| reason.truncated_output())
-                || calls.len() != 1
-                || calls[0].function.name.as_str() != HandoffTool::NAME
+                || !calls
+                    .next()
+                    .is_some_and(|call| call.function.name == HandoffTool::NAME)
+                || calls.next().is_some()
             {
                 return ModelTurnAction::stop(
                     "Context handoff failed: the agent must submit one complete handoff document.",
                 );
             }
-        } else if calls
-            .iter()
-            .any(|call| call.function.name.as_str() == HandoffTool::NAME)
-        {
+        } else if calls.any(|call| call.function.name == HandoffTool::NAME) {
             return ModelTurnAction::stop("No context handoff is pending.");
         }
         ModelTurnAction::Continue
