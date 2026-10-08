@@ -19,12 +19,17 @@ import {
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
+import {
+	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
+	isAutomaticallyRecoverableRun
+} from '@convex/lib/runRecovery';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import {
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange,
 	registerChildThread,
+	threadRoot,
 	unsettleRootOfThread
 } from '@convex/lib/threadHierarchy';
 import { startRunLifecycle } from '@convex/runLifecycle';
@@ -241,7 +246,17 @@ export async function createQueuedRunRecord(
 	}
 
 	if (continuationOfRunId) {
-		assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
+		const parent = assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
+
+		if (
+			args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
+			(!machineId ||
+				!isAutomaticallyRecoverableRun(parent, machineId) ||
+				recordsPrompt ||
+				(await threadRoot(ctx.db, threadRecord)).archivedAt !== undefined)
+		) {
+			throw new ConvexError('This run cannot recover automatically.');
+		}
 	}
 
 	if (await headActionablePendingQuestion(ctx.db, threadRecord._id)) {
