@@ -26,8 +26,14 @@ pub struct ProjectAttachmentRecord {
     pub last_used_at: u64,
     #[serde(default)]
     pub last_message_sent_at: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,9 +83,34 @@ impl ProjectAttachmentStore {
         self.ensure_loaded().await?;
         self.refresh_all().await?;
         let sessions = self.attachments.read().await;
-        let mut listed: Vec<ProjectAttachmentRecord> = sessions.values().cloned().collect();
+        let mut listed: Vec<ProjectAttachmentRecord> = sessions
+            .values()
+            .filter(|attachment| !attachment.hidden)
+            .cloned()
+            .collect();
         listed.sort_by(compare_project_recency);
         Ok(listed)
+    }
+
+    pub async fn remove(&self, workspace_path: &str) -> Result<()> {
+        self.ensure_loaded().await?;
+        let _update_guard = self.update_lock.lock().await;
+        let mut attachments = self.attachments.write().await;
+        let Some(existing) = attachments.get(workspace_path) else {
+            return Ok(());
+        };
+        if existing.hidden {
+            return Ok(());
+        }
+
+        let mut hidden = existing.clone();
+        hidden.hidden = true;
+        let mut updated = attachments.clone();
+        updated.insert(workspace_path.to_owned(), hidden);
+        let payload = serde_json::to_vec_pretty(&updated.values().collect::<Vec<_>>())?;
+        self.persist_payload(payload).await?;
+        *attachments = updated;
+        Ok(())
     }
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
@@ -101,7 +132,8 @@ impl ProjectAttachmentStore {
                 anyhow::bail!("Replacement workspace is not attached");
             }
             if let Some(existing) = sessions.values().find(|attachment| {
-                same_attachment_identity(attachment, &validated)
+                !attachment.hidden
+                    && same_attachment_identity(attachment, &validated)
                     && match replace_workspace_path.as_deref() {
                         Some(previous_path) => attachment.workspace_path != previous_path,
                         None => attachment.workspace_path != validated.workspace_path,
@@ -148,6 +180,9 @@ impl ProjectAttachmentStore {
                 .get(&resolved.workspace_path)
                 .map(|attachment| attachment.last_message_sent_at)
                 .unwrap_or_default();
+            resolved.hidden = attachments
+                .get(&resolved.workspace_path)
+                .is_some_and(|attachment| attachment.hidden);
             let existing = attachments
                 .values()
                 .find(|attachment| same_attachment_identity(attachment, &resolved))
@@ -155,6 +190,7 @@ impl ProjectAttachmentStore {
 
             match existing {
                 Some(existing) => {
+                    resolved.hidden |= existing.hidden;
                     resolved.last_message_sent_at = resolved
                         .last_message_sent_at
                         .max(existing.last_message_sent_at);
@@ -329,11 +365,15 @@ impl ProjectAttachmentStore {
 
     async fn save_to_disk(&self) -> Result<()> {
         self.prune().await;
-        let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
         let payload = {
             let sessions = self.attachments.read().await;
             serde_json::to_vec_pretty(&sessions.values().collect::<Vec<_>>())?
         };
+        self.persist_payload(payload).await
+    }
+
+    async fn persist_payload(&self, payload: Vec<u8>) -> Result<()> {
+        let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
         tokio::task::spawn_blocking(move || {
             crate::profile::write_private_file(&store_path, &payload)
         })
@@ -347,9 +387,10 @@ impl ProjectAttachmentStore {
         let mut sessions: Vec<ProjectAttachmentRecord> = store
             .values()
             .filter(|session| {
-                session.availability == WorkspaceAvailability::Available
-                    || now.saturating_sub(session.last_validated_at)
-                        < STALE_UNAVAILABLE_WORKSPACE_MS
+                !session.hidden
+                    && (session.availability == WorkspaceAvailability::Available
+                        || now.saturating_sub(session.last_validated_at)
+                            < STALE_UNAVAILABLE_WORKSPACE_MS)
             })
             .cloned()
             .collect();
@@ -357,7 +398,8 @@ impl ProjectAttachmentStore {
         sessions.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
         sessions.truncate(MAX_PERSISTED_PROJECT_ATTACHMENTS);
 
-        store.clear();
+        // Hidden records are removal tombstones: eviction would let run recovery revive them.
+        store.retain(|_, session| session.hidden);
         for session in sessions {
             store.insert(session.workspace_path.clone(), session);
         }
@@ -460,6 +502,7 @@ fn mark_available(
         unavailable_reason: None,
         last_used_at: session.last_used_at,
         last_message_sent_at: session.last_message_sent_at,
+        hidden: session.hidden,
     }
 }
 
@@ -535,6 +578,7 @@ async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentR
         last_validated_at: now,
         last_used_at: now,
         last_message_sent_at: 0,
+        hidden: false,
         unavailable_reason: None,
     })
     .await?;
@@ -599,6 +643,7 @@ mod tests {
             last_validated_at: last_used_at,
             last_used_at,
             last_message_sent_at: 0,
+            hidden: false,
             unavailable_reason: None,
         }
     }
@@ -625,6 +670,308 @@ mod tests {
         assert_eq!(listed[0].workspace_path, session.workspace_path);
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn removal_persists_visibility_and_preserves_workspace_access_and_files() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let workspace = temp_root.path().join("project");
+        init_repo_with_origin(&workspace, "https://github.com/example/project.git");
+        let file = workspace.join("artifact.txt");
+        fs::write(&file, "keep this artifact").expect("write artifact");
+        let config = fs::read(workspace.join(".git/config")).expect("read git config");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach project");
+
+        store.remove(&attached.workspace_path).await.expect("remove");
+        let persisted: Vec<ProjectAttachmentRecord> = serde_json::from_slice(
+            &fs::read(temp_root.path().join(PROJECT_ATTACHMENTS_FILE)).expect("read records"),
+        )
+        .expect("parse records");
+        let mut hidden = attached.clone();
+        hidden.hidden = true;
+        assert_eq!(persisted, vec![hidden]);
+        assert!(store.list().await.expect("list").is_empty());
+
+        let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        assert!(reloaded.list().await.expect("reload list").is_empty());
+        let available = reloaded
+            .require_matching_workspace(&attached.workspace_path, &attached.repository_key)
+            .await
+            .expect("hidden attachment remains usable");
+        assert!(available.hidden);
+        assert_eq!(available.attachment_key, attached.attachment_key);
+        reloaded
+            .record_message_sent(&attached.attachment_key, 100)
+            .await
+            .expect("record ongoing run message");
+        assert_eq!(
+            reloaded
+                .get_or_error(&attached.workspace_path)
+                .await
+                .expect("hidden attachment")
+                .last_message_sent_at,
+            100
+        );
+        assert!(workspace.is_dir());
+        assert_eq!(
+            fs::read_to_string(file).expect("read artifact"),
+            "keep this artifact"
+        );
+        assert_eq!(
+            fs::read(workspace.join(".git/config")).expect("git config"),
+            config
+        );
+    }
+
+    #[tokio::test]
+    async fn removal_uses_the_exact_path_even_when_the_folder_is_unavailable() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let workspace = temp_root.path().join("project");
+        fs::create_dir_all(&workspace).expect("project dir");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach project");
+        fs::rename(&workspace, temp_root.path().join("offline-project")).expect("move offline");
+
+        store
+            .remove(&format!("{} ", attached.workspace_path))
+            .await
+            .expect("unknown exact path is harmless");
+        assert_eq!(
+            store
+                .get_or_error(&attached.workspace_path)
+                .await
+                .expect("record"),
+            attached
+        );
+        store
+            .remove(&attached.workspace_path)
+            .await
+            .expect("remove unavailable folder");
+        let hidden = store
+            .get_or_error(&attached.workspace_path)
+            .await
+            .expect("hidden record");
+        assert!(hidden.hidden);
+        assert_eq!(hidden.availability, WorkspaceAvailability::Available);
+
+        let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        assert!(reloaded.list().await.expect("reload list").is_empty());
+        let unavailable = reloaded
+            .get_or_error(&attached.workspace_path)
+            .await
+            .expect("record");
+        assert!(unavailable.hidden);
+        assert_eq!(unavailable.availability, WorkspaceAvailability::Unavailable);
+        reloaded
+            .remove(&attached.workspace_path)
+            .await
+            .expect("repeat unavailable removal");
+        assert!(temp_root.path().join("offline-project").is_dir());
+    }
+
+    #[tokio::test]
+    async fn repeated_removal_and_explicit_reattachment_restore_visibility() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let workspace = temp_root.path().join("project");
+        fs::create_dir_all(&workspace).expect("project dir");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let request = AttachProjectRequest {
+            workspace_path: workspace.to_string_lossy().into_owned(),
+            replace_workspace_path: None,
+        };
+        let attached = store
+            .attach(request.clone())
+            .await
+            .expect("attach project");
+        store.remove(&attached.workspace_path).await.expect("remove");
+        store
+            .remove(&attached.workspace_path)
+            .await
+            .expect("repeat remove");
+        store.remove("unknown").await.expect("remove unknown");
+        assert!(store.list().await.expect("list hidden").is_empty());
+
+        let reattached = store.attach(request).await.expect("reattach");
+        assert!(!reattached.hidden);
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("reload visible project");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].attachment_key, attached.attachment_key);
+        assert!(!listed[0].hidden);
+        let persisted: serde_json::Value = serde_json::from_slice(
+            &fs::read(temp_root.path().join(PROJECT_ATTACHMENTS_FILE)).expect("read records"),
+        )
+        .expect("parse records");
+        assert_eq!(persisted[0].get("hidden"), None);
+    }
+
+    #[tokio::test]
+    async fn readding_a_hidden_repository_from_another_checkout_restores_visibility() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("first");
+        let second = temp_root.path().join("second");
+        let origin = "https://github.com/example/project.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first checkout");
+        store
+            .record_message_sent(&attached.attachment_key, 100)
+            .await
+            .expect("record message");
+        store.remove(&attached.workspace_path).await.expect("remove");
+
+        let reattached = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("readd hidden repository at another checkout");
+        assert!(!reattached.hidden);
+        assert_eq!(reattached.attachment_key, attached.attachment_key);
+        assert_eq!(
+            reattached.workspace_path,
+            resolve_workspace_root(&second.to_string_lossy())
+                .expect("resolve second checkout")
+                .to_string_lossy()
+        );
+        assert_eq!(reattached.last_message_sent_at, 100);
+
+        let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let listed = reloaded.list().await.expect("reload visible project");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, reattached.workspace_path);
+        assert!(!listed[0].hidden);
+        assert_eq!(listed[0].last_message_sent_at, 100);
+        let attachments = reloaded.attachments.read().await;
+        assert_eq!(attachments.len(), 1);
+        assert!(attachments.contains_key(&reattached.workspace_path));
+    }
+
+    #[tokio::test]
+    async fn active_and_recovered_run_resolution_preserve_hidden_identity() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("project");
+        let second = temp_root.path().join("worktree");
+        let second_path = second.to_string_lossy().into_owned();
+        let origin = "https://github.com/example/project.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .resolve_run_workspace(first.to_string_lossy().into_owned())
+            .await
+            .expect("resolve new run workspace");
+        store.remove(&attached.workspace_path).await.expect("remove");
+
+        for store in [
+            store,
+            ProjectAttachmentStore::new(temp_root.path().to_path_buf()),
+        ] {
+            for workspace_path in [&attached.workspace_path, &second_path] {
+                let resolved = store
+                    .resolve_run_workspace(workspace_path.clone())
+                    .await
+                    .expect("resolve active or recovered run");
+                assert!(resolved.hidden);
+                assert_eq!(resolved.attachment_key, attached.attachment_key);
+                assert_eq!(&resolved.workspace_path, workspace_path);
+                assert!(store.list().await.expect("list").is_empty());
+                assert!(
+                    store
+                        .get_or_error(&attached.workspace_path)
+                        .await
+                        .expect("record")
+                        .hidden
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_removal_persistence_leaves_the_visible_record_intact() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let workspace = temp_root.path().join("project");
+        fs::create_dir_all(&workspace).expect("project dir");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached = store
+            .attach(AttachProjectRequest {
+                workspace_path: workspace.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach project");
+        let store_path = temp_root.path().join(PROJECT_ATTACHMENTS_FILE);
+        fs::remove_file(&store_path).expect("remove store file");
+        fs::create_dir(&store_path).expect("block store persistence");
+
+        store
+            .remove(&attached.workspace_path)
+            .await
+            .expect_err("persistence must fail");
+        assert_eq!(
+            store
+                .get_or_error(&attached.workspace_path)
+                .await
+                .expect("visible record"),
+            attached
+        );
+        assert_eq!(store.list().await.expect("list").len(), 1);
+    }
+
+    #[test]
+    fn legacy_records_default_to_visible_and_keep_their_json_shape() {
+        let record = attachment_record("/project", "repository", 1);
+        let json = serde_json::to_value(&record).expect("serialize visible record");
+        assert_eq!(json.get("hidden"), None);
+        let legacy: ProjectAttachmentRecord =
+            serde_json::from_value(json).expect("parse legacy record");
+        assert_eq!(legacy, record);
+        assert!(!legacy.hidden);
+    }
+
+    #[tokio::test]
+    async fn pruning_retains_hidden_records_outside_the_recent_project_limit() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let mut hidden = attachment_record("/removed", "removed", 0);
+        hidden.hidden = true;
+        hidden.availability = WorkspaceAvailability::Unavailable;
+        let mut records = store.attachments.write().await;
+        records.insert(hidden.workspace_path.clone(), hidden.clone());
+        for index in 0..=MAX_PERSISTED_PROJECT_ATTACHMENTS {
+            let record = attachment_record(format!("/visible/{index}"), "visible", index as u64);
+            records.insert(record.workspace_path.clone(), record);
+        }
+        drop(records);
+
+        store.prune().await;
+
+        let records = store.attachments.read().await;
+        assert_eq!(records.get(&hidden.workspace_path), Some(&hidden));
+        assert_eq!(records.len(), MAX_PERSISTED_PROJECT_ATTACHMENTS + 1);
     }
 
     #[tokio::test]

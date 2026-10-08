@@ -65,6 +65,65 @@ function renderPicker(overrides: Partial<ComponentProps<typeof ProjectPicker>> =
 	return { ...api, props };
 }
 
+function createWindowsDesktopApi() {
+	const browseFilesystem = vi.fn(async ({ partialPath }: { partialPath: string }) => {
+		if (partialPath === '/' || partialPath === '\\') {
+			return {
+				parentPath: '\\',
+				volumeList: true,
+				entries: [
+					{ name: 'C:\\', fullPath: 'C:\\' },
+					{ name: 'D:\\', fullPath: 'D:\\' },
+					{ name: 'E:\\', fullPath: 'E:\\' }
+				]
+			};
+		}
+
+		const drive = /^([DE]):(?:[\\/]|$)/i.exec(partialPath)?.[1]?.toUpperCase();
+
+		if (drive) {
+			if (partialPath === `${drive}:\\projects\\`) {
+				return {
+					parentPath: `${drive}:\\projects`,
+					volumeList: false,
+					entries: [{ name: '..', fullPath: `${drive}:\\` }]
+				};
+			}
+
+			return {
+				parentPath: `${drive}:\\`,
+				volumeList: false,
+				entries: [
+					{ name: '..', fullPath: '\\' },
+					{ name: 'projects', fullPath: `${drive}:\\projects` }
+				]
+			};
+		}
+
+		return {
+			parentPath: 'C:\\Users\\me',
+			volumeList: false,
+			entries: [{ name: '..', fullPath: 'C:\\Users' }]
+		};
+	});
+
+	const resolveWorkspacePath = vi.fn(async ({ workspacePath }: { workspacePath: string }) => {
+		const path = workspacePath.endsWith(':')
+			? `${workspacePath}\\`
+			: workspacePath.replaceAll('/', '\\');
+
+		const displayName = path.slice(3) || 'workspace';
+
+		return {
+			workspacePath: path,
+			displayName,
+			repositoryKey: displayName
+		};
+	});
+
+	return { browseFilesystem, resolveWorkspacePath };
+}
+
 async function keydown(target: Element, init: KeyboardEventInit) {
 	await act(async () => {
 		target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
@@ -79,6 +138,21 @@ async function waitForDirectories() {
 }
 
 describe('ProjectPicker', () => {
+	it('offers recent-project removal without browsing or opening that folder', async () => {
+		const recent = { workspacePath: 'D:\\robots', displayName: 'Robots' };
+		const onRemoveProject = vi.fn();
+
+		const { props, browseFilesystem } = renderPicker({
+			recentProjectPaths: [recent],
+			onRemoveProject
+		});
+
+		fireEvent.click(document.querySelector('[aria-label="Remove Robots from project list"]')!);
+		expect(onRemoveProject).toHaveBeenCalledWith(recent);
+		expect(browseFilesystem).toHaveBeenCalledWith({ partialPath: '~/' });
+		expect(props.onSelect).not.toHaveBeenCalled();
+	});
+
 	it('navigates the directory list with arrow keys and selects with Enter', async () => {
 		const { resolveWorkspacePath } = renderPicker();
 		await waitForDirectories();
@@ -158,4 +232,145 @@ describe('ProjectPicker', () => {
 			expect(props.onClose).toHaveBeenCalledOnce();
 		});
 	});
+
+	it.each(['D:', 'D:\\', 'D:/', 'E:', 'E:\\', 'E:/'])(
+		'browses and resolves a typed Windows root %s',
+		async (query) => {
+			const desktopApi = createWindowsDesktopApi();
+			const { props } = renderPicker({ desktopApi });
+
+			const input = document.querySelector<HTMLInputElement>(
+				'[aria-label="Project directory path"]'
+			)!;
+
+			await waitFor(() =>
+				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: '~/' })
+			);
+
+			fireEvent.change(input, { target: { value: query } });
+			await waitFor(() => {
+				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: query });
+				expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+			});
+			await keydown(input, { key: 'Enter', ctrlKey: true });
+
+			const root = `${query[0]}:\\`;
+			await waitFor(() => {
+				expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
+					workspacePath: query.endsWith(':') ? query : root,
+					createIfMissing: false
+				});
+				expect(props.onSelect).toHaveBeenCalledWith({
+					workspacePath: root,
+					displayName: 'workspace',
+					repositoryKey: 'workspace'
+				});
+			});
+		}
+	);
+
+	it.each(['/', '\\'])(
+		'selects E: from the Windows drive list at %s and returns to it',
+		async (query) => {
+			const desktopApi = createWindowsDesktopApi();
+			const { props } = renderPicker({ desktopApi });
+
+			const input = document.querySelector<HTMLInputElement>(
+				'[aria-label="Project directory path"]'
+			)!;
+
+			fireEvent.change(input, { target: { value: query } });
+			await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(3));
+			await keydown(input, { key: 'Enter', ctrlKey: true });
+			expect(desktopApi.resolveWorkspacePath).not.toHaveBeenCalled();
+
+			fireEvent.click(document.querySelectorAll('[role="option"]')[2]!);
+			expect(input.value).toBe('E:\\');
+			await waitFor(() => {
+				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: 'E:\\' });
+				expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+			});
+			await keydown(input, { key: 'Enter', ctrlKey: true });
+			await waitFor(() => {
+				expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
+					workspacePath: 'E:\\',
+					createIfMissing: false
+				});
+				expect(props.onSelect).toHaveBeenCalledWith({
+					workspacePath: 'E:\\',
+					displayName: 'workspace',
+					repositoryKey: 'workspace'
+				});
+			});
+
+			fireEvent.click(document.querySelector('[aria-label="Go to parent directory"]')!);
+			expect(input.value).toBe('\\');
+			await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(3));
+		}
+	);
+
+	it.each(['D', 'D:', '\\D:', 'e:', '/e:'])(
+		'filters the Windows drive list locally for %s before selecting it',
+		async (query) => {
+			const desktopApi = createWindowsDesktopApi();
+			renderPicker({ desktopApi });
+
+			const input = document.querySelector<HTMLInputElement>(
+				'[aria-label="Project directory path"]'
+			)!;
+
+			fireEvent.change(input, { target: { value: '\\' } });
+			await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(3));
+			fireEvent.change(input, { target: { value: query } });
+			const root = `${query.replace(/^[\\/]/, '')[0]!.toUpperCase()}:\\`;
+			await waitFor(() => {
+				const options = document.querySelectorAll('[role="option"]');
+				expect(options).toHaveLength(1);
+				expect(options[0]?.textContent).toBe(root);
+			});
+			await keydown(input, { key: 'Enter' });
+			expect(input.value).toBe(root);
+			await waitFor(() =>
+				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({ partialPath: root })
+			);
+			expect(desktopApi.browseFilesystem).not.toHaveBeenCalledWith({ partialPath: query });
+		}
+	);
+
+	it.each(['D', 'E'])(
+		'browses into a folder on drive %s and resolves it for selection',
+		async (drive) => {
+			const desktopApi = createWindowsDesktopApi();
+			const { props } = renderPicker({ desktopApi });
+
+			const input = document.querySelector<HTMLInputElement>(
+				'[aria-label="Project directory path"]'
+			)!;
+
+			fireEvent.change(input, { target: { value: `${drive}:\\` } });
+			await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(1));
+			fireEvent.click(document.querySelector('[role="option"]')!);
+			expect(input.value).toBe(`${drive}:\\projects\\`);
+			await waitFor(() => {
+				expect(desktopApi.browseFilesystem).toHaveBeenCalledWith({
+					partialPath: `${drive}:\\projects\\`
+				});
+				expect(document.querySelector('[data-project-submit]')?.hasAttribute('disabled')).toBe(
+					false
+				);
+			});
+			await keydown(input, { key: 'Enter', ctrlKey: true });
+			await waitFor(() => {
+				expect(desktopApi.resolveWorkspacePath).toHaveBeenCalledWith({
+					workspacePath: `${drive}:\\projects`,
+					createIfMissing: false
+				});
+				expect(props.onSelect).toHaveBeenCalledWith({
+					workspacePath: `${drive}:\\projects`,
+					displayName: 'projects',
+					repositoryKey: 'projects'
+				});
+			});
+		}
+	);
 });

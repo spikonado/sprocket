@@ -290,7 +290,7 @@ mod tests {
         let partial = root.join("new-project").to_string_lossy().to_string();
 
         let result = browse_filesystem(&partial, None).expect("browse");
-        assert_eq!(result.parent_path, root.to_string_lossy());
+        assert_eq!(result.parent_path, display_path(&root));
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -337,5 +337,43 @@ mod tests {
         assert!(is_windows_volume_list_query("\\"));
         assert!(!is_windows_volume_list_query("//server/share"));
         assert!(!is_windows_volume_list_query(r"D:\"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_roots_resolve_without_a_current_directory() {
+        let workspace = temp_dir("sprocket-browse-drive-root");
+        let root = workspace.ancestors().last().expect("drive root");
+        let displayed_root = display_path(root);
+        let bare_drive = displayed_root.trim_end_matches('\\');
+
+        for query in [
+            bare_drive.to_string(),
+            displayed_root.clone(),
+            displayed_root.replace('\\', "/"),
+        ] {
+            let directory = resolve_browse_directory(&query, None).expect("browse drive root");
+            assert_eq!(display_path(&directory), displayed_root);
+            assert_eq!(
+                parent_browse_entry(&directory)
+                    .expect("drive-list parent")
+                    .full_path,
+                "\\"
+            );
+        }
+
+        fs::remove_dir_all(workspace).expect("cleanup");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_browse_paths_keep_the_drive_prefix() {
+        for (query, expected) in [
+            (r"D:\projects\..\robot", r"D:\robot"),
+            ("E:/projects/../robot", r"E:\robot"),
+        ] {
+            let normalized = normalize_path(Path::new(query)).expect("normalize drive path");
+            assert_eq!(normalized, PathBuf::from(expected));
+        }
     }
 }
