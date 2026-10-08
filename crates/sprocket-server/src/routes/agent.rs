@@ -19,7 +19,6 @@ use sprocket_agent::{
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
-use uuid::Uuid;
 
 use crate::AppState;
 use crate::auth::require_session_user;
@@ -30,7 +29,7 @@ const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 struct FinishedOnDrop(Option<Arc<sprocket_agent::RunOutput>>);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) enum WorkspaceAccess {
     Attached,
     RunDirectory,
@@ -44,7 +43,7 @@ impl Drop for FinishedOnDrop {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RunAgentApiRequest {
     pub user_id: String,
@@ -166,6 +165,45 @@ pub(crate) async fn launch_agent(
     cancellation: sprocket_workspace::WorkspaceCancellation,
     output: Option<Arc<sprocket_agent::RunOutput>>,
 ) -> Result<RunStarted, ApiError> {
+    launch_agent_inner(
+        state,
+        payload,
+        workspace_access,
+        allow_interaction,
+        cancellation,
+        output,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn launch_recovery(
+    state: AppState,
+    record: crate::run_recovery::RecoveryRecord,
+) -> anyhow::Result<()> {
+    launch_agent_inner(
+        state,
+        record.request.clone(),
+        record.workspace_access,
+        record.allow_interaction,
+        Default::default(),
+        None,
+        Some(record),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| anyhow!("failed to restart interrupted run: {error}"))
+}
+
+async fn launch_agent_inner(
+    state: AppState,
+    payload: RunAgentApiRequest,
+    workspace_access: WorkspaceAccess,
+    allow_interaction: bool,
+    cancellation: sprocket_workspace::WorkspaceCancellation,
+    output: Option<Arc<sprocket_agent::RunOutput>>,
+    recovery: Option<crate::run_recovery::RecoveryRecord>,
+) -> Result<RunStarted, ApiError> {
     let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
     state
         .native_auth
@@ -224,15 +262,30 @@ pub(crate) async fn launch_agent(
         reasoning: payload.reasoning_effort.clone(),
         fast: payload.fast_mode,
     };
+    let mut recovery = recovery.unwrap_or_else(|| {
+        crate::run_recovery::RecoveryRecord::new(
+            payload.clone(),
+            workspace_access,
+            allow_interaction,
+        )
+    });
+    recovery.request.workspace_path = workspace_path.clone();
+    let (recovery_guard, saved) = state
+        .run_recovery
+        // Caller-owned output is the CLI's result and cancellation lifetime.
+        .begin(recovery, output.is_some())
+        .await
+        .map_err(ApiError::internal)?;
     let request = RunAgentRequest {
         chatgpt_credentials: Some(state.chatgpt_credentials.for_user(payload.user_id.clone())),
         allow_interaction,
         cancellation,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
-        execution_secret: payload
+        execution_secret: saved
+            .request
             .execution_secret
-            .unwrap_or_else(|| format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())),
+            .expect("the recovery record has an execution secret"),
         submission_id: payload.submission_id,
         thread_id: payload.thread_id.unwrap_or_default(),
         repository_key: payload.repository_key,
@@ -266,6 +319,7 @@ pub(crate) async fn launch_agent(
     // still either run or durably reconcile the submitted run.
     tokio::spawn(async move {
         let _guard = guard;
+        let _recovery_guard = recovery_guard;
         let _finished = FinishedOnDrop(output.clone());
         let run = match start_agent_run(request).await {
             Ok(run) => Ok(run),
@@ -495,6 +549,7 @@ fn encode_live_event(event: LiveCompletionWatchEvent) -> Option<Result<Event, In
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {

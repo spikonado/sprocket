@@ -238,10 +238,6 @@
 	font-size: 11px;
 }
 
-.inbox-row-model .inbox-status {
-	margin-left: auto;
-}
-
 .inbox-row-actions {
 	position: absolute;
 	top: 4px;
@@ -257,7 +253,7 @@
 	visibility: visible;
 }
 
-.inbox-row:hover .inbox-row-age {
+.inbox-row:has(> .inbox-row-actions):hover .inbox-status {
 	visibility: hidden;
 }
 
@@ -319,12 +315,6 @@
 .inbox-subagents svg {
 	flex-shrink: 0;
 	margin-top: 3.5px;
-}
-
-.inbox-subagent-statuses {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
 }
 
 .inbox-children .inbox-load-more {

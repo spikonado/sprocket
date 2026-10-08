@@ -25,7 +25,10 @@ import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
-import { refreshThreadHierarchyActivity } from '@convex/lib/threadHierarchy';
+import {
+	captureThreadActivityBeforeChange,
+	updateThreadHierarchyAfterChange
+} from '@convex/lib/threadHierarchy';
 
 const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -107,6 +110,8 @@ async function createQuestion(
 	const timeoutAt = timeoutMs === undefined ? undefined : createdAt + timeoutMs;
 	const sequence = await nextThreadSequence(ctx, run.threadId);
 
+	const before = await captureThreadActivityBeforeChange(ctx, run.threadId);
+
 	const questionId = await ctx.db.insert('agentQuestions', {
 		threadId: run.threadId,
 		runId: run._id,
@@ -124,7 +129,7 @@ async function createQuestion(
 		await scheduleDeadlineCheck(ctx, questionId, createdAt, timeoutAt);
 	}
 
-	await refreshThreadHierarchyActivity(ctx, run.threadId);
+	await updateThreadHierarchyAfterChange(ctx, before);
 
 	return {
 		questionId,
@@ -291,8 +296,10 @@ export async function answerPendingQuestion(
 			question.requiresContinuation || (run !== null && isRunFinalStatus(run.status))
 	} as const;
 
+	const before = await captureThreadActivityBeforeChange(ctx, args.threadId);
+
 	await ctx.db.patch('agentQuestions', question._id, questionPatch);
-	await refreshThreadHierarchyActivity(ctx, args.threadId);
+	await updateThreadHierarchyAfterChange(ctx, before);
 
 	return {
 		kind: 'answered',
@@ -379,11 +386,13 @@ export const timeout = internalMutation({
 			return null;
 		}
 
+		const before = await captureThreadActivityBeforeChange(ctx, question.threadId);
+
 		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'timedOut',
 			answeredAt: now
 		});
-		await refreshThreadHierarchyActivity(ctx, question.threadId);
+		await updateThreadHierarchyAfterChange(ctx, before);
 
 		return null;
 	}
@@ -433,6 +442,7 @@ export async function cancelPendingQuestionsForThread(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<boolean> {
+	const before = await captureThreadActivityBeforeChange(ctx, threadId);
 	const now = Date.now();
 	let cancelledAny = false;
 
@@ -464,6 +474,8 @@ export async function cancelPendingQuestionsForThread(
 		});
 		cancelledAny = true;
 	}
+
+	await updateThreadHierarchyAfterChange(ctx, before);
 
 	return cancelledAny;
 }

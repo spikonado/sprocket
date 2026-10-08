@@ -249,24 +249,11 @@ mod tests {
 
     #[test]
     fn deserialize_convex_u64_rejects_fractions() {
-        #[derive(Deserialize)]
-        struct Row {
-            #[serde(deserialize_with = "deserialize_convex_u64")]
-            n: u64,
-        }
-        assert!(serde_json::from_value::<Row>(serde_json::json!({ "n": 1.5 })).is_err());
+        assert!(deserialize_convex_u64(serde_json::json!(1.5)).is_err());
     }
 
     #[test]
     fn deserialize_convex_u32_rejects_overflow() {
-        #[derive(Deserialize)]
-        struct Row {
-            #[serde(deserialize_with = "deserialize_convex_u32")]
-            n: u32,
-        }
-        assert!(
-            serde_json::from_value::<Row>(serde_json::json!({ "n": (u32::MAX as f64) + 1.0 }))
-                .is_err()
-        );
+        assert!(deserialize_convex_u32(serde_json::json!((u32::MAX as f64) + 1.0)).is_err());
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io::Write;
 
-use sprocket_server::cli_protocol::{CliRunSettings, CliRunSnapshot, RunStarted};
+use sprocket_server::cli_protocol::{CliRunSnapshot, RunStarted};
 
 fn run_header(started: &RunStarted) -> String {
     format!(
@@ -138,6 +138,7 @@ impl Output {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sprocket_server::cli_protocol::CliRunSettings;
 
     fn snapshot(parts: serde_json::Value) -> CliRunSnapshot {
         serde_json::from_value(serde_json::json!({

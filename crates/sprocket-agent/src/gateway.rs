@@ -2,17 +2,18 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rig::DynModel;
 use rig::http_client::{
     self, DynHttpClient, HeaderMap, HttpMiddleware, Method, ReqwestClient, Uri, bearer_auth_header,
 };
 use rig::operation::Completion;
 use rig::providers::openai::OpenAIConfig;
 use rig::wasm_compat::WasmBoxedFuture;
+use rig::{DynModel, Model};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 use crate::live::now_ms;
+use crate::openai::DeveloperResponses;
 use crate::types::GatewayCredential;
 
 const REFRESH_HEADROOM_MS: u64 = 60_000;
@@ -115,12 +116,17 @@ impl GatewayClient {
         }
     }
 
-    pub(crate) fn completion_model(&self, model: impl Into<String>) -> DynModel<Completion> {
-        OpenAIConfig::new(GATEWAY_MANAGED_KEY)
+    pub(crate) fn completion_model(
+        &self,
+        model: impl Into<String>,
+        instructions: &str,
+    ) -> DynModel<Completion> {
+        let model = OpenAIConfig::new(GATEWAY_MANAGED_KEY)
             .with_base_url(&self.base_url)
+            .with_instructions(instructions)
             .connect(self.http.clone())
-            .responses(model)
-            .erase()
+            .responses(model);
+        Model::new(DeveloperResponses(model.wire), model.transport).erase()
     }
 }
 
@@ -142,7 +148,8 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn request() -> CompletionRequest {
-        CompletionRequest::new("hello")
+        CompletionRequest::new(crate::openai::developer_message("Continue the task."))
+            .messages([rig::completion::Message::user("hello")])
     }
 
     #[tokio::test]
@@ -170,6 +177,15 @@ mod tests {
                     .unwrap();
                 let mut body = vec![0; content_length];
                 socket.read_exact(&mut body).await.unwrap();
+                let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(request["instructions"], "Base instructions.");
+                assert_eq!(request["input"][0]["role"], "user");
+                assert_eq!(request["input"][1]["role"], "developer");
+                assert_eq!(
+                    request["input"][1]["content"][0]["text"],
+                    "Continue the task."
+                );
+                assert!(request.get("store").is_none());
                 let response = json!({
                     "id": "response-test",
                     "object": "response",
@@ -222,7 +238,7 @@ mod tests {
                 }
             }
         });
-        let model = client.completion_model("test-model");
+        let model = client.completion_model("test-model", "Base instructions.");
         timeout(TEST_TIMEOUT, model.call(request()))
             .await
             .unwrap()
@@ -379,7 +395,7 @@ mod tests {
         let client = GatewayClient::new("http://127.0.0.1:1/v1".to_string(), || async {
             Err::<GatewayCredential, _>(anyhow::anyhow!("Run is no longer active."))
         });
-        let model = client.completion_model("test-model");
+        let model = client.completion_model("test-model", "Base instructions.");
         let error = model.call(request()).await.unwrap_err();
         assert!(error.to_string().contains("Run is no longer active."));
         let mut stream = model.stream(request()).unwrap();
