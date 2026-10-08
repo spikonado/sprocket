@@ -16,11 +16,11 @@ use convex::Value;
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::agent_launch::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
 use crate::auth::bearer_token;
 use crate::cli_protocol::*;
 use crate::cli_sessions::CliSession;
 use crate::project_attachments::repository_key_matches;
-use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
 use crate::routes::api_error::ApiError;
 use crate::transcript_client::UserConvexClient;
 
