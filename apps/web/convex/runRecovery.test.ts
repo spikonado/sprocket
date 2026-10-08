@@ -56,6 +56,105 @@ async function setup() {
 }
 
 describe('automatic run recovery', () => {
+	it('recovers an executor-reported lease failure before the lifecycle deadline', async () => {
+		vi.useFakeTimers();
+		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			executionSecret: 'run-secret',
+			claimId: 'disconnected-agent'
+		});
+		await vi.advanceTimersByTimeAsync(RUN_CLAIM_LEASE_DURATION_MS - 10_000);
+
+		// Rust's lease loop reports the abandonment sentinel as lastError,
+		// retaining the underlying renewal failure in the transcript text.
+		expect(
+			await asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
+				runId,
+				executionSecret: 'run-secret',
+				claimId: 'disconnected-agent',
+				text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}: claim renewal timed out`,
+				lastError: RUN_ABANDONED_BY_AGENT
+			})
+		).toMatchObject({ accepted: true });
+		await vi.advanceTimersByTimeAsync(10_000);
+		await t.finishInProgressScheduledFunctions();
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+
+		// Refresh presence after advancing past the machine heartbeat window.
+		await asUser.mutation(api.machines.heartbeat, {
+			userId: 'user_alice',
+			machineId: queryArgs.machineId,
+			credential: 'machine-secret'
+		});
+		const continuation = await insertQueuedRun(t, asUser, recoveryArgs);
+		expect(continuation.created).toBe(true);
+		expect(continuation.promptPart).toBeUndefined();
+	});
+
+	it('hands recovery ownership to a manual continuation on another machine', async () => {
+		const { t, asUser, threadId, runId, queryArgs, recoveryArgs, abandon } = await setup();
+		await abandon();
+		const machineId = 'second-machine';
+		await asUser.mutation(api.machines.tryRegister, {
+			machineId,
+			credentialHash: await executionSecretHash('second-machine-secret'),
+			friendlyName: 'Second workstation',
+			platform: 'linux',
+			platformVersion: 'test',
+			architecture: 'x86_64',
+			hostname: 'second-workstation',
+			appVersion: 'test'
+		});
+		const submissionId = 'manual-continuation-on-second-machine';
+
+		const continuation = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId,
+			executionSecret: 'manual-secret',
+			prompt: '',
+			machineId,
+			continuationOfRunId: runId
+		});
+
+		expect(continuation.created).toBe(true);
+		expect(continuation.promptPart).toBeUndefined();
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
+		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow();
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: continuation.runId,
+			executionSecret: 'manual-secret',
+			text: '',
+			status: 'failed',
+			lastError: RUN_ABANDONED_BY_AGENT
+		});
+		expect(await asUser.query(api.runRecovery.state, { submissionId, machineId })).toEqual({
+			state: 'recover',
+			runId: continuation.runId,
+			threadId
+		});
+		expect(await asUser.query(api.runRecovery.state, { ...queryArgs, submissionId })).toEqual({
+			state: 'discard'
+		});
+		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
+			'Only the latest run can continue.'
+		);
+
+		const recovered = await insertQueuedRun(t, asUser, {
+			...recoveryArgs,
+			submissionId: `${AUTOMATIC_RECOVERY_SUBMISSION_PREFIX}second-machine`,
+			machineId,
+			continuationOfRunId: continuation.runId
+		});
+
+		expect(recovered.created).toBe(true);
+	});
+
 	it('recovers a lease-expired run once without replaying the prompt', async () => {
 		vi.useFakeTimers();
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();
