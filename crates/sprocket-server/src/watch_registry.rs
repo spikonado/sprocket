@@ -139,14 +139,14 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
         if slot.generation != generation {
             return;
         }
-        slot.refs = slot.refs.saturating_sub(1);
-        if slot.refs > 0 {
-            return;
+        slot.refs -= 1;
+        if slot.refs == 0 {
+            let slot = inner
+                .slots
+                .remove(key)
+                .expect("the open watch remains registered while locked");
+            slot.task.abort();
         }
-        let Some(slot) = inner.slots.remove(key) else {
-            return;
-        };
-        slot.task.abort();
     }
 
     #[cfg(test)]
