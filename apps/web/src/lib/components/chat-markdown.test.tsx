@@ -232,6 +232,38 @@ describe('code blocks', () => {
 
 	afterEach(() => vi.unstubAllGlobals());
 
+	it('wraps each block independently and keeps wrapping as highlighted code streams', async () => {
+		const content = '```ts\nconst reading = 23.4;\n```\n\n```\necho ready\n```';
+
+		const { container, getAllByRole, getByRole, rerender } = render(
+			<StrictMode>
+				<ChatMarkdown content={content} />
+			</StrictMode>
+		);
+
+		fireEvent.click(getAllByRole('button', { name: 'Enable line wrapping' })[0]);
+		expect(
+			getByRole('button', { name: 'Disable line wrapping' }).getAttribute('aria-pressed')
+		).toBe('true');
+		expect(container.querySelectorAll('pre.markdown-code-wrap')).toHaveLength(1);
+
+		rerender(
+			<StrictMode>
+				<ChatMarkdown content={content.replace('23.4;', '23.4;\nconsole.log(reading);')} />
+			</StrictMode>
+		);
+		await waitFor(() => expect(container.querySelector('pre code.shiki span')).not.toBeNull());
+		expect(container.querySelectorAll('pre.markdown-code-wrap')).toHaveLength(1);
+		expect(container.querySelector('pre.markdown-code-wrap code')?.textContent).toBe(
+			'const reading = 23.4;\nconsole.log(reading);\n'
+		);
+		expect(container.querySelectorAll('.markdown-code-header')).toHaveLength(2);
+
+		fireEvent.click(getByRole('button', { name: 'Disable line wrapping' }));
+		expect(container.querySelector('pre.markdown-code-wrap')).toBeNull();
+		expect(getAllByRole('button', { name: 'Enable line wrapping' })).toHaveLength(2);
+	});
+
 	it('highlights nested fences while preserving literal code, tabs, and blank lines', async () => {
 		const code = 'const markup = "<img src=x onerror=alert(1)>";\n\n\tconsole.log(markup);\n';
 
