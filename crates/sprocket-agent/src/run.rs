@@ -18,6 +18,7 @@ use crate::attachments::cache_prompt_attachments;
 use crate::catalog::catalog_capabilities_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
+use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
@@ -42,11 +43,11 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 /// Must match the createGatewayRun conflict ConvexErrors in
 /// apps/web/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
-const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
+const CONTINUE_PROMPT: &str = "continue";
 // Must match convex/lib/agentErrors.ts so executor-reported lease loss and
 // lifecycle-detected abandonment have the same automatic recovery policy.
 const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
-const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
+const DEVELOPER_PROMPT_TEMPLATE: &str = include_str!("developer_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
 const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
@@ -177,7 +178,7 @@ fn build_workspace_prompt_context(
     };
 
     let model_identity = format!("Your model is {model_label} ({model_id}).");
-    let base_instructions = SYSTEM_PROMPT_TEMPLATE
+    let base_instructions = DEVELOPER_PROMPT_TEMPLATE
         .trim_end()
         .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
         .replace(THREAD_ID_PLACEHOLDER, thread_id)
@@ -969,9 +970,7 @@ pub async fn run_agent(
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     let prompt = if continue_without_prompt {
-        Message::User {
-            content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
-        }
+        developer_message(CONTINUE_PROMPT)
     } else {
         prompt
     };

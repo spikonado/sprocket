@@ -19,6 +19,7 @@ use super::{
     ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffRequest,
     HandoffTool, context_summary_text,
 };
+use crate::openai::{developer_message, stateless_responses_model};
 
 const MODEL: &str = "gateway-model";
 const OLD_CONTEXT: &str = "UNIQUE_OLD_CONTEXT xyz-arm-bus";
@@ -354,12 +355,13 @@ fn stub_tool() -> DynamicTool {
 }
 
 fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
-    let model = openai::OpenAIConfig::new("test-key")
-        .with_base_url(base_url)
-        .client()
-        .responses(MODEL);
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key")
+            .with_base_url(base_url)
+            .with_instructions("context handoff fixture"),
+        MODEL,
+    );
     rig::AgentBuilder::new(model)
-        .preamble("context handoff fixture")
         .tool(hook.tool())
         .dynamic_tool(stub_tool())
         .build()
@@ -409,12 +411,16 @@ fn input_blob(request: &JsonValue) -> String {
 }
 
 fn assert_handoff_request(request: &JsonValue) {
+    let last = request["input"]
+        .as_array()
+        .expect("handoff input")
+        .last()
+        .unwrap();
     assert_eq!(
-        last_user_text(request),
-        HANDOFF_PROMPT,
-        "handoff completion must send the hidden prompt verbatim, got {}",
-        last_user_text(request)
+        last["content"][0]["text"], HANDOFF_PROMPT,
+        "handoff completion must send the hidden prompt verbatim"
     );
+    assert_eq!(last["role"], "developer");
     let tools = advertised_tools(request);
     assert!(
         tools.contains(&HandoffTool::NAME.to_string()) && tools.contains(&"exec_cmd".to_string()),
@@ -561,7 +567,10 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
-    let mut stream = agent.prompt(HANDOFF_PROMPT).add_hook(hook.clone()).stream();
+    let mut stream = agent
+        .prompt(developer_message(HANDOFF_PROMPT))
+        .add_hook(hook.clone())
+        .stream();
     let mut completion_calls = 0;
     let mut stopped = false;
     tokio::time::timeout(DRIVE_TIMEOUT, async {
@@ -636,7 +645,7 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
     match drive(
         &agent,
         &hook,
-        Message::user(HANDOFF_PROMPT),
+        developer_message(HANDOFF_PROMPT),
         request.history.clone(),
     )
     .await
@@ -737,7 +746,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
     match drive(
         &agent,
         &hook,
-        Message::user(HANDOFF_PROMPT),
+        developer_message(HANDOFF_PROMPT),
         request.history.clone(),
     )
     .await
@@ -803,7 +812,14 @@ async fn context_handoff_repeats_after_restart() {
     }
     let first = take_handoff(&hook);
     hook.start_handoff();
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), first.history).await {
+    match drive(
+        &agent,
+        &hook,
+        developer_message(HANDOFF_PROMPT),
+        first.history,
+    )
+    .await
+    {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("first handoff should submit, got {other:?}"),
     }
@@ -839,7 +855,14 @@ async fn context_handoff_repeats_after_restart() {
     );
 
     hook.start_handoff();
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), second.history).await {
+    match drive(
+        &agent,
+        &hook,
+        developer_message(HANDOFF_PROMPT),
+        second.history,
+    )
+    .await
+    {
         DriveEnd::Submitted(document) => assert_eq!(document, SECOND_SUMMARY),
         other => panic!("second handoff should submit a new document, got {other:?}"),
     }
@@ -869,7 +892,7 @@ async fn empty_handoff_document_is_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
         DriveEnd::MissingDocument => {}
         other => panic!("whitespace-only document should not be accepted, got {other:?}"),
     }
@@ -887,7 +910,7 @@ async fn truncated_handoff_turn_is_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("truncated handoff should stop the turn, got {other:?}"),
     }
@@ -902,7 +925,7 @@ async fn text_only_handoff_turn_is_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("a text-only handoff turn should fail, got {other:?}"),
     }
@@ -917,7 +940,7 @@ async fn two_handoff_tool_calls_are_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("two handoff tool calls should fail, got {other:?}"),
     }
@@ -932,7 +955,7 @@ async fn handoff_turn_only_accepts_the_handoff_tool_even_with_other_tools_advert
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, Message::user(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("handoff turn must reject an ordinary tool call, got {other:?}"),
     }

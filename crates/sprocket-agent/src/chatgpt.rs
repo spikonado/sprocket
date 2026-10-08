@@ -11,7 +11,6 @@ use rig::operation::Completion;
 use rig::providers::openai;
 #[cfg(test)]
 use rig::providers::openai::responses_api::ResponsesToolDefinition;
-use rig::providers::openai::responses_api::SystemInstructionsPlacement;
 use rig::wasm_compat::WasmCompatSend;
 #[cfg(test)]
 use rig::wire::{Mode, Wire};
@@ -566,12 +565,15 @@ fn namespace_function_tools(
 }
 
 impl ChatGptClient {
-    pub(crate) fn completion_model(&self, model: impl Into<String>) -> DynModel<Completion> {
+    pub(crate) fn completion_model(
+        &self,
+        model: impl Into<String>,
+        instructions: &str,
+    ) -> DynModel<Completion> {
         let wire = openai::responses_api::wire::Responses::new(
-            openai::OpenAIConfig::new("siwc-managed-by-transport"),
+            openai::OpenAIConfig::new("siwc-managed-by-transport").with_instructions(instructions),
             model,
-        )
-        .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions);
+        );
         Model::new(
             StatelessResponses(wire),
             SiwcHttpClient {
@@ -740,7 +742,7 @@ mod tests {
         };
         Model::new(
             StatelessResponses(openai::responses_api::wire::Responses::new(
-                openai::OpenAIConfig::new("test-token"),
+                openai::OpenAIConfig::new("test-token").with_instructions("Base instructions."),
                 "gpt-6.1-sol",
             )),
             http,
@@ -891,13 +893,11 @@ mod tests {
         .await;
         let (credentials, client) = stub_client("connection-1");
         let model = Model::new(
-            StatelessResponses(
-                openai::responses_api::wire::Responses::new(
-                    openai::OpenAIConfig::new("siwc-managed-by-transport"),
-                    "gpt-5.3-codex",
-                )
-                .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions),
-            ),
+            StatelessResponses(openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("siwc-managed-by-transport")
+                    .with_instructions("Base instructions."),
+                "gpt-5.3-codex",
+            )),
             SiwcHttpClient {
                 inner: reqwest::Client::builder()
                     .no_proxy()
@@ -1408,8 +1408,6 @@ mod tests {
         chat_history: Vec<Message>,
         additional_params: serde_json::Value,
     ) -> CompletionRequest {
-        let mut chat_history = chat_history;
-        chat_history.insert(0, Message::system("Base instructions."));
         CompletionRequest {
             model: None,
             chat_history,
@@ -1436,13 +1434,10 @@ mod tests {
     }
 
     fn wire_body(request: CompletionRequest) -> serde_json::Value {
-        let wire = StatelessResponses(
-            openai::responses_api::wire::Responses::new(
-                openai::OpenAIConfig::new("test-token"),
-                "gpt-5.3-codex",
-            )
-            .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions),
-        );
+        let wire = StatelessResponses(openai::responses_api::wire::Responses::new(
+            openai::OpenAIConfig::new("test-token").with_instructions("Base instructions."),
+            "gpt-5.3-codex",
+        ));
         let encoded = wire
             .encode(request, Mode::Streaming)
             .expect("request converts");
@@ -1459,25 +1454,25 @@ mod tests {
     }
 
     #[test]
-    fn siwc_body_lifts_mid_conversation_system_items_into_instructions() {
+    fn siwc_body_keeps_late_application_instructions_as_developer_messages() {
+        let previous = shaped_body(test_request(vec![Message::user("hi")]));
         let body = shaped_body(test_request(vec![
             Message::user("hi"),
-            Message::System {
-                content: "Mid-run rule.".to_string(),
-            },
+            crate::openai::developer_message("Mid-run rule."),
             Message::user("again"),
         ]));
 
-        assert_eq!(
-            body["instructions"],
-            json!("Base instructions.\n\nMid-run rule.")
-        );
+        assert_eq!(body["instructions"], json!("Base instructions."));
         let input = body["input"].as_array().unwrap();
         assert!(
             input.iter().all(|item| item["role"] != "system"),
             "system role input items are rejected by the SIWC route: {input:?}"
         );
-        assert_eq!(input.len(), 2);
+        assert_eq!(input.len(), 3);
+        assert_eq!(body["instructions"], previous["instructions"]);
+        assert_eq!(input[0], previous["input"][0]);
+        assert_eq!(input[1]["role"], "developer");
+        assert_eq!(input[1]["content"][0]["text"], "Mid-run rule.");
     }
 
     #[test]
@@ -1580,7 +1575,7 @@ mod tests {
     #[tokio::test]
     async fn nonstreaming_completion_is_rejected() {
         let (_, client) = stub_client("connection-1");
-        let model = client.completion_model("gpt-5.3-codex");
+        let model = client.completion_model("gpt-5.3-codex", "Base instructions.");
         let error = model
             .call(test_request(vec![Message::user("hello")]))
             .await

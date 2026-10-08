@@ -58,6 +58,17 @@ to pair tool results; existing transcript formats remain unchanged.
 Remove this wire wrapper once Rig exposes an equivalent stateless Responses
 configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
 
+### Rig developer messages
+
+Rig's pinned message type has no developer role. Sprocket represents application
+instructions as Rig system messages and converts them to `developer` in the
+shared Responses wire. Base instructions use the provider's `instructions`
+configuration directly. Late instructions stay at their conversation position
+on gateway, BYOK, and SIWC routes. User content and tool results keep their roles;
+stored transcript formats are unchanged. Remove this mapping when a released
+Rig version supports developer messages natively and the handoff, continuation,
+and SIWC prefix tests pass without it.
+
 ### Rig history identities
 
 Released Sprocket history records carry separate `id` and optional `callId`
