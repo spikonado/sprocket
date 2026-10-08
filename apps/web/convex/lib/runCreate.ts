@@ -26,7 +26,8 @@ import {
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import {
-	refreshThreadHierarchyActivity,
+	captureThreadActivityBeforeChange,
+	updateThreadHierarchyAfterChange,
 	registerChildThread,
 	threadRoot,
 	unsettleRootOfThread
@@ -296,6 +297,8 @@ export async function createQueuedRunRecord(
 
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 
+	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
+
 	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 
@@ -336,7 +339,7 @@ export async function createQueuedRunRecord(
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 
 	await unsettleRootOfThread(ctx, threadRecord);
-	await refreshThreadHierarchyActivity(ctx, threadRecord._id);
+	await updateThreadHierarchyAfterChange(ctx, before);
 	await startRunLifecycle(ctx, runId);
 
 	return created;
