@@ -131,6 +131,10 @@ describe('automatic run recovery', () => {
 				lastError: 'provider failure'
 			});
 			expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
+			expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId })).toBe(false);
+			expect(
+				(await t.run((ctx) => ctx.db.get('runs', runId)))?.cancellationRequestedAt
+			).toBeUndefined();
 			await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow();
 		}
 	);
@@ -157,7 +161,7 @@ describe('automatic run recovery', () => {
 			'This run cannot recover automatically.'
 		);
 		await t.run((ctx) => ctx.db.patch('threadRecords', threadId, { archivedAt: undefined }));
-		await t.run((ctx) => ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() }));
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
 		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
 		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
 			'This run cannot recover automatically.'

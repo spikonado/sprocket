@@ -5,6 +5,7 @@ import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { isAutomaticallyRecoverableRun } from '@convex/lib/runRecovery';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
@@ -84,6 +85,16 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			: false;
 
 	if (isRunFinalStatus(current.status)) {
+		if (
+			current.machineId !== undefined &&
+			isAutomaticallyRecoverableRun(current, current.machineId)
+		) {
+			// A stopped abandoned run must stay terminal when its local agent returns.
+			await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
+
+			return true;
+		}
+
 		return cancelledQuestions;
 	}
 
