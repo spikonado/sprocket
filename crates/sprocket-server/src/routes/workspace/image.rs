@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
@@ -15,7 +18,7 @@ use crate::auth::require_session_user;
 use crate::routes::api_error::ApiError;
 use crate::routes::session::MachineSession;
 
-pub(super) const MAX_LOCAL_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_LOCAL_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 static LOCAL_IMAGE_READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
 #[derive(Debug, Deserialize)]
@@ -230,7 +233,7 @@ fn open_local_image(
     Ok((file, metadata))
 }
 
-pub(super) fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {
+fn detect_image_media_type(contents: &[u8]) -> Option<&'static str> {
     if contents.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
     } else if contents.starts_with(b"\xff\xd8\xff") {
