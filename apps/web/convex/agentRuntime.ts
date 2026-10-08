@@ -546,8 +546,8 @@ export const finalizeCompletionCall = mutation({
 		usage: v.optional(
 			v.object({
 				contextTokens: v.number(),
-			processedTokens: v.number()
-		})
+				processedTokens: v.number()
+			})
 		),
 		executionSecret: v.string()
 	},

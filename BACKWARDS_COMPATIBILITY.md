@@ -617,13 +617,10 @@ Stored completion bodies may include `providerResponseId`,
 `providerRequestId`, and `providerMessageId`. New agents copy non-empty values
 from the provider completion call. Missing and empty strings are omitted.
 
-`finalizeCompletionCall` keeps these arguments optional so released agents that
-do not send them can still finalize. Stored fields remain optional because
-historical completions lack them and providers may omit them. The local JSONL
-replica does not store these fields.
-
-Keep the mutation arguments optional until agents that predate these fields
-have aged out. Do not require stored fields while providers can omit them.
+The mutation arguments and stored fields remain optional permanently: released
+agents do not send them, historical completions lack them, and providers may
+omit them even for new agents. Historical IDs cannot be reconstructed, so no
+backfill invents values. The local JSONL replica does not store these fields.
 
 #### Retired tool visibility flag
 

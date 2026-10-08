@@ -108,88 +108,114 @@ describe('numbered transcript parts', () => {
 		});
 	});
 
-	it('finalizes a successful completion call as one numbered record', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'transcript-complete-secret';
-
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'sub-complete',
-			executionSecret,
-			'Write code'
-		);
-
-		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-complete',
-			runId,
-			executionSecret
-		});
-		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
-			runId,
-			claimId: 'claim-complete',
-			attemptSeq: 1,
-			executionSecret
-		});
-
-		const items = [
-			{
-				type: 'reasoning' as const,
-				id: 'stream-1:reasoning:a',
-				text: 'Thinking',
-				turnId: 'stream-1',
-				startedAt: 1_000,
-				completedAt: 2_000
+	it.each([
+		{
+			label: 'reported provider IDs',
+			providerIds: {
+				providerResponseId: 'response-1',
+				providerRequestId: 'request-1',
+				providerMessageId: 'message-1'
 			},
-			{
-				type: 'text' as const,
-				id: 'stream-1:text:a',
-				text: 'Working',
-				turnId: 'stream-1',
-				startedAt: 2_000,
-				completedAt: 3_000
+			expectedIds: {
+				providerResponseId: 'response-1',
+				providerRequestId: 'request-1',
+				providerMessageId: 'message-1'
 			}
-		];
+		},
+		{
+			label: 'empty provider IDs',
+			providerIds: { providerResponseId: '', providerRequestId: '', providerMessageId: '' },
+			expectedIds: {}
+		},
+		{ label: 'unreported provider IDs', providerIds: {}, expectedIds: {} }
+	])(
+		'finalizes one numbered record with $label',
+		async ({ providerIds, expectedIds }) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = 'transcript-complete-secret';
 
-		const sectionKey = `agent:${runId}:claim-complete:1:section:1`;
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'sub-complete',
+				executionSecret,
+				'Write code'
+			);
 
-		const assignments = {
-			work: { ranges: [{ start: 0, end: 1, sectionKey }] },
-			toolInvocations: [],
-			sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
-		};
+			await asUser.mutation(api.agentRuntime.start, {
+				claimId: 'claim-complete',
+				runId,
+				executionSecret
+			});
+			await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+				runId,
+				claimId: 'claim-complete',
+				attemptSeq: 1,
+				executionSecret
+			});
 
-		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			runId,
-			claimId: 'claim-complete',
-			attemptSeq: 1,
-			streamId: 'stream-1',
-			items,
-			...assignments,
-			executionSecret
-		});
+			const items = [
+				{
+					type: 'reasoning' as const,
+					id: 'stream-1:reasoning:a',
+					text: 'Thinking',
+					turnId: 'stream-1',
+					startedAt: 1_000,
+					completedAt: 2_000
+				},
+				{
+					type: 'text' as const,
+					id: 'stream-1:text:a',
+					text: 'Working',
+					turnId: 'stream-1',
+					startedAt: 2_000,
+					completedAt: 3_000
+				}
+			];
 
-		expect(number?.number).toBe(1);
+			const sectionKey = `agent:${runId}:claim-complete:1:section:1`;
 
-		const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			runId,
-			claimId: 'claim-complete',
-			attemptSeq: 1,
-			streamId: 'stream-1',
-			items,
-			...assignments,
-			executionSecret
-		});
+			const assignments = {
+				work: { ranges: [{ start: 0, end: 1, sectionKey }] },
+				toolInvocations: [],
+				sections: [{ sectionKey, sectionOrdinal: 1, closed: true }]
+			};
 
-		expect(again?._id).toBe(number?._id);
-		const state = await asUser.query(api.transcript.getState, { threadId });
-		expect(state.totalParts).toBe(2);
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
-		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
-		expect(parts.parts[1]?.completion?.items).toEqual(items);
-	});
+			const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+				runId,
+				claimId: 'claim-complete',
+				attemptSeq: 1,
+				streamId: 'stream-1',
+				items,
+				...providerIds,
+				...assignments,
+				executionSecret
+			});
+
+			expect(number?.number).toBe(1);
+
+			const again = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+				runId,
+				claimId: 'claim-complete',
+				attemptSeq: 1,
+				streamId: 'stream-1',
+				items,
+				...providerIds,
+				...assignments,
+				executionSecret
+			});
+
+			expect(again?._id).toBe(number?._id);
+			const state = await asUser.query(api.transcript.getState, { threadId });
+			expect(state.totalParts).toBe(2);
+			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+			expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
+			expect(parts.parts[1]?.completion).toEqual({ streamId: 'stream-1', items, ...expectedIds });
+		},
+		10_000
+	);
 
 	it('accepts encrypted-only reasoning without a work assignment', async () => {
 		const t = initConvexTest();
