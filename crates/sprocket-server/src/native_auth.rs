@@ -1923,7 +1923,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sign_out_keeps_the_session_when_credential_deletion_fails() {
+    async fn failed_sign_out_retains_the_session_across_restart() {
         let store = MemoryRefreshTokenStore::with_token("refresh-current");
         let manager = NativeAuthManager::with_store(
             NativeAuthConfig {
@@ -1942,42 +1942,9 @@ mod tests {
         store.fail_clear.store(true, Ordering::SeqCst);
 
         assert!(manager.sign_out().await.is_err());
-        assert_eq!(
-            manager
-                .session
-                .lock()
-                .await
-                .user
-                .as_ref()
-                .map(|user| user.id.as_str()),
-            Some("user_123")
-        );
-        assert!(manager.session.lock().await.access_token.is_some());
-        assert_eq!(store.token().as_deref(), Some("refresh-current"));
-
         let session = manager.browser_session(false).await.unwrap().unwrap();
         assert_eq!(session.user.id, "user_123");
-    }
-
-    #[tokio::test]
-    async fn failed_sign_out_leaves_a_refresh_token_that_survives_restart() {
-        let store = MemoryRefreshTokenStore::with_token("refresh-current");
-        let manager = NativeAuthManager::with_store(
-            NativeAuthConfig {
-                workos_client_id: "client_test".to_string(),
-            },
-            "http://127.0.0.1/callback".to_string(),
-            store.clone(),
-        );
-        manager
-            .accept_authentication(authentication_response(
-                access_token(unix_time_secs() + 3_600),
-                "refresh-current",
-            ))
-            .await
-            .unwrap();
-        store.fail_clear.store(true, Ordering::SeqCst);
-        assert!(manager.sign_out().await.is_err());
+        assert_eq!(store.token().as_deref(), Some("refresh-current"));
         drop(manager);
 
         let restarted = manager_with_response(

@@ -1132,26 +1132,11 @@ export async function signOut() {
 			const generation = authGeneration;
 			const outcome = await requestNativeSessionToken(false, generation);
 
-			if (generation !== authGeneration) {
-				return;
-			}
-
-			if (outcome.kind === 'session') {
-				// Credential deletion failed and the host is still signed in.
-				authState.update((current) => ({
-					...current,
-					user: outcome.user,
-					isLoading: false,
-					nativeSession: 'ready',
-					error: errors.join(' ')
-				}));
-
+			if (generation !== authGeneration || outcome.kind === 'stale') {
 				return;
 			}
 
 			if (outcome.kind === 'signedOut') {
-				// Token delete succeeded but a later step failed, or the host is already
-				// gone. Do not keep a signed-in page that a restart would not restore.
 				authState.set(
 					signedOutState({
 						error: errors.join(' ')
@@ -1161,11 +1146,12 @@ export async function signOut() {
 				return;
 			}
 
-			// Timeout, 503, or another check failure does not mean the host signed out.
+			// Only an authoritative signed-out response can clear the retained account.
 			authState.update((current) => ({
 				...current,
+				user: outcome.kind === 'session' ? outcome.user : current.user,
 				isLoading: false,
-				nativeSession: current.user ? 'ready' : current.nativeSession,
+				nativeSession: outcome.kind === 'session' || current.user ? 'ready' : current.nativeSession,
 				error: errors.join(' ')
 			}));
 

@@ -1182,3 +1182,17 @@ it('floats logo and settings over a full-width transcript when the sidebar is cl
 	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
 	expect(document.querySelector('.inbox-floating-controls')).toBeNull();
 });
+
+it('shows a retained-account sign-out failure in Account settings', async () => {
+	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
+	fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
+	await screen.findByRole('button', { name: 'Sign Out' });
+	await act(async () => {
+		authState.update((current) => ({ ...current, error: 'Could not delete saved credentials.' }));
+	});
+	expect(screen.getByRole('alert').textContent).toBe('Could not delete saved credentials.');
+	expect(screen.getByRole('button', { name: 'Sign Out' })).toHaveProperty('disabled', false);
+	expect(screen.getByRole('button', { name: 'Show email address' }).textContent).toBe(
+		'a@example.com'
+	);
+});
