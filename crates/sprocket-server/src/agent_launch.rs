@@ -1,9 +1,3 @@
-//! Agent-run launch orchestration.
-//!
-//! HTTP `/agent/run`, the CLI, and native subagent delegation all start a run
-//! the same way. Keeping that here means those callers do not import route
-//! internals, and the HTTP module can stay a thin handler layer.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -179,7 +173,7 @@ async fn launch_agent_inner(
         allow_interaction,
         cancellation,
         deployment_url: state.convex_deployment_url.clone(),
-        auth_token_fetcher: auth_token_fetcher.clone(),
+        auth_token_fetcher,
         execution_secret: saved
             .request
             .execution_secret
@@ -223,8 +217,6 @@ async fn launch_agent_inner(
             Ok(run) => Ok(run),
             Err(error) => {
                 let startup_error = format!("{error:#}");
-                let mut cleanup_request = cleanup_request;
-                cleanup_request.auth_token_fetcher = auth_token_fetcher;
                 match timeout(
                     AGENT_START_CLEANUP_TIMEOUT,
                     finalize_failed_start(cleanup_request, startup_error.clone()),
