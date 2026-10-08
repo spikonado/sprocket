@@ -28,7 +28,11 @@ fn main() {
 
         let mut dirs: Vec<PathBuf> = fs::read_dir(&skills_dir)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", skills_dir.display()))
-            .filter_map(|entry| entry.ok())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|error| {
+                panic!("failed to read entry in {}: {error}", skills_dir.display())
+            })
+            .into_iter()
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
             .collect();
@@ -72,13 +76,12 @@ fn main() {
 
             // Embedded skills have no on-disk directory at runtime, so anything
             // beyond SKILL.md would be silently dropped by read_skill.
-            let entries: Vec<_> = fs::read_dir(&skill_dir)
+            for entry in fs::read_dir(&skill_dir)
                 .unwrap_or_else(|error| panic!("failed to read {}: {error}", skill_dir.display()))
-                .collect::<Result<_, _>>()
-                .unwrap_or_else(|error| {
+            {
+                let entry = entry.unwrap_or_else(|error| {
                     panic!("failed to read entry in {}: {error}", skill_dir.display())
                 });
-            for entry in entries {
                 let is_skill_md = entry.file_name() == "SKILL.md"
                     && entry
                         .file_type()

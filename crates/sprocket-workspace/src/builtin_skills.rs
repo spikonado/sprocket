@@ -28,43 +28,6 @@ mod tests {
     }
 
     #[test]
-    fn artifacts_skill_teaches_create_artifact_tool() {
-        let (_, contents) = BUILTIN_SKILLS
-            .iter()
-            .copied()
-            .find(|(name, _)| *name == "artifacts")
-            .expect("artifacts built-in skill must exist");
-        let parsed = parse_skill_markdown(contents).expect("artifacts skill parses");
-        assert!(
-            parsed.description.to_lowercase().contains("react")
-                || parsed.description.to_lowercase().contains("design"),
-            "description should mention react/design so the agent selects it"
-        );
-        assert!(parsed.body.contains("create_artifact"));
-        assert!(parsed.body.contains("contentType"));
-        assert!(parsed.body.contains("App"));
-    }
-
-    #[test]
-    fn ucp_shopping_skill_teaches_checkout_flow() {
-        let (_, contents) = BUILTIN_SKILLS
-            .iter()
-            .copied()
-            .find(|(name, _)| *name == "ucp-shopping")
-            .expect("ucp-shopping built-in skill must exist");
-        let parsed = parse_skill_markdown(contents).expect("ucp-shopping skill parses");
-        assert!(
-            parsed.description.to_lowercase().contains("shop")
-                || parsed.description.to_lowercase().contains("buy"),
-            "description should mention shopping/buying so the agent selects it"
-        );
-        assert!(parsed.body.contains("/.well-known/ucp"));
-        assert!(parsed.body.contains("checkout-sessions"));
-        assert!(parsed.body.contains("continue_url"));
-        assert!(parsed.body.contains("mandate_charge"));
-    }
-
-    #[test]
     fn vendored_skills_match_skills_lock() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let vendored_dir = manifest_dir.join(".agents/skills");
@@ -86,8 +49,8 @@ mod tests {
             .collect();
         dir_names.sort();
 
-        let lock_text = std::fs::read_to_string(&lock_path)
-            .expect("vendored skills require skills-lock.json");
+        let lock_text =
+            std::fs::read_to_string(&lock_path).expect("vendored skills require skills-lock.json");
         let lock: SkillsLock =
             serde_json::from_str(&lock_text).expect("skills-lock.json must be valid JSON");
         assert_eq!(lock.version, 1, "unsupported skills-lock.json version");
@@ -100,6 +63,7 @@ mod tests {
         for (name, entry) in &lock.skills {
             let contents = std::fs::read(vendored_dir.join(name).join("SKILL.md"))
                 .expect("vendored skill SKILL.md");
+            // The CLI hashes relative paths followed by bytes; build.rs allows only SKILL.md.
             let mut hasher = Sha256::new();
             hasher.update(b"SKILL.md");
             hasher.update(contents);

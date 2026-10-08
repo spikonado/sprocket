@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SKILLS_CLI = 'skills@1.5.23';
+
 const crateDir = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
 	'../crates/sprocket-workspace'
@@ -17,30 +18,38 @@ const crateDir = path.resolve(
 // the repo's default branch because the CLI's URL form requires one.
 function toTreeUrl(source) {
 	const shorthand = source.match(/^[\w.-]+\/[\w.-]+$/);
+
 	if (shorthand) {
 		return defaultBranchUrl(`https://github.com/${shorthand[0]}`);
 	}
+
 	const repoUrl = source.match(/^(https:\/\/github\.com\/[\w.-]+\/[\w.-]+?)\/?$/);
+
 	if (repoUrl) {
 		return defaultBranchUrl(repoUrl[1]);
 	}
+
 	return source;
 }
 
 function defaultBranchUrl(repoUrl) {
 	const result = spawnSync('git', ['ls-remote', '--symref', repoUrl, 'HEAD'], { encoding: 'utf8' });
 	const branch = result.stdout?.match(/^ref: refs\/heads\/(\S+)\s+HEAD$/m)?.[1];
+
 	if (result.status !== 0 || !branch) {
 		console.error(
 			`could not resolve the default branch of ${repoUrl}; pass a full https://github.com/<owner>/<repo>/tree/<ref> URL instead`
 		);
 		process.exit(1);
 	}
+
 	return `${repoUrl}/tree/${branch}`;
 }
 
 const [command, ...args] = process.argv.slice(2);
+
 let argv = null;
+
 if (command === 'add' && args.length > 0) {
 	argv = ['add', toTreeUrl(args[0]), ...args.slice(1), '-a', 'universal', '--copy', '-y'];
 } else if (command === 'update') {
@@ -63,4 +72,5 @@ const result = spawnSync('bunx', [SKILLS_CLI, ...argv], {
 if (result.error) {
 	console.error(`failed to run ${SKILLS_CLI}: ${result.error.message}`);
 }
+
 process.exit(result.status ?? 1);
