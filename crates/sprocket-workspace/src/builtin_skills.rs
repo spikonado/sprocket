@@ -68,7 +68,11 @@ mod tests {
             hasher.update(b"SKILL.md");
             hasher.update(contents);
             assert_eq!(
-                format!("{:x}", hasher.finalize()),
+                hasher
+                    .finalize()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
                 entry.computed_hash,
                 "vendored skill '{name}' differs from skills-lock.json; restore it with `bun run skills:update`"
             );
