@@ -1,5 +1,4 @@
 use axum::Json;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts, Query, Request};
 use axum::http::{HeaderMap, request::Parts};
 use axum::response::{IntoResponse, Response};
@@ -34,80 +33,52 @@ impl FromRequestParts<AppState> for MachineSession {
     }
 }
 
-/// JSON or query payload that names the user the caller claims to act as.
 pub(crate) trait UserScoped {
     fn user_id(&self) -> &str;
 }
 
-pub(crate) enum AuthorizedRejection {
-    Auth(ApiError),
-    Json(JsonRejection),
-    Query(QueryRejection),
-}
-
-impl From<ApiError> for AuthorizedRejection {
-    fn from(error: ApiError) -> Self {
-        Self::Auth(error)
-    }
-}
-
-impl IntoResponse for AuthorizedRejection {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Auth(error) => error.into_response(),
-            Self::Json(error) => error.into_response(),
-            Self::Query(error) => error.into_response(),
-        }
-    }
-}
-
-/// JSON body whose `userId` must match the caller's session and native identity.
 pub(crate) struct AuthorizedJson<T>(pub T);
 
 impl<T> FromRequest<AppState> for AuthorizedJson<T>
 where
     T: DeserializeOwned + UserScoped + Send,
 {
-    type Rejection = AuthorizedRejection;
+    type Rejection = Response;
 
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
         let headers = req.headers().clone();
         let jar = CookieJar::from_headers(&headers);
         let Json(payload) = Json::<T>::from_request(req, state)
             .await
-            .map_err(AuthorizedRejection::Json)?;
+            .map_err(IntoResponse::into_response)?;
         state
             .require_session_user(&headers, &jar, payload.user_id())
-            .await?;
+            .await
+            .map_err(IntoResponse::into_response)?;
         Ok(Self(payload))
     }
 }
 
-/// Query string whose `userId` must match the caller's session and native identity.
 pub(crate) struct AuthorizedQuery<T>(pub T);
 
 impl<T> FromRequestParts<AppState> for AuthorizedQuery<T>
 where
     T: DeserializeOwned + UserScoped + Send,
 {
-    type Rejection = AuthorizedRejection;
+    type Rejection = Response;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let headers = HeaderMap::from_request_parts(parts, state)
-            .await
-            .map_err(|_| ApiError::authentication_required())?;
-        let jar = CookieJar::from_request_parts(parts, state)
-            .await
-            .map_err(|_| ApiError::authentication_required())?;
+        let jar = CookieJar::from_headers(&parts.headers);
         let Query(query) = Query::<T>::from_request_parts(parts, state)
             .await
-            .map_err(AuthorizedRejection::Query)?;
+            .map_err(IntoResponse::into_response)?;
         state
-            .require_session_user(&headers, &jar, query.user_id())
-            .await?;
+            .require_session_user(&parts.headers, &jar, query.user_id())
+            .await
+            .map_err(IntoResponse::into_response)?;
         Ok(Self(query))
     }
 }
@@ -120,7 +91,6 @@ mod tests {
     use axum::routing::post;
     use serde::Deserialize;
     use tower::ServiceExt;
-    use uuid::Uuid;
 
     use super::*;
     use crate::auth;
@@ -142,11 +112,9 @@ mod tests {
         Json(payload.user_id)
     }
 
-    async fn test_state(native_user: Option<&str>) -> (AppState, String) {
-        let temp_dir =
-            std::env::temp_dir().join(format!("sprocket-session-user-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        let auth = auth::AuthState::load(&temp_dir).expect("auth state");
+    async fn test_state(native_user: Option<&str>) -> (tempfile::TempDir, AppState, String) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let auth = auth::AuthState::load(temp_dir.path()).expect("auth state");
         let (_, session_token) = auth
             .bootstrap_browser_session(true)
             .await
@@ -166,11 +134,11 @@ mod tests {
         let state = AppState::for_test(
             auth,
             native_auth,
-            temp_dir,
+            temp_dir.path().to_path_buf(),
             true,
             PackageUpdateManager::disabled(),
         );
-        (state, session_token)
+        (temp_dir, state, session_token)
     }
 
     fn router(state: AppState) -> Router {
@@ -194,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorized_json_requires_session_native_identity_and_matching_user() {
-        let (state, session_token) = test_state(Some("user-a")).await;
+        let (_temp_dir, state, session_token) = test_state(Some("user-a")).await;
         let app = router(state);
 
         let unauthenticated = app
@@ -224,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorized_json_rejects_a_session_without_native_identity() {
-        let (state, session_token) = test_state(None).await;
+        let (_temp_dir, state, session_token) = test_state(None).await;
         let response = router(state)
             .oneshot(echo_request(Some(&session_token), r#"{"userId":"user-a"}"#))
             .await
@@ -234,7 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorized_json_keeps_axum_json_rejection_for_bad_bodies() {
-        let (state, session_token) = test_state(Some("user-a")).await;
+        let (_temp_dir, state, session_token) = test_state(Some("user-a")).await;
         let response = router(state)
             .oneshot(echo_request(Some(&session_token), "not-json"))
             .await
