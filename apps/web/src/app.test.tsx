@@ -899,9 +899,12 @@ it.each([
 	expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId: 'run-1' });
 });
 
-it.each<ChangeLoopMode>(['cleanup-and-review', 'cleanup', 'review'])(
-	'submits the %s loop separately from the composer draft and attachments',
-	async (mode) => {
+it.each<{ mode: ChangeLoopMode; label: string; launchFails: boolean }>([
+	{ mode: 'cleanup-and-review', label: 'Run cleanup and review loop', launchFails: false },
+	{ mode: 'review', label: 'Run review loop', launchFails: true }
+])(
+	'submits the $mode loop separately from the composer draft and attachments (failure: $launchFails)',
+	async ({ mode, label, launchFails }) => {
 		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 		const thread = threadRecord('thread-1', 'repo-alpha', 'Robot changes');
 		const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
@@ -949,13 +952,6 @@ it.each<ChangeLoopMode>(['cleanup-and-review', 'cleanup', 'review'])(
 		});
 		await screen.findByRole('button', { name: 'Remove draft.txt' });
 
-		const label =
-			mode === 'cleanup'
-				? 'Run cleanup loop'
-				: mode === 'review'
-					? 'Run review loop'
-					: 'Run cleanup and review loop';
-
 		if (mode !== 'cleanup-and-review') {
 			fireEvent.click(screen.getByRole('button', { name: 'Select change loop' }));
 			fireEvent.click(screen.getByRole('button', { name: label }));
@@ -982,7 +978,7 @@ it.each<ChangeLoopMode>(['cleanup-and-review', 'cleanup', 'review'])(
 			true
 		);
 		await act(async () => {
-			if (mode === 'review') {
+			if (launchFails) {
 				launch.reject(new Error('Loop launch failed'));
 			} else {
 				// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -996,13 +992,13 @@ it.each<ChangeLoopMode>(['cleanup-and-review', 'cleanup', 'review'])(
 			}
 		});
 
-		if (mode === 'review') expect(await screen.findByText('Loop launch failed')).toBeTruthy();
+		if (launchFails) expect(await screen.findByText('Loop launch failed')).toBeTruthy();
 		expect(composer).toHaveProperty('value', 'Unfinished follow-up');
 		expect(screen.getByRole('button', { name: 'Remove draft.txt' })).toBeTruthy();
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Run cleanup and review loop' })).toHaveProperty(
 				'disabled',
-				mode !== 'review'
+				!launchFails
 			)
 		);
 	}

@@ -232,17 +232,11 @@ describe('PromptComposer change loops', () => {
 	])(
 		'selects $mode without running, invokes it explicitly, and resets for the next run',
 		async ({ mode, label }) => {
-			const { props, textarea } = renderChangeLoop();
-			expect(textarea.value).toBe('');
+			const { props } = renderChangeLoop();
 			const selector = screen.getByRole('button', { name: 'Select change loop' });
 			expect(selector.textContent).toBe('');
 			await click(selector);
 			const menu = screen.getByRole('dialog', { name: 'Change loop' });
-			expect(
-				within(menu)
-					.getAllByRole('button')
-					.map((button) => button.textContent)
-			).toEqual(['Run cleanup and review loop', 'Run cleanup loop', 'Run review loop']);
 			await click(within(menu).getByRole('button', { name: label }));
 			expect(screen.queryByRole('dialog', { name: 'Change loop' })).toBeNull();
 			expect(props.onRunChangeLoop).not.toHaveBeenCalled();

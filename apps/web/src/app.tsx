@@ -1033,12 +1033,7 @@ export default function App({
 			: undefined;
 
 	const canRunChangeLoop = Boolean(
-		changeLoopThreadId &&
-		canSend &&
-		!pendingAgentQuestion &&
-		!isRunInProgress &&
-		subtreeQuery.data &&
-		!subtreeQuery.data.anyActive
+		changeLoopThreadId && canSend && !pendingAgentQuestion && subtreeQuery.data?.anyActive === false
 	);
 
 	const recentProjectDirectories = useMemo(() => {

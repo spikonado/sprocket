@@ -18,21 +18,21 @@ const cleanupInstructions = `Spawn a fresh cleanup subagent with a prompt explic
 
 const reviewInstructions = `Spawn a fresh read-only review subagent with a prompt like "Review these changes", the full change scope, and the PR or other change reference. Have it report actionable findings without editing. Wait for completion, evaluate every finding yourself, and fix relevant issues; the reviewer may be wrong.`;
 
-export function changeLoopPrompt(mode: ChangeLoopMode): string {
-	const instructions: Record<ChangeLoopMode, string> = {
-		'cleanup-and-review': `Run the cleanup and review loop for up to three rounds.
+const instructions: Record<ChangeLoopMode, string> = {
+	'cleanup-and-review': `Run the cleanup and review loop for up to three rounds.
 In each round:
 1. ${cleanupInstructions}
 2. After cleanup completes, ${reviewInstructions}
 Stop early only when a complete round makes no cleanup edits and has no relevant review findings requiring fixes. Otherwise repeat with fresh subagents, reviewing the entire updated change each time.`,
-		cleanup: `Run the cleanup loop for up to three rounds.
+	cleanup: `Run the cleanup loop for up to three rounds.
 In each round, ${cleanupInstructions}
 Stop early when a completed cleanup makes no edits; otherwise repeat with a fresh cleanup subagent over the entire updated change. This mode has no reviewer, so you must not reverse cleanup changes yourself.`,
-		review: `Run the review loop for up to three rounds.
+	review: `Run the review loop for up to three rounds.
 In each round, ${reviewInstructions}
 Stop early when a completed review has no relevant findings requiring fixes; otherwise repeat with a fresh reviewer over the entire updated change.`
-	};
+};
 
+export function changeLoopPrompt(mode: ChangeLoopMode): string {
 	return `${instructions[mode]}
 
 ${scopeInstructions}
