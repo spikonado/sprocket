@@ -16,10 +16,12 @@ use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
 
 use crate::chatgpt::ChatGptClient;
-use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
+use crate::context_handoff::{
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_SUBMITTED, context_summary_text,
+};
 use crate::convex::RuntimeClient;
 use crate::gateway::GatewayClient;
-use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
+use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -100,7 +102,6 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
-    pub(crate) supports_required_tool_choice: bool,
     pub(crate) transcript_dir: PathBuf,
     pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
@@ -260,12 +261,6 @@ async fn run_with_completion_model(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
-        available_agent_tool_names(
-            request.allow_interaction,
-            request.supports_images,
-            request.is_child,
-        ),
-        request.supports_required_tool_choice,
     );
     let agent = AgentBuilder::new(model)
         .preamble(&request.base_instructions)
@@ -496,38 +491,45 @@ async fn run_with_completion_model(
                                     _ => {}
                                 }
                             }
+                            Some(Err(rig::completion::PromptError::Cancelled { reason, .. }))
+                                if reason == HANDOFF_SUBMITTED => {
+                                let Some(summary) = context_handoff_hook.take_summary() else {
+                                    break 'agent_run AgentProviderResult::Failed {
+                                        text: streamed_text,
+                                        error: anyhow!("Context handoff failed: no valid document was submitted."),
+                                    };
+                                };
+                                match runtime.save_context_handoff(
+                                    &request.run_id, &request.claim_id, &summary,
+                                    transcript.attempt_seq, before_prompt,
+                                    handoff_processed_tokens,
+                                ).await {
+                                    Ok(true) => {}
+                                    Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
+                                    Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
+                                }
+                                if let Err(error) = transcript.advance_attempt().await {
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
+                                history = initial_context.to_vec();
+                                let handoff = Message::user(context_summary_text(&summary));
+                                prompt = match deferred_prompt.take() {
+                                    Some(pending) => { history.push(handoff); pending }
+                                    None => handoff,
+                                };
+                                context_handoff_hook.restart();
+                                handoff_processed_tokens = 0;
+                                final_text.clear();
+                                final_response_received = false;
+                                streamed_text.clear();
+                                continue 'generations;
+                            }
                             Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
                                 if context_handoff_hook.is_writing() {
-                                    let Some(summary) = context_handoff_hook.take_summary() else {
-                                        break 'agent_run AgentProviderResult::Failed {
-                                            text: streamed_text,
-                                            error: anyhow!("Context handoff failed: no valid document was submitted."),
-                                        };
+                                    break 'agent_run AgentProviderResult::Failed {
+                                        text: streamed_text,
+                                        error: anyhow!("Context handoff failed: no valid document was submitted."),
                                     };
-                                    match runtime.save_context_handoff(
-                                        &request.run_id, &request.claim_id, &summary,
-                                        transcript.attempt_seq, before_prompt,
-                                        handoff_processed_tokens,
-                                    ).await {
-                                        Ok(true) => {}
-                                        Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
-                                        Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
-                                    }
-                                    if let Err(error) = transcript.advance_attempt().await {
-                                        break 'agent_run transcript_error(error, &final_text, &streamed_text);
-                                    }
-                                    history = initial_context.to_vec();
-                                    let handoff = Message::user(context_summary_text(&summary));
-                                    prompt = match deferred_prompt.take() {
-                                        Some(pending) => { history.push(handoff); pending }
-                                        None => handoff,
-                                    };
-                                    context_handoff_hook.restart();
-                                    handoff_processed_tokens = 0;
-                                    final_text.clear();
-                                    final_response_received = false;
-                                    streamed_text.clear();
-                                    continue 'generations;
                                 }
                                 if let Err(error) = transcript.begin_next_turn_if_streamed().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
