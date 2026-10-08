@@ -100,6 +100,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		resolveWorkspacePath: unused,
 		listProjectAttachments: async () => [],
 		attachProject: unused,
+		removeProject: unused,
 		runAgent: unused,
 		fetchTranscriptDisplay: async () => emptyDisplayPage('replica-1'),
 		fetchTranscriptDisplayDetails: unused,
@@ -274,6 +275,248 @@ it('populates projects from the desktop client resolved during boot', async () =
 
 	expect(await projectTrigger('Alpha')).toBeTruthy();
 	expect(listProjectAttachments).toHaveBeenCalled();
+});
+
+it.each(['/work/alpha', 'D:\\work\\alpha'])(
+	'removes %s from project lists and inbox queries, and restores it when re-added',
+	async (workspacePath) => {
+		const alpha = projectAttachment(workspacePath, 'repo-alpha', 'Alpha');
+		alpha.lastUsedAt = 2;
+		const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+		let attachments = [alpha, beta];
+		const client = createConvexFixtures();
+		client.registerPaginatedQuery(api.inbox.list, []);
+		const inboxQueries = vi.spyOn(client, 'watchPaginatedQuery');
+
+		const removeProject = vi.fn<DesktopApi['removeProject']>(async ({ workspacePath: path }) => {
+			attachments = attachments.filter((attachment) => attachment.workspacePath !== path);
+		});
+
+		const attachProject = vi.fn<DesktopApi['attachProject']>(async () => {
+			attachments = [alpha, beta];
+
+			return alpha;
+		});
+
+		const desktop = createDesktopApi({
+			listProjectAttachments: async () => attachments,
+			removeProject,
+			attachProject,
+			browseFilesystem: async () => ({ parentPath: '/home/me', entries: [] }),
+			resolveWorkspacePath: async () => ({ ...alpha })
+		});
+
+		await renderApp(client, createRuntime(desktop));
+		await projectTrigger('Alpha');
+		fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+		const confirmation = screen.getByRole('dialog', { name: 'Remove project?' });
+		expect(confirmation.textContent).toContain(workspacePath);
+		fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove project' }));
+		await waitFor(() => expect(removeProject).toHaveBeenCalledWith({ workspacePath }));
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Remove project?' })).toBeNull()
+		);
+		expect(await projectTrigger('Choose a project')).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Remove Alpha from project list' })).toBeNull();
+		expect(inboxQueries.mock.calls.at(-1)?.[1]).toEqual({
+			state: 'unsettled',
+			repositoryKeys: ['repo-beta']
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
+		const picker = screen.getByRole('dialog', { name: 'Add project' });
+		expect(
+			within(picker).queryByRole('button', { name: 'Remove alpha from project list' })
+		).toBeNull();
+		fireEvent.change(within(picker).getByRole('combobox'), { target: { value: workspacePath } });
+		const add = within(picker).getByRole('button', { name: /^(Add|Create & add)/ });
+		await waitFor(() => expect(add.hasAttribute('disabled')).toBe(false));
+		fireEvent.click(add);
+		expect(await projectTrigger('Alpha')).toBeTruthy();
+		expect(attachProject).toHaveBeenCalledWith({ workspacePath });
+		expect(inboxQueries.mock.calls.at(-1)?.[1]).toEqual({
+			state: 'unsettled',
+			repositoryKeys: ['repo-alpha', 'repo-beta']
+		});
+	}
+);
+
+it('finishes a pending upload before removing a project and restores the completed attachment', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+
+	const upload =
+		Promise.withResolvers<Awaited<ReturnType<DesktopApi['uploadTranscriptAttachment']>>>();
+
+	let attachments = [alpha];
+	const discardTranscriptAttachment = vi.fn(async () => true);
+
+	const removeProject = vi.fn<DesktopApi['removeProject']>(async () => {
+		attachments = [];
+	});
+
+	const desktop = createDesktopApi({
+		listProjectAttachments: async () => attachments,
+		removeProject,
+		uploadTranscriptAttachment: vi.fn(() => upload.promise),
+		discardTranscriptAttachment,
+		attachProject: async () => {
+			attachments = [alpha];
+
+			return alpha;
+		},
+		browseFilesystem: async () => ({ parentPath: '/home/me', entries: [] }),
+		resolveWorkspacePath: async () => alpha
+	});
+
+	await renderApp(createConvexFixtures(), createRuntime(desktop));
+	await projectTrigger('Alpha');
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Inspect these notes' } });
+	fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+		target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] }
+	});
+	await screen.findByLabelText('Uploading notes.txt');
+	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+	fireEvent.click(
+		within(screen.getByRole('dialog', { name: 'Remove project?' })).getByRole('button', {
+			name: 'Remove project'
+		})
+	);
+	await screen.findByRole('button', { name: 'Waiting for uploads…' });
+	expect(removeProject).not.toHaveBeenCalled();
+
+	await act(async () => {
+		upload.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			storageId: 'completed-upload' as Id<'_storage'>,
+			name: 'notes.txt',
+			mediaType: 'text/plain',
+			size: 5,
+			url: 'https://sprocket.test/notes'
+		});
+	});
+	await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Remove project?' })).toBeNull());
+	expect(removeProject).toHaveBeenCalledWith({ workspacePath: alpha.workspacePath });
+	expect(discardTranscriptAttachment).not.toHaveBeenCalled();
+
+	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
+	const picker = screen.getByRole('dialog', { name: 'Add project' });
+	fireEvent.change(within(picker).getByRole('combobox'), {
+		target: { value: alpha.workspacePath }
+	});
+	const add = within(picker).getByRole('button', { name: /^(Add|Create & add)/ });
+	await waitFor(() => expect(add.hasAttribute('disabled')).toBe(false));
+	fireEvent.click(add);
+	await projectTrigger('Alpha');
+	await screen.findByRole('button', { name: 'Remove notes.txt' });
+	expect(screen.queryByLabelText('Uploading notes.txt')).toBeNull();
+	expect(screen.getByRole('combobox')).toHaveProperty('value', 'Inspect these notes');
+	await waitFor(() =>
+		expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
+	);
+	expect(desktop.uploadTranscriptAttachment).toHaveBeenCalledOnce();
+	expect(discardTranscriptAttachment).not.toHaveBeenCalled();
+});
+
+it.each(['unrelated project', 'removed file', 'cancel waiting'])(
+	'keeps stalled uploads from blocking removal: %s',
+	async (scenario) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		alpha.lastUsedAt = 2;
+		const beta = projectAttachment('/work/beta', 'repo-beta', 'Beta');
+
+		const upload =
+			Promise.withResolvers<Awaited<ReturnType<DesktopApi['uploadTranscriptAttachment']>>>();
+
+		let attachments = [alpha, beta];
+
+		const removeProject = vi.fn<DesktopApi['removeProject']>(async ({ workspacePath }) => {
+			attachments = attachments.filter((entry) => entry.workspacePath !== workspacePath);
+		});
+
+		const desktop = createDesktopApi({
+			listProjectAttachments: async () => attachments,
+			removeProject,
+			uploadTranscriptAttachment: () => upload.promise
+		});
+
+		await renderApp(createConvexFixtures(), createRuntime(desktop));
+		await projectTrigger('Alpha');
+		fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+			target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] }
+		});
+		await screen.findByLabelText('Uploading notes.txt');
+
+		if (scenario === 'removed file') {
+			fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
+		}
+
+		fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+		const name = scenario === 'unrelated project' ? 'Beta' : 'Alpha';
+		fireEvent.click(screen.getByRole('button', { name: `Remove ${name} from project list` }));
+		const dialog = screen.getByRole('dialog', { name: 'Remove project?' });
+		fireEvent.click(within(dialog).getByRole('button', { name: 'Remove project' }));
+
+		if (scenario === 'cancel waiting') {
+			await screen.findByRole('button', { name: 'Waiting for uploads…' });
+			fireEvent.keyDown(window, { key: 'Escape' });
+		} else {
+			await waitFor(() =>
+				expect(removeProject).toHaveBeenCalledWith({
+					workspacePath: scenario === 'unrelated project' ? beta.workspacePath : alpha.workspacePath
+				})
+			);
+		}
+
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Remove project?' })).toBeNull()
+		);
+
+		if (scenario === 'cancel waiting') {
+			await projectTrigger('Alpha');
+			expect(removeProject).not.toHaveBeenCalled();
+		}
+
+		await act(async () => {
+			upload.resolve({
+				// SAFETY: fixture strings are only compared as opaque Convex document ids.
+				storageId: 'late-upload' as Id<'_storage'>,
+				name: 'notes.txt',
+				mediaType: 'text/plain',
+				size: 5,
+				url: 'https://sprocket.test/notes'
+			});
+		});
+
+		if (scenario !== 'removed file') {
+			expect(screen.queryByLabelText('Uploading notes.txt')).toBeNull();
+			expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeTruthy();
+		}
+	}
+);
+
+it('keeps an unavailable project listed when removal fails and allows retry', async () => {
+	const alpha = projectAttachment('/missing/alpha', 'repo-alpha', 'Alpha', 'unavailable');
+
+	const removeProject = vi
+		.fn<DesktopApi['removeProject']>()
+		.mockRejectedValueOnce(new Error('Could not save project list'))
+		.mockResolvedValue(undefined);
+
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], removeProject }))
+	);
+	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+	const confirmation = screen.getByRole('dialog', { name: 'Remove project?' });
+	fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove project' }));
+	await screen.findByText('Could not save project list');
+	expect(screen.getByRole('button', { name: 'Remove Alpha from project list' })).toBeTruthy();
+	fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove project' }));
+	await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Remove project?' })).toBeNull());
+	expect(screen.queryByRole('button', { name: 'Remove Alpha from project list' })).toBeNull();
 });
 
 it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {

@@ -67,8 +67,33 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 					status: 'uploading'
 				}
 			]);
+
 			void this.#upload(localId, file, name);
 		}
+	}
+
+	waitForUploads(signal: AbortSignal) {
+		return new Promise<void>((resolve, reject) => {
+			const check = () => {
+				if (signal.aborted) {
+					cleanup();
+					reject(signal.reason);
+				} else if (!this.items.some((entry) => entry.status === 'uploading')) {
+					cleanup();
+					resolve();
+				}
+			};
+
+			const unsubscribe = this.subscribe(check);
+
+			const cleanup = () => {
+				unsubscribe();
+				signal.removeEventListener('abort', check);
+			};
+
+			signal.addEventListener('abort', check, { once: true });
+			check();
+		});
 	}
 
 	remove(localId: string) {

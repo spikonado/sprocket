@@ -312,6 +312,7 @@ export type DesktopApi = {
 	}) => Promise<WorkspacePathResolution>;
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
+	removeProject: (input: { workspacePath: string }) => Promise<void>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
 	fetchTranscriptDisplay: (
 		request: TranscriptDisplayRequest,
@@ -370,6 +371,7 @@ export type WorkspacePathResolution = {
 	workspacePath: string;
 	displayName: string;
 	repositoryKey: string;
+	attachmentKey?: string;
 };
 
 export type ProjectAttachmentRequest = {

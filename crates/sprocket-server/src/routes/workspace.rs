@@ -50,6 +50,12 @@ struct WorkspaceSkillsRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RemoveProjectRequest {
+    workspace_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkspaceSearchRequest {
     workspace_path: String,
     query: String,
@@ -96,7 +102,9 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route(
             "/workspace/projects",
-            get(list_projects).post(attach_project),
+            get(list_projects)
+                .post(attach_project)
+                .delete(remove_project),
         )
         .route("/workspace/resolve", post(resolve_path))
         .route("/workspace/browse", post(browse_path))
@@ -464,6 +472,19 @@ async fn attach_project(
     Ok(Json(project))
 }
 
+async fn remove_project(
+    State(state): State<AppState>,
+    MachineSession: MachineSession,
+    Json(payload): Json<RemoveProjectRequest>,
+) -> Result<Json<()>, ApiError> {
+    state
+        .project_attachments
+        .remove(&payload.workspace_path)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(()))
+}
+
 async fn resolve_path(
     MachineSession: MachineSession,
     Json(payload): Json<WorkspacePathResolutionRequest>,
@@ -561,6 +582,62 @@ mod tests {
             );
         }
         builder.body(Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn remove_project_requires_session_and_returns_null() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let (app, token) = image_test_app(data.path()).await;
+        let workspace_path = resolve_workspace_path(&workspace.path().to_string_lossy(), false)
+            .unwrap()
+            .workspace_path;
+        let payload = serde_json::json!({"workspacePath": workspace_path}).to_string();
+        let request = |method: &str, token: Option<&str>| {
+            let mut builder = Request::builder()
+                .method(method)
+                .uri("/workspace/projects")
+                .header("content-type", "application/json");
+            if let Some(token) = token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            builder.body(Body::from(payload.clone())).unwrap()
+        };
+
+        let attached = app
+            .clone()
+            .oneshot(request("POST", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(attached.status(), StatusCode::OK);
+
+        let denied = app.clone().oneshot(request("DELETE", None)).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+
+        let removed = app
+            .clone()
+            .oneshot(request("DELETE", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        assert_eq!(removed.headers()[header::CONTENT_TYPE], "application/json");
+        let body = to_bytes(removed.into_body(), 1024).await.unwrap();
+        assert_eq!(body.as_ref(), b"null");
+
+        let listed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/workspace/projects")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let body = to_bytes(listed.into_body(), 1024).await.unwrap();
+        let projects: Vec<ProjectAttachmentRecord> = serde_json::from_slice(&body).unwrap();
+        assert!(projects.is_empty());
     }
 
     #[tokio::test]

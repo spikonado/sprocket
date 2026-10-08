@@ -2,6 +2,32 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Local project attachment compatibility
+
+### Hidden attachments
+
+`project-attachments.json` keeps its existing array format. Records without
+`hidden` default to visible, and visible records omit the field when saved.
+Hidden records retain their workspace identity and history; run recovery and
+message updates preserve the flag, while explicitly adding the folder restores
+visibility. The project list and inbox omit hidden attachments. Convex threads,
+artifacts, and released-client functions are unchanged, so no Convex migration
+is needed.
+
+Hidden records are retained outside the recent-project pruning limit so run
+recovery cannot recreate a removed project as visible.
+
+Workspace resolution keeps the server's `attachmentKey` in the web client.
+Responses without that field still validate; their canonical-attachment fallback
+is limited to remote repositories, never unrelated same-named directories.
+Remove the optional response field and fallback after servers that omit
+`attachmentKey` are outside the supported upgrade window.
+
+Keep the missing-field default until all supported local attachment files have
+been rewritten by a versioned migration that requires `hidden`. Older binaries
+ignore the field and may show a hidden project again after a downgrade; they
+can still read the file and cannot lose project history through this change.
+
 ## Development tooling compatibility
 
 ### TypeScript compiler API

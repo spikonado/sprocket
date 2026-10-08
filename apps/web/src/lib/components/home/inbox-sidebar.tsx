@@ -92,6 +92,7 @@ type InboxSidebarProps = {
 	onSelect: (thread: Thread) => void;
 	onNew: () => void;
 	onAddProject: () => void;
+	onRemoveProject?: (project: Project) => void;
 	onSettings: () => void;
 	onClose: () => void;
 	onChange: (thread: Thread, state: InboxState) => Promise<void>;
@@ -116,6 +117,7 @@ export default function InboxSidebar({
 	onSelect,
 	onNew,
 	onAddProject,
+	onRemoveProject,
 	onSettings,
 	onClose,
 	onChange,
@@ -483,17 +485,32 @@ export default function InboxSidebar({
 										selectedProjects.length === 1 && selectedProjects[0] === project.repositoryKey;
 
 									return (
-										<button
-											key={project.repositoryKey}
-											className={cn('inbox-project-option', {
-												'inbox-project-selected': selected
-											})}
-											type="button"
-											aria-pressed={selected}
-											onClick={() => filterProjects([project.repositoryKey])}
-										>
-											{project.displayName}
-										</button>
+										<div className="flex items-center" key={project.repositoryKey}>
+											<button
+												className={cn('inbox-project-option', {
+													'inbox-project-selected': selected
+												})}
+												type="button"
+												aria-pressed={selected}
+												onClick={() => filterProjects([project.repositoryKey])}
+											>
+												{project.displayName}
+											</button>
+											{onRemoveProject && (
+												<button
+													type="button"
+													className="inbox-icon shrink-0"
+													aria-label={`Remove ${project.displayName} from project list`}
+													title={`Remove ${project.workspacePath} from project list`}
+													onClick={() => {
+														closeProjectMenu();
+														onRemoveProject(project);
+													}}
+												>
+													<X size={14} />
+												</button>
+											)}
+										</div>
 									);
 								})}
 							</div>

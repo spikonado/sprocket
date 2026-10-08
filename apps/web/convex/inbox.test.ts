@@ -30,6 +30,88 @@ describe('thread inbox', () => {
 		expect(settled.page.map((thread) => thread._id)).toEqual([second]);
 	});
 
+	it.each(['unsettled', 'settled'] as const)(
+		'restores %s history and artifacts when a removed project key is re-added',
+		async (state) => {
+			const t = initConvexTest();
+			const { asUser, subject, threadId, repositoryKey } = await seedOwnedThread(t);
+			const second = await seedThreadRecord(t, subject, 'beta');
+			const prompt = 'Create project notes';
+			const executionSecret = 'inbox-project-removal-secret';
+
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'inbox-project-removal',
+				executionSecret,
+				prompt
+			);
+
+			const auth = { runId, executionSecret, claimId: 'inbox-project-removal-claim' };
+			await asUser.mutation(api.agentRuntime.start, auth);
+
+			const { artifactId } = await asUser.mutation(api.artifacts.addArtifact, {
+				...auth,
+				registrationId: 'inbox-project-notes',
+				scope: 'project',
+				title: 'Project notes',
+				contentType: 'markdown',
+				content: '# Preserved project notes'
+			});
+
+			await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId,
+				executionSecret,
+				expectedStatus: 'running',
+				expectedClaimId: auth.claimId,
+				text: 'Created project notes',
+				status: 'completed'
+			});
+
+			if (state === 'settled') {
+				await asUser.mutation(api.threads.settle, { threadId });
+				await asUser.mutation(api.threads.settle, { threadId: second });
+			}
+
+			const listInbox = (repositoryKeys: string[]) =>
+				asUser.query(api.inbox.list, {
+					state,
+					repositoryKeys,
+					paginationOpts: { numItems: 10, cursor: null }
+				});
+
+			const readHistory = async () => ({
+				thread: await asUser.query(api.threads.getByThreadId, { threadId }),
+				run: await t.run((ctx) => ctx.db.get('runs', runId)),
+				transcript: await asUser.query(api.transcript.getParts, { threadId, numbers: [0] }),
+				artifacts: await asUser.query(api.artifacts.listArtifacts, { repositoryKey }),
+				artifact: await asUser.query(api.artifacts.getArtifact, { repositoryKey, artifactId })
+			});
+
+			const attached = await listInbox([repositoryKey, 'beta']);
+			expect(attached.page.map((thread) => thread._id).sort()).toEqual([threadId, second].sort());
+			const history = await readHistory();
+			expect(history.run).toMatchObject({ threadId, status: 'completed' });
+			expect(history.transcript.parts).toMatchObject([
+				{ number: 0, kind: 'prompt', prompt: { text: prompt } }
+			]);
+			expect(history.artifacts.page.map((artifact) => artifact._id)).toEqual([artifactId]);
+			expect(history.artifact).toMatchObject({
+				content: '# Preserved project notes',
+				revision: 1
+			});
+
+			const removed = await listInbox(['beta']);
+			expect(removed.page.map((thread) => thread._id)).toEqual([second]);
+			expect(await readHistory()).toEqual(history);
+
+			const restored = await listInbox([repositoryKey, 'beta']);
+			expect(restored.page).toEqual(attached.page);
+			expect(await readHistory()).toEqual(history);
+		}
+	);
+
 	it('keeps another account out of the requested project stream', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
