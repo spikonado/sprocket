@@ -18,11 +18,6 @@ type PendingBrowserLogin = {
 	login: ChatGptBrowserLoginStart;
 };
 
-type PendingChatGptOperation = {
-	generation: number;
-	kind: 'refresh' | 'select' | 'signout';
-};
-
 export default function SettingsProviders({
 	userId,
 	desktopApi,
@@ -62,8 +57,8 @@ export default function SettingsProviders({
 	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
 	const loginGenerationRef = useRef(0);
-	const pendingOperationRef = useRef<PendingChatGptOperation | null>(null);
-	const userOpEpochRef = useRef(0);
+	const pendingOperationRef = useRef<number | null>(null);
+	const selectionEpochRef = useRef(0);
 	const loginEpochRef = useRef(0);
 
 	const activeAccount =
@@ -93,13 +88,13 @@ export default function SettingsProviders({
 			.catch(() => {});
 	}
 
-	function beginChatGptPending(generation: number, kind: 'refresh' | 'select' | 'signout') {
-		pendingOperationRef.current = { generation, kind };
+	function beginChatGptPending(generation: number) {
+		pendingOperationRef.current = generation;
 		setChatGptPending(true);
 	}
 
 	function endChatGptPending(generation: number) {
-		if (pendingOperationRef.current?.generation !== generation) return;
+		if (pendingOperationRef.current !== generation) return;
 
 		pendingOperationRef.current = null;
 		setChatGptPending(false);
@@ -154,6 +149,7 @@ export default function SettingsProviders({
 		generation: number
 	) {
 		let closedPendingPolls = 0;
+		const selectionAtStart = selectionEpochRef.current;
 
 		for (;;) {
 			await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -194,16 +190,11 @@ export default function SettingsProviders({
 					return;
 				}
 
-				const userOpAtFetch = userOpEpochRef.current;
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
 				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
 
-				const pendingKind = pendingOperationRef.current?.kind;
-
-				if (pendingKind === 'select' || pendingKind === 'signout') return;
-
-				if (userOpEpochRef.current !== userOpAtFetch) return;
+				if (selectionEpochRef.current !== selectionAtStart) return;
 
 				loginEpochRef.current += 1;
 				onChatGptStatusChange(status);
@@ -314,14 +305,14 @@ export default function SettingsProviders({
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 
-		beginChatGptPending(generation, 'select');
+		selectionEpochRef.current += 1;
+		beginChatGptPending(generation);
 
 		try {
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
-			userOpEpochRef.current += 1;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
@@ -343,7 +334,7 @@ export default function SettingsProviders({
 		const generation = ++generationRef.current;
 		const loginEpochAtStart = loginEpochRef.current;
 
-		beginChatGptPending(generation, 'refresh');
+		beginChatGptPending(generation);
 		setChatGptError(null);
 
 		try {
@@ -377,7 +368,7 @@ export default function SettingsProviders({
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 
-		beginChatGptPending(generation, 'signout');
+		beginChatGptPending(generation);
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
@@ -394,7 +385,6 @@ export default function SettingsProviders({
 						? null
 						: chatGptStatus.activeConnectionId;
 
-				userOpEpochRef.current += 1;
 				onChatGptStatusChange({
 					accounts: chatGptStatus.accounts.filter(
 						(account) => account.connectionId !== connectionId
@@ -407,7 +397,6 @@ export default function SettingsProviders({
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
-			userOpEpochRef.current += 1;
 			onChatGptStatusChange(status);
 		} catch (error) {
 			if (generation !== generationRef.current) return;
