@@ -253,11 +253,11 @@ it('does not render empty thread rows', async () => {
 	expect(document.body.textContent).not.toContain('No unsettled threads');
 });
 
-it('shows project, title, age, provider, and model name without a model slug', async () => {
+it('shows project, title, provider, and model name without a model slug', async () => {
 	await render([thread()]);
 	const row = document.querySelector('.inbox-row')!;
 
-	expect(row.querySelector('.inbox-row-meta')?.textContent).toContain('Repository');
+	expect(row.querySelector('.inbox-row-meta')?.textContent).toBe('Repository');
 	expect(row.querySelector('.inbox-row-title')?.textContent).toBe('Thread');
 	expect(row.querySelector('.inbox-row-model')?.textContent).toContain('Model Name');
 	expect(row.querySelector('.inbox-row-model svg')).toBeTruthy();
@@ -304,12 +304,19 @@ it.each([
 	{ status: 'running', label: 'Working', className: 'inbox-working' },
 	{ status: 'failed', label: 'Failed', className: 'inbox-attention' }
 ] satisfies { status: ThreadStatus; label: string; className: string }[])(
-	'styles the $label thread status',
+	'shows the $label thread status beside the project, including while renaming',
 	async ({ status, label, className }) => {
 		await render([thread(false, status)]);
-		const badge = document.querySelector(`.inbox-row-model .inbox-status.${className}`);
+		const badge = document.querySelector(`.inbox-row-meta .inbox-status.${className}`);
 
 		expect(badge?.textContent).toBe(label);
+		expect(document.querySelector('.inbox-row-meta')?.textContent).toBe(`Repository${label}`);
+		expect(document.querySelector('.inbox-row-model .truncate')?.textContent).toBe('Model Name');
+
+		await userEvent.setup().dblClick(document.querySelector('.inbox-row-main')!);
+		await flush();
+
+		expect(document.querySelector('form .inbox-row-meta .inbox-status')?.textContent).toBe(label);
 	}
 );
 

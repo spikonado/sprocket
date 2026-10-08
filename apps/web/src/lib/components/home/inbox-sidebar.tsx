@@ -65,7 +65,6 @@ type ThreadTreeRowProps = {
 	readTreeSummary?: ThreadTreeSummaryRead;
 	projectName: string;
 	model: Pick<CatalogModel, 'id' | 'label' | 'provider'> | undefined;
-	ageLabel: string;
 	renderChildren: (rows: Thread[]) => ReactElement;
 	onChoose: (thread: Thread) => void;
 	onOpenMenu: (event: ReactMouseEvent, thread: Thread) => void;
@@ -131,7 +130,6 @@ export default function InboxSidebar({
 	const [busy, setBusy] = useState(false);
 	const [renameThread, setRenameThread] = useState<Thread | null>(null);
 	const [renameTitle, setRenameTitle] = useState('');
-	const [now, setNow] = useState(() => Date.now());
 	const [projectSearch, setProjectSearch] = useState('');
 	const busyRef = useRef(false);
 	const menuTriggerRef = useRef<HTMLElement | null>(null);
@@ -195,12 +193,6 @@ export default function InboxSidebar({
 		} catch {
 			// Browsers can deny storage access while still allowing the app to run.
 		}
-
-		const timer = setInterval(() => {
-			setNow(Date.now());
-		}, 30_000);
-
-		return () => clearInterval(timer);
 	}, []);
 
 	useEffect(() => {
@@ -252,18 +244,6 @@ export default function InboxSidebar({
 		} catch {
 			// The collapsed state still works for this session without storage.
 		}
-	}
-
-	function age(at: number) {
-		const minutes = Math.max(0, Math.floor((now - at) / 60_000));
-
-		if (minutes < 1) return 'now';
-
-		if (minutes < 60) return `${minutes}m`;
-
-		if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
-
-		return `${Math.floor(minutes / 1440)}d`;
 	}
 
 	function beginRename(thread: Thread) {
@@ -377,7 +357,6 @@ export default function InboxSidebar({
 			readTreeSummary={readTreeSummary}
 			projectName={projectName(thread)}
 			model={threadModel(thread)}
-			ageLabel={age(thread.lastMessageAt)}
 			renderChildren={(children) => (
 				<>{children.map((child) => renderThreadRow(child, sectionState, depth + 1))}</>
 			)}
@@ -677,7 +656,6 @@ function ThreadTreeRow({
 	readTreeSummary = useThreadTreeSummary,
 	projectName,
 	model,
-	ageLabel,
 	renderChildren,
 	onChoose,
 	onOpenMenu,
@@ -727,7 +705,11 @@ function ThreadTreeRow({
 					>
 						<span className="inbox-row-meta">
 							<span className="truncate">{projectName}</span>
-							<span className="inbox-row-age shrink-0">{ageLabel}</span>
+							{status && (
+								<span className={cn('inbox-status shrink-0', status.className)}>
+									{status.label}
+								</span>
+							)}
 						</span>
 						<input
 							ref={renameInputRef}
@@ -758,7 +740,7 @@ function ThreadTreeRow({
 					<button
 						className="inbox-row-main"
 						type="button"
-						title={`${thread.title ?? 'New thread'}\n${projectName}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
+						title={`${thread.title ?? 'New thread'}\n${projectName}`}
 						onClick={() => onChoose(thread)}
 						onDoubleClick={() => {
 							if (!mutationsEnabled || busy) return;
@@ -768,7 +750,11 @@ function ThreadTreeRow({
 					>
 						<span className="inbox-row-meta">
 							<span className="truncate">{projectName}</span>
-							<span className="inbox-row-age shrink-0">{ageLabel}</span>
+							{status && (
+								<span className={cn('inbox-status shrink-0', status.className)}>
+									{status.label}
+								</span>
+							)}
 						</span>
 						<span className="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
 						<span className="inbox-row-model">
@@ -779,9 +765,6 @@ function ThreadTreeRow({
 								</>
 							) : (
 								<span className="truncate">Unknown model</span>
-							)}
-							{status && (
-								<span className={cn('inbox-status', status.className)}>{status.label}</span>
 							)}
 						</span>
 					</button>
