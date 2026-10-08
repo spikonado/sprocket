@@ -36,7 +36,7 @@ impl Drop for FinishedOnDrop {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RunAgentApiRequest {
     pub user_id: String,
