@@ -365,8 +365,10 @@ export default defineSchema({
 		]),
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
-		ownActive: v.boolean(),
+		// Released contribution flags are accepted only until the counter backfill finishes.
+		ownActive: v.optional(v.boolean()),
 		ownStatus: v.optional(vRunStatus),
+		workingDescendantCount: v.optional(v.number()),
 		descendantCount: v.number(),
 		activeDescendantCount: v.number(),
 		descendantStatusCounts: v.optional(vDescendantStatusCounts)
