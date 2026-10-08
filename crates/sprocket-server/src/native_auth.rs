@@ -1270,30 +1270,24 @@ mod tests {
             .unwrap()
             .unwrap();
         let session = manager.browser_session(false).await.unwrap().unwrap();
-        assert!(
+        for browser_session in [&desktop_session, &browser_session] {
+            assert!(
+                local
+                    .require_session_user(browser_session, &session.user.id)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("sign in again")
+            );
             local
-                .require_session_user(&desktop_session, &session.user.id)
+                .inherit_session_user(browser_session, &session.user.id)
                 .await
-                .unwrap_err()
-                .to_string()
-                .contains("sign in again")
-        );
-        assert!(
+                .unwrap();
             local
-                .require_session_user(&browser_session, &session.user.id)
+                .require_session_user(browser_session, &session.user.id)
                 .await
-                .unwrap_err()
-                .to_string()
-                .contains("sign in again")
-        );
-        local
-            .inherit_session_user(&desktop_session, &session.user.id)
-            .await
-            .unwrap();
-        local
-            .require_session_user(&desktop_session, &session.user.id)
-            .await
-            .unwrap();
+                .unwrap();
+        }
         assert_eq!(
             store.token.lock().unwrap().as_deref(),
             Some("device-refresh")
@@ -1303,18 +1297,14 @@ mod tests {
         );
         manager.sign_out().await.unwrap();
         assert!(manager.browser_session(false).await.unwrap().is_none());
-        assert!(
-            local
-                .require_session_user(&desktop_session, &session.user.id)
-                .await
-                .is_err()
-        );
-        assert!(
-            local
-                .require_session_user(&browser_session, &session.user.id)
-                .await
-                .is_err()
-        );
+        for browser_session in [&desktop_session, &browser_session] {
+            assert!(
+                local
+                    .require_session_user(browser_session, &session.user.id)
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test]

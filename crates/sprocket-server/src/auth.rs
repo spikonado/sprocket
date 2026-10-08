@@ -429,14 +429,6 @@ impl AuthState {
             .is_some_and(|session| !session_is_expired(session) && session.user_id.is_some())
     }
 
-    pub async fn session_may_inherit_native_owner(&self, session_token: &str) -> bool {
-        self.sessions
-            .read()
-            .await
-            .get(session_token)
-            .is_some_and(|session| !session_is_expired(session) && session.inherit_native_owner)
-    }
-
     async fn session_may_access_machine(&self, session_token: &str) -> bool {
         self.sessions
             .read()
@@ -1135,7 +1127,13 @@ mod tests {
                 .to_string()
                 .contains("sign in again")
         );
-        assert!(!auth.session_may_inherit_native_owner(&leftover).await);
+        assert!(
+            auth.inherit_session_user(&leftover, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
 
         let (_, next) = auth
             .bootstrap_browser_session(true)
@@ -1166,7 +1164,14 @@ mod tests {
                 .to_string()
                 .contains("sign in again")
         );
-        assert!(!reloaded.session_may_inherit_native_owner(&leftover).await);
+        assert!(
+            reloaded
+                .inherit_session_user(&leftover, "user-2")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
 
         let _ = fs::remove_dir_all(temp_dir);
     }
