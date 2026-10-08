@@ -8,6 +8,7 @@ import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
 import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
+import { changeLoopPrompt, type ChangeLoopMode } from '$lib/home/change-loops';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import type { UpdateState } from '$lib/updates';
@@ -151,6 +152,13 @@ function createConvexFixtures(): ConvexTestClient {
 		chatgptModelIds: null
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
+	client.registerQuery(api.threads.subtreeSummaryForThread, {
+		descendantCount: 0,
+		descendantStatusCounts: { queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 },
+		workingDescendantCount: 0,
+		anyActive: false,
+		descendantsActive: false
+	});
 
 	return client;
 }
@@ -889,6 +897,200 @@ it.each([
 
 	await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(message));
 	expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId: 'run-1' });
+});
+
+it.each<ChangeLoopMode>(['cleanup-and-review', 'cleanup', 'review'])(
+	'submits the %s loop separately from the composer draft and attachments',
+	async (mode) => {
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		const thread = threadRecord('thread-1', 'repo-alpha', 'Robot changes');
+		const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+		const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+		const client = createConvexFixtures();
+		client.registerPaginatedQuery(api.inbox.list, [thread]);
+		client.registerQuery(api.threads.getByThreadId, {
+			...thread,
+			contextTokens: 0,
+			totalTokensProcessed: 0
+		});
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		const priorRunId = 'prior-run' as Id<'runs'>;
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'failed',
+			run: { runId: priorRunId, startedAt: 1, lastError: 'Prior task failed' }
+		});
+		await renderApp(
+			client,
+			createRuntime(
+				createDesktopApi({
+					listProjectAttachments: async () => [alpha],
+					runAgent,
+					uploadTranscriptAttachment: async ({ file, name }) => ({
+						// SAFETY: fixture strings are only compared as opaque Convex document ids.
+						storageId: 'draft-file' as Id<'_storage'>,
+						name,
+						mediaType: file.type,
+						size: file.size,
+						url: 'https://sprocket.test/draft.txt'
+					})
+				})
+			)
+		);
+		expect(screen.queryByRole('button', { name: 'Run cleanup and review loop' })).toBeNull();
+		fireEvent.click(await screen.findByText('Robot changes'));
+		const composer = screen.getByRole('combobox');
+		fireEvent.change(composer, { target: { value: 'Unfinished follow-up' } });
+		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+
+		if (!fileInput) throw new Error('Expected attachment input');
+		fireEvent.change(fileInput, {
+			target: { files: [new File(['draft'], 'draft.txt', { type: 'text/plain' })] }
+		});
+		await screen.findByRole('button', { name: 'Remove draft.txt' });
+
+		const label =
+			mode === 'cleanup'
+				? 'Run cleanup loop'
+				: mode === 'review'
+					? 'Run review loop'
+					: 'Run cleanup and review loop';
+
+		if (mode !== 'cleanup-and-review') {
+			fireEvent.click(screen.getByRole('button', { name: 'Select change loop' }));
+			fireEvent.click(screen.getByRole('button', { name: label }));
+			expect(runAgent).not.toHaveBeenCalled();
+		}
+
+		const button = screen.getByRole('button', { name: label });
+		await waitFor(() => expect(button).toHaveProperty('disabled', false));
+		fireEvent.click(button);
+		await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				threadId: thread._id,
+				workspacePath: alpha.workspacePath,
+				prompt: changeLoopPrompt(mode),
+				storageIds: []
+			})
+		);
+		expect(runAgent.mock.calls[0]?.[0]).not.toHaveProperty('continuationOfRunId');
+		expect(composer).toHaveProperty('value', 'Unfinished follow-up');
+		expect(screen.getByRole('button', { name: 'Remove draft.txt' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Run cleanup and review loop' })).toHaveProperty(
+			'disabled',
+			true
+		);
+		await act(async () => {
+			if (mode === 'review') {
+				launch.reject(new Error('Loop launch failed'));
+			} else {
+				// SAFETY: fixture strings are only compared as opaque Convex document ids.
+				const nextRunId = 'loop-run' as Id<'runs'>;
+				launch.resolve({ runId: nextRunId, threadId: thread._id });
+				client.registerQuery(api.chat.selectedThreadLifecycle, {
+					threadId: thread._id,
+					phase: 'running',
+					run: { runId: nextRunId, startedAt: Date.now() }
+				});
+			}
+		});
+
+		if (mode === 'review') expect(await screen.findByText('Loop launch failed')).toBeTruthy();
+		expect(composer).toHaveProperty('value', 'Unfinished follow-up');
+		expect(screen.getByRole('button', { name: 'Remove draft.txt' })).toBeTruthy();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Run cleanup and review loop' })).toHaveProperty(
+				'disabled',
+				mode !== 'review'
+			)
+		);
+	}
+);
+
+it('enables change loops only for idle main threads with history and inactive descendants', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Robot changes');
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	const activeThread = { ...thread, contextTokens: 0, totalTokensProcessed: 0 };
+	client.registerQuery(api.threads.getByThreadId, activeThread);
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const runId = 'run-1' as Id<'runs'>;
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'completed',
+		run: { runId, startedAt: 1 }
+	});
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha] }))
+	);
+	fireEvent.click(await screen.findByText('Robot changes'));
+	const loopButton = () => screen.getByRole('button', { name: 'Run cleanup and review loop' });
+	await waitFor(() => expect(loopButton()).toHaveProperty('disabled', false));
+	await act(async () => {
+		client.registerQuery(api.threads.subtreeSummaryForThread, {
+			descendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 1, completed: 0, failed: 0, cancelled: 0 },
+			workingDescendantCount: 1,
+			anyActive: true,
+			descendantsActive: true
+		});
+	});
+	expect(loopButton()).toHaveProperty('disabled', true);
+	await act(async () => {
+		client.registerQuery(api.threads.subtreeSummaryForThread, {
+			descendantCount: 1,
+			descendantStatusCounts: { queued: 0, running: 0, completed: 1, failed: 0, cancelled: 0 },
+			workingDescendantCount: 0,
+			anyActive: false,
+			descendantsActive: false
+		});
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			run: { runId, startedAt: 1 }
+		});
+	});
+	expect(loopButton()).toHaveProperty('disabled', true);
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'completed',
+			run: { runId, startedAt: 1 }
+		});
+		client.registerQuery(api.agentQuestions.headPendingForThread, {
+			threadId: thread._id,
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			questionId: 'question-1' as Id<'agentQuestions'>,
+			question: 'Which board?',
+			options: [],
+			status: 'pending',
+			sequence: 1,
+			createdAt: 1,
+			timeoutAt: 1_000_000
+		});
+	});
+	expect(loopButton()).toHaveProperty('disabled', true);
+	await act(async () => {
+		client.registerQuery(api.agentQuestions.headPendingForThread, null);
+		client.registerQuery(api.threads.getByThreadId, {
+			...activeThread,
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			parentThreadId: 'parent-thread' as Id<'threadRecords'>
+		});
+	});
+	expect(screen.queryByRole('button', { name: 'Run cleanup and review loop' })).toBeNull();
+	await act(async () => {
+		client.registerQuery(api.threads.getByThreadId, activeThread);
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'idle',
+			run: null
+		});
+	});
+	expect(screen.queryByRole('button', { name: 'Run cleanup and review loop' })).toBeNull();
 });
 
 it('shows a failed run beside the composer and scopes it to the selected thread', async () => {

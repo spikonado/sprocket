@@ -71,6 +71,8 @@ import {
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
+import { changeLoopPrompt, type ChangeLoopMode } from '$lib/home/change-loops';
+import { isRootThread } from '$lib/project/subagents';
 import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -671,6 +673,11 @@ export default function App({
 		authenticatedThreadQueryArgs
 	);
 
+	const subtreeQuery = usePageQuery(
+		api.threads.subtreeSummaryForThread,
+		authenticatedThreadQueryArgs
+	);
+
 	// No browser backend is wired up; the live view stays empty until the local
 	// browser implementation provides session state.
 	const browserLiveView = { data: null, error: null };
@@ -684,6 +691,7 @@ export default function App({
 		uiPreferencesQuery.error ??
 		activeThreadQuery.error ??
 		lifecycleQuery.error ??
+		subtreeQuery.error ??
 		pendingAgentQuestionQuery.error;
 
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
@@ -1017,6 +1025,20 @@ export default function App({
 		!answeringAgentQuestion &&
 		!hasPendingAgentLaunch &&
 		((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
+	);
+
+	const changeLoopThreadId =
+		currentActiveThread && isRootThread(currentActiveThread) && runState
+			? currentActiveThread._id
+			: undefined;
+
+	const canRunChangeLoop = Boolean(
+		changeLoopThreadId &&
+		canSend &&
+		!pendingAgentQuestion &&
+		!isRunInProgress &&
+		subtreeQuery.data &&
+		!subtreeQuery.data.anyActive
 	);
 
 	const recentProjectDirectories = useMemo(() => {
@@ -1997,6 +2019,58 @@ export default function App({
 		}
 	}
 
+	async function runChangeLoop(mode: ChangeLoopMode) {
+		const threadId = currentThreadId;
+		const workspacePath = currentProjectPath;
+		const userId = signedInUserIdRef.current;
+
+		if (!canRunChangeLoop || !threadId || !workspacePath || !userId || !runState) return;
+
+		if (!desktopApi) {
+			setCurrentError(localServerRequiredMessage);
+
+			return;
+		}
+
+		const launchId = ++nextAgentLaunchId.current;
+		setPendingAgentLaunches((launches) =>
+			beginPendingAgentLaunch(launches, threadId, {
+				launchId,
+				previousRunId: runState.runId,
+				previousStartedAt: runState.startedAt
+			})
+		);
+		setCurrentError(null);
+
+		await launchAgentRun({
+			userId,
+			desktopApi,
+			onError: (error) => {
+				setPendingAgentLaunches((launches) =>
+					clearPendingAgentLaunch(launches, threadId, launchId)
+				);
+
+				if (signedInUserIdRef.current === userId && currentThreadIdRef.current === threadId) {
+					setCurrentError(error.message);
+				}
+			},
+			onStarted: () => {
+				if (signedInUserIdRef.current === userId) {
+					void refreshDesktopProjectAttachments().catch(() => {});
+				}
+			},
+			threadId,
+			prompt: changeLoopPrompt(mode),
+			storageIds: [],
+			selectedModel,
+			completionProvider: selectedCompletionProvider,
+			reasoningEffort: selectedReasoningEffort,
+			fastMode,
+			submissionId: crypto.randomUUID(),
+			workspacePath
+		});
+	}
+
 	async function continueWorking() {
 		if (
 			!latestRunResumeKind ||
@@ -2774,6 +2848,9 @@ export default function App({
 										pendingQuestion={pendingAgentQuestion}
 										showContinueWorking={latestRunResumeKind != null}
 										onContinueWorking={() => void continueWorking()}
+										changeLoopThreadId={changeLoopThreadId}
+										changeLoopDisabled={!canRunChangeLoop}
+										onRunChangeLoop={(mode) => void runChangeLoop(mode)}
 										runningCommands={
 											currentThreadId && signedInUserId && desktopApi && authReady
 												? {
