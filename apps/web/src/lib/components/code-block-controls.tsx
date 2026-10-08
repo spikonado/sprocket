@@ -1,6 +1,7 @@
 import { Check, CircleAlert, Copy, WrapText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import CodeLanguageIcon from './code-language-icon';
 
 type CopyState = { status: 'idle' | 'copying' | 'failed' } | { status: 'copied'; code: string };
 
@@ -68,9 +69,6 @@ export default function CodeBlockControls({
 	const [wrapped, setWrapped] = useState(false);
 	const wrapLabel = wrapped ? 'Disable line wrapping' : 'Enable line wrapping';
 
-	const badge =
-		language === 'typescript' ? 'ts' : language === 'javascript' ? 'js' : language || 'text';
-
 	useEffect(() => {
 		pre.classList.toggle('markdown-code-wrap', wrapped);
 
@@ -79,9 +77,7 @@ export default function CodeBlockControls({
 
 	return createPortal(
 		<>
-			<span className="markdown-code-language" title={language || 'Plain text'}>
-				{badge}
-			</span>
+			<CodeLanguageIcon language={language} />
 			<div className="markdown-code-actions">
 				<button
 					type="button"
