@@ -456,55 +456,113 @@ body::after {
 	border-radius: 1rem;
 	background: var(--panel-elevated);
 	padding: 0.95rem 1rem;
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
+	line-height: 1.7;
 }
 
 .chat-markdown .markdown-code-block {
-	position: relative;
+	min-width: 0;
+	overflow: hidden;
 	margin: 0.8rem 0;
+	border: 1px solid var(--border);
+	border-radius: 0.8rem;
+	background: var(--panel-elevated);
 }
 
 .chat-markdown .markdown-code-block pre {
 	margin: 0;
-	padding-top: 2.6rem;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	padding: 0.6rem 1rem 1rem;
 }
 
-.markdown-code-copy {
-	position: absolute;
-	top: 0.55rem;
-	right: 0.7rem;
-	display: inline-flex;
+.markdown-code-header {
+	display: flex;
+	min-height: 2.6rem;
 	align-items: center;
-	gap: 0.35rem;
-	border-radius: 0.35rem;
-	padding: 0.2rem 0.4rem;
+	justify-content: space-between;
+	gap: 0.75rem;
+	padding: 0.4rem 0.55rem 0.4rem 1rem;
+}
+
+.markdown-code-language {
+	display: inline-flex;
+	min-width: 0;
+	overflow: hidden;
+	align-items: center;
 	color: var(--muted-foreground);
-	background: var(--panel-elevated);
-	font-family: var(--font-sans);
-	font-size: 0.75rem;
-	line-height: 1.4;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	line-height: 1.2;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.markdown-code-language-icon,
+.markdown-code-language-icon svg {
+	display: block;
+	width: 1rem;
+	height: 1rem;
+}
+
+[data-theme='dark'] .markdown-code-language-icon.monochrome {
+	filter: invert(1);
+}
+
+.markdown-code-actions {
+	display: flex;
+	flex-shrink: 0;
+	gap: 0.15rem;
+}
+
+.markdown-code-action {
+	display: inline-flex;
+	width: 2rem;
+	height: 2rem;
+	align-items: center;
+	justify-content: center;
+	border-radius: 0.75rem;
+	color: var(--muted-foreground);
 	cursor: pointer;
 }
 
-.markdown-code-copy:hover {
+.markdown-code-action:hover {
 	color: var(--foreground);
 	background: var(--hover-fill);
 }
 
-.markdown-code-copy:focus-visible {
+.markdown-code-action[aria-pressed='true'] {
+	color: var(--foreground);
+	background: var(--accent-soft);
+}
+
+.markdown-code-action:disabled {
+	cursor: wait;
+	opacity: 0.5;
+}
+
+.markdown-code-action:focus-visible {
 	outline: 2px solid var(--ring);
 	outline-offset: 2px;
 }
 
-[data-theme='light'] .chat-markdown pre {
+[data-theme='light'] .chat-markdown .markdown-code-block {
 	background: color-mix(in oklab, var(--muted) 55%, var(--surface));
+}
+
+.chat-markdown pre.markdown-code-wrap {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 .chat-markdown pre code {
 	background: transparent;
 	padding: 0;
 	font-family: var(--font-mono);
-	font-size: 0.82rem;
-	line-height: 1.7;
+	font-size: inherit;
+	line-height: inherit;
 }
 
 .chat-markdown .shiki span {

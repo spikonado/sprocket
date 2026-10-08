@@ -171,6 +171,7 @@ export const listChildren = query({
 });
 
 const vSubtreeSummary = v.object({
+	workingDescendantCount: v.number(),
 	descendantCount: v.number(),
 	descendantStatusCounts: vDescendantStatusCounts,
 	anyActive: v.boolean(),
