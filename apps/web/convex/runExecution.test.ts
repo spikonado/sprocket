@@ -21,6 +21,7 @@ import {
 import { selectedThreadLifecycle } from '@convex/chat';
 import { complete, fail, getJob } from '@convex/executor';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import { registerChildThread } from '@convex/lib/threadHierarchy';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -45,9 +46,20 @@ function callHandler<Ref extends FunctionReference<'query' | 'mutation'>>(
 	return _handler(ctx, args);
 }
 
-async function startedRun() {
+async function startedRun(depth = 0) {
 	const t = initConvexTest();
 	const { asUser, threadId } = await seedOwnedThread(t);
+	let descendantId = threadId;
+
+	for (let level = 0; level < depth; level += 1) {
+		const parent = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', descendantId, { parentThreadId: parent.threadId });
+			await registerChildThread(ctx, (await ctx.db.get('threadRecords', descendantId))!);
+		});
+		descendantId = parent.threadId;
+	}
+
 	const executionSecret = 'execution-state-secret';
 	const { runId } = await createQueuedRun(t, asUser, threadId, 'execution-state', executionSecret);
 	const auth = { runId, executionSecret, claimId: 'execution-claim' };
@@ -57,11 +69,89 @@ async function startedRun() {
 }
 
 describe('run execution state', () => {
+	it.each([1, 2])(
+		'preserves ordinary tools while excluding payment jobs at depth %i',
+		async (depth) => {
+			const { t, asUser, auth } = await startedRun(depth);
+
+			const paymentCalls = [
+				{
+					kind: 'mandate_setup',
+					payload: {
+						amountCap: '1.00',
+						currency: 'USD',
+						frequency: 'one_time',
+						scope: 'any',
+						description: 'Test purchase'
+					}
+				},
+				{ kind: 'mandate_list', payload: {} },
+				{ kind: 'mandate_status', payload: { mandateId: 'mandate' } },
+				{
+					kind: 'mandate_charge',
+					payload: {
+						mandateId: 'mandate',
+						amount: '1.00',
+						currency: 'USD',
+						description: 'Test purchase'
+					}
+				},
+				{ kind: 'mandate_report', payload: { chargeId: 'charge', outcome: 'declined' } }
+			] as const;
+
+			for (const call of paymentCalls) {
+				await expect(
+					asUser.mutation(api.agentRuntime.beginToolJob, {
+						...auth,
+						...toolTranscriptAssignment(auth.runId, auth.claimId),
+						...call
+					})
+				).rejects.toThrow('Payment tools are not available to subagents.');
+			}
+
+			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				...auth,
+				...toolTranscriptAssignment(auth.runId, auth.claimId),
+				kind: 'exec_command',
+				payload: { cmd: 'true' }
+			});
+
+			expect(await t.run((ctx) => ctx.db.query('executorJobs').collect())).toEqual([
+				expect.objectContaining({ _id: jobId, kind: 'exec_command' })
+			]);
+		}
+	);
+
+	it('keeps root payment tools available', async () => {
+		const { asUser, auth } = await startedRun();
+
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			...auth,
+			...toolTranscriptAssignment(auth.runId, auth.claimId),
+			kind: 'mandate_list',
+			payload: {}
+		});
+
+		expect(
+			(
+				await asUser.query(api.executor.getJob, {
+					runId: auth.runId,
+					executionSecret: auth.executionSecret,
+					jobId
+				})
+			)?.status
+		).toBe('claimed');
+	});
+
 	it.each([
 		{ kind: 'exec_command' as const, running: false },
 		{ kind: 'exec_command' as const, running: true },
 		{ kind: 'write_stdin' as const, running: false },
-		{ kind: 'write_stdin' as const, running: true }
+		{ kind: 'write_stdin' as const, running: true },
+		{ kind: 'control_command' as const, running: false },
+		{ kind: 'control_command' as const, running: true },
+		{ kind: 'poll_command' as const, running: false },
+		{ kind: 'poll_command' as const, running: true }
 	])('records $kind results with running=$running', async ({ kind, running }) => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		const callId = 'command-call';
@@ -71,7 +161,12 @@ describe('run execution state', () => {
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
 			kind,
 			callId,
-			payload: kind === 'exec_command' ? { cmd: 'echo ok' } : { sessionId: '1' }
+			payload:
+				kind === 'exec_command'
+					? { cmd: 'echo ok' }
+					: kind === 'control_command'
+						? { sessionId: '1', action: 'write' as const, chars: 'yes\n' }
+						: { sessionId: '1' }
 		});
 
 		const output: Infer<typeof vCommandExecResult> = {
@@ -88,7 +183,7 @@ describe('run execution state', () => {
 		if (kind === 'exec_command' && running) output.sessionId = '1';
 
 		const result =
-			kind === 'write_stdin' ? { ...output, command: 'echo ok', workdir: '/' } : output;
+			kind === 'exec_command' ? output : { ...output, command: 'echo ok', workdir: '/' };
 
 		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
 		expect(
@@ -247,6 +342,7 @@ describe('run execution state', () => {
 				'completionProvider',
 				'continuationOfRunId',
 				'fastMode',
+				'parentThreadId',
 				'reasoningEffort',
 				'selectedModel',
 				'startedAt',

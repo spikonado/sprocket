@@ -559,11 +559,6 @@ pub(crate) fn cookie_get_is_csrf_safe(headers: &HeaderMap) -> bool {
     }
 }
 
-pub(crate) fn cookie_request_is_loopback_csrf_safe(headers: &HeaderMap) -> bool {
-    cookie_request_is_csrf_safe(headers)
-        && (bearer_token(headers).is_some() || origin_host_is_loopback(headers))
-}
-
 pub async fn require_session(
     auth: &AuthState,
     headers: &HeaderMap,
@@ -967,7 +962,6 @@ mod tests {
         assert!(origin_host_is_loopback(&headers));
         assert!(cookie_get_is_csrf_safe(&headers));
         assert!(cookie_request_is_csrf_safe(&headers));
-        assert!(cookie_request_is_loopback_csrf_safe(&headers));
 
         headers.insert(header::ORIGIN, "https://attacker.example".parse().unwrap());
         assert!(!origin_matches_host(&headers));
@@ -982,11 +976,9 @@ mod tests {
         assert!(origin_matches_host(&headers));
         assert!(cookie_request_is_csrf_safe(&headers));
         assert!(!origin_host_is_loopback(&headers));
-        assert!(!cookie_request_is_loopback_csrf_safe(&headers));
 
         headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
         assert!(cookie_request_is_csrf_safe(&headers));
-        assert!(cookie_request_is_loopback_csrf_safe(&headers));
     }
 
     #[test]

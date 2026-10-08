@@ -24,6 +24,7 @@ type Props = {
 		signal: AbortSignal
 	) => Promise<TranscriptDisplayDetails>;
 	inProgress: boolean;
+	commands: ReadonlyMap<string, string>;
 	viewport: HTMLDivElement | null;
 	beforeChange: (follow: boolean) => () => void;
 };
@@ -36,6 +37,7 @@ export default function WorkSectionDetails({
 	row,
 	load,
 	inProgress,
+	commands: knownCommands,
 	viewport,
 	beforeChange
 }: Props) {
@@ -121,7 +123,7 @@ export default function WorkSectionDetails({
 
 	const partitioned = partitionWorkSectionTools(grouped, inProgress);
 
-	const commands = buildCommandSessionCommandMap(tools);
+	const commands = new Map([...knownCommands, ...buildCommandSessionCommandMap(tools)]);
 	const blockKeysRef = useRef<TranscriptSectionKeys | null>(null);
 
 	if (!blockKeysRef.current) blockKeysRef.current = new TranscriptSectionKeys();
@@ -231,13 +233,7 @@ export default function WorkSectionDetails({
 						{block.type === 'reasoning' ? (
 							<ReasoningDisclosure text={block.text} inProgress={false} />
 						) : (
-							<WorkTools
-								tools={block.tools}
-								toolKey={block.toolKey}
-								preserveExpansion
-								inProgress={inProgress}
-								commands={commands}
-							/>
+							<WorkTools tools={block.tools} inProgress={inProgress} commands={commands} />
 						)}
 					</div>
 				))}
@@ -245,7 +241,6 @@ export default function WorkSectionDetails({
 					<div data-work-detail>
 						<WorkTools
 							tools={partitioned.runningTools}
-							running
 							inProgress={inProgress}
 							commands={commands}
 						/>

@@ -4,6 +4,8 @@ mod chatgpt_credentials;
 mod chatgpt_oauth;
 pub mod cli_protocol;
 mod cli_sessions;
+mod command_sessions;
+mod command_sync;
 mod config;
 mod machine_identity;
 mod machines;
@@ -13,8 +15,10 @@ mod profile;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
+mod run_recovery;
 mod static_dir;
 mod static_files;
+mod subagent_launcher;
 mod transcript_client;
 mod transcript_watch;
 mod work_sync;
@@ -101,12 +105,14 @@ pub struct AppState {
     pub(crate) workspace_search: Arc<workspace_search::WorkspaceSearchIndex>,
     pub machines: Arc<machines::MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
+    pub(crate) command_sessions: Arc<command_sessions::ThreadCommandSessions>,
     pub http_base_url: String,
     pub loopback_desktop_login_supported: bool,
     pub convex_deployment_url: String,
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
     pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
+    pub(crate) run_recovery: Arc<run_recovery::RunRecovery>,
     pub package_updates: Arc<package_update::PackageUpdateManager>,
 }
 
@@ -186,12 +192,14 @@ impl AppState {
                 Arc::clone(&machine_identity),
             ),
             live_completions: Arc::new(LiveCompletionHub::new()),
+            command_sessions: Arc::new(command_sessions::ThreadCommandSessions::default()),
             http_base_url: "http://127.0.0.1:7731".to_string(),
             loopback_desktop_login_supported,
             convex_deployment_url: "https://example.convex.cloud".to_string(),
             web_ui_enabled: true,
             desktop_bootstrap_token: None,
             machine_identity,
+            run_recovery: run_recovery::RunRecovery::load(&data_dir).expect("run recovery store"),
             package_updates,
         }
     }
@@ -279,12 +287,14 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         workspace_search: Arc::new(workspace_search),
         machines: Arc::clone(&machines),
         live_completions: Arc::new(LiveCompletionHub::new()),
+        command_sessions: Arc::new(command_sessions::ThreadCommandSessions::default()),
         http_base_url: http_base_url.clone(),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
         convex_deployment_url,
         web_ui_enabled,
         desktop_bootstrap_token,
         machine_identity,
+        run_recovery: run_recovery::RunRecovery::load(&data_dir)?,
         package_updates: package_update::PackageUpdateManager::from_env(),
     };
 
@@ -345,6 +355,28 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
             }
         }
     });
+    let command_sessions = Arc::clone(&state.command_sessions);
+    let command_sync_store = Arc::clone(&state.transcript);
+    let command_sync_auth = Arc::clone(&state.native_auth);
+    let command_sync_deployment = state.convex_deployment_url.clone();
+    let command_sync_machine = state.machine_identity.installation_id.clone();
+    let command_sync = command_sync::spawn(
+        Arc::clone(&state.transcript),
+        Arc::clone(&state.command_sessions),
+        Arc::clone(&state.native_auth),
+        state.convex_deployment_url.clone(),
+        state.machine_identity.installation_id.clone(),
+    );
+    let command_cleanup_sessions = Arc::clone(&command_sessions);
+    let command_cleanup = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            command_cleanup_sessions.prune().await;
+        }
+    });
+    let recovery = run_recovery::spawn(state.clone());
     let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
     let shutdown_machines = Arc::clone(&machines);
@@ -381,7 +413,29 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     };
     cleanup.abort();
+    recovery.abort();
+    let _ = recovery.await;
     let _ = cleanup.await;
+    command_cleanup.abort();
+    let _ = command_cleanup.await;
+    command_sessions.stop_all().await;
+    command_sync.abort();
+    let _ = command_sync.await;
+    if let Err(error) = tokio::time::timeout(
+        Duration::from_secs(10),
+        command_sync::flush(
+            &command_sync_store,
+            &command_sessions,
+            &command_sync_auth,
+            &command_sync_deployment,
+            &command_sync_machine,
+        ),
+    )
+    .await
+    .unwrap_or_else(|error| Err(error.into()))
+    {
+        tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
+    }
     chatgpt_oauth::shutdown(&pending_chatgpt_oauth).await;
     machines.shutdown().await;
     result?;

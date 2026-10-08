@@ -92,6 +92,8 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
+		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,
 		listWorkspaceSkills: async () => ({ skills: [], warnings: [] }),
 		searchWorkspace: unused,
@@ -107,6 +109,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		fetchTranscriptAttachment: unused,
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
+		deleteArtifact: async () => {},
 		watchArtifacts: () => new Promise<void>(() => {}),
 		requestRunCancellation: async () => {},
 		startAccountSession: async () => {},
@@ -171,6 +174,33 @@ async function renderApp(client: ConvexTestClient, runtime: AppRuntime): Promise
 	});
 }
 
+async function renderThreadLaunch() {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Robot work');
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'idle',
+		run: null
+	});
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha], runAgent }))
+	);
+	fireEvent.click(await screen.findByText('Robot work'));
+
+	return { client, thread, launch, runAgent };
+}
+
 async function flushPendingWork(): Promise<void> {
 	await act(async () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
@@ -226,6 +256,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	cleanup();
 	resetAuthRuntime();
@@ -243,6 +274,64 @@ it('populates projects from the desktop client resolved during boot', async () =
 
 	expect(await projectTrigger('Alpha')).toBeTruthy();
 	expect(listProjectAttachments).toHaveBeenCalled();
+});
+
+it('deletes an attached project artifact through the local server and keeps failures retryable', async () => {
+	const client = createConvexFixtures();
+
+	const artifact: FunctionReturnType<typeof api.artifacts.listArtifacts>['page'][number] = {
+		// SAFETY: this fixture ID is only compared as an opaque Convex document ID.
+		_id: 'artifact-a' as Id<'artifacts'>,
+		_creationTime: 1,
+		userId: 'user-a',
+		repositoryKey: 'repo-alpha',
+		scope: 'project',
+		registrationId: 'registration-a',
+		content: 'Notes',
+		type: 'markdown',
+		title: 'Artifact notes',
+		revision: 1,
+		createdAt: 1,
+		updatedAt: 1
+	};
+
+	client.registerQuery(api.artifacts.listArtifacts, {
+		page: [artifact],
+		isDone: true,
+		continueCursor: '',
+		revision: 1
+	});
+
+	const deleteArtifact = vi
+		.fn<DesktopApi['deleteArtifact']>()
+		.mockRejectedValueOnce(new Error('artifact deletion timed out'))
+		.mockResolvedValue(undefined);
+
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [
+					projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')
+				],
+				deleteArtifact
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.contextMenu(await screen.findByText('Artifact notes'));
+	fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete artifact' }));
+	expect((await screen.findByRole('alert')).textContent).toContain('artifact deletion timed out');
+	fireEvent.click(screen.getByRole('menuitem', { name: 'Delete artifact' }));
+	await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+	expect(deleteArtifact).toHaveBeenCalledTimes(2);
+	expect(deleteArtifact).toHaveBeenLastCalledWith({
+		userId: 'user-a',
+		repositoryKey: 'repo-alpha',
+		workspacePath: '/work/alpha',
+		artifactId: 'artifact-a'
+	});
 });
 
 it('shares local message recency across the project menus and recent directories', async () => {
@@ -519,7 +608,7 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 	await waitFor(() => expect(listCalls).toBe(3));
 	fireEvent.change(
 		screen.getByPlaceholderText(
-			'Ask anything, @tag files/directories, or use $ to show available skills'
+			'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
 		),
 		{ target: { value: 'Fix the robot' } }
 	);
@@ -539,6 +628,69 @@ it('submits with current attachments when a newer refresh supersedes the submiss
 			})
 		)
 	);
+});
+
+it('keeps a local submission Starting beyond the old timeout until it starts', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Existing robot work');
+	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
+	const priorRunId = 'prior-run' as Id<'runs'>;
+	// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
+	const nextRunId = 'run-new' as Id<'runs'>;
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: 0,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'completed',
+		run: { runId: priorRunId, startedAt: 1 }
+	});
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				runAgent
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Existing robot work'));
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	vi.useFakeTimers();
+
+	try {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(60_000);
+		});
+		expect(composer).toHaveProperty('value', '');
+		expect(screen.getByText('Starting agent…')).toBeTruthy();
+		expect(send).toHaveProperty('disabled', true);
+		expect(runAgent).toHaveBeenCalledOnce();
+		await act(async () => {
+			launch.resolve({ runId: nextRunId, threadId: thread._id });
+			client.registerQuery(api.chat.selectedThreadLifecycle, {
+				threadId: thread._id,
+				phase: 'running',
+				run: { runId: nextRunId, startedAt: Date.now() }
+			});
+		});
+		expect(screen.queryByText('Starting agent…')).toBeNull();
+	} finally {
+		vi.useRealTimers();
+	}
 });
 
 it('restores the submitted prompt and error when an agent launch fails', async () => {
@@ -569,7 +721,44 @@ it('restores the submitted prompt and error when an agent launch fails', async (
 		launch.reject(new Error('Local agent unavailable.'));
 	});
 	await waitFor(() => expect(composer).toHaveProperty('value', 'Fix the robot'));
-	expect(screen.getByRole('alert')).toHaveProperty('textContent', 'Local agent unavailable.');
+	const group = screen.getByRole('group', { name: 'Message composer' });
+	expect(within(group).getByRole('alert').textContent).toContain('Local agent unavailable.');
+});
+
+it('keeps a sent prompt cleared when returning to a thread before its lifecycle catches up', async () => {
+	const { client, thread, launch, runAgent } = await renderThreadLaunch();
+	const composer = screen.getByRole('combobox');
+	fireEvent.change(composer, { target: { value: 'Fix the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	vi.useFakeTimers();
+	await act(async () => {
+		fireEvent.click(send);
+	});
+	fireEvent.click(screen.getByText('Other work'));
+	await act(async () => {
+		launch.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			runId: 'run-new' as Id<'runs'>,
+			threadId: thread._id
+		});
+		await vi.advanceTimersByTimeAsync(31_000);
+	});
+	fireEvent.click(screen.getByText('Robot work'));
+	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+	expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
+	expect(screen.queryByRole('alert')).toBeNull();
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			run: { runId: 'run-new' as Id<'runs'>, startedAt: 1 }
+		});
+	});
+	expect(screen.getByRole('combobox')).toHaveProperty('value', '');
+	expect(screen.getByRole('button', { name: 'Stop generation' })).toBeTruthy();
+	expect(runAgent).toHaveBeenCalledOnce();
 });
 
 it('launches ChatGPT with a gateway model and a connected local account', async () => {
@@ -619,6 +808,182 @@ it('launches ChatGPT with a gateway model and a connected local account', async 
 			})
 		)
 	);
+});
+
+it('enables run-bound Stop after the lifecycle arrives behind a pending question', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+
+	const question: AgentQuestionSnapshot = {
+		threadId: thread._id,
+		// SAFETY: fixture strings are only compared as opaque Convex document ids.
+		questionId: 'question-1' as Id<'agentQuestions'>,
+		question: 'Which board should I target?',
+		options: [{ id: 'option-a', label: 'Option A' }],
+		status: 'pending',
+		sequence: 1,
+		createdAt: 1,
+		timeoutAt: 1_000_000
+	};
+
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const runId = 'run-1' as Id<'runs'>;
+
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.agentQuestions.headPendingForThread, question);
+	client.registerMutation(api.agentRuntime.requestCancellation, true);
+
+	const mutation = vi.spyOn(client, 'mutation');
+
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha] }))
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	expect(await screen.findByText(question.question)).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'Submit answer' })).toHaveProperty('disabled', true);
+	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
+
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'waiting_for_input',
+			run: { runId, startedAt: 1 }
+		});
+	});
+	fireEvent.click(await screen.findByRole('button', { name: 'Stop generation' }));
+	await waitFor(() =>
+		expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId })
+	);
+});
+
+it.each([
+	{ error: null, message: 'Failed to stop run.' },
+	{ error: new Error('Server unavailable.'), message: 'Server unavailable.' }
+])('shows "$message" when stopping a run fails', async ({ error, message }) => {
+	const { client, thread } = await renderThreadLaunch();
+	await flushPendingWork();
+
+	const mutation = vi.spyOn(client, 'mutation').mockRejectedValueOnce(error);
+
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			run: { runId: 'run-1' as Id<'runs'>, startedAt: 1 }
+		});
+	});
+	const stop = await screen.findByRole('button', { name: 'Stop generation' });
+
+	await act(async () => {
+		fireEvent.click(stop);
+	});
+
+	await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(message));
+	expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId: 'run-1' });
+});
+
+it('shows a failed run beside the composer and scopes it to the selected thread', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+	const error = 'ChatGPT usage limit reached. Try again after it resets or switch providers.';
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'failed',
+		// SAFETY: the fixture only compares run ids as opaque Convex document ids.
+		run: { runId: 'run-1' as Id<'runs'>, startedAt: 1, lastError: error }
+	});
+	await renderApp(
+		client,
+		createRuntime(createDesktopApi({ listProjectAttachments: async () => [alpha] }))
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	const composer = await screen.findByRole('group', { name: 'Message composer' });
+	expect((await within(composer).findByRole('alert')).textContent).toContain(error);
+	expect(screen.getByRole('button', { name: 'Continue working' })).toBeTruthy();
+
+	fireEvent.click(await screen.findByText('Other work'));
+	await waitFor(() => expect(within(composer).queryByRole('alert')).toBeNull());
+
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	expect((await within(composer).findByRole('alert')).textContent).toContain(error);
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			// SAFETY: the fixture only compares run ids as opaque Convex document ids.
+			run: { runId: 'run-2' as Id<'runs'>, startedAt: Date.now() }
+		});
+	});
+	expect(within(composer).getByRole('button', { name: 'Stop generation' })).toBeTruthy();
+});
+
+it('shows reconnecting beside an empty selected conversation and clears it on recovery', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
+	const otherThread = threadRecord('thread-2', 'repo-alpha', 'Other work');
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread, otherThread]);
+
+	const watchers = new Map<string, Parameters<DesktopApi['watchTranscript']>[1]['onEvent']>();
+
+	let stale = true;
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				fetchTranscriptDisplay: async ({ threadId }) => ({
+					...emptyDisplayPage(`replica-${threadId}`),
+					stale: threadId === thread._id && stale
+				}),
+				watchTranscript: (request, handlers) => {
+					watchers.set(request.threadId, handlers.onEvent);
+
+					return new Promise<void>(() => {});
+				}
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	const composer = screen.getByRole('group', { name: 'Message composer' });
+	expect((await within(composer).findByRole('status')).textContent).toContain(
+		'Reconnecting to conversation history.'
+	);
+	expect(within(composer).getByRole('combobox')).toBeTruthy();
+
+	fireEvent.click(await screen.findByText('Other work'));
+	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
+	await act(async () => {
+		watchers.get(thread._id)?.({ eventType: 'updated', stale: true });
+	});
+	expect(within(composer).queryByRole('status')).toBeNull();
+
+	fireEvent.click(await screen.findByText('Fix the robot'));
+	await within(composer).findByRole('status');
+	await act(async () => {
+		stale = false;
+		watchers.get(thread._id)?.({ eventType: 'updated', stale: false });
+	});
+	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
 });
 
 it('launches the continuation prompt after an agent question is answered', async () => {
@@ -801,4 +1166,19 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 			})
 		)
 	);
+});
+
+it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
+	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
+	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
+	const layout = document.querySelector('.inbox-layout');
+	const controls = document.querySelector<HTMLElement>('.inbox-floating-controls');
+	expect(controls).toBeTruthy();
+	expect(layout?.classList.contains('sidebar-hidden')).toBe(true);
+	const floating = within(controls!);
+	expect(floating.getByRole('button', { name: 'Open sidebar' })).toBeTruthy();
+	expect(floating.getByRole('button', { name: 'Settings' })).toBeTruthy();
+	fireEvent.click(floating.getByRole('button', { name: 'Open sidebar' }));
+	expect(layout?.classList.contains('sidebar-hidden')).toBe(false);
+	expect(document.querySelector('.inbox-floating-controls')).toBeNull();
 });

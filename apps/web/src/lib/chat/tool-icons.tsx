@@ -1,5 +1,6 @@
 import {
 	BookOpen,
+	Bot,
 	Camera,
 	CircleDollarSign,
 	CircleQuestionMark,
@@ -16,6 +17,7 @@ import {
 	Search,
 	SquareTerminal,
 	Terminal,
+	Trash2,
 	Wallet,
 	Wrench,
 	type LucideIcon
@@ -29,16 +31,32 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'ask_question':
 			return CircleQuestionMark;
 		case 'await_question':
+		case 'poll_question':
 			return Hourglass;
+		case 'spawn_subagent':
+		case 'control_subagent':
+		case 'poll_subagent':
+			return Bot;
+		case 'list_subagents':
+		case 'list_subagent_models':
+			return ListChecks;
 		case 'check_docs':
 			return BookOpen;
 		case 'add_artifact':
 		case 'create_artifact':
 			return FileCode;
+		case 'delete_artifact':
+			return Trash2;
 		case 'save_artifact':
 			return Save;
 		case 'exec_command':
+		case 'exec_cmd':
 			return Terminal;
+		case 'control_command':
+		case 'control_cmd':
+		case 'poll_command':
+		case 'poll_cmd':
+			return SquareTerminal;
 		case 'get_workspace_instructions':
 			return ScrollText;
 		case 'mandate_charge':

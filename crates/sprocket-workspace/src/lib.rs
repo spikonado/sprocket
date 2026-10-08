@@ -1,9 +1,12 @@
 mod agents;
 mod apply_patch_format;
 mod artifacts;
+pub mod async_tools;
 mod browse;
 mod builtin_skills;
+mod command_history;
 mod command_output;
+mod command_shell;
 mod commands;
 mod git_repository;
 mod patch;
@@ -28,10 +31,13 @@ pub use browse::{
     resolve_or_create_workspace_root,
 };
 pub use builtin_skills::BUILTIN_SKILLS;
+pub use command_history::{CommandHistory, history_path};
 pub use command_output::CommandOutputLimits;
+pub use command_shell::default_command_shell;
 pub use commands::{
-    CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
-    WorkspaceCancellation, WorkspaceOperationCancelled, default_command_shell,
+    CommandAction, CommandExecOutput, CommandOutput, CommandSessionManager, CommandStdinOutput,
+    MAX_COMMAND_YIELD_MS, MIN_COMMAND_POLL_YIELD_MS, RunningCommand, WorkspaceCancellation,
+    WorkspaceOperationCancelled,
 };
 pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};
 pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};

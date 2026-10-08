@@ -13,7 +13,6 @@ export default function AppUpdate() {
 	const [updateState, setUpdateState] = useState<UpdateState | null>(null);
 	const [requestError, setRequestError] = useState<string | null>(null);
 	const [busy, setBusyState] = useState(false);
-	const [confirmInstall, setConfirmInstall] = useState(false);
 	const busyRef = useRef(false);
 	const revisionRef = useRef(0);
 	const label = updateState ? updateLabel(updateState) : null;
@@ -78,13 +77,6 @@ export default function AppUpdate() {
 	async function update() {
 		if (!updateState || working) return;
 
-		if (updateState.method === 'package' && !confirmInstall) {
-			setConfirmInstall(true);
-
-			return;
-		}
-
-		setConfirmInstall(false);
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
 		setRequestError(null);
@@ -131,30 +123,6 @@ export default function AppUpdate() {
 				)}
 				<span>{label}</span>
 			</button>
-			{confirmInstall && (
-				<div className="text-muted-foreground px-2 pb-2 text-xs">
-					<p>
-						Install {updateState.version} using your package manager? Restart Sprocket from your
-						terminal afterward to use the new version.
-					</p>
-					<p className="mt-1">
-						On Windows, a locked executable may require stopping Sprocket and running
-						<code>sprocket update</code> instead.
-					</p>
-					<div className="mt-2 flex gap-3">
-						<button
-							type="button"
-							className="text-foreground underline"
-							onClick={() => void update()}
-						>
-							Install update
-						</button>
-						<button type="button" className="underline" onClick={() => setConfirmInstall(false)}>
-							Cancel
-						</button>
-					</div>
-				</div>
-			)}
 			{updateState.status === 'installed' && (
 				<p className="text-muted-foreground px-2 pb-2 text-xs">
 					Wait for active agents to finish, then stop Sprocket in your terminal and launch it again.

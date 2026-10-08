@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rig::tool::ToolExecutionError;
 use sprocket_workspace::{CommandSessionManager, WorkspaceOperationCancelled};
@@ -22,38 +23,18 @@ pub(super) struct AgentToolContext {
     pub(super) runtime: RuntimeClient,
     pub(super) run_id: String,
     pub(super) claim_id: String,
+    pub(super) user_id: String,
     pub(super) workspace_root: PathBuf,
     pub(super) transcript_dir: PathBuf,
+    pub(super) gateway_url: String,
+    pub(super) transcript_store: Option<Arc<crate::TranscriptStore>>,
     pub(super) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(super) supports_images: bool,
     pub(super) tool_call_tracker: ToolCallTracker,
     pub(super) command_sessions: CommandSessionManager,
-}
-
-impl AgentToolContext {
-    pub(super) fn new(
-        runtime: RuntimeClient,
-        run_id: String,
-        claim_id: String,
-        workspace_root: PathBuf,
-        transcript_dir: PathBuf,
-        artifact_bindings: crate::artifact_bindings::ArtifactBindings,
-        supports_images: bool,
-        tool_call_tracker: ToolCallTracker,
-        command_sessions: CommandSessionManager,
-    ) -> Self {
-        Self {
-            runtime,
-            run_id,
-            claim_id,
-            workspace_root,
-            transcript_dir,
-            artifact_bindings,
-            supports_images,
-            tool_call_tracker,
-            command_sessions,
-        }
-    }
+    pub(super) question_polls: super::questions::QuestionPolls,
+    pub(super) subagent_polls: super::subagents::SubagentPolls,
+    pub(super) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 }
 
 pub(super) fn tool_error(error: anyhow::Error) -> ToolExecutionError {

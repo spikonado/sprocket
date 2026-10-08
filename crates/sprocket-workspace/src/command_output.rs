@@ -56,6 +56,7 @@ pub(crate) struct CapturedOutput {
     limits: CommandOutputLimits,
     pending_utf8: Vec<u8>,
     preview: PreviewBuffer,
+    full_preview: PreviewBuffer,
 }
 
 impl CapturedOutput {
@@ -107,7 +108,19 @@ impl CapturedOutput {
             limits,
             pending_utf8: Vec::new(),
             preview: PreviewBuffer::new(max_chars),
+            full_preview: PreviewBuffer::new(max_chars),
         })
+    }
+
+    pub(crate) async fn discard(&mut self) -> Result<()> {
+        self.log.take();
+        self.events.take();
+        let directory = Path::new(&self.log_path)
+            .parent()
+            .expect("log has a directory");
+        tokio::fs::remove_dir_all(directory)
+            .await
+            .context("failed to remove unstarted command logs")
     }
 
     pub(crate) async fn append(&mut self, channel: OutputChannel, bytes: &[u8]) -> Result<()> {
@@ -161,31 +174,10 @@ impl CapturedOutput {
     }
 
     fn decode(&mut self, bytes: &[u8], final_chunk: bool) {
-        let mut pending = std::mem::take(&mut self.pending_utf8);
-        pending.extend_from_slice(bytes);
-        let mut remaining = pending.as_slice();
-        while !remaining.is_empty() {
-            match std::str::from_utf8(remaining) {
-                Ok(text) => {
-                    self.preview.push_text(text);
-                    remaining = &[];
-                }
-                Err(error) => {
-                    let valid = error.valid_up_to();
-                    self.preview
-                        .push_text(std::str::from_utf8(&remaining[..valid]).unwrap());
-                    remaining = &remaining[valid..];
-                    let invalid = match error.error_len() {
-                        Some(len) => len,
-                        None if final_chunk => remaining.len(),
-                        None => break,
-                    };
-                    self.preview.push('\u{fffd}');
-                    remaining = &remaining[invalid..];
-                }
-            }
-        }
-        self.pending_utf8.extend_from_slice(remaining);
+        decode_utf8(&mut self.pending_utf8, bytes, final_chunk, |text| {
+            self.preview.push_text(text);
+            self.full_preview.push_text(text);
+        });
     }
 
     pub(crate) async fn finish(&mut self) -> Result<()> {
@@ -210,10 +202,74 @@ impl CapturedOutput {
         let preview = std::mem::replace(&mut self.preview, PreviewBuffer::new(max_chars));
         OutputPreview {
             output: preview.render(),
+            ..self.preview_metadata()
+        }
+    }
+
+    pub(crate) fn full_preview(&self) -> OutputPreview {
+        OutputPreview {
+            output: self.full_preview.clone().render(),
+            ..self.preview_metadata()
+        }
+    }
+
+    pub(crate) async fn read_log_preview(path: &Path, max_chars: usize) -> Result<String> {
+        use tokio::io::AsyncReadExt;
+
+        let mut file = File::open(path).await?;
+        let mut preview = PreviewBuffer::new(max_chars);
+        let mut buffer = [0_u8; 8_192];
+        let mut pending = Vec::new();
+        loop {
+            let read = file.read(&mut buffer).await?;
+            decode_utf8(&mut pending, &buffer[..read], read == 0, |text| {
+                preview.push_text(text);
+            });
+            if read == 0 {
+                return Ok(preview.render());
+            }
+        }
+    }
+
+    pub(crate) fn preview_metadata(&self) -> OutputPreview {
+        OutputPreview {
+            output: String::new(),
             complete_log_path: self.log_path.clone(),
             events_path: self.events_path.clone(),
         }
     }
+}
+
+fn decode_utf8(
+    pending: &mut Vec<u8>,
+    bytes: &[u8],
+    final_chunk: bool,
+    mut push_text: impl FnMut(&str),
+) {
+    let mut combined = std::mem::take(pending);
+    combined.extend_from_slice(bytes);
+    let mut remaining = combined.as_slice();
+    while !remaining.is_empty() {
+        match std::str::from_utf8(remaining) {
+            Ok(text) => {
+                push_text(text);
+                remaining = &[];
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                push_text(std::str::from_utf8(&remaining[..valid]).unwrap());
+                remaining = &remaining[valid..];
+                let invalid = match error.error_len() {
+                    Some(len) => len,
+                    None if final_chunk => remaining.len(),
+                    None => break,
+                };
+                push_text("\u{fffd}");
+                remaining = &remaining[invalid..];
+            }
+        }
+    }
+    pending.extend_from_slice(remaining);
 }
 
 async fn ensure_disk_reserve(path: PathBuf, next_bytes: u64, reserve: u64) -> Result<()> {
@@ -228,6 +284,7 @@ async fn ensure_disk_reserve(path: PathBuf, next_bytes: u64, reserve: u64) -> Re
     Ok(())
 }
 
+#[derive(Clone)]
 struct PreviewBuffer {
     max_chars: usize,
     head: Vec<char>,

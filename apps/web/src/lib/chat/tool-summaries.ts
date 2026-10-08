@@ -1,11 +1,10 @@
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import {
-	assistantTimelineToolError,
-	isAssistantTimelineToolRunning,
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
+import { isCommandToolKind, isSessionCommandToolKind } from '@convex/lib/commandToolKinds';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -14,28 +13,42 @@ function titleizeSnakeCase(value: string) {
 		.join(' ');
 }
 
-export function toolGroupLabel(toolKey: string) {
+export function toolItemLabel(toolKey: string): string | undefined {
+	if (isCommandToolKind(toolKey)) return undefined;
+
 	switch (toolKey) {
 		case 'apply_patch':
-			return 'Changed Files';
 		case 'ask_question':
-			return 'Asked Questions';
 		case 'await_question':
-			return 'Waiting for Answers';
+		case 'poll_question':
+		case 'read_skill':
+		case 'scrape_url':
+		case 'web_search':
+			return undefined;
+		case 'spawn_subagent':
+			return 'Delegated Tasks';
+		case 'control_subagent':
+			return 'Controlled Subagents';
+		case 'poll_subagent':
+			return 'Polled Subagents';
+		case 'list_subagents':
+			return 'Listed Subagents';
+		case 'list_subagent_models':
+			return 'Listed Subagent Models';
 		case 'check_docs':
 			return 'Checked Docs';
 		case 'add_artifact':
 		case 'create_artifact':
-			return 'Created Artifacts';
+			return 'Created Artifact';
 		case 'edit_artifact':
 		case 'update_artifact':
-			return 'Updated Artifacts';
+			return 'Updated Artifact';
 		case 'list_artifacts':
 			return 'Listed Artifacts';
 		case 'save_artifact':
-			return 'Saved Artifacts';
-		case 'exec_command':
-			return 'Ran Commands';
+			return 'Saved Artifact';
+		case 'delete_artifact':
+			return 'Deleted Artifact';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
 		case 'mandate_charge':
@@ -43,44 +56,26 @@ export function toolGroupLabel(toolKey: string) {
 		case 'mandate_list':
 			return 'Listed Mandates';
 		case 'mandate_report':
-			return 'Settled Charges';
+			return 'Settled Charge';
 		case 'mandate_setup':
 			return 'Set Up Mandate';
 		case 'mandate_status':
 			return 'Checked Mandate';
-		case 'read_skill':
-			return 'Read Skill';
 		case 'parse_file':
-			return 'Parsed Files';
-		case 'scrape_url':
-			return 'Read URLs';
+			return 'Parsed File';
 		case 'screenshot_url':
-			return 'Captured Screenshots';
-		case 'web_search':
-			return 'Searched Web';
-		case 'write_stdin':
-			return 'Monitored Commands';
+			return 'Captured Screenshot';
 		default:
 			return titleizeSnakeCase(toolKey);
 	}
 }
 
 function describeExecCommandOptions(input: JsonValue | undefined) {
-	if (!isJsonObject(input)) {
-		return '';
-	}
+	const workdir = isJsonObject(input) ? jsonString(input.workdir) : undefined;
 
-	const details: string[] = [];
-	const workdir = jsonString(input.workdir);
-
-	if (workdir && workdir.trim().length > 0 && workdir !== '.') {
-		details.push(`cwd ${workdir}`);
-	}
-
-	return details.length > 0 ? ` (${details.join(', ')})` : '';
+	return workdir && workdir.trim().length > 0 && workdir !== '.' ? ` (cwd ${workdir})` : '';
 }
 
-/** Detail line for a tool row; no type prefix (that lives on the dropdown label). */
 function summarizeTool(name: string, input: JsonValue | undefined) {
 	const fields = isJsonObject(input) ? input : undefined;
 
@@ -90,20 +85,54 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'ask_question':
 			return jsonString(fields?.question) ?? 'Question';
 		case 'await_question':
+		case 'poll_question':
 			return 'Waiting for answer';
+		case 'spawn_subagent':
+			return jsonString(fields?.prompt) ?? 'Child agent';
+		case 'control_subagent':
+			if (fields?.action === 'send') return jsonString(fields.prompt) ?? 'Message child agent';
+
+			if (fields?.action === 'stop') return 'Stop child agent';
+
+			if (fields?.action === 'answer_question') return 'Answered question';
+
+			return jsonString(fields?.threadId) ?? 'Child agent';
+		case 'poll_subagent':
+			return jsonString(fields?.threadId) ?? 'Child agent';
+		case 'list_subagents':
+		case 'list_subagent_models':
+			return '';
 		case 'check_docs':
 			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
 		case 'add_artifact':
 		case 'create_artifact':
 		case 'edit_artifact':
 		case 'save_artifact':
+		case 'delete_artifact':
 			return summarizeArtifactTool(input);
 		case 'list_artifacts':
 			return 'Artifacts';
-		case 'exec_command': {
+		case 'exec_command':
+		case 'exec_cmd': {
 			const cmd = jsonString(fields?.cmd);
 
 			return cmd ? `${cmd}${describeExecCommandOptions(input)}` : 'Command';
+		}
+
+		case 'control_command':
+		case 'control_cmd': {
+			const sessionId = jsonString(fields?.sessionId);
+			const session = sessionId ? `Session ${sessionId}` : 'Command session';
+
+			return fields?.action === 'terminate' ? `Terminate ${session}` : `Write to ${session}`;
+		}
+
+		case 'poll_command':
+		case 'poll_cmd':
+		case 'write_stdin': {
+			const sessionId = jsonString(fields?.sessionId);
+
+			return sessionId ? `Session ${sessionId}` : 'Command session';
 		}
 
 		case 'get_workspace_instructions':
@@ -133,22 +162,9 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
-		case 'write_stdin': {
-			const sessionId = jsonString(fields?.sessionId);
-
-			return sessionId ? `Session ${sessionId}` : 'Command session';
-		}
-
 		default:
 			return titleizeSnakeCase(name);
 	}
-}
-
-/** Patch summaries list one path per line; give them room to wrap instead of truncating. */
-export function toolSummaryClass(toolLog: AssistantTimelineTool) {
-	return (toolLog.job?.kind ?? toolLog.name) === 'apply_patch'
-		? 'whitespace-pre-wrap [overflow-wrap:anywhere]'
-		: 'truncate';
 }
 
 /** "Merchant · 120.00 USD monthly" from a mandate setup payload. */
@@ -299,10 +315,6 @@ function patchSummary(toolLog: AssistantTimelineTool) {
 	return toolLog.name === 'apply_patch' ? summarizePatchInput(toolLog.input) : null;
 }
 
-export function changedFileCount(tools: AssistantTimelineTool[]) {
-	return new Set(tools.flatMap((tool) => patchSummary(tool)?.split('\n') ?? [])).size;
-}
-
 function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
 	if (kind === 'web_search' && isJsonObject(result) && Array.isArray(result.results)) {
 		const count = result.results.length;
@@ -319,10 +331,10 @@ export function toolItemSummary(
 ) {
 	const kind = toolLog.job?.kind ?? toolLog.name;
 
-	if (kind === 'write_stdin') {
+	if (isSessionCommandToolKind(kind)) {
 		return (
 			resolveCommandSessionLabel(toolLog, sessionCommands) ??
-			summarizeTool('write_stdin', toolLog.job?.payload ?? toolLog.input)
+			summarizeTool(kind, toolLog.job?.payload ?? toolLog.input)
 		);
 	}
 
@@ -334,6 +346,7 @@ export function toolItemSummary(
 		kind === 'add_artifact' ||
 		kind === 'edit_artifact' ||
 		kind === 'save_artifact' ||
+		kind === 'delete_artifact' ||
 		kind === 'create_artifact'
 	) {
 		return summarizeArtifactTool(
@@ -356,31 +369,4 @@ export function toolItemSummary(
 	}
 
 	return summarizeTool(toolLog.name, toolLog.input);
-}
-
-export function commandSnapshotLabel(tool: AssistantTimelineTool): string | undefined {
-	const kind = tool.job?.kind ?? tool.name;
-	const output: JsonValue | undefined = tool.output ?? tool.job?.result;
-
-	return (kind === 'exec_command' || kind === 'write_stdin') &&
-		isJsonObject(output) &&
-		output.running === true
-		? 'Still running when this call returned'
-		: undefined;
-}
-
-export function fullToolSummary(
-	toolLog: AssistantTimelineTool,
-	isStreaming: boolean,
-	sessionCommands: ReadonlyMap<string, string>
-) {
-	const summary = toolItemSummary(toolLog, sessionCommands);
-
-	if (isAssistantTimelineToolRunning(toolLog, isStreaming)) {
-		return `${summary} (running)`;
-	}
-
-	const error = assistantTimelineToolError(toolLog, isStreaming);
-
-	return error ? `${summary} (${error})` : summary;
 }

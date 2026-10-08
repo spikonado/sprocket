@@ -1,5 +1,6 @@
 import {
 	useCallback,
+	type ComponentProps,
 	useEffect,
 	useEffectEvent,
 	useLayoutEffect,
@@ -37,11 +38,13 @@ import AuthGate from '$lib/components/home/auth-gate';
 import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay';
 import CalmCentered from '$lib/components/home/calm-centered';
 import PromptComposer from '$lib/components/home/prompt-composer';
+import ConversationNotices from '$lib/components/home/conversation-notices';
 import CreateThreadHeading from '$lib/components/home/create-thread-heading';
 import '$lib/components/home/create-thread.css';
 import '$lib/components/home/inbox.css';
 import BrandMark from '$lib/components/brand-mark';
-import InboxSidebar from '$lib/components/home/inbox-sidebar';
+import InboxSidebar, { type SidebarChildrenResolver } from '$lib/components/home/inbox-sidebar';
+import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsProviders from '$lib/components/home/settings-providers';
@@ -52,7 +55,6 @@ import SidePanel from '$lib/components/home/side-panel';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
-import Button from '$lib/components/ui/button/button';
 import {
 	attachLocalProject as attachLocalProjectForPath,
 	compareProjectRecency,
@@ -88,7 +90,6 @@ import {
 	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	resolveExpiredAgentLaunch,
 	resolveInitialDraftSelection,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
@@ -97,7 +98,14 @@ import {
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
-import { useThreadInbox } from '$lib/project/inbox';
+import { useRevealInboxThread, useThreadInbox } from '$lib/project/inbox';
+import {
+	useExpandedThreads,
+	useRevealPaginatedThread,
+	useSelectedThreadAncestryReveal,
+	useThreadChildren,
+	type UseExpandedThreads
+} from '$lib/project/useThreadTree';
 import type { InboxState } from '@convex/lib/inboxState';
 import { useTranscriptReplica } from '$lib/home/transcript-replica';
 import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
@@ -128,6 +136,93 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 
 const agentLaunchTimeoutMs = 30_000;
+
+type SidebarProps = ComponentProps<typeof InboxSidebar>;
+
+function InboxSidebarContainer(
+	props: Omit<SidebarProps, 'expansion' | 'resolveChildren'> & {
+		signedInUserId: string | null;
+		repositoryKeys: string[];
+	}
+) {
+	const expansion = useExpandedThreads(props.signedInUserId);
+	const { currentThreadId, onSettledOpenChange } = props;
+
+	const selectedPath = useSelectedThreadAncestryReveal({
+		currentThreadId: props.currentThreadId,
+		enabled: props.mutationsEnabled,
+		expansion
+	});
+
+	const rootId = selectedPath[0] ?? null;
+
+	const rootQuery = useConvexQueryResult({
+		query: api.threads.getByThreadId,
+		args: props.mutationsEnabled && rootId ? { threadId: rootId } : 'skip'
+	});
+
+	const root = useRevealInboxThread(
+		rootQuery.status === 'success' ? rootQuery.data : null,
+		props.repositoryKeys,
+		props.sections
+	);
+
+	const revealedSettledRef = useRef<Id<'threadRecords'> | null>(null);
+
+	useEffect(() => {
+		if (!root || root.archivedAt === undefined) {
+			revealedSettledRef.current = null;
+
+			return;
+		}
+
+		if (revealedSettledRef.current === currentThreadId) return;
+		revealedSettledRef.current = currentThreadId;
+		onSettledOpenChange(true);
+	}, [root, currentThreadId, onSettledOpenChange]);
+
+	const resolveChildren: SidebarChildrenResolver = useCallback(
+		({ threadId, renderRows }) => (
+			<ExpandedThreadChildren
+				expansion={expansion}
+				threadId={threadId}
+				renderRows={renderRows}
+				selectedPath={selectedPath}
+			/>
+		),
+		[expansion, selectedPath]
+	);
+
+	return <InboxSidebar {...props} expansion={expansion} resolveChildren={resolveChildren} />;
+}
+
+function ExpandedThreadChildren({
+	expansion,
+	threadId,
+	renderRows,
+	selectedPath
+}: Parameters<SidebarChildrenResolver>[0] & {
+	expansion: UseExpandedThreads;
+	selectedPath: readonly Id<'threadRecords'>[];
+}) {
+	const children = useThreadChildren(threadId);
+	const parentIndex = selectedPath.indexOf(threadId);
+	useRevealPaginatedThread(
+		parentIndex >= 0 ? (selectedPath[parentIndex + 1] ?? null) : null,
+		children
+	);
+
+	useEffect(() => {
+		expansion.registerChildren(threadId, children.rows);
+	}, [expansion, threadId, children.rows]);
+
+	return (
+		<>
+			{renderRows(children.rows)}
+			<InboxLoadMore section={children} />
+		</>
+	);
+}
 
 export type AppRuntime = {
 	resolveDesktopApi: () => Promise<DesktopApi>;
@@ -226,6 +321,7 @@ export default function App({
 	}, [retryPending, convexAuth.isAuthenticated, convexAuth.isLoading, sawAuthLoadingDuringRetry]);
 
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
+	const deleteArtifactRecord = useMutation(api.artifacts.deleteArtifact);
 	const renameThreadRecord = useMutation(api.threads.rename);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
@@ -590,9 +686,6 @@ export default function App({
 		lifecycleQuery.error ??
 		pendingAgentQuestionQuery.error;
 
-	const createThreadError =
-		currentError ?? auth.error ?? (queryError ? convexClientErrorMessage(queryError) : null);
-
 	const [workspaceTheme, setWorkspaceTheme] = useState<SprocketTheme>(resolveTheme(null));
 	useEffect(() => {
 		if (!authReady) {
@@ -843,6 +936,28 @@ export default function App({
 		convexAuth.isAuthenticated
 	]);
 
+	const deleteArtifact =
+		currentRepositoryKey && convexAuth.isAuthenticated && !convexAuth.isLoading
+			? async (artifactId: string) => {
+					if (desktopApi && signedInUserId && currentWorkspacePath) {
+						await desktopApi.deleteArtifact({
+							userId: signedInUserId,
+							repositoryKey: currentRepositoryKey,
+							workspacePath: currentWorkspacePath,
+							artifactId
+						});
+
+						return;
+					}
+
+					// SAFETY: artifact IDs come from the authenticated artifact registry.
+					await deleteArtifactRecord({
+						artifactId: artifactId as Id<'artifacts'>,
+						repositoryKey: currentRepositoryKey
+					});
+				}
+			: undefined;
+
 	const currentComposerScope = getComposerScope(currentThreadId, currentProjectPath);
 
 	const currentRecoveredSubmission = (() => {
@@ -861,7 +976,11 @@ export default function App({
 		isLifecycleInProgress(currentLifecycle.phase) &&
 		!isRetryableQueuedRun;
 
-	const isRunning = isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested';
+	const isStopAvailable =
+		runState != null &&
+		((isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested') ||
+			(!isRunInProgress && pendingAgentQuestion != null));
+
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 
 	const latestRunResumeKind =
@@ -878,6 +997,17 @@ export default function App({
 	const isSubmittingPrompt = Boolean(
 		currentComposerScope && submittingPromptScopes.has(currentComposerScope)
 	);
+
+	const conversationError =
+		(currentThreadId && transcript.threadId === currentThreadId ? transcript.error : null) ??
+		currentError ??
+		auth.error ??
+		(queryError ? convexClientErrorMessage(queryError) : null);
+
+	const runError =
+		(latestRunResumeKind === 'failed' || latestRunResumeKind === 'crash') && !isSubmittingPrompt
+			? (runState?.lastError ?? null)
+			: null;
 
 	const canSend = Boolean(
 		currentProjectPath &&
@@ -968,17 +1098,6 @@ export default function App({
 		}
 
 		return nextAttachments;
-	}
-
-	function localThreadCommandContext() {
-		const api = desktopApi;
-		const userId = signedInUserIdRef.current;
-
-		if (!api || !userId) {
-			throw new Error('The local Sprocket service is not ready.');
-		}
-
-		return { api, userId };
 	}
 
 	async function signOut() {
@@ -1652,6 +1771,15 @@ export default function App({
 			}
 
 			recoverSubmission(submissionDelayMessage);
+			const pendingThreadId = launchedThreadId;
+			const pendingLaunchId = agentLaunchId;
+
+			if (pendingThreadId && pendingLaunchId !== null) {
+				setPendingAgentLaunches((launches) =>
+					clearPendingAgentLaunch(launches, pendingThreadId, pendingLaunchId)
+				);
+			}
+
 			clearSubmittingPrompt(submissionScope, submissionSequence);
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, agentLaunchTimeoutMs);
@@ -1708,11 +1836,11 @@ export default function App({
 
 			launchedThreadId = threadId;
 			clearSubmissionDelay();
+			window.clearTimeout(submissionTimeoutId);
 			const launchId = ++nextAgentLaunchId.current;
 			agentLaunchId = launchId;
 
 			const launch: PendingAgentLaunch = {
-				expiresAt: Date.now() + agentLaunchTimeoutMs,
 				launchId,
 				previousRunId
 			};
@@ -1721,37 +1849,6 @@ export default function App({
 
 			if (threadId) {
 				setPendingAgentLaunches((launches) => beginPendingAgentLaunch(launches, threadId, launch));
-			}
-
-			if (threadId) {
-				window.setTimeout(() => {
-					const selectedRunId =
-						currentThreadIdRef.current === threadId ? (runStateRef.current?.runId ?? null) : null;
-
-					const latestRunId = selectedRunId;
-
-					const latestStartedAt =
-						currentThreadIdRef.current === threadId && runStateRef.current?.runId === latestRunId
-							? runStateRef.current?.startedAt
-							: undefined;
-
-					const recovery = resolveExpiredAgentLaunch(
-						pendingAgentLaunchesRef.current,
-						threadId,
-						launchId,
-						Date.now(),
-						latestRunId,
-						undefined,
-						latestStartedAt
-					);
-
-					if (recovery.pendingLaunches === pendingAgentLaunchesRef.current) return;
-					setPendingAgentLaunches(recovery.pendingLaunches);
-
-					if (recovery.shouldRecover) {
-						recoverSubmission('The local agent did not start. Please try again.');
-					}
-				}, agentLaunchTimeoutMs);
 			}
 
 			await launchAgentRun({
@@ -1878,14 +1975,17 @@ export default function App({
 	]);
 
 	async function cancelRun() {
-		if (!runState?.runId || !isRunInProgress) return;
+		if (!isStopAvailable) return;
 		const expectedUserId = signedInUserIdRef.current;
 		const expectedThreadId = currentThreadId;
-		const expectedRunId = runState.runId;
+		const expectedRunId = runState?.runId;
+
+		if (!expectedThreadId || !expectedRunId) return;
 
 		try {
-			const { api, userId } = localThreadCommandContext();
-			await api.requestRunCancellation({ userId, runId: expectedRunId });
+			await convexClient.mutation(api.agentRuntime.requestCancellation, {
+				runId: expectedRunId
+			});
 		} catch (error) {
 			if (
 				signedInUserIdRef.current !== expectedUserId ||
@@ -1893,7 +1993,7 @@ export default function App({
 				runStateRef.current?.runId !== expectedRunId
 			)
 				return;
-			setCurrentError(error instanceof Error ? error.message : 'Failed to cancel run.');
+			setCurrentError(error instanceof Error ? error.message : 'Failed to stop run.');
 		}
 	}
 
@@ -1925,7 +2025,6 @@ export default function App({
 		const launchId = ++nextAgentLaunchId.current;
 
 		const launch: PendingAgentLaunch = {
-			expiresAt: Date.now() + agentLaunchTimeoutMs,
 			launchId,
 			previousRunId,
 			previousStartedAt
@@ -2363,36 +2462,41 @@ export default function App({
 		};
 	}, []);
 
+	async function focusSidebarControl(open: boolean) {
+		await Promise.resolve();
+		document
+			.querySelector<HTMLButtonElement>(
+				open ? '.inbox-sidebar-host button' : '.inbox-floating-controls button'
+			)
+			?.focus();
+	}
+
 	async function openSidebar() {
 		setSidebarOpen(true);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		await focusSidebarControl(true);
 	}
 
 	async function closeSidebar() {
 		setSidebarOpen(false);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-collapsed-rail button')?.focus();
+		await focusSidebarControl(false);
 	}
 
-	async function openSettingsFromRail() {
+	function openSettings() {
 		setSettingsPage('account');
 		setSettingsOpen(true);
+	}
+
+	async function openSettingsFromFloatingControls() {
+		openSettings();
 
 		if (viewportWidth < 768) setSidebarOpen(true);
-		await Promise.resolve();
-		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+		await focusSidebarControl(true);
 	}
 
 	async function leaveSettings() {
 		setSettingsOpen(false);
 		setSettingsPage('account');
-		await Promise.resolve();
-		document
-			.querySelector<HTMLButtonElement>(
-				sidebarOpen ? '.inbox-sidebar-host button' : '.inbox-collapsed-rail button'
-			)
-			?.focus();
+		await focusSidebarControl(sidebarOpen);
 	}
 
 	if (!desktopApiResolved) {
@@ -2449,7 +2553,7 @@ export default function App({
 	}
 
 	return (
-		<div className="relative h-screen overflow-hidden">
+		<div className="relative h-dvh overflow-hidden">
 			<div
 				className={cn(
 					'app-workspace-shell inbox-layout',
@@ -2488,7 +2592,9 @@ export default function App({
 							}}
 						/>
 					) : (
-						<InboxSidebar
+						<InboxSidebarContainer
+							signedInUserId={signedInUserId}
+							repositoryKeys={inboxProjectKeys}
 							sections={inbox.sections}
 							projects={inboxProjects}
 							models={modelCatalog?.models ?? []}
@@ -2504,10 +2610,7 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
-							onSettings={() => {
-								setSettingsPage('account');
-								setSettingsOpen(true);
-							}}
+							onSettings={openSettings}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
 						/>
@@ -2515,10 +2618,10 @@ export default function App({
 				</div>
 
 				{!sidebarVisible && (
-					<div className="inbox-collapsed-rail">
+					<div className="inbox-floating-controls">
 						<BrandMark
 							size="sm"
-							class="inbox-icon inbox-rail-logo"
+							class="inbox-icon"
 							label="Open sidebar"
 							onclick={() => void openSidebar()}
 						/>
@@ -2527,7 +2630,7 @@ export default function App({
 							type="button"
 							aria-label="Settings"
 							title="Settings"
-							onClick={() => void openSettingsFromRail()}
+							onClick={() => void openSettingsFromFloatingControls()}
 						>
 							<Settings size={16} />
 						</button>
@@ -2535,7 +2638,7 @@ export default function App({
 				)}
 
 				<main
-					className="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
+					className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
 					inert={sidebarOpen && viewportWidth < 768}
 				>
 					{!settingsOpen && !artifactPanel.panel.open && (
@@ -2574,14 +2677,7 @@ export default function App({
 							{currentThreadId && (
 								<ThreadTranscript
 									key={`${currentThreadId}:${transcript.windowVersion}`}
-									currentError={
-										transcript.error ??
-										currentError ??
-										auth.error ??
-										(queryError ? convexClientErrorMessage(queryError) : null) ??
-										null
-									}
-									runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
+									userId={signedInUserId ?? undefined}
 									messages={visibleMessages}
 									actions={visibleActions}
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
@@ -2594,7 +2690,6 @@ export default function App({
 											selectedKey: artifactId
 										});
 									}}
-									stale={transcript.stale}
 									loadingOlder={transcript.loadingOlder}
 									nextBefore={transcript.nextBefore ?? undefined}
 									emptyStateMessage={
@@ -2611,7 +2706,7 @@ export default function App({
 								/>
 							)}
 
-							<div className={!currentThreadId ? 'create-thread-screen' : ''}>
+							<div className={!currentThreadId ? 'create-thread-screen' : 'shrink-0'}>
 								{!currentThreadId && (
 									<>
 										<CreateThreadHeading
@@ -2634,30 +2729,10 @@ export default function App({
 												to start local work.
 											</p>
 										)}
-										{createThreadError && (
-											<p className="create-thread-message text-destructive" role="alert">
-												{createThreadError}
-											</p>
-										)}
 									</>
 								)}
 
-								{catalogError ? (
-									<div
-										role="alert"
-										className="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
-									>
-										<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
-										<Button
-											variant="outline"
-											className="h-8 px-3"
-											disabled={catalogLoading}
-											onclick={() => void loadModelCatalog()}
-										>
-											{catalogLoading ? 'Retrying…' : 'Retry'}
-										</Button>
-									</div>
-								) : catalogLoading && !modelCatalog ? (
+								{!catalogError && catalogLoading && !modelCatalog ? (
 									<div className="text-muted-foreground mb-3 text-sm">Loading models…</div>
 								) : null}
 
@@ -2666,6 +2741,20 @@ export default function App({
 									className={!currentThreadId ? 'create-thread-composer' : ''}
 								>
 									<PromptComposer
+										notices={
+											<ConversationNotices
+												error={conversationError}
+												runError={runError}
+												reconnecting={Boolean(
+													currentThreadId &&
+													transcript.threadId === currentThreadId &&
+													transcript.stale
+												)}
+												catalogError={catalogError !== null}
+												catalogLoading={catalogLoading}
+												onRetryCatalog={() => void loadModelCatalog()}
+											/>
+										}
 										prompt={prompt}
 										onPromptChange={setPrompt}
 										attachments={composerAttachments.items}
@@ -2685,6 +2774,14 @@ export default function App({
 										pendingQuestion={pendingAgentQuestion}
 										showContinueWorking={latestRunResumeKind != null}
 										onContinueWorking={() => void continueWorking()}
+										runningCommands={
+											currentThreadId && signedInUserId && desktopApi && authReady
+												? {
+														api: desktopApi,
+														scope: { userId: signedInUserId, threadId: currentThreadId }
+													}
+												: null
+										}
 										selectedQuestionOptionId={selectedQuestionOptionId}
 										onSelectedQuestionOptionIdChange={setSelectedQuestionOptionId}
 										canSend={canSend}
@@ -2692,7 +2789,7 @@ export default function App({
 											isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion
 										}
 										isStarting={hasPendingAgentLaunch}
-										isRunning={isRunning}
+										isRunning={!hasPendingAgentLaunch && isStopAvailable}
 										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}
@@ -2716,7 +2813,9 @@ export default function App({
 					inert={artifactPanel.fullscreenArtifact ? true : undefined}
 				>
 					<SidePanel
+						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 						artifacts={artifactPanel.artifacts}
+						onDeleteArtifact={deleteArtifact}
 						selectedKey={artifactPanel.panel.selectedKey}
 						tab={artifactPanel.panel.tab}
 						liveView={browserLiveView.data}
@@ -2746,6 +2845,7 @@ export default function App({
 
 			{artifactPanel.fullscreenArtifact && (
 				<ArtifactScreenFullscreen
+					workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 					artifact={artifactPanel.fullscreenArtifact}
 					onClose={() => artifactPanel.setFullscreenKey(null)}
 				/>

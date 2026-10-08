@@ -20,12 +20,28 @@ export const vCompletionProvider = v.union(...literals(completionProviderIds));
 /** Tier ids are gateway-owned and dynamic, so this stays an open string. */
 export const vSubscriptionTier = v.string();
 
+export const vBillingInterval = v.union(v.literal('monthly'), v.literal('annual'));
+
+// Public checkout mode surfaced to the website; never exposes raw provider
+// environment naming.
+export const vDodoMode = v.union(v.literal('test'), v.literal('live'));
+
 export const vSubscriptionStatus = v.union(
 	v.literal('active'),
 	v.literal('on_hold'),
 	v.literal('cancelled'),
 	v.literal('expired'),
 	v.literal('failed')
+);
+
+// Neutral provider-backed attempt status; never asserts entitlement by itself.
+export const vCheckoutAttemptStatus = v.union(
+	v.literal('awaiting_payment'),
+	v.literal('pending'),
+	v.literal('succeeded'),
+	v.literal('failed'),
+	v.literal('expired'),
+	v.literal('unknown')
 );
 
 export const vWorkspaceInstruction = v.object({
@@ -66,6 +82,15 @@ export const vWriteStdinPayload = v.object({
 	terminate: v.optional(v.boolean()),
 	yieldTimeMs: v.optional(v.number())
 });
+
+export const vControlCommandPayload = v.object({
+	sessionId: v.string(),
+	action: v.union(v.literal('write'), v.literal('terminate')),
+	chars: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vPollCommandPayload = vWriteStdinPayload.pick('sessionId', 'yieldTimeMs');
 
 export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
 
@@ -189,7 +214,7 @@ export const vAskQuestionPayload = v.object({
 	question: v.string(),
 	options: v.array(vAskQuestionOption),
 	yieldTimeMs: v.optional(v.number()),
-	timeoutMs: v.optional(v.number())
+	timeoutMs: v.optional(v.union(v.number(), v.null()))
 });
 
 export const vAwaitQuestionPayload = v.object({
@@ -202,9 +227,42 @@ export const vParseFilePayload = v.union(
 	v.object({ url: v.string() })
 );
 
+export const vSubagentPayload = v.object({
+	threadId: v.optional(v.id('threadRecords')),
+	prompt: v.string(),
+	model: v.optional(v.string()),
+	reasoning: v.optional(v.string()),
+	fast: v.optional(v.boolean()),
+	yieldTimeMs: v.optional(v.number()),
+	timeoutMs: v.optional(v.number())
+});
+
+export const vControlSubagentPayload = vSubagentPayload.partial().extend({
+	threadId: v.id('threadRecords'),
+	action: v.union(v.literal('send'), v.literal('stop'), v.literal('answer_question')),
+	questionId: v.optional(v.id('agentQuestions')),
+	optionId: v.optional(v.string()),
+	text: v.optional(v.string())
+});
+
+export const vPollSubagentPayload = v.object({
+	threadId: v.id('threadRecords'),
+	cursor: v.optional(v.string()),
+	yieldTimeMs: v.optional(v.number())
+});
+
+export const vListSubagentsPayload = v.object({
+	parentThreadId: v.optional(v.id('threadRecords')),
+	cursor: v.optional(v.string())
+});
+
 export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
 	vParseFilePayload,
+	vSubagentPayload,
+	vControlSubagentPayload,
+	vPollSubagentPayload,
+	vListSubagentsPayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
@@ -214,6 +272,8 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload,
+	vControlCommandPayload,
+	vPollCommandPayload,
 	vAddArtifactPayload,
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
@@ -234,6 +294,7 @@ export const vApplyPatchResult = v.object({
 	changes: v.array(
 		v.object({
 			path: v.string(),
+			source: v.optional(v.string()),
 			operation: v.union(
 				v.literal('created'),
 				v.literal('updated'),
@@ -431,13 +492,121 @@ export const vAskQuestionAnswer = v.object({
 	text: v.optional(v.string())
 });
 
-export const vAskQuestionResult = v.object({
-	questionId: v.id('agentQuestions'),
-	question: v.string(),
-	options: v.array(vAskQuestionOption),
+export const vPollQuestionResult = v.object({
 	pending: v.boolean(),
 	timedOut: v.boolean(),
 	answer: v.optional(vAskQuestionAnswer)
+});
+
+export const vAskQuestionResult = vPollQuestionResult.extend({
+	questionId: v.id('agentQuestions'),
+	question: v.optional(v.string()),
+	options: v.optional(v.array(vAskQuestionOption))
+});
+
+export const vRunStatus = v.union(
+	v.literal('queued'),
+	v.literal('running'),
+	v.literal('completed'),
+	v.literal('failed'),
+	v.literal('cancelled')
+);
+
+export const vDescendantStatusCounts = v.object({
+	queued: v.number(),
+	running: v.number(),
+	completed: v.number(),
+	failed: v.number(),
+	cancelled: v.number()
+});
+
+export const vSubagentSettings = v.object({
+	model: v.string(),
+	reasoning: vReasoningEffort,
+	fast: v.boolean(),
+	completionProvider: vCompletionProvider
+});
+
+const vSubagentPendingQuestion = v.object({
+	questionId: v.id('agentQuestions'),
+	question: v.string(),
+	options: v.array(vAskQuestionOption)
+});
+
+const vSubagentMonitorEntry = v.union(
+	v.object({ type: v.literal('prompt'), id: v.string(), text: v.string() }),
+	v.object({ type: v.literal('text'), id: v.string(), text: v.string() }),
+	v.object({
+		type: v.literal('patch'),
+		id: v.string(),
+		ok: v.boolean(),
+		changes: v.array(
+			v.object({ operation: v.string(), path: v.string(), sourcePath: v.optional(v.string()) })
+		)
+	})
+);
+
+export const vSubagentActionResult = v.object({
+	status: vRunStatus,
+	lastError: v.optional(v.union(v.string(), v.null())),
+	pendingQuestions: v.array(vSubagentPendingQuestion)
+});
+
+export const vSubagentSnapshotResult = vSubagentActionResult.extend({
+	entries: v.array(vSubagentMonitorEntry),
+	nextCursor: v.string(),
+	hasMore: v.boolean()
+});
+
+const vSpawnSubagentFields = {
+	threadId: v.id('threadRecords'),
+	settings: vSubagentSettings
+};
+
+export const vSpawnSubagentResult = v.union(
+	vSubagentActionResult.extend(vSpawnSubagentFields),
+	vSubagentSnapshotResult.extend(vSpawnSubagentFields)
+);
+
+const vControlSubagentFields = {
+	answer: v.optional(vAskQuestionAnswer),
+	alreadyAnswered: v.optional(v.literal(true))
+};
+
+export const vControlSubagentResult = v.union(
+	vSpawnSubagentResult,
+	vSubagentActionResult.extend(vControlSubagentFields),
+	vSubagentSnapshotResult.extend(vControlSubagentFields)
+);
+
+export const vListSubagentsResult = v.object({
+	children: v.array(
+		v.object({
+			threadId: v.id('threadRecords'),
+			parentThreadId: v.id('threadRecords'),
+			title: v.optional(v.union(v.string(), v.null())),
+			status: vRunStatus,
+			lastError: v.optional(v.union(v.string(), v.null())),
+			settings: vSubagentSettings
+		})
+	),
+	nextCursor: v.union(v.string(), v.null()),
+	hasMore: v.boolean()
+});
+
+export const vListModelsResult = v.object({
+	defaultModelId: v.string(),
+	defaultFast: v.boolean(),
+	models: v.array(
+		v.object({
+			id: v.string(),
+			label: v.string(),
+			reasoningEfforts: v.array(v.string()),
+			defaultReasoningEffort: v.string(),
+			serviceTiers: v.array(v.string()),
+			supportsImages: v.boolean()
+		})
+	)
 });
 
 export const vArtifactResult = v.object({
@@ -499,6 +668,12 @@ export const vExecutorJobResult = v.union(
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
 	vAskQuestionResult,
+	vPollQuestionResult,
+	vSpawnSubagentResult,
+	vControlSubagentResult,
+	vSubagentSnapshotResult,
+	vListSubagentsResult,
+	vListModelsResult,
 	vCommandExecResult,
 	vCommandStdinResult,
 	vLegacyCommandResult,
@@ -519,14 +694,6 @@ export const vExecutorJobResult = v.union(
 	vMandateReportResult
 );
 
-export const vRunStatus = v.union(
-	v.literal('queued'),
-	v.literal('running'),
-	v.literal('completed'),
-	v.literal('failed'),
-	v.literal('cancelled')
-);
-
 export const runFinalStatus = ['cancelled', 'completed', 'failed'] as const;
 
 export const vRunFinalStatus = v.union(...literals(runFinalStatus));
@@ -540,7 +707,9 @@ export function isRunFinalStatus(
 export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
+	v.literal('poll_question'),
 	v.literal('await_question'),
+	v.literal('exec_cmd'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
@@ -554,10 +723,20 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
+	v.literal('control_cmd'),
+	v.literal('control_command'),
+	v.literal('poll_cmd'),
+	v.literal('poll_command'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
+	v.literal('list_subagent_models'),
+	v.literal('list_subagents'),
 	v.literal('edit_artifact'),
-	v.literal('save_artifact')
+	v.literal('delete_artifact'),
+	v.literal('save_artifact'),
+	v.literal('spawn_subagent'),
+	v.literal('control_subagent'),
+	v.literal('poll_subagent')
 );
 
 export const vExecutorJobKind = v.union(
@@ -722,6 +901,7 @@ export const vTranscriptToolBody = v.object({
 	toolInvocationId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
+	input: v.optional(vJsonValue),
 	output: v.optional(vJsonValue),
 	status: vTranscriptToolStatus
 });

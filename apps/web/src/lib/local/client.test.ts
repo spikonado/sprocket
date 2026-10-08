@@ -346,6 +346,25 @@ describe('watchLiveCompletion', () => {
 	});
 });
 
+describe('deleteArtifact', () => {
+	const request = {
+		userId: 'alice',
+		repositoryKey: 'robot',
+		workspacePath: '/workspace',
+		artifactId: 'artifact'
+	};
+
+	it('deletes through the local server with the account and workspace scope', async () => {
+		const fetch = vi.fn(async () => Response.json(null));
+		vi.stubGlobal('fetch', fetch);
+		await createLocalClient('http://127.0.0.1:7731').deleteArtifact(request);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/artifacts/delete',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
+		);
+	});
+});
+
 describe('watchArtifacts', () => {
 	const artifact = {
 		_id: 'artifact-1',
@@ -785,6 +804,43 @@ describe('chatgpt local sign-in', () => {
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify({ userId: 'user-1', connectionId: 'conn-1' })
+			})
+		);
+	});
+});
+
+describe('running command controls', () => {
+	it('sends scoped list and termination requests and forwards the list abort signal', async () => {
+		const commands = [{ sessionId: '7', command: 'bun run dev', workdir: '/work', startedAt: 100 }];
+
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(Response.json({ commands }))
+			.mockResolvedValueOnce(Response.json({ terminated: true }));
+
+		vi.stubGlobal('fetch', fetch);
+		const api = createLocalClient('http://localhost:17731');
+		const scope = { userId: 'user', threadId: threadRecordId('thread') };
+		const controller = new AbortController();
+		await expect(api.listRunningCommands(scope, controller.signal)).resolves.toEqual({ commands });
+		await expect(api.terminateCommand({ ...scope, sessionId: '7' })).resolves.toEqual({
+			terminated: true
+		});
+		expect(fetch).toHaveBeenNthCalledWith(
+			1,
+			'http://localhost:17731/api/agent/commands',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify(scope),
+				signal: controller.signal
+			})
+		);
+		expect(fetch).toHaveBeenNthCalledWith(
+			2,
+			'http://localhost:17731/api/agent/commands/terminate',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ ...scope, sessionId: '7' })
 			})
 		);
 	});

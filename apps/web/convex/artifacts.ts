@@ -32,6 +32,8 @@ const vArtifactMutationResult = v.object({
 	scope: v.literal('project')
 });
 
+const vDeleteArtifactMutationResult = vArtifactMutationResult.pick('artifactId');
+
 const vProjectArtifact = schema
 	.doc('artifacts')
 	.omit('threadId')
@@ -177,19 +179,48 @@ async function promoteArtifact(ctx: MutationCtx, artifact: Doc<'artifacts'>) {
 	return projectArtifact(artifact);
 }
 
+async function findAccessibleArtifact(
+	ctx: QueryCtx | MutationCtx,
+	artifactId: Id<'artifacts'>,
+	userId: string,
+	repositoryKey: string
+): Promise<Doc<'artifacts'> | null> {
+	const artifact = await ctx.db.get('artifacts', artifactId);
+
+	if (artifact && !canAccessArtifact(artifact, userId, repositoryKey)) {
+		throw new Error('Artifact not found.');
+	}
+
+	return artifact;
+}
+
 async function requireAccessibleArtifact(
 	ctx: QueryCtx | MutationCtx,
 	artifactId: Id<'artifacts'>,
 	userId: string,
 	repositoryKey: string
 ): Promise<Doc<'artifacts'>> {
-	const artifact = await ctx.db.get('artifacts', artifactId);
+	const artifact = await findAccessibleArtifact(ctx, artifactId, userId, repositoryKey);
 
-	if (!artifact || !canAccessArtifact(artifact, userId, repositoryKey)) {
-		throw new Error('Artifact not found.');
-	}
+	if (!artifact) throw new Error('Artifact not found.');
 
 	return artifact;
+}
+
+async function deleteAccessibleArtifact(
+	ctx: MutationCtx,
+	artifactId: Id<'artifacts'>,
+	userId: string,
+	repositoryKey: string
+) {
+	const artifact = await findAccessibleArtifact(ctx, artifactId, userId, repositoryKey);
+
+	if (artifact) {
+		await ctx.db.delete('artifacts', artifactId);
+		await bumpRegistry(ctx, userId, repositoryKey);
+	}
+
+	return { artifactId };
 }
 
 async function writeArtifactFields(
@@ -347,6 +378,37 @@ export const editArtifact = mutation({
 	}
 });
 
+export const deleteArtifact = mutation({
+	args: { artifactId: v.id('artifacts'), repositoryKey: v.string() },
+	returns: vDeleteArtifactMutationResult,
+	handler: async (ctx, args) => {
+		const repositoryKey = validateRepositoryKey(args.repositoryKey);
+		const userId = await authorizeProject(ctx, repositoryKey);
+
+		return await deleteAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);
+	}
+});
+
+export const deleteArtifactForRun = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		artifactId: v.id('artifacts')
+	},
+	returns: vDeleteArtifactMutationResult,
+	handler: async (ctx, args) => {
+		try {
+			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+			const repositoryKey = await loadThreadForRun(ctx, run);
+
+			return await deleteAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
 export const listArtifactsForRun = query({
 	args: {
 		runId: v.id('runs'),
@@ -472,9 +534,9 @@ export const syncArtifact = mutation({
 		const userId = await authorizeProject(ctx, repositoryKey, args.threadId);
 		validateArtifactContent(args.content);
 
-		const artifact = await requireAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);
+		const artifact = await findAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);
 
-		if (artifact.revision !== args.expectedRevision) {
+		if (!artifact || artifact.revision !== args.expectedRevision) {
 			return false;
 		}
 

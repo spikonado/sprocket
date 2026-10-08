@@ -6,6 +6,7 @@ import {
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { InboxState } from '@convex/lib/inboxState';
+import { useRevealPaginatedThread } from '$lib/project/useThreadTree';
 
 const INBOX_PAGE_SIZE = 10;
 
@@ -86,3 +87,21 @@ export type InboxSectionData = {
 	error?: string;
 	loadMore: () => void;
 };
+
+export function useRevealInboxThread(
+	root: Doc<'threadRecords'> | null,
+	repositoryKeys: readonly string[],
+	sections: readonly InboxSectionData[]
+): Doc<'threadRecords'> | null {
+	const visibleRoot = root && repositoryKeys.includes(root.repositoryKey) ? root : null;
+	const emptyPage = { rows: [], loading: false, canLoadMore: false, loadMore: () => {} };
+
+	const state = visibleRoot?.archivedAt === undefined ? 'unsettled' : 'settled';
+
+	useRevealPaginatedThread(
+		visibleRoot?._id ?? null,
+		sections.find((section) => section.state === state) ?? emptyPage
+	);
+
+	return visibleRoot;
+}

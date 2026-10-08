@@ -1,3 +1,4 @@
+import ArtifactMenu from '$lib/components/artifact-menu';
 import { Expand, FileCode, FileText, Fullscreen, Globe, Shrink, X } from 'lucide-react';
 import { useEffect, type KeyboardEvent } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
@@ -8,6 +9,8 @@ import type { ArtifactType } from '@convex/lib/validators';
 
 type Props = {
 	artifacts: ArtifactEntry[];
+	workspacePath?: string;
+	onDeleteArtifact?: (artifactId: string) => Promise<void>;
 	selectedKey: string | null;
 	tab: SidePanelTab;
 	/** undefined while the query is loading, null when no session exists. */
@@ -40,6 +43,8 @@ const TABS: { id: SidePanelTab; label: string }[] = [
 
 export default function SidePanel({
 	artifacts,
+	workspacePath,
+	onDeleteArtifact,
 	selectedKey,
 	tab,
 	liveView,
@@ -86,7 +91,8 @@ export default function SidePanel({
 			// Artifact screen-fullscreen (browser FS or CSS fallback) owns Escape.
 			if (
 				document.fullscreenElement ||
-				document.querySelector('[data-artifact-screen-fullscreen]')
+				document.querySelector('[data-artifact-screen-fullscreen]') ||
+				document.querySelector('[data-image-viewer]')
 			) {
 				return;
 			}
@@ -190,10 +196,12 @@ export default function SidePanel({
 									artifactType={selected.artifactType}
 									content={selected.content}
 									localPath={selected.localPath}
+									workspacePath={workspacePath}
 									localError={selected.localError}
 									variant="full"
 									onOpenFullscreen={() => onOpenFullscreen(selected.key)}
 									onBack={onBack}
+									onDelete={onDeleteArtifact ? () => onDeleteArtifact(selected.key) : undefined}
 								/>
 							</div>
 						) : (
@@ -209,34 +217,42 @@ export default function SidePanel({
 												key={artifact.key}
 												className="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
 											>
-												<button
-													type="button"
-													className="flex min-w-0 flex-1 items-center gap-2 text-left"
-													onClick={() => onSelect(artifact.key)}
+												<ArtifactMenu
+													trigger="context"
+													title={artifact.title}
+													onDelete={
+														onDeleteArtifact ? () => onDeleteArtifact(artifact.key) : undefined
+													}
 												>
-													<TypeIcon
-														className="text-muted-foreground size-3.5 shrink-0"
-														aria-hidden="true"
-													/>
-													<span className="flex min-w-0 flex-1 flex-col">
-														<span className="flex min-w-0 items-center gap-2">
-															<span className="text-foreground min-w-0 truncate text-sm">
-																{artifact.title}
+													<button
+														type="button"
+														className="flex min-w-0 flex-1 items-center gap-2 text-left"
+														onClick={() => onSelect(artifact.key)}
+													>
+														<TypeIcon
+															className="text-muted-foreground size-3.5 shrink-0"
+															aria-hidden="true"
+														/>
+														<span className="flex min-w-0 flex-1 flex-col">
+															<span className="flex min-w-0 items-center gap-2">
+																<span className="text-foreground min-w-0 truncate text-sm">
+																	{artifact.title}
+																</span>
+																<span className="text-muted-foreground shrink-0 text-[11px]">
+																	{artifact.artifactType}
+																</span>
 															</span>
-															<span className="text-muted-foreground shrink-0 text-[11px]">
-																{artifact.artifactType}
+															<span className="text-muted-foreground min-w-0 truncate text-[11px]">
+																{artifact.localPath ?? 'Stored in cloud'}
 															</span>
+															{artifact.localError ? (
+																<span className="text-[11px] text-amber-800 dark:text-amber-200">
+																	{artifact.localError}
+																</span>
+															) : null}
 														</span>
-														<span className="text-muted-foreground min-w-0 truncate text-[11px]">
-															{artifact.localPath ?? 'Stored in cloud'}
-														</span>
-														{artifact.localError ? (
-															<span className="text-[11px] text-amber-800 dark:text-amber-200">
-																{artifact.localError}
-															</span>
-														) : null}
-													</span>
-												</button>
+													</button>
+												</ArtifactMenu>
 												<button
 													type="button"
 													className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"

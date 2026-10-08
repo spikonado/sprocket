@@ -18,11 +18,14 @@ use crate::attachments::cache_prompt_attachments;
 use crate::catalog::catalog_capabilities_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
+use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
+use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
     TranscriptPart, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
     current_run_has_finished_turns, fetch_missing_parts, fetch_parts_by_numbers,
     parse_remote_parts, prompt_text_after_handoff, prompt_text_with_attachments,
+    workspace_context_after_handoff,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
@@ -44,8 +47,11 @@ const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 /// Must match the createGatewayRun conflict ConvexErrors in
 /// apps/web/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
-const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
-const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
+const CONTINUE_PROMPT: &str = "continue";
+// Must match convex/lib/agentErrors.ts so executor-reported lease loss and
+// lifecycle-detected abandonment have the same automatic recovery policy.
+const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
+const DEVELOPER_PROMPT_TEMPLATE: &str = include_str!("developer_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
 const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
@@ -176,7 +182,7 @@ fn build_workspace_prompt_context(
     };
 
     let model_identity = format!("Your model is {model_label} ({model_id}).");
-    let base_instructions = SYSTEM_PROMPT_TEMPLATE
+    let base_instructions = DEVELOPER_PROMPT_TEMPLATE
         .trim_end()
         .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
         .replace(THREAD_ID_PLACEHOLDER, thread_id)
@@ -293,7 +299,7 @@ async fn abort_after_claim(
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
     // After claim (including mid-run lease loss); not the pre-start phrasing.
-    let text = format!("Run aborted: {error}");
+    let text = format!("Run aborted: {error:#}");
     match finalize_claim_failure(runtime, run_id, claim_id, &error, &text).await {
         Ok(()) => Err(error),
         Err(cleanup_error) => Err(anyhow!(
@@ -555,8 +561,11 @@ where
                         lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
                         next_renewal_at = renewal_started_at + RUN_CLAIM_RENEW_INTERVAL;
                     }
-                    Ok((false, _)) => return Err(anyhow!("claim lease for run {run_id} was lost")),
-                    Err(error) => return Err(error),
+                    Ok((false, _)) => return Err(
+                        anyhow!("claim lease for run {run_id} was lost")
+                            .context(RUN_ABANDONED_BY_AGENT)
+                    ),
+                    Err(error) => return Err(error.context(RUN_ABANDONED_BY_AGENT)),
                 }
             }
             result = &mut operation => return Ok(result),
@@ -601,10 +610,45 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
         None
     };
     let claim_id = Uuid::new_v4().to_string();
-    let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
+    let runtime = timeout(
+        SUBMISSION_ATTEMPT_TIMEOUT,
+        RuntimeClient::from_request(&request),
+    )
+    .await
+    .context("timed out initializing agent submission")??;
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
-    let created_run = runtime.create_run(&request).await?;
+    let created_run = loop {
+        if request.cancellation.is_cancelled() {
+            return Err(sprocket_workspace::WorkspaceOperationCancelled.into());
+        }
+        match timeout(SUBMISSION_ATTEMPT_TIMEOUT, runtime.create_run(&request))
+            .await
+            .context("timed out submitting agent run")?
+        {
+            Ok(created) => break created,
+            Err(error) if submission_is_waiting(&error) && !request.thread_id.is_empty() => {
+                wait_until_ready(&request.cancellation, || async {
+                    let result = runtime
+                        .client
+                        .mutation(
+                            "agentRuntime:prepareSubmission",
+                            std::collections::BTreeMap::from([(
+                                "threadId".to_string(),
+                                request.thread_id.clone().into(),
+                            )]),
+                        )
+                        .await?;
+                    sprocket_convex::decode_function_result(
+                        result,
+                        "agentRuntime:prepareSubmission",
+                    )
+                })
+                .await?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
     let mut request = request;
     request.thread_id = created_run.thread_id.clone();
     // The browser token is only needed to create and bind the run. Every later
@@ -801,6 +845,7 @@ async fn load_prior_history(
 
 pub async fn run_agent(
     run: AgentRun,
+    command_sessions: sprocket_workspace::CommandSessionManager,
     live: Arc<LiveCompletionHub>,
     store: Arc<TranscriptStore>,
 ) -> anyhow::Result<()> {
@@ -920,9 +965,7 @@ pub async fn run_agent(
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     let prompt = if continue_without_prompt {
-        Message::User {
-            content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
-        }
+        developer_message(CONTINUE_PROMPT)
     } else {
         prompt
     };
@@ -982,8 +1025,9 @@ pub async fn run_agent(
                 if !continue_without_prompt {
                     let prompt_text =
                         prompt_text_after_handoff(body, part.number, &prior_history.state);
-                    prompt_includes_workspace_context = body.workspace_context.is_some()
-                        && prompt_text == prompt_text_with_attachments(body);
+                    prompt_includes_workspace_context =
+                        workspace_context_after_handoff(body, part.number, &prior_history.state)
+                            .is_some();
                     prompt = Message::user(prompt_text);
                 }
                 store
@@ -1010,9 +1054,11 @@ pub async fn run_agent(
                 runtime.clone(),
                 AgentProviderRequest {
                     allow_interaction: request.allow_interaction,
+                    is_child: context.run.parent_thread_id.is_some(),
                     cancellation: request.cancellation,
                     run_id: run_id.clone(),
                     claim_id: claim_id.clone(),
+                    user_id: context.run.user_id.clone(),
                     thread_id: request.thread_id.clone(),
                     run_started_at: context.run.started_at,
                     live: live.clone(),
@@ -1028,16 +1074,19 @@ pub async fn run_agent(
                         &context.run.user_id,
                         &workspace_root,
                     ),
+                    command_sessions: command_sessions.clone(),
                     workspace_root,
                     skills,
                     reasoning_effort,
                     fast_mode,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
-                    supports_required_tool_choice: capabilities.supports_required_tool_choice,
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
+                    gateway_url: gateway_url.clone(),
+                    subagent_launcher: request.subagent_launcher.clone(),
+                    transcript_store: request.transcript_store.clone(),
                 },
             )
             .await;
@@ -1225,18 +1274,20 @@ mod tests {
 
     #[test]
     fn initial_context_renders_user_instructions_before_workspace_instructions() {
+        let user_instructions = "Use the user's preferred test runner.";
+        let workspace_instructions = "Keep generated board files in hardware/output.";
         let instructions = [
             WorkspaceInstruction {
                 path: "/home/user/.agents/AGENTS.md".to_string(),
                 directory: "/home/user/.agents".to_string(),
-                contents: "user instructions".to_string(),
+                contents: user_instructions.to_string(),
                 truncated: false,
                 source: WorkspaceInstructionSource::User,
             },
             WorkspaceInstruction {
                 path: "/tmp/project/AGENTS.md".to_string(),
                 directory: "/tmp/project".to_string(),
-                contents: "workspace instructions".to_string(),
+                contents: workspace_instructions.to_string(),
                 truncated: false,
                 source: WorkspaceInstructionSource::Workspace,
             },
@@ -1251,6 +1302,8 @@ mod tests {
         assert!(initial_context.contains(agents_heading));
         assert!(initial_context.contains(user_heading));
         assert!(initial_context.contains(workspace_heading));
+        assert!(initial_context.contains(user_instructions));
+        assert!(initial_context.contains(workspace_instructions));
         assert!(
             initial_context
                 .find(agents_heading)
@@ -1263,15 +1316,11 @@ mod tests {
                     .find(workspace_heading)
                     .expect("workspace heading")
         );
+        assert!(!prompt_context.base_instructions.contains(user_instructions));
         assert!(
             !prompt_context
                 .base_instructions
-                .contains("user instructions")
-        );
-        assert!(
-            !prompt_context
-                .base_instructions
-                .contains("workspace instructions")
+                .contains(workspace_instructions)
         );
     }
 }
@@ -1285,8 +1334,9 @@ mod claim_lease_tests {
     use tokio::time::{Instant, sleep};
 
     use super::{
-        RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
-        RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
+        RUN_ABANDONED_BY_AGENT, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION,
+        RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease,
+        renew_claim_with,
     };
 
     /// Regression: a starved renewal tick (CPU saturation, slow reconnect)
@@ -1396,7 +1446,34 @@ mod claim_lease_tests {
             std::future::pending(),
         )
         .await;
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("was lost"), "{error}");
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
+        assert!(format!("{error:#}").contains("was lost"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn renewal_failure_is_abandonment_and_keeps_the_diagnostic() {
+        let result: anyhow::Result<()> = drive_claim_lease(
+            "run-disconnected",
+            Instant::now(),
+            |_lease_deadline| async { Err(anyhow!("claim renewal timed out")) },
+            std::future::pending(),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
+        assert!(format!("{error:#}").contains("claim renewal timed out"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn operation_failure_is_not_classified_as_abandonment() {
+        let result = drive_claim_lease(
+            "run-provider-error",
+            Instant::now(),
+            |_lease_deadline| async { Ok((true, Instant::now())) },
+            async { Err::<(), _>(anyhow!("provider failure")) },
+        )
+        .await;
+        assert_eq!(result.unwrap().unwrap_err().to_string(), "provider failure");
     }
 }

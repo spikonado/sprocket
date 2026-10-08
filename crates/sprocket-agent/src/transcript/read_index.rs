@@ -5,7 +5,7 @@ use super::sections::{WorkItem, WorkPosition, earliest_timing, string, timing};
 
 pub(super) struct ReadIndex<'a>(pub &'a Connection);
 
-const DISPLAY_ITEM: &str = "(canonical=1 OR (NOT EXISTS (
+pub(super) const DISPLAY_ITEM: &str = "(canonical=1 OR (NOT EXISTS (
     SELECT 1 FROM source_refs c WHERE c.run=s.run AND c.canonical=1 AND
     (c.identity=s.identity OR c.identity='call:'||s.call_id)
 ) AND sequence=(SELECT MIN(t.sequence) FROM source_refs t WHERE t.run=s.run AND t.identity=s.identity AND t.canonical=0)))";

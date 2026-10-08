@@ -227,17 +227,14 @@ impl TranscriptStore {
                     .prompt
                     .as_ref()
                     .and_then(|prompt| prompt.workspace_context.as_ref())
-                {
-                    if let Some(prompt) = existing
+                    && let Some(prompt) = existing
                         .iter_mut()
                         .find(|part| part.number == incoming.number)
                         .and_then(|part| part.prompt.as_mut())
-                    {
-                        if prompt.workspace_context.is_none() {
-                            prompt.workspace_context = Some(context.clone());
-                            enriched = true;
-                        }
-                    }
+                    && prompt.workspace_context.is_none()
+                {
+                    prompt.workspace_context = Some(context.clone());
+                    enriched = true;
                 }
             }
             if enriched {
@@ -362,7 +359,26 @@ impl TranscriptStore {
         let _guard = lock.lock().await;
         let dir = self.thread_dir(user_id, thread_id);
         if tokio::fs::try_exists(&dir).await? {
-            tokio::fs::remove_dir_all(&dir).await?;
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                if entry.file_name() == "command-logs" {
+                    continue;
+                }
+                if entry.file_type().await?.is_dir() {
+                    tokio::fs::remove_dir_all(entry.path()).await?;
+                } else {
+                    tokio::fs::remove_file(entry.path()).await?;
+                }
+            }
+            match tokio::fs::remove_dir(&dir).await {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         Ok(())
     }
@@ -571,7 +587,35 @@ mod tests {
                 .len(),
             3
         );
+        let command_log = store
+            .thread_dir("user", "thread")
+            .join("command-logs/output.log");
+        tokio::fs::create_dir_all(command_log.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&command_log, b"command output")
+            .await
+            .unwrap();
         store.clear_thread("user", "thread").await.unwrap();
+        assert!(
+            store
+                .read_parts("user", "thread", &[0, 1, 2])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .load_state("user", "thread")
+                .await
+                .unwrap()
+                .remote_total_parts,
+            0
+        );
+        assert_eq!(
+            tokio::fs::read(command_log).await.unwrap(),
+            b"command output"
+        );
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 

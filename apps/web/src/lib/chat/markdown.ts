@@ -1,13 +1,21 @@
 import DOMPurify from 'isomorphic-dompurify';
-import { marked, type Token } from 'marked';
+import { Marked, type Token } from 'marked';
+import { isWindowsImagePath, stripImageFileScheme } from './markdown-image-path';
+import { markdownMath } from './markdown-math';
 
-marked.setOptions({
-	gfm: true,
-	breaks: true
+const marked = new Marked({ gfm: true, breaks: true }, markdownMath);
+
+DOMPurify.addHook('uponSanitizeAttribute', (node, attribute) => {
+	if (node.nodeName !== 'IMG' || attribute.attrName !== 'src') return;
+
+	const source = stripImageFileScheme(attribute.attrValue);
+
+	attribute.attrValue = isWindowsImagePath(source) ? `${source[0]}%3A${source.slice(2)}` : source;
 });
 
 function sanitizeMarkdown(rendered: string, openLinksInNewTab = false) {
 	const sanitized = DOMPurify.sanitize(rendered, {
+		ADD_FORBID_CONTENTS: ['annotation'],
 		ADD_ATTR: ['target', 'rel'],
 		FORBID_ATTR: openLinksInNewTab ? ['target', 'rel'] : []
 	});

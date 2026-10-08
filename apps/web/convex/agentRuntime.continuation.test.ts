@@ -144,7 +144,9 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 				prompt: '',
 				continuationOfRunId: active.runId
 			})
-		).rejects.toThrow('Finish or cancel the active run before sending another message.');
+		).rejects.toThrow(
+			'Stop the current run or wait for it to finish before sending another message.'
+		);
 
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: active.runId,
@@ -212,7 +214,9 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 				prompt: '',
 				continuationOfRunId: parent.runId
 			})
-		).rejects.toThrow('Finish or cancel the active run before sending another message.');
+		).rejects.toThrow(
+			'Stop the current run or wait for it to finish before sending another message.'
+		);
 	});
 
 	it('fails an abandoned claimed parent, then continues from it', async () => {

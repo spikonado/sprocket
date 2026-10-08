@@ -42,6 +42,7 @@ import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
+	submissionReadiness,
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
@@ -75,6 +76,14 @@ type RunClaimPatch = {
 	completionAttemptSeq?: number;
 };
 
+const paymentToolJobKinds: ReadonlySet<string> = new Set([
+	'mandate_setup',
+	'mandate_status',
+	'mandate_list',
+	'mandate_charge',
+	'mandate_report'
+]);
+
 function isExpectedSectionKey(
 	runId: Doc<'runs'>['_id'],
 	claimId: string,
@@ -106,6 +115,17 @@ const vCreatedGatewayRun = v.object({
 const vCreateGatewayRunResult = vCreatedGatewayRun.extend({
 	gatewayUrl: v.string(),
 	protocolVersion: v.number()
+});
+
+export const prepareSubmission = mutation({
+	args: { threadId: v.id('threadRecords') },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		return await submissionReadiness(ctx, thread._id);
+	}
 });
 
 export const insertGatewayRun = internalMutation({
@@ -286,6 +306,7 @@ export const renewClaim = mutation({
 
 function getContextResult(args: {
 	run: Doc<'runs'>;
+	parentThreadId?: Doc<'threadRecords'>['_id'];
 	prompt: string;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
@@ -299,7 +320,8 @@ function getContextResult(args: {
 			reasoningEffort: args.run.reasoningEffort,
 			fastMode: args.run.fastMode,
 			startedAt: args.run.startedAt,
-			continuationOfRunId: args.run.continuationOfRunId
+			continuationOfRunId: args.run.continuationOfRunId,
+			parentThreadId: args.parentThreadId
 		},
 		prompt: args.prompt
 	};
@@ -321,6 +343,8 @@ export const getContext = query({
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+		const thread = await ctx.db.get('threadRecords', run.threadId);
+		const parentThreadId = thread?.parentThreadId;
 
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
@@ -329,6 +353,7 @@ export const getContext = query({
 
 			return getContextResult({
 				run,
+				parentThreadId,
 				prompt: '',
 				contextTokens
 			});
@@ -336,6 +361,7 @@ export const getContext = query({
 
 		return getContextResult({
 			run,
+			parentThreadId,
 			prompt: promptPart.prompt.text,
 			contextTokens
 		});
@@ -402,6 +428,10 @@ export const prepareWorkspacePrompt = mutation({
 		await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 		const prompt = await getPromptPart(ctx, run.threadId, run._id);
 
+		if (prompt?.prompt?.workspaceContext != null) {
+			return { prompt: prompt.prompt, workspaceContext: prompt.prompt.workspaceContext };
+		}
+
 		const earlierPrompts = ctx.db
 			.query('threadTranscriptParts')
 			.withIndex('by_threadId_and_kind_and_number', (q) =>
@@ -414,44 +444,36 @@ export const prepareWorkspacePrompt = mutation({
 		let earlierContext: string | undefined;
 
 		for await (const part of earlierPrompts) {
-			if (part.prompt?.workspaceContext !== undefined && part.prompt.workspaceContext !== null) {
+			if (part.prompt?.workspaceContext != null) {
 				earlierContext = part.prompt.workspaceContext;
 				break;
 			}
 		}
 
-		if (prompt?.prompt?.workspaceContext !== undefined) {
+		if (prompt?.prompt?.workspaceContext === null) {
+			if (earlierContext === undefined) throw new Error('Prepared workspace context is missing.');
+
 			return {
 				prompt: prompt.prompt,
-				workspaceContext: prompt.prompt.workspaceContext ?? earlierContext ?? args.text
+				workspaceContext: earlierContext
 			};
 		}
 
-		if (!prompt) {
-			if (earlierContext !== undefined) {
-				return { prompt: null, workspaceContext: earlierContext };
-			}
+		const completion =
+			prompt &&
+			(await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (q) =>
+					q.eq('threadId', run.threadId).eq('runId', run._id)
+				)
+				.filter((q) => q.eq(q.field('kind'), 'completion'))
+				.first());
 
-			return { prompt: null, workspaceContext: args.text, initialWorkspaceContext: args.text };
-		}
-
-		const completion = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_runId_and_number', (q) =>
-				q.eq('threadId', run.threadId).eq('runId', run._id)
-			)
-			.filter((q) => q.eq(q.field('kind'), 'completion'))
-			.first();
-
-		if (completion) {
-			if (earlierContext !== undefined) {
-				return { prompt: prompt.prompt ?? null, workspaceContext: earlierContext };
-			}
-
+		if (!prompt || completion) {
 			return {
-				prompt: prompt.prompt ?? null,
-				workspaceContext: args.text,
-				initialWorkspaceContext: args.text
+				prompt: prompt?.prompt ?? null,
+				workspaceContext: earlierContext ?? args.text,
+				initialWorkspaceContext: earlierContext === undefined ? args.text : undefined
 			};
 		}
 
@@ -909,6 +931,14 @@ export const beginToolJob = mutation({
 
 			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+			}
+
+			if (paymentToolJobKinds.has(args.kind)) {
+				const thread = await ctx.db.get('threadRecords', run.threadId);
+
+				if (thread?.parentThreadId !== undefined) {
+					throw new Error('Payment tools are not available to subagents.');
+				}
 			}
 
 			if (!args.sectionKey && args.hidden !== true) {

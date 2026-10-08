@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render as renderView } from '@testing-library/react';
+import { render as renderView, within } from '@testing-library/react';
 import type { Id } from '@convex/_generated/dataModel';
 import type { TranscriptDisplayDetails } from '$lib/types/sprocket';
 import WorkSectionDetails from './work-section-details';
@@ -79,6 +79,7 @@ async function render(load: Props['load'], inProgress = false, visible = false) 
 		},
 		load,
 		inProgress,
+		commands: new Map(),
 		viewport,
 		beforeChange: vi.fn(() => restore)
 	};
@@ -121,7 +122,7 @@ afterEach(() => {
 });
 
 describe('scrolling work details', () => {
-	it('appends completed work in the conversation viewport without replacing open reasoning', async () => {
+	it('appends completed work without replacing expanded reasoning', async () => {
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce(page([1], undefined, 1))
@@ -129,26 +130,26 @@ describe('scrolling work details', () => {
 
 		const { viewport, edges, props, restore } = await render(load);
 		expect(load.mock.calls[0][1]).toEqual({});
-		const reasoning = viewport.querySelector<HTMLButtonElement>('button');
-		act(() => {
-			reasoning?.click();
-		});
-		await settle();
+		act(() => within(viewport).getByRole('button', { name: 'Reasoned' }).click());
+		const reasoning = within(viewport).getByText('Reason 1');
 		edges.newer = 1_500;
 		act(() => intersection());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 1 });
-		expect(viewport.querySelector('button')).toBe(reasoning);
-		expect(reasoning?.getAttribute('aria-expanded')).toBe('true');
+		expect(within(viewport).getByText('Reason 1')).toBe(reasoning);
 		expect(viewport.textContent).toContain('Reason 1');
+		act(() => within(viewport).getAllByRole('button', { name: 'Reasoned' })[1].click());
+		expect(viewport.textContent).toContain('Reason 2');
 		expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(2);
 		expect(viewport.textContent).not.toMatch(/Previous details|Next details/);
-		expect(viewport.querySelector('[class*="overflow"]')).toBeNull();
+		expect(
+			viewport.querySelector('[class~="overflow-auto"], [class~="overflow-y-auto"]')
+		).toBeNull();
 		expect(props.beforeChange).toHaveBeenLastCalledWith(false);
 		expect(restore).toHaveBeenCalledTimes(2);
 	});
 
-	it('opens active work at the oldest page and preserves a tool group when newer calls join it', async () => {
+	it('opens active work at the oldest page and preserves inline tool rows as pages arrive', async () => {
 		const load = vi
 			.fn()
 			.mockResolvedValueOnce({ ...tools([2, 3]), nextAfter: 3 })
@@ -158,31 +159,38 @@ describe('scrolling work details', () => {
 		const { viewport, edges, props, setProps } = await render(load, true);
 		expect(load.mock.calls[0][1]).toEqual({});
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
-		const group = viewport.querySelector<HTMLButtonElement>('button');
-		const originalTool = viewport.querySelector('[title="echo 2"]');
+
+		const originalTool = [...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
+			row.textContent?.includes('echo 2')
+		);
+
 		expect(originalTool).not.toBeNull();
-		expect(group?.getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.querySelector('button')).toBeNull();
 		edges.newer = 1_500;
 		act(() => intersection());
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 3 });
-		expect(viewport.querySelector('button')).toBe(group);
-		expect(group?.getAttribute('aria-expanded')).toBe('true');
-		expect(viewport.querySelector('[title="echo 2"]')).toBe(originalTool);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
+				row.textContent?.includes('echo 2')
+			)
+		).toBe(originalTool);
 		expect(viewport.textContent).toContain('echo 6');
 		expect(
-			[...viewport.querySelectorAll<HTMLElement>('[title^="echo "]')].map((item) => item.title)
+			[...viewport.querySelectorAll('[data-tool-row]')].map(
+				(item) => item.querySelector('.truncate')?.textContent
+			)
 		).toEqual(['echo 2', 'echo 3', 'echo 4', 'echo 5', 'echo 6', 'echo 7']);
 		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
-		act(() => {
-			group?.click();
-		});
-		await settle();
 		load.mockResolvedValue(tools([2, 3, 4, 5, 6, 7]));
 		setProps({ row: { ...props.row, revision: 2 } });
 		await settle();
-		expect(viewport.querySelector('button')).toBe(group);
-		expect(group?.getAttribute('aria-expanded')).toBe('false');
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
+				row.textContent?.includes('echo 2')
+			)
+		).toBe(originalTool);
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(6);
 	});
 
 	it('prefetches work three viewports before its unloaded edge becomes visible', async () => {
@@ -199,7 +207,7 @@ describe('scrolling work details', () => {
 		expect(viewport.textContent).not.toMatch(/Scroll (up|down)/);
 	});
 
-	it('bounds lookahead when collapsed details do not make the section taller', async () => {
+	it('bounds lookahead when loaded details do not make the section taller', async () => {
 		let id = 0;
 
 		const load = vi.fn().mockImplementation(async () => {

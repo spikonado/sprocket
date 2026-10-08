@@ -1,8 +1,94 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderMarkdown, renderMarkdownBlocks } from '$lib/chat/markdown';
 
 describe('renderMarkdown', () => {
+	it.each([
+		['dollar inline', String.raw`The result is $x^2 + y_1$.`, false],
+		['parenthesis inline', String.raw`The result is \(x^2 + y_1\).`, false],
+		['dollar display', String.raw`$$\frac{1}{2}$$`, true],
+		['bracket display', String.raw`\[\frac{1}{2}\]`, true],
+		['multiline display', '$$\n\\begin{aligned}x &= 1 \\\\\ny &= 2\\end{aligned}\n$$', true],
+		['matrix', String.raw`\[\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}\]`, true],
+		['nested radicals', String.raw`$\sqrt{1 + \sqrt{x}}$`, false],
+		['limits', String.raw`\[\sum_{n=1}^{\infty}\frac{1}{n^2} = \frac{\pi^2}{6}\]`, true],
+		['reflected text', String.raw`$\reflectbox{ABC}$`, false],
+		['maps from', String.raw`$A \mapsfrom B$`, false]
+	])('renders %s math with accessible markup', (_case, markdown, display) => {
+		const html = renderMarkdown(markdown);
+
+		expect(html).toContain('class="katex"');
+		expect(html).toContain('<math');
+		expect(html).toContain('class="katex-html" aria-hidden="true"');
+		expect(html.includes('class="katex-display"')).toBe(display);
+		expect(html).not.toContain('class="katex-error"');
+		expect(html).not.toContain('<annotation');
+	});
+
+	it('keeps Unicode text readable when KaTeX warns about missing font metrics', () => {
+		const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		try {
+			const html = renderMarkdown(String.raw`$\text{λ}$ and $x^2$`);
+
+			expect(html).toContain('<mtext>λ</mtext>');
+			expect(html.match(/class="katex"/g)).toHaveLength(2);
+			expect(html).not.toContain('class="katex-error"');
+			expect(warning).toHaveBeenCalledWith(expect.stringContaining('[symbolNotInFont]'));
+		} finally {
+			warning.mockRestore();
+		}
+	});
+
+	it.each([
+		[String.raw`*before $a*b$ after*`, 'em'],
+		[String.raw`**before \(a*b\) after**`, 'strong'],
+		[String.raw`_before $a_b$ after_`, 'em'],
+		[String.raw`~~before $a~~b$ after~~`, 'del']
+	])('preserves math within Markdown emphasis: %s', (markdown, tag) => {
+		const html = renderMarkdown(markdown);
+
+		expect(html).toContain(`<${tag}>before <span class="katex">`);
+		expect(html).toContain(` after</${tag}>`);
+	});
+
+	it('preserves currency next to code and formatting around literal dollars', () => {
+		expect(renderMarkdown('Costs $5; use `$HOME` for the path.')).toBe(
+			'<p>Costs $5; use <code>$HOME</code> for the path.</p>\n'
+		);
+
+		const html = renderMarkdown('*before `$x`* and **$y$**');
+
+		expect(html).toContain('<em>before <code>$x</code></em> and <strong><span class="katex">');
+		expect(html).toContain('</span></strong>');
+		expect(renderMarkdown(String.raw`*before \$x* and **$y$**`)).toContain(
+			'<em>before $x</em> and <strong><span class="katex">'
+		);
+	});
+
+	it.each([
+		['currency', 'Costs $5 and $10.'],
+		['escaped dollars', String.raw`Use \$x\$ literally.`],
+		['inline code', '`$x^2$` and `\\(y_1\\)`'],
+		['fenced code', '```latex\n$x^2$\n\\[y_1\\]\n```'],
+		['indented code', '    $$x^2$$'],
+		['raw code', String.raw`<code>$x^2$</code>`],
+		['unfinished inline math', String.raw`The result is $\frac{1}`]
+	])('keeps %s readable as literal text', (_case, markdown) => {
+		const html = renderMarkdown(markdown);
+
+		expect(html).not.toContain('class="katex"');
+		expect(html).toContain('$');
+	});
+
+	it('keeps malformed math readable alongside valid math', () => {
+		const html = renderMarkdown(String.raw`$\frac{$ and $x^2$`);
+
+		expect(html).toContain('class="katex-error"');
+		expect(html).toContain('\\frac{');
+		expect(html).toContain('class="katex"');
+	});
+
 	it('sanitizes unsafe html', () => {
 		const html = renderMarkdown('<script>alert("xss")</script><strong>safe</strong>');
 
@@ -12,6 +98,16 @@ describe('renderMarkdown', () => {
 });
 
 describe('renderMarkdownBlocks', () => {
+	it('renders math on both sides of an artifact reference', () => {
+		const blocks = renderMarkdownBlocks('$x^2$\n\nartifact:known\n\n\\[y_1\\]', new Set(['known']));
+
+		expect(blocks).toEqual([
+			{ type: 'html', html: expect.stringContaining('class="katex"') },
+			{ type: 'artifact', artifactId: 'known' },
+			{ type: 'html', html: expect.stringContaining('class="katex-display"') }
+		]);
+	});
+
 	it('replaces existing link targets when links should open in a new tab', () => {
 		const blocks = renderMarkdownBlocks(
 			'<a href="https://example.com" target="named-frame" rel="opener">example</a>',

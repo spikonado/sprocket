@@ -238,10 +238,6 @@
 	font-size: 11px;
 }
 
-.inbox-row-model .inbox-status {
-	margin-left: auto;
-}
-
 .inbox-row-actions {
 	position: absolute;
 	top: 4px;
@@ -257,7 +253,7 @@
 	visibility: visible;
 }
 
-.inbox-row:hover .inbox-row-age {
+.inbox-row:has(> .inbox-row-actions):hover .inbox-status {
 	visibility: hidden;
 }
 
@@ -288,6 +284,42 @@
 .inbox-row-state-action:hover::after {
 	opacity: 1;
 	visibility: visible;
+}
+
+.inbox-row:has(> .inbox-subagents) {
+	flex-direction: column;
+	align-items: stretch;
+}
+
+.inbox-row:has(> .inbox-subagents) .inbox-row-main {
+	padding-bottom: 4px;
+}
+
+.inbox-row-subagents {
+	color: var(--muted-foreground);
+	font-size: 11px;
+	line-height: 20px;
+}
+
+.inbox-subagents {
+	display: flex;
+	align-self: flex-start;
+	align-items: flex-start;
+	gap: 7px;
+	margin: 0 10px 8px;
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.inbox-subagents svg {
+	flex-shrink: 0;
+	margin-top: 3.5px;
+}
+
+.inbox-children .inbox-load-more {
+	padding: 4px 10px;
+	text-align: left;
 }
 
 .inbox-working {
@@ -370,12 +402,14 @@
 }
 
 .inbox-sidebar button:focus-visible,
-.inbox-context-menu button:focus-visible {
+.inbox-context-menu button:focus-visible,
+.inbox-floating-controls button:focus-visible {
 	outline: 2px solid var(--foreground);
 	outline-offset: 2px;
 }
 
 .inbox-layout {
+	position: relative;
 	display: grid;
 	height: 100dvh;
 	grid-template-columns: 260px minmax(0, 1fr);
@@ -387,7 +421,7 @@
 }
 
 .inbox-layout.sidebar-hidden {
-	grid-template-columns: 3.5rem minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr);
 }
 
 .inbox-sidebar-host {
@@ -406,35 +440,36 @@
 	border-right: 0;
 }
 
-.inbox-collapsed-rail {
+.inbox-floating-controls {
+	position: absolute;
+	top: 0.75rem;
+	bottom: 0.75rem;
+	left: 0.75rem;
+	z-index: 10;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
-	height: 100%;
-	min-height: 0;
-	padding: 12px 0;
-	border-right: 1px solid var(--sidebar-border);
-	background: var(--sidebar-bg);
+	pointer-events: none;
 }
 
-.inbox-collapsed-rail .inbox-icon {
+.inbox-layout[inert] .inbox-floating-controls {
+	display: none;
+}
+
+.inbox-floating-controls .inbox-icon {
+	pointer-events: auto;
 	width: 32px;
 	height: 32px;
 }
 
-.inbox-collapsed-rail .inbox-rail-logo span {
+.inbox-floating-controls .inbox-icon span {
 	display: none;
 }
 
 @media (max-width: 767px) {
 	.inbox-layout {
 		display: block;
-	}
-
-	.inbox-layout.sidebar-hidden {
-		display: grid;
 	}
 
 	.inbox-sidebar-host {

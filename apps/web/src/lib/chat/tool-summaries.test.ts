@@ -1,0 +1,119 @@
+import { describe, expect, it } from 'vitest';
+import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
+import { toolItemSummary } from '$lib/chat/tool-summaries';
+import type { JsonValue } from '@convex/lib/json';
+
+describe('command tool summaries', () => {
+	it.each([
+		{ workdir: undefined, expected: 'bun run build' },
+		{ workdir: '.', expected: 'bun run build' },
+		{ workdir: ' \t ', expected: 'bun run build' },
+		{ workdir: '/repo', expected: 'bun run build (cwd /repo)' },
+		{ workdir: 'apps/web', expected: 'bun run build (cwd apps/web)' }
+	])('summarizes exec_cmd with workdir $workdir', ({ workdir, expected }) => {
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'exec',
+			name: 'exec_cmd',
+			input: { cmd: 'bun run build' }
+		};
+
+		if (workdir !== undefined) tool.input = { cmd: 'bun run build', workdir };
+
+		expect(toolItemSummary(tool, new Map())).toBe(expected);
+	});
+
+	it.each([
+		{ action: 'write', chars: 'yes\n', expected: 'Write to Session 7' },
+		{ action: 'terminate', expected: 'Terminate Session 7' }
+	])('describes control action $action before a command label is available', (input) => {
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'control',
+			name: 'control_cmd',
+			input: { sessionId: '7', action: input.action, chars: input.chars ?? '' }
+		};
+
+		expect(toolItemSummary(tool, new Map())).toBe(input.expected);
+		expect(toolItemSummary(tool, new Map([['7', 'bun run build']]))).toBe('bun run build');
+	});
+
+	describe.each(['poll_cmd', 'poll_command', 'write_stdin'])('%s', (name) => {
+		it('falls back to the session ID until the command label is available', () => {
+			const tool: AssistantTimelineTool = {
+				type: 'tool',
+				callId: 'monitor',
+				name,
+				input: { sessionId: '7' }
+			};
+
+			expect(toolItemSummary(tool, new Map())).toBe('Session 7');
+			expect(toolItemSummary(tool, new Map([['7', 'bun run build']]))).toBe('bun run build');
+		});
+
+		it('uses a generic session label when no session ID is available', () => {
+			const tool: AssistantTimelineTool = {
+				type: 'tool',
+				callId: 'monitor',
+				name,
+				input: {}
+			};
+
+			expect(toolItemSummary(tool, new Map())).toBe('Command session');
+		});
+	});
+
+	it.each(['control_cmd', 'poll_cmd', 'control_command', 'poll_command', 'write_stdin'])(
+		'resolves the %s command from returned output without a session-map entry',
+		(name) => {
+			const tool: AssistantTimelineTool = {
+				type: 'tool',
+				callId: 'snapshot',
+				name,
+				input: { sessionId: '7' },
+				output: { command: 'bun run build', workdir: '/repo', running: true, output: '' }
+			};
+
+			expect(toolItemSummary(tool, new Map())).toBe('bun run build');
+		}
+	);
+});
+
+describe('subagent summaries', () => {
+	it.each<{ name: string; input: JsonValue; expected: string }>([
+		{
+			name: 'spawn_subagent',
+			input: { prompt: 'Implement the design' },
+			expected: 'Implement the design'
+		},
+		{
+			name: 'spawn_subagent',
+			input: { threadId: 'child', prompt: 'Implement the design' },
+			expected: 'Implement the design'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'send', threadId: 'child', prompt: 'Refine the design' },
+			expected: 'Refine the design'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'send', threadId: 'child' },
+			expected: 'Message child agent'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'stop', threadId: 'child' },
+			expected: 'Stop child agent'
+		},
+		{
+			name: 'control_subagent',
+			input: { action: 'answer_question', threadId: 'child', questionId: 'question', text: 'Yes' },
+			expected: 'Answered question'
+		},
+		{ name: 'poll_subagent', input: { threadId: 'child' }, expected: 'child' }
+	])('summarizes $name as "$expected"', ({ name, input, expected }) => {
+		const tool: AssistantTimelineTool = { type: 'tool', callId: 'call', name, input };
+		expect(toolItemSummary(tool, new Map())).toBe(expected);
+	});
+});

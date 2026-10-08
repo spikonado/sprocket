@@ -19,7 +19,7 @@ export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null 
 		return;
 	}
 
-	throw new Error('Finish or cancel the active run before sending another message.');
+	throw new Error('Stop the current run or wait for it to finish before sending another message.');
 }
 
 export function isSettledExecutorJobStatus(
@@ -41,7 +41,7 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 	const error =
 		args.lastError ??
 		(args.runStatus === 'cancelled'
-			? 'Run was cancelled before executor job completed.'
+			? 'Run was stopped before executor job completed.'
 			: args.runStatus === 'failed'
 				? 'Run failed before executor job completed.'
 				: 'Run completed before executor job completed.');

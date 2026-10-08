@@ -1,7 +1,13 @@
 import { renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { useThreadInbox, type InboxQueryHook, type InboxQueryResult } from '$lib/project/inbox';
+import {
+	useRevealInboxThread,
+	useThreadInbox,
+	type InboxQueryHook,
+	type InboxQueryResult,
+	type InboxSectionData
+} from '$lib/project/inbox';
 
 function threadRecord(): Doc<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -50,6 +56,36 @@ function inboxQuery(
 		loadMore
 	};
 }
+
+it('reveals the selected root only in its included project and lifecycle section', () => {
+	const loadUnsettled = vi.fn();
+	const loadSettled = vi.fn();
+	const root = threadRecord();
+
+	const sections: InboxSectionData[] = [
+		{ state: 'unsettled', rows: [], loading: false, canLoadMore: true, loadMore: loadUnsettled },
+		{ state: 'settled', rows: [], loading: false, canLoadMore: true, loadMore: loadSettled }
+	];
+
+	const { result, rerender } = renderHook(
+		({ root, repositoryKeys }) => useRevealInboxThread(root, repositoryKeys, sections),
+		{ initialProps: { root, repositoryKeys: ['other-project'] } }
+	);
+
+	expect(result.current).toBeNull();
+	expect(loadUnsettled).toHaveBeenCalledTimes(0);
+	expect(loadSettled).toHaveBeenCalledTimes(0);
+	rerender({ root, repositoryKeys: ['alpha'] });
+	expect(result.current).toBe(root);
+	expect(loadUnsettled).toHaveBeenCalledTimes(1);
+	expect(loadSettled).toHaveBeenCalledTimes(0);
+	rerender({ root: { ...root, archivedAt: 1 }, repositoryKeys: ['alpha'] });
+	expect(loadSettled).toHaveBeenCalledTimes(1);
+	rerender({ root: { ...root, archivedAt: 1 }, repositoryKeys: [] });
+	expect(result.current).toBeNull();
+	expect(loadUnsettled).toHaveBeenCalledTimes(1);
+	expect(loadSettled).toHaveBeenCalledTimes(1);
+});
 
 it('requests both sections with normalized repositories when enabled', () => {
 	const query = vi.fn<InboxQueryHook>(() => inboxQuery());

@@ -8,12 +8,9 @@
 
 ## Available testing commands
 
-- `bun run build`
-- `bun run test`
-- `cargo test`
-- `prek run -a` -> This covers ALL formatting and linting
-
-If you are a subagent, don't run any of these.
+- Only run `prek run -a` and other small tests locally. Don't run any rust compilations or checks.
+- Prek covers formatting and linting.
+- Aside from these, look at the CI on GitHub when you open a PR.
 
 ### Nix environment
 
@@ -37,11 +34,6 @@ All of these are core priorities; try your best to achieve all of them without h
 - Include data migrations in the PR that introduces the breaking change instead of leaving debt behind.
 - Remove compat only once that gate passes (clients age out, or a migration rewrites the data).
 
-## Writing code
-
-- Deleting code often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
-- Feel free to commit, branch, and spin up worktrees as you please.
-
 ## PR Workflow
 
 - Unless requested, PRs should be made only against the default branch and should not be a draft.
@@ -57,20 +49,13 @@ All of these are core priorities; try your best to achieve all of them without h
 5. You should loop steps 2-4 until Greptile gives you a 5/5 confidence score or there are no remaining actionable issues. Comment `@greptileai review` when it doesn't start reviewing automatically; if the score remains below 5/5 with no actionable issues, explain why and stop.
 6. Clean up any worktrees and branches you created for this PR when you are done.
 
-## Subagents
+<!-- BEGIN:turborepo-agent-rules -->
 
-### Working on stuff, main agents only
+# This is NOT the Turborepo you know
 
-- Orchestrate subagents for tasks that will benefit from your context being less polluted and you working with the subagents in parallel.
-- For non bulk/mechanical/zero-brain operations, after you complete the task, always run a subagent that finds cleanup opportunities in the changed code and tests, and implements them.
+Turborepo configuration, task behavior, and CLI commands can vary between installed versions and may differ from your training data. Resolve the `turbo` package from this file's directory or relevant workspace; in monorepos, it may not be visible from the repository root. For example, run `node -p "require.resolve('turbo/package.json')"` from a workspace that depends on `turbo`.
 
-### Subagent prompting
+Read `docs/README.md` inside that installed package first, then read the relevant pages from its `docs/` directory before changing Turborepo configuration or commands. Heed deprecation notices. These bundled docs match the installed package version and are available without network access.
 
-To main agents:
-
-- Don't put any parts of your system prompt, AGENTS.md, etc. in the subagent prompts.
-- Tell the subagent that it is a subagent.
-
-To subagents:
-
-- Never create your own subagents.
+This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
+<!-- END:turborepo-agent-rules -->

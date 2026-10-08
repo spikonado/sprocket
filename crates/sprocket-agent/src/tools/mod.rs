@@ -1,4 +1,5 @@
 mod artifacts;
+mod async_tools;
 mod commands;
 mod context;
 mod firecrawl;
@@ -12,6 +13,7 @@ mod patch;
 mod questions;
 mod scrape_files;
 mod skills;
+mod subagents;
 mod web;
 
 use std::path::PathBuf;
@@ -19,16 +21,22 @@ use std::sync::Arc;
 
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
-use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool};
-use self::commands::{ExecCommandTool, WriteStdinTool};
+use self::artifacts::{
+    AddArtifactTool, DeleteArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool,
+};
+use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::AgentToolContext;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
 use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
-use self::questions::{AskQuestionTool, AwaitQuestionTool};
+use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
+use self::subagents::{
+    ControlSubagentTool, ListSubagentModelsTool, ListSubagentsTool, PollSubagentTool,
+    SpawnSubagentTool,
+};
 use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -40,28 +48,36 @@ use self::context::tool_error;
 use self::job::mutation_args_from_payload;
 #[cfg(test)]
 use self::questions::{
-    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, DEFAULT_ASK_QUESTION_TIMEOUT_MS,
-    DEFAULT_ASK_QUESTION_YIELD_MS, MAX_QUESTION_CHARS, prepare_ask_question,
+    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, MAX_QUESTION_CHARS,
+    prepare_ask_question,
 };
 #[cfg(test)]
 use self::skills::resolve_read_skill;
+#[cfg(test)]
+use sprocket_workspace::async_tools::DEFAULT_YIELD_MS;
 
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) ask_question: AskQuestionTool,
-    pub(crate) await_question: AwaitQuestionTool,
-    pub(crate) command_sessions: CommandSessionManager,
-    pub(crate) exec_command: ExecCommandTool,
+    pub(crate) poll_question: PollQuestionTool,
+    pub(crate) control_cmd: ControlCmdTool,
+    pub(crate) exec_cmd: ExecCmdTool,
+    pub(crate) control_subagent: ControlSubagentTool,
+    pub(crate) list_subagent_models: ListSubagentModelsTool,
+    pub(crate) list_subagents: ListSubagentsTool,
     pub(crate) parse_file: ParseFileTool,
+    pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) screenshot_url: ScreenshotUrlTool,
+    pub(crate) spawn_subagent: SpawnSubagentTool,
+    pub(crate) poll_subagent: PollSubagentTool,
     pub(crate) web_search: WebSearchTool,
-    pub(crate) write_stdin: WriteStdinTool,
     pub(crate) add_artifact: AddArtifactTool,
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) edit_artifact: EditArtifactTool,
     pub(crate) save_artifact: SaveArtifactTool,
+    pub(crate) delete_artifact: DeleteArtifactTool,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -125,45 +141,68 @@ pub(crate) fn agent_tools(
     runtime: RuntimeClient,
     run_id: String,
     claim_id: String,
+    user_id: String,
     workspace_root: PathBuf,
     transcript_dir: PathBuf,
+    gateway_url: String,
+    transcript_store: Option<Arc<crate::TranscriptStore>>,
     artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
+    command_sessions: CommandSessionManager,
+    subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 ) -> AgentToolSet {
-    let command_sessions =
-        CommandSessionManager::new(workspace_root.clone(), transcript_dir.join("command-logs"));
-    let context = AgentToolContext::new(
+    let context = AgentToolContext {
         runtime,
         run_id,
         claim_id,
+        user_id,
         workspace_root,
         transcript_dir,
+        gateway_url,
+        transcript_store,
         artifact_bindings,
         supports_images,
         tool_call_tracker,
-        command_sessions.clone(),
-    );
+        command_sessions,
+        question_polls: questions::QuestionPolls::default(),
+        subagent_polls: subagents::SubagentPolls::default(),
+        subagent_launcher,
+    };
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
         ask_question: AskQuestionTool(context.clone()),
-        await_question: AwaitQuestionTool(context.clone()),
-        command_sessions,
-        exec_command: ExecCommandTool(context.clone()),
+        poll_question: PollQuestionTool(context.clone()),
+        control_cmd: ControlCmdTool(context.clone()),
+        exec_cmd: ExecCmdTool(context.clone()),
+        control_subagent: ControlSubagentTool {
+            context: context.clone(),
+        },
+        list_subagent_models: ListSubagentModelsTool(context.clone()),
+        list_subagents: ListSubagentsTool {
+            context: context.clone(),
+        },
         parse_file: ParseFileTool(context.clone()),
+        poll_cmd: PollCmdTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),
             skills,
         },
         scrape_url: ScrapeUrlTool(context.clone()),
         screenshot_url: ScreenshotUrlTool(context.clone()),
+        spawn_subagent: SpawnSubagentTool {
+            context: context.clone(),
+        },
+        poll_subagent: PollSubagentTool {
+            context: context.clone(),
+        },
         web_search: WebSearchTool(context.clone()),
-        write_stdin: WriteStdinTool(context.clone()),
         add_artifact: AddArtifactTool(context.clone()),
         list_artifacts: ListArtifactsTool(context.clone()),
         edit_artifact: EditArtifactTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
+        delete_artifact: DeleteArtifactTool(context.clone()),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),
@@ -247,8 +286,8 @@ mod tests {
                     label: "SQLite".to_string(),
                 },
             ],
-            yield_time_ms: DEFAULT_ASK_QUESTION_YIELD_MS,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            yield_time_ms: DEFAULT_YIELD_MS,
+            timeout_ms: None,
         })
         .expect("valid question");
 
@@ -264,7 +303,7 @@ mod tests {
                 label: "A".to_string(),
             }],
             yield_time_ms: 0,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect_err("overlong question");
         assert!(error.to_string().contains("2000"));
@@ -278,7 +317,7 @@ mod tests {
                 label: "café".to_string(),
             }],
             yield_time_ms: 0,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect("unicode within character limits");
 
@@ -289,7 +328,7 @@ mod tests {
                 label: "Nope".to_string(),
             }],
             yield_time_ms: 0,
-            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+            timeout_ms: None,
         })
         .expect_err("reserved id");
         assert!(reserved.to_string().contains("reserved"));

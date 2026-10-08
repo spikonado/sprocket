@@ -1,6 +1,32 @@
 use super::*;
 
 #[tokio::test]
+async fn full_preview_and_disk_recovery_preserve_consumed_output_with_bounded_utf8() {
+    let root = tempfile::tempdir().unwrap();
+    let mut output = CapturedOutput::create(root.path(), 40).await.unwrap();
+    let text = format!("start\n{}end\n", "é\n".repeat(5_000));
+    for chunk in text.as_bytes().chunks(31) {
+        output.append(OutputChannel::Stdout, chunk).await.unwrap();
+        output.take_preview();
+    }
+    output
+        .append(OutputChannel::Stderr, &[0xff, 0xc3])
+        .await
+        .unwrap();
+    output.finish().await.unwrap();
+    let full = output.full_preview();
+    assert!(full.output.starts_with("start\n"));
+    assert!(full.output.ends_with("end\n\u{fffd}\u{fffd}"));
+    assert!(full.output.chars().count() <= 40);
+    assert_eq!(
+        CapturedOutput::read_log_preview(Path::new(&full.complete_log_path), 40)
+            .await
+            .unwrap(),
+        full.output
+    );
+}
+
+#[tokio::test]
 async fn log_quota_counts_both_files_and_rejects_a_chunk_before_writing() {
     let root = tempfile::tempdir().unwrap();
     let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();

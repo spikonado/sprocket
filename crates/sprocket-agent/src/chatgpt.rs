@@ -3,28 +3,27 @@ use std::sync::Arc;
 use anyhow::Context;
 use bytes::Bytes;
 use futures::StreamExt;
-use rig::client::CompletionClient;
-use rig::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse};
-use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
-use rig::providers::openai;
-use rig::providers::openai::responses_api::SystemInstructionsPlacement;
+use rig::ProviderError;
 #[cfg(test)]
-use rig::providers::openai::responses_api::{
-    CompletionRequest as ResponsesCompletionRequest, ResponsesRequestParams,
-    ResponsesToolDefinition,
-};
-use rig::streaming::StreamingCompletionResponse;
+use rig::completion::CompletionRequest;
+use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
+use rig::operation::Completion;
+use rig::providers::openai;
+#[cfg(test)]
+use rig::providers::openai::responses_api::ResponsesToolDefinition;
 use rig::wasm_compat::WasmCompatSend;
+#[cfg(test)]
+use rig::wire::{Mode, Wire};
+use rig::{DynModel, Model};
 
 use crate::live::now_ms;
-use crate::openai::replay_contents;
+use crate::openai::StatelessResponses;
 use crate::types::ChatGptCredentials;
 
 const CONNECTION_CHANGED: &str =
     "ChatGPT connection changed or became unavailable. Start a new run.";
 const STREAM_REQUIRED: &str =
     "ChatGPT inference requires streaming; non-streaming completion is not supported.";
-const STREAM_INTERRUPTED: &str = "ChatGPT response stream ended before a terminal response event.";
 const SIWC_TOOL_NAMESPACE: &str = "sprocket";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -51,8 +50,13 @@ fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     let usage_limit = error.chain().any(|cause| {
         cause
-            .downcast_ref::<CompletionError>()
+            .downcast_ref::<ProviderError>()
             .and_then(|error| error.provider_response_json().ok().flatten())
+            .or_else(|| {
+                cause
+                    .downcast_ref::<rig::ErrorReport>()
+                    .and_then(|report| report.provider_response_json().ok().flatten())
+            })
             .is_some_and(|body| is_subscription_usage_limit(&body))
     });
     if usage_limit {
@@ -182,27 +186,12 @@ impl ChatGptClient {
     }
 }
 
-impl CompletionClient for ChatGptClient {
-    type CompletionModel = ChatGptModel;
-
-    fn completion_model(&self, model: impl Into<String>) -> Self::CompletionModel {
-        ChatGptModel {
-            client: self.clone(),
-            model: model.into(),
-        }
-    }
-}
-
-pub(crate) struct ChatGptModel {
-    client: ChatGptClient,
-    model: String,
-}
-
 #[derive(Clone, Default)]
 struct SiwcHttpClient {
     inner: reqwest::Client,
     authorization: Option<(Arc<dyn ChatGptCredentials>, SharedConnection)>,
-    sent: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    test_endpoint: Option<String>,
 }
 
 impl std::fmt::Debug for SiwcHttpClient {
@@ -249,11 +238,6 @@ impl HttpClientExt for SiwcHttpClient {
     {
         let this = self.clone();
         async move {
-            if this.sent.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                return Err(stream_error(
-                    "ChatGPT inference cannot replay an interrupted request. Start a new run.",
-                ));
-            }
             let (credentials, connection) = this
                 .authorization
                 .as_ref()
@@ -266,9 +250,12 @@ impl HttpClientExt for SiwcHttpClient {
                 ));
             }
             let body = rewrite_request_body(&body.into())?;
+            let endpoint = parts.uri.to_string();
+            #[cfg(test)]
+            let endpoint = this.test_endpoint.as_deref().unwrap_or(&endpoint);
             let request = this
                 .inner
-                .request(parts.method, parts.uri.to_string())
+                .request(parts.method, endpoint)
                 .headers(parts.headers)
                 .body(body)
                 .build()
@@ -309,7 +296,7 @@ fn streaming_response(
             .entry(http::header::CONTENT_TYPE)
             .or_insert(HeaderValue::from_static("text/event-stream"));
     }
-    let stream: rig::http_client::sse::BoxedStream =
+    let stream: rig::http_client::BoxedStream =
         Box::pin(SiwcStreamGuard::new(response.bytes_stream(), connection));
     res.body(stream).map_err(http_client::Error::Protocol)
 }
@@ -353,6 +340,17 @@ fn diagnostic_text(value: &str, access_token: &str) -> String {
 
 async fn inference_error(response: reqwest::Response, access_token: &str) -> http_client::Error {
     let status = response.status();
+    let mut headers = response.headers().clone();
+    if !access_token.is_empty() {
+        for value in headers.values_mut() {
+            if let Ok(text) = value.to_str()
+                && text.contains(access_token)
+            {
+                *value = HeaderValue::from_str(&text.replace(access_token, "[redacted]"))
+                    .expect("redacting a valid header leaves it valid");
+            }
+        }
+    }
     let request_id = response
         .headers()
         .get("x-request-id")
@@ -399,14 +397,13 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
         })
         .to_string();
     }
-    http_client::Error::InvalidStatusCodeWithMessage(status, message)
+    http_client::Error::non_success_with_details(status, headers, message)
 }
 
 struct SiwcStreamGuard<S> {
     inner: S,
     connection: SharedConnection,
-    buffered: Vec<u8>,
-    terminal: bool,
+    framing: rig::http_client::framing::SseFramer,
     ended: bool,
     connection_changed: futures::future::BoxFuture<'static, ()>,
 }
@@ -431,78 +428,11 @@ impl<S> SiwcStreamGuard<S> {
         Self {
             inner,
             connection,
-            buffered: Vec::new(),
-            terminal: false,
+            framing: rig::http_client::framing::SseFramer::new(),
             ended: false,
             connection_changed,
         }
     }
-
-    fn absorb(&mut self, chunk: &[u8]) -> http_client::Result<()> {
-        const FRAME_LIMIT: usize = 4 * 1024 * 1024;
-        if self.buffered.len().saturating_add(chunk.len()) > FRAME_LIMIT {
-            return Err(stream_error("ChatGPT returned an oversized stream frame."));
-        }
-        self.buffered.extend_from_slice(chunk);
-        while let Some(frame_end) = find_frame_end(&self.buffered) {
-            let frame: Vec<u8> = self.buffered.drain(..frame_end).collect();
-            if !self.terminal && frame_is_terminal(&frame) {
-                self.terminal = true;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn find_frame_end(buffered: &[u8]) -> Option<usize> {
-    let crlf = buffered
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|position| position + 4);
-    let lf = buffered
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .map(|position| position + 2);
-    match (crlf, lf) {
-        (Some(crlf), Some(lf)) => Some(crlf.min(lf)),
-        (crlf, lf) => crlf.or(lf),
-    }
-}
-
-const TERMINAL_EVENTS: [&str; 3] = [
-    "response.completed",
-    "response.failed",
-    "response.incomplete",
-];
-
-fn frame_is_terminal(frame: &[u8]) -> bool {
-    let Ok(frame) = std::str::from_utf8(frame) else {
-        return false;
-    };
-    let mut event = None;
-    let mut data = String::new();
-    for line in frame.lines() {
-        if let Some(value) = line.strip_prefix("event:") {
-            event = Some(value.trim().to_string());
-        } else if let Some(value) = line.strip_prefix("data:") {
-            if !data.is_empty() {
-                data.push('\n');
-            }
-            data.push_str(value.strip_prefix(' ').unwrap_or(value));
-        }
-    }
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&data) else {
-        return false;
-    };
-    let Some(kind) = payload.get("type").and_then(serde_json::Value::as_str) else {
-        return false;
-    };
-    if !TERMINAL_EVENTS.contains(&kind) {
-        return false;
-    }
-    // A named event frame counts only when its payload agrees; a data-only
-    // frame stands on its payload alone.
-    event.is_none_or(|event| event == kind)
 }
 
 impl<S, E> futures::Stream for SiwcStreamGuard<S>
@@ -529,10 +459,14 @@ where
         }
         match self.inner.poll_next_unpin(cx) {
             std::task::Poll::Ready(Some(Ok(chunk))) => {
-                if let Err(error) = self.absorb(&chunk) {
+                const FRAME_LIMIT: usize = 4 * 1024 * 1024;
+                if self.framing.pending().saturating_add(chunk.len()) > FRAME_LIMIT {
                     self.ended = true;
-                    return std::task::Poll::Ready(Some(Err(error)));
+                    return std::task::Poll::Ready(Some(Err(stream_error(
+                        "ChatGPT returned an oversized stream frame.",
+                    ))));
                 }
+                self.framing.push(&chunk).for_each(drop);
                 std::task::Poll::Ready(Some(Ok(chunk)))
             }
             std::task::Poll::Ready(Some(Err(error))) => {
@@ -541,11 +475,7 @@ where
             }
             std::task::Poll::Ready(None) => {
                 self.ended = true;
-                if self.terminal {
-                    std::task::Poll::Ready(None)
-                } else {
-                    std::task::Poll::Ready(Some(Err(stream_error(STREAM_INTERRUPTED))))
-                }
+                std::task::Poll::Ready(None)
             }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
@@ -634,40 +564,26 @@ fn namespace_function_tools(
     Ok(())
 }
 
-impl ChatGptModel {
-    fn responses_model(&self) -> openai::responses_api::ResponsesCompletionModel<SiwcHttpClient> {
-        let client = openai::Client::builder()
-            .api_key("siwc-managed-by-transport")
-            .base_url("https://api.openai.com/v1")
-            .http_client(SiwcHttpClient {
-                inner: self.client.http.clone(),
-                authorization: Some((
-                    Arc::clone(&self.client.credentials),
-                    Arc::clone(&self.client.connection),
-                )),
-                sent: Arc::default(),
-            })
-            .build()
-            .expect("SIWC client construction cannot fail");
-        client
-            .completion_model(&self.model)
-            .with_system_instructions_placement(SystemInstructionsPlacement::AllInstructions)
-    }
-}
-
-impl CompletionModel for ChatGptModel {
-    async fn completion(
+impl ChatGptClient {
+    pub(crate) fn completion_model(
         &self,
-        _request: CompletionRequest,
-    ) -> Result<CompletionResponse, CompletionError> {
-        Err(CompletionError::RequestError(STREAM_REQUIRED.into()))
-    }
-
-    async fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse, CompletionError> {
-        CompletionModel::stream(&self.responses_model(), replay_contents(request)).await
+        model: impl Into<String>,
+        instructions: &str,
+    ) -> DynModel<Completion> {
+        let wire = openai::responses_api::wire::Responses::new(
+            openai::OpenAIConfig::new("siwc-managed-by-transport").with_instructions(instructions),
+            model,
+        );
+        Model::new(
+            StatelessResponses(wire),
+            SiwcHttpClient {
+                inner: self.http.clone(),
+                authorization: Some((Arc::clone(&self.credentials), Arc::clone(&self.connection))),
+                #[cfg(test)]
+                test_endpoint: None,
+            },
+        )
+        .erase()
     }
 }
 
@@ -681,17 +597,19 @@ fn wire_tool(definition: &rig::completion::ToolDefinition) -> serde_json::Value 
 mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use futures::future::BoxFuture;
     use rig::completion::Message;
-    use rig::message::{
-        AssistantContent, ProviderCallId, Reasoning, ReasoningContent, ToolCall, ToolFunction,
-        ToolResult, ToolResultContent, UserContent,
-    };
+    use rig::message::{AssistantContent, Reasoning, ReasoningContent};
     use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     use super::*;
-    use crate::types::ChatGptAccess;
+    use crate::reasoning::{openai_reasoning_metadata, reasoning_summary_text};
+    use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
+    use crate::types::{ChatGptAccess, deserialize_agent_history};
 
     struct StubCredentials {
         connection: tokio::sync::watch::Sender<Option<String>>,
@@ -748,8 +666,8 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct StubResponseClient {
         http: SiwcHttpClient,
-        body: Option<String>,
-        status: Option<http::StatusCode>,
+        body: String,
+        status: http::StatusCode,
     }
 
     impl HttpClientExt for StubResponseClient {
@@ -787,31 +705,17 @@ mod tests {
         {
             let connection = self.http.authorization.as_ref().unwrap().1.clone();
             let response_body = self.body.clone();
-            let status = self.status.unwrap_or(http::StatusCode::OK);
+            let status = self.status;
             async move {
                 assert_eq!(req.uri(), "https://api.openai.com/v1/responses");
                 let body: serde_json::Value =
                     serde_json::from_slice(&rewrite_request_body(&req.into_body().into())?)
                         .unwrap();
                 assert_eq!(body["tools"][0]["type"], "namespace");
-                let event = json!({
-                    "type": "response.completed",
-                    "sequence_number": 0,
-                    "response": {
-                        "id": "resp-test",
-                        "object": "response",
-                        "created_at": 0,
-                        "status": "completed",
-                        "model": "gpt-6.1-sol",
-                        "output": [],
-                        "tools": [],
-                        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
-                    }
-                });
                 let response = http::Response::builder()
                     .status(status)
                     .header("x-request-id", "req-stream")
-                    .body(response_body.unwrap_or_else(|| format!("data: {event}\n\n")))
+                    .body(response_body)
                     .unwrap()
                     .into();
                 if status.is_success() {
@@ -824,10 +728,10 @@ mod tests {
     }
 
     fn stub_model(
-        response: Option<(http::StatusCode, String)>,
-    ) -> openai::responses_api::ResponsesCompletionModel<StubResponseClient> {
+        status: http::StatusCode,
+        body: String,
+    ) -> Model<StatelessResponses, StubResponseClient> {
         let (credentials, client) = stub_client("connection-1");
-        let (status, body) = response.unzip();
         let http = StubResponseClient {
             http: SiwcHttpClient {
                 authorization: Some((credentials, Arc::clone(&client.connection))),
@@ -836,43 +740,332 @@ mod tests {
             status,
             body,
         };
-        openai::Client::builder()
-            .api_key("test-token")
-            .http_client(http)
-            .build()
-            .unwrap()
-            .completion_model("gpt-6.1-sol")
+        Model::new(
+            StatelessResponses(openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("test-token").with_instructions("Base instructions."),
+                "gpt-6.1-sol",
+            )),
+            http,
+        )
     }
 
-    async fn first_stream_error(model: impl CompletionModel) -> CompletionError {
-        match model
+    async fn first_stream_error(
+        model: Model<StatelessResponses, StubResponseClient>,
+    ) -> ProviderError {
+        model
             .stream(test_request(vec![Message::user("hello")]))
+            .unwrap()
+            .finish()
             .await
-        {
-            Err(error) => error,
-            Ok(mut stream) => stream
-                .by_ref()
-                .filter_map(|item| std::future::ready(item.err()))
-                .next()
-                .await
-                .expect("provider error must fail the stream"),
+            .expect_err("provider error must fail the stream")
+    }
+
+    struct CapturedSiwcRequest {
+        headers: String,
+        body: serde_json::Value,
+    }
+
+    async fn spawn_siwc_sse(
+        bodies: Vec<String>,
+    ) -> (String, tokio::task::JoinHandle<Vec<CapturedSiwcRequest>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(10), async move {
+                let mut captured = Vec::new();
+                for (turn, body) in bodies.into_iter().enumerate() {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 2048];
+                    let header_end = loop {
+                        let read = stream.read(&mut chunk).await.unwrap();
+                        assert!(read > 0, "request ended before its headers");
+                        request.extend_from_slice(&chunk[..read]);
+                        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break end;
+                        }
+                        assert!(request.len() < 64 * 1024, "oversized request headers");
+                    };
+                    let headers = String::from_utf8(request[..header_end].to_vec()).unwrap();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().expect("request content length"))
+                        })
+                        .expect("request must have a content length");
+                    assert!(length < 1024 * 1024, "oversized request body");
+                    let body_start = header_end + 4;
+                    while request.len() < body_start + length {
+                        let read = stream.read(&mut chunk).await.unwrap();
+                        assert!(read > 0, "request ended before its body");
+                        request.extend_from_slice(&chunk[..read]);
+                    }
+                    captured.push(CapturedSiwcRequest {
+                        headers,
+                        body: serde_json::from_slice(&request[body_start..body_start + length])
+                            .unwrap(),
+                    });
+                    // SIWC can omit Content-Type; exercise the real transport's fallback.
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\nx-request-id: req-siwc-{turn}\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+                captured
+            })
+            .await
+            .expect("SIWC test server timed out")
+        });
+        (endpoint, server)
+    }
+
+    fn siwc_output_sse(response_id: &str, output: Vec<serde_json::Value>) -> String {
+        let response = |status, output| {
+            json!({
+                "id": response_id, "object": "response", "created_at": 0,
+                "status": status, "model": "gpt-5.3-codex", "output": output,
+                "tools": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            })
+        };
+        let mut events = vec![json!({
+            "type": "response.created", "response": response("in_progress", vec![]),
+        })];
+        for (index, item) in output.iter().enumerate() {
+            events.push(json!({
+                "type": "response.output_item.added", "output_index": index, "item": item,
+            }));
+            if item["type"] == "message" {
+                events.push(json!({
+                    "type": "response.output_text.delta", "output_index": index,
+                    "item_id": item["id"], "content_index": 0,
+                    "delta": item["content"][0]["text"],
+                }));
+            }
+            events.push(json!({
+                "type": "response.output_item.done", "output_index": index, "item": item,
+            }));
         }
+        events.push(json!({
+            "type": "response.completed", "response": response("completed", output),
+        }));
+        events
+            .into_iter()
+            .enumerate()
+            .map(|(sequence, mut event)| {
+                event["sequence_number"] = json!(sequence);
+                format!("data: {event}\n\n")
+            })
+            .collect()
     }
 
     #[tokio::test]
-    async fn responses_client_completes_a_headerless_siwc_stream() {
-        let model = stub_model(None);
-        let mut stream = model
-            .stream(test_request(vec![Message::user("hello")]))
+    async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn() {
+        const ENVELOPE: &str = "  encrypted+state/=\n  ";
+        let (endpoint, server) = spawn_siwc_sse(vec![
+            siwc_output_sse(
+                "resp-siwc-0",
+                vec![
+                    json!({
+                        "type": "reasoning", "id": "rs_1", "status": "completed",
+                        "summary": [{"type": "summary_text", "text": "Read the workspace."}],
+                        "encrypted_content": ENVELOPE,
+                    }),
+                    json!({
+                        "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                        "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}",
+                        "status": "completed",
+                    }),
+                ],
+            ),
+            siwc_output_sse(
+                "resp-siwc-1",
+                vec![json!({
+                    "type": "message", "id": "msg_final", "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "The workspace is /workspace."}],
+                })],
+            ),
+        ])
+        .await;
+        let (credentials, client) = stub_client("connection-1");
+        let model = Model::new(
+            StatelessResponses(openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("siwc-managed-by-transport")
+                    .with_instructions("Base instructions."),
+                "gpt-5.3-codex",
+            )),
+            SiwcHttpClient {
+                inner: reqwest::Client::builder()
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .retry(reqwest::retry::never())
+                    .timeout(Duration::from_secs(5))
+                    .build()
+                    .unwrap(),
+                authorization: Some((credentials.clone(), Arc::clone(&client.connection))),
+                test_endpoint: Some(endpoint),
+            },
+        );
+        let request = |history| {
+            completion_request(
+                history,
+                json!({
+                    "store": true, "previous_response_id": "resp-old",
+                    "reasoning": {"effort": "high"},
+                    "metadata": {"trace": "abc"}, "user": "user-1",
+                }),
+            )
+        };
+        let first = model
+            .stream(request(vec![Message::user("Where is the workspace?")]))
+            .unwrap()
+            .finish()
+            .await
+            .expect("headerless SIWC tool turn completes");
+        assert_eq!(first.response_id.as_deref(), Some("resp-siwc-0"));
+        assert_eq!(first.provider_request_id.as_deref(), Some("req-siwc-0"));
+        assert_eq!(
+            first.finish_reason(),
+            Some(rig::completion::FinishReason::ToolCalls)
+        );
+        assert_eq!(first.choice.len(), 2);
+        let AssistantContent::Reasoning(reasoning) = &first.choice[0] else {
+            panic!("first turn must contain parsed reasoning");
+        };
+        let opened_reasoning = reasoning.open(reasoning.issuer()).unwrap();
+        assert_eq!(opened_reasoning.id.as_deref(), Some("rs_1"));
+        assert_eq!(opened_reasoning.encrypted_content(), Some(ENVELOPE));
+        let AssistantContent::ToolCall(call) = &first.choice[1] else {
+            panic!("first turn must contain a parsed tool call");
+        };
+        let provider_id = call.id.provider().unwrap();
+        assert_eq!(provider_id.item_id.as_deref(), Some("fc_1"));
+        assert_eq!(call.id.wire(), "call_1");
+        assert_eq!(call.function.name, "exec_command");
+        assert_eq!(call.function.arguments, json!({"cmd": "pwd"}));
+
+        let parts: Vec<TranscriptPart> = serde_json::from_value(json!([
+            {
+                "number": 0, "sourceKey": "completion:siwc", "kind": "completion",
+                "runId": "run", "completion": {"streamId": "stream", "items": [
+                    {
+                        "type": "reasoning", "text": reasoning_summary_text(reasoning),
+                        "providerMetadata": openai_reasoning_metadata(
+                            opened_reasoning.id.as_deref(), opened_reasoning.encrypted_content(),
+                        ),
+                    },
+                    {
+                        "type": "tool-call", "callId": call.id.wire(),
+                        "name": call.function.name, "input": call.function.arguments,
+                        "providerMetadata": {"openai": {"itemId": provider_id.item_id}},
+                    },
+                ]},
+            },
+            {
+                "number": 1, "sourceKey": "tool:siwc", "kind": "tool", "runId": "run",
+                "tool": {
+                    "callId": call.id.wire(), "name": call.function.name,
+                    "output": "/workspace", "status": "completed",
+                },
+            },
+        ]))
+        .expect("parsed SIWC turn as durable transcript");
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_path_buf());
+        store.append_parts("user", "thread", &parts).await.unwrap();
+        let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
+        let parts = reloaded_store
+            .read_parts("user", "thread", &[0, 1])
             .await
             .unwrap();
-        while let Some(item) = stream.next().await {
-            item.expect("Rig must accept the headerless SIWC handshake and parse its events");
+        let state = reloaded_store.load_state("user", "thread").await.unwrap();
+        let reloaded = agent_history_from_parts(&state, &parts, None);
+        let mut history = vec![Message::user("Where is the workspace?")];
+        history.extend(deserialize_agent_history(reloaded).expect("reload SIWC history"));
+        let second = model
+            .stream(request(history))
+            .unwrap()
+            .finish()
+            .await
+            .expect("replayed SIWC turn completes");
+        assert_eq!(second.response_id.as_deref(), Some("resp-siwc-1"));
+        assert_eq!(second.provider_request_id.as_deref(), Some("req-siwc-1"));
+        assert_eq!(
+            second.finish_reason(),
+            Some(rig::completion::FinishReason::Stop)
+        );
+        assert_eq!(second.usage.total_tokens, Some(2));
+        assert!(matches!(
+            second.choice.as_slice(),
+            [AssistantContent::Text(text)] if text.text == "The workspace is /workspace."
+        ));
+
+        let requests = server.await.expect("SIWC test server");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(credentials.calls.load(Ordering::SeqCst), 2);
+        let expected_tool = wire_tool(&test_request(vec![Message::user("hello")]).tools[0]);
+        for (turn, request) in requests.iter().enumerate() {
+            assert_eq!(
+                request.headers.lines().next(),
+                Some("POST /v1/responses HTTP/1.1")
+            );
+            let header = |name: &str| {
+                request.headers.lines().find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case(name).then(|| value.trim())
+                })
+            };
+            assert_eq!(
+                header("authorization"),
+                Some(format!("Bearer token-{turn}").as_str())
+            );
+            assert_eq!(header("content-type"), Some("application/json"));
+            let body = &request.body;
+            assert_eq!(body["model"], "gpt-5.3-codex");
+            assert_eq!(body["instructions"], "Base instructions.");
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["store"], false);
+            assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+            assert_eq!(body["reasoning"]["effort"], "high");
+            for field in UNSUPPORTED_FIELDS {
+                assert!(body.get(*field).is_none(), "{field} must be omitted");
+            }
+            assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+            assert_eq!(body["tools"][0]["type"], "namespace");
+            assert_eq!(body["tools"][0]["name"], SIWC_TOOL_NAMESPACE);
+            assert!(
+                body["tools"][0]["description"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty())
+            );
+            assert_eq!(body["tools"][0]["tools"], json!([expected_tool]));
         }
-        let response = stream.response.expect("parsed terminal response");
-        assert_eq!(response.usage.total_tokens, 2);
-        assert_eq!(response.response_id.as_deref(), Some("resp-test"));
-        assert_eq!(response.provider_request_id.as_deref(), Some("req-stream"));
+        let initial = requests[0].body["input"].as_array().unwrap();
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0]["role"], "user");
+        assert_eq!(initial[0]["content"][0]["text"], "Where is the workspace?");
+        let replay = requests[1].body["input"].as_array().unwrap();
+        assert_eq!(replay.len(), 4);
+        assert_eq!(replay[0], initial[0]);
+        assert_eq!(replay[1]["type"], "reasoning");
+        assert_eq!(replay[1]["id"], "rs_1");
+        assert_eq!(replay[1]["encrypted_content"], ENVELOPE);
+        assert_eq!(
+            replay[1]["summary"],
+            json!([{"type": "summary_text", "text": "Read the workspace."}])
+        );
+        assert_eq!(replay[2]["type"], "function_call");
+        assert_eq!(replay[2]["id"], "fc_1");
+        assert_eq!(replay[2]["call_id"], "call_1");
+        assert_eq!(replay[2]["name"], "exec_command");
+        assert_eq!(replay[2]["arguments"], "{\"cmd\":\"pwd\"}");
+        assert_eq!(replay[3]["type"], "function_call_output");
+        assert_eq!(replay[3]["call_id"], replay[2]["call_id"]);
+        assert_eq!(replay[3]["output"], json!("/workspace").to_string());
     }
 
     #[tokio::test]
@@ -920,10 +1113,16 @@ mod tests {
                 ),
             ),
         ] {
-            let raw_error = first_stream_error(stub_model(Some((status, body)))).await;
+            let raw_error = first_stream_error(stub_model(status, body)).await;
             let raw_diagnostic = raw_error.to_string();
+            let report_error = user_facing_error(anyhow::Error::new(raw_error.report()));
+            assert!(
+                report_error
+                    .downcast_ref::<SubscriptionUsageLimit>()
+                    .is_some()
+            );
             let error = user_facing_error(
-                anyhow::Error::new(rig::completion::PromptError::from(raw_error))
+                anyhow::Error::new(raw_error)
                     .context("Context handoff failed. Retry to continue the conversation."),
             );
             assert_eq!(
@@ -945,36 +1144,10 @@ mod tests {
             json!({"error": {"code": "invalid_api_key", "message": "subscription_sharing_usage_limit_exceeded"}}).to_string(),
             "not JSON".to_string(),
         ] {
-            let error = anyhow::Error::new(CompletionError::from_provider_body(body));
+            let error = anyhow::Error::new(ProviderError::from_provider_body(body));
             let diagnostic = format!("{error:#}");
             assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
         }
-    }
-
-    #[tokio::test]
-    async fn streaming_response_supplies_missing_sse_content_type_and_preserves_events() {
-        let (_, client) = stub_client("connection-1");
-        let frame = Bytes::from_static(
-            b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
-        );
-        let response = http::Response::builder()
-            .status(http::StatusCode::OK)
-            .version(http::Version::HTTP_2)
-            .header("x-request-id", "req-stream")
-            .body(frame.clone())
-            .unwrap()
-            .into();
-        let response = streaming_response(response, Arc::clone(&client.connection)).unwrap();
-        assert_eq!(response.status(), http::StatusCode::OK);
-        assert_eq!(response.version(), http::Version::HTTP_2);
-        assert_eq!(
-            response.headers()[http::header::CONTENT_TYPE],
-            "text/event-stream"
-        );
-        assert_eq!(response.headers()["x-request-id"], "req-stream");
-        let mut stream = response.into_body();
-        assert_eq!(stream.next().await.unwrap().unwrap(), frame);
-        assert!(stream.next().await.is_none());
     }
 
     #[test]
@@ -992,28 +1165,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn streaming_response_requires_terminal_events_even_without_content_type() {
-        let (_, client) = stub_client("connection-1");
+    async fn responses_model_rejects_premature_eof_and_unparseable_streams() {
         for body in [
             "",
             r#"{"detail":"not an SSE response"}"#,
+            "data: [DONE]\n\n",
             "data: {not json}\n\n",
+            "event: response.completed\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
         ] {
-            let response = http::Response::builder().body(body).unwrap().into();
-            let mut stream = streaming_response(response, Arc::clone(&client.connection))
-                .unwrap()
-                .into_body();
-            let error = stream
-                .by_ref()
-                .filter_map(|item| std::future::ready(item.err()))
-                .next()
-                .await
-                .expect("stream must report an error");
-            let http_client::Error::Instance(error) = error else {
-                panic!("expected terminal-event validation error");
-            };
-            assert_eq!(error.to_string(), STREAM_INTERRUPTED);
-            assert!(stream.next().await.is_none());
+            let error =
+                first_stream_error(stub_model(http::StatusCode::OK, body.to_string())).await;
+            assert!(
+                matches!(error, ProviderError::Truncated | ProviderError::Json(_)),
+                "unexpected error: {error}"
+            );
         }
     }
 
@@ -1028,8 +1194,11 @@ mod tests {
             }})
             .to_string(),
         );
-        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            status,
+            body: message,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
@@ -1046,8 +1215,11 @@ mod tests {
             http::StatusCode::SERVICE_UNAVAILABLE,
             json!({"detail": "Direct routing is unavailable."}).to_string(),
         );
-        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            status,
+            body: message,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
@@ -1066,11 +1238,15 @@ mod tests {
             .body(json!({"detail": format!("Bearer test-token\n{}", "é".repeat(2048))}).to_string())
             .unwrap()
             .into();
-        let http_client::Error::InvalidStatusCodeWithMessage(_, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            body: message,
+            headers,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
+        assert_eq!(headers["x-request-id"], "[redacted]");
         assert!(message.contains("Bearer [redacted]\\n"));
         assert!(message.ends_with("...\" request_id=\"[redacted]\""));
         assert!(message.len() < 2300);
@@ -1097,8 +1273,11 @@ mod tests {
             (unreadable, "Could not read provider error response."),
         ] {
             let response = error_response(http::StatusCode::BAD_GATEWAY, body);
-            let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-                inference_error(response, "test-token").await
+            let http_client::Error::InvalidStatusCodeWithDetails {
+                status,
+                body: message,
+                ..
+            } = inference_error(response, "test-token").await
             else {
                 panic!("expected HTTP status and diagnostics");
             };
@@ -1117,8 +1296,11 @@ mod tests {
         let body =
             reqwest::Body::wrap_stream(futures::stream::pending::<Result<Bytes, std::io::Error>>());
         let response = error_response(http::StatusCode::BAD_GATEWAY, body);
-        let http_client::Error::InvalidStatusCodeWithMessage(status, message) =
-            inference_error(response, "test-token").await
+        let http_client::Error::InvalidStatusCodeWithDetails {
+            status,
+            body: message,
+            ..
+        } = inference_error(response, "test-token").await
         else {
             panic!("expected HTTP status and diagnostics");
         };
@@ -1222,53 +1404,12 @@ mod tests {
         );
     }
 
-    fn assistant_turn() -> Message {
-        Message::Assistant {
-            id: None,
-            content: vec![
-                AssistantContent::Reasoning(Reasoning {
-                    id: Some("rs_1".to_string()),
-                    content: vec![
-                        ReasoningContent::Summary("plan".to_string()),
-                        ReasoningContent::Encrypted("envelope".to_string()),
-                    ],
-                }),
-                AssistantContent::Text(rig::message::Text::new("working on it".to_string())),
-                AssistantContent::ToolCall(ToolCall {
-                    id: rig::message::ToolCallId::new_or_mint("call-1".to_string()),
-                    provider: ProviderCallId::new("call_1".to_string())
-                        .map(|id| id.with_item_id("fc_1".to_string())),
-                    function: ToolFunction {
-                        name: "exec_command".to_string(),
-                        arguments: json!({"cmd": "pwd"}),
-                    },
-                    signature: None,
-                    additional_params: None,
-                }),
-            ],
-        }
-    }
-
-    fn tool_result_turn() -> Message {
-        Message::User {
-            content: vec![UserContent::ToolResult(ToolResult {
-                call: rig::message::ToolCallId::new_or_mint("call-1".to_string()),
-                provider: ProviderCallId::new("call_1".to_string()),
-                name: "exec_command".to_string(),
-                content: vec![ToolResultContent::text("done")]
-                    .try_into()
-                    .expect("non-empty tool result"),
-            })],
-        }
-    }
-
     fn completion_request(
         chat_history: Vec<Message>,
         additional_params: serde_json::Value,
     ) -> CompletionRequest {
         CompletionRequest {
             model: None,
-            preamble: Some("Base instructions.".to_string()),
             chat_history,
             documents: Vec::new(),
             tools: vec![rig::completion::ToolDefinition {
@@ -1293,13 +1434,17 @@ mod tests {
     }
 
     fn wire_body(request: CompletionRequest) -> serde_json::Value {
-        let request = ResponsesCompletionRequest::try_from(ResponsesRequestParams {
-            model: "gpt-5.3-codex".to_string(),
-            request: replay_contents(request),
-            system_instructions_placement: SystemInstructionsPlacement::AllInstructions,
-        })
-        .expect("request converts");
-        serde_json::to_value(request).expect("request serializes")
+        let wire = StatelessResponses(openai::responses_api::wire::Responses::new(
+            openai::OpenAIConfig::new("test-token").with_instructions("Base instructions."),
+            "gpt-5.3-codex",
+        ));
+        let encoded = wire
+            .encode(request, Mode::Streaming)
+            .expect("request converts");
+        let rig::wire::Body::Bytes(bytes) = encoded.request.into_body() else {
+            panic!("Responses uses a JSON body");
+        };
+        serde_json::from_slice(&bytes).expect("request serializes")
     }
 
     fn shaped_body(request: CompletionRequest) -> serde_json::Value {
@@ -1309,100 +1454,25 @@ mod tests {
     }
 
     #[test]
-    fn siwc_body_sets_store_and_stream_and_drops_unsupported_fields() {
-        let body = shaped_body(completion_request(
-            vec![Message::user("hello")],
-            json!({
-                "reasoning": {"effort": "high"},
-                "metadata": {"trace": "abc"},
-                "user": "user-1"
-            }),
-        ));
-
-        assert_eq!(body["store"], json!(false));
-        assert_eq!(body["stream"], json!(true));
-        assert_eq!(body["model"], json!("gpt-5.3-codex"));
-        assert_eq!(body["instructions"], json!("Base instructions."));
-        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
-        for field in UNSUPPORTED_FIELDS {
-            assert!(body.get(*field).is_none(), "{field} must be omitted");
-        }
-        assert_eq!(body["reasoning"]["effort"], json!("high"));
-    }
-
-    #[test]
-    fn siwc_body_lifts_mid_conversation_system_items_into_instructions() {
+    fn siwc_body_keeps_late_application_instructions_as_developer_messages() {
+        let previous = shaped_body(test_request(vec![Message::user("hi")]));
         let body = shaped_body(test_request(vec![
             Message::user("hi"),
-            Message::System {
-                content: "Mid-run rule.".to_string(),
-            },
+            crate::openai::developer_message("Mid-run rule."),
             Message::user("again"),
         ]));
 
-        assert_eq!(
-            body["instructions"],
-            json!("Base instructions.\n\nMid-run rule.")
-        );
+        assert_eq!(body["instructions"], json!("Base instructions."));
         let input = body["input"].as_array().unwrap();
         assert!(
             input.iter().all(|item| item["role"] != "system"),
             "system role input items are rejected by the SIWC route: {input:?}"
         );
-        assert_eq!(input.len(), 2);
-    }
-
-    #[test]
-    fn siwc_body_replays_reasoning_and_tool_turns_as_self_contained_items() {
-        let body = shaped_body(test_request(vec![
-            Message::user("start"),
-            assistant_turn(),
-            tool_result_turn(),
-            Message::user("continue"),
-        ]));
-
-        let input = body["input"].as_array().unwrap();
-        let reasoning = input
-            .iter()
-            .find(|item| item["type"] == "reasoning")
-            .expect("reasoning replay item");
-        assert_eq!(reasoning["encrypted_content"], json!("envelope"));
-        let call = input
-            .iter()
-            .find(|item| item["type"] == "function_call")
-            .expect("function call replay item");
-        assert_eq!(call["call_id"], json!("call_1"));
-        assert_eq!(call["name"], json!("exec_command"));
-        assert_eq!(call["arguments"], json!(r#"{"cmd":"pwd"}"#));
-        let output = input
-            .iter()
-            .find(|item| item["type"] == "function_call_output")
-            .expect("function call output replay item");
-        assert_eq!(output["call_id"], json!("call_1"));
-        assert!(
-            body.get("previous_response_id").is_none(),
-            "conversation state is replayed, never referenced"
-        );
-    }
-
-    #[test]
-    fn siwc_body_groups_function_tools_under_a_namespace() {
-        let request = test_request(vec![Message::user("hello")]);
-        let expected_tool = wire_tool(&request.tools[0]);
-        let body = shaped_body(request);
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["type"], json!("namespace"));
-        assert_eq!(tools[0]["name"], json!(SIWC_TOOL_NAMESPACE));
-        assert!(
-            tools[0]["description"]
-                .as_str()
-                .is_some_and(|description| !description.is_empty())
-        );
-        let functions = tools[0]["tools"].as_array().unwrap();
-        assert_eq!(functions.len(), 1);
-        assert_eq!(functions[0]["type"], json!("function"));
-        assert_eq!(functions[0], expected_tool);
+        assert_eq!(input.len(), 3);
+        assert_eq!(body["instructions"], previous["instructions"]);
+        assert_eq!(input[0], previous["input"][0]);
+        assert_eq!(input[1]["role"], "developer");
+        assert_eq!(input[1]["content"][0]["text"], "Mid-run rule.");
     }
 
     #[test]
@@ -1429,11 +1499,14 @@ mod tests {
         let mut request = test_request(vec![Message::Assistant {
             id: None,
             content: vec![
-                AssistantContent::Reasoning(Reasoning {
-                    id: None,
-                    content: vec![ReasoningContent::Summary("summary only".to_string())],
-                }),
-                AssistantContent::Text(rig::message::Text::new("answer".to_string())),
+                AssistantContent::Reasoning(
+                    Reasoning {
+                        id: Some("rs_summary_only".to_string()),
+                        content: vec![ReasoningContent::Summary("summary only".to_string())],
+                    }
+                    .sealed("openai"),
+                ),
+                AssistantContent::text("answer"),
             ],
         }]);
         request.chat_history.push(Message::user("next"));
@@ -1446,73 +1519,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_guard_fails_a_stream_without_a_terminal_event() {
+    async fn stream_guard_bounds_unterminated_sse_frames() {
         let (_, client) = stub_client("connection-1");
-        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
-            Ok(Bytes::from_static(
-                b"event: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\"}\n\n",
-            )),
-            Ok(Bytes::from_static(b"data: [DONE]\n\n")),
-        ];
-        let mut stream = SiwcStreamGuard::new(
-            futures::stream::iter(chunks),
-            Arc::clone(&client.connection),
-        );
-        assert!(stream.next().await.unwrap().is_ok());
+        let chunks = futures::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from(vec![b'x'; 4 * 1024 * 1024])),
+            Ok(Bytes::from_static(b"x")),
+        ]);
+        let mut stream = SiwcStreamGuard::new(chunks, Arc::clone(&client.connection));
         assert!(stream.next().await.unwrap().is_ok());
         let error = stream.next().await.unwrap().unwrap_err();
-        assert!(error.to_string().contains("terminal response event"));
-
-        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
-            Ok(Bytes::from_static(
-                b"event: response.output_text.delta\ndata: {\"type\": \"response.output_text.delta\"}\n\n",
-            )),
-            Ok(Bytes::from_static(
-                b"event: response.completed\ndata: {\"type\": \"response.completed\"}\n\ndata: [DONE]\n\n",
-            )),
-        ];
-        let mut stream = SiwcStreamGuard::new(
-            futures::stream::iter(chunks),
-            Arc::clone(&client.connection),
-        );
-        assert!(stream.next().await.unwrap().is_ok());
-        assert!(stream.next().await.unwrap().is_ok());
-        assert!(stream.next().await.is_none());
-    }
-
-    #[test]
-    fn terminal_frames_require_a_parsed_payload_matching_the_event() {
-        assert!(frame_is_terminal(
-            b"event: response.completed\ndata: {\"type\": \"response.completed\", \"response\": {}}\n\n"
-        ));
-        // An event line without its data payload does not count.
-        assert!(!frame_is_terminal(b"event: response.completed\n\n"));
-        assert!(!frame_is_terminal(
-            b"event: response.completed\ndata: {\"type\": \"response.\n\n"
-        ));
-        assert!(frame_is_terminal(
-            b"data: {\"type\": \"response.failed\", \"response\": {}}\n\n"
-        ));
-        assert!(!frame_is_terminal(
-            b"data: {\"type\": \"response.output_text.delta\"}\n\n"
-        ));
-    }
-
-    #[tokio::test]
-    async fn stream_guard_accepts_a_terminal_frame_split_across_chunks() {
-        let (_, client) = stub_client("connection-1");
-        let frame = "event: response.completed\ndata: {\"type\": \"response.completed\"}\n\n";
-        let split = frame.len() / 2;
-        let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
-            Ok(Bytes::from(frame.as_bytes()[..split].to_vec())),
-            Ok(Bytes::from(frame.as_bytes()[split..].to_vec())),
-        ];
-        let mut stream = SiwcStreamGuard::new(
-            futures::stream::iter(chunks),
-            Arc::clone(&client.connection),
-        );
-        assert!(stream.next().await.unwrap().is_ok());
-        assert!(stream.next().await.unwrap().is_ok());
+        assert!(error.to_string().contains("oversized stream frame"));
         assert!(stream.next().await.is_none());
     }
 
@@ -1559,9 +1575,9 @@ mod tests {
     #[tokio::test]
     async fn nonstreaming_completion_is_rejected() {
         let (_, client) = stub_client("connection-1");
-        let model = client.completion_model("gpt-5.3-codex");
+        let model = client.completion_model("gpt-5.3-codex", "Base instructions.");
         let error = model
-            .completion(test_request(vec![Message::user("hello")]))
+            .call(test_request(vec![Message::user("hello")]))
             .await
             .unwrap_err();
         assert!(error.to_string().contains("requires streaming"));

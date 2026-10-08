@@ -6,6 +6,13 @@ import type { FunctionReference } from 'convex/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { z } from 'zod';
+import { isRunFinalStatus } from '@convex/lib/validators';
+import { reconcileTerminalRun } from '@convex/lib/runTerminal';
+import { captureThreadActivityBeforeChange } from '@convex/lib/threadHierarchy';
+import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
+import { isCommandToolKind } from '@convex/lib/commandToolKinds';
+import { computeAccess } from '@convex/lib/subscriptionProjection';
+import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 // Backfills for legacy stored fields that predate their validators. Current
 // code never writes these fields, so the migrations need no start delay and
@@ -21,6 +28,143 @@ import { z } from 'zod';
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
+});
+
+export const reconcileLegacyTerminalJobs = migrations.define({
+	table: 'runExecutionStates',
+	batchSize: 1,
+	migrateOne: async (ctx, state) => {
+		if (state.terminalJobsReconciled !== undefined) return;
+		const run = await ctx.db.get('runs', state.runId);
+
+		if (!run || !isRunFinalStatus(run.status)) return;
+
+		await reconcileTerminalRun(ctx, run, {
+			completedAt: run.completedAt ?? Date.now(),
+			jobCursor: -1,
+			questionCursor: -1
+		});
+	}
+});
+
+export const runTerminalJobBackfill = migrations.runner([
+	internal.migrations.reconcileLegacyTerminalJobs
+]);
+
+export const backfillThreadHierarchyCounters = migrations.define({
+	table: 'threadRecords',
+	batchSize: 1,
+	migrateOne: async (ctx, thread) => {
+		await captureThreadActivityBeforeChange(ctx, thread._id);
+	}
+});
+
+// Keep the former entrypoint for migration batches scheduled before this deploy.
+export const backfillThreadHierarchyStatuses = backfillThreadHierarchyCounters;
+
+const threadHierarchyCounterMigrations: FunctionReference<'mutation', 'internal'>[] = [
+	internal.migrations.backfillThreadHierarchyCounters
+];
+
+export const runThreadHierarchyStatusBackfill = migrations.runner(threadHierarchyCounterMigrations);
+
+export const backfillSubscriptionExpiry = migrations.define({
+	table: 'subscriptions',
+	migrateOne: async (ctx, subscription) => {
+		if (!subscription.dodoSubscriptionId) return;
+
+		await scheduleSubscriptionExpiry(ctx, subscription);
+	}
+});
+
+export const runSubscriptionExpiryBackfill = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		await migrations.runOne(ctx, internal.migrations.backfillSubscriptionExpiry);
+
+		return null;
+	}
+});
+
+/**
+ * Backfill access phase/deadline, projection revision, and payload watermark
+ * for subscriptions written before those fields existed. Idempotent: rows
+ * that already carry every field are skipped. Kept off the automatic hourly
+ * run so an operator can verify a dry run first:
+ *
+ *   bunx convex run migrations:runSubscriptionAccessBackfill '{"dryRun":true}'
+ *   bunx convex run migrations:runSubscriptionAccessBackfill
+ */
+export const backfillSubscriptionAccess = migrations.define({
+	table: 'subscriptions',
+	migrateOne: async (ctx, subscription) => {
+		const hasRevision = subscription.projectionRevision !== undefined;
+		const hasPayloadWatermark = subscription.payloadEventAt !== undefined;
+		const hasAccess = subscription.accessPhase !== undefined;
+		const hasGeneration = subscription.quotaGeneration !== undefined;
+
+		if (
+			hasRevision &&
+			hasPayloadWatermark &&
+			hasAccess &&
+			hasGeneration &&
+			subscription.scheduleEventAt !== undefined
+		)
+			return;
+
+		// Long-expired terms must not gain fresh grace: clamp the backfilled
+		// clock so a stale term never materializes a renewal-processing window.
+		const now = Date.now();
+
+		const access = computeAccess(
+			{
+				status: subscription.status,
+				dodoSubscriptionId: subscription.dodoSubscriptionId,
+				billingPeriodStart: subscription.billingPeriodStart,
+				billingPeriodEnd: subscription.billingPeriodEnd,
+				cancelAtNextBillingDate: subscription.cancelAtNextBillingDate
+			},
+			now
+		);
+
+		// Derive the monotonic usage generation from the legacy timestamp key:
+		// bucket keys keep moving with the same value they already used, so the
+		// migration itself neither resets usage nor mints extra allowance. The
+		// legacy key is preserved only on rows that already carry it; a legacy
+		// row without quotaResetAt never gains one, so its original
+		// rate-limiter bucket key stays untouched.
+		const quotaGeneration = subscription.quotaGeneration ?? subscription.quotaResetAt ?? 0;
+
+		const patch = {
+			projectionRevision: subscription.projectionRevision ?? 1,
+			payloadEventAt: subscription.payloadEventAt ?? subscription.eventAt,
+			termEventAt: subscription.termEventAt ?? subscription.eventAt,
+			scheduleEventAt:
+				subscription.scheduleEventAt ?? subscription.payloadEventAt ?? subscription.eventAt,
+			providerStatus: subscription.providerStatus ?? subscription.status,
+			accessPhase: subscription.accessPhase ?? access.accessPhase,
+			accessEndsAt: subscription.accessEndsAt ?? access.accessEndsAt,
+			quotaGeneration,
+			quotaTransitionAt: subscription.quotaTransitionAt ?? subscription.quotaResetAt,
+			quotaResetAt: subscription.quotaResetAt
+		};
+
+		await ctx.db.patch('subscriptions', subscription._id, patch);
+		await scheduleSubscriptionExpiry(ctx, { ...subscription, ...patch });
+	}
+});
+
+export const runSubscriptionAccessBackfill = internalMutation({
+	args: { dryRun: v.optional(v.boolean()) },
+	returns: v.null(),
+	handler: async (ctx, { dryRun }) => {
+		await migrations.runOne(ctx, internal.migrations.backfillSubscriptionAccess, {
+			dryRun: dryRun ?? false
+		});
+
+		return null;
+	}
 });
 
 export const removeTranscriptStateWorkThrough = migrations.define({
@@ -103,6 +247,36 @@ export const migrateToolPartJobIds = migrations.define({
 		delete tool.jobId;
 
 		return { tool };
+	}
+});
+
+export const backfillCommandToolInputs = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (ctx, part) => {
+		const tool = part.tool;
+
+		if (
+			part.kind !== 'tool' ||
+			!tool ||
+			tool.input !== undefined ||
+			!tool.toolInvocationId ||
+			!isCommandToolKind(tool.name)
+		) {
+			return;
+		}
+
+		const toolInvocationId = tool.toolInvocationId;
+
+		const job = await ctx.db
+			.query('executorJobs')
+			.withIndex('by_runId_and_toolInvocationId', (q) =>
+				q.eq('runId', part.runId).eq('toolInvocationId', toolInvocationId)
+			)
+			.unique();
+
+		if (!job || job.threadId !== part.threadId || job.kind !== tool.name) return;
+
+		return { tool: { ...tool, input: commandToolDisplayInput(job.kind, job.payload) } };
 	}
 });
 
@@ -192,6 +366,7 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 	internal.migrations.normalizeScrapeUrlResults,
 	internal.migrations.backfillExecutorJobToolInvocationId,
 	internal.migrations.migrateToolPartJobIds,
+	internal.migrations.backfillCommandToolInputs,
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
 	internal.migrations.removeSectionLinkedParts,
@@ -200,7 +375,7 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 
 export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMigrations);
 
-const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10';
+const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10-command-inputs';
 
 const projectArtifactMigrations: FunctionReference<'mutation', 'internal'>[] = [
 	internal.migrations.promoteThreadArtifacts
@@ -256,4 +431,15 @@ export const runProjectArtifactBackfillAutomatically = internalMutation({
 	returns: v.null(),
 	handler: (ctx): Promise<null> =>
 		runBackfillAutomatically(ctx, 'project-artifacts-2026-10', projectArtifactMigrations)
+});
+
+export const runThreadHierarchyStatusBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: (ctx): Promise<null> =>
+		runBackfillAutomatically(
+			ctx,
+			'thread-hierarchy-counters-2026-10',
+			threadHierarchyCounterMigrations
+		)
 });

@@ -105,12 +105,12 @@ export function selectedThreadLifecyclePhase(args: {
 		return 'queued';
 	}
 
-	if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-		return run.status;
+	if (args.waitingForInput && run.status !== 'cancelled') {
+		return 'waiting_for_input';
 	}
 
-	if (args.waitingForInput) {
-		return 'waiting_for_input';
+	if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+		return run.status;
 	}
 
 	return 'running';

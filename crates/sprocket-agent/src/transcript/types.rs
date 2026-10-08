@@ -198,6 +198,8 @@ pub struct TranscriptToolBody {
     pub call_id: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<JsonValue>,
     pub status: String,
 }

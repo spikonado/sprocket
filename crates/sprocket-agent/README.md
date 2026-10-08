@@ -149,6 +149,64 @@ patching, skill loading (`read_skill`), web search, and web-page scraping. Every
 tool call is wrapped in a durable executor-job record and observes run
 cancellation while work is active.
 
+Async tools share their timing policy through
+`sprocket_workspace::async_tools`. New action tools should normalize their wait
+with `YieldMode::Action`; poll tools use `YieldMode::Poll`. Use
+`tools/async_tools.rs` for the matching provider schema and serde defaults, and
+`execute_serialized_tool_job` for typed arguments and results in the existing
+job lifecycle. Resource operations must observe the supplied cancellation token.
+Cancelling a command operation stops waiting for input or output; the process stays available
+through its thread session. Commands keep running after agent completion or
+cancellation until they exit, reach an explicit timeout, are terminated, or the
+server shuts down. Subsequent runs in the same thread reuse the sessions.
+Every command returns a thread-scoped session ID, including commands that finish
+within the initial wait. Session records, `output.log`, and `events.jsonl` are
+stored under the Sprocket data directory. Only the event log is replicated to
+Convex in ordered, retryable chunks; downloads reconstruct the raw output from
+its ordered byte arrays. Downloaded logs live directly under
+`command-logs/command-<sessionId>/`, alongside locally captured log directories.
+Completed results remain pollable without an age or count limit after restarts
+or from another machine. Remote queries download logs into the local data directory;
+live command control requires the originating machine. Network outages leave
+local records pending for retry, so another machine sees only previously synced data.
+Once a running session's events are fully acknowledged, unchanged event lengths skip
+cloud queries and writes. New bytes or completion resume synchronization; failed
+and partial uploads remain pending. This idle tracking is in memory, so server
+restart reconciles unsynced records with Convex again.
+Running polls return incremental output; completed polls replay a bounded preview
+of the full output, including bytes read by earlier runs, with full log paths.
+If shutdown interrupts a command before its final status is saved, later polls
+recover the log and report an interrupted, potentially incomplete result.
+The transcript dashboard lists live commands without consuming output and offers
+per-command termination.
+
+For immediate polls, keep `ZeroPollCooldown` under the resource's observation
+lock. Fetch current state before checking the cooldown so terminal results remain
+available. Check before consuming pending output, and record success only after
+the read succeeds. Failed, rejected, terminal, and positive-wait reads leave the
+cooldown unchanged. Process I/O and question subscriptions retain their own wait
+implementations.
+
+Native delegation uses `spawn_subagent` for child creation,
+`control_subagent` for sending follow-up prompts (`action: "send"`), stopping
+descendant work, or answering its questions, and
+`poll_subagent` for lifecycle, filtered transcript pages, and pending questions.
+Zero-wait actions return metadata only, without transcript entries or cursors.
+Stop waits for the targeted run to reach a terminal status regardless of the
+requested yield time, without waiting for replacement work in the same thread.
+Tool status is the run status: queued, running, completed, failed, or cancelled.
+Pending questions are returned separately. Spawn, send, and child listings return
+thread IDs; internal activity, question deadlines, and transcript paths are omitted.
+Positive polls wait for settlement or a question before reading a page,
+even when the cursor points at older entries.
+`list_subagents` lists immediate children in pages of 32; `list_subagent_models`
+exposes compatible model settings. Child runs are independent of the caller's lifetime and never receive
+payment tools. The delegation `timeoutMs` is persisted against the submitted run,
+not the thread or subsequent runs. Stable tool-job submission identities recover
+accepted child runs after a lost response instead of creating duplicates.
+Sending to an actively running child fails with guidance to stop it or wait for
+it to finish. Only pending cleanup of an ended run is waited out automatically.
+
 Command execution and patch operations both run with the local Sprocket
 process's permissions. Web search runs Exa through a Convex Workpool job.
 Current agents orchestrate scraping locally and call an authenticated Firecrawl
@@ -164,10 +222,36 @@ in the backend.
 - `tools/`: model tools and durable job coordination.
 - `convex.rs`: run-control communication.
 - `types.rs`: history and context wire types.
-- `hooks.rs`: tool-call correlation, invalid-call handling, and OpenAI additional params.
+- `hooks.rs`: durable tool-call assignments, dispatch correlation, and invalid-call recovery.
 
 Changes to run state, history, cancellation, or tool shapes usually require a
 matching Convex change.
+
+## Rig 0.43 integration
+
+The dependency is pinned to upstream `e02ddcc6` rather than the published 0.43
+tarball, which leaks partial conversation content to stderr on invalid-tool
+recovery. The pin includes the upstream removal and unified run errors without
+the later item-shaped history API rewrite.
+
+Provider construction uses native `DynModel<Completion>` and `Wire` APIs. Rig
+owns Responses decoding, stream termination, reasoning seals, item replay, and
+per-call optional usage. Gateway credentials refresh through transport middleware
+rather than rebuilding completion models. Unknown usage does not overwrite the
+last observed context size.
+
+The completion boundary records assignments from the actual durable parts before
+tool dispatch, including repaired calls. Every completion is checked for an
+incomplete finish reason before tools execute. A terminal empty answer stays
+empty; streamed commentary is not a substitute for a missing final response.
+
+Sprocket retains its stateless request policy, SIWC connection pinning and tool
+namespace, and durable context handoff. Rig's native ChatGPT provider targets a
+different endpoint; its resumable runs do not replace versioned Sprocket
+transcripts and idempotent external jobs. Gemini caching, ECS, other modalities,
+and new provider/model constants do not affect the current Responses-only routes.
+Replay metadata remains additive to the existing transcript format; see
+`BACKWARDS_COMPATIBILITY.md` for legacy-reader behavior and removal gates.
 
 ## Validation
 

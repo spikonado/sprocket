@@ -28,8 +28,11 @@ export const list = query({
 		const streams = repositoryKeys.map((repositoryKey) => {
 			const rows = stream(ctx.db, schema)
 				.query('threadRecords')
-				.withIndex('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', (range) => {
-					const project = range.eq('userId', userId).eq('repositoryKey', repositoryKey);
+				.withIndex('by_userId_parentThreadId_repositoryKey_archivedAt_lastMessageAt', (range) => {
+					const project = range
+						.eq('userId', userId)
+						.eq('parentThreadId', undefined)
+						.eq('repositoryKey', repositoryKey);
 
 					return args.state === 'unsettled'
 						? project.eq('archivedAt', undefined)

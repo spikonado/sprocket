@@ -1,5 +1,5 @@
-import { ArrowUp, CircleAlert, Paperclip, Square } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, Paperclip, Square } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
@@ -14,21 +14,28 @@ import {
 	getCatalogModel,
 	modelOptionsForCompletionProvider,
 	resolveModelForCompletionProvider,
-	showsReasoningControl,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
 import { formatCountdownDuration } from '$lib/format';
+import { useUsageTime } from '$lib/usage-time';
 import AgentQuestion from '$lib/components/home/agent-question';
 import RunElapsed from '$lib/components/home/run-elapsed';
+import RunningCommands from '$lib/components/home/running-commands';
 import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
+import ComposerNotice from '$lib/components/home/composer-notice';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
+import type { CommandApi } from '$lib/home/running-commands';
 import OptionSelector from '$lib/components/option-selector';
 import ProviderLogo from '$lib/components/provider-logo';
-import ReasoningSelector from '$lib/components/reasoning-selector';
-import type { SkillSummary, WorkspaceSearchEntry } from '$lib/types/sprocket';
+import ModelSelector from '$lib/components/model-selector';
+import type {
+	SkillSummary,
+	TranscriptScopeRequest,
+	WorkspaceSearchEntry
+} from '$lib/types/sprocket';
 
 export type PendingAgentQuestion = {
 	questionId: string;
@@ -37,6 +44,7 @@ export type PendingAgentQuestion = {
 };
 
 export type PromptComposerProps = {
+	notices?: ReactNode;
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
 	attachments: ComposerAttachment[];
@@ -56,6 +64,7 @@ export type PromptComposerProps = {
 	pendingQuestion?: PendingAgentQuestion | null;
 	showContinueWorking?: boolean;
 	onContinueWorking?: () => void;
+	runningCommands?: { api: CommandApi; scope: TranscriptScopeRequest } | null;
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
 	canSend: boolean;
@@ -98,6 +107,7 @@ const COMPOSER_INNER_CLASS =
 	'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
 
 export function PromptComposerView({
+	notices,
 	prompt = '',
 	onPromptChange,
 	attachments,
@@ -117,6 +127,7 @@ export function PromptComposerView({
 	pendingQuestion = null,
 	showContinueWorking = false,
 	onContinueWorking,
+	runningCommands = null,
 	selectedQuestionOptionId = null,
 	onSelectedQuestionOptionIdChange,
 	canSend,
@@ -132,6 +143,7 @@ export function PromptComposerView({
 	usageFailed
 }: PromptComposerViewProps) {
 	const [now, setNow] = useState(() => Date.now());
+	const continueWorkingVisible = showContinueWorking && Boolean(onContinueWorking);
 
 	useEffect(() => {
 		const interval = setInterval(() => {
@@ -160,10 +172,6 @@ export function PromptComposerView({
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
-
-	// Fast mode only runs through Spikonado's gateway; other providers never offer it.
-	const selectedFastModeAvailable =
-		selectedCompletionProvider === 'spikonado' && selectedCatalogModel?.supportsFastMode === true;
 
 	const canSubmitWithModel =
 		(selectedCompletionProvider === 'spikonado' ||
@@ -458,6 +466,8 @@ export function PromptComposerView({
 	function handleComposerKeydown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
 		if (event.nativeEvent.isComposing) return;
 
+		if (event.key === 'Enter' && window.matchMedia?.('(pointer: coarse)').matches) return;
+
 		if (pathsPopupOpen) {
 			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 				event.preventDefault();
@@ -555,12 +565,12 @@ export function PromptComposerView({
 		onSelectedQuestionOptionIdChange?.(selectedQuestionOptionId === optionId ? null : optionId);
 	}
 
-	function handleModelChange(modelId: CatalogModelId) {
+	function handleModelChange(modelId: CatalogModelId, effort: string) {
 		if (!modelCatalog) return;
 		onSelectedModelChange?.(modelId);
 		const model = getCatalogModel(modelCatalog, modelId);
 
-		if (model) onSelectedReasoningEffortChange?.(model.defaultReasoningEffort);
+		if (model) onSelectedReasoningEffortChange?.(effort);
 	}
 
 	function handleProviderChange(provider: CompletionProvider) {
@@ -625,10 +635,20 @@ export function PromptComposerView({
 	useEffect(() => {
 		if (!selectedCatalogModel) return;
 
+		if (!selectedCatalogModel.reasoningEfforts.includes(selectedReasoningEffort)) {
+			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
+		}
+
 		if (fastMode && !selectedCatalogModel.supportsFastMode) {
 			onFastModeChange?.(false);
 		}
-	}, [selectedCatalogModel, fastMode, onFastModeChange]);
+	}, [
+		selectedCatalogModel,
+		selectedReasoningEffort,
+		onSelectedReasoningEffortChange,
+		fastMode,
+		onFastModeChange
+	]);
 
 	useEffect(() => {
 		syncComposerHeight();
@@ -694,7 +714,7 @@ export function PromptComposerView({
 
 	return (
 		<>
-			<footer className="shrink-0 px-6 py-4">
+			<footer className="shrink-0 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
 				<div className="mx-auto max-w-336">
 					{runStartedAt !== null && runStartedAt > 0 && Number.isFinite(runStartedAt) ? (
 						<div className="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]">
@@ -718,7 +738,11 @@ export function PromptComposerView({
 						</div>
 					) : null}
 
-					{showContinueWorking && onContinueWorking ? (
+					{runningCommands && (
+						<RunningCommands {...runningCommands} collapseWhen={continueWorkingVisible} />
+					)}
+
+					{continueWorkingVisible ? (
 						<div className="mx-auto mb-3 w-full max-w-[48rem] px-4">
 							<button
 								type="button"
@@ -752,25 +776,17 @@ export function PromptComposerView({
 								</div>
 							) : null}
 							<div className="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
-								{composerNotice ? (
-									<div
-										className="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-3"
-										role="alert"
-									>
-										<CircleAlert
-											className="mt-0.5 size-4 shrink-0 text-amber-800 dark:text-amber-200"
-											aria-hidden="true"
-										/>
-										<div className="min-w-0">
-											<p className="text-[13px] leading-5 font-medium text-amber-800 dark:text-amber-200">
-												You're out of usage
-											</p>
-											<p className="text-[12.5px] leading-5 text-amber-800/90 dark:text-amber-200/90">
-												{composerNotice}
-											</p>
-										</div>
-									</div>
-								) : null}
+								<div
+									className="mb-3 max-h-[min(30vh,16rem)] space-y-2 overflow-y-auto empty:hidden"
+									role="region"
+									aria-label="Conversation notices"
+									tabIndex={0}
+								>
+									{notices}
+									{composerNotice ? (
+										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
+									) : null}
+								</div>
 								{pendingQuestion ? (
 									<AgentQuestion
 										question={pendingQuestion.question}
@@ -817,11 +833,11 @@ export function PromptComposerView({
 										ref={composerTextarea}
 										value={prompt}
 										rows={1}
-										className="text-foreground placeholder:text-muted-foreground field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 outline-none"
+										className="text-foreground placeholder:text-muted-foreground field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-base leading-6 outline-none sm:text-[14px]"
 										placeholder={
 											answeringQuestion
 												? 'Add detail, or type a custom answer'
-												: 'Ask anything, @tag files/directories, or use $ to show available skills'
+												: 'Ask anything, use / for commands, @ to tag files/folders, and $ for skills'
 										}
 										disabled={isSubmitting}
 										role="combobox"
@@ -837,6 +853,7 @@ export function PromptComposerView({
 										}
 										aria-activedescendant={activeOptionId}
 										autoComplete="off"
+										enterKeyHint="enter"
 										onKeyDown={handleComposerKeydown}
 										onPaste={handleComposerPaste}
 										onFocus={syncCaretFromTextarea}
@@ -851,7 +868,7 @@ export function PromptComposerView({
 									/>
 								</div>
 
-								<div className="flex min-w-0 flex-nowrap items-center justify-between gap-3 overflow-visible px-0 pt-2.5 pb-0">
+								<div className="flex min-w-0 items-center justify-between gap-1 overflow-visible pt-2.5 sm:gap-3">
 									<div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1">
 										<input
 											ref={attachmentInput}
@@ -862,7 +879,7 @@ export function PromptComposerView({
 										/>
 										<button
 											type="button"
-											className="text-muted-foreground enabled:hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition enabled:cursor-pointer disabled:opacity-40"
+											className="text-muted-foreground enabled:hover:text-foreground flex size-11 shrink-0 items-center justify-center rounded-lg transition enabled:cursor-pointer disabled:opacity-40 sm:size-9"
 											aria-label={ATTACH_TOOLTIP_LABEL}
 											disabled={!canAttachMore}
 											onMouseEnter={showAttachTooltip}
@@ -879,39 +896,20 @@ export function PromptComposerView({
 
 										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
-										<OptionSelector
-											value={selectedModel}
-											options={modelOptions}
-											ariaLabel="Select model"
-											menuTitle="Model"
+										<ModelSelector
+											modelId={selectedModel}
+											models={
+												modelCatalog?.models.filter((model) =>
+													modelOptions.some((option) => option.id === model.id)
+												) ?? []
+											}
+											reasoningEffort={selectedReasoningEffort}
+											fastMode={fastMode}
+											allowsFastMode={selectedCompletionProvider === 'spikonado'}
 											disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
-											searchable
-											onValueChange={handleModelChange}
-											className="z-20 shrink-0"
-											triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
-											optionIcon={(option) => (
-												<ProviderLogo provider={option.provider} className="size-4 shrink-0" />
-											)}
+											onSelect={handleModelChange}
+											onFastModeChange={onFastModeChange}
 										/>
-
-										{selectedCatalogModel ? (
-											<>
-												{showsReasoningControl(selectedCatalogModel) ||
-												selectedFastModeAvailable ? (
-													<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-												) : null}
-												<ReasoningSelector
-													model={selectedCatalogModel}
-													reasoningEffort={selectedReasoningEffort}
-													fastMode={fastMode}
-													fastModeAvailable={selectedFastModeAvailable}
-													disabled={composerLocked || answeringQuestion}
-													className="z-20 shrink-0"
-													onReasoningEffortChange={onSelectedReasoningEffortChange}
-													onFastModeChange={onFastModeChange}
-												/>
-											</>
-										) : null}
 
 										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
@@ -920,10 +918,11 @@ export function PromptComposerView({
 											options={providerOptions}
 											ariaLabel="Select provider"
 											menuTitle="Provider"
+											compactOnMobile
 											disabled={composerLocked || answeringQuestion || !providersReady}
 											onValueChange={handleProviderChange}
 											className="z-20 shrink-0"
-											triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
+											triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"
 											optionIcon={(option) => (
 												<ProviderLogo provider={option.id} className="size-4 shrink-0" />
 											)}
@@ -934,7 +933,7 @@ export function PromptComposerView({
 										{isRunning ? (
 											<button
 												type="button"
-												className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100"
+												className="flex size-11 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100 sm:size-10"
 												aria-label="Stop generation"
 												title="Stop"
 												onClick={onCancel}
@@ -945,7 +944,7 @@ export function PromptComposerView({
 										{answeringQuestion || !isRunning ? (
 											<button
 												type="button"
-												className="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"
+												className="bg-primary/90 text-primary-foreground hover:bg-primary flex size-11 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:size-10"
 												onClick={onSubmit}
 												disabled={
 													!canSend ||
@@ -983,10 +982,11 @@ export function PromptComposerView({
 
 export default function PromptComposer(props: PromptComposerProps) {
 	const convexAuth = useConvexAuth();
+	const usageTime = useUsageTime();
 
 	const usageQuery = useQuery_experimental({
 		query: api.usage.getMyUsage,
-		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now: usageTime } : 'skip'
 	});
 
 	return (

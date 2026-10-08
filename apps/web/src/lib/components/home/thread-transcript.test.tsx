@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
-import { render } from '@testing-library/react';
+import { render, within } from '@testing-library/react';
 import type { Id } from '@convex/_generated/dataModel';
+import type { JsonValue } from '@convex/lib/json';
 import type {
 	TranscriptMessage,
 	TranscriptDisplayDetails,
@@ -59,8 +60,6 @@ async function settle(milliseconds = 16) {
 
 async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 600) {
 	const props: Props = {
-		currentError: null,
-		runError: null,
 		messages,
 		actions: [],
 		activeRunId: null,
@@ -162,6 +161,46 @@ describe('transcript viewport paging', () => {
 		expect(viewport.classList.contains('overflow-auto')).toBe(false);
 	});
 
+	it('right-aligns user prompts inside a composer-width column', async () => {
+		const promptMessage: TranscriptDisplayRow = {
+			...message(1),
+			attachments: [
+				{
+					// SAFETY: Fixture IDs never leave the mounted component.
+					storageId: 'file' as Id<'_storage'>,
+					name: 'notes.txt',
+					mediaType: 'text/plain',
+					size: 10
+				}
+			]
+		};
+
+		const response: TranscriptDisplayRow = {
+			...message(2),
+			id: 'text:2',
+			kind: 'text',
+			text: 'Agent reply'
+		};
+
+		const { viewport } = await renderTranscript([promptMessage, response]);
+
+		const column = viewport.firstElementChild;
+		const prompt = column?.querySelector<HTMLElement>('[data-message-id="prompt:1"]');
+		const agent = column?.querySelector<HTMLElement>('[data-message-id="text:2"]');
+		const chips = prompt?.querySelector('[aria-label="Attached files"]');
+
+		if (!column || !prompt || !agent || !chips) {
+			throw new Error('Missing transcript alignment fixtures');
+		}
+
+		expect(column.classList.contains('mx-auto')).toBe(true);
+		expect(column.classList.contains('max-w-[48rem]')).toBe(true);
+		expect(prompt.classList.contains('items-end')).toBe(true);
+		expect(prompt.classList.contains('items-start')).toBe(false);
+		expect(chips.classList.contains('justify-end')).toBe(true);
+		expect(agent.className).not.toMatch(/\b(items-end|justify-end|self-end|ml-auto|text-right)\b/);
+	});
+
 	it('opens every transcript link in a new tab without granting opener access', async () => {
 		const prompt = { ...message(1), text: '[Prompt](https://example.com/prompt)' };
 
@@ -185,8 +224,27 @@ describe('transcript viewport paging', () => {
 		expect(links.every((link) => link.rel === 'noopener noreferrer')).toBe(true);
 	});
 
+	it('renders math in user, persisted assistant, and live assistant messages', async () => {
+		const prompt = { ...message(1), text: String.raw`Explain $E = mc^2$.` };
+
+		const response: TranscriptDisplayRow = {
+			...message(2),
+			id: 'text:2',
+			kind: 'text',
+			text: String.raw`\[\frac{1}{2}\]`
+		};
+
+		const live = { ...liveMessage(), text: String.raw`The result is \(x^2\).` };
+
+		const { viewport } = await renderTranscript([prompt, response, live]);
+
+		expect(viewport.querySelectorAll('.katex')).toHaveLength(3);
+		expect(viewport.querySelectorAll('.katex-display')).toHaveLength(1);
+		expect(viewport.querySelector('math mfrac')?.textContent).toBe('12');
+	});
+
 	it.each(['live', 'persisted'] as const)(
-		'uses the same patch and failure disclosures for %s tools',
+		'shows patch paths and failure details inline for %s tools',
 		async (kind) => {
 			const parts: LiveTranscriptMessage['parts'] = [
 				{
@@ -234,44 +292,260 @@ describe('transcript viewport paging', () => {
 			click(viewport.querySelector<HTMLButtonElement>('button[aria-expanded]'));
 			await settle();
 
-			const patch = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes('Changed Files')
+			const files = [
+				...viewport.querySelectorAll('[data-tool-kind="apply_patch"] [data-tool-row]')
+			];
+
+			expect(files.map((row) => row.textContent)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+			expect(files.every((row) => row.firstElementChild?.tagName === 'svg')).toBe(true);
+			expect(viewport.textContent).toContain('a.txt');
+			expect(viewport.textContent).toContain('b.txt');
+			expect(viewport.textContent).toContain('c.txt');
+
+			const failures = [...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].filter(
+				(row) =>
+					row.textContent?.includes('(stopped)') || row.textContent?.includes('(interrupted)')
 			);
 
-			expect(patch?.getAttribute('aria-expanded')).toBe('false');
-			const failures = [...viewport.querySelectorAll('details summary')];
-			expect(failures.map((summary) => summary.textContent)).toEqual([
-				expect.stringContaining('(cancelled)'),
+			expect(failures.map((row) => row.textContent)).toEqual([
+				expect.stringContaining('(stopped)'),
 				expect.stringContaining('(interrupted)')
 			]);
 			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
-			expect(viewport.querySelector('details [role="status"]')?.textContent).toBe(
+			expect(viewport.querySelector('[data-tool-kind] [role="status"]')?.textContent).toBe(
 				'stopped by user'
 			);
 			expect(props.loadSectionDetails).toBeDefined();
 		}
 	);
 
+	it.each(['live', 'persisted'] as const)(
+		'lists repeated tools, artifacts, and reasoning directly inside %s work',
+		async (kind) => {
+			const calls: { name: string; input: JsonValue }[] = [
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'exec_cmd',
+					input: { cmd: `echo command-${index}` }
+				})),
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'read_skill',
+					input: { name: `skill-${index}` }
+				})),
+				...Array.from({ length: 3 }, (_, index) => ({
+					name: 'apply_patch',
+					input: { patch: `*** Begin Patch\n*** Add File: file-${index}.txt\n+text\n*** End Patch` }
+				})),
+				{ name: 'add_artifact', input: { path: 'notes.md' } },
+				{ name: 'list_artifacts', input: {} },
+				{ name: 'edit_artifact', input: { path: 'notes.md' } }
+			];
+
+			const parts: LiveTranscriptMessage['parts'] = [
+				{ type: 'reasoning', id: 'plan', text: 'Inspect, edit, and validate.' },
+				...calls.flatMap((call, index): LiveTranscriptMessage['parts'] => [
+					{ type: 'tool-call', callId: `tool-${index}`, ...call },
+					{ type: 'tool-result', callId: `tool-${index}`, name: call.name, output: {} }
+				])
+			];
+
+			const response: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), parts }
+					: { ...message(3), kind: 'work', id: 'work-3', itemCount: calls.length };
+
+			const { viewport, setProps } = await renderTranscript([response]);
+			setProps({
+				loadSectionDetails: vi
+					.fn()
+					.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+			});
+			click(within(viewport).getByRole('button', { name: /^Worked/ }));
+			await settle();
+
+			const rows = [...viewport.querySelectorAll('[data-tool-kind]')];
+			expect(rows).toHaveLength(calls.length);
+			expect(
+				rows.every(
+					(row) => row.querySelector('[data-tool-row]')?.firstElementChild?.tagName === 'svg'
+				)
+			).toBe(true);
+			expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(2);
+			expect(viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')).toHaveLength(
+				calls.length
+			);
+
+			for (let index = 0; index < 3; index += 1) {
+				expect(viewport.textContent).toContain(`echo command-${index}`);
+				expect(viewport.textContent).toContain(`$skill-${index}`);
+				expect(viewport.textContent).toContain(`file-${index}.txt`);
+			}
+
+			expect(viewport.textContent).toContain('Created Artifact:notes.md');
+			expect(viewport.textContent).toContain('Listed Artifacts');
+			expect(viewport.textContent).toContain('Updated Artifact:notes.md');
+			click(within(viewport).getByRole('button', { name: 'Reasoned' }));
+			expect(viewport.textContent).toContain('Inspect, edit, and validate.');
+		}
+	);
+
+	it('keeps running calls inside Working as they settle and the run completes', async () => {
+		const response: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: Array.from({ length: 3 }, (_, index) => ({
+				type: 'tool-call',
+				callId: `command-${index}`,
+				name: 'exec_cmd',
+				input: { cmd: `sleep ${index + 1}` }
+			}))
+		};
+
+		const { viewport, setProps } = await renderTranscript([response]);
+		setProps({ activeRunId: response.runId });
+		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
+		const work = within(viewport).getByRole('button', { name: /^Working/ });
+		click(work);
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
+		expect(
+			[...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].map(
+				(row) => row.textContent
+			)
+		).toEqual(['sleep 1', 'sleep 2', 'sleep 3']);
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(1);
+
+		const settled: LiveTranscriptMessage = {
+			...response,
+			runStatus: 'completed',
+			parts: [
+				...response.parts,
+				...response.parts
+					.filter((part) => part.type === 'tool-call')
+					.map((part) => ({
+						type: 'tool-result' as const,
+						callId: part.callId,
+						name: part.name,
+						output: { exitCode: 0 }
+					}))
+			]
+		};
+
+		setProps({ messages: [settled], activeRunId: null });
+		await settle();
+		expect(within(viewport).getByRole('button', { name: /^Worked/ })).toBe(work);
+		expect(work.getAttribute('aria-expanded')).toBe('true');
+		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
+		expect(viewport.querySelector('.animate-spin')).toBeNull();
+	});
+
+	it.each([false, true])(
+		'reveals a synchronous call only after its result arrives with async=%s',
+		async (withAsync) => {
+			const response: LiveTranscriptMessage = {
+				...liveMessage(),
+				runStatus: 'running',
+				parts: [
+					{ type: 'reasoning', id: 'plan', text: 'Checking the workspace.' },
+					{
+						type: 'tool-call',
+						callId: 'skill',
+						name: 'read_skill',
+						input: { name: 'hidden-skill' }
+					},
+					...(withAsync
+						? [
+								{
+									type: 'tool-call' as const,
+									callId: 'command',
+									name: 'exec_command',
+									input: { cmd: 'sleep 10' }
+								}
+							]
+						: [])
+				]
+			};
+
+			const { viewport, setProps } = await renderTranscript([response]);
+			setProps({ activeRunId: response.runId });
+			await settle();
+			click(viewport.querySelector('button[aria-expanded]'));
+			await settle();
+
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(withAsync);
+			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
+			expect(viewport.textContent).toContain('Reasoned');
+			expect(viewport.textContent).not.toContain('Reasoning');
+			expect(viewport.textContent).not.toContain('hidden-skill');
+			expect(viewport.textContent).not.toContain('Read Skill');
+
+			setProps({
+				messages: [
+					{
+						...response,
+						parts: [
+							...response.parts,
+							{ type: 'tool-result', callId: 'skill', name: 'read_skill', output: {} }
+						]
+					}
+				]
+			});
+			await settle();
+
+			expect(viewport.textContent).toContain('hidden-skill');
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(withAsync);
+			expect(viewport.textContent?.includes('sleep 10')).toBe(withAsync);
+			expect(viewport.textContent).toContain('Reasoned');
+			expect(viewport.textContent).not.toContain('Reasoning');
+		}
+	);
+
 	it.each([
+		{ kind: 'live', toolName: 'exec_cmd', group: 'Ran Commands' },
+		{ kind: 'persisted', toolName: 'exec_cmd', group: 'Ran Commands' },
+		{ kind: 'live', toolName: 'control_cmd', group: 'Controlled Commands' },
+		{ kind: 'persisted', toolName: 'control_cmd', group: 'Controlled Commands' },
+		{ kind: 'live', toolName: 'poll_cmd', group: 'Polled Commands' },
+		{ kind: 'persisted', toolName: 'poll_cmd', group: 'Polled Commands' },
 		{ kind: 'live', toolName: 'exec_command', group: 'Ran Commands' },
 		{ kind: 'persisted', toolName: 'exec_command', group: 'Ran Commands' },
 		{ kind: 'live', toolName: 'write_stdin', group: 'Monitored Commands' },
-		{ kind: 'persisted', toolName: 'write_stdin', group: 'Monitored Commands' }
+		{ kind: 'persisted', toolName: 'write_stdin', group: 'Monitored Commands' },
+		{ kind: 'live', toolName: 'control_command', group: 'Controlled Commands' },
+		{ kind: 'persisted', toolName: 'control_command', group: 'Controlled Commands' },
+		{ kind: 'live', toolName: 'poll_command', group: 'Polled Commands' },
+		{ kind: 'persisted', toolName: 'poll_command', group: 'Polled Commands' }
 	] as const)(
 		'shows $toolName as a settled snapshot in completed $kind work',
 		async ({ kind, toolName, group }) => {
+			const output: JsonValue =
+				toolName === 'exec_cmd' || toolName === 'exec_command' || toolName === 'write_stdin'
+					? { sessionId: 'session', command: 'sleep 10', running: true }
+					: { command: 'sleep 10', workdir: '/', running: true };
+
 			const parts: LiveTranscriptMessage['parts'] = [
 				{
 					type: 'tool-call',
 					callId: 'command',
 					name: toolName,
-					input: toolName === 'exec_command' ? { cmd: 'sleep 10' } : { sessionId: 'session' }
+					input:
+						toolName === 'exec_cmd' || toolName === 'exec_command'
+							? { cmd: 'sleep 10' }
+							: toolName === 'control_cmd' || toolName === 'control_command'
+								? { sessionId: 'session', action: 'terminate' }
+								: { sessionId: 'session' }
 				},
 				{
 					type: 'tool-result',
 					callId: 'command',
 					name: toolName,
-					output: { sessionId: 'session', command: 'sleep 10', running: true }
+					output
 				}
 			];
 
@@ -312,16 +586,195 @@ describe('transcript viewport paging', () => {
 			click(work);
 			await settle();
 
-			const commands = [...viewport.querySelectorAll('button')].find((button) =>
-				button.textContent?.includes(group)
-			);
-
-			expect(commands?.getAttribute('aria-expanded')).toBe('true');
-			expect(commands?.querySelector('.animate-spin')).toBeNull();
-			expect(viewport.querySelector('[title="sleep 10"]')).not.toBeNull();
-			expect(viewport.textContent).toContain('Still running when this call returned');
+			expect(viewport.textContent).not.toContain(group);
+			expect(viewport.querySelector('.animate-spin')).toBeNull();
+			expect(
+				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
+					row.textContent?.includes('sleep 10')
+				)
+			).toBe(true);
 		}
 	);
+
+	it('labels a poll_command row with the command from the originating exec_command session', async () => {
+		const parts: LiveTranscriptMessage['parts'] = [
+			{
+				type: 'tool-call',
+				callId: 'launch',
+				name: 'exec_command',
+				input: { cmd: 'npm run dev', yieldTimeMs: 0 }
+			},
+			{
+				type: 'tool-result',
+				callId: 'launch',
+				name: 'exec_command',
+				output: { sessionId: '7', running: true, success: false, output: '' }
+			},
+			{
+				type: 'tool-call',
+				callId: 'poll',
+				name: 'poll_command',
+				input: { sessionId: '7' }
+			},
+			{
+				type: 'tool-result',
+				callId: 'poll',
+				name: 'poll_command',
+				output: { workdir: '/app', running: true, success: false }
+			}
+		];
+
+		const response: TranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [...parts, { type: 'text', id: 'after', text: 'Doing something else.' }]
+		};
+
+		const { viewport, setProps } = await renderTranscript([response]);
+		setProps({
+			activeRunId: response.runId,
+			loadSectionDetails: vi
+				.fn()
+				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false })
+		});
+		await settle();
+
+		const transcript = within(viewport);
+
+		click(transcript.getByRole('button', { name: /^Worked/ }));
+		await settle();
+
+		expect(
+			[...viewport.querySelectorAll('[data-tool-row]')].filter((row) =>
+				row.textContent?.includes('npm run dev')
+			)
+		).toHaveLength(2);
+	});
+
+	it.each(['live', 'persisted'] as const)(
+		'reuses a command from an earlier run in %s monitoring rows',
+		async (kind) => {
+			const launchParts: LiveTranscriptMessage['parts'] = [
+				{
+					type: 'tool-call',
+					callId: 'launch',
+					name: 'exec_cmd',
+					input: { cmd: 'gh pr checks 567 --watch' }
+				},
+				{
+					type: 'tool-result',
+					callId: 'launch',
+					name: 'exec_cmd',
+					output: { sessionId: 'checks-session', running: true }
+				}
+			];
+
+			const pollParts: LiveTranscriptMessage['parts'] = [
+				{
+					type: 'tool-call',
+					callId: 'poll',
+					name: 'poll_cmd',
+					input: { sessionId: 'checks-session' }
+				},
+				{
+					type: 'tool-result',
+					callId: 'poll',
+					name: 'poll_cmd',
+					output: { status: 'failed', error: 'Connection interrupted' }
+				}
+			];
+
+			const launch: TranscriptDisplayRow = {
+				...message(2),
+				kind: 'work',
+				id: 'launch-work',
+				itemCount: 1
+			};
+
+			const poll: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), parts: pollParts }
+					: { ...message(3), kind: 'work', id: 'poll-work', itemCount: 1 };
+
+			const { viewport, setProps } = await renderTranscript([launch, poll]);
+			setProps({
+				loadSectionDetails: vi.fn().mockImplementation(async (row: TranscriptDisplayRow) => ({
+					parts: row.id === launch.id ? launchParts : pollParts,
+					revision: 1,
+					stale: false,
+					indexing: false
+				}))
+			});
+			await settle();
+
+			const buttons = within(viewport).getAllByRole('button', { name: /^Worked/ });
+			click(buttons[1]);
+			await settle();
+			const pollRow = viewport.querySelector('[data-tool-kind="poll_cmd"]');
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'Session checks-session'
+			);
+
+			click(buttons[0]);
+			await settle();
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'gh pr checks 567 --watch'
+			);
+
+			click(buttons[0]);
+			await settle();
+			expect(pollRow?.querySelector('[data-tool-row]')?.textContent).toContain(
+				'gh pr checks 567 --watch'
+			);
+		}
+	);
+
+	it('keeps a live command label when the launch moves into collapsed persisted history', async () => {
+		const launch: LiveTranscriptMessage = {
+			...liveMessage(),
+			id: 'launch-response',
+			runId: message(2).runId,
+			parts: [
+				{ type: 'tool-call', callId: 'launch', name: 'exec_cmd', input: { cmd: 'sleep 10' } },
+				{
+					type: 'tool-result',
+					callId: 'launch',
+					name: 'exec_cmd',
+					output: { sessionId: 'sleep-session', running: true }
+				}
+			]
+		};
+
+		const poll: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [
+				{
+					type: 'tool-call',
+					callId: 'poll',
+					name: 'poll_cmd',
+					input: { sessionId: 'sleep-session' }
+				}
+			]
+		};
+
+		const { viewport, setProps } = await renderTranscript([launch, poll]);
+		setProps({ activeRunId: poll.runId });
+		await settle();
+		click(within(viewport).getByRole('button', { name: /^Working/ }));
+		await settle();
+		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
+			'sleep 10'
+		);
+
+		setProps({
+			messages: [{ ...message(2), kind: 'work', id: 'launch-work', itemCount: 1 }, poll]
+		});
+		await settle();
+		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
+			'sleep 10'
+		);
+	});
 
 	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
 		const work: TranscriptDisplayRow = {
@@ -379,15 +832,11 @@ describe('transcript viewport paging', () => {
 		await settle();
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 
-		const reasoningLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')].flatMap(
-			(button) => {
-				const label = button.textContent?.trim();
-
-				return label === 'Reasoned' || label === 'Reasoning' ? [label] : [];
-			}
-		);
-
-		expect(reasoningLabels).toEqual(['Reasoned', 'Reasoning']);
+		expect(viewport.textContent).toContain('Reasoned');
+		expect(viewport.textContent).toContain('Reasoning');
+		expect(viewport.querySelectorAll('button[aria-expanded]')).toHaveLength(3);
+		click(within(viewport).getByRole('button', { name: 'Reasoned' }));
+		expect(viewport.textContent).toContain('Saved reasoning');
 		expect(viewport.textContent).toContain('Current reasoning');
 	});
 
@@ -515,9 +964,16 @@ describe('transcript viewport paging', () => {
 		expect(viewport.textContent).not.toContain('Next details');
 	});
 
-	it.each([false, true])(
-		'anchors the visible tool after prepending, including movement during the request: %s',
-		async (moveWhileLoading) => {
+	it.each([
+		{ visibleDetail: 'tool', moveWhileLoading: false },
+		{ visibleDetail: 'tool', moveWhileLoading: true },
+		{ visibleDetail: 'final patch error', moveWhileLoading: false },
+		{ visibleDetail: 'final patch error', moveWhileLoading: true }
+	])(
+		'anchors the visible $visibleDetail after prepending, movement during the request: $moveWhileLoading',
+		async ({ visibleDetail, moveWhileLoading }) => {
+			const viewingError = visibleDetail === 'final patch error';
+
 			const work: TranscriptDisplayRow = {
 				...message(2),
 				id: 'work',
@@ -530,17 +986,24 @@ describe('transcript viewport paging', () => {
 				message(0),
 				message(1),
 				work,
-				message(3)
+				...(viewingError ? [] : [message(3)])
 			]);
 
 			setProps({ nextBefore: undefined });
 
 			const rows = () =>
-				[...viewport.querySelectorAll<HTMLElement>('[data-work-detail]')].filter(
-					(element) => !element.querySelector('[data-work-detail]')
-				);
+				[
+					...viewport.querySelectorAll<HTMLElement>(
+						'[data-work-detail], [data-tool-kind] > [role="status"]'
+					)
+				].filter((element) => !element.querySelector('[data-work-detail]'));
 
-			Object.defineProperty(viewport, 'scrollHeight', { get: () => 1200 + rows().length * 100 });
+			const rowHeight = (element: HTMLElement) =>
+				element.getAttribute('role') === 'status' ? 600 : 100;
+
+			Object.defineProperty(viewport, 'scrollHeight', {
+				get: () => 1200 + rows().reduce((height, element) => height + rowHeight(element), 0)
+			});
 			let olderVisible = false;
 			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 				this: HTMLElement
@@ -558,7 +1021,16 @@ describe('transcript viewport paging', () => {
 				const detailIndex = details.indexOf(this);
 
 				if (detailIndex >= 0)
-					return new DOMRect(0, 650 + detailIndex * 100 - viewport.scrollTop, 800, 100);
+					return new DOMRect(
+						0,
+						650 +
+							details
+								.slice(0, detailIndex)
+								.reduce((height, element) => height + rowHeight(element), 0) -
+							viewport.scrollTop,
+						800,
+						rowHeight(this)
+					);
 				const index = [...viewport.querySelectorAll('[data-transcript-anchor]')].indexOf(this);
 
 				return new DOMRect(
@@ -571,15 +1043,30 @@ describe('transcript viewport paging', () => {
 
 			function page(ids: number[], previousBefore?: number): TranscriptDisplayDetails {
 				return {
-					parts: ids.flatMap((id) => [
-						{
-							type: 'tool-call' as const,
-							callId: String(id),
-							name: 'exec_command',
-							input: { cmd: `echo ${id}` }
-						},
-						{ type: 'tool-result' as const, callId: String(id), name: 'exec_command', output: {} }
-					]),
+					parts: ids.flatMap((id): TranscriptDisplayDetails['parts'] => {
+						const failedPatch = viewingError && id === 7;
+						const name = failedPatch ? 'apply_patch' : 'exec_command';
+
+						return [
+							{
+								type: 'tool-call' as const,
+								callId: String(id),
+								name,
+								input: failedPatch
+									? {
+											patch:
+												'*** Begin Patch\n*** Update File: a.ts\n*** Update File: b.ts\n*** End Patch'
+										}
+									: { cmd: `echo ${id}` }
+							},
+							{
+								type: 'tool-result' as const,
+								callId: String(id),
+								name,
+								output: failedPatch ? { status: 'failed', error: 'The patch did not apply.' } : {}
+							}
+						];
+					}),
 					previousBefore,
 					revision: 1,
 					indexing: false,
@@ -610,14 +1097,21 @@ describe('transcript viewport paging', () => {
 			click(disclosure);
 			await settle();
 			expect(load).toHaveBeenCalledTimes(1);
-			scrollTo(700);
-			const anchor = rows()[0];
+
+			const anchor = viewingError
+				? within(viewport).getByText('The patch did not apply.')
+				: rows()[0];
+
+			const initialTop = viewingError ? 1000 : 699;
+			scrollTo(initialTop + 1);
 			olderVisible = true;
-			scrollTo(699);
+			scrollTo(initialTop);
 			await settle();
 			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
 
-			if (moveWhileLoading) scrollTo(660);
+			const top = moveWhileLoading ? initialTop - 39 : initialTop;
+
+			if (moveWhileLoading) scrollTo(top);
 			const offset = anchor.getBoundingClientRect().top;
 			await act(async () => {
 				resolve(page([4, 5]));
@@ -625,21 +1119,11 @@ describe('transcript viewport paging', () => {
 			await settle();
 			expect(anchor.isConnected).toBe(true);
 			expect(anchor.getBoundingClientRect().top).toBe(offset);
-			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
+			expect(viewport.scrollTop).toBe(top + 200);
 			act(() => resize());
-			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 899);
+			expect(viewport.scrollTop).toBe(top + 200);
 		}
 	);
-
-	it('does not claim an empty thread has a local copy when reconnecting', async () => {
-		const { viewport, setProps } = await renderTranscript([]);
-		setProps({ stale: true });
-		await settle();
-		expect(viewport.querySelector('[role="status"]')?.textContent).toContain(
-			'Reconnecting to conversation history.'
-		);
-		expect(viewport.textContent).not.toContain('local copy');
-	});
 
 	it('keeps prefetching nearby history without rendering pagination controls', async () => {
 		const { props, viewport, setProps } = await renderTranscript([message(3)]);
@@ -866,7 +1350,7 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		setProps({ loadingOlder: true });
 		await settle();
-		setProps({ stale: true, loadingOlder: false });
+		setProps({ loadingOlder: false });
 		await settle();
 		await settle(10_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);

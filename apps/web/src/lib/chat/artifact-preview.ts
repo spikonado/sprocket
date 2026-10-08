@@ -94,13 +94,9 @@ export function buildArtifactPreviewDocument(
 	artifactType: ArtifactType,
 	content: string
 ): string | null {
-	if (artifactType === 'react') {
-		return buildReactPreviewDocument(content);
-	}
+	if (artifactType === 'react') return buildReactPreviewDocument(content);
 
-	if (artifactType === 'html') {
-		return buildHtmlPreviewDocument(content);
-	}
+	if (artifactType === 'html') return buildHtmlPreviewDocument(content);
 
 	return null;
 }

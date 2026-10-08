@@ -22,6 +22,15 @@ pub(crate) struct EditArtifactTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct SaveArtifactTool(pub(super) AgentToolContext);
 
+#[derive(Clone)]
+pub(crate) struct DeleteArtifactTool(pub(super) AgentToolContext);
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DeleteArtifactArgs {
+    pub(crate) artifact_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AddArtifactArgs {
@@ -361,6 +370,55 @@ impl rig::tool::Tool for ListArtifactsTool {
                 Err(tool_error(anyhow::anyhow!("Artifact registry kept changing during listing; retry the tool")))
             },
         ).await
+    }
+}
+
+impl rig::tool::Tool for DeleteArtifactTool {
+    const NAME: &'static str = "delete_artifact";
+    type Error = ToolExecutionError;
+    type Args = DeleteArtifactArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        String::new()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(DeleteArtifactArgs))
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
+        let mutation_args = mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
+        execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
+            let mut bindings = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                result = self.0.artifact_bindings.lock() => result.map_err(tool_error)?,
+            };
+            bindings
+                .delete_artifact(&self.0.workspace_root, &args.artifact_id)
+                .await
+                .map_err(tool_error)?;
+            // Keep the store exclusive until Convex removes the artifact so a
+            // concurrent save cannot recreate the file from the still-visible record.
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                run_convex_tool_mutation(
+                    &self.0.runtime,
+                    cancellation,
+                    "artifacts:deleteArtifactForRun",
+                    mutation_args,
+                ),
+            )
+            .await
+            .map_err(|error| tool_error(error.into()))?
+        })
+        .await
     }
 }
 

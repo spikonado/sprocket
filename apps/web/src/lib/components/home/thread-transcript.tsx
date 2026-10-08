@@ -1,6 +1,7 @@
 import {
 	useCallback,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 	type KeyboardEvent,
@@ -14,9 +15,7 @@ import {
 	groupAssistantTimelineSections,
 	isAssistantResponseStreaming,
 	partitionWorkSectionTools,
-	workSectionTimingAnchor,
-	type AssistantTimelineTool,
-	type AssistantTimelineWorkBlock
+	workSectionTimingAnchor
 } from '$lib/chat/assistant-timeline';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -45,14 +44,12 @@ import type {
 import '$lib/components/home/thread-transcript.css';
 
 type Props = {
-	currentError: string | null;
-	runError: string | null;
+	userId?: string;
 	messages: TranscriptMessage[];
 	actions: ExecutorJob[];
 	activeRunId: TranscriptMessage['runId'] | null;
 	project: Project | null;
 	emptyStateMessage?: string;
-	stale?: boolean;
 	loadingOlder?: boolean;
 	nextBefore?: number;
 	onLoadOlder?: () => void;
@@ -79,21 +76,6 @@ type ScrollAnchor = {
 	scrollHeight: number;
 };
 
-function isArtifactToolGroup(block: AssistantTimelineWorkBlock) {
-	return (
-		block.type === 'tool-group' &&
-		(block.toolKey === 'add_artifact' ||
-			block.toolKey === 'list_artifacts' ||
-			block.toolKey === 'edit_artifact' ||
-			block.toolKey === 'create_artifact' ||
-			block.toolKey === 'update_artifact')
-	);
-}
-
-function isVisibleWorkBlock(block: AssistantTimelineWorkBlock) {
-	return !isArtifactToolGroup(block);
-}
-
 function earlierTimestamp(left: number | undefined, right: number | undefined) {
 	if (left === undefined) return right;
 
@@ -111,8 +93,7 @@ function laterTimestamp(left: number | undefined, right: number | undefined) {
 }
 
 export default function ThreadTranscript({
-	currentError,
-	runError,
+	userId,
 	messages,
 	actions,
 	activeRunId,
@@ -120,7 +101,6 @@ export default function ThreadTranscript({
 	emptyStateMessage = project
 		? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 		: 'Add a project to begin.',
-	stale = false,
 	loadingOlder = false,
 	nextBefore,
 	onLoadOlder,
@@ -141,6 +121,59 @@ export default function ThreadTranscript({
 	const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	const [rememberedCommands, setRememberedCommands] = useState<ReadonlyMap<string, string>>(
+		() => new Map()
+	);
+
+	const rememberCommands = useCallback((added: ReadonlyMap<string, string>) => {
+		if (added.size === 0) return;
+		setRememberedCommands((previous) => {
+			if ([...added].every(([session, command]) => previous.get(session) === command)) {
+				return previous;
+			}
+
+			return new Map([...previous, ...added]);
+		});
+	}, []);
+
+	const liveCommands = useMemo(() => {
+		const tools = [
+			...buildAssistantTimeline([], actions),
+			...messages.flatMap((message) =>
+				message.kind === 'live' ? buildAssistantTimeline(message.parts, []) : []
+			)
+		].filter((item) => item.type === 'tool');
+
+		return buildCommandSessionCommandMap(tools);
+	}, [messages, actions]);
+
+	useLayoutEffect(() => rememberCommands(liveCommands), [liveCommands, rememberCommands]);
+
+	const commands = useMemo(
+		() => new Map([...rememberedCommands, ...liveCommands]),
+		[rememberedCommands, liveCommands]
+	);
+
+	const loadWorkDetails = useMemo<Props['loadSectionDetails']>(
+		() =>
+			loadSectionDetails
+				? async (row, cursor, signal) => {
+						const details = await loadSectionDetails(row, cursor, signal);
+
+						if (!signal.aborted) {
+							const tools = buildAssistantTimeline(details.parts, []).filter(
+								(item) => item.type === 'tool'
+							);
+
+							rememberCommands(buildCommandSessionCommandMap(tools));
+						}
+
+						return details;
+					}
+				: undefined,
+		[loadSectionDetails, rememberCommands]
+	);
+
 	const sectionKeysRef = useRef<TranscriptSectionKeys | null>(null);
 
 	if (!sectionKeysRef.current) sectionKeysRef.current = new TranscriptSectionKeys();
@@ -160,7 +193,6 @@ export default function ThreadTranscript({
 		);
 
 		const timeline = buildAssistantTimeline(message.parts, messageActions);
-		const tools = timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool');
 
 		const sections = sectionKeys.reconcile(
 			message.id,
@@ -172,8 +204,7 @@ export default function ThreadTranscript({
 		return {
 			timeline,
 			sections,
-			isStreaming,
-			commands: buildCommandSessionCommandMap(tools)
+			isStreaming
 		};
 	}
 
@@ -187,18 +218,17 @@ export default function ThreadTranscript({
 			state.isStreaming
 		);
 
-		const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock);
-
 		const workInProgress =
 			state.isStreaming && (sectionIndex === state.sections.length - 1 || runningTools.length > 0);
 
 		const nextSection = state.sections[sectionIndex + 1];
 
 		return {
-			visibleBlocks,
+			settledBlocks,
+			lastBlock: section.blocks.at(-1),
 			runningTools,
 			workInProgress,
-			approvals: visibleBlocks.flatMap((block) =>
+			approvals: settledBlocks.flatMap((block) =>
 				block.type === 'tool-group' ? mandateApprovals(block.tools) : []
 			),
 			timing: workSectionTimingAnchor(section, {
@@ -476,40 +506,56 @@ export default function ThreadTranscript({
 	}, []);
 
 	function renderWorkBlocks(work: LiveWorkState, state: LiveRenderState) {
-		return work.visibleBlocks.map((block, blockIndex) => {
-			const renderKey = `${block.type}-${
-				block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id
-			}-${blockIndex}`;
+		return (
+			<>
+				{work.settledBlocks.map((block, blockIndex) => {
+					const renderKey = `${block.type}-${
+						block.type === 'tool-group'
+							? block.tools.map((tool) => tool.callId).join(',')
+							: block.id
+					}-${blockIndex}`;
 
-			if (block.type === 'reasoning') {
-				const reasoningInProgress =
-					work.workInProgress &&
-					work.runningTools.length === 0 &&
-					blockIndex === work.visibleBlocks.length - 1;
+					if (block.type === 'reasoning') {
+						const reasoningInProgress =
+							work.workInProgress && work.runningTools.length === 0 && block === work.lastBlock;
 
-				return (
-					<ReasoningDisclosure key={renderKey} text={block.text} inProgress={reasoningInProgress} />
-				);
-			}
+						return (
+							<ReasoningDisclosure
+								key={renderKey}
+								text={block.text}
+								inProgress={reasoningInProgress}
+							/>
+						);
+					}
 
-			return (
-				<WorkTools
-					key={renderKey}
-					tools={block.tools}
-					toolKey={block.toolKey}
-					inProgress={state.isStreaming}
-					commands={state.commands}
-				/>
-			);
-		});
+					return (
+						<WorkTools
+							key={renderKey}
+							tools={block.tools}
+							inProgress={state.isStreaming}
+							commands={commands}
+						/>
+					);
+				})}
+				{work.runningTools.length > 0 ? (
+					<WorkTools tools={work.runningTools} inProgress={state.isStreaming} commands={commands} />
+				) : null}
+			</>
+		);
 	}
 
 	function renderMessage(message: TranscriptMessage, messageIndex: number): ReactNode {
+		const imageScope = {
+			workspacePath: project?.workspacePath,
+			transcript: userId ? { userId, threadId: message.threadId } : undefined
+		};
+
 		if (message.kind === 'prompt') {
 			return (
 				<TranscriptPromptMessage
 					key={message.id}
 					message={message}
+					imageScope={imageScope}
 					copied={copiedMessageId === message.id}
 					loadAttachment={loadAttachment}
 					onCopy={() => void copyUserMessage(message.id, message.text ?? '')}
@@ -556,10 +602,11 @@ export default function ThreadTranscript({
 						startedAtMs={startedAt}
 						completedAtMs={completedAt}
 					>
-						{loadSectionDetails ? (
+						{loadWorkDetails ? (
 							<WorkSectionDetails
 								row={row}
-								load={loadSectionDetails}
+								load={loadWorkDetails}
+								commands={commands}
 								inProgress={inProgress}
 								viewport={viewport}
 								beforeChange={beforeDetailChange}
@@ -592,6 +639,7 @@ export default function ThreadTranscript({
 					data-message-kind="text"
 				>
 					<ChatMarkdown
+						imageScope={imageScope}
 						content={message.text || ' '}
 						className="text-foreground"
 						artifacts={artifacts}
@@ -625,6 +673,7 @@ export default function ThreadTranscript({
 					{!hasPersistedAssistantContent &&
 					(message.text || (live.isStreaming && live.timeline.length === 0)) ? (
 						<ChatMarkdown
+							imageScope={imageScope}
 							content={message.text || '...'}
 							className="text-foreground"
 							artifacts={artifacts}
@@ -640,6 +689,7 @@ export default function ThreadTranscript({
 									data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
 								>
 									<ChatMarkdown
+										imageScope={imageScope}
 										content={section.text || ' '}
 										className="text-foreground"
 										artifacts={artifacts}
@@ -653,7 +703,7 @@ export default function ThreadTranscript({
 						const work = liveWorkState(live, section, sectionIndex);
 
 						if (
-							work.visibleBlocks.length === 0 &&
+							work.settledBlocks.length === 0 &&
 							!work.workInProgress &&
 							work.runningTools.length === 0
 						) {
@@ -678,14 +728,6 @@ export default function ThreadTranscript({
 								{work.approvals.map((approval) => (
 									<MandateApprovalForm key={approval.mandateId} approval={approval} />
 								))}
-								{work.runningTools.length > 0 ? (
-									<WorkTools
-										tools={work.runningTools}
-										running
-										inProgress={live.isStreaming}
-										commands={live.commands}
-									/>
-								) : null}
 							</div>
 						);
 					})}
@@ -729,35 +771,8 @@ export default function ThreadTranscript({
 			>
 				<div
 					ref={contentRef}
-					className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8"
+					className="mx-auto flex min-h-full w-full max-w-[48rem] flex-col px-4 py-8"
 				>
-					{currentError ? (
-						<div
-							role="alert"
-							className="text-destructive mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm"
-						>
-							{currentError}
-						</div>
-					) : null}
-
-					{runError ? (
-						<div
-							role="alert"
-							className="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
-						>
-							{runError}
-						</div>
-					) : null}
-
-					{stale ? (
-						<div
-							role="status"
-							className="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
-						>
-							Reconnecting to conversation history.
-						</div>
-					) : null}
-
 					{messages.length === 0 ? (
 						emptyStateMessage ? (
 							<div className="flex flex-1 items-center justify-center">

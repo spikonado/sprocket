@@ -87,9 +87,56 @@ describe('workspace prompt preparation', () => {
 		);
 
 		expect(prompt?.prompt?.workspaceContext).toBe('Original instructions and skills');
+		expect(prompt?.prompt?.text).toBe('Do the thing');
 		expect(
 			await createQueuedRun(t, asUser, threadId, 'workspace-context', auth.executionSecret)
 		).toMatchObject({ runId: auth.runId, created: false });
+	});
+
+	it('reuses a prepared preamble without scanning large earlier prompts', async () => {
+		const { t, asUser, threadId, auth } = await setup();
+		const userId = (await t.run((ctx) => ctx.db.get('threadRecords', threadId)))!.userId;
+		await t.run(async (ctx) => {
+			const part = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (q) =>
+					q.eq('threadId', threadId).eq('runId', auth.runId)
+				)
+				.first();
+
+			await ctx.db.patch('threadTranscriptParts', part!._id, {
+				number: 24,
+				prompt: { ...part!.prompt!, workspaceContext: 'Pinned context' }
+			});
+		});
+
+		for (let batch = 0; batch < 3; batch++) {
+			await t.run(async (ctx) => {
+				for (let offset = 0; offset < 8; offset++) {
+					const number = batch * 8 + offset;
+					await ctx.db.insert('threadTranscriptParts', {
+						threadId,
+						userId,
+						runId: auth.runId,
+						sourceKey: `historical:${number}`,
+						number,
+						kind: 'prompt',
+						prompt: { text: 'x'.repeat(768 * 1024), imageUploads: [] },
+						work: { ranges: [] }
+					});
+				}
+			});
+		}
+
+		expect(
+			await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, {
+				...auth,
+				text: 'Edited on retry'
+			})
+		).toEqual({
+			prompt: { text: 'Do the thing', imageUploads: [], workspaceContext: 'Pinned context' },
+			workspaceContext: 'Pinned context'
+		});
 	});
 
 	it.each([{ changed: false }, { changed: true }])(
@@ -128,22 +175,6 @@ describe('workspace prompt preparation', () => {
 			).toEqual(expected);
 		}
 	);
-
-	it('never modifies the UI-visible prompt text', async () => {
-		const { t, asUser, threadId, auth } = await setup();
-		await asUser.mutation(api.agentRuntime.prepareWorkspacePrompt, { ...auth, text: 'Preamble' });
-
-		const prompt = await t.run((ctx) =>
-			ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_runId_and_number', (q) =>
-					q.eq('threadId', threadId).eq('runId', auth.runId)
-				)
-				.first()
-		);
-
-		expect(prompt?.prompt?.text).toBe('Do the thing');
-	});
 
 	it('reports oversized combined prompts and allows retry after reducing the preamble', async () => {
 		const { t, asUser, threadId, auth } = await setup();

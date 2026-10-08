@@ -42,6 +42,8 @@ function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
+		listRunningCommands: vi.fn(async () => ({ commands: [] })),
+		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,
 		listWorkspaceSkills: unused,
 		searchWorkspace: unused,
@@ -57,6 +59,7 @@ function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		fetchTranscriptAttachment: unused,
 		uploadTranscriptAttachment: unused,
 		discardTranscriptAttachment: unused,
+		deleteArtifact: unused,
 		watchArtifacts: unused,
 		requestRunCancellation: unused,
 		startAccountSession: unused,

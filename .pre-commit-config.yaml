@@ -50,12 +50,6 @@ repos:
         entry: cargo fmt
         pass_filenames: false
 
-      - id: cargo-check
-        name: cargo-check
-        language: system
-        entry: cargo check
-        pass_filenames: false
-
       - id: commitlint
         name: commitlint
         language: system

@@ -9,15 +9,16 @@
 //!   numbers (`f64`) into integers. Do not use them on non-Convex JSON.
 
 use anyhow::{Context, anyhow};
-use convex::{FunctionResult, Value};
+use convex::{ConvexError, FunctionResult, Value};
 use serde::{Deserialize, de::Deserializer};
 
 /// Decode a Convex `FunctionResult` into `T`, converting Values through plain JSON.
 ///
 /// Error messages are cleaned of Convex transport noise (request-id masking lines,
 /// `Uncaught` prefixes, stack frames) so callers can surface them to users or tools
-/// without extra stripping. The `function` argument is only attached when a
-/// successful Value fails to deserialize into `T`.
+/// without extra stripping. `ConvexError` string `data` is preferred over `message`
+/// because production redacts `message`. The `function` argument is only attached
+/// when a successful Value fails to deserialize into `T`.
 pub fn decode_function_result<T: for<'de> Deserialize<'de>>(
     result: FunctionResult,
     function: &str,
@@ -32,9 +33,9 @@ pub fn decode_function_result<T: for<'de> Deserialize<'de>>(
         FunctionResult::ErrorMessage(message) => {
             Err(anyhow!(clean_function_error_message(&message)))
         }
-        FunctionResult::ConvexError(error) => {
-            Err(anyhow!(clean_function_error_message(&error.message)))
-        }
+        FunctionResult::ConvexError(error) => Err(anyhow!(clean_function_error_message(
+            convex_error_text(&error)
+        ))),
     }
 }
 
@@ -52,8 +53,18 @@ pub fn decode_labeled_function_result<T: for<'de> Deserialize<'de>>(
         )),
         FunctionResult::ConvexError(error) => Err(anyhow!(
             "{function}: {}",
-            clean_function_error_message(&error.message)
+            clean_function_error_message(convex_error_text(&error))
         )),
+    }
+}
+
+/// Application payload for a `ConvexError`. Production redacts `message` to a
+/// `[Request ID ...] Server Error` line; string `data` is what the function
+/// threw and is what tools should see.
+fn convex_error_text(error: &ConvexError) -> &str {
+    match &error.data {
+        Value::String(text) if !text.trim().is_empty() => text,
+        _ => error.message.as_str(),
     }
 }
 
@@ -70,10 +81,13 @@ fn clean_function_error_message(raw: &str) -> String {
         if line.starts_with([' ', '\t']) && trimmed.starts_with("at ") {
             continue;
         }
-        let message = trimmed
+        let mut message = trimmed;
+        while let Some(inner) = message
             .strip_prefix("Uncaught ConvexError: ")
-            .or_else(|| trimmed.strip_prefix("Uncaught Error: "))
-            .unwrap_or(trimmed);
+            .or_else(|| message.strip_prefix("Uncaught Error: "))
+        {
+            message = inner;
+        }
         content.push(message);
     }
     if content.is_empty() {
@@ -162,6 +176,39 @@ mod tests {
     }
 
     #[test]
+    fn convex_error_uses_string_data_when_production_redacts_the_message() {
+        let err = decode_function_result::<serde_json::Value>(
+            FunctionResult::ConvexError(ConvexError {
+                message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+                data: Value::String(
+                    "Finish or cancel the active run before sending another message.".to_string(),
+                ),
+            }),
+            "subagents:createOrSend",
+        )
+        .expect_err("should fail");
+        assert_eq!(
+            err.to_string(),
+            "Finish or cancel the active run before sending another message."
+        );
+    }
+
+    #[test]
+    fn convex_error_falls_back_to_message_when_data_is_not_a_string() {
+        let err = decode_function_result::<serde_json::Value>(
+            FunctionResult::ConvexError(ConvexError {
+                message:
+                    "Uncaught ConvexError: boom\n    at handler (../src/convex/webTools.ts:1:0)"
+                        .to_string(),
+                data: Value::Object(Default::default()),
+            }),
+            "webTools:search",
+        )
+        .expect_err("should fail");
+        assert_eq!(err.to_string(), "boom");
+    }
+
+    #[test]
     fn labeled_errors_include_the_function_path() {
         let err = decode_labeled_function_result::<serde_json::Value>(
             FunctionResult::ErrorMessage("Uncaught Error: boom".to_string()),
@@ -169,6 +216,24 @@ mod tests {
         )
         .expect_err("should fail");
         assert_eq!(err.to_string(), "transcript:getState: boom");
+    }
+
+    #[test]
+    fn labeled_convex_error_uses_string_data_when_production_redacts_the_message() {
+        let err = decode_labeled_function_result::<serde_json::Value>(
+            FunctionResult::ConvexError(ConvexError {
+                message: "[Request ID: 0d45611fde71c0f2] Server Error".to_string(),
+                data: Value::String(
+                    "Finish or cancel the active run before sending another message.".to_string(),
+                ),
+            }),
+            "subagents:createOrSend",
+        )
+        .expect_err("should fail");
+        assert_eq!(
+            err.to_string(),
+            "subagents:createOrSend: Finish or cancel the active run before sending another message."
+        );
     }
 
     #[test]
@@ -184,24 +249,11 @@ mod tests {
 
     #[test]
     fn deserialize_convex_u64_rejects_fractions() {
-        #[derive(Deserialize)]
-        struct Row {
-            #[serde(deserialize_with = "deserialize_convex_u64")]
-            n: u64,
-        }
-        assert!(serde_json::from_value::<Row>(serde_json::json!({ "n": 1.5 })).is_err());
+        assert!(deserialize_convex_u64(serde_json::json!(1.5)).is_err());
     }
 
     #[test]
     fn deserialize_convex_u32_rejects_overflow() {
-        #[derive(Deserialize)]
-        struct Row {
-            #[serde(deserialize_with = "deserialize_convex_u32")]
-            n: u32,
-        }
-        assert!(
-            serde_json::from_value::<Row>(serde_json::json!({ "n": (u32::MAX as f64) + 1.0 }))
-                .is_err()
-        );
+        assert!(deserialize_convex_u32(serde_json::json!((u32::MAX as f64) + 1.0)).is_err());
     }
 }

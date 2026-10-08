@@ -6,10 +6,11 @@ import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 
 type Props = {
 	artifact: ArtifactEntry;
+	workspacePath?: string;
 	onClose: () => void;
 };
 
-export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
+export default function ArtifactScreenFullscreen({ artifact, workspacePath, onClose }: Props) {
 	const previewDocument = useMemo(
 		() => buildArtifactPreviewDocument(artifact.artifactType, artifact.content),
 		[artifact.artifactType, artifact.content]
@@ -51,11 +52,20 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 			}
 
 			if (wasFullscreen) {
+				if (document.querySelector('[data-image-viewer]')) {
+					wasFullscreen = false;
+					setShowFallbackClose(true);
+
+					return;
+				}
+
 				close();
 			}
 		};
 
 		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			if (document.querySelector('[data-image-viewer]')) return;
+
 			if (event.key !== 'Escape') return;
 			// Claim Escape so an expanded workspace panel underneath does not also collapse.
 			event.stopImmediatePropagation();
@@ -117,7 +127,11 @@ export default function ArtifactScreenFullscreen({ artifact, onClose }: Props) {
 				></iframe>
 			) : (
 				<div className="min-h-0 flex-1 overflow-auto p-6">
-					<ChatMarkdown content={artifact.content} className="text-foreground text-sm" />
+					<ChatMarkdown
+						content={artifact.content}
+						className="text-foreground text-sm"
+						imageScope={{ workspacePath, documentPath: artifact.localPath }}
+					/>
 				</div>
 			)}
 			{showFallbackClose ? (

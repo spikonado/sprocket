@@ -23,7 +23,7 @@ export const modules = import.meta.glob([
 	'!./**/*.test.ts',
 	'!./**/*.config.ts',
 	'!./**/*.d.ts',
-	'!./**/test.setup.ts'
+	'!./**/*test.setup.ts'
 ]);
 
 export type ConvexTestInstance = TestConvex<typeof schema>;
@@ -67,6 +67,8 @@ export function initConvexTest(): ConvexTestInstance {
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
+	workpoolTest.register(backend, 'billingWebhookWorkpool');
+	workpoolTest.register(backend, 'billingReconciliationWorkpool');
 
 	return t;
 }

@@ -438,7 +438,15 @@ mod tests {
         assert!(prompt.image_uploads[0].local_path.is_some());
         assert!(prompt.image_uploads[1].local_path.is_none());
         let text = crate::transcript::prompt_text_with_attachments(prompt);
-        assert!(text.contains("reattach"));
-        assert!(text.contains("Continue"));
+        let (user_text, metadata) = text
+            .split_once("\n\nAttached files in the local transcript cache:\n")
+            .unwrap();
+        assert_eq!(user_text, "Continue");
+        let metadata: serde_json::Value = serde_json::from_str(metadata).unwrap();
+        assert_eq!(
+            metadata[0]["path"],
+            serde_json::json!(prompt.image_uploads[0].local_path)
+        );
+        assert_eq!(metadata[1]["path"], serde_json::Value::Null);
     }
 }
