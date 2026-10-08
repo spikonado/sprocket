@@ -342,6 +342,83 @@ it.each(['/work/alpha', 'D:\\work\\alpha'])(
 	}
 );
 
+it('finishes a pending upload before removing a project and restores the completed attachment', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+
+	const upload =
+		Promise.withResolvers<Awaited<ReturnType<DesktopApi['uploadTranscriptAttachment']>>>();
+
+	let attachments = [alpha];
+	const discardTranscriptAttachment = vi.fn(async () => true);
+
+	const removeProject = vi.fn<DesktopApi['removeProject']>(async () => {
+		attachments = [];
+	});
+
+	const desktop = createDesktopApi({
+		listProjectAttachments: async () => attachments,
+		removeProject,
+		uploadTranscriptAttachment: vi.fn(() => upload.promise),
+		discardTranscriptAttachment,
+		attachProject: async () => {
+			attachments = [alpha];
+
+			return alpha;
+		},
+		browseFilesystem: async () => ({ parentPath: '/home/me', entries: [] }),
+		resolveWorkspacePath: async () => alpha
+	});
+
+	await renderApp(createConvexFixtures(), createRuntime(desktop));
+	await projectTrigger('Alpha');
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Inspect these notes' } });
+	fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+		target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] }
+	});
+	await screen.findByLabelText('Uploading notes.txt');
+	fireEvent.click(screen.getByText('All projects', { selector: 'summary span' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Remove Alpha from project list' }));
+	fireEvent.click(
+		within(screen.getByRole('dialog', { name: 'Remove project?' })).getByRole('button', {
+			name: 'Remove project'
+		})
+	);
+	await screen.findByRole('button', { name: 'Removing…' });
+	expect(removeProject).not.toHaveBeenCalled();
+
+	await act(async () => {
+		upload.resolve({
+			// SAFETY: fixture strings are only compared as opaque Convex document ids.
+			storageId: 'completed-upload' as Id<'_storage'>,
+			name: 'notes.txt',
+			mediaType: 'text/plain',
+			size: 5,
+			url: 'https://sprocket.test/notes'
+		});
+	});
+	await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Remove project?' })).toBeNull());
+	expect(removeProject).toHaveBeenCalledWith({ workspacePath: alpha.workspacePath });
+	expect(discardTranscriptAttachment).not.toHaveBeenCalled();
+
+	fireEvent.click(screen.getByRole('button', { name: 'Create or add project' }));
+	const picker = screen.getByRole('dialog', { name: 'Add project' });
+	fireEvent.change(within(picker).getByRole('combobox'), {
+		target: { value: alpha.workspacePath }
+	});
+	const add = within(picker).getByRole('button', { name: /^(Add|Create & add)/ });
+	await waitFor(() => expect(add.hasAttribute('disabled')).toBe(false));
+	fireEvent.click(add);
+	await projectTrigger('Alpha');
+	await screen.findByRole('button', { name: 'Remove notes.txt' });
+	expect(screen.queryByLabelText('Uploading notes.txt')).toBeNull();
+	expect(screen.getByRole('combobox')).toHaveProperty('value', 'Inspect these notes');
+	await waitFor(() =>
+		expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
+	);
+	expect(desktop.uploadTranscriptAttachment).toHaveBeenCalledOnce();
+	expect(discardTranscriptAttachment).not.toHaveBeenCalled();
+});
+
 it('keeps an unavailable project listed when removal fails and allows retry', async () => {
 	const alpha = projectAttachment('/missing/alpha', 'repo-alpha', 'Alpha', 'unavailable');
 

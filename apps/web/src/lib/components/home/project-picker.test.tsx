@@ -1,5 +1,6 @@
 import { act, type ComponentProps } from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import ProjectPicker from './project-picker';
 
@@ -138,6 +139,34 @@ async function waitForDirectories() {
 }
 
 describe('ProjectPicker', () => {
+	it.each(['{Enter}', ' '])(
+		'removes a recent project with %s without opening a directory',
+		async (key) => {
+			const user = userEvent.setup();
+			const recent = { workspacePath: 'D:\\robots', displayName: 'Robots' };
+			const onRemoveProject = vi.fn();
+
+			const { browseFilesystem, props } = renderPicker({
+				recentProjectPaths: [recent],
+				onRemoveProject
+			});
+
+			await waitForDirectories();
+
+			const button = document.querySelector<HTMLButtonElement>(
+				'[aria-label="Remove Robots from project list"]'
+			)!;
+
+			button.focus();
+			await user.keyboard(key);
+
+			expect(onRemoveProject).toHaveBeenCalledOnce();
+			expect(onRemoveProject).toHaveBeenCalledWith(recent);
+			expect(browseFilesystem).toHaveBeenCalledTimes(1);
+			expect(props.onSelect).not.toHaveBeenCalled();
+		}
+	);
+
 	it('offers recent-project removal without browsing or opening that folder', async () => {
 		const recent = { workspacePath: 'D:\\robots', displayName: 'Robots' };
 		const onRemoveProject = vi.fn();

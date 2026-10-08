@@ -136,6 +136,7 @@ export default function RemoveProjectDialog({
 						{project.workspacePath}
 					</code>
 					<p>Your files, threads, and artifacts will be retained. Running agents will continue.</p>
+					<p>Pending file uploads will finish before removal.</p>
 					<p>Re-add this folder to restore its history.</p>
 				</div>
 				{errorMessage && (

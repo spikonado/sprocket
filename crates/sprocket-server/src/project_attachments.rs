@@ -458,6 +458,10 @@ fn attachment_is_preferred(
     current: &ProjectAttachmentRecord,
     preferred_workspace_path: Option<&str>,
 ) -> bool {
+    if candidate.hidden != current.hidden {
+        return !candidate.hidden;
+    }
+
     match preferred_workspace_path {
         Some(path) if candidate.workspace_path == path => return true,
         Some(path) if current.workspace_path == path => return false,
@@ -689,7 +693,10 @@ mod tests {
             .await
             .expect("attach project");
 
-        store.remove(&attached.workspace_path).await.expect("remove");
+        store
+            .remove(&attached.workspace_path)
+            .await
+            .expect("remove");
         let persisted: Vec<ProjectAttachmentRecord> = serde_json::from_slice(
             &fs::read(temp_root.path().join(PROJECT_ATTACHMENTS_FILE)).expect("read records"),
         )
@@ -792,11 +799,11 @@ mod tests {
             workspace_path: workspace.to_string_lossy().into_owned(),
             replace_workspace_path: None,
         };
-        let attached = store
-            .attach(request.clone())
+        let attached = store.attach(request.clone()).await.expect("attach project");
+        store
+            .remove(&attached.workspace_path)
             .await
-            .expect("attach project");
-        store.remove(&attached.workspace_path).await.expect("remove");
+            .expect("remove");
         store
             .remove(&attached.workspace_path)
             .await
@@ -821,7 +828,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn readding_a_hidden_repository_from_another_checkout_restores_visibility() {
+    async fn add_again_a_hidden_repository_from_another_checkout_restores_visibility() {
         let temp_root = tempfile::tempdir().expect("temp dir");
         let first = temp_root.path().join("first");
         let second = temp_root.path().join("second");
@@ -840,7 +847,10 @@ mod tests {
             .record_message_sent(&attached.attachment_key, 100)
             .await
             .expect("record message");
-        store.remove(&attached.workspace_path).await.expect("remove");
+        store
+            .remove(&attached.workspace_path)
+            .await
+            .expect("remove");
 
         let reattached = store
             .attach(AttachProjectRequest {
@@ -848,7 +858,7 @@ mod tests {
                 replace_workspace_path: None,
             })
             .await
-            .expect("readd hidden repository at another checkout");
+            .expect("re-added hidden repository at another checkout");
         assert!(!reattached.hidden);
         assert_eq!(reattached.attachment_key, attached.attachment_key);
         assert_eq!(
@@ -884,7 +894,10 @@ mod tests {
             .resolve_run_workspace(first.to_string_lossy().into_owned())
             .await
             .expect("resolve new run workspace");
-        store.remove(&attached.workspace_path).await.expect("remove");
+        store
+            .remove(&attached.workspace_path)
+            .await
+            .expect("remove");
 
         for store in [
             store,
@@ -1572,6 +1585,53 @@ mod tests {
     }
 
     #[test]
+    fn visible_duplicate_wins_over_hidden_regardless_of_other_preferences() {
+        for hidden_availability in [
+            WorkspaceAvailability::Available,
+            WorkspaceAvailability::Unavailable,
+        ] {
+            for visible_availability in [
+                WorkspaceAvailability::Available,
+                WorkspaceAvailability::Unavailable,
+            ] {
+                for hidden_last_used_at in [1, 2, 3] {
+                    let mut hidden =
+                        attachment_record("/worktrees/a-hidden", "repository", hidden_last_used_at);
+                    hidden.hidden = true;
+                    hidden.availability = hidden_availability;
+                    hidden.last_validated_at = 100;
+                    hidden.last_message_sent_at = 100;
+                    let mut visible = attachment_record("/worktrees/z-visible", "repository", 2);
+                    visible.availability = visible_availability;
+
+                    for preferred_path in [
+                        None,
+                        Some(hidden.workspace_path.as_str()),
+                        Some(visible.workspace_path.as_str()),
+                    ] {
+                        assert!(attachment_is_preferred(&visible, &hidden, preferred_path));
+                        assert!(!attachment_is_preferred(&hidden, &visible, preferred_path));
+
+                        for records in [[&hidden, &visible], [&visible, &hidden]] {
+                            let mut attachments = records
+                                .into_iter()
+                                .map(|record| (record.workspace_path.clone(), record.clone()))
+                                .collect();
+
+                            assert!(deduplicate_repository_attachments(
+                                &mut attachments,
+                                preferred_path,
+                            ));
+                            assert_eq!(attachments.len(), 1);
+                            assert_eq!(attachments.get(&visible.workspace_path), Some(&visible));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn duplicate_winner_does_not_depend_on_hash_map_order() {
         let earlier = attachment_record("/worktrees/earlier", "repository", 1);
         let lexical_tie = attachment_record("/worktrees/a-first", "repository", 1);
@@ -1592,6 +1652,65 @@ mod tests {
                 vec![&lexical_tie.workspace_path]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn origin_change_on_removed_attachment_keeps_visible_repository_after_refresh() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("first");
+        let second = temp_root.path().join("second");
+        let first_origin = "https://github.com/example/first.git";
+        let second_origin = "https://github.com/example/second.git";
+        init_repo_with_origin(&first, first_origin);
+        init_repo_with_origin(&second, second_origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+        let attached_first = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first repository");
+        let attached_second = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().into_owned(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach second repository");
+        {
+            let mut attachments = store.attachments.write().await;
+            attachments
+                .get_mut(&attached_first.workspace_path)
+                .expect("first record")
+                .last_used_at = 1;
+            attachments
+                .get_mut(&attached_second.workspace_path)
+                .expect("second record")
+                .last_used_at = 2;
+        }
+        store
+            .remove(&attached_first.workspace_path)
+            .await
+            .expect("remove first repository");
+        let config_path = first.join(".git/config");
+        let config = fs::read_to_string(&config_path).expect("read config");
+        fs::write(config_path, config.replace(first_origin, second_origin)).expect("change origin");
+
+        let listed = store.list().await.expect("refresh attachments");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
+        assert_eq!(listed[0].attachment_key, attached_second.attachment_key);
+        assert!(!listed[0].hidden);
+
+        let reloaded = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("reload attachments");
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].workspace_path, attached_second.workspace_path);
+        assert_eq!(reloaded[0].attachment_key, attached_second.attachment_key);
+        assert!(!reloaded[0].hidden);
     }
 
     #[tokio::test]

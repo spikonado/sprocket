@@ -36,6 +36,7 @@ type Dependencies = {
 export class ComposerAttachments implements Store<ComposerAttachment[]> {
 	items: ComposerAttachment[] = [];
 	readonly #listeners = new Set<() => void>();
+	readonly #uploads = new Map<string, Promise<void>>();
 
 	constructor(private readonly dependencies: Dependencies) {}
 
@@ -67,8 +68,17 @@ export class ComposerAttachments implements Store<ComposerAttachment[]> {
 					status: 'uploading'
 				}
 			]);
-			void this.#upload(localId, file, name);
+
+			const upload = this.#upload(localId, file, name).finally(() => {
+				this.#uploads.delete(localId);
+			});
+
+			this.#uploads.set(localId, upload);
 		}
+	}
+
+	async waitForUploads() {
+		await Promise.all(this.#uploads.values());
 	}
 
 	remove(localId: string) {

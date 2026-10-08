@@ -1202,6 +1202,10 @@ export default function App({
 
 		if (!client || !userId) throw new Error(localServerRequiredMessage);
 
+		await composerAttachments.waitForUploads();
+
+		if (client !== desktopApiRef.current || userId !== signedInUserIdRef.current) return;
+
 		await client.removeProject({ workspacePath });
 
 		if (client !== desktopApiRef.current || userId !== signedInUserIdRef.current) return;

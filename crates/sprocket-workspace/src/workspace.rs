@@ -49,7 +49,10 @@ mod tests {
         let displayed = expected.to_string_lossy();
         let bare_drive = displayed.trim_end_matches('\\');
 
-        assert_eq!(resolve_workspace_root(bare_drive).expect("resolve"), expected);
+        assert_eq!(
+            resolve_workspace_root(bare_drive).expect("resolve"),
+            expected
+        );
 
         std::fs::remove_dir_all(workspace).expect("cleanup");
     }

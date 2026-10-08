@@ -384,6 +384,10 @@ export default function ProjectPicker({
 			return;
 		}
 
+		if (event.target instanceof Element && event.target.closest('button:not([role="option"])')) {
+			return;
+		}
+
 		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSubmit && !isSubmitting) {
 			event.preventDefault();
 			void confirmSelection();
@@ -407,10 +411,6 @@ export default function ProjectPicker({
 		}
 
 		if (event.key === 'Enter' && highlightedEntry) {
-			if (event.target instanceof Element && event.target.closest('[data-project-submit]')) {
-				return;
-			}
-
 			event.preventDefault();
 			selectEntry(highlightedEntry);
 

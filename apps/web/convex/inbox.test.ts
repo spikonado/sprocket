@@ -106,8 +106,8 @@ describe('thread inbox', () => {
 			expect(removed.page.map((thread) => thread._id)).toEqual([second]);
 			expect(await readHistory()).toEqual(history);
 
-			const readded = await listInbox([repositoryKey, 'beta']);
-			expect(readded.page).toEqual(attached.page);
+			const restored = await listInbox([repositoryKey, 'beta']);
+			expect(restored.page).toEqual(attached.page);
 			expect(await readHistory()).toEqual(history);
 		}
 	);
