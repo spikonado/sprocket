@@ -122,12 +122,11 @@ impl ArtifactWatchers {
             self.registry
                 .open_with(key.clone(), 1, || Arc::new(Mutex::new(None)), {
                     |events, latest| {
-                        let task_key = key.clone();
                         tokio::spawn(watch(
                             self.deployment_url.clone(),
                             Arc::clone(&self.native_auth),
-                            task_key.clone(),
-                            self.bindings(&task_key.user_id, Path::new(&task_key.workspace_path)),
+                            key.clone(),
+                            self.bindings(&key.user_id, Path::new(&key.workspace_path)),
                             events,
                             latest,
                         ))
