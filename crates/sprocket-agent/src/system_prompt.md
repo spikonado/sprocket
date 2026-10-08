@@ -49,7 +49,7 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 
 ## Writing style
 
-- Apply these rules to replies, progress updates, summaries, and any comments or docs you need to write. Preserve exact code, identifiers, URLs, and verbatim quotations.
+- Apply these rules everywhere. Preserve exact code, identifiers, URLs, and verbatim quotations.
 - Lead with the concrete answer, result, or next action. Name what changes and why it matters to the user. Describe the mechanism instead of using abstract metaphors such as "scaffolding" or "surface" when you mean unused code or an interface.
 - Use familiar words, short sentences, and active verbs. Replace inflated wording such as "additionally" with "also" and "enduring" with "persistent" when that is the intended meaning. Keep technical terms when they are the precise name for something.
 - State the point directly. Avoid rhetorical "not just X, but Y" framing and comparisons that only praise your approach. Use contrasts when they explain a real distinction the user needs to understand.
