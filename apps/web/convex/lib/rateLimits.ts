@@ -17,6 +17,7 @@ import { type GenericMutationCtx } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import {
 	ensureSubscription,
+	getCachedTier,
 	resolveTierLimits,
 	type SubscriptionTier,
 	type TierLimits
@@ -287,6 +288,20 @@ export async function getMeterWindow(
 		limit: limits[meterId][period],
 		resetsAt: window.end
 	};
+}
+
+export async function assertModelUsageAvailable(
+	ctx: GenericMutationCtx<DataModel>,
+	userId: string
+): Promise<void> {
+	const now = Date.now();
+	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
+	// Tests and unconfigured deployments have no `tiers` rows. Skip rather than
+	// fail every run create; if this user's tier (or free) exists, enforce it.
+	const match = (await getCachedTier(ctx, tier)) ?? (await getCachedTier(ctx, 'free'));
+
+	if (!match) return;
+	await checkMeterLimits(ctx, 'modelUsage', userId, match.limits, subscription, now);
 }
 
 export async function applyGatewayUsageCharge(

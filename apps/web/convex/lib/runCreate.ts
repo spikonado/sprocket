@@ -40,6 +40,7 @@ import {
 	type CompletionProvider,
 	type vReasoningEffort
 } from '@convex/lib/validators';
+import { assertModelUsageAvailable } from '@convex/lib/rateLimits';
 import { withRunExecution, getRunExecutionState } from '@convex/lib/runExecution';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 
@@ -166,6 +167,10 @@ export async function createQueuedRunRecord(
 
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
+	}
+
+	if (completionProvider === 'spikonado') {
+		await assertModelUsageAvailable(ctx, args.userId);
 	}
 
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
