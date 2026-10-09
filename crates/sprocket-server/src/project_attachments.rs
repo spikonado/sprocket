@@ -836,6 +836,59 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn refresh_corrects_saved_subfolder_display_name_without_changing_identity() {
+        for origin in [None, Some("https://github.com/example/dotfiles.git")] {
+            let temp_root = tempfile::tempdir().expect("temp dir");
+            let home = temp_root.path().join("home");
+            let project = home.join("S93");
+            fs::create_dir_all(&project).expect("project directory in home");
+            if let Some(origin) = origin {
+                init_repo_with_origin(&home, origin);
+            } else {
+                gix::init(&home).expect("init home repository");
+            }
+            let home_resolution =
+                resolve_workspace_path(&home.to_string_lossy(), false).expect("resolve home");
+            let project_resolution =
+                resolve_workspace_path(&project.to_string_lossy(), false).expect("resolve project");
+            assert_eq!(project_resolution.display_name, "S93");
+            let saved = ProjectAttachmentRecord {
+                workspace_path: project_resolution.workspace_path,
+                repository_key: home_resolution.repository_key,
+                attachment_key: home_resolution.attachment_key,
+                display_name: home_resolution.display_name,
+                availability: WorkspaceAvailability::Available,
+                last_validated_at: 1,
+                last_used_at: 100,
+                last_message_sent_at: 200,
+                unavailable_reason: None,
+            };
+            let store_path = temp_root.path().join(PROJECT_ATTACHMENTS_FILE);
+            fs::write(
+                &store_path,
+                serde_json::to_vec(&vec![saved.clone()]).expect("serialize"),
+            )
+            .expect("save legacy attachment");
+
+            let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+            let listed = store.list().await.expect("refresh attachments");
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].display_name, "S93");
+            assert_eq!(listed[0].workspace_path, saved.workspace_path);
+            assert_eq!(listed[0].repository_key, saved.repository_key);
+            assert_eq!(listed[0].attachment_key, saved.attachment_key);
+            assert_eq!(listed[0].last_used_at, 100);
+            assert_eq!(listed[0].last_message_sent_at, 200);
+
+            let persisted: Vec<ProjectAttachmentRecord> =
+                serde_json::from_slice(&fs::read(store_path).expect("read attachments"))
+                    .expect("parse attachments");
+            assert_eq!(persisted.len(), 1);
+            assert_eq!(persisted[0].display_name, "S93");
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn workspace_path_resolution_uses_canonical_name_and_root_fallback() {

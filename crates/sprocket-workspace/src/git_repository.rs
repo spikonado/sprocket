@@ -20,10 +20,13 @@ pub struct GitRepositoryIdentity {
 ///
 /// Discovers the enclosing git repository with `gix` (including linked worktrees),
 /// stopping at the process temp root so ephemeral paths do not inherit ambient
-/// git metadata. Reads `remote.origin.url` when present; otherwise falls back to
-/// the workspace directory name.
+/// git metadata. Attached subfolders keep the enclosing repository's identity
+/// keys but use their own directory name for display.
 pub fn resolve_git_repository_identity(workspace_root: &Path) -> GitRepositoryIdentity {
     let repository = discover_repository(workspace_root);
+    let is_repository_root = repository
+        .as_ref()
+        .is_some_and(|repo| is_repository_root(repo, workspace_root));
     let directory_name = repository
         .as_ref()
         .map(|repo| local_git_display_name(repo, workspace_root))
@@ -36,20 +39,36 @@ pub fn resolve_git_repository_identity(workspace_root: &Path) -> GitRepositoryId
                 .as_ref()
                 .map(local_git_attachment_key)
                 .unwrap_or_else(|| local_directory_attachment_key(workspace_root)),
-            display_name: directory_name,
+            display_name: if is_repository_root {
+                directory_name
+            } else {
+                directory_display_name(workspace_root)
+            },
         };
     };
 
     let repository_key =
         repository_key_from_url(&origin_url).unwrap_or_else(|| origin_url.to_bstring().to_string());
-    let display_name =
-        display_name_from_repository_key(&repository_key).unwrap_or_else(|| directory_name.clone());
+    let display_name = if is_repository_root {
+        display_name_from_repository_key(&repository_key).unwrap_or(directory_name)
+    } else {
+        directory_display_name(workspace_root)
+    };
 
     GitRepositoryIdentity {
         attachment_key: format!("remote:{repository_key}"),
         repository_key,
         display_name,
     }
+}
+
+fn is_repository_root(repo: &gix::Repository, workspace_root: &Path) -> bool {
+    repo.workdir()
+        .unwrap_or_else(|| repo.path())
+        .canonicalize()
+        .ok()
+        .zip(workspace_root.canonicalize().ok())
+        .is_some_and(|(repository_root, workspace_root)| repository_root == workspace_root)
 }
 
 fn directory_display_name(path: &Path) -> String {
@@ -224,7 +243,95 @@ mod tests {
 
         let identity = resolve_git_repository_identity(&nested);
         assert_eq!(identity.repository_key, "github.com/spikonado/sprocket");
+        assert_eq!(identity.display_name, "demo");
+        assert_eq!(
+            identity.attachment_key,
+            resolve_git_repository_identity(&root).attachment_key
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn assert_attached_folder_names(origin: Option<&str>) {
+        let root = temp_dir("folder-names");
+        let home = root.join("home");
+        init_repo(&home);
+        if let Some(origin) = origin {
+            set_origin(&home, origin);
+        }
+        let home_identity = resolve_git_repository_identity(&home);
+
+        let names = vec![
+            "S93",
+            "D",
+            "C-drive",
+            "123",
+            "v1.2",
+            "project with spaces",
+            "プロジェクト",
+            "~project",
+            "repo.git",
+        ];
+        #[cfg(not(windows))]
+        let names = [names, vec!["C:", "C:project"]].concat();
+
+        for name in names {
+            let folder = home.join(name);
+            fs::create_dir_all(&folder).expect("project directory in home");
+            let identity = resolve_git_repository_identity(&folder);
+            assert_eq!(identity.display_name, name, "{}", folder.display());
+            assert_eq!(identity.repository_key, home_identity.repository_key);
+            assert_eq!(identity.attachment_key, home_identity.attachment_key);
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn uses_attached_folder_names_inside_home_repository_without_origin() {
+        assert_attached_folder_names(None);
+    }
+
+    #[test]
+    fn uses_attached_folder_names_inside_home_repository_with_origin() {
+        assert_attached_folder_names(Some("https://github.com/spikonado/sprocket.git"));
+    }
+
+    #[test]
+    fn uses_own_repository_name_inside_another_repository() {
+        let root = temp_dir("nested-repositories");
+        let home = root.join("home");
+        let project = home.join("S93");
+        init_repo(&home);
+        init_repo(&project);
+
+        let identity = resolve_git_repository_identity(&project);
+        assert_eq!(identity.display_name, "S93");
+        assert_eq!(identity.repository_key, "S93");
+        assert_ne!(
+            identity.attachment_key,
+            resolve_git_repository_identity(&home).attachment_key
+        );
+
+        set_origin(&project, "https://github.com/spikonado/sprocket.git");
+        let identity = resolve_git_repository_identity(&project);
         assert_eq!(identity.display_name, "sprocket");
+        assert_eq!(identity.repository_key, "github.com/spikonado/sprocket");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_repository_name_through_symlink() {
+        let root = temp_dir("symlink");
+        let main = root.join("checkout");
+        let link = root.join("project-link");
+        init_repo(&main);
+        set_origin(&main, "https://github.com/spikonado/sprocket.git");
+        std::os::unix::fs::symlink(&main, &link).expect("symlink");
+
+        assert_eq!(
+            resolve_git_repository_identity(&link),
+            resolve_git_repository_identity(&main)
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -266,11 +373,20 @@ mod tests {
         let identity = resolve_git_repository_identity(&worktree);
         assert_eq!(identity.repository_key, "github.com/spikonado/sprocket");
         assert_eq!(identity.display_name, "sprocket");
+        assert_eq!(identity, resolve_git_repository_identity(&main));
+
+        let nested = worktree.join("S93");
+        fs::create_dir_all(&nested).expect("nested worktree directory");
+        let nested_identity = resolve_git_repository_identity(&nested);
+        assert_eq!(nested_identity.display_name, "S93");
+        assert_eq!(nested_identity.repository_key, identity.repository_key);
+        assert_eq!(nested_identity.attachment_key, identity.attachment_key);
 
         fs::write(main.join(".git/config"), config_without_origin).expect("remove origin");
         let main_identity = resolve_git_repository_identity(&main);
         let worktree_identity = resolve_git_repository_identity(&worktree);
         assert_eq!(main_identity.repository_key, "main");
+        assert_eq!(worktree_identity.display_name, "main");
         assert_eq!(
             worktree_identity.repository_key,
             main_identity.repository_key
@@ -279,6 +395,10 @@ mod tests {
             worktree_identity.attachment_key,
             main_identity.attachment_key
         );
+        let nested_identity = resolve_git_repository_identity(&nested);
+        assert_eq!(nested_identity.display_name, "S93");
+        assert_eq!(nested_identity.repository_key, main_identity.repository_key);
+        assert_eq!(nested_identity.attachment_key, main_identity.attachment_key);
         let _ = fs::remove_dir_all(root);
     }
 
