@@ -272,7 +272,9 @@ provider-compatible model settings. Actions and polls share the timing policy of
 the existing sidebar thread tree, not a separate dashboard.
 
 Stop waits for confirmed termination of the run it targeted, even with a zero
-yield time. A replacement run cannot extend that wait. Tool outputs report run
+yield time. Descendant cancellation runs in bounded batches; new runs and
+delegation within the subtree stay blocked until all batches finish. A replacement
+run cannot extend that wait. Tool outputs report run
 status rather than the UI lifecycle phase, with pending questions separately.
 Spawn, send, and child listings return thread IDs. Activity flags, question
 deadlines, creation flags, and transcript directories remain internal.

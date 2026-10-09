@@ -120,36 +120,123 @@ export async function requestThreadTreeCancellation(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>
 ): Promise<{ stoppedRunId?: Id<'runs'>; cancelled: boolean }> {
-	const pending = [thread];
-	let stoppedRunId: Id<'runs'> | undefined;
-	let cancelled = false;
+	const latest = await ctx.db
+		.query('runs')
+		.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', thread._id))
+		.order('desc')
+		.first();
 
-	for (let current = pending.pop(); current; current = pending.pop()) {
+	if (thread.treeCancellation) return { stoppedRunId: latest?._id, cancelled: true };
+
+	const cancelled = latest
+		? await requestRunCancellation(ctx, latest)
+		: await cancelPendingQuestionsForThread(ctx, thread._id);
+
+	const generation = crypto.randomUUID();
+	await ctx.db.patch('threadRecords', thread._id, {
+		treeCancellation: { generation, pendingBatches: 1 }
+	});
+
+	const descendantsCancelled = await cancelDescendantsPage(ctx, {
+		rootThreadId: thread._id,
+		parentThreadId: thread._id,
+		generation,
+		cursor: null
+	});
+
+	return { stoppedRunId: latest?._id, cancelled: cancelled || descendantsCancelled };
+}
+
+const vTreeCancellationBatch = {
+	rootThreadId: v.id('threadRecords'),
+	parentThreadId: v.id('threadRecords'),
+	generation: v.string(),
+	cursor: v.union(v.string(), v.null())
+};
+
+async function cancelDescendantsPage(
+	ctx: MutationCtx,
+	args: {
+		rootThreadId: Id<'threadRecords'>;
+		parentThreadId: Id<'threadRecords'>;
+		generation: string;
+		cursor: string | null;
+	}
+): Promise<boolean> {
+	const root = await ctx.db.get('threadRecords', args.rootThreadId);
+
+	if (!root?.treeCancellation || root.treeCancellation.generation !== args.generation) return false;
+
+	const result = await ctx.db
+		.query('threadRecords')
+		.withIndex('by_userId_parentThreadId', (q) =>
+			q.eq('userId', root.userId).eq('parentThreadId', args.parentThreadId)
+		)
+		.order('desc')
+		.paginate({
+			numItems: 16,
+			cursor: args.cursor,
+			maximumRowsRead: 16,
+			maximumBytesRead: 1024 * 1024
+		});
+
+	let pendingBatches = root.treeCancellation.pendingBatches - 1;
+
+	for (const child of result.page) {
 		const latest = await ctx.db
 			.query('runs')
-			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', current._id))
+			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', child._id))
 			.order('desc')
 			.first();
 
-		if (current._id === thread._id) stoppedRunId = latest?._id;
+		if (latest) {
+			await requestRunCancellation(ctx, latest);
+		} else {
+			await cancelPendingQuestionsForThread(ctx, child._id);
+		}
 
-		const requested = latest
-			? await requestRunCancellation(ctx, latest)
-			: await cancelPendingQuestionsForThread(ctx, current._id);
-
-		cancelled = requested || cancelled;
-
-		for await (const child of ctx.db
+		const descendant = await ctx.db
 			.query('threadRecords')
-			.withIndex('by_userId_and_parentThreadId_and_lastMessageAt', (q) =>
-				q.eq('userId', thread.userId).eq('parentThreadId', current._id)
-			)) {
-			pending.push(child);
+			.withIndex('by_userId_parentThreadId', (q) =>
+				q.eq('userId', root.userId).eq('parentThreadId', child._id)
+			)
+			.first();
+
+		if (descendant) {
+			await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
+				...args,
+				parentThreadId: child._id,
+				cursor: null
+			});
+			pendingBatches++;
 		}
 	}
 
-	return { stoppedRunId, cancelled };
+	if (!result.isDone) {
+		await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
+			...args,
+			cursor: result.continueCursor
+		});
+		pendingBatches++;
+	}
+
+	await ctx.db.patch('threadRecords', root._id, {
+		treeCancellation:
+			pendingBatches > 0 ? { generation: args.generation, pendingBatches } : undefined
+	});
+
+	return result.page.length > 0 || pendingBatches > 0;
 }
+
+export const cancelDescendants = internalMutation({
+	args: vTreeCancellationBatch,
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await cancelDescendantsPage(ctx, args);
+
+		return null;
+	}
+});
 
 export const forceCancelRun = internalMutation({
 	args: { runId: v.id('runs') },

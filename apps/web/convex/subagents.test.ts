@@ -102,6 +102,17 @@ async function createChild(t: ConvexTestInstance, caller: CallerRun) {
 	return await t.mutation(api.subagents.createOrSend, createArgs(caller));
 }
 
+async function finishTreeCancellation(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		await vi.advanceTimersByTimeAsync(1);
+		await t.finishInProgressScheduledFunctions();
+
+		if (!(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.treeCancellation) return;
+	}
+
+	throw new Error('Tree cancellation did not finish.');
+}
+
 /** Claim a child's queued run with the exact secret chosen at create time —
  * the same secret the native launcher reuses for start/renew/getContext. */
 async function claimChildRun(
@@ -754,6 +765,75 @@ describe('subagents access control', () => {
 });
 
 describe('subagents.control', () => {
+	it('stops a large historical tree in batches and blocks new descendant work during traversal', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const childArgs = createArgs(caller);
+		const child = await t.mutation(api.subagents.createOrSend, childArgs);
+		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
+		const grandchildArgs = createArgs(childRun);
+		const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
+		const grandchildRun = await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
+
+		for (let batch = 0; batch < 10; batch++) {
+			await t.run(async (ctx) => {
+				const thread = (await ctx.db.get('threadRecords', child.threadId))!;
+
+				for (let index = 0; index < 40; index++) {
+					const submissionId = `historical-${batch}-${index}`;
+
+					const threadId = await ctx.db.insert('threadRecords', {
+						userId: thread.userId,
+						submissionId,
+						parentThreadId: child.threadId,
+						status: 'completed',
+						repositoryKey: thread.repositoryKey,
+						selectedModel: thread.selectedModel,
+						reasoningEffort: thread.reasoningEffort,
+						fastMode: thread.fastMode,
+						lastMessageAt: Date.now() + 1
+					});
+
+					const runId = await ctx.db.insert('runs', {
+						threadId,
+						userId: thread.userId,
+						submissionId,
+						status: 'completed',
+						executionSecretHash: 'historical',
+						selectedModel: thread.selectedModel,
+						reasoningEffort: thread.reasoningEffort,
+						fastMode: thread.fastMode,
+						startedAt: Date.now(),
+						completedAt: Date.now()
+					});
+
+					await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+				}
+			});
+		}
+
+		await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', child.threadId)))?.treeCancellation
+		).toBeDefined();
+		await expect(t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))).rejects.toThrow(
+			/tree is being stopped/
+		);
+		await expect(
+			insertQueuedRun(t, caller.asUser, {
+				threadId: grandchild.threadId,
+				submissionId: 'manual-during-tree-stop',
+				executionSecret: 'manual-secret',
+				prompt: 'New work'
+			})
+		).rejects.toThrow(/tree is being stopped/);
+		await finishTreeCancellation(t, child.threadId);
+		expect(
+			(await t.run((ctx) => ctx.db.get('runs', grandchild.runId)))?.cancellationRequestedAt
+		).toBeDefined();
+	}, 30_000);
+
 	async function childWithPendingQuestion(
 		t: ConvexTestInstance,
 		timeoutMs: number | null = 60_000
@@ -990,6 +1070,7 @@ describe('subagents.control', () => {
 	it.each(['tool', 'ui', 'executor'] as const)(
 		'%s stop cancels the entire descendant tree and leaves siblings running',
 		async (source) => {
+			vi.useFakeTimers();
 			const t = initConvexTest();
 			const caller = await startCallerRun(t);
 			const sibling = await createChild(t, caller);
@@ -1033,6 +1114,8 @@ describe('subagents.control', () => {
 				});
 			}
 
+			await finishTreeCancellation(t, child.threadId);
+
 			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {
 				expect(await t.run((ctx) => ctx.db.get('runs', target.runId))).toMatchObject({
 					cancellationRequestedAt: expect.any(Number)
@@ -1061,6 +1144,7 @@ describe('subagents.control', () => {
 	it.each(['tool', 'ui'] as const)(
 		'%s stop traverses completed children and cancels descendant questions',
 		async (source) => {
+			vi.useFakeTimers();
 			const t = initConvexTest();
 			const { caller, child, childRun, questionId } = await childWithPendingQuestion(t);
 			const grandchildArgs = createArgs(childRun);
@@ -1108,6 +1192,8 @@ describe('subagents.control', () => {
 			} else {
 				await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
 			}
+
+			await finishTreeCancellation(t, child.threadId);
 
 			for (const id of [questionId, descendantQuestion.questionId]) {
 				expect((await t.run((ctx) => ctx.db.get('agentQuestions', id)))?.status).toBe('cancelled');
