@@ -33,6 +33,10 @@ export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 
 export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
+// A single model call charges a small multiple of UNITS_PER_DOLLAR; anything
+// above this is a caller bug or a replayed token, not real usage.
+export const MAX_QUOTA_CHARGE_UNITS = 1_000_000_000_000;
+
 const METER_CAPACITY = 4_000_000_000_000_000;
 
 const STORAGE_PERIOD = 365 * DAY;
@@ -294,7 +298,17 @@ export async function applyGatewayUsageCharge(
 	userId: string,
 	count: number
 ): Promise<void> {
-	if (!Number.isFinite(count) || count <= 0) return;
+	if (count <= 0) return;
+
+	// A single model call charges a small multiple of UNITS_PER_DOLLAR; anything
+	// above this is a caller bug or a replayed token, not real usage. Enforced
+	// here so every charge path is covered, not just the gateway mutation.
+	// Non-finite counts reach past the guard above (comparisons with NaN are
+	// false), so they fail loudly here instead of going uncharged.
+	if (!Number.isSafeInteger(count) || count > MAX_QUOTA_CHARGE_UNITS) {
+		throw new ConvexError('Quota charge exceeds the per-call limit.');
+	}
+
 	const now = Date.now();
 	const { tier, subscription } = await ensureSubscription(ctx, userId, now);
 	await chargeMeterLimits(
