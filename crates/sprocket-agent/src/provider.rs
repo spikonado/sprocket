@@ -265,6 +265,32 @@ fn completion_parameters(
     .to_json())
 }
 
+pub(crate) async fn resume_context_handoff(
+    agent: &mut rig::Agent,
+    initial_context: &[Message],
+    summary: &str,
+    deferred_prompt: Option<Message>,
+    save: impl std::future::Future<Output = anyhow::Result<bool>>,
+    next_model: impl std::future::Future<Output = anyhow::Result<Option<DynModel<Completion>>>>,
+) -> anyhow::Result<Option<(Vec<Message>, Message)>> {
+    if !save.await? {
+        return Ok(None);
+    }
+    if let Some(model) = next_model.await? {
+        agent.set_model(model);
+    }
+    let mut history = initial_context.to_vec();
+    let handoff = Message::user(context_summary_text(summary));
+    let prompt = match deferred_prompt {
+        Some(pending) => {
+            history.push(handoff);
+            pending
+        }
+        None => handoff,
+    };
+    Ok(Some((history, prompt)))
+}
+
 async fn run_with_completion_model(
     model: DynModel<Completion>,
     runtime: RuntimeClient,
@@ -565,36 +591,37 @@ async fn run_with_completion_model(
                                         error: anyhow!("Context handoff failed: no valid document was submitted."),
                                     };
                                 };
-                                match runtime.save_context_handoff(
+                                drop(stream);
+                                let switching_provider = provider_switch.is_some();
+                                let next_model = async {
+                                    match provider_switch.take() {
+                                        Some((provider, _)) => provider.completion_model(
+                                            &runtime, &request.run_id, &request.claim_id,
+                                            &request.base_instructions,
+                                        ).await.map(Some),
+                                        None => Ok(None),
+                                    }
+                                };
+                                let save = runtime.save_context_handoff(
                                     &request.run_id, &request.claim_id, &summary,
                                     transcript.attempt_seq, before_prompt,
                                     handoff_processed_tokens,
+                                );
+                                match resume_context_handoff(
+                                    &mut agent, &initial_context, &summary,
+                                    deferred_prompt.take(), save, next_model,
                                 ).await {
-                                    Ok(true) => {}
-                                    Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
+                                    Ok(Some((next_history, next_prompt))) => {
+                                        history = next_history;
+                                        prompt = next_prompt;
+                                    }
+                                    Ok(None) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
                                     Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
                                 }
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
-                                history = initial_context.to_vec();
-                                let handoff = Message::user(context_summary_text(&summary));
-                                prompt = match deferred_prompt.take() {
-                                    Some(pending) => { history.push(handoff); pending }
-                                    None => handoff,
-                                };
-                                if let Some((provider, _)) = provider_switch.take() {
-                                    drop(stream);
-                                    let model = match provider.completion_model(
-                                        &runtime, &request.run_id, &request.claim_id,
-                                        &request.base_instructions,
-                                    ).await {
-                                        Ok(model) => model,
-                                        Err(error) => break 'agent_run AgentProviderResult::Failed {
-                                            text: streamed_text, error,
-                                        },
-                                    };
-                                    agent.set_model(model);
+                                if switching_provider {
                                     additional_params = target_params.clone();
                                 }
                                 context_handoff_hook.restart();

@@ -23,6 +23,7 @@ use super::{
     HandoffTool, PROVIDER_HANDOFF_PROMPT, context_summary_text,
 };
 use crate::openai::{developer_message, stateless_responses_model};
+use crate::provider::resume_context_handoff;
 
 const MODEL: &str = "gateway-model";
 const OLD_CONTEXT: &str = "UNIQUE_OLD_CONTEXT xyz-arm-bus";
@@ -683,25 +684,47 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     };
     assert_eq!(summary, FIRST_SUMMARY);
 
+    let saved_summary = std::cell::RefCell::new(None);
+    let failed_transition = resume_context_handoff(
+        &mut agent,
+        std::slice::from_ref(&initial_context),
+        &summary,
+        Some(pending_prompt.clone()),
+        async {
+            *saved_summary.borrow_mut() = Some(summary.clone());
+            Ok(true)
+        },
+        async {
+            assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
+            Err(anyhow::anyhow!("new provider temporarily unavailable"))
+        },
+    )
+    .await;
+    assert!(failed_transition.is_err());
+    assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
+
     let target_model = stateless_responses_model(
         openai::OpenAIConfig::new("test-key")
             .with_base_url(&new_url)
             .with_instructions("context handoff fixture"),
         TARGET_MODEL,
     );
-    agent.set_model(target_model);
-    hook.restart();
-    match drive(
-        &agent,
-        &hook,
-        pending_prompt,
-        vec![
-            initial_context,
-            Message::user(context_summary_text(&summary)),
-        ],
+    let (history, prompt) = resume_context_handoff(
+        &mut agent,
+        std::slice::from_ref(&initial_context),
+        &summary,
+        Some(pending_prompt),
+        async {
+            assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
+            Ok(true)
+        },
+        async { Ok(Some(target_model)) },
     )
     .await
-    {
+    .expect("retry the saved handoff")
+    .expect("active run");
+    hook.restart();
+    match drive(&agent, &hook, prompt, history).await {
         DriveEnd::Finished(text) => assert_eq!(text, "continued on the new provider"),
         other => panic!("new provider should answer the pending user prompt, got {other:?}"),
     }

@@ -896,13 +896,24 @@ pub async fn run_agent(
             Ok(budget) => budget,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
+    let handoff_capabilities = if let Some(handoff) = &context.provider_handoff {
+        match catalog_capabilities_for_model(&gateway_url, &handoff.selected_model).await {
+            Ok(capabilities) => Some(capabilities),
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        }
+    } else {
+        None
+    };
 
     let prepare_history = load_prior_history(
         &runtime,
         &store,
         &context,
         &run_id,
-        capabilities.supports_images || context.provider_handoff.is_some(),
+        handoff_capabilities
+            .as_ref()
+            .unwrap_or(&capabilities)
+            .supports_images,
     );
     let prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
@@ -974,7 +985,10 @@ pub async fn run_agent(
                 &request.workspace_path,
                 &workspace_instructions,
                 &skills,
-                &handoff.selected_model,
+                &handoff_capabilities
+                    .as_ref()
+                    .expect("handoff capabilities loaded")
+                    .label,
                 &handoff.selected_model,
                 &context.run.thread_id,
                 &transcript_dir,
