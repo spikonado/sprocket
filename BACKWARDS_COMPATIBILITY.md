@@ -27,6 +27,8 @@ handoff before sending the summary and pending prompt to the selected provider.
 Gateway and BYOK credential authorization also permits the derived handoff
 provider while that history remains uncovered, subject to the active run claim.
 Once saved, the existing summary cutoff prevents another handoff on retry.
+If the previous model has left the catalog, its provider's current default
+writes the handoff with supported settings. The provider remains unchanged.
 
 Released clients ignore the optional response field. Keep it optional and keep
 the Rust missing-field default until those clients age out. Local transcripts,

@@ -15,7 +15,7 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use crate::attachments::cache_prompt_attachments;
-use crate::catalog::catalog_capabilities_for_model;
+use crate::catalog::{catalog_capabilities_for_model, catalog_model_for_handoff};
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::openai::developer_message;
@@ -882,16 +882,18 @@ pub async fn run_agent(
             Ok(capabilities) => capabilities,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
-    let handoff_capabilities = if let Some(handoff) = &context.provider_handoff {
-        match catalog_capabilities_for_model(&gateway_url, &handoff.selected_model).await {
-            Ok(source)
-                if requires_context_handoff(
-                    handoff.completion_provider,
-                    context.run.completion_provider,
-                    &source.vendor,
-                    &capabilities.vendor,
-                ) =>
+    let handoff_capabilities = if let Some(handoff) = context.provider_handoff.take() {
+        match catalog_model_for_handoff(&gateway_url, handoff).await {
+            Ok((handoff, source, removed))
+                if removed
+                    || requires_context_handoff(
+                        handoff.completion_provider,
+                        context.run.completion_provider,
+                        &source.vendor,
+                        &capabilities.vendor,
+                    ) =>
             {
+                context.provider_handoff = Some(handoff);
                 Some(source)
             }
             Ok(_) => {
