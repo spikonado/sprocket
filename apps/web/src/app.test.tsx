@@ -1168,6 +1168,20 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	);
 });
 
+it('opens General by default and resets to it when reopening settings', async () => {
+	const client = createConvexFixtures();
+	await renderApp(client, createRuntime(createDesktopApi()));
+	fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'General', current: 'page' })).toBeTruthy();
+	expect(screen.getByRole('switch', { name: 'Automatically name threads' })).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+	expect(screen.getByRole('heading', { name: 'Account' })).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
+});
+
 it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
 	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);

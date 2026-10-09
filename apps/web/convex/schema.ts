@@ -309,7 +309,8 @@ export default defineSchema({
 	}).index('by_key', ['key']),
 	uiPreferences: defineTable({
 		userId: v.string(),
-		theme: v.union(v.literal('light'), v.literal('dark'))
+		theme: v.union(v.literal('light'), v.literal('dark')),
+		automaticThreadTitles: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	providerCredentialStates: defineTable({
 		userId: v.string(),
@@ -453,6 +454,7 @@ export default defineSchema({
 		work: workMembership
 	})
 		.index('by_threadId_and_number', ['threadId', 'number'])
+		.index('by_threadId_kind_number', ['threadId', 'kind', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
 	threadTranscriptWorkSections: defineTable({

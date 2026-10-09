@@ -46,6 +46,7 @@ import BrandMark from '$lib/components/brand-mark';
 import InboxSidebar, { type SidebarChildrenResolver } from '$lib/components/home/inbox-sidebar';
 import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
+import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
@@ -561,7 +562,7 @@ export default function App({
 	>(null);
 
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [settingsPage, setSettingsPage] = useState<SettingsPage>('account');
+	const [settingsPage, setSettingsPage] = useState<SettingsPage>('general');
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [viewportWidth, setViewportWidth] = useState(0);
 	const sidebarVisible = sidebarOpen || (settingsOpen && viewportWidth >= 768);
@@ -2482,7 +2483,7 @@ export default function App({
 	}
 
 	function openSettings() {
-		setSettingsPage('account');
+		setSettingsPage('general');
 		setSettingsOpen(true);
 	}
 
@@ -2495,7 +2496,7 @@ export default function App({
 
 	async function leaveSettings() {
 		setSettingsOpen(false);
-		setSettingsPage('account');
+		setSettingsPage('general');
 		await focusSidebarControl(sidebarOpen);
 	}
 
@@ -2652,7 +2653,9 @@ export default function App({
 						</button>
 					)}
 					{settingsOpen ? (
-						settingsPage === 'usage' ? (
+						settingsPage === 'general' ? (
+							<SettingsGeneral />
+						) : settingsPage === 'usage' ? (
 							<SettingsUsage />
 						) : settingsPage === 'providers' && signedInUserId ? (
 							<SettingsProviders

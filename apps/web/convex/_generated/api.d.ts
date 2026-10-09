@@ -96,6 +96,7 @@ import type * as storageCleanup from "../storageCleanup.js";
 import type * as subagents from "../subagents.js";
 import type * as subscriptionExpiry from "../subscriptionExpiry.js";
 import type * as subscriptionReconciliation from "../subscriptionReconciliation.js";
+import type * as threadTitles from "../threadTitles.js";
 import type * as threads from "../threads.js";
 import type * as transcript from "../transcript.js";
 import type * as uiPreferences from "../uiPreferences.js";
@@ -198,6 +199,7 @@ declare const fullApi: ApiFromModules<{
   subagents: typeof subagents;
   subscriptionExpiry: typeof subscriptionExpiry;
   subscriptionReconciliation: typeof subscriptionReconciliation;
+  threadTitles: typeof threadTitles;
   threads: typeof threads;
   transcript: typeof transcript;
   uiPreferences: typeof uiPreferences;
