@@ -59,6 +59,18 @@ export async function threadRoot(
 	return (await ancestorThreads(db, thread)).at(-1) ?? thread;
 }
 
+export async function assertThreadTreeAcceptsWork(
+	db: DatabaseReader,
+	thread: Doc<'threadRecords'>
+) {
+	if (
+		thread.treeCancellation ||
+		(await ancestorThreads(db, thread)).some((parent) => parent.treeCancellation)
+	) {
+		throw new Error('Subagent tree is being stopped. Wait for cancellation to finish.');
+	}
+}
+
 export async function threadAncestryIds(
 	db: DatabaseReader,
 	thread: Doc<'threadRecords'>

@@ -189,7 +189,7 @@ implementations.
 
 Native delegation uses `spawn_subagent` for child creation,
 `control_subagent` for sending follow-up prompts (`action: "send"`), stopping
-descendant work, or answering its questions, and
+descendant work and its entire descendant tree, or answering its questions, and
 `poll_subagent` for lifecycle, filtered transcript pages, and pending questions.
 Zero-wait actions return metadata only, without transcript entries or cursors.
 Stop waits for the targeted run to reach a terminal status regardless of the

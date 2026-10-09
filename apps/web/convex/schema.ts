@@ -335,6 +335,7 @@ export default defineSchema({
 		userId: v.string(),
 		submissionId: v.string(),
 		parentThreadId: v.optional(v.id('threadRecords')),
+		treeCancellation: v.optional(v.object({ generation: v.string(), pendingBatches: v.number() })),
 		status: vRunStatus,
 		repositoryKey: v.string(),
 		title: v.optional(v.string()),
@@ -353,6 +354,9 @@ export default defineSchema({
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
+		// Tree cancellation needs stable cursors while transcript timestamps change.
+		// eslint-disable-next-line @convex-dev/no-duplicate-indexes
+		.index('by_userId_parentThreadId', ['userId', 'parentThreadId'])
 		.index('by_userId_and_parentThreadId_and_lastMessageAt', [
 			'userId',
 			'parentThreadId',

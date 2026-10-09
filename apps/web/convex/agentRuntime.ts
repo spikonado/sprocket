@@ -5,7 +5,7 @@ import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
-import { patchRunExecution } from '@convex/lib/runExecution';
+import { latestRunForThread, patchRunExecution } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -27,7 +27,7 @@ import {
 	matchesFinalizeExpectations,
 	vExecutorFinalizationResult
 } from '@convex/lib/runFinalize';
-import { requestRunCancellation } from './runLifecycle';
+import { requestRunCancellation, requestThreadTreeCancellation } from './runLifecycle';
 import {
 	recordCompletionTranscript,
 	recordSettledToolTranscripts
@@ -720,6 +720,15 @@ export const requestCancellation = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+
+		if (thread.parentThreadId !== undefined) {
+			const latest = await latestRunForThread(ctx.db, thread._id);
+
+			if (latest?._id === run._id) {
+				return (await requestThreadTreeCancellation(ctx, thread)).cancelled;
+			}
+		}
 
 		return await requestRunCancellation(ctx, run);
 	}
@@ -739,8 +748,23 @@ export const finalizeExecutorRun = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		const accepted =
-			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));
+		if (!matchesFinalizeExpectations(run, args)) {
+			return await executorFinalizationResult(ctx, run, false);
+		}
+
+		if (
+			args.status === 'cancelled' &&
+			!isRunFinalStatus(run.status) &&
+			run.cancellationRequestedAt === undefined
+		) {
+			const thread = await ctx.db.get('threadRecords', run.threadId);
+
+			if (thread?.parentThreadId !== undefined) {
+				await requestThreadTreeCancellation(ctx, thread);
+			}
+		}
+
+		const accepted = await finalizeRunRecord(ctx, run, args);
 
 		return executorFinalizationResult(ctx, run, accepted);
 	}

@@ -262,7 +262,7 @@ that order and keeps no cross-thread transcript cache.
 
 The `spawn_subagent` tool creates a child with a nonempty prompt and rejects
 `threadId`. `control_subagent` sends a follow-up with `action: "send"`, stops a
-descendant, or answers its pending question, while
+descendant and its entire descendant tree, or answers its pending question, while
 `poll_subagent` observes its lifecycle and pages its transcript. Discovery uses
 `list_subagents`, with 32 children per page. `list_subagent_models` exposes
 provider-compatible model settings. Actions and polls share the timing policy of `exec_cmd`,
@@ -272,7 +272,9 @@ provider-compatible model settings. Actions and polls share the timing policy of
 the existing sidebar thread tree, not a separate dashboard.
 
 Stop waits for confirmed termination of the run it targeted, even with a zero
-yield time. A replacement run cannot extend that wait. Tool outputs report run
+yield time. Descendant cancellation runs in bounded batches; new runs and
+delegation within the subtree stay blocked until all batches finish. A replacement
+run cannot extend that wait. Tool outputs report run
 status rather than the UI lifecycle phase, with pending questions separately.
 Spawn, send, and child listings return thread IDs. Activity flags, question
 deadlines, creation flags, and transcript directories remain internal.

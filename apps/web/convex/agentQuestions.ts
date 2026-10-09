@@ -26,6 +26,7 @@ import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
 import {
+	assertThreadTreeAcceptsWork,
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange
 } from '@convex/lib/threadHierarchy';
@@ -93,6 +94,11 @@ async function createQuestion(
 ): Promise<CreatedQuestion> {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 	assertRunAcceptsModelCompletion(run);
+	const thread = await ctx.db.get('threadRecords', run.threadId);
+
+	if (!thread) throw new Error('Thread not found.');
+
+	await assertThreadTreeAcceptsWork(ctx.db, thread);
 
 	if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 		throw new Error('Run is no longer active.');
@@ -272,6 +278,12 @@ export async function answerPendingQuestion(
 	if (!(await isPendingQuestionActionable(ctx.db, question))) {
 		throw new Error('Question is no longer awaiting an answer.');
 	}
+
+	const thread = await ctx.db.get('threadRecords', args.threadId);
+
+	if (!thread) throw new Error('Thread not found.');
+
+	await assertThreadTreeAcceptsWork(ctx.db, thread);
 
 	const head = await headActionablePendingQuestion(ctx.db, args.threadId);
 
