@@ -236,4 +236,29 @@ describe('automatic thread titles', () => {
 		});
 		expect(errorLog).toHaveBeenCalledOnce();
 	});
+
+	it('preserves a manual name restored while generation is pending', async () => {
+		const t = initConvexTest();
+		const alice = t.withIdentity({ subject: 'alice' });
+		const first = await createRun(t, 'first');
+		await alice.mutation(api.threads.rename, { threadId: first.threadId, title: 'My title' });
+		await finishRun(t, first.runId);
+		await createRun(t, 'second', first.threadId);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn<typeof fetch>().mockImplementation(async () => {
+				await alice.mutation(api.threads.rename, {
+					threadId: first.threadId,
+					title: 'Other title'
+				});
+				await alice.mutation(api.threads.rename, { threadId: first.threadId, title: 'My title' });
+
+				return titleResponse('Generated title');
+			})
+		);
+		await finishTitle(t);
+		expect(
+			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
+		).toMatchObject({ title: 'My title' });
+	});
 });

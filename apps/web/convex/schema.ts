@@ -338,6 +338,7 @@ export default defineSchema({
 		status: vRunStatus,
 		repositoryKey: v.string(),
 		title: v.optional(v.string()),
+		titleRenameKey: v.optional(v.string()),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,

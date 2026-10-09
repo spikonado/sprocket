@@ -349,7 +349,8 @@ export async function createQueuedRunRecord(
 		if (preferences?.automaticThreadTitles !== false) {
 			await ctx.scheduler.runAfter(0, internal.threadTitles.generate, {
 				runId,
-				expectedTitle: threadUpdates.title
+				expectedTitle: threadUpdates.title,
+				expectedRenameKey: threadRecord.titleRenameKey
 			});
 		}
 	}

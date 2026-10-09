@@ -13,7 +13,11 @@ import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFet
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 
-const requestArgs = { runId: v.id('runs'), expectedTitle: v.string() };
+const requestArgs = {
+	runId: v.id('runs'),
+	expectedTitle: v.string(),
+	expectedRenameKey: v.optional(v.string())
+};
 
 const vMessage = v.object({
 	role: v.union(v.literal('user'), v.literal('assistant')),
@@ -22,13 +26,21 @@ const vMessage = v.object({
 
 type TitleMessage = { role: 'user' | 'assistant'; content: string };
 
-async function currentRequest(ctx: QueryCtx, args: { runId: Id<'runs'>; expectedTitle: string }) {
+async function currentRequest(
+	ctx: QueryCtx,
+	args: { runId: Id<'runs'>; expectedTitle: string; expectedRenameKey?: string }
+) {
 	const run = await ctx.db.get('runs', args.runId);
 
 	if (!run) return null;
 	const thread = await ctx.db.get('threadRecords', run.threadId);
 
-	if (!thread || thread.title !== args.expectedTitle) return null;
+	if (
+		!thread ||
+		thread.title !== args.expectedTitle ||
+		thread.titleRenameKey !== args.expectedRenameKey
+	)
+		return null;
 
 	const preferences = await ctx.db
 		.query('uiPreferences')
