@@ -21,6 +21,7 @@ mod static_files;
 mod subagent_launcher;
 mod transcript_client;
 mod transcript_watch;
+mod watch_registry;
 mod work_sync;
 mod workspace_search;
 
