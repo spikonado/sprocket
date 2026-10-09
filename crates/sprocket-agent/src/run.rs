@@ -47,7 +47,7 @@ const CONTINUE_PROMPT: &str = "continue";
 // Must match convex/lib/agentErrors.ts so executor-reported lease loss and
 // lifecycle-detected abandonment have the same automatic recovery policy.
 const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
-const DEVELOPER_PROMPT_TEMPLATE: &str = include_str!("developer_prompt.md");
+const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
 const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
@@ -178,7 +178,7 @@ fn build_workspace_prompt_context(
     };
 
     let model_identity = format!("Your model is {model_label} ({model_id}).");
-    let base_instructions = DEVELOPER_PROMPT_TEMPLATE
+    let base_instructions = SYSTEM_PROMPT_TEMPLATE
         .trim_end()
         .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
         .replace(THREAD_ID_PLACEHOLDER, thread_id)
