@@ -132,18 +132,15 @@ describe('automatic thread titles', () => {
 			.object({
 				model: z.string(),
 				reasoning: z.object({ effort: z.string() }),
-				input: z.array(z.object({ role: z.string(), content: z.string() }))
+				input: z.string()
 			})
 			.parse(JSON.parse(String(options?.body)));
 
 		expect(body).toEqual({
 			model: 'gpt-6-luna',
 			reasoning: { effort: 'low' },
-			input: [
-				{ role: 'user', content: 'Build a robot' },
-				{ role: 'assistant', content: 'The robot uses two motors.' },
-				{ role: 'user', content: 'Add obstacle avoidance' }
-			]
+			input:
+				'User:\nBuild a robot\n\nAssistant:\nThe robot uses two motors.\n\nUser:\nAdd obstacle avoidance'
 		});
 		const token = new Headers(options?.headers).get('Authorization')!.slice('Bearer '.length);
 		expect(await verifyGatewayToken(secret, token)).toMatchObject({ userId: 'alice' });
