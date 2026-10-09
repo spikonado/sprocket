@@ -1131,11 +1131,10 @@ describe('subagents.control', () => {
 			await expect(
 				t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))
 			).rejects.toThrow(/cancelled/);
-			vi.useFakeTimers();
-			vi.setSystemTime(Date.now() + 10_000);
+			await vi.advanceTimersByTimeAsync(10_000);
+			await t.finishInProgressScheduledFunctions();
 
 			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {
-				await t.mutation(internal.runLifecycle.forceCancelRun, { runId: target.runId });
 				expect((await t.run((ctx) => ctx.db.get('runs', target.runId)))?.status).toBe('cancelled');
 			}
 		}

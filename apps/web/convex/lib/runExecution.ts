@@ -8,6 +8,14 @@ type ExecutionFields = Pick<
 
 export type ExecutionRun = Doc<'runs'> & ExecutionFields;
 
+export async function latestRunForThread(db: DatabaseReader, threadId: Id<'threadRecords'>) {
+	return await db
+		.query('runs')
+		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+		.order('desc')
+		.first();
+}
+
 function executionFields(state: Doc<'runExecutionStates'>): ExecutionFields {
 	return {
 		claimId: state.claimId,

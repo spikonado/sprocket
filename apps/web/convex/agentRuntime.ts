@@ -5,7 +5,7 @@ import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
-import { patchRunExecution } from '@convex/lib/runExecution';
+import { latestRunForThread, patchRunExecution } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -723,11 +723,7 @@ export const requestCancellation = mutation({
 		const thread = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
 
 		if (thread.parentThreadId !== undefined) {
-			const latest = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', thread._id))
-				.order('desc')
-				.first();
+			const latest = await latestRunForThread(ctx.db, thread._id);
 
 			if (latest?._id === run._id) {
 				return (await requestThreadTreeCancellation(ctx, thread)).cancelled;
@@ -752,11 +748,14 @@ export const finalizeExecutorRun = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
+		if (!matchesFinalizeExpectations(run, args)) {
+			return await executorFinalizationResult(ctx, run, false);
+		}
+
 		if (
 			args.status === 'cancelled' &&
 			!isRunFinalStatus(run.status) &&
-			run.cancellationRequestedAt === undefined &&
-			matchesFinalizeExpectations(run, args)
+			run.cancellationRequestedAt === undefined
 		) {
 			const thread = await ctx.db.get('threadRecords', run.threadId);
 
@@ -765,8 +764,7 @@ export const finalizeExecutorRun = mutation({
 			}
 		}
 
-		const accepted =
-			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));
+		const accepted = await finalizeRunRecord(ctx, run, args);
 
 		return executorFinalizationResult(ctx, run, accepted);
 	}

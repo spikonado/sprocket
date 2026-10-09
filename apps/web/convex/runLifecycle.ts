@@ -1,5 +1,9 @@
-import { v } from 'convex/values';
-import { getRunExecutionState, getRunWithExecution } from '@convex/lib/runExecution';
+import { v, type Infer } from 'convex/values';
+import {
+	getRunExecutionState,
+	getRunWithExecution,
+	latestRunForThread
+} from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
 import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -69,15 +73,11 @@ export const checkRun = internalMutation({
 });
 
 export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
-	const current = await getRunWithExecution(ctx.db, run._id);
+	const current = await ctx.db.get('runs', run._id);
 
 	if (!current) return false;
 
-	const latest = await ctx.db
-		.query('runs')
-		.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', current.threadId))
-		.order('desc')
-		.first();
+	const latest = await latestRunForThread(ctx.db, current.threadId);
 
 	const cancelledQuestions =
 		latest?._id === current._id
@@ -120,11 +120,7 @@ export async function requestThreadTreeCancellation(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>
 ): Promise<{ stoppedRunId?: Id<'runs'>; cancelled: boolean }> {
-	const latest = await ctx.db
-		.query('runs')
-		.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', thread._id))
-		.order('desc')
-		.first();
+	const latest = await latestRunForThread(ctx.db, thread._id);
 
 	if (thread.treeCancellation) return { stoppedRunId: latest?._id, cancelled: true };
 
@@ -147,21 +143,16 @@ export async function requestThreadTreeCancellation(
 	return { stoppedRunId: latest?._id, cancelled: cancelled || descendantsCancelled };
 }
 
-const vTreeCancellationBatch = {
+const vTreeCancellationBatch = v.object({
 	rootThreadId: v.id('threadRecords'),
 	parentThreadId: v.id('threadRecords'),
 	generation: v.string(),
 	cursor: v.union(v.string(), v.null())
-};
+});
 
 async function cancelDescendantsPage(
 	ctx: MutationCtx,
-	args: {
-		rootThreadId: Id<'threadRecords'>;
-		parentThreadId: Id<'threadRecords'>;
-		generation: string;
-		cursor: string | null;
-	}
+	args: Infer<typeof vTreeCancellationBatch>
 ): Promise<boolean> {
 	const root = await ctx.db.get('threadRecords', args.rootThreadId);
 
@@ -183,11 +174,7 @@ async function cancelDescendantsPage(
 	let pendingBatches = root.treeCancellation.pendingBatches - 1;
 
 	for (const child of result.page) {
-		const latest = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', child._id))
-			.order('desc')
-			.first();
+		const latest = await latestRunForThread(ctx.db, child._id);
 
 		if (latest) {
 			await requestRunCancellation(ctx, latest);
@@ -229,7 +216,7 @@ async function cancelDescendantsPage(
 }
 
 export const cancelDescendants = internalMutation({
-	args: vTreeCancellationBatch,
+	args: vTreeCancellationBatch.fields,
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await cancelDescendantsPage(ctx, args);

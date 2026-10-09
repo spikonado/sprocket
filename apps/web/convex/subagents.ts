@@ -1,5 +1,5 @@
 import { internal } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import {
 	internalMutation,
 	mutation,
@@ -26,7 +26,7 @@ import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreat
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { getRunWithExecution } from '@convex/lib/runExecution';
+import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
 import {
 	assertDescendantThreadAccess,
@@ -115,14 +115,6 @@ export const recoverSubmission = mutation({
 		}
 	}
 });
-
-async function latestRunForThread(ctx: QueryCtx | MutationCtx, threadId: Id<'threadRecords'>) {
-	return await ctx.db
-		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
-		.order('desc')
-		.first();
-}
 
 async function submissionRun(
 	ctx: QueryCtx | MutationCtx,
@@ -357,7 +349,7 @@ export const listChildren = mutation({
 
 			const page = await Promise.all(
 				result.page.map(async (child) => {
-					const latest = await latestRunForThread(ctx, child._id);
+					const latest = await latestRunForThread(ctx.db, child._id);
 
 					return {
 						threadId: child._id,
@@ -505,7 +497,7 @@ export const threadMonitorInfo = mutation({
 
 			const latest = args.targetRunId
 				? await ctx.db.get('runs', args.targetRunId)
-				: await latestRunForThread(ctx, thread._id);
+				: await latestRunForThread(ctx.db, thread._id);
 
 			if (args.targetRunId && (!latest || latest.threadId !== thread._id)) {
 				throw new Error('Target run does not belong to the descendant thread.');
