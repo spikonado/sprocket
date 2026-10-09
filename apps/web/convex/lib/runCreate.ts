@@ -1,4 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { internal } from '@convex/_generated/api';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -337,6 +338,21 @@ export async function createQueuedRunRecord(
 	};
 
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
+
+	if (created.promptPart) {
+		const preferences = await ctx.db
+			.query('uiPreferences')
+			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.unique();
+
+		if (preferences?.automaticThreadTitles !== false) {
+			await ctx.scheduler.runAfter(0, internal.threadTitles.generate, {
+				runId,
+				expectedTitle: threadUpdates.title,
+				expectedRenameKey: threadRecord.titleRenameKey
+			});
+		}
+	}
 
 	await unsettleRootOfThread(ctx, threadRecord);
 	await updateThreadHierarchyAfterChange(ctx, before);
