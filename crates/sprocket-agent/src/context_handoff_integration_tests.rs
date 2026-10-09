@@ -20,7 +20,7 @@ use serde_json::{Value as JsonValue, json};
 
 use super::{
     ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffRequest,
-    HandoffTool, PROVIDER_HANDOFF_PROMPT, context_summary_text,
+    HandoffTool, context_summary_text,
 };
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::provider::resume_context_handoff;
@@ -671,14 +671,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let pending_prompt = Message::user(DEFERRED_PROMPT);
 
     hook.start_handoff();
-    let summary = match drive(
-        &agent,
-        &hook,
-        developer_message(PROVIDER_HANDOFF_PROMPT),
-        history,
-    )
-    .await
-    {
+    let summary = match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), history).await {
         DriveEnd::Submitted(document) => document,
         other => panic!("old provider should submit the handoff, got {other:?}"),
     };
@@ -757,7 +750,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     assert_eq!(input[5]["role"], "assistant");
     assert_eq!(input[5]["content"], OLD_ASSISTANT_TEXT);
     assert_eq!(input[6]["role"], "developer");
-    assert_eq!(input[6]["content"][0]["text"], PROVIDER_HANDOFF_PROMPT);
+    assert_eq!(input[6]["content"][0]["text"], HANDOFF_PROMPT);
     assert!(!input_blob(&handoff).contains(DEFERRED_PROMPT));
     assert!(advertised_tools(&handoff).contains(&HandoffTool::NAME.to_string()));
 

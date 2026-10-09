@@ -17,8 +17,7 @@ use tokio::time::sleep;
 
 use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{
-    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_SUBMITTED, PROVIDER_HANDOFF_PROMPT,
-    context_summary_text,
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_SUBMITTED, context_summary_text,
 };
 use crate::convex::RuntimeClient;
 use crate::gateway::GatewayClient;
@@ -454,7 +453,7 @@ async fn run_with_completion_model(
         } else {
             history.push(prompt);
         }
-        prompt = developer_message(PROVIDER_HANDOFF_PROMPT);
+        prompt = developer_message(HANDOFF_PROMPT);
         context_handoff_hook.start_handoff();
     }
 
