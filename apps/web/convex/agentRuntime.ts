@@ -13,6 +13,7 @@ import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
 	existingThroughPartNumber,
+	getProviderHandoff,
 	throughPartNumberForHandoff
 } from '@convex/lib/contextHandoff';
 import {
@@ -223,11 +224,17 @@ export const issueGatewayCredential = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+		if (
+			run.cancellationRequestedAt !== undefined ||
+			!ownsActiveRunClaim(run, args.claimId, Date.now())
+		) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
 
-		if ((run.completionProvider ?? 'spikonado') !== 'spikonado') {
+		if (
+			(run.completionProvider ?? 'spikonado') !== 'spikonado' &&
+			(await getProviderHandoff(ctx, run))?.completionProvider !== 'spikonado'
+		) {
 			throw new Error('Run is not configured to use the Spikonado gateway.');
 		}
 
@@ -308,6 +315,7 @@ function getContextResult(args: {
 	parentThreadId?: Doc<'threadRecords'>['_id'];
 	prompt: string;
 	contextTokens: number | undefined;
+	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
 		run: {
@@ -329,6 +337,8 @@ function getContextResult(args: {
 		result.contextTokens = args.contextTokens;
 	}
 
+	if (args.providerHandoff !== undefined) result.providerHandoff = args.providerHandoff;
+
 	return result;
 }
 
@@ -344,6 +354,7 @@ export const getContext = query({
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 		const parentThreadId = thread?.parentThreadId;
+		const providerHandoff = await getProviderHandoff(ctx, run);
 
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
@@ -354,7 +365,8 @@ export const getContext = query({
 				run,
 				parentThreadId,
 				prompt: '',
-				contextTokens
+				contextTokens,
+				providerHandoff
 			});
 		}
 
@@ -362,7 +374,8 @@ export const getContext = query({
 			run,
 			parentThreadId,
 			prompt: promptPart.prompt.text,
-			contextTokens
+			contextTokens,
+			providerHandoff
 		});
 	}
 });

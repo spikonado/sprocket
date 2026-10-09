@@ -866,6 +866,24 @@ pub async fn run_agent(
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
 
+    let chatgpt_client = if chatgpt_client.is_none()
+        && context.provider_handoff.as_ref().is_some_and(|handoff| {
+            handoff.completion_provider == crate::types::CompletionProvider::Chatgpt
+        }) {
+        let previous_client = request
+            .chatgpt_credentials
+            .clone()
+            .context(
+                "The previous ChatGPT provider must remain connected to write the context handoff.",
+            )
+            .and_then(crate::chatgpt::ChatGptClient::new);
+        match previous_client {
+            Ok(client) => Some(client),
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        }
+    } else {
+        chatgpt_client
+    };
     let provider = match AgentProvider::default_for_run(&context, &gateway_url, chatgpt_client) {
         Ok(provider) => provider,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
@@ -884,7 +902,7 @@ pub async fn run_agent(
         &store,
         &context,
         &run_id,
-        capabilities.supports_images,
+        capabilities.supports_images || context.provider_handoff.is_some(),
     );
     let prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
@@ -951,6 +969,18 @@ pub async fn run_agent(
             &context.run.thread_id,
             &transcript_dir,
         );
+        let handoff_base_instructions = context.provider_handoff.as_ref().map(|handoff| {
+            build_workspace_prompt_context(
+                &request.workspace_path,
+                &workspace_instructions,
+                &skills,
+                &handoff.selected_model,
+                &handoff.selected_model,
+                &context.run.thread_id,
+                &transcript_dir,
+            )
+            .base_instructions
+        });
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -960,12 +990,20 @@ pub async fn run_agent(
             prompt,
             provider,
             prompt_context,
+            handoff_base_instructions,
             skills,
             continue_without_prompt,
         ))
     })();
 
-    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
+    let (
+        prompt,
+        provider,
+        prompt_context,
+        handoff_base_instructions,
+        skills,
+        continue_without_prompt,
+    ) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -1025,6 +1063,7 @@ pub async fn run_agent(
                     live: live.clone(),
                     prompt,
                     base_instructions: prompt_context.base_instructions,
+                    handoff_base_instructions,
                     initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(

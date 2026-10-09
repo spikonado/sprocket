@@ -1,5 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import type { Infer } from 'convex/values';
+import type { vProviderHandoff } from '@convex/lib/docs';
 import { getPromptPart, getTranscriptState } from '@convex/lib/transcriptParts';
 
 /** Inclusive last covered part when a handoff covers no transcript prefix. */
@@ -73,4 +75,40 @@ export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null)
 	const throughPartNumber = existingThroughPartNumber(thread);
 
 	return throughPartNumber === undefined ? 0 : throughPartNumber + 1;
+}
+
+export async function getProviderHandoff(
+	ctx: QueryCtx | MutationCtx,
+	run: Doc<'runs'>
+): Promise<Infer<typeof vProviderHandoff> | undefined> {
+	const thread = await ctx.db.get('threadRecords', run.threadId);
+
+	const completions = ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_kind_number', (query) =>
+			query
+				.eq('threadId', run.threadId)
+				.eq('kind', 'completion')
+				.gte('number', transcriptHistoryFromNumber(thread))
+		)
+		.order('desc');
+
+	for await (const part of completions) {
+		if (part.runId === run._id || !part.completion?.items.length) continue;
+		const source = await ctx.db.get('runs', part.runId);
+
+		if (!source) throw new Error('Conversation completion run not found.');
+		const completionProvider = source.completionProvider ?? 'spikonado';
+
+		if (completionProvider === (run.completionProvider ?? 'spikonado')) return undefined;
+
+		return {
+			completionProvider,
+			selectedModel: source.selectedModel,
+			reasoningEffort: source.reasoningEffort,
+			fastMode: source.fastMode
+		};
+	}
+
+	return undefined;
 }

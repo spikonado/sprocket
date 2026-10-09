@@ -17,7 +17,8 @@ use tokio::time::sleep;
 
 use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{
-    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_SUBMITTED, context_summary_text,
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_SUBMITTED, PROVIDER_HANDOFF_PROMPT,
+    context_summary_text,
 };
 use crate::convex::RuntimeClient;
 use crate::gateway::GatewayClient;
@@ -29,7 +30,9 @@ use crate::live::{
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
-use crate::types::{CompletionProvider, ContextBudget, RunContextResponse, gateway_api_v1_url};
+use crate::types::{
+    CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
+};
 
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -77,6 +80,7 @@ pub(crate) struct AgentProvider {
     gateway_url: String,
     model: String,
     chatgpt_client: Option<ChatGptClient>,
+    provider_handoff: Option<ProviderHandoff>,
 }
 
 pub(crate) struct AgentProviderRequest {
@@ -94,6 +98,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
+    pub(crate) handoff_base_instructions: Option<String>,
     pub(crate) initial_context: Vec<Message>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
@@ -124,7 +129,12 @@ impl AgentProvider {
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
     ) -> anyhow::Result<Self> {
-        let chatgpt_client = if context.run.completion_provider == CompletionProvider::Chatgpt {
+        let chatgpt_client = if context.run.completion_provider == CompletionProvider::Chatgpt
+            || context
+                .provider_handoff
+                .as_ref()
+                .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
+        {
             Some(chatgpt_client.ok_or_else(|| {
                 anyhow!("ChatGPT runs require the local ChatGPT credential service.")
             })?)
@@ -136,25 +146,77 @@ impl AgentProvider {
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
             chatgpt_client,
+            provider_handoff: context.provider_handoff.clone(),
         })
     }
 
     pub(crate) async fn run(
-        self,
+        mut self,
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
         if self.completion_provider != CompletionProvider::Spikonado {
             request.fast_mode = false;
         }
+        let handoff = self.provider_handoff.take();
+        let source = handoff.as_ref().map(|handoff| Self {
+            completion_provider: handoff.completion_provider,
+            gateway_url: self.gateway_url.clone(),
+            model: handoff.selected_model.clone(),
+            chatgpt_client: self.chatgpt_client.clone(),
+            provider_handoff: None,
+        });
+        let model = match source
+            .as_ref()
+            .unwrap_or(&self)
+            .completion_model(
+                &runtime,
+                &request.run_id,
+                &request.claim_id,
+                request
+                    .handoff_base_instructions
+                    .as_deref()
+                    .unwrap_or(&request.base_instructions),
+            )
+            .await
+        {
+            Ok(model) => model,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error: if handoff.is_some() {
+                        error.context("Provider switch context handoff failed. The previous provider must remain available. Retry to continue.")
+                    } else {
+                        error
+                    },
+                };
+            }
+        };
+        let provider_switch = handoff.map(|handoff| (self, handoff));
+        match run_with_completion_model(model, runtime, request, provider_switch).await {
+            AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
+                text,
+                error: crate::chatgpt::user_facing_error(error),
+            },
+            result => result,
+        }
+    }
+
+    async fn completion_model(
+        &self,
+        runtime: &RuntimeClient,
+        run_id: &str,
+        claim_id: &str,
+        base_instructions: &str,
+    ) -> anyhow::Result<DynModel<Completion>> {
         match self.completion_provider {
             CompletionProvider::Spikonado => {
                 let completion_client = GatewayClient::new(
                     gateway_api_v1_url(&self.gateway_url),
                     {
                         let runtime = runtime.clone();
-                        let run_id = request.run_id.clone();
-                        let claim_id = request.claim_id.clone();
+                        let run_id = run_id.to_string();
+                        let claim_id = claim_id.to_string();
                         move || {
                             let runtime = runtime.clone();
                             let run_id = run_id.clone();
@@ -163,84 +225,77 @@ impl AgentProvider {
                         }
                     },
                 );
-                run_with_completion_model(
-                    completion_client.completion_model(self.model, &request.base_instructions),
-                    runtime,
-                    request,
-                )
-                .await
+                Ok(completion_client.completion_model(&self.model, base_instructions))
             }
             CompletionProvider::Openai => {
-                let credential = match runtime
-                    .issue_openai_credential(&request.run_id, &request.claim_id)
-                    .await
-                {
-                    Ok(credential) => credential,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error,
-                        };
-                    }
-                };
+                let credential = runtime.issue_openai_credential(run_id, claim_id).await?;
                 let model = stateless_responses_model(
                     openai::OpenAIConfig::new(credential.api_key)
-                        .with_instructions(&request.base_instructions),
-                    self.model,
+                        .with_instructions(base_instructions),
+                    &self.model,
                 );
-                run_with_completion_model(model, runtime, request).await
+                Ok(model)
             }
             CompletionProvider::Chatgpt => {
-                let Some(completion_client) = self.chatgpt_client else {
-                    return AgentProviderResult::Failed {
-                        text: String::new(),
-                        error: anyhow!(
-                            "ChatGPT runs require the local ChatGPT credential service."
-                        ),
-                    };
+                let Some(completion_client) = &self.chatgpt_client else {
+                    return Err(anyhow!(
+                        "ChatGPT runs require the local ChatGPT credential service."
+                    ));
                 };
-                match run_with_completion_model(
-                    completion_client.completion_model(self.model, &request.base_instructions),
-                    runtime,
-                    request,
-                )
-                .await
-                {
-                    AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
-                        text,
-                        error: crate::chatgpt::user_facing_error(error),
-                    },
-                    result => result,
-                }
+                Ok(completion_client.completion_model(&self.model, base_instructions))
             }
         }
     }
+}
+
+fn completion_parameters(
+    reasoning_effort: &str,
+    fast_mode: bool,
+) -> anyhow::Result<serde_json::Value> {
+    let reasoning_effort = serde_json::from_value::<openai::responses_api::ReasoningEffort>(
+        serde_json::Value::String(reasoning_effort.to_string()),
+    )
+    .map_err(|error| anyhow!("invalid OpenAI Responses API reasoning effort: {error}"))?;
+    Ok(openai::responses_api::AdditionalParameters {
+        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
+        service_tier: fast_mode
+            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
+        ..Default::default()
+    }
+    .to_json())
 }
 
 async fn run_with_completion_model(
     model: DynModel<Completion>,
     runtime: RuntimeClient,
     request: AgentProviderRequest,
+    mut provider_switch: Option<(AgentProvider, ProviderHandoff)>,
 ) -> AgentProviderResult {
-    let reasoning_effort = match serde_json::from_value::<openai::responses_api::ReasoningEffort>(
-        serde_json::Value::String(request.reasoning_effort.clone()),
-    ) {
-        Ok(reasoning_effort) => reasoning_effort,
+    let target_params = match completion_parameters(&request.reasoning_effort, request.fast_mode) {
+        Ok(params) => params,
         Err(error) => {
             return AgentProviderResult::Failed {
                 text: String::new(),
-                error: anyhow!("invalid OpenAI Responses API reasoning effort: {error}"),
+                error,
             };
         }
     };
-    let additional_params = openai::responses_api::AdditionalParameters {
-        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
-        service_tier: request
-            .fast_mode
-            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
-        ..Default::default()
-    }
-    .to_json();
+    let mut additional_params = if let Some((_, handoff)) = &provider_switch {
+        match completion_parameters(
+            &handoff.reasoning_effort,
+            handoff.fast_mode && handoff.completion_provider == CompletionProvider::Spikonado,
+        ) {
+            Ok(params) => params,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error,
+                };
+            }
+        }
+    } else {
+        target_params.clone()
+    };
     let tool_call_tracker = ToolCallTracker::new(&request.run_id, &request.claim_id);
     let tools = agent_tools(
         runtime.clone(),
@@ -264,7 +319,6 @@ async fn run_with_completion_model(
         request.defer_prompt_for_context_handoff,
     );
     let agent = AgentBuilder::new(model)
-        .additional_params(additional_params)
         .tool(tools.apply_patch)
         .tool(tools.control_cmd)
         .tool(tools.exec_cmd)
@@ -303,7 +357,7 @@ async fn run_with_completion_model(
     } else {
         agent
     };
-    let agent = if request.supports_images {
+    let mut agent = if request.supports_images {
         agent.tool(tools.screenshot_url)
     } else {
         agent
@@ -367,10 +421,22 @@ async fn run_with_completion_model(
     let mut completed_attempt = None;
     let mut handoff_processed_tokens = 0_u64;
 
+    if provider_switch.is_some() {
+        before_prompt = request.defer_prompt_for_context_handoff;
+        if before_prompt {
+            deferred_prompt = Some(prompt);
+        } else {
+            history.push(prompt);
+        }
+        prompt = developer_message(PROVIDER_HANDOFF_PROMPT);
+        context_handoff_hook.start_handoff();
+    }
+
     'agent_run: {
         'generations: loop {
             let mut stream = agent
                 .prompt(prompt)
+                .replace_additional_params(additional_params.clone())
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(context_handoff_hook.clone())
@@ -517,6 +583,20 @@ async fn run_with_completion_model(
                                     Some(pending) => { history.push(handoff); pending }
                                     None => handoff,
                                 };
+                                if let Some((provider, _)) = provider_switch.take() {
+                                    drop(stream);
+                                    let model = match provider.completion_model(
+                                        &runtime, &request.run_id, &request.claim_id,
+                                        &request.base_instructions,
+                                    ).await {
+                                        Ok(model) => model,
+                                        Err(error) => break 'agent_run AgentProviderResult::Failed {
+                                            text: streamed_text, error,
+                                        },
+                                    };
+                                    agent.set_model(model);
+                                    additional_params = target_params.clone();
+                                }
                                 context_handoff_hook.restart();
                                 handoff_processed_tokens = 0;
                                 final_text.clear();

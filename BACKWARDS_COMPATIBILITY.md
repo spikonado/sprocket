@@ -15,6 +15,21 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Provider-switch context handoffs
+
+Run context responses optionally include `providerHandoff` with the previous
+provider's model settings. The server derives it from uncovered transcript
+completions, so existing threads need no migration. Missing historical provider
+IDs still mean `spikonado`. New clients use that provider to write and save a
+handoff before sending the summary and pending prompt to the selected provider.
+Gateway and BYOK credential authorization also permits the derived handoff
+provider while that history remains uncovered, subject to the active run claim.
+Once saved, the existing summary cutoff prevents another handoff on retry.
+
+Released clients ignore the optional response field. Keep it optional and keep
+the Rust missing-field default until those clients age out. Local transcripts,
+saved provider settings and Convex documents keep their existing formats.
+
 ### Rig 0.43 upstream revision
 
 Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
