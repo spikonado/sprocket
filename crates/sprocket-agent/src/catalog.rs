@@ -167,6 +167,7 @@ fn select_catalog_model(
         .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
     Ok(CatalogModelCapabilities {
         label: model.label.clone(),
+        vendor: model.provider.clone(),
         context_budget: ContextBudget {
             context_window_tokens: model.context_window_tokens,
             auto_handoff_token_limit: model.auto_handoff_token_limit,
@@ -232,12 +233,14 @@ mod tests {
         assert!(vision.supports_images);
         assert!(vision.supports_required_tool_choice);
         assert_eq!(vision.label, "Vision Model");
+        assert_eq!(vision.vendor, "openai");
         assert_eq!(vision.context_budget.context_window_tokens, 100_000);
         assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
 
         let long_context = select_catalog_model(catalog_payload().sprocket, "long-context-model")
             .expect("long-context model");
         assert!(!long_context.supports_images);
+        assert_eq!(long_context.vendor, "other");
         assert!(!long_context.supports_required_tool_choice);
         assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     }

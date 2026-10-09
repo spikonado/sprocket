@@ -15,11 +15,13 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
-### Provider-switch context handoffs
+### Provider and model-vendor context handoffs
 
 Run context responses optionally include `providerHandoff` with the previous
-provider's model settings. The server derives it from uncovered transcript
-completions, so existing threads need no migration. Missing historical provider
+provider's model settings when the provider or model ID changes. The local
+runner compares model vendors from the live gateway catalog, preserving history
+for same-provider, same-vendor model changes. The server derives the source from
+uncovered transcript completions, so existing threads need no migration. Missing historical provider
 IDs still mean `spikonado`. New clients use that provider to write and save a
 handoff before sending the summary and pending prompt to the selected provider.
 Gateway and BYOK credential authorization also permits the derived handoff

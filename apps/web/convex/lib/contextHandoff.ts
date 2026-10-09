@@ -77,6 +77,7 @@ export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null)
 	return throughPartNumber === undefined ? 0 : throughPartNumber + 1;
 }
 
+// Model IDs are opaque. The local runner resolves vendor changes from the live catalog.
 export async function getProviderHandoff(
 	ctx: QueryCtx | MutationCtx,
 	run: Doc<'runs'>
@@ -100,7 +101,11 @@ export async function getProviderHandoff(
 		if (!source) throw new Error('Conversation completion run not found.');
 		const completionProvider = source.completionProvider ?? 'spikonado';
 
-		if (completionProvider === (run.completionProvider ?? 'spikonado')) return undefined;
+		if (
+			completionProvider === (run.completionProvider ?? 'spikonado') &&
+			source.selectedModel === run.selectedModel
+		)
+			return undefined;
 
 		return {
 			completionProvider,

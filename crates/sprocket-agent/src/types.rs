@@ -154,6 +154,7 @@ pub struct ContextBudget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogModelCapabilities {
     pub label: String,
+    pub vendor: String,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_required_tool_choice: bool,

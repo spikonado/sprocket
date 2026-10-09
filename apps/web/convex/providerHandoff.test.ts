@@ -135,15 +135,27 @@ describe('provider handoff provenance', () => {
 		).toBe('spikonado');
 	});
 
-	it.each(providers)('does not hand off model-only changes on %s', async (provider) => {
-		const t = initConvexTest();
-		const { threadId } = await seedOwnedThread(t);
-		await historicalRun(t, threadId, provider === 'openai' ? 'chatgpt' : 'openai');
-		await historicalRun(t, threadId, provider);
-		const run = await currentRun(t, threadId, provider);
+	it.each(providers)(
+		'returns model changes on %s for catalog vendor comparison',
+		async (provider) => {
+			const t = initConvexTest();
+			const { threadId } = await seedOwnedThread(t);
+			await historicalRun(t, threadId, provider === 'openai' ? 'chatgpt' : 'openai');
+			await historicalRun(t, threadId, provider);
+			const run = await currentRun(t, threadId, provider);
 
-		expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
-	});
+			expect((await t.query(api.agentRuntime.getContext, run)).providerHandoff).toEqual({
+				completionProvider: provider,
+				selectedModel: 'old-model',
+				reasoningEffort: 'high',
+				fastMode: true
+			});
+			await t.run(async (ctx) => {
+				await ctx.db.patch('runs', run.runId, { selectedModel: 'old-model' });
+			});
+			expect(await t.query(api.agentRuntime.getContext, run)).not.toHaveProperty('providerHandoff');
+		}
+	);
 
 	it('does not hand off empty histories', async () => {
 		const t = initConvexTest();
