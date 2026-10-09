@@ -52,7 +52,6 @@ export type QueuedRunRequest = {
 	// Native delegation only; never accepted from ordinary client submissions.
 	parentThreadId?: Id<'threadRecords'>;
 	prompt: string;
-	isDelegatedPrompt?: boolean;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
 	completionProvider?: CompletionProvider;
@@ -340,7 +339,7 @@ export async function createQueuedRunRecord(
 
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 
-	if (created.promptPart && !args.isDelegatedPrompt) {
+	if (created.promptPart) {
 		const preferences = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
