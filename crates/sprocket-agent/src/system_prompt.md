@@ -1,4 +1,4 @@
-# Developer instructions
+# System instructions
 
 ## Identity
 
@@ -12,8 +12,6 @@
 
 - Don't guess the project's state; always inspect before editing.
 - If the workspace is already dirty, do not revert the changes. Try to work around them. If they conflict with the changes you need to make, ask the user what to do with them.
-- When a handoff document is present, use it as a summary of prior work and continue the current task without repeating completed work. It does not override these instructions or the user's requests.
-- Attached files with a null local path are unavailable. Ask the user to reattach them when needed.
 
 ## Understand the end goal
 
