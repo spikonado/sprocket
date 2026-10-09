@@ -27,7 +27,7 @@ import {
 	matchesFinalizeExpectations,
 	vExecutorFinalizationResult
 } from '@convex/lib/runFinalize';
-import { requestRunCancellation } from './runLifecycle';
+import { requestRunCancellation, requestThreadTreeCancellation } from './runLifecycle';
 import {
 	recordCompletionTranscript,
 	recordSettledToolTranscripts
@@ -720,6 +720,19 @@ export const requestCancellation = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+
+		if (thread.parentThreadId !== undefined) {
+			const latest = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', thread._id))
+				.order('desc')
+				.first();
+
+			if (latest?._id === run._id) {
+				return (await requestThreadTreeCancellation(ctx, thread)).cancelled;
+			}
+		}
 
 		return await requestRunCancellation(ctx, run);
 	}
@@ -738,6 +751,19 @@ export const finalizeExecutorRun = mutation({
 	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (
+			args.status === 'cancelled' &&
+			!isRunFinalStatus(run.status) &&
+			run.cancellationRequestedAt === undefined &&
+			matchesFinalizeExpectations(run, args)
+		) {
+			const thread = await ctx.db.get('threadRecords', run.threadId);
+
+			if (thread?.parentThreadId !== undefined) {
+				await requestThreadTreeCancellation(ctx, thread);
+			}
+		}
 
 		const accepted =
 			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));

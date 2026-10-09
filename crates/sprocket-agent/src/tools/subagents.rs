@@ -662,7 +662,7 @@ impl rig::tool::Tool for ControlSubagentTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Send a follow-up, stop work, or answer a question on an existing subagent. Stop the current run or wait for it to finish before sending another message."
+        "Send a follow-up, stop a subagent and its entire descendant tree, or answer a question on an existing subagent. Stop the current run or wait for it to finish before sending another message."
             .to_string()
     }
 

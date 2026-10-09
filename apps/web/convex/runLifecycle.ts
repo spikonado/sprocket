@@ -116,6 +116,41 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 	return true;
 }
 
+export async function requestThreadTreeCancellation(
+	ctx: MutationCtx,
+	thread: Doc<'threadRecords'>
+): Promise<{ stoppedRunId?: Id<'runs'>; cancelled: boolean }> {
+	const pending = [thread];
+	let stoppedRunId: Id<'runs'> | undefined;
+	let cancelled = false;
+
+	for (let current = pending.pop(); current; current = pending.pop()) {
+		const latest = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', current._id))
+			.order('desc')
+			.first();
+
+		if (current._id === thread._id) stoppedRunId = latest?._id;
+
+		const requested = latest
+			? await requestRunCancellation(ctx, latest)
+			: await cancelPendingQuestionsForThread(ctx, current._id);
+
+		cancelled = requested || cancelled;
+
+		for await (const child of ctx.db
+			.query('threadRecords')
+			.withIndex('by_userId_and_parentThreadId_and_lastMessageAt', (q) =>
+				q.eq('userId', thread.userId).eq('parentThreadId', current._id)
+			)) {
+			pending.push(child);
+		}
+	}
+
+	return { stoppedRunId, cancelled };
+}
+
 export const forceCancelRun = internalMutation({
 	args: { runId: v.id('runs') },
 	returns: v.boolean(),

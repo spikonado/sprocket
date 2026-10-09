@@ -10,7 +10,6 @@ import { paginationOptsValidator, paginationResultValidator } from 'convex/serve
 import { v, type Infer } from 'convex/values';
 import {
 	answerPendingQuestion,
-	cancelPendingQuestionsForThread,
 	questionContinuation,
 	toAgentQuestionSnapshot
 } from '@convex/agentQuestions';
@@ -24,7 +23,7 @@ import {
 	vTranscriptStateResult
 } from '@convex/lib/docs';
 import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreate';
-import { requestRunCancellation } from '@convex/runLifecycle';
+import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { getRunWithExecution } from '@convex/lib/runExecution';
@@ -286,6 +285,10 @@ export const enforceTaskDeadline = internalMutation({
 			return null;
 		}
 
+		const thread = await ctx.db.get('threadRecords', run.threadId);
+
+		if (thread) await requestThreadTreeCancellation(ctx, thread);
+
 		await finalizeRunRecord(ctx, run, {
 			text: 'Task deadline exceeded.',
 			status: 'cancelled',
@@ -385,15 +388,9 @@ export const control = mutation({
 			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 
 			if (args.action === 'stop') {
-				const latest = await latestRunForThread(ctx, thread._id);
+				const { stoppedRunId } = await requestThreadTreeCancellation(ctx, thread);
 
-				if (latest) {
-					await requestRunCancellation(ctx, latest);
-				} else {
-					await cancelPendingQuestionsForThread(ctx, thread._id);
-				}
-
-				return { stoppedRunId: latest?._id };
+				return { stoppedRunId };
 			}
 
 			if (!args.questionId) {

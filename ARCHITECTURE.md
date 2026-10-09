@@ -262,7 +262,7 @@ that order and keeps no cross-thread transcript cache.
 
 The `spawn_subagent` tool creates a child with a nonempty prompt and rejects
 `threadId`. `control_subagent` sends a follow-up with `action: "send"`, stops a
-descendant, or answers its pending question, while
+descendant and its entire descendant tree, or answers its pending question, while
 `poll_subagent` observes its lifecycle and pages its transcript. Discovery uses
 `list_subagents`, with 32 children per page. `list_subagent_models` exposes
 provider-compatible model settings. Actions and polls share the timing policy of `exec_cmd`,
