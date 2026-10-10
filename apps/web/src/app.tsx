@@ -672,10 +672,6 @@ export default function App({
 		authenticatedThreadQueryArgs
 	);
 
-	// No browser backend is wired up; the live view stays empty until the local
-	// browser implementation provides session state.
-	const browserLiveView = { data: null, error: null };
-
 	const pendingAgentQuestionQuery = usePageQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -2821,8 +2817,7 @@ export default function App({
 						onDeleteArtifact={deleteArtifact}
 						selectedKey={artifactPanel.panel.selectedKey}
 						tab={artifactPanel.panel.tab}
-						liveView={browserLiveView.data}
-						liveActive={false}
+						browserApi={desktopApi}
 						expanded={artifactPanel.panel.expanded}
 						stale={artifactPanel.watchState.stale}
 						error={artifactPanel.watchState.error}

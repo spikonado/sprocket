@@ -92,6 +92,12 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 	const unused = () => Promise.reject(new Error('unexpected desktop API call'));
 
 	return {
+		fetchBrowserStatus: vi.fn<DesktopApi['fetchBrowserStatus']>(async () => ({
+			state: 'ready',
+			error: null
+		})),
+		startBrowser: vi.fn<DesktopApi['startBrowser']>(async () => ({ state: 'ready', error: null })),
+		browserDashboardUrl: 'https://sprocket.test/api/browser/dashboard/',
 		listRunningCommands: vi.fn(async () => ({ commands: [] })),
 		terminateCommand: vi.fn(async () => ({ terminated: true })),
 		browseFilesystem: unused,
@@ -332,6 +338,31 @@ it('deletes an attached project artifact through the local server and keeps fail
 		workspacePath: '/work/alpha',
 		artifactId: 'artifact-a'
 	});
+});
+
+it('opens the managed browser dashboard without a thread and keeps it mounted when expanded', async () => {
+	const startBrowser = vi.fn<DesktopApi['startBrowser']>(async () => ({
+		state: 'ready',
+		error: null
+	}));
+
+	const desktopApi = createDesktopApi({
+		listProjectAttachments: async () => [projectAttachment('/work/alpha', 'repo-alpha', 'Alpha')],
+		startBrowser
+	});
+
+	await renderApp(createConvexFixtures(), createRuntime(desktopApi));
+	await projectTrigger('Alpha');
+	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	expect(startBrowser).not.toHaveBeenCalled();
+	fireEvent.click(screen.getByRole('tab', { name: 'Live view' }));
+	const iframe = await screen.findByTitle('Agent browser dashboard');
+	expect(iframe.getAttribute('src')).toBe(desktopApi.browserDashboardUrl);
+	expect(startBrowser).toHaveBeenCalledOnce();
+	fireEvent.click(screen.getByRole('button', { name: 'Expand to full workspace' }));
+	expect(screen.getByTitle('Agent browser dashboard')).toBe(iframe);
+	expect(screen.getByRole('button', { name: 'Exit full workspace' })).toBeTruthy();
+	expect(startBrowser).toHaveBeenCalledOnce();
 });
 
 it('shares local message recency across the project menus and recent directories', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
-import type { ChatGptStatus } from '$lib/types/sprocket';
+import type { BrowserStatus, ChatGptStatus } from '$lib/types/sprocket';
 import {
 	createLocalClient,
 	ensureLocalSession,
@@ -65,6 +65,68 @@ describe('workspace launch fragments', () => {
 
 		expect(hash).toBe('#workspace=%2Frobots%2Farm+%26+gripper');
 		expect(readWorkspaceLaunchFromHash()).toBe(workspacePath);
+	});
+});
+
+describe('managed browser dashboard', () => {
+	it.each(['http://127.0.0.1:7731', 'https://sprocket.test/local'])(
+		'resolves the dashboard URL using client base URL %s',
+		(baseUrl) => {
+			expect(createLocalClient(baseUrl).browserDashboardUrl).toBe(
+				`${baseUrl}/api/browser/dashboard/`
+			);
+		}
+	);
+
+	it.each([
+		{ method: 'fetchBrowserStatus' as const, pathname: '/api/browser/status', verb: 'GET' },
+		{ method: 'startBrowser' as const, pathname: '/api/browser/start', verb: 'POST' }
+	])(
+		'$method sends an authenticated, cancellable request and returns the status',
+		async ({ method, pathname, verb }) => {
+			const status: BrowserStatus = { state: 'error', error: 'Chromium installation failed.' };
+			const fetch = vi.fn(async () => Response.json(status));
+			vi.stubGlobal('fetch', fetch);
+			const signal = new AbortController().signal;
+
+			await expect(createLocalClient('http://127.0.0.1:7731')[method](signal)).resolves.toEqual(
+				status
+			);
+			expect(fetch).toHaveBeenCalledExactlyOnceWith(`http://127.0.0.1:7731${pathname}`, {
+				method: verb,
+				signal,
+				credentials: 'include',
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+	);
+
+	it.each<BrowserStatus>([
+		{ state: 'installing', error: null },
+		{ state: 'ready', error: null }
+	])('accepts browser status $state', async (status) => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(status))
+		);
+		await expect(createLocalClient('http://127.0.0.1:7731').fetchBrowserStatus()).resolves.toEqual(
+			status
+		);
+	});
+
+	it.each([
+		{ state: 'pending', error: null },
+		{ state: 'ready' },
+		{ state: 'error', error: 123 },
+		{ error: null }
+	])('rejects malformed browser status %j', async (payload) => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(payload))
+		);
+		await expect(createLocalClient('http://127.0.0.1:7731').fetchBrowserStatus()).rejects.toThrow(
+			'Local API returned an unexpected response.'
+		);
 	});
 });
 

@@ -15,6 +15,11 @@ const errorPayloadSchema = z.object({ error: z.string().optional() });
 
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 
+const browserStatusSchema = z.object({
+	state: z.enum(['installing', 'ready', 'error']),
+	error: z.string().nullable()
+});
+
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
 	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
@@ -368,6 +373,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 	const { request } = transport;
 
 	return {
+		fetchBrowserStatus: (signal) =>
+			request('/api/browser/status', browserStatusSchema, { method: 'GET', signal }),
+		startBrowser: (signal) =>
+			request('/api/browser/start', browserStatusSchema, { method: 'POST', signal }),
+		browserDashboardUrl: `${baseUrl}/api/browser/dashboard/`,
 		browseFilesystem: (input) => {
 			const body = input.cwd
 				? { partialPath: input.partialPath, cwd: input.cwd }
