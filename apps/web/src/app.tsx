@@ -53,6 +53,8 @@ import SettingsSidebar, { type SettingsPage } from '$lib/components/home/setting
 import SettingsUsage from '$lib/components/home/settings-usage';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
+import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
+import { useSidePanelWidth } from '$lib/home/side-panel-width';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
@@ -566,6 +568,7 @@ export default function App({
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [viewportWidth, setViewportWidth] = useState(0);
 	const sidebarVisible = sidebarOpen || (settingsOpen && viewportWidth >= 768);
+	const sidePanelWidth = useSidePanelWidth(viewportWidth, sidebarVisible);
 	const [projectFilter, setProjectFilter] = useState<string[]>([]);
 	const [settledInboxOpen, setSettledInboxOpen] = useState(false);
 	const [pendingProjectLaunches, setPendingProjectLaunches] = useState<string[]>([]);
@@ -2558,12 +2561,15 @@ export default function App({
 			<div
 				className={cn(
 					'app-workspace-shell inbox-layout',
-					!settingsOpen && artifactPanel.panel.open && !artifactPanel.panel.expanded
-						? 'pr-[20rem]'
-						: '',
 					!sidebarVisible && 'sidebar-hidden',
 					settingsOpen && 'settings-open'
 				)}
+				style={{
+					paddingRight:
+						!settingsOpen && artifactPanel.panel.open && !artifactPanel.panel.expanded
+							? sidePanelWidth.width
+							: undefined
+				}}
 				inert={
 					artifactPanel.fullscreenArtifact ||
 					(artifactPanel.panel.open && artifactPanel.panel.expanded)
@@ -2811,10 +2817,19 @@ export default function App({
 					className={
 						artifactPanel.panel.expanded
 							? 'bg-background fixed inset-0 z-50'
-							: 'absolute inset-y-0 right-0 z-40 w-[20rem]'
+							: 'absolute inset-y-0 right-0 z-40'
 					}
+					style={{ width: artifactPanel.panel.expanded ? undefined : sidePanelWidth.width }}
 					inert={artifactPanel.fullscreenArtifact ? true : undefined}
 				>
+					{!artifactPanel.panel.expanded && (
+						<SidePanelResizeHandle
+							width={sidePanelWidth.width}
+							minWidth={sidePanelWidth.minWidth}
+							maxWidth={sidePanelWidth.maxWidth}
+							onWidthChange={sidePanelWidth.setWidth}
+						/>
+					)}
 					<SidePanel
 						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 						artifacts={artifactPanel.artifacts}
