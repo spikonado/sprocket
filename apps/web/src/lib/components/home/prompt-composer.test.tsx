@@ -694,6 +694,51 @@ describe('PromptComposer mobile selectors', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it.each([
+		['spikonado', 'chatgpt', 'ChatGPT Subscription'],
+		['spikonado', 'openai', 'OpenAI API'],
+		['chatgpt', 'openai', 'OpenAI API'],
+		['openai', 'spikonado', 'Spikonado']
+	] as const)('preserves supported model and reasoning from %s to %s', async (from, to, label) => {
+		const { props } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [modelCatalog.models[1], { ...modelCatalog.models[0], provider: 'openai' }]
+			},
+			configuredProviders: ['spikonado', 'openai', 'chatgpt'],
+			selectedCompletionProvider: from,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'low',
+			onCompletionProviderSelect: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		await click(screen.getByRole('button', { name: new RegExp(label) }));
+		expect(props.onCompletionProviderSelect).toHaveBeenCalledWith(to);
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Low');
+	});
+
+	it.each(['low', 'high'])('uses a supported fallback model with reasoning %s', async (effort) => {
+		renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [
+					{ ...modelCatalog.models[1], reasoningEfforts: ['low', 'high'] },
+					{ ...modelCatalog.models[0], provider: 'openai' }
+				]
+			},
+			configuredProviders: ['spikonado', 'chatgpt'],
+			selectedModel: 'model-two',
+			selectedReasoningEffort: effort
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		await click(screen.getByRole('button', { name: /ChatGPT Subscription/ }));
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe(
+			effort === 'low' ? 'Model One · Low' : 'Model One · Medium'
+		);
+	});
+
 	it('keeps the provider menu anchored when a parent scrolls', async () => {
 		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
 		const trigger = screen.getByRole('button', { name: 'Select provider' });

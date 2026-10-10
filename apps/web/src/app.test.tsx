@@ -11,6 +11,10 @@ import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import type { UpdateState } from '$lib/updates';
+import {
+	readCompletionProviderPreference,
+	storeCompletionProviderPreference
+} from '$lib/home/completion-provider-preference';
 import type {
 	DesktopApi,
 	ProjectAttachment,
@@ -224,6 +228,7 @@ async function openProjectFromHeading(from: string, target: string) {
 }
 
 beforeEach(() => {
+	localStorage.clear();
 	vi.stubGlobal(
 		'fetch',
 		vi.fn<typeof fetch>(async (input, options) => {
@@ -815,6 +820,88 @@ it('launches ChatGPT with a gateway model and a connected local account', async 
 		)
 	);
 });
+
+it.each([false, true])(
+	'restores the preferred provider for new drafts (saved: %s)',
+	async (saved) => {
+		if (saved) storeCompletionProviderPreference('user-a', 'chatgpt');
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		const thread = threadRecord('thread-1', 'repo-alpha', 'Existing Spikonado thread');
+		const status = Promise.withResolvers<Awaited<ReturnType<DesktopApi['fetchChatGptStatus']>>>();
+		const client = createConvexFixtures();
+		client.registerPaginatedQuery(api.inbox.list, [thread]);
+		client.registerQuery(api.threads.getByThreadId, {
+			...thread,
+			contextTokens: undefined,
+			totalTokensProcessed: 0
+		});
+		const runAgent = vi.fn<DesktopApi['runAgent']>(() => new Promise(() => {}));
+
+		const runtime = createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				fetchChatGptStatus: () => status.promise,
+				runAgent
+			})
+		);
+
+		runtime.fetchGatewayModelCatalog = async () => ({
+			...modelCatalog,
+			models: [
+				...modelCatalog.models,
+				{
+					...modelCatalog.models[0],
+					id: 'openai-model',
+					label: 'OpenAI model',
+					provider: 'openai'
+				}
+			]
+		});
+		await renderApp(client, runtime);
+		await projectTrigger('Alpha');
+		await act(async () => {
+			status.resolve({
+				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
+				activeConnectionId: 'chatgpt-1',
+				loginAvailable: true
+			});
+		});
+
+		if (!saved) {
+			fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+			fireEvent.click(screen.getByRole('button', { name: /ChatGPT Subscription/ }));
+		}
+
+		expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+			'ChatGPT'
+		);
+		fireEvent.click(screen.getByText('Existing Spikonado thread'));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+				'Spikonado'
+			)
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+				'ChatGPT'
+			)
+		);
+		expect(readCompletionProviderPreference('user-a')).toBe('chatgpt');
+		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'New work' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await waitFor(() =>
+			expect(runAgent).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completionProvider: 'chatgpt',
+					prompt: 'New work',
+					selectedModel: 'openai-model'
+				})
+			)
+		);
+	}
+);
 
 it('enables run-bound Stop after the lifecycle arrives behind a pending question', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');

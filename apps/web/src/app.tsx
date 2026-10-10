@@ -55,6 +55,10 @@ import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
 import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
+import {
+	readCompletionProviderPreference,
+	storeCompletionProviderPreference
+} from '$lib/home/completion-provider-preference';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
@@ -518,6 +522,8 @@ export default function App({
 
 	const [selectedCompletionProvider, setSelectedCompletionProvider] =
 		useState<CompletionProvider>('spikonado');
+
+	const preferredCompletionProvider = useRef<CompletionProvider>('spikonado');
 
 	const [selectedReasoningEffort, setSelectedReasoningEffort] =
 		useState<string>(defaultReasoningEffort);
@@ -1142,6 +1148,8 @@ export default function App({
 		setCurrentRepositoryKey(nextRepositoryKey);
 		setCurrentThreadId(threadId);
 		setDraftWorkspacePath(draft ? workspacePath : null);
+
+		if (draft) setSelectedCompletionProvider(preferredCompletionProvider.current);
 
 		if (threadId !== pendingCreatedThreadId) {
 			setPendingCreatedThreadId(null);
@@ -2109,7 +2117,8 @@ export default function App({
 		});
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId ?? defaultModelId);
-		setSelectedCompletionProvider('spikonado');
+		preferredCompletionProvider.current = readCompletionProviderPreference(userId);
+		setSelectedCompletionProvider(preferredCompletionProvider.current);
 		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort);
 		setFastMode(false);
 		setProjectPickerOpen(false);
@@ -2779,9 +2788,20 @@ export default function App({
 										selectedModel={selectedModel}
 										onSelectedModelChange={setSelectedModel}
 										configuredProviders={configuredProviders}
-										providersReady={providerConfigurationReady}
+										providersReady={
+											providerConfigurationReady &&
+											(selectedCompletionProvider !== 'chatgpt' ||
+												(desktopApiResolved &&
+													(!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)))
+										}
 										selectedCompletionProvider={selectedCompletionProvider}
 										onSelectedCompletionProviderChange={setSelectedCompletionProvider}
+										onCompletionProviderSelect={(provider) => {
+											preferredCompletionProvider.current = provider;
+
+											if (signedInUserId)
+												storeCompletionProviderPreference(signedInUserId, provider);
+										}}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										fastMode={fastMode}
