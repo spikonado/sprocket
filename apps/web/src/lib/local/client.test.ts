@@ -68,6 +68,26 @@ describe('workspace launch fragments', () => {
 	});
 });
 
+describe('workspace skill listing', () => {
+	it('preserves invocation policy for the composer command menu', async () => {
+		const result = {
+			skills: [
+				{ name: 'deploy', description: 'Deploy apps', disableModelInvocation: true },
+				{ name: 'review', description: 'Review code', disableModelInvocation: false }
+			],
+			warnings: []
+		};
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => Response.json(result))
+		);
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').listWorkspaceSkills({ workspacePath: '/work' })
+		).resolves.toEqual(result);
+	});
+});
+
 describe('workspace path search', () => {
 	it('passes the workspace, query, and cancellation signal to the server', async () => {
 		const result = {

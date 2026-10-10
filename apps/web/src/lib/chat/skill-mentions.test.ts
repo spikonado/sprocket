@@ -1,25 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
-import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
+import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/chat/skill-mentions';
 import type { SkillSummary } from '$lib/types/sprocket';
 
 const skills: SkillSummary[] = [
-	{ name: 'pdf-processing', description: 'Handle PDFs' },
-	{ name: 'code-review', description: 'Review code' },
-	{ name: 'deploy', description: 'Deploy apps' }
+	{ name: 'pdf-processing', description: 'Handle PDFs', disableModelInvocation: false },
+	{ name: 'code-review', description: 'Review code', disableModelInvocation: false },
+	{ name: 'deploy', description: 'Deploy apps', disableModelInvocation: true }
 ];
 
-describe('getActiveDollarQuery', () => {
+describe('getActiveSkillMention', () => {
 	it('matches with the caret mid-token', () => {
-		expect(getActiveDollarQuery('$pdf-processing', 5)).toBe('pdf-');
+		expect(getActiveSkillMention('$pdf-processing', 5)).toEqual({
+			query: 'pdf-',
+			prefix: '$',
+			tokenStart: 0
+		});
 	});
 
 	it('rejects a path-like slash inside a skill token', () => {
-		expect(getActiveDollarQuery('path/$foo/bar', 10)).toBeNull();
+		expect(getActiveSkillMention('path/$foo/bar', 10)).toBeNull();
 	});
 
 	it('rejects a dollar mid-token', () => {
-		expect(getActiveDollarQuery('price$foo', 9)).toBeNull();
+		expect(getActiveSkillMention('price$foo', 9)).toBeNull();
+	});
+
+	it('matches slash commands without matching slashes inside paths', () => {
+		expect(getActiveSkillMention('use /de', 7)).toEqual({
+			query: 'de',
+			prefix: '/',
+			tokenStart: 4
+		});
+		expect(getActiveSkillMention('src/deploy', 10)).toBeNull();
+		expect(getActiveSkillMention('/usr/bin', 8)).toBeNull();
 	});
 });
 
@@ -33,6 +47,13 @@ describe('filterSkills', () => {
 });
 
 describe('applySkillSelection', () => {
+	it('converts a slash command selection to the normal skill mention', () => {
+		expect(applySkillSelection('use /de more', 7, 'deploy')).toEqual({
+			text: 'use $deploy more',
+			caret: 12
+		});
+	});
+
 	it('replaces the active skill token and places the caret after a trailing space', () => {
 		expect(applySkillSelection('use $pd', 7, 'pdf-processing')).toEqual({
 			text: 'use $pdf-processing ',

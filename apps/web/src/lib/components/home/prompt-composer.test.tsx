@@ -36,8 +36,8 @@ const modelCatalog: ModelCatalog = {
 };
 
 const skills = [
-	{ name: 'kicad', description: 'Author KiCad schematics' },
-	{ name: 'zap', description: 'Zap tooling' }
+	{ name: 'kicad', description: 'Author KiCad schematics', disableModelInvocation: false },
+	{ name: 'zap', description: 'Zap tooling', disableModelInvocation: true }
 ];
 
 function composerProps(overrides: Partial<PromptComposerViewProps> = {}): PromptComposerViewProps {
@@ -550,6 +550,42 @@ describe('PromptComposer attachments', () => {
 });
 
 describe('PromptComposer skill menu', () => {
+	it.each(['/', '$'])(
+		'selects a disabled skill through %s as a normal skill request',
+		async (prefix) => {
+			const { textarea, props } = renderComposer({
+				projectSkills: { workspacePath: '/demo', load: async () => skills },
+				onPromptChange: vi.fn(),
+				onSubmit: vi.fn()
+			});
+
+			await typeInComposer(textarea, prefix);
+
+			const listbox = await screen.findByRole('listbox', {
+				name: prefix === '/' ? 'Available commands' : 'Available skills'
+			});
+
+			expect(within(listbox).getAllByRole('option')).toHaveLength(prefix === '/' ? 1 : 2);
+			await click(within(listbox).getByText(`${prefix}zap`));
+			expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
+			expect(textarea.value).toBe('$zap ');
+			expect(document.activeElement).toBe(textarea);
+			expect(props.onSubmit).not.toHaveBeenCalled();
+		}
+	);
+
+	it('filters slash commands and selects with Tab', async () => {
+		const { textarea, props } = renderComposer({
+			projectSkills: { workspacePath: '/demo', load: async () => skills },
+			onPromptChange: vi.fn()
+		});
+
+		await typeInComposer(textarea, '/za');
+		expect(screen.getByRole('option').textContent).toContain('/zap');
+		await pressKey(textarea, { key: 'Tab' });
+		expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
+	});
+
 	it('loads project skills on $ and selects the highlighted one', async () => {
 		const { textarea, props } = renderComposer({
 			projectSkills: { workspacePath: '/demo', load: async () => skills },

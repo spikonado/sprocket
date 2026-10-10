@@ -1,11 +1,11 @@
 import type { SkillSummary } from '$lib/types/sprocket';
 
-const ACTIVE_SKILL_TOKEN = /(^|\s)\$([a-z0-9-]*)$/i;
+const ACTIVE_SKILL_TOKEN = /(^|\s)([$/])([a-z0-9-]*)$/i;
 
-function matchActiveSkillToken(
+export function getActiveSkillMention(
 	text: string,
 	caret: number
-): { query: string; tokenStart: number } | null {
+): { query: string; prefix: '$' | '/'; tokenStart: number } | null {
 	if (caret < 0 || caret > text.length) {
 		return null;
 	}
@@ -18,13 +18,10 @@ function matchActiveSkillToken(
 	}
 
 	return {
-		query: match[2].toLowerCase(),
+		query: match[3].toLowerCase(),
+		prefix: match[2] === '/' ? '/' : '$',
 		tokenStart: match.index + match[1].length
 	};
-}
-
-export function getActiveDollarQuery(text: string, caret: number): string | null {
-	return matchActiveSkillToken(text, caret)?.query ?? null;
 }
 
 export function filterSkills(skills: SkillSummary[], query: string): SkillSummary[] {
@@ -53,7 +50,7 @@ export function applySkillSelection(
 	caret: number,
 	name: string
 ): { text: string; caret: number } | null {
-	const match = matchActiveSkillToken(text, caret);
+	const match = getActiveSkillMention(text, caret);
 
 	if (!match) {
 		return null;

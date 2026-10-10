@@ -9,7 +9,7 @@ import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
-import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
+import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/chat/skill-mentions';
 import {
 	getCatalogModel,
 	modelOptionsForCompletionProvider,
@@ -247,12 +247,14 @@ export function PromptComposerView({
 	const canSubmitContent = answeringQuestion ? canAnswerQuestion : hasMessageContent;
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
 	const canAttachMore = !composerLocked && !answeringQuestion;
-	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
+	const skillMention = getActiveSkillMention(prompt, caretPosition);
+	const skillQuery = skillMention?.query ?? null;
+	const skillPrefix = skillMention?.prefix ?? '$';
 	const atMention = getActiveAtMention(prompt, caretPosition);
 	const atQuery = atMention?.query ?? null;
 
 	const skillsPopupOpen =
-		dollarQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
+		skillQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
 
 	const pathsPopupOpen = atQuery !== null && !pathsDismissed && !answeringQuestion && !isSubmitting;
 	const paths = useComposerPaths(projectPaths, pathsPopupOpen ? atQuery : null);
@@ -260,8 +262,14 @@ export function PromptComposerView({
 	const popupOpen = skillsPopupOpen || pathsPopupOpen;
 
 	const filteredSkills = useMemo(
-		() => (dollarQuery === null ? [] : filterSkills(skills, dollarQuery)),
-		[dollarQuery, skills]
+		() =>
+			skillQuery === null
+				? []
+				: filterSkills(
+						skillPrefix === '/' ? skills.filter((skill) => skill.disableModelInvocation) : skills,
+						skillQuery
+					),
+		[skillQuery, skillPrefix, skills]
 	);
 
 	const activeOptionId =
@@ -690,7 +698,7 @@ export function PromptComposerView({
 			invalidateSkillsCache();
 		}
 
-		if (dollarQuery === null) {
+		if (skillQuery === null) {
 			setSkillsDismissed(false);
 
 			return;
@@ -701,7 +709,7 @@ export function PromptComposerView({
 		}
 
 		void ensureSkillsLoaded();
-	}, [projectSkills, dollarQuery, skillsDismissed, ensureSkillsLoaded, invalidateSkillsCache]);
+	}, [projectSkills, skillQuery, skillsDismissed, ensureSkillsLoaded, invalidateSkillsCache]);
 
 	useEffect(() => {
 		setHighlightedIndex(0);
@@ -819,6 +827,7 @@ export function PromptComposerView({
 									) : null}
 									{skillsPopupOpen ? (
 										<ComposerSkillMenu
+											prefix={skillPrefix}
 											loadState={skillsLoadState}
 											skills={filteredSkills}
 											highlightedIndex={highlightedIndex}

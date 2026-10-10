@@ -64,6 +64,7 @@ struct WorkspaceSearchEntry {
 struct SkillSummary {
     name: String,
     description: String,
+    disable_model_invocation: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -183,6 +184,7 @@ async fn list_skills(
         .map(|skill| SkillSummary {
             name: skill.name,
             description: skill.description,
+            disable_model_invocation: skill.disable_model_invocation,
         })
         .collect();
     Ok(Json(WorkspaceSkillsResponse {

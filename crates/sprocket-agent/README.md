@@ -36,8 +36,9 @@ the on-disk layout.
 to `false`. Setting it to `true` omits the skill's name and description from the
 model's workspace context, which is also reused after handoff. The skill stays
 in the host registry and user skill picker with normal precedence. Users can
-explicitly request it with `$skill-name`, and the agent can call `read_skill`
-as usual. Invalid or duplicate values skip the skill with a discovery warning.
+select it through `/` commands or `$` skills in the composer. Both insert a
+normal `$skill-name` request, and the agent can call `read_skill` as usual.
+Invalid or duplicate values skip the skill with a discovery warning.
 This is prompt filtering, not access control. `read_skill` remains unchanged and
 can still read any registered skill.
 
