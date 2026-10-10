@@ -151,6 +151,16 @@ Remove legacy-field detection once all supported clients have upgraded and
 their data directories have been migrated; collision protection remains a
 general safety rule, not a removable compatibility shim.
 
+### Browser-session native-owner inheritance
+
+Released `sessions.json` records omit `inheritNativeOwner`. The reader defaults
+it to `true` to preserve first-use native login for existing loopback cookies;
+native sign-out persists `false`, so retained cookies need an explicit login
+before acquiring another account. Normal session saves write the field without
+changing tokens, account bindings, or expiry. Remove the missing-field default
+only after releases without it are outside the supported direct-upgrade window
+and supported session stores have been rewritten.
+
 ### Local project message recency
 
 Older `project-attachments.json` files omit `lastMessageSentAt`. The server
