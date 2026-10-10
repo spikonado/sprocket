@@ -17,7 +17,6 @@ pub(crate) struct ReadSkillTool {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ReadSkillArgs {
-    /// Skill name from the Available Skills section of the workspace context.
     pub(crate) name: String,
 }
 
@@ -28,8 +27,7 @@ impl rig::tool::Tool for ReadSkillTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Read a skill's SKILL.md instructions by name. Use when a task matches a skill listed in the Skills section of your instructions."
-            .to_string()
+        String::new()
     }
 
     fn parameters(&self) -> serde_json::Value {

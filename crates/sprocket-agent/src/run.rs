@@ -165,17 +165,18 @@ fn build_workspace_prompt_context(
         blocks.join("\n\n")
     };
 
-    let skills_block = if skills.is_empty() {
+    let entries = skills
+        .iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .map(|skill| {
+            let description = collapse_whitespace(&skill.description);
+            format!("- name: {}\n  description: {description}", skill.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let skills_block = if entries.is_empty() {
         "No skills are installed.".to_string()
     } else {
-        let entries = skills
-            .iter()
-            .map(|skill| {
-                let description = collapse_whitespace(&skill.description);
-                format!("- name: {}\n  description: {description}", skill.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
@@ -1253,6 +1254,7 @@ mod tests {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),
             description: "Handle PDFs".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
@@ -1278,10 +1280,39 @@ mod tests {
     }
 
     #[test]
+    fn initial_context_omits_disabled_skills() {
+        let skills = [
+            WorkspaceSkill {
+                name: "deploy".to_string(),
+                description: "Deploy production".to_string(),
+                disable_model_invocation: true,
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+            WorkspaceSkill {
+                name: "ordinary".to_string(),
+                description: "Ordinary skill".to_string(),
+                disable_model_invocation: false,
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+        ];
+        let prompt_context = build_test_prompt_context(&[], &skills);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.contains("- name: ordinary"));
+        assert!(!initial_context.contains("deploy"));
+        assert!(!initial_context.contains("Deploy production"));
+
+        let only_disabled = build_test_prompt_context(&[], &skills[..1]);
+        let initial_context = initial_context_text(&only_disabled.initial_context);
+        assert!(!initial_context.contains("deploy"));
+        assert!(!initial_context.contains("<SKILLS>"));
+    }
+
+    #[test]
     fn initial_context_collapses_multiline_skill_descriptions() {
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Line one\nline two".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },

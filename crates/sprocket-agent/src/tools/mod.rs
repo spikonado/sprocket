@@ -343,6 +343,7 @@ mod tests {
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Demo skill".to_string(),
+            disable_model_invocation: true,
             source: SkillSource::BuiltIn { contents },
         }];
 
@@ -359,11 +360,13 @@ mod tests {
             WorkspaceSkill {
                 name: "alpha".to_string(),
                 description: "A".to_string(),
+                disable_model_invocation: false,
                 source: SkillSource::BuiltIn { contents: "" },
             },
             WorkspaceSkill {
                 name: "bravo".to_string(),
                 description: "B".to_string(),
+                disable_model_invocation: false,
                 source: SkillSource::BuiltIn { contents: "" },
             },
         ];

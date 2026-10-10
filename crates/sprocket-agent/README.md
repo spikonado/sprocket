@@ -32,6 +32,24 @@ Built-in skills live in [`sprocket-workspace/skills`](../sprocket-workspace/skil
 and are discovered at run time with project and user skills. See that crate for
 the on-disk layout.
 
+`SKILL.md` accepts an optional `disable-model-invocation` YAML boolean, defaulting
+to `false`. Setting it to `true` omits the skill's name and description from the
+model's workspace context, which is also reused after handoff. The skill stays
+in the host registry and user skill picker with normal precedence. Users can
+select it through `/` commands or `$` skills in the composer. Both insert
+`/skill-name` for disabled skills; ordinary skills use `$skill-name`.
+The agent reads explicitly requested skills by name through `read_skill` as usual.
+Invalid or duplicate values skip the skill with a discovery warning.
+This is prompt filtering, not access control. `read_skill` remains unchanged and
+can still read any registered skill.
+
+The field is a [Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill)
+and [Cursor](https://cursor.com/docs/skills#disabling-automatic-invocation)
+extension, not part of the core [Agent Skills specification](https://agentskills.io/specification).
+[Codex](https://developers.openai.com/codex/skills#optional-metadata) uses
+`policy.allow_implicit_invocation: false` in `agents/openai.yaml` instead.
+Sprocket does not read that sidecar policy or enforce tool-call authorization.
+
 ## Tools
 
 Message attachments can contain any file type, with no application size or count

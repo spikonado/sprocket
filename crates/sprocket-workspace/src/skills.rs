@@ -11,6 +11,7 @@ const MAX_SKILLS: usize = 64;
 pub struct WorkspaceSkill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub source: SkillSource,
 }
 
@@ -30,6 +31,7 @@ pub struct WorkspaceSkills {
 pub(crate) struct ParsedSkill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub body: String,
 }
 
@@ -111,6 +113,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
 
     let mut name: Option<String> = None;
     let mut description: Option<String> = None;
+    let mut disable_model_invocation = None;
 
     for line in frontmatter.lines() {
         if line.trim().is_empty() || starts_with_yaml_indent(line) {
@@ -121,7 +124,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
-        let key = key.trim();
+        let key = strip_yaml_quotes(key.trim());
         let value = value.trim();
 
         match key {
@@ -140,6 +143,24 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
                     description = Some(value.to_string());
                 }
             }
+            "disable-model-invocation" => {
+                if disable_model_invocation.is_some() {
+                    return Err("duplicate disable-model-invocation field".to_string());
+                }
+                let scalar = value
+                    .split_once('#')
+                    .filter(|(prefix, _)| prefix.ends_with(char::is_whitespace))
+                    .map_or(value, |(prefix, _)| prefix.trim_end());
+                disable_model_invocation = Some(match scalar {
+                    "true" | "True" | "TRUE" => true,
+                    "false" | "False" | "FALSE" => false,
+                    _ => {
+                        return Err(format!(
+                            "disable-model-invocation must be a YAML boolean (true or false), got {value:?}"
+                        ));
+                    }
+                });
+            }
             _ => {}
         }
     }
@@ -150,6 +171,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     Ok(ParsedSkill {
         name,
         description,
+        disable_model_invocation: disable_model_invocation.unwrap_or(false),
         body: body.to_string(),
     })
 }
@@ -209,6 +231,7 @@ fn parse_and_validate_builtin(
     Ok(WorkspaceSkill {
         name: parsed.name,
         description: parsed.description,
+        disable_model_invocation: parsed.disable_model_invocation,
         source: SkillSource::BuiltIn { contents },
     })
 }
@@ -313,6 +336,7 @@ fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, S
     Ok(WorkspaceSkill {
         name: parsed.name,
         description: parsed.description,
+        disable_model_invocation: parsed.disable_model_invocation,
         source: SkillSource::File { skill_md_path },
     })
 }
@@ -376,11 +400,21 @@ mod tests {
     use super::*;
 
     fn write_skill(dir: &Path, name: &str, description: &str, body: &str) {
+        write_skill_with_frontmatter(dir, name, description, body, "");
+    }
+
+    fn write_skill_with_frontmatter(
+        dir: &Path,
+        name: &str,
+        description: &str,
+        body: &str,
+        frontmatter: &str,
+    ) {
         let skill_dir = dir.join(name);
         fs::create_dir_all(&skill_dir).expect("skill dir");
         fs::write(
             skill_dir.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: {description}\n---\n{body}\n"),
+            format!("---\nname: {name}\ndescription: {description}\n{frontmatter}---\n{body}\n"),
         )
         .expect("skill file");
     }
@@ -395,9 +429,21 @@ mod tests {
         fs::create_dir_all(&project_skills).expect("project skills");
 
         write_skill(&project_skills, "alpha", "from project", "project body");
-        write_skill(&project_skills, "shared", "project wins", "project shared");
+        write_skill_with_frontmatter(
+            &project_skills,
+            "shared",
+            "project wins",
+            "project shared",
+            "disable-model-invocation: true\n",
+        );
         write_skill(&sprocket_user, "shared", "sprocket user", "sprocket shared");
-        write_skill(&sprocket_user, "bravo", "from sprocket", "sprocket body");
+        write_skill_with_frontmatter(
+            &sprocket_user,
+            "bravo",
+            "from sprocket",
+            "sprocket body",
+            "disable-model-invocation: true\n",
+        );
         write_skill(&agents_user, "shared", "agents user", "agents shared");
         write_skill(&agents_user, "charlie", "from agents", "agents body");
 
@@ -408,7 +454,7 @@ mod tests {
             ),
             (
                 "delta",
-                "---\nname: delta\ndescription: from builtin\n---\nbuiltin delta\n",
+                "---\nname: delta\ndescription: from builtin\ndisable-model-invocation: true\n---\nbuiltin delta\n",
             ),
         ];
 
@@ -424,6 +470,13 @@ mod tests {
             .map(|skill| skill.name.as_str())
             .collect();
         assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta", "shared"]);
+        let hidden_names: Vec<_> = loaded
+            .skills
+            .iter()
+            .filter(|skill| skill.disable_model_invocation)
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert_eq!(hidden_names, vec!["bravo", "delta", "shared"]);
 
         let shared = loaded
             .skills
@@ -462,6 +515,13 @@ mod tests {
 
         write_skill(&skills, "BadName", "uppercase", "body");
         write_skill(&skills, "-leading", "leading hyphen", "body");
+        write_skill_with_frontmatter(
+            &skills,
+            "bad-policy",
+            "invalid invocation policy",
+            "body",
+            "disable-model-invocation: maybe\n",
+        );
 
         let no_desc = skills.join("no-desc");
         fs::create_dir_all(&no_desc).unwrap();
@@ -473,6 +533,10 @@ mod tests {
 
         let loaded = load_workspace_skills(&root, &[], &[]);
         assert!(loaded.skills.is_empty());
+        assert!(loaded.warnings.iter().any(|warning| {
+            warning.contains("bad-policy")
+                && warning.contains("disable-model-invocation must be a YAML boolean")
+        }));
         assert!(
             loaded
                 .warnings
@@ -514,6 +578,39 @@ mod tests {
         assert_eq!(parsed.name, "pdf-processing");
         assert_eq!(parsed.description, "Handle PDFs");
         assert_eq!(parsed.body, "# Body\n\nDo the thing.\n");
+    }
+
+    #[test]
+    fn parses_optional_disable_model_invocation() {
+        for (frontmatter, expected) in [
+            ("", false),
+            ("disable-model-invocation: false\n", false),
+            ("disable-model-invocation: true\n", true),
+            ("\"disable-model-invocation\": true\n", true),
+            ("disable-model-invocation: TRUE # explicit only\n", true),
+            ("metadata:\n  disable-model-invocation: true\n", false),
+        ] {
+            let contents =
+                format!("---\nname: demo\ndescription: demo skill\n{frontmatter}---\nbody\n");
+            let parsed = parse_skill_markdown(&contents).expect("valid frontmatter");
+            assert_eq!(parsed.disable_model_invocation, expected, "{frontmatter}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_disable_model_invocation() {
+        for value in [
+            "",
+            "maybe",
+            "\"true\"",
+            "false\ndisable-model-invocation: true",
+        ] {
+            let contents = format!(
+                "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: {value}\n---\nbody\n"
+            );
+            let error = parse_skill_markdown(&contents).expect_err("invalid frontmatter");
+            assert!(error.contains("disable-model-invocation"), "{error}");
+        }
     }
 
     #[test]
