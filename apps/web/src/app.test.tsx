@@ -1067,7 +1067,7 @@ it('renders remote history progressively and allows sending while older parts lo
 		});
 	});
 	expect(await screen.findByText('The latest robot update')).toBeTruthy();
-	expect(screen.getByRole('status').textContent).toContain(
+	expect((await screen.findByRole('status', {}, { timeout: 3_000 })).textContent).toContain(
 		'Conversation history is still loading.'
 	);
 	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Continue with the robot' } });
