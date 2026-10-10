@@ -927,7 +927,7 @@ export function PromptComposerView({
 											ariaLabel="Select provider"
 											menuTitle="Provider"
 											compactOnMobile
-											disabled={composerLocked || answeringQuestion || !providersReady}
+											disabled={composerLocked || answeringQuestion}
 											onValueChange={handleProviderChange}
 											className="z-20 shrink-0"
 											triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"

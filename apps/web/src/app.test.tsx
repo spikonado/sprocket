@@ -903,6 +903,43 @@ it.each([false, true])(
 	}
 );
 
+it('can switch away from saved ChatGPT and send while its connection check is pending', async () => {
+	storeCompletionProviderPreference('user-a', 'chatgpt');
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => new Promise(() => {}));
+
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				fetchChatGptStatus: () => new Promise(() => {}),
+				runAgent
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'New work' } });
+	expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
+	const picker = screen.getByRole('button', { name: 'Select provider' });
+	expect(picker).toHaveProperty('disabled', false);
+	fireEvent.click(picker);
+	fireEvent.click(screen.getByRole('button', { name: 'Spikonado' }));
+	expect(readCompletionProviderPreference('user-a')).toBe('spikonado');
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				completionProvider: 'spikonado',
+				prompt: 'New work'
+			})
+		)
+	);
+});
+
 it('enables run-bound Stop after the lifecycle arrives behind a pending question', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
