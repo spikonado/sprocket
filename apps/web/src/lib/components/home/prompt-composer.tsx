@@ -532,14 +532,14 @@ export function PromptComposerView({
 			}
 
 			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
-				event.preventDefault();
 				const skill = filteredSkills[highlightedIndex];
 
 				if (skill) {
+					event.preventDefault();
 					selectSkill(skill);
-				}
 
-				return;
+					return;
+				}
 			}
 		}
 

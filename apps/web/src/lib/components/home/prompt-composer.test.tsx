@@ -550,6 +550,20 @@ describe('PromptComposer attachments', () => {
 });
 
 describe('PromptComposer skill menu', () => {
+	it('submits a message ending in an unmatched slash token with Enter', async () => {
+		const { textarea, props } = renderComposer({
+			projectSkills: { workspacePath: '/demo', load: async () => skills },
+			modelCatalog,
+			selectedModel: 'model-one',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		await typeInComposer(textarea, 'inspect /tmp');
+		expect(screen.getByText('No matching commands')).toBeTruthy();
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
 	it.each(['/', '$'])(
 		'selects a disabled skill through %s as a normal skill request',
 		async (prefix) => {
