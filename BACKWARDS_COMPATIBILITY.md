@@ -26,6 +26,15 @@ summary cutoff. Missing historical provider IDs still mean `spikonado`. Local
 transcripts, saved provider settings and Convex documents keep their existing
 formats, so existing threads need no migration.
 
+If that handoff fails, the selected provider continues from the same visible
+history with reasoning replay omitted. The thread may store optional
+`reasoningStrippedThroughPartNumber`, an inclusive part cutoff. Released
+clients ignore the field. Transcript state responses include it when set, and
+older local transcript state files load without it. Parts, summaries and
+provider settings stay in their existing formats, so no migration is required.
+The cutoff is persistent replay state, not a compatibility shim. Keep it until
+a migration removes the covered reasoning from stored transcript parts.
+
 ### Rig 0.43 upstream revision
 
 Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the

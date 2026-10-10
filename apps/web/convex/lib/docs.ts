@@ -22,7 +22,8 @@ export const vTranscriptStateResult = v.object({
 	threadId: v.id('threadRecords'),
 	totalParts: v.number(),
 	historyFromNumber: v.number(),
-	contextSummary: v.optional(v.string())
+	contextSummary: v.optional(v.string()),
+	reasoningStrippedThroughPartNumber: v.optional(v.number())
 });
 
 export const vTranscriptPartsResult = v.object({

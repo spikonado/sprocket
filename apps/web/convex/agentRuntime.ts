@@ -479,6 +479,37 @@ export const saveContextHandoff = mutation({
 	}
 });
 
+export const omitReasoningReplay = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		beforePrompt: v.boolean()
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			beforePrompt: args.beforePrompt
+		});
+
+		if (throughPartNumber > (thread.reasoningStrippedThroughPartNumber ?? -1)) {
+			await ctx.db.patch('threadRecords', thread._id, {
+				reasoningStrippedThroughPartNumber: throughPartNumber
+			});
+		}
+
+		return true;
+	}
+});
+
 export const recordContextUsage = mutation({
 	args: {
 		runId: v.id('runs'),

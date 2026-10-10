@@ -142,6 +142,7 @@ pub(crate) async fn synchronize(
         total_parts: 0,
         history_from_number: 0,
         context_summary: None,
+        reasoning_stripped_through_part_number: None,
     });
     tokio::select! {
         result = async {

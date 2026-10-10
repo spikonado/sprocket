@@ -27,7 +27,8 @@ export async function transcriptStateResult(
 		threadId,
 		totalParts: state?.totalParts ?? 0,
 		historyFromNumber: transcriptHistoryFromNumber(thread),
-		contextSummary: thread?.contextSummary || undefined
+		contextSummary: thread?.contextSummary || undefined,
+		reasoningStrippedThroughPartNumber: thread?.reasoningStrippedThroughPartNumber
 	};
 }
 
