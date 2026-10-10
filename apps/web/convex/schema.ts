@@ -396,7 +396,6 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
-		modelInitiated: v.optional(v.boolean()),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),

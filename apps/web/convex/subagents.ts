@@ -245,7 +245,6 @@ export const createOrSend = mutation({
 				repositoryKey: creating ? callerThread.repositoryKey : undefined,
 				parentThreadId: creating ? callerRun.threadId : undefined,
 				prompt: args.prompt,
-				modelInitiated: true,
 				imageUploadIds: [],
 				selectedModel: args.model,
 				completionProvider,

@@ -72,9 +72,6 @@ export const vGetContextResult = v.object({
 			parentThreadId: v.optional(v.id('threadRecords'))
 		}),
 	prompt: v.string(),
-	promptIsUser: v.boolean(),
-	invocationPrompt: v.optional(v.string()),
-	invocationPromptIsUser: v.optional(v.boolean()),
 	contextTokens: v.optional(v.number())
 });
 

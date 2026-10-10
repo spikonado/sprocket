@@ -1,10 +1,4 @@
-import {
-	action,
-	internalMutation,
-	mutation,
-	query,
-	type QueryCtx
-} from '@convex/_generated/server';
+import { action, internalMutation, mutation, query } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
@@ -309,39 +303,10 @@ export const renewClaim = mutation({
 	}
 });
 
-async function resolveInvocationPrompt(
-	ctx: QueryCtx,
-	run: Doc<'runs'>,
-	prompt: Doc<'threadTranscriptParts'>['prompt'],
-	parentThreadId: Doc<'threadRecords'>['_id'] | undefined
-) {
-	let source = run;
-
-	for (let hops = 0; hops <= 64; hops++) {
-		if (prompt) {
-			return {
-				invocationPrompt: prompt.text,
-				invocationPromptIsUser: !(source.modelInitiated ?? parentThreadId !== undefined)
-			};
-		}
-
-		if (hops === 64 || !source.continuationOfRunId) break;
-		const previous = await ctx.db.get('runs', source.continuationOfRunId);
-
-		if (!previous || previous.userId !== run.userId || previous.threadId !== run.threadId) break;
-		source = previous;
-		prompt = (await getPromptPart(ctx, run.threadId, source._id))?.prompt;
-	}
-
-	return { invocationPrompt: '', invocationPromptIsUser: false };
-}
-
 function getContextResult(args: {
 	run: Doc<'runs'>;
 	parentThreadId?: Doc<'threadRecords'>['_id'];
 	prompt: string;
-	invocationPrompt: string;
-	invocationPromptIsUser: boolean;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
@@ -357,10 +322,7 @@ function getContextResult(args: {
 			continuationOfRunId: args.run.continuationOfRunId,
 			parentThreadId: args.parentThreadId
 		},
-		prompt: args.prompt,
-		promptIsUser: !(args.run.modelInitiated ?? args.parentThreadId !== undefined),
-		invocationPrompt: args.invocationPrompt,
-		invocationPromptIsUser: args.invocationPromptIsUser
+		prompt: args.prompt
 	};
 
 	if (args.contextTokens !== undefined) {
@@ -383,15 +345,23 @@ export const getContext = query({
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 		const parentThreadId = thread?.parentThreadId;
 
-		if (!promptPart?.prompt && !run.continuationOfRunId) {
-			throw new Error('Run does not contain a user prompt.');
+		if (!promptPart?.prompt) {
+			if (!run.continuationOfRunId) {
+				throw new Error('Run does not contain a user prompt.');
+			}
+
+			return getContextResult({
+				run,
+				parentThreadId,
+				prompt: '',
+				contextTokens
+			});
 		}
 
 		return getContextResult({
 			run,
 			parentThreadId,
-			prompt: promptPart?.prompt?.text ?? '',
-			...(await resolveInvocationPrompt(ctx, run, promptPart?.prompt, parentThreadId)),
+			prompt: promptPart.prompt.text,
 			contextTokens
 		});
 	}

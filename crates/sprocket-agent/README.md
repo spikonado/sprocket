@@ -33,32 +33,20 @@ and are discovered at run time with project and user skills. See that crate for
 the on-disk layout.
 
 `SKILL.md` accepts an optional `disable-model-invocation` YAML boolean, defaulting
-to `false`. Setting it to `true` keeps the skill in host discovery with normal
-project, user, and built-in precedence for explicit `$skill-name` invocation,
-but disables automatic model invocation. Invalid values and duplicate policy
-fields skip the skill with a discovery warning.
+to `false`. Setting it to `true` omits the skill's name and description from the
+model's workspace context, which is also reused after handoff. The skill stays
+in the host registry and user skill picker with normal precedence. Users can
+explicitly request it with `$skill-name`, and the agent can call `read_skill`
+as usual. Invalid or duplicate values skip the skill with a discovery warning.
+This is prompt filtering, not access control. `read_skill` remains unchanged and
+can still read any registered skill.
 
-Explicit-only names and descriptions are omitted from normal model context,
-including context rebuilt after handoff. An explicit invocation in the current
-user prompt loads the body through the normal size-capped reader. `read_skill`
-rejects reads without that invocation. Authorization lasts for that request,
-including its in-run handoffs, and does not carry into later requests or
-model-generated subagent prompts. Promptless recovery keeps the original
-request's invocation. These skills still appear in the user's
-skill picker. This controls skill loading, not shell or filesystem access.
-Eagerly loaded skills share a conservative budget of one quarter of the model's
-context window in bytes, capped at 256 KiB. Requests that exceed it fail with
-guidance to invoke fewer skills or choose a larger-context model.
-
-This is a [Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill)
+The field is a [Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill)
 and [Cursor](https://cursor.com/docs/skills#disabling-automatic-invocation)
-compatibility extension, not a required field in the
-[Agent Skills specification](https://agentskills.io/specification).
-[Codex](https://developers.openai.com/codex/skills#optional-metadata) expresses
-explicit-only invocation through `policy.allow_implicit_invocation: false` in
-`agents/openai.yaml`. This extension does not add support for that sidecar policy.
-See [issue #339](https://github.com/spikonado/sprocket/issues/339) for the policy
-requirements and source references.
+extension, not part of the core [Agent Skills specification](https://agentskills.io/specification).
+[Codex](https://developers.openai.com/codex/skills#optional-metadata) uses
+`policy.allow_implicit_invocation: false` in `agents/openai.yaml` instead.
+Sprocket does not read that sidecar policy or enforce tool-call authorization.
 
 ## Tools
 

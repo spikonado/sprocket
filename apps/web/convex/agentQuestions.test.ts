@@ -2,11 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import {
-	AGENT_DECIDE_OPTION_ID,
-	QUESTION_TIMEOUT_CHECKPOINT_MS,
-	formatQuestionContinuationPrompt
-} from '@convex/lib/agentQuestions';
+import { AGENT_DECIDE_OPTION_ID, QUESTION_TIMEOUT_CHECKPOINT_MS } from '@convex/lib/agentQuestions';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -54,18 +50,6 @@ async function startRun(
 }
 
 describe('agentQuestions', () => {
-	it('escapes selected option labels while preserving explicit user-written invocations', () => {
-		const question = {
-			question: 'Should I use $deploy?',
-			answer: { optionLabel: 'Skip $deploy', text: 'Use $release' }
-		};
-
-		expect(formatQuestionContinuationPrompt([question])).toBe('Skip \\$deploy: Use $release');
-		expect(formatQuestionContinuationPrompt([question, question])).toBe(
-			'Answers to your questions:\n\n1. Skip \\$deploy: Use $release\n\n2. Skip \\$deploy: Use $release'
-		);
-	});
-
 	it('creates a question with agent_decide, enforces FIFO answers, and times out', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();
@@ -656,7 +640,7 @@ describe('agentQuestions', () => {
 		});
 	});
 
-	it('aggregates answers without treating model-authored questions as user skill invocations', async () => {
+	it('keeps pending questions after completion and aggregates their answers', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
@@ -664,8 +648,8 @@ describe('agentQuestions', () => {
 		const first = await t.mutation(api.agentQuestions.create, {
 			runId,
 			claimId,
-			question: 'Should I use $deploy?',
-			options: [{ id: 'no', label: 'Skip $deploy' }],
+			question: 'First open question?',
+			options: [{ id: 'yes', label: 'Yes' }],
 			executionSecret
 		});
 
@@ -694,13 +678,13 @@ describe('agentQuestions', () => {
 		const firstAnswer = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
 			questionId: first.questionId,
-			optionId: 'no'
+			optionId: 'yes'
 		});
 
 		expect(firstAnswer).toMatchObject({
 			question: {
 				status: 'answered',
-				answer: { optionId: 'no', optionLabel: 'Skip $deploy' }
+				answer: { optionId: 'yes', optionLabel: 'Yes' }
 			}
 		});
 		expect(firstAnswer).not.toHaveProperty('continuation');
@@ -723,7 +707,7 @@ describe('agentQuestions', () => {
 			continuation: {
 				runId,
 				prompt:
-					'Answers to your questions:\n\n1. Skip \\$deploy\n\n2. Ship it: include the release notes'
+					'Answers to your questions:\n\n1. First open question?\n   Yes\n\n2. Second open question?\n   Ship it: include the release notes'
 			}
 		});
 	});

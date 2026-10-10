@@ -924,12 +924,6 @@ pub async fn run_agent(
             eprintln!("sprocket-agent: {warning}");
         }
         let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
-        let (invocation_prompt, invocation_prompt_is_user) = context.skill_invocation_source();
-        let skill_invocations = crate::tools::SkillInvocations::from_run_prompt(
-            &skills,
-            invocation_prompt,
-            invocation_prompt_is_user,
-        );
         let is_continuation = context.run.continuation_of_run_id.is_some()
             || request.continuation_of_run_id.is_some();
         let prompt_text = prior_history
@@ -957,11 +951,6 @@ pub async fn run_agent(
             &context.run.thread_id,
             &transcript_dir,
         );
-        let mut initial_context = vec![prompt_context.initial_context];
-        // Budget one byte per token and leave most of the window for history and output.
-        let skill_context_bytes =
-            (capabilities.context_budget.context_window_tokens / 4).min(256 * 1024) as usize;
-        initial_context.extend(skill_invocations.load_context(&skills, skill_context_bytes)?);
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -970,23 +959,13 @@ pub async fn run_agent(
         Ok((
             prompt,
             provider,
-            prompt_context.base_instructions,
-            initial_context,
+            prompt_context,
             skills,
-            skill_invocations,
             continue_without_prompt,
         ))
     })();
 
-    let (
-        prompt,
-        provider,
-        base_instructions,
-        initial_context,
-        skills,
-        skill_invocations,
-        continue_without_prompt,
-    ) = match prepared {
+    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -1045,8 +1024,8 @@ pub async fn run_agent(
                     run_started_at: context.run.started_at,
                     live: live.clone(),
                     prompt,
-                    base_instructions,
-                    initial_context,
+                    base_instructions: prompt_context.base_instructions,
+                    initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),
@@ -1057,7 +1036,6 @@ pub async fn run_agent(
                     command_sessions: command_sessions.clone(),
                     workspace_root,
                     skills,
-                    skill_invocations,
                     reasoning_effort,
                     fast_mode,
                     context_budget: capabilities.context_budget,
@@ -1252,15 +1230,13 @@ mod tests {
     }
 
     #[test]
-    fn explicit_only_skills_stay_hidden_after_handoff_and_context_reconstruction() {
+    fn initial_context_omits_disabled_skills() {
         let skills = [
             WorkspaceSkill {
                 name: "deploy".to_string(),
                 description: "Deploy production".to_string(),
                 disable_model_invocation: true,
-                source: SkillSource::BuiltIn {
-                    contents: "---\nname: deploy\ndescription: Deploy production\ndisable-model-invocation: true\n---\n# Deployment instructions\n",
-                },
+                source: SkillSource::BuiltIn { contents: "" },
             },
             WorkspaceSkill {
                 name: "ordinary".to_string(),
@@ -1269,41 +1245,16 @@ mod tests {
                 source: SkillSource::BuiltIn { contents: "" },
             },
         ];
-        for invoked in [false, true] {
-            let user_prompt = if invoked {
-                "Use $deploy"
-            } else {
-                "Review the app"
-            };
-            let invocations =
-                crate::tools::SkillInvocations::from_run_prompt(&skills, user_prompt, true);
-            let workspace_context = build_test_prompt_context(&[], &skills);
-            let metadata = initial_context_text(&workspace_context.initial_context);
-            assert!(metadata.contains("- name: ordinary"));
-            assert!(!metadata.contains("deploy"));
-            assert!(!metadata.contains("Deploy production"));
-            assert!(!workspace_context.base_instructions.contains("deploy"));
-            let mut initial_context = vec![workspace_context.initial_context];
-            initial_context.extend(invocations.load_context(&skills, 256 * 1024).unwrap());
+        let prompt_context = build_test_prompt_context(&[], &skills);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.contains("- name: ordinary"));
+        assert!(!initial_context.contains("deploy"));
+        assert!(!initial_context.contains("Deploy production"));
 
-            for deferred in [None, Some(Message::user(user_prompt))] {
-                let (history, prompt) = crate::provider::context_after_handoff(
-                    &initial_context,
-                    "Work remains to be done.",
-                    deferred,
-                );
-                let serialized = serde_json::to_string(&(history, prompt)).unwrap();
-                assert!(serialized.contains("Ordinary skill"));
-                assert_eq!(serialized.contains("Deploy production"), invoked);
-                assert_eq!(serialized.contains("# Deployment instructions"), invoked);
-            }
-        }
-
-        let rebuilt = build_test_prompt_context(&[], &skills);
-        assert!(!initial_context_text(&rebuilt.initial_context).contains("deploy"));
-        let only_explicit = build_test_prompt_context(&[], &skills[..1]);
-        assert!(!initial_context_text(&only_explicit.initial_context).contains("deploy"));
-        assert!(!initial_context_text(&only_explicit.initial_context).contains("<SKILLS>"));
+        let only_disabled = build_test_prompt_context(&[], &skills[..1]);
+        let initial_context = initial_context_text(&only_disabled.initial_context);
+        assert!(!initial_context.contains("deploy"));
+        assert!(!initial_context.contains("<SKILLS>"));
     }
 
     #[test]

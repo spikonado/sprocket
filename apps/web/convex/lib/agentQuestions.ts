@@ -220,8 +220,7 @@ export function normalizeQuestionAnswer(args: {
 }
 
 function formatAnswer(answer: AgentQuestionAnswer): string {
-	// Labels are model-authored, so their dollar tokens must not grant skill access.
-	return [answer.optionLabel?.replaceAll('$', '\\$'), answer.text]
+	return [answer.optionLabel, answer.text]
 		.filter((part): part is string => Boolean(part))
 		.join(': ');
 }
@@ -232,9 +231,10 @@ export function formatQuestionContinuationPrompt(questions: AnsweredAgentQuestio
 	}
 
 	const entries = questions.map((question, index) => {
+		const questionText = question.question.replaceAll('\n', '\n   ');
 		const answerText = formatAnswer(question.answer).replaceAll('\n', '\n   ');
 
-		return `${index + 1}. ${answerText}`;
+		return `${index + 1}. ${questionText}\n   ${answerText}`;
 	});
 
 	return `Answers to your questions:\n\n${entries.join('\n\n')}`;

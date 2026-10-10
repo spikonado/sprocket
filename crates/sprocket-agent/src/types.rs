@@ -123,24 +123,8 @@ pub struct RenewClaimResponse {
 pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub prompt: String,
-    #[serde(default)]
-    pub prompt_is_user: bool,
-    #[serde(default)]
-    pub invocation_prompt: Option<String>,
-    #[serde(default)]
-    pub invocation_prompt_is_user: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub context_tokens: u64,
-}
-
-impl RunContextResponse {
-    pub(crate) fn skill_invocation_source(&self) -> (&str, bool) {
-        match (&self.invocation_prompt, self.invocation_prompt_is_user) {
-            (Some(prompt), Some(is_user)) => (prompt, is_user),
-            (None, None) => (&self.prompt, self.prompt_is_user),
-            _ => ("", false),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -503,39 +487,6 @@ mod tests {
         AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
         deserialize_agent_history,
     };
-
-    #[test]
-    fn run_prompt_provenance_defaults_to_no_skill_authorization() {
-        let context = serde_json::json!({
-            "run": {
-                "_id": "run-id",
-                "threadId": "thread-id",
-                "userId": "user-id",
-                "selectedModel": "model",
-                "reasoningEffort": "high",
-                "fastMode": false,
-                "startedAt": 0,
-            },
-            "prompt": "$deploy",
-        });
-        let legacy: super::RunContextResponse = serde_json::from_value(context.clone()).unwrap();
-        assert!(!legacy.prompt_is_user);
-        assert_eq!(legacy.skill_invocation_source(), ("$deploy", false));
-        for prompt_is_user in [false, true] {
-            let mut context = context.clone();
-            context["promptIsUser"] = serde_json::json!(prompt_is_user);
-            let parsed: super::RunContextResponse = serde_json::from_value(context).unwrap();
-            assert_eq!(parsed.prompt_is_user, prompt_is_user);
-        }
-        let mut recovery = context;
-        recovery["prompt"] = serde_json::json!("");
-        recovery["invocationPrompt"] = serde_json::json!("$deploy");
-        let partial: super::RunContextResponse = serde_json::from_value(recovery.clone()).unwrap();
-        assert_eq!(partial.skill_invocation_source(), ("", false));
-        recovery["invocationPromptIsUser"] = serde_json::json!(true);
-        let parsed: super::RunContextResponse = serde_json::from_value(recovery).unwrap();
-        assert_eq!(parsed.skill_invocation_source(), ("$deploy", true));
-    }
 
     #[test]
     fn deserializes_tool_history_into_rig_messages_with_matching_ids() {

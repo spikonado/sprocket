@@ -14,9 +14,9 @@ import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
-// Backfills for legacy stored shapes that current writers no longer produce.
-// The migrations need no start delay and are safe to trigger from the CLI
-// as soon as they deploy:
+// Backfills for legacy stored fields that predate their validators. Current
+// code never writes these fields, so the migrations need no start delay and
+// are safe to trigger from the CLI as soon as they deploy:
 //
 //   bunx convex run migrations:runLegacyCompatBackfill '{"dryRun":true}'
 //   bunx convex run migrations:runLegacyCompatBackfill
@@ -345,16 +345,6 @@ export const removeArtifactRegistryRekeyTargets = migrations.define({
 	}
 });
 
-export const backfillRunPromptProvenance = migrations.define({
-	table: 'runs',
-	migrateOne: async (ctx, run) => {
-		if (run.modelInitiated !== undefined) return;
-		const thread = await ctx.db.get('threadRecords', run.threadId);
-
-		return { modelInitiated: Boolean(thread?.parentThreadId) };
-	}
-});
-
 // Project ownership is available immediately through artifact readers; this
 // backfill removes historical confinement without changing artifact identities
 // or content revisions. Registry invalidation refreshes installed-client caches.
@@ -380,13 +370,12 @@ const legacyCompatBackfillMigrations: FunctionReference<'mutation', 'internal'>[
 	internal.migrations.normalizeTranscriptCompletionTiming,
 	internal.migrations.stripStoredAttachmentImageUploadIds,
 	internal.migrations.removeSectionLinkedParts,
-	internal.migrations.removeArtifactRegistryRekeyTargets,
-	internal.migrations.backfillRunPromptProvenance
+	internal.migrations.removeArtifactRegistryRekeyTargets
 ];
 
 export const runLegacyCompatBackfill = migrations.runner(legacyCompatBackfillMigrations);
 
-const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10-run-prompt-provenance';
+const LEGACY_COMPAT_BACKFILL = 'legacy-compat-backfill-2026-10-command-inputs';
 
 const projectArtifactMigrations: FunctionReference<'mutation', 'internal'>[] = [
 	internal.migrations.promoteThreadArtifacts
