@@ -7,9 +7,11 @@ import Button from '$lib/components/ui/button/button';
 
 export default function SettingsAccount({
 	user,
+	error,
 	onSignOut
 }: {
 	user: AuthUser | null;
+	error: string | null;
 	onSignOut: () => void;
 }) {
 	const [emailRevealed, setEmailRevealed] = useState(false);
@@ -81,6 +83,11 @@ export default function SettingsAccount({
 							<LogOut className="mr-2 size-4" aria-hidden="true" />
 							Sign Out
 						</Button>
+						{error && (
+							<p role="alert" className="text-destructive mt-3 text-sm">
+								{error}
+							</p>
+						)}
 					</div>
 				</div>
 			</div>

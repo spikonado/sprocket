@@ -1127,6 +1127,37 @@ export async function signOut() {
 		}
 
 		convexAuthRetryPending.set(false);
+
+		if (isMachineApp() && !isRemoteMachineApp() && errors.length > 0) {
+			const generation = authGeneration;
+			const outcome = await requestNativeSessionToken(false, generation);
+
+			if (generation !== authGeneration || outcome.kind === 'stale') {
+				return;
+			}
+
+			if (outcome.kind === 'signedOut') {
+				authState.set(
+					signedOutState({
+						error: errors.join(' ')
+					})
+				);
+
+				return;
+			}
+
+			// Only an authoritative signed-out response can clear the retained account.
+			authState.update((current) => ({
+				...current,
+				user: outcome.kind === 'session' ? outcome.user : current.user,
+				isLoading: false,
+				nativeSession: outcome.kind === 'session' || current.user ? 'ready' : current.nativeSession,
+				error: errors.join(' ')
+			}));
+
+			return;
+		}
+
 		authState.set(
 			signedOutState({
 				user: browserSignOutFailed ? remainingBrowserUser : null,

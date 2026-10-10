@@ -2688,7 +2688,11 @@ export default function App({
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments />
 						) : (
-							<SettingsAccount user={auth.user} onSignOut={() => void signOut()} />
+							<SettingsAccount
+								user={auth.user}
+								error={auth.error}
+								onSignOut={() => void signOut()}
+							/>
 						)
 					) : (
 						<>
