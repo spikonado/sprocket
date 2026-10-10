@@ -335,22 +335,23 @@ mod tests {
     }
 
     #[test]
-    fn read_skill_returns_builtin_content_without_dir() {
+    fn read_skill_returns_complete_large_builtin_body() {
+        let body = format!("{}\nFinal instruction.\n", "λ".repeat(40 * 1024));
+        let contents = Box::leak(
+            format!("---\nname: demo\ndescription: Demo skill\n---\n{body}").into_boxed_str(),
+        );
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Demo skill".to_string(),
             disable_model_invocation: true,
-            source: SkillSource::BuiltIn {
-                contents: "---\nname: demo\ndescription: Demo skill\n---\n# Do it\n",
-            },
+            source: SkillSource::BuiltIn { contents },
         }];
 
         let value = resolve_read_skill(&skills, "demo").expect("should resolve");
         assert_eq!(value["name"], "demo");
         assert_eq!(value["description"], "Demo skill");
-        assert_eq!(value["content"], "# Do it\n");
+        assert_eq!(value["content"], body);
         assert!(value.get("dir").is_none());
-        assert!(value.get("truncated").is_none());
     }
 
     #[test]

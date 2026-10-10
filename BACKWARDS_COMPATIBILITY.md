@@ -605,6 +605,13 @@ both shapes so executor history and local JSONL transcripts remain readable.
 `normalizeScrapeUrlResults` drops `truncated` and backfills the Firecrawl
 default summary with an empty image list.
 
+#### Historical skill results
+
+`read_skill` returns complete bodies and no longer emits `truncated`.
+The stored result validator still accepts that optional field for released
+clients and historical results. Remove it only after those clients age out and
+stored results are migrated. Local transcripts must continue accepting it.
+
 #### Hosted parse files
 
 Historical `parse_file` jobs and results may identify their source with a URL.

@@ -82,8 +82,5 @@ pub(super) fn resolve_read_skill(
     if let Some(dir) = content.dir {
         value["dir"] = json!(dir);
     }
-    if content.truncated {
-        value["truncated"] = json!(true);
-    }
     Ok(value)
 }
