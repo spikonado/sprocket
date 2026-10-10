@@ -57,6 +57,7 @@ export type PromptComposerProps = {
 	providersReady?: boolean;
 	selectedCompletionProvider?: CompletionProvider;
 	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
+	onCompletionProviderSelect?: (provider: CompletionProvider) => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
 	fastMode?: boolean;
@@ -120,6 +121,7 @@ export function PromptComposerView({
 	providersReady = true,
 	selectedCompletionProvider = 'spikonado',
 	onSelectedCompletionProviderChange,
+	onCompletionProviderSelect,
 	selectedReasoningEffort = defaultReasoningEffort,
 	onSelectedReasoningEffortChange,
 	fastMode = false,
@@ -584,14 +586,17 @@ export function PromptComposerView({
 	function handleProviderChange(provider: CompletionProvider) {
 		if (!modelCatalog) return;
 		onSelectedCompletionProviderChange?.(provider);
+		onCompletionProviderSelect?.(provider);
 
 		const modelId = resolveModelForCompletionProvider(modelCatalog, provider, selectedModel);
 
 		if (!modelId) return;
+		const model = getCatalogModel(modelCatalog, modelId);
 		onSelectedModelChange?.(modelId);
 		onSelectedReasoningEffortChange?.(
-			getCatalogModel(modelCatalog, modelId)?.defaultReasoningEffort ??
-				modelCatalog.defaultReasoningEffort
+			model?.reasoningEfforts.includes(selectedReasoningEffort)
+				? selectedReasoningEffort
+				: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
 		);
 		onFastModeChange?.(false);
 	}
@@ -615,10 +620,12 @@ export function PromptComposerView({
 		);
 
 		if (resolvedModel && resolvedModel !== selectedModel) {
+			const model = getCatalogModel(modelCatalog, resolvedModel);
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
-				getCatalogModel(modelCatalog, resolvedModel)?.defaultReasoningEffort ??
-					modelCatalog.defaultReasoningEffort
+				model?.reasoningEfforts.includes(selectedReasoningEffort)
+					? selectedReasoningEffort
+					: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
 			);
 			onFastModeChange?.(false);
 		}
@@ -628,6 +635,7 @@ export function PromptComposerView({
 		configuredProviders,
 		selectedCompletionProvider,
 		selectedModel,
+		selectedReasoningEffort,
 		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
@@ -928,7 +936,7 @@ export function PromptComposerView({
 											ariaLabel="Select provider"
 											menuTitle="Provider"
 											compactOnMobile
-											disabled={composerLocked || answeringQuestion || !providersReady}
+											disabled={composerLocked || answeringQuestion}
 											onValueChange={handleProviderChange}
 											className="z-20 shrink-0"
 											triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"
