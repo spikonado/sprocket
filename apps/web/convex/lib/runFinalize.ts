@@ -1,4 +1,5 @@
 import type { MutationCtx } from '@convex/_generated/server';
+import type { Doc } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
 import { isRunFinalStatus, vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 import { reconcileTerminalRun } from '@convex/lib/runTerminal';
@@ -13,11 +14,13 @@ import {
 	type ExecutionRun
 } from '@convex/lib/runExecution';
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
+import { usageLimitAfterFailure } from '@convex/lib/providerUsageLimit';
 
 type FinalizeRunArgs = {
 	text: string;
 	status: Infer<typeof vRunFinalStatus>;
 	lastError?: string;
+	providerUsageLimit?: { resetsAt?: number };
 };
 
 export const vExecutorFinalizationResult = v.object({
@@ -106,6 +109,46 @@ export async function finalizeRunRecord(
 		claimExpiresAt: undefined,
 		activeJobId: undefined
 	});
+
+	let usageLimit: Doc<'runs'>['usageLimit'] =
+		finalStatus === 'failed' && run.usageLimit
+			? { attempts: run.usageLimit.attempts, deadlineAt: run.usageLimit.deadlineAt }
+			: undefined;
+
+	if (
+		finalStatus === 'failed' &&
+		args.providerUsageLimit !== undefined &&
+		run.completionProvider === 'chatgpt' &&
+		run.machineId !== undefined &&
+		run.cancellationRequestedAt === undefined
+	) {
+		const thread = await ctx.db.get('threadRecords', run.threadId);
+
+		if (thread?.userId === run.userId && thread.completionProvider === run.completionProvider) {
+			usageLimit = usageLimitAfterFailure(
+				run.usageLimit,
+				args.providerUsageLimit.resetsAt,
+				completedAt,
+				run.taskDeadlineAt
+			);
+		}
+	}
+
+	if (run.usageLimit !== undefined || usageLimit !== undefined) {
+		await ctx.db.patch('runs', run._id, { usageLimit });
+	}
+
+	if (usageLimit?.retryAt !== undefined) {
+		await ctx.scheduler.runAt(
+			usageLimit.deadlineAt + 1,
+			internal.runLifecycle.expireUsageLimitWait,
+			{
+				runId: run._id,
+				deadlineAt: usageLimit.deadlineAt
+			}
+		);
+	}
+
 	await setRunAndThreadStatus(ctx, run, finalStatus, {
 		lastError: args.lastError,
 		completedAt

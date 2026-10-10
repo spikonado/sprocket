@@ -4,6 +4,7 @@ import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
+import { vRunUsageLimit } from '@convex/lib/providerUsageLimit';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -410,6 +411,8 @@ export default defineSchema({
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
+		usageLimit: v.optional(vRunUsageLimit),
+		taskDeadlineAt: v.optional(v.number()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number())
 	})

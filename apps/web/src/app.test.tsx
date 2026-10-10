@@ -157,6 +157,7 @@ function createConvexFixtures(): ConvexTestClient {
 		chatgptModelIds: null
 	});
 	client.registerMutation(api.billing.ensureMySubscription, null);
+	client.registerMutation(api.threads.setCompletionSettings, null);
 
 	return client;
 }
@@ -205,6 +206,75 @@ async function renderThreadLaunch() {
 	fireEvent.click(await screen.findByText('Robot work'));
 
 	return { client, thread, launch, runAgent };
+}
+
+async function renderUsageLimitWait() {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+
+	const thread = {
+		...threadRecord('thread-1', 'repo-alpha', 'Robot work'),
+		status: 'failed' as const,
+		completionProvider: 'chatgpt' as const,
+		selectedModel: 'gpt-6.1-sol'
+	};
+
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const runId = 'run-1' as Id<'runs'>;
+
+	const run = {
+		runId,
+		startedAt: 1,
+		lastError: 'ChatGPT usage limit reached.',
+		usageLimitRetryAt: new Date('2030-06-12T15:30:00Z').getTime()
+	};
+
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [
+		thread,
+		threadRecord('thread-2', 'repo-alpha', 'Other work')
+	]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: undefined,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'failed',
+		run
+	});
+	client.registerMutation(api.agentRuntime.requestCancellation, true);
+
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const requestRunCancellation = vi.fn<DesktopApi['requestRunCancellation']>();
+
+	const runtime = createRuntime(
+		createDesktopApi({
+			listProjectAttachments: async () => [alpha],
+			runAgent,
+			requestRunCancellation,
+			fetchChatGptStatus: async () => ({
+				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
+				activeConnectionId: 'chatgpt-1',
+				loginAvailable: true
+			})
+		})
+	);
+
+	runtime.fetchGatewayModelCatalog = async () => ({
+		...modelCatalog,
+		models: [
+			...modelCatalog.models,
+			{ ...modelCatalog.models[0], id: thread.selectedModel, provider: 'openai' }
+		]
+	});
+
+	await renderApp(client, runtime);
+	fireEvent.click(await screen.findByText('Robot work'));
+	await screen.findByText('Waiting for usage limit reset');
+
+	return { client, thread, run, runAgent, requestRunCancellation };
 }
 
 async function flushPendingWork(): Promise<void> {
@@ -939,6 +1009,165 @@ it('shows a failed run beside the composer and scopes it to the selected thread'
 		});
 	});
 	expect(within(composer).getByRole('button', { name: 'Stop generation' })).toBeTruthy();
+});
+
+it('shows the scheduled retry in the composer without making failed work busy', async () => {
+	const { client, thread, run, runAgent } = await renderUsageLimitWait();
+	const composer = screen.getByRole('group', { name: 'Message composer' });
+	const status = within(composer).getByRole('status');
+	expect(status.textContent).toContain(new Date(run.usageLimitRetryAt).toLocaleString());
+	expect(within(status).getByRole('button', { name: 'Cancel auto-resume' })).toBeTruthy();
+	expect(within(composer).queryByRole('alert')).toBeNull();
+	expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull();
+	expect(screen.getByRole('button', { name: 'Continue working' })).toHaveProperty(
+		'disabled',
+		false
+	);
+	fireEvent.change(within(composer).getByRole('combobox'), { target: { value: 'Try a new task' } });
+	const send = within(composer).getByRole('button', { name: 'Send message' });
+	expect(send).toHaveProperty('disabled', false);
+
+	fireEvent.click(screen.getByText('Other work'));
+	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
+	fireEvent.click(screen.getByText('Robot work'));
+	await screen.findByText('Waiting for usage limit reset');
+	fireEvent.click(send);
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({ threadId: thread._id, prompt: 'Try a new task' })
+		)
+	);
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'running',
+			run: { ...run, usageLimitRetryAt: undefined }
+		});
+	});
+	expect(screen.queryByText('Waiting for usage limit reset')).toBeNull();
+});
+
+it('allows a manual continuation while usage-limit auto-resume is waiting', async () => {
+	const { thread, run, runAgent } = await renderUsageLimitWait();
+	fireEvent.click(screen.getByRole('button', { name: 'Continue working' }));
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				threadId: thread._id,
+				prompt: '',
+				continuationOfRunId: run.runId
+			})
+		)
+	);
+});
+
+it('cancels auto-resume through Convex and clears the notice only after the snapshot updates', async () => {
+	const { client, thread, run, requestRunCancellation } = await renderUsageLimitWait();
+	const cancellation = Promise.withResolvers<boolean>();
+	client.registerMutation(api.agentRuntime.requestCancellation, cancellation.promise);
+	const mutation = vi.spyOn(client, 'mutation');
+	fireEvent.click(screen.getByRole('button', { name: 'Cancel auto-resume' }));
+	expect(screen.getByRole('button', { name: 'Cancelling…' })).toHaveProperty('disabled', true);
+	expect(mutation).toHaveBeenCalledWith(api.agentRuntime.requestCancellation, { runId: run.runId });
+	expect(requestRunCancellation).not.toHaveBeenCalled();
+	await act(async () => cancellation.resolve(true));
+	expect(screen.getByRole('button', { name: 'Cancel auto-resume' })).toHaveProperty(
+		'disabled',
+		false
+	);
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'failed',
+			run: { ...run, usageLimitRetryAt: undefined }
+		});
+	});
+	expect(screen.queryByText('Waiting for usage limit reset')).toBeNull();
+	expect(screen.getByRole('alert').textContent).toContain(run.lastError);
+	expect(screen.getByRole('button', { name: 'Continue working' })).toHaveProperty(
+		'disabled',
+		false
+	);
+});
+
+it.each([
+	{ error: null, message: 'Failed to cancel auto-resume.' },
+	{ error: new Error('Server unavailable.'), message: 'Server unavailable.' }
+])('keeps auto-resume cancellable after "$message"', async ({ error, message }) => {
+	const { client, run } = await renderUsageLimitWait();
+	const mutation = vi.spyOn(client, 'mutation').mockRejectedValueOnce(error);
+	fireEvent.click(screen.getByRole('button', { name: 'Cancel auto-resume' }));
+	expect((await screen.findByRole('alert')).textContent).toContain(message);
+	expect(screen.getByRole('status').textContent).toContain('Waiting for usage limit reset');
+	const cancel = screen.getByRole('button', { name: 'Cancel auto-resume' });
+	expect(cancel).toHaveProperty('disabled', false);
+	fireEvent.click(cancel);
+	await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+	expect(mutation).toHaveBeenCalledTimes(2);
+	expect(mutation).toHaveBeenLastCalledWith(api.agentRuntime.requestCancellation, {
+		runId: run.runId
+	});
+});
+
+it('does not show a stale cancellation failure in another thread', async () => {
+	const { client } = await renderUsageLimitWait();
+	const cancellation = Promise.withResolvers<boolean>();
+	client.registerMutation(api.agentRuntime.requestCancellation, cancellation.promise);
+	fireEvent.click(screen.getByRole('button', { name: 'Cancel auto-resume' }));
+	fireEvent.click(screen.getByText('Other work'));
+	await act(async () => cancellation.reject(new Error('Server unavailable.')));
+	expect(screen.queryByRole('alert')).toBeNull();
+	expect(screen.queryByText('Waiting for usage limit reset')).toBeNull();
+});
+
+it('persists a provider switch before sending new work and follows the cleared wait snapshot', async () => {
+	const { client, thread, run } = await renderUsageLimitWait();
+	const mutation = vi.spyOn(client, 'mutation');
+	fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Spikonado' }));
+	await waitFor(() =>
+		expect(mutation).toHaveBeenCalledWith(api.threads.setCompletionSettings, {
+			threadId: thread._id,
+			selectedModel: thread.selectedModel,
+			completionProvider: 'spikonado'
+		})
+	);
+	expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+		'Spikonado'
+	);
+	expect(screen.getByText('Waiting for usage limit reset')).toBeTruthy();
+	await act(async () => {
+		client.registerQuery(api.chat.selectedThreadLifecycle, {
+			threadId: thread._id,
+			phase: 'failed',
+			run: { ...run, usageLimitRetryAt: undefined }
+		});
+	});
+	expect(screen.queryByText('Waiting for usage limit reset')).toBeNull();
+});
+
+it('restores the previous provider and shows a failed durable switch without clearing the wait', async () => {
+	const { client } = await renderUsageLimitWait();
+	vi.spyOn(client, 'mutation').mockRejectedValueOnce(new Error('Could not save provider.'));
+	fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Spikonado' }));
+	expect((await screen.findByRole('alert')).textContent).toContain('Could not save provider.');
+	expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain('ChatGPT');
+	expect(screen.getByText('Waiting for usage limit reset')).toBeTruthy();
+});
+
+it('does not restore provider settings or show a failed save after switching threads', async () => {
+	const { client } = await renderUsageLimitWait();
+	const save = Promise.withResolvers<null>();
+	client.registerMutation(api.threads.setCompletionSettings, save.promise);
+	fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Spikonado' }));
+	fireEvent.click(screen.getByText('Other work'));
+	await act(async () => save.reject(new Error('Could not save provider.')));
+	expect(screen.queryByRole('alert')).toBeNull();
+	expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+		'Spikonado'
+	);
 });
 
 it('shows reconnecting beside an empty selected conversation and clears it on recovery', async () => {

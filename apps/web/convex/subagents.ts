@@ -258,6 +258,7 @@ export const createOrSend = mutation({
 
 			if (created.created && timeoutMs !== undefined) {
 				const deadlineAt = Date.now() + timeoutMs;
+				await ctx.db.patch('runs', created.runId, { taskDeadlineAt: deadlineAt });
 				await ctx.scheduler.runAt(deadlineAt, internal.subagents.enforceTaskDeadline, {
 					runId: created.runId,
 					deadlineAt
