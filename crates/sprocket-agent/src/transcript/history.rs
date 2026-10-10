@@ -855,7 +855,7 @@ mod tests {
                 }
             }
         });
-        let history = completion_item_to_history(&item).unwrap();
+        let history = completion_item_to_history(&item, false).unwrap();
         let AgentHistoryContent::Reasoning { id, blocks_json } = history else {
             panic!("expected reasoning history");
         };
@@ -887,7 +887,7 @@ mod tests {
         let messages = deserialize_agent_history(vec![AgentHistoryMessage {
             role: AgentHistoryRole::Assistant,
             assistant_id: None,
-            contents: vec![completion_item_to_history(&item).unwrap()],
+            contents: vec![completion_item_to_history(&item, false).unwrap()],
         }])
         .unwrap();
         let Message::Assistant { content, .. } = &messages[0] else {
