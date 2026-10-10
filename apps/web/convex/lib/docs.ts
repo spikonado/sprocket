@@ -4,6 +4,7 @@ import {
 	vAgentQuestionStatus,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
+	vCompletionProvider,
 	vRunStatus,
 	vSubscriptionTier
 } from '@convex/lib/validators';
@@ -54,6 +55,11 @@ export const vAgentQuestionSnapshot = v.object({
 	answeredAt: v.optional(v.number())
 });
 
+export const vProviderHandoff = schema
+	.doc('runs')
+	.pick('selectedModel', 'reasoningEffort', 'fastMode')
+	.extend({ completionProvider: vCompletionProvider });
+
 export const vGetContextResult = v.object({
 	run: schema
 		.doc('runs')
@@ -72,7 +78,8 @@ export const vGetContextResult = v.object({
 			parentThreadId: v.optional(v.id('threadRecords'))
 		}),
 	prompt: v.string(),
-	contextTokens: v.optional(v.number())
+	contextTokens: v.optional(v.number()),
+	providerHandoff: v.optional(vProviderHandoff)
 });
 
 export const vCompletionActor = v.object({

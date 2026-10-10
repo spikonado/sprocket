@@ -125,6 +125,17 @@ pub struct RunContextResponse {
     pub prompt: String,
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub context_tokens: u64,
+    #[serde(default)]
+    pub provider_handoff: Option<ProviderHandoff>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderHandoff {
+    pub completion_provider: CompletionProvider,
+    pub selected_model: String,
+    pub reasoning_effort: String,
+    pub fast_mode: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -143,6 +154,7 @@ pub struct ContextBudget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogModelCapabilities {
     pub label: String,
+    pub vendor: String,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
     pub supports_required_tool_choice: bool,

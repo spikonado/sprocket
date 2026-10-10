@@ -15,6 +15,17 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Provider and model-vendor context handoffs
+
+Run context responses optionally include `providerHandoff` with the previous
+provider's model settings. Released clients ignore this field. Keep it optional
+and keep the Rust missing-field default until those clients age out.
+
+The source comes from uncovered transcript completions and uses the existing
+summary cutoff. Missing historical provider IDs still mean `spikonado`. Local
+transcripts, saved provider settings and Convex documents keep their existing
+formats, so existing threads need no migration.
+
 ### Rig 0.43 upstream revision
 
 Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the

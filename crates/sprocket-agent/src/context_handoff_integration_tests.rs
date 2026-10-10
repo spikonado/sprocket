@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::completion::{Message, PromptError};
-use rig::message::{AssistantContent, ToolResultContent, UserContent};
+use rig::message::{
+    AssistantContent, CallId, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolName,
+    ToolResult, ToolResultContent, UserContent,
+};
 use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
 use rig::tool::{DynamicTool, Tool, ToolOutput};
@@ -20,6 +23,7 @@ use super::{
     HandoffTool, context_summary_text,
 };
 use crate::openai::{developer_message, stateless_responses_model};
+use crate::provider::resume_context_handoff;
 
 const MODEL: &str = "gateway-model";
 const OLD_CONTEXT: &str = "UNIQUE_OLD_CONTEXT xyz-arm-bus";
@@ -611,6 +615,145 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
     let request = parse_request(&captured[0]);
     assert_handoff_request(&request);
     assert!(request["tool_choice"].is_null());
+}
+
+#[tokio::test]
+async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new_model() {
+    const INITIAL_CONTEXT: &str = "Workspace instructions shared by both providers.";
+    const ENCRYPTED_REASONING: &str = "  old-provider-encrypted+reasoning/=\n  ";
+    const REASONING_SUMMARY: &str = "Checked the arm bus before running pwd.";
+    const OLD_ASSISTANT_TEXT: &str = "The firmware workspace is ready.";
+    const OLD_CALL_ID: &str = "call_old_provider_exec";
+    const TARGET_MODEL: &str = "new-provider-model";
+
+    let (old_url, old_server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
+    let (new_url, new_server) =
+        spawn_responses_sse(vec![text_sse("continued on the new provider", 4, 4)]);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let mut agent = test_agent(&old_url, &hook);
+    let initial_context = Message::user(INITIAL_CONTEXT);
+    let history = vec![
+        initial_context.clone(),
+        Message::user(OLD_CONTEXT),
+        Message::Assistant {
+            id: None,
+            content: vec![
+                AssistantContent::Reasoning(
+                    Reasoning {
+                        id: Some("rs_old_provider".to_string()),
+                        content: vec![
+                            ReasoningContent::Summary(REASONING_SUMMARY.to_string()),
+                            ReasoningContent::Encrypted(ENCRYPTED_REASONING.to_string()),
+                        ],
+                    }
+                    .sealed("openai"),
+                ),
+                AssistantContent::ToolCall(ToolCall {
+                    id: CallId::from_wire(OLD_CALL_ID),
+                    function: ToolFunction {
+                        name: ToolName::new("exec_cmd").expect("fixture tool name"),
+                        arguments: json!({ "cmd": "pwd" }),
+                    },
+                    signature: None,
+                    additional_params: None,
+                }),
+            ],
+        },
+        Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: CallId::from_wire(OLD_CALL_ID),
+                name: ToolName::new("exec_cmd").expect("fixture tool name"),
+                content: vec![ToolResultContent::text(TOOL_RESULT)],
+            })],
+        },
+        Message::assistant(OLD_ASSISTANT_TEXT),
+    ];
+    let pending_prompt = Message::user(DEFERRED_PROMPT);
+
+    hook.start_handoff();
+    let summary = match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), history).await {
+        DriveEnd::Submitted(document) => document,
+        other => panic!("old provider should submit the handoff, got {other:?}"),
+    };
+    assert_eq!(summary, FIRST_SUMMARY);
+
+    let saved_summary = std::cell::RefCell::new(None);
+    let failed_transition = resume_context_handoff(
+        &mut agent,
+        std::slice::from_ref(&initial_context),
+        &summary,
+        Some(pending_prompt.clone()),
+        async {
+            *saved_summary.borrow_mut() = Some(summary.clone());
+            Ok(true)
+        },
+        async {
+            assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
+            Err(anyhow::anyhow!("new provider temporarily unavailable"))
+        },
+    )
+    .await;
+    assert!(failed_transition.is_err());
+    assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
+
+    let target_model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key")
+            .with_base_url(&new_url)
+            .with_instructions("context handoff fixture"),
+        TARGET_MODEL,
+    );
+    let (history, prompt) = resume_context_handoff(
+        &mut agent,
+        std::slice::from_ref(&initial_context),
+        &summary,
+        Some(pending_prompt),
+        async {
+            assert_eq!(saved_summary.borrow().as_deref(), Some(FIRST_SUMMARY));
+            Ok(true)
+        },
+        async { Ok(Some(target_model)) },
+    )
+    .await
+    .expect("retry the saved handoff")
+    .expect("active run");
+    hook.restart();
+    match drive(&agent, &hook, prompt, history).await {
+        DriveEnd::Finished(text) => assert_eq!(text, "continued on the new provider"),
+        other => panic!("new provider should answer the pending user prompt, got {other:?}"),
+    }
+
+    let old_requests = old_server.join().expect("old provider mock thread");
+    let new_requests = new_server.join().expect("new provider mock thread");
+    assert_eq!(
+        old_requests.len(),
+        1,
+        "old provider only writes the handoff"
+    );
+    assert_eq!(new_requests.len(), 1, "new provider only resumes the work");
+    let handoff = parse_request(&old_requests[0]);
+    assert_eq!(handoff["model"], MODEL);
+    let input = handoff["input"].as_array().expect("old provider input");
+    let reasoning = input
+        .iter()
+        .find(|item| item["type"] == "reasoning")
+        .expect("old provider receives encrypted history");
+    assert_eq!(reasoning["encrypted_content"], ENCRYPTED_REASONING);
+    assert!(input_blob(&handoff).contains(OLD_CONTEXT));
+    assert!(input_blob(&handoff).contains(HANDOFF_PROMPT));
+    assert!(!input_blob(&handoff).contains(DEFERRED_PROMPT));
+    assert!(advertised_tools(&handoff).contains(&HandoffTool::NAME.to_string()));
+
+    let resume = parse_request(&new_requests[0]);
+    assert_eq!(resume["model"], TARGET_MODEL);
+    assert_eq!(
+        resume["input"],
+        json!([
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": INITIAL_CONTEXT }] },
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": context_summary_text(&summary) }] },
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": DEFERRED_PROMPT }] }
+        ]),
+        "new provider must receive only initial context, the handoff summary, and the pending prompt"
+    );
 }
 
 #[tokio::test]
