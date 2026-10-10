@@ -342,6 +342,7 @@ impl RuntimeClient {
         items: Vec<serde_json::Value>,
         assignments: crate::hooks::CompletionAssignments,
         usage_tokens: Option<u64>,
+        provider_identity: &rig::agent::ResponseIdentity,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
         let mut args = self.run_args_with_claim(run_id, claim_id);
@@ -371,6 +372,15 @@ impl RuntimeClient {
                     "processedTokens": tokens,
                 }))?,
             );
+        }
+        for (key, value) in [
+            ("providerResponseId", &provider_identity.response_id),
+            ("providerRequestId", &provider_identity.provider_request_id),
+            ("providerMessageId", &provider_identity.message_id),
+        ] {
+            if let Some(value) = value.as_deref().filter(|value| !value.is_empty()) {
+                args.insert(key.to_string(), value.to_string().into());
+            }
         }
         let persisted: Option<PersistedTranscriptPart> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)

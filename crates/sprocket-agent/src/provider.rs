@@ -534,7 +534,7 @@ async fn run_with_completion_model(
                                         handoff_processed_tokens.saturating_add(tokens.unwrap_or(0));
                                 } else {
                                     transcript.record_usage(tokens);
-                                    transcript.record_completion(call.message_id.as_deref());
+                                    transcript.record_completion(call.identity());
                                 }
                                 if let Some(error) = incomplete_completion_error(call.finish_reason.as_ref()) {
                                     break 'agent_run AgentProviderResult::Failed {
@@ -744,6 +744,7 @@ struct TranscriptSink {
     attempt_seq: u64,
     parts: LiveAssistantParts,
     provider_metadata: HashMap<String, serde_json::Value>,
+    provider_identity: rig::agent::ResponseIdentity,
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
@@ -775,6 +776,7 @@ impl TranscriptSink {
             attempt_seq: 1,
             parts: LiveAssistantParts::default(),
             provider_metadata: HashMap::new(),
+            provider_identity: rig::agent::ResponseIdentity::default(),
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
@@ -844,6 +846,7 @@ impl TranscriptSink {
     fn reset_parts(&mut self) {
         self.parts.clear();
         self.provider_metadata.clear();
+        self.provider_identity = rig::agent::ResponseIdentity::default();
         self.unpublished = 0;
         self.streamed = false;
         self.usage_tokens = None;
@@ -860,6 +863,7 @@ impl TranscriptSink {
                 self.items_json(),
                 self.tool_call_tracker.completion_assignments(),
                 self.usage_tokens,
+                &self.provider_identity,
             )
             .await?;
         self.streamed = false;
@@ -907,8 +911,13 @@ impl TranscriptSink {
         }
     }
 
-    fn record_completion(&mut self, message_id: Option<&str>) {
-        preserve_text_message_id(&self.parts.parts, &mut self.provider_metadata, message_id);
+    fn record_completion(&mut self, identity: rig::agent::ResponseIdentity) {
+        preserve_text_message_id(
+            &self.parts.parts,
+            &mut self.provider_metadata,
+            identity.message_id.as_deref(),
+        );
+        self.provider_identity = identity;
         self.tool_call_tracker.record_parts(&self.parts.parts);
     }
 

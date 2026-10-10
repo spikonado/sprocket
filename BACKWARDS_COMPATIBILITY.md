@@ -629,6 +629,17 @@ Stored result validators and filtered subagent monitors accept that absence and
 report only the known destination. Source paths cannot be recovered reliably
 from unexecuted patch inputs, so this historical result variant stays permanently.
 
+#### Completion provider identity
+
+Stored completion bodies may include `providerResponseId`,
+`providerRequestId`, and `providerMessageId`. New agents copy non-empty values
+from the provider completion call. Missing and empty strings are omitted.
+
+The mutation arguments and stored fields remain optional permanently: released
+agents do not send them, historical completions lack them, and providers may
+omit them even for new agents. Historical IDs cannot be reconstructed, so no
+backfill invents values. The local JSONL replica does not store these fields.
+
 #### Retired tool visibility flag
 
 All current agent tools receive work sections and appear in the transcript.
