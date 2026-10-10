@@ -351,7 +351,7 @@ export function PromptComposerView({
 	);
 
 	function selectSkill(skill: SkillSummary) {
-		const selection = applySkillSelection(prompt, caretPosition, skill.name);
+		const selection = applySkillSelection(prompt, caretPosition, skill);
 
 		if (!selection) {
 			return;

@@ -565,7 +565,7 @@ describe('PromptComposer skill menu', () => {
 	});
 
 	it.each(['/', '$'])(
-		'selects a disabled skill through %s as a normal skill request',
+		'inserts a disabled skill with slash when selected through %s',
 		async (prefix) => {
 			const { textarea, props } = renderComposer({
 				projectSkills: { workspacePath: '/demo', load: async () => skills },
@@ -581,8 +581,8 @@ describe('PromptComposer skill menu', () => {
 
 			expect(within(listbox).getAllByRole('option')).toHaveLength(prefix === '/' ? 1 : 2);
 			await click(within(listbox).getByText(`${prefix}zap`));
-			expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
-			expect(textarea.value).toBe('$zap ');
+			expect(props.onPromptChange).toHaveBeenCalledWith('/zap ');
+			expect(textarea.value).toBe('/zap ');
 			expect(document.activeElement).toBe(textarea);
 			expect(props.onSubmit).not.toHaveBeenCalled();
 		}
@@ -597,7 +597,7 @@ describe('PromptComposer skill menu', () => {
 		await typeInComposer(textarea, '/za');
 		expect(screen.getByRole('option').textContent).toContain('/zap');
 		await pressKey(textarea, { key: 'Tab' });
-		expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
+		expect(props.onPromptChange).toHaveBeenCalledWith('/zap ');
 	});
 
 	it('loads project skills on $ and selects the highlighted one', async () => {
@@ -617,8 +617,8 @@ describe('PromptComposer skill menu', () => {
 		expect(options[1]?.getAttribute('aria-selected')).toBe('true');
 
 		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
-		expect(textarea.value).toBe('$zap ');
+		expect(props.onPromptChange).toHaveBeenCalledWith('/zap ');
+		expect(textarea.value).toBe('/zap ');
 		expect(document.getElementById('composer-skills-listbox')).toBeNull();
 		expect(document.activeElement).toBe(textarea);
 	});
@@ -646,13 +646,13 @@ describe('PromptComposer skill menu', () => {
 			onPromptChange: vi.fn()
 		});
 
-		await typeInComposer(textarea, '$za');
+		await typeInComposer(textarea, '$ki');
 		const options = document.querySelectorAll<HTMLButtonElement>('[role="option"]');
 		expect(options).toHaveLength(1);
-		expect(options[0]?.textContent).toContain('$zap');
+		expect(options[0]?.textContent).toContain('$kicad');
 
 		await pressKey(textarea, { key: 'Tab' });
-		expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
+		expect(props.onPromptChange).toHaveBeenCalledWith('$kicad ');
 	});
 
 	it('retries a failed skill load', async () => {

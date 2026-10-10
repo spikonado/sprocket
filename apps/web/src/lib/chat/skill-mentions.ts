@@ -48,7 +48,7 @@ export function filterSkills(skills: SkillSummary[], query: string): SkillSummar
 export function applySkillSelection(
 	text: string,
 	caret: number,
-	name: string
+	skill: SkillSummary
 ): { text: string; caret: number } | null {
 	const match = getActiveSkillMention(text, caret);
 
@@ -67,7 +67,8 @@ export function applySkillSelection(
 		tokenEnd += 1;
 	}
 
-	const replacement = `$${name} `;
+	const prefix = skill.disableModelInvocation ? '/' : '$';
+	const replacement = `${prefix}${skill.name} `;
 	const nextText = `${text.slice(0, match.tokenStart)}${replacement}${text.slice(tokenEnd)}`;
 
 	return {
