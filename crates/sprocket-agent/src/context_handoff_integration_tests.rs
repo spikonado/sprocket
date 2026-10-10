@@ -820,7 +820,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     )
     .await
     {
-        DriveEnd::Finished(_) => assert!(hook.is_writing()),
+        DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("expected a handoff without a document, got {other:?}"),
     }
     let old_requests = old_server.join().expect("old provider mock thread");
