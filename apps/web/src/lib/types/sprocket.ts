@@ -69,6 +69,7 @@ export type RunState = {
 	startedAt: number;
 	completedAt?: number;
 	lastError?: string;
+	usageLimitRetryAt?: number;
 	activeJobId?: Id<'executorJobs'>;
 	jobs: ExecutorJob[];
 };

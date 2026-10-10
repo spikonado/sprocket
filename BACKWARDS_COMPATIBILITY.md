@@ -15,6 +15,25 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Subscription usage-limit recovery
+
+`finalizeExecutorRun.providerUsageLimit`, `runs.usageLimit`, and lifecycle
+`usageLimitRetryAt` are optional. Existing runs need no migration and ordinary
+provider error text does not enable quota recovery. Continuations retain the
+attempt count and deadline without a retry time until another quota failure.
+
+`runRecovery.state` returns usage-limit waiting and recovery responses only when
+the caller sends `supportsUsageLimitResume: true`. Released recovery workers
+continue to receive the existing abandoned-run responses and discard quota waits.
+New workers default the optional recover response `providerUsageLimit` to false.
+Remove the opt-in response gate and missing-flag fallback once workers without
+subscription usage-limit recovery are outside the supported upgrade window.
+
+Local `run-recovery.json` records default missing usage-limit start times and
+attempt counts to the original 24-hour abandonment policy. Keep these defaults
+until supported data directories have been rewritten by a usage-limit-aware
+server. Old servers ignore the added journal fields.
+
 ### Rig 0.43 upstream revision
 
 Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the

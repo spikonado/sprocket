@@ -2,6 +2,7 @@ import { action, internalMutation, mutation, query } from '@convex/_generated/se
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
+import { vProviderUsageLimit } from '@convex/lib/providerUsageLimit';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
@@ -742,6 +743,7 @@ export const finalizeExecutorRun = mutation({
 		text: v.string(),
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string()),
+		providerUsageLimit: v.optional(vProviderUsageLimit),
 		executionSecret: v.string()
 	},
 	returns: vExecutorFinalizationResult,

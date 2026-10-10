@@ -12,6 +12,7 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 		<ConversationNotices
 			error={null}
 			runError={null}
+			onCancelAutoResume={vi.fn()}
 			reconnecting={false}
 			syncing={false}
 			catalogError={false}
@@ -24,7 +25,8 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 
 function composer(
 	children: ComponentProps<typeof PromptComposerView>['notices'],
-	exhausted = false
+	exhausted = false,
+	props: Partial<ComponentProps<typeof PromptComposerView>> = {}
 ) {
 	return (
 		<PromptComposerView
@@ -41,6 +43,7 @@ function composer(
 			onCancel={vi.fn()}
 			usage={{ tier: 'pro', exhausted, resetsAt: null }}
 			usageFailed={false}
+			{...props}
 		/>
 	);
 }
@@ -95,6 +98,93 @@ describe('Conversation notices', () => {
 		render(composer(notices({ error: usageLimit, runError: usageLimit })));
 		expect(screen.getAllByRole('alert')).toHaveLength(1);
 		expect(screen.getByRole('alert').textContent).toContain(usageLimit);
+	});
+
+	it('shows the next local retry time and a cancel action instead of the usage-limit errors', () => {
+		const usageLimitRetryAt = Date.parse('2026-07-18T15:30:00Z');
+		const cancelAutoResume = vi.fn();
+		render(
+			composer(
+				notices({
+					error: usageLimit,
+					runError: usageLimit,
+					usageLimitRetryAt,
+					onCancelAutoResume: cancelAutoResume
+				})
+			)
+		);
+
+		const group = screen.getByRole('group', { name: 'Message composer' });
+		const status = within(group).getByRole('status');
+		expect(status.textContent).toContain('Waiting for usage limit reset');
+		expect(status.textContent).toContain('Next retry:');
+		expect(status.textContent).toContain(
+			'You can retry manually, send a new message, or switch providers.'
+		);
+		const time = within(status).getByText(new Date(usageLimitRetryAt).toLocaleString());
+		expect(time.tagName).toBe('TIME');
+		expect(time.getAttribute('datetime')).toBe(new Date(usageLimitRetryAt).toISOString());
+		expect(within(group).queryByRole('alert')).toBeNull();
+
+		const cancelButton = within(status).getByRole('button', { name: 'Cancel auto-resume' });
+		expect(cancelButton).toHaveProperty('disabled', false);
+		fireEvent.click(cancelButton);
+		expect(cancelAutoResume).toHaveBeenCalledOnce();
+	});
+
+	it('disables cancel auto-resume while cancellation is pending', () => {
+		const cancelAutoResume = vi.fn();
+		render(
+			notices({
+				usageLimitRetryAt: Date.now(),
+				cancellingAutoResume: true,
+				onCancelAutoResume: cancelAutoResume
+			})
+		);
+
+		const cancelButton = screen.getByRole('button', { name: 'Cancelling…' });
+		expect(cancelButton).toHaveProperty('disabled', true);
+		fireEvent.click(cancelButton);
+		expect(cancelAutoResume).not.toHaveBeenCalled();
+	});
+
+	it('restores the generic run error when waiting clears', () => {
+		const view = render(notices({ runError: usageLimit, usageLimitRetryAt: Date.now() }));
+		expect(screen.getByRole('status').textContent).toContain('Waiting for usage limit reset');
+		expect(screen.queryByRole('alert')).toBeNull();
+
+		view.rerender(notices({ runError: usageLimit }));
+		expect(screen.queryByRole('status')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Cancel auto-resume' })).toBeNull();
+		expect(screen.getByRole('alert').textContent).toContain("Run couldn't continue");
+		expect(screen.getByRole('alert').textContent).toContain(usageLimit);
+	});
+
+	it.each(['Could not send request.', 'Could not cancel auto-resume.'])(
+		'keeps a distinct failure visible while waiting: %s',
+		(error) => {
+			render(notices({ error, runError: usageLimit, usageLimitRetryAt: Date.now() }));
+			expect(screen.getByRole('status').textContent).toContain('Waiting for usage limit reset');
+			expect(screen.getAllByRole('alert')).toHaveLength(1);
+			expect(screen.getByRole('alert').textContent).toContain(error);
+		}
+	);
+
+	it('keeps the composer input usable while waiting', () => {
+		const onPromptChange = vi.fn();
+		render(
+			composer(notices({ runError: usageLimit, usageLimitRetryAt: Date.now() }), false, {
+				onPromptChange
+			})
+		);
+
+		const group = screen.getByRole('group', { name: 'Message composer' });
+		const input = within(group).getByRole('combobox');
+		expect(input).toHaveProperty('disabled', false);
+		input.focus();
+		expect(document.activeElement).toBe(input);
+		fireEvent.change(input, { target: { value: 'Try another provider' } });
+		expect(onPromptChange).toHaveBeenCalledWith('Try another provider');
 	});
 
 	it('keeps catalog recovery in the notice and disables retry while loading', () => {

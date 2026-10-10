@@ -326,13 +326,22 @@ async fn finalize_run(
     claim_id: &str,
     assistant_text: &str,
     status: RunFinalStatus,
-    error_message: Option<&str>,
+    error: Option<&anyhow::Error>,
 ) -> anyhow::Result<()> {
     let status_text = status.as_str();
-    let accepted = runtime
-        .finalize_run(run_id, claim_id, assistant_text, status_text, error_message)
-        .await
-        .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))?;
+    let accepted = match error {
+        Some(error) => {
+            runtime
+                .finalize_provider_failure(run_id, claim_id, assistant_text, error)
+                .await
+        }
+        None => {
+            runtime
+                .finalize_run(run_id, claim_id, assistant_text, status_text, None)
+                .await
+        }
+    }
+    .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))?;
     if !accepted {
         return Err(anyhow!(
             "failed to finalize {status_text} run because claim ownership was lost"
@@ -395,7 +404,7 @@ async fn finalize_provider_result(
                 claim_id,
                 &text,
                 RunFinalStatus::Failed,
-                Some(&error_text),
+                Some(&error),
             )
             .await
             {

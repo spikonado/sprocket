@@ -87,10 +87,16 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 	if (isRunFinalStatus(current.status)) {
 		if (
 			current.machineId !== undefined &&
-			isAutomaticallyRecoverableRun(current, current.machineId)
+			(isAutomaticallyRecoverableRun(current, current.machineId) ||
+				(current.status === 'failed' &&
+					current.completionProvider === 'chatgpt' &&
+					current.usageLimit?.retryAt !== undefined))
 		) {
-			// A stopped abandoned run must stay terminal when its local agent returns.
-			await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
+			// Stop also revokes recovery while the executor is offline or waiting for quota.
+			await ctx.db.patch('runs', current._id, {
+				cancellationRequestedAt: Date.now(),
+				usageLimit: undefined
+			});
 
 			return true;
 		}

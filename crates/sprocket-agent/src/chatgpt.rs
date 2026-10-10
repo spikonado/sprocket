@@ -33,8 +33,24 @@ const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
     "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
 )]
 struct SubscriptionUsageLimit {
+    limit: ProviderUsageLimit,
     #[source]
     source: anyhow::Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProviderUsageLimit {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resets_at: Option<u64>,
+}
+
+pub(crate) fn provider_usage_limit(error: &anyhow::Error) -> Option<ProviderUsageLimit> {
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<SubscriptionUsageLimit>()
+            .map(|error| error.limit)
+    })
 }
 
 fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
@@ -47,8 +63,25 @@ fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
         == Some("subscription_sharing_usage_limit_exceeded")
 }
 
+fn subscription_usage_limit(body: &serde_json::Value, now: u64) -> Option<ProviderUsageLimit> {
+    if !is_subscription_usage_limit(body) {
+        return None;
+    }
+    let error = body
+        .get("error")
+        .or_else(|| body.get("response")?.get("error"))?;
+    let seconds =
+        |value: &serde_json::Value| value.as_u64().and_then(|seconds| seconds.checked_mul(1000));
+    let resets_at = error
+        .get("resets_in_seconds")
+        .and_then(seconds)
+        .and_then(|delay| now.checked_add(delay))
+        .or_else(|| error.get("resets_at").and_then(seconds));
+    Some(ProviderUsageLimit { resets_at })
+}
+
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
-    let usage_limit = error.chain().any(|cause| {
+    let usage_limit = error.chain().find_map(|cause| {
         cause
             .downcast_ref::<ProviderError>()
             .and_then(|error| error.provider_response_json().ok().flatten())
@@ -57,10 +90,14 @@ pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
                     .downcast_ref::<rig::ErrorReport>()
                     .and_then(|report| report.provider_response_json().ok().flatten())
             })
-            .is_some_and(|body| is_subscription_usage_limit(&body))
+            .and_then(|body| subscription_usage_limit(&body, now_ms()))
     });
-    if usage_limit {
-        SubscriptionUsageLimit { source: error }.into()
+    if let Some(limit) = usage_limit {
+        SubscriptionUsageLimit {
+            limit,
+            source: error,
+        }
+        .into()
     } else {
         error
     }
@@ -357,10 +394,21 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
         .and_then(|value| value.to_str().ok())
         .map(|value| diagnostic_text(value, access_token));
     let mut message = format!("ChatGPT inference returned HTTP {status}.");
-    let mut usage_limit = false;
+    let mut usage_limit = None;
     match tokio::time::timeout(ERROR_BODY_TIMEOUT, read_error_body(response)).await {
         Ok(Ok(body)) => {
-            usage_limit = is_subscription_usage_limit(&body);
+            usage_limit = subscription_usage_limit(&body, now_ms());
+            if let Some(limit) = &mut usage_limit {
+                let retry_after = headers
+                    .get(http::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .and_then(|seconds| seconds.checked_mul(1000))
+                    .and_then(|delay| now_ms().checked_add(delay));
+                if retry_after.is_some() {
+                    limit.resets_at = retry_after;
+                }
+            }
             let recognized = [
                 ("error.message", body["error"]["message"].as_str()),
                 ("error.code", body["error"]["code"].as_str()),
@@ -387,12 +435,13 @@ async fn inference_error(response: reqwest::Response, access_token: &str) -> htt
     if let Some(request_id) = request_id {
         message.push_str(&format!(" request_id={request_id}"));
     }
-    if usage_limit {
+    if let Some(limit) = usage_limit {
         // Rig must retain a structured code when it wraps this HTTP failure.
         message = serde_json::json!({
             "error": {
                 "code": "subscription_sharing_usage_limit_exceeded",
                 "message": message,
+                "resets_at": limit.resets_at.map(|time| time.div_ceil(1000)),
             }
         })
         .to_string();
@@ -1075,6 +1124,7 @@ mod tests {
             "code": "subscription_sharing_usage_limit_exceeded",
             "message": "The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.",
             "param": null,
+            "resets_at": 1_800_001_000,
         });
         for (status, body) in [
             (
@@ -1129,11 +1179,88 @@ mod tests {
                 error.to_string(),
                 "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
             );
+            assert_eq!(
+                provider_usage_limit(&error).unwrap().resets_at,
+                Some(1_800_001_000_000)
+            );
             assert!(
                 error
                     .chain()
                     .any(|cause| cause.to_string() == raw_diagnostic)
             );
+        }
+    }
+
+    #[test]
+    fn subscription_limit_detection_preserves_reset_guidance_without_matching_messages() {
+        let now = 1_800_000_000_000;
+        for (fields, expected) in [
+            (json!({"resets_at": 1_800_001_000}), Some(1_800_001_000_000)),
+            (json!({"resets_in_seconds": 900}), Some(now + 900_000)),
+            (
+                json!({"resets_in_seconds": 900, "resets_at": 1}),
+                Some(now + 900_000),
+            ),
+            (json!({}), None),
+            (
+                json!({"resets_at": "tomorrow", "resets_in_seconds": -1}),
+                None,
+            ),
+            (json!({"resets_at": u64::MAX}), None),
+        ] {
+            let mut quota = fields;
+            quota["code"] = json!("subscription_sharing_usage_limit_exceeded");
+            for body in [
+                json!({"error": quota}),
+                json!({"response": {"error": quota}}),
+            ] {
+                let detected = subscription_usage_limit(&body, now).unwrap();
+                assert_eq!(detected.resets_at, expected);
+                let wrapped = user_facing_error(anyhow::Error::new(
+                    ProviderError::from_provider_body(body.to_string()),
+                ));
+                assert!(provider_usage_limit(&wrapped).is_some());
+            }
+        }
+        for code in [
+            "rate_limit_exceeded",
+            "subscription_sharing_usage_unavailable",
+            "invalid_api_key",
+        ] {
+            let body = json!({"error": {"code": code, "message": "subscription_sharing_usage_limit_exceeded", "resets_at": 1_800_001_000}});
+            assert!(subscription_usage_limit(&body, now).is_none());
+            let wrapped = user_facing_error(anyhow::Error::new(ProviderError::from_provider_body(
+                body.to_string(),
+            )));
+            assert!(provider_usage_limit(&wrapped).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn http_subscription_limit_preserves_body_and_retry_after_timing() {
+        for retry_after in [None, Some("1800")] {
+            let before = now_ms();
+            let mut response = error_response(http::StatusCode::TOO_MANY_REQUESTS,
+                json!({"error": {"code": "subscription_sharing_usage_limit_exceeded", "resets_at": 1_800_001_000}}).to_string());
+            if let Some(header) = retry_after {
+                response
+                    .headers_mut()
+                    .insert(http::header::RETRY_AFTER, HeaderValue::from_static(header));
+            }
+            let http_client::Error::InvalidStatusCodeWithDetails { body, .. } =
+                inference_error(response, "test-token").await
+            else {
+                panic!("expected HTTP error details");
+            };
+            let wrapped =
+                user_facing_error(anyhow::Error::new(ProviderError::from_provider_body(body)));
+            let reset = provider_usage_limit(&wrapped).unwrap().resets_at.unwrap();
+            if retry_after.is_some() {
+                assert!(reset >= before + 1_800_000);
+                assert!(reset <= now_ms() + 1_801_000);
+            } else {
+                assert_eq!(reset, 1_800_001_000_000);
+            }
         }
     }
 

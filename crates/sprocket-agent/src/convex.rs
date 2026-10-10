@@ -77,6 +77,7 @@ pub(crate) struct RuntimeClient {
     pub(crate) output: Option<std::sync::Arc<crate::RunOutput>>,
     pub(crate) client: ConvexRpcClient,
     execution_secret: String,
+    allow_automatic_resume: bool,
 }
 
 #[derive(Debug)]
@@ -110,6 +111,7 @@ impl RuntimeClient {
             output: None,
             client,
             execution_secret: request.execution_secret.clone(),
+            allow_automatic_resume: request.allow_interaction,
         })
     }
 
@@ -516,6 +518,30 @@ impl RuntimeClient {
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
         self.finalize_run_with_expectations(run_id, text, status, last_error, Some(claim_id), None)
+            .await
+    }
+
+    pub(crate) async fn finalize_provider_failure(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        text: &str,
+        error: &anyhow::Error,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args(run_id);
+        args.insert("expectedClaimId".into(), claim_id.to_string().into());
+        args.insert("text".into(), text.to_string().into());
+        args.insert("status".into(), "failed".into());
+        args.insert("lastError".into(), error.to_string().into());
+        if self.allow_automatic_resume
+            && let Some(limit) = crate::chatgpt::provider_usage_limit(error)
+        {
+            args.insert(
+                "providerUsageLimit".into(),
+                Value::try_from(serde_json::to_value(limit)?)?,
+            );
+        }
+        self.finalize_mutation("agentRuntime:finalizeExecutorRun", args)
             .await
     }
 

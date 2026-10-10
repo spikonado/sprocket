@@ -33,6 +33,7 @@ export const vSelectedThreadLifecycleRun = v.object({
 	startedAt: v.number(),
 	completedAt: v.optional(v.number()),
 	lastError: v.optional(v.string()),
+	usageLimitRetryAt: v.optional(v.number()),
 	executorFriendlyName: v.optional(v.string())
 });
 
@@ -124,6 +125,7 @@ export function projectSelectedThreadLifecycle(args: {
 		startedAt: number;
 		completedAt?: number;
 		lastError?: string;
+		usageLimit?: { retryAt?: number; deadlineAt: number };
 		cancellationRequestedAt?: number;
 	} | null;
 	waitingForInput: boolean;
@@ -149,6 +151,15 @@ export function projectSelectedThreadLifecycle(args: {
 
 	if (args.run.lastError !== undefined) {
 		projected.lastError = args.run.lastError;
+	}
+
+	if (
+		args.run.status === 'failed' &&
+		args.run.cancellationRequestedAt === undefined &&
+		args.run.usageLimit?.retryAt !== undefined &&
+		Date.now() <= args.run.usageLimit.deadlineAt
+	) {
+		projected.usageLimitRetryAt = args.run.usageLimit.retryAt;
 	}
 
 	if (args.executorFriendlyName) {

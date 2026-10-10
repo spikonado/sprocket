@@ -8,6 +8,7 @@ import { vCompletionProvider, vDescendantStatusCounts } from '@convex/lib/valida
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import schema from '@convex/schema';
+import { latestRunForThread } from '@convex/lib/runExecution';
 import {
 	listDirectChildrenPage,
 	subtreeSummary,
@@ -97,6 +98,14 @@ export const setCompletionSettings = mutation({
 			(thread.completionProvider ?? 'spikonado') === args.completionProvider
 		) {
 			return null;
+		}
+
+		if ((thread.completionProvider ?? 'spikonado') !== args.completionProvider) {
+			const latest = await latestRunForThread(ctx.db, thread._id);
+
+			if (latest?.usageLimit) {
+				await ctx.db.patch('runs', latest._id, { usageLimit: undefined });
+			}
 		}
 
 		await ctx.db.patch('threadRecords', thread._id, {

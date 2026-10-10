@@ -256,7 +256,11 @@ export async function createQueuedRunRecord(
 		if (
 			args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
 			(!machineId ||
+				parent.userId !== args.userId ||
 				!isAutomaticallyRecoverableRun(parent, machineId) ||
+				(parent.usageLimit?.retryAt !== undefined &&
+					(parent.completionProvider !== threadRecord.completionProvider ||
+						parent.completionProvider !== completionProvider)) ||
 				recordsPrompt ||
 				(await threadRoot(ctx.db, threadRecord)).archivedAt !== undefined)
 		) {
@@ -301,6 +305,26 @@ export async function createQueuedRunRecord(
 	if (machineId) runRecord.machineId = machineId;
 
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
+
+	if (
+		continuationOfRunId &&
+		latestRun?.usageLimit &&
+		completionProvider === latestRun.completionProvider
+	) {
+		runRecord.usageLimit = {
+			attempts:
+				latestRun.usageLimit.attempts +
+				Number(
+					latestRun.usageLimit.retryAt !== undefined &&
+						args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX)
+				),
+			deadlineAt: latestRun.usageLimit.deadlineAt
+		};
+	}
+
+	if (latestRun?.usageLimit) {
+		await ctx.db.patch('runs', latestRun._id, { usageLimit: undefined });
+	}
 
 	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
 
