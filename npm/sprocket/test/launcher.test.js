@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureExecutable, launch, nativePackage } from '../lib/launcher.js';
+import { ensureExecutable, launch, nativePackage, run } from '../lib/launcher.js';
+
+function successfulChild() {
+	const child = new EventEmitter();
+	queueMicrotask(() => child.emit('close', 0, null));
+
+	return child;
+}
 
 test('selects the native package for supported platforms', () => {
 	assert.deepEqual(nativePackage('linux', 'x64'), [
@@ -52,7 +61,7 @@ test('overrides inherited update helper environment for the native child', async
 		spawn(binary, args, options) {
 			invocation = { binary, args, options };
 
-			return { status: 0 };
+			return successfulChild();
 		}
 	});
 	assert.equal(invocation.options.env.SPROCKET_UPDATE_NODE, '/usr/bin/node');
@@ -77,7 +86,7 @@ test('update and upgrade help is delegated to the native CLI', async () => {
 			spawn(binary, childArgs) {
 				invocation = { binary, args: childArgs };
 
-				return { status: 0 };
+				return successfulChild();
 			}
 		});
 
@@ -85,3 +94,79 @@ test('update and upgrade help is delegated to the native CLI', async () => {
 		assert.deepEqual(invocation, { binary: '/tmp/sprocket', args });
 	}
 });
+
+test('returns the native child exit code and removes signal handlers', async () => {
+	const listeners = ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal));
+	assert.equal(await run(process.execPath, ['-e', 'process.exit(7)']), 7);
+	assert.deepEqual(
+		['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal)),
+		listeners
+	);
+});
+
+test('reports a failed native launch and removes signal handlers', async () => {
+	const listeners = ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal));
+	await assert.rejects(run(path.join(tmpdir(), 'sprocket-missing', 'binary'), []), {
+		code: 'ENOENT'
+	});
+	assert.deepEqual(
+		['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal)),
+		listeners
+	);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+	for (const target of ['launcher', 'process group']) {
+		test(
+			`waits for native shutdown when ${signal} is sent to the ${target}`,
+			{ skip: process.platform === 'win32', timeout: 10_000 },
+			async (t) => {
+				const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-shutdown-'));
+				const completed = path.join(directory, 'completed');
+				t.after(() => rmSync(directory, { recursive: true, force: true }));
+
+				const launcher = spawn(
+					process.execPath,
+					[path.join(import.meta.dirname, 'launcher-shutdown-helper.mjs'), completed],
+					{ detached: true, stdio: ['ignore', 'pipe', 'inherit'] }
+				);
+
+				t.after(() => {
+					try {
+						process.kill(-launcher.pid, 'SIGKILL');
+					} catch (error) {
+						assert.equal(error.code, 'ESRCH');
+					}
+				});
+
+				let output = '';
+				launcher.stdout.setEncoding('utf8');
+
+				const ready = new Promise((resolve) => {
+					launcher.stdout.on('data', (data) => {
+						output += data;
+
+						if (output.includes('READY')) {
+							resolve();
+						}
+					});
+				});
+
+				const exited = once(launcher, 'exit');
+				const closed = once(launcher, 'close');
+
+				await Promise.race([
+					ready,
+					exited.then(() => assert.fail('launcher exited before startup'))
+				]);
+				process.kill(target === 'launcher' ? launcher.pid : -launcher.pid, signal);
+				const [code, exitSignal] = await exited;
+				assert.ok(existsSync(completed), 'native shutdown must complete before the launcher exits');
+				await closed;
+				assert.match(output, /SHUTDOWN_COMPLETED/);
+				assert.equal(code, null);
+				assert.equal(exitSignal, signal);
+			}
+		);
+	}
+}

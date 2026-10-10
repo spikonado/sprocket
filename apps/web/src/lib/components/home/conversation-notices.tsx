@@ -6,6 +6,7 @@ type Props = {
 	error: string | null;
 	runError: string | null;
 	reconnecting: boolean;
+	syncing: boolean;
 	catalogError: boolean;
 	catalogLoading: boolean;
 	onRetryCatalog: () => void;
@@ -15,6 +16,7 @@ export default function ConversationNotices({
 	error,
 	runError,
 	reconnecting,
+	syncing,
 	catalogError,
 	catalogLoading,
 	onRetryCatalog
@@ -32,6 +34,10 @@ export default function ConversationNotices({
 			{reconnecting ? (
 				<ComposerNotice title="Reconnecting" tone="status">
 					Reconnecting to conversation history.
+				</ComposerNotice>
+			) : syncing ? (
+				<ComposerNotice title="Loading history" tone="status">
+					Conversation history is still loading. You can send a prompt while it loads.
 				</ComposerNotice>
 			) : null}
 			{catalogError ? (

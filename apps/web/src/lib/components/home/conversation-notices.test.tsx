@@ -13,6 +13,7 @@ function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}
 			error={null}
 			runError={null}
 			reconnecting={false}
+			syncing={false}
 			catalogError={false}
 			catalogLoading={false}
 			onRetryCatalog={vi.fn()}
@@ -45,6 +46,18 @@ function composer(
 }
 
 describe('Conversation notices', () => {
+	it('shows background history loading and clears the notice after syncing', () => {
+		const view = render(composer(notices({ syncing: true })));
+		expect(screen.getByRole('status').textContent).toContain(
+			'Conversation history is still loading. You can send a prompt while it loads.'
+		);
+		view.rerender(composer(notices({ syncing: true, reconnecting: true })));
+		expect(screen.getAllByRole('status')).toHaveLength(1);
+		expect(screen.getByRole('status').textContent).toContain('Reconnecting');
+		view.rerender(composer(notices()));
+		expect(screen.queryByRole('status')).toBeNull();
+	});
+
 	it('shows run errors inside the composer using the same card as Sprocket usage limits', () => {
 		const view = render(composer(notices({ runError: usageLimit })));
 		const group = screen.getByRole('group', { name: 'Message composer' });

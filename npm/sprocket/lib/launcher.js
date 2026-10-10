@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { accessSync, chmodSync, constants, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -63,18 +63,49 @@ export function ensureExecutable(binary) {
 	}
 }
 
-export function run(binary, args, options = {}) {
-	const result = (options.spawn ?? spawnSync)(binary, args, {
+export async function run(binary, args, options = {}) {
+	const child = (options.spawn ?? spawn)(binary, args, {
 		stdio: 'inherit',
 		env: options.env ?? process.env
 	});
 
-	if (result.error) {
-		throw result.error;
+	let interrupted;
+
+	const handlers = new Map(
+		['SIGINT', 'SIGTERM'].map((signal) => [
+			signal,
+			() => {
+				interrupted ??= signal;
+
+				// Windows already sends Ctrl+C to both processes; child.kill would force termination.
+				if (process.platform !== 'win32' || signal !== 'SIGINT') {
+					child.kill(signal);
+				}
+			}
+		])
+	);
+
+	for (const [signal, handler] of handlers) {
+		process.on(signal, handler);
 	}
 
-	if (result.signal) {
-		process.kill(process.pid, result.signal);
+	let result;
+
+	try {
+		result = await new Promise((resolve, reject) => {
+			child.once('error', reject);
+			child.once('close', (status, signal) => resolve({ status, signal }));
+		});
+	} finally {
+		for (const [signal, handler] of handlers) {
+			process.off(signal, handler);
+		}
+	}
+
+	const signal = result.signal ?? interrupted;
+
+	if (signal) {
+		process.kill(process.pid, signal);
 
 		return undefined;
 	}
@@ -112,7 +143,7 @@ export async function launch(args, options = {}) {
 		const staticDir = path.resolve(libDir, '../web');
 		const binary = (options.resolveBinary ?? resolveNativeBinary)();
 		(options.ensureExecutable ?? ensureExecutable)(binary);
-		process.exitCode = run(binary, args, {
+		process.exitCode = await run(binary, args, {
 			env: nativeChildEnvironment(
 				env,
 				staticDir,

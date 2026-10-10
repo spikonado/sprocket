@@ -33,6 +33,7 @@ export class TranscriptReplica implements Store<number> {
 	nextBefore: number | null = null;
 	windowVersion = 0;
 	stale = false;
+	syncing = false;
 	threadId: Id<'threadRecords'> | null = null;
 	loading = false;
 	error: string | null = null;
@@ -78,6 +79,7 @@ export class TranscriptReplica implements Store<number> {
 		this.nextBefore = null;
 		this.windowVersion = 0;
 		this.stale = false;
+		this.syncing = false;
 		this.loading = threadId !== null;
 		this.#emit();
 	}
@@ -95,6 +97,7 @@ export class TranscriptReplica implements Store<number> {
 				this.nextBefore = history.nextBefore ?? null;
 				this.windowVersion = history.windowVersion;
 				this.stale = history.stale;
+				this.syncing = history.syncing;
 				this.loading = history.loading;
 				this.loadingOlder = history.loadingOlder;
 				this.error = history.error;
