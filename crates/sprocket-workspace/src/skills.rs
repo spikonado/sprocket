@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -5,9 +6,6 @@ use crate::project_root::find_project_root;
 use crate::skill_name::validate_skill_name;
 
 const MAX_SKILLS: usize = 64;
-const MAX_FRONTMATTER_BYTES: usize = 8 * 1024;
-const MAX_DESCRIPTION_CHARS: usize = 1024;
-const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceSkill {
@@ -147,10 +145,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     }
 
     let name = name.ok_or_else(|| "missing or empty name".to_string())?;
-    let mut description = description.ok_or_else(|| "missing or empty description".to_string())?;
-    if description.chars().count() > MAX_DESCRIPTION_CHARS {
-        description = description.chars().take(MAX_DESCRIPTION_CHARS).collect();
-    }
+    let description = description.ok_or_else(|| "missing or empty description".to_string())?;
 
     Ok(ParsedSkill {
         name,
@@ -159,23 +154,13 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     })
 }
 
-/// Resolve skill body for `read_skill`, capped at 64 KiB.
 pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, String> {
-    let (raw, truncated) = match &skill.source {
-        SkillSource::File { skill_md_path } => {
-            read_file_capped(skill_md_path, MAX_SKILL_CONTENT_BYTES)
-                .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?
-        }
-        SkillSource::BuiltIn { contents } => {
-            let bytes = contents.as_bytes();
-            let truncated = bytes.len() > MAX_SKILL_CONTENT_BYTES;
-            let raw = if truncated {
-                bytes[..MAX_SKILL_CONTENT_BYTES].to_vec()
-            } else {
-                bytes.to_vec()
-            };
-            (raw, truncated)
-        }
+    let raw = match &skill.source {
+        SkillSource::File { skill_md_path } => Cow::Owned(
+            std::fs::read(skill_md_path)
+                .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?,
+        ),
+        SkillSource::BuiltIn { contents } => Cow::Borrowed(contents.as_bytes()),
     };
 
     let text = String::from_utf8_lossy(&raw);
@@ -195,7 +180,6 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
         description: skill.description.clone(),
         content: body.to_string(),
         dir,
-        truncated,
     })
 }
 
@@ -205,7 +189,6 @@ pub struct ReadSkillContent {
     pub description: String,
     pub content: String,
     pub dir: Option<String>,
-    pub truncated: bool,
 }
 
 fn parse_and_validate_builtin(
@@ -298,7 +281,7 @@ fn scan_skills_dir(
 
 fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, String> {
     let skill_md_path = skill_dir.join("SKILL.md");
-    let (data, _) = read_file_capped(&skill_md_path, MAX_FRONTMATTER_BYTES).map_err(|error| {
+    let data = std::fs::read(&skill_md_path).map_err(|error| {
         format!(
             "skipped skill '{dir_name}': failed to read {}: {error}",
             skill_md_path.display()
@@ -332,20 +315,6 @@ fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, S
         description: parsed.description,
         source: SkillSource::File { skill_md_path },
     })
-}
-
-fn read_file_capped(path: &Path, max_bytes: usize) -> std::io::Result<(Vec<u8>, bool)> {
-    use std::io::Read;
-
-    let file = std::fs::File::open(path)?;
-    let mut limited = file.take(max_bytes.saturating_add(1) as u64);
-    let mut buf = Vec::new();
-    limited.read_to_end(&mut buf)?;
-    let truncated = buf.len() > max_bytes;
-    if truncated {
-        buf.truncate(max_bytes);
-    }
-    Ok((buf, truncated))
 }
 
 fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
@@ -559,24 +528,29 @@ mod tests {
     }
 
     #[test]
-    fn discovery_and_content_reads_stay_byte_capped() {
+    fn discovers_large_frontmatter_and_returns_complete_file_content() {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
         let skill_dir = skills.join("huge");
         gix::init(&root).expect("git repository");
         fs::create_dir_all(&skill_dir).unwrap();
 
-        let mut contents = String::from("---\nname: huge\ndescription: oversized\n---\n");
-        contents.push_str(&"x".repeat(MAX_SKILL_CONTENT_BYTES + 8 * 1024));
+        let body = format!("{}\nFinal instruction.\n", "λ".repeat(40 * 1024));
+        let description = "λ".repeat(1500);
+        let metadata = "x".repeat(10 * 1024);
+        let contents = format!(
+            "---\nname: huge\ndescription: {description}\nmetadata: {metadata}\n---\n{body}"
+        );
         fs::write(skill_dir.join("SKILL.md"), &contents).unwrap();
 
         let loaded = load_workspace_skills(&root, &[], &[]);
         assert_eq!(loaded.skills.len(), 1);
         assert_eq!(loaded.skills[0].name, "huge");
+        assert_eq!(loaded.skills[0].description, description);
 
         let content = read_skill_content(&loaded.skills[0]).expect("read");
-        assert!(content.truncated);
-        assert!(content.content.len() <= MAX_SKILL_CONTENT_BYTES);
+        assert_eq!(content.description, description);
+        assert_eq!(content.content, body);
 
         fs::remove_dir_all(root).ok();
     }
@@ -594,7 +568,6 @@ mod tests {
         assert_eq!(content.name, "demo");
         assert_eq!(content.description, "A demo skill");
         assert_eq!(content.content, "# Instructions\n\nGo.\n");
-        assert!(!content.truncated);
         assert_eq!(
             content.dir.as_deref(),
             Some(skills.join("demo").to_string_lossy().as_ref())
