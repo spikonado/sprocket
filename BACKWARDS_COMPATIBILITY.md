@@ -18,21 +18,13 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 ### Provider and model-vendor context handoffs
 
 Run context responses optionally include `providerHandoff` with the previous
-provider's model settings when the provider or model ID changes. The local
-runner compares model vendors from the live gateway catalog, preserving history
-for same-provider, same-vendor model changes. The server derives the source from
-uncovered transcript completions, so existing threads need no migration. Missing historical provider
-IDs still mean `spikonado`. New clients use that provider to write and save a
-handoff before sending the summary and pending prompt to the selected provider.
-Gateway and BYOK credential authorization also permits the derived handoff
-provider while that history remains uncovered, subject to the active run claim.
-Once saved, the existing summary cutoff prevents another handoff on retry.
-If the previous model has left the catalog, its provider's current default
-writes the handoff with supported settings. The provider remains unchanged.
+provider's model settings. Released clients ignore this field. Keep it optional
+and keep the Rust missing-field default until those clients age out.
 
-Released clients ignore the optional response field. Keep it optional and keep
-the Rust missing-field default until those clients age out. Local transcripts,
-saved provider settings and Convex documents keep their existing formats.
+The source comes from uncovered transcript completions and uses the existing
+summary cutoff. Missing historical provider IDs still mean `spikonado`. Local
+transcripts, saved provider settings and Convex documents keep their existing
+formats, so existing threads need no migration.
 
 ### Rig 0.43 upstream revision
 

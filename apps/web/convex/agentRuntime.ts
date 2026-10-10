@@ -356,24 +356,14 @@ export const getContext = query({
 		const parentThreadId = thread?.parentThreadId;
 		const providerHandoff = await getProviderHandoff(ctx, run);
 
-		if (!promptPart?.prompt) {
-			if (!run.continuationOfRunId) {
-				throw new Error('Run does not contain a user prompt.');
-			}
-
-			return getContextResult({
-				run,
-				parentThreadId,
-				prompt: '',
-				contextTokens,
-				providerHandoff
-			});
+		if (!promptPart?.prompt && !run.continuationOfRunId) {
+			throw new Error('Run does not contain a user prompt.');
 		}
 
 		return getContextResult({
 			run,
 			parentThreadId,
-			prompt: promptPart.prompt.text,
+			prompt: promptPart?.prompt?.text ?? '',
 			contextTokens,
 			providerHandoff
 		});

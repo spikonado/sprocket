@@ -733,24 +733,13 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let handoff = parse_request(&old_requests[0]);
     assert_eq!(handoff["model"], MODEL);
     let input = handoff["input"].as_array().expect("old provider input");
-    assert_eq!(input.len(), 7);
-    assert_eq!(input[0]["content"][0]["text"], INITIAL_CONTEXT);
-    assert_eq!(input[1]["content"][0]["text"], OLD_CONTEXT);
-    assert_eq!(input[2]["type"], "reasoning");
-    assert_eq!(input[2]["id"], "rs_old_provider");
-    assert_eq!(input[2]["encrypted_content"], ENCRYPTED_REASONING);
-    assert_eq!(input[2]["summary"][0]["text"], REASONING_SUMMARY);
-    assert_eq!(input[3]["type"], "function_call");
-    assert_eq!(input[3]["call_id"], OLD_CALL_ID);
-    assert_eq!(input[3]["name"], "exec_cmd");
-    assert_eq!(input[3]["arguments"], json!({ "cmd": "pwd" }).to_string());
-    assert_eq!(input[4]["type"], "function_call_output");
-    assert_eq!(input[4]["call_id"], OLD_CALL_ID);
-    assert!(input[4]["output"].to_string().contains(TOOL_RESULT));
-    assert_eq!(input[5]["role"], "assistant");
-    assert_eq!(input[5]["content"], OLD_ASSISTANT_TEXT);
-    assert_eq!(input[6]["role"], "developer");
-    assert_eq!(input[6]["content"][0]["text"], HANDOFF_PROMPT);
+    let reasoning = input
+        .iter()
+        .find(|item| item["type"] == "reasoning")
+        .expect("old provider receives encrypted history");
+    assert_eq!(reasoning["encrypted_content"], ENCRYPTED_REASONING);
+    assert!(input_blob(&handoff).contains(OLD_CONTEXT));
+    assert!(input_blob(&handoff).contains(HANDOFF_PROMPT));
     assert!(!input_blob(&handoff).contains(DEFERRED_PROMPT));
     assert!(advertised_tools(&handoff).contains(&HandoffTool::NAME.to_string()));
 

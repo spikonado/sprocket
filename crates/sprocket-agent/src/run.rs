@@ -15,7 +15,7 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use crate::attachments::cache_prompt_attachments;
-use crate::catalog::{catalog_capabilities_for_model, catalog_model_for_handoff};
+use crate::catalog::catalog_models_for_run;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::openai::developer_message;
@@ -765,15 +765,6 @@ fn should_continue_without_prompt(
     continue_from_finished_turns || (is_continuation && prompt_text.is_empty())
 }
 
-fn requires_context_handoff(
-    source_provider: CompletionProvider,
-    target_provider: CompletionProvider,
-    source_vendor: &str,
-    target_vendor: &str,
-) -> bool {
-    source_provider != target_provider || source_vendor != target_vendor
-}
-
 async fn load_prior_history(
     runtime: &RuntimeClient,
     store: &TranscriptStore,
@@ -876,39 +867,21 @@ pub async fn run_agent(
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
 
-    let capabilities =
-        match catalog_capabilities_for_model(&gateway_url, &context.run.selected_model).await {
-            Ok(capabilities) => capabilities,
+    let (capabilities, handoff_model) =
+        match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
+            .await
+        {
+            Ok(models) => models,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
-    let handoff_capabilities = if let Some(handoff) = context.provider_handoff.take() {
-        match catalog_model_for_handoff(&gateway_url, handoff).await {
-            Ok((handoff, source, removed))
-                if removed
-                    || requires_context_handoff(
-                        handoff.completion_provider,
-                        context.run.completion_provider,
-                        &source.vendor,
-                        &capabilities.vendor,
-                    ) =>
-            {
-                context.provider_handoff = Some(handoff);
-                Some(source)
-            }
-            Ok(_) => {
-                context.provider_handoff = None;
-                None
-            }
-            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-        }
-    } else {
-        None
-    };
+    context.provider_handoff = handoff_model.as_ref().map(|(handoff, _)| handoff.clone());
 
     let chatgpt_client = if chatgpt_client.is_none()
-        && context.provider_handoff.as_ref().is_some_and(|handoff| {
-            handoff.completion_provider == crate::types::CompletionProvider::Chatgpt
-        }) {
+        && context
+            .provider_handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
+    {
         let previous_client = request
             .chatgpt_credentials
             .clone()
@@ -935,8 +908,9 @@ pub async fn run_agent(
         &store,
         &context,
         &run_id,
-        handoff_capabilities
+        handoff_model
             .as_ref()
+            .map(|(_, capabilities)| capabilities)
             .unwrap_or(&capabilities)
             .supports_images,
     );
@@ -1005,15 +979,12 @@ pub async fn run_agent(
             &context.run.thread_id,
             &transcript_dir,
         );
-        let handoff_base_instructions = context.provider_handoff.as_ref().map(|handoff| {
+        let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
             build_workspace_prompt_context(
                 &request.workspace_path,
                 &workspace_instructions,
                 &skills,
-                &handoff_capabilities
-                    .as_ref()
-                    .expect("handoff capabilities loaded")
-                    .label,
+                &capabilities.label,
                 &handoff.selected_model,
                 &context.run.thread_id,
                 &transcript_dir,
@@ -1160,36 +1131,12 @@ mod tests {
     };
 
     use super::{
-        build_workspace_prompt_context, requires_context_handoff, should_continue_without_prompt,
+        build_workspace_prompt_context, should_continue_without_prompt,
         submission_owned_by_another_executor,
     };
-    use crate::types::CompletionProvider;
 
     const MODEL_LABEL: &str = "GPT-5.6 Sol";
     const MODEL_ID: &str = "gpt-5.6-sol";
-
-    #[test]
-    fn vendor_switches_handoff_and_same_vendor_models_keep_history() {
-        for source in ["openai", "anthropic", "xai"] {
-            for target in ["openai", "anthropic", "xai"] {
-                assert_eq!(
-                    requires_context_handoff(
-                        CompletionProvider::Spikonado,
-                        CompletionProvider::Spikonado,
-                        source,
-                        target,
-                    ),
-                    source != target,
-                );
-            }
-        }
-        assert!(requires_context_handoff(
-            CompletionProvider::Spikonado,
-            CompletionProvider::Chatgpt,
-            "openai",
-            "openai",
-        ));
-    }
 
     #[test]
     fn prompted_continuations_use_their_user_prompt() {

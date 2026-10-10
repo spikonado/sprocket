@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    CatalogModelCapabilities, CompletionProvider, ContextBudget, ProviderHandoff,
+    CatalogModelCapabilities, CompletionProvider, ContextBudget, ProviderHandoff, RunSnapshot,
     gateway_api_v1_url,
 };
 
@@ -158,7 +158,7 @@ pub async fn catalog_for_provider(
 }
 
 fn select_catalog_model(
-    catalog: GatewaySprocketCatalog,
+    catalog: &GatewaySprocketCatalog,
     model_id: &str,
 ) -> anyhow::Result<CatalogModelCapabilities> {
     let model = catalog
@@ -178,19 +178,31 @@ fn select_catalog_model(
     })
 }
 
-/// Fetch model capabilities for `model_id` from one catalog GET.
-pub async fn catalog_capabilities_for_model(
+pub(crate) async fn catalog_models_for_run(
     gateway_url: &str,
-    model_id: &str,
-) -> anyhow::Result<CatalogModelCapabilities> {
+    run: &RunSnapshot,
+    handoff: Option<ProviderHandoff>,
+) -> anyhow::Result<(
+    CatalogModelCapabilities,
+    Option<(ProviderHandoff, CatalogModelCapabilities)>,
+)> {
     let catalog = fetch_catalog(gateway_url).await?;
-    select_catalog_model(catalog, model_id)
+    let selected = select_catalog_model(&catalog, &run.selected_model)?;
+    let handoff = match handoff {
+        Some(handoff) => {
+            select_handoff_model(&catalog, handoff, run.completion_provider, &selected.vendor)?
+        }
+        None => None,
+    };
+    Ok((selected, handoff))
 }
 
 fn select_handoff_model(
-    catalog: GatewaySprocketCatalog,
+    catalog: &GatewaySprocketCatalog,
     mut handoff: ProviderHandoff,
-) -> anyhow::Result<(ProviderHandoff, CatalogModelCapabilities, bool)> {
+    target_provider: CompletionProvider,
+    target_vendor: &str,
+) -> anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>> {
     let removed = !catalog
         .models
         .iter()
@@ -216,14 +228,11 @@ fn select_handoff_model(
         handoff.fast_mode &= model.service_tiers.iter().any(|tier| tier == "fast");
     }
     let capabilities = select_catalog_model(catalog, &handoff.selected_model)?;
-    Ok((handoff, capabilities, removed))
-}
-
-pub(crate) async fn catalog_model_for_handoff(
-    gateway_url: &str,
-    handoff: ProviderHandoff,
-) -> anyhow::Result<(ProviderHandoff, CatalogModelCapabilities, bool)> {
-    select_handoff_model(fetch_catalog(gateway_url).await?, handoff)
+    // A fallback cannot establish the historical vendor, so summarize instead of replaying it.
+    Ok((removed
+        || handoff.completion_provider != target_provider
+        || capabilities.vendor != target_vendor)
+        .then_some((handoff, capabilities)))
 }
 
 #[cfg(test)]
@@ -268,8 +277,8 @@ mod tests {
 
     #[test]
     fn reports_selected_model_metadata_from_one_payload() {
-        let vision =
-            select_catalog_model(catalog_payload().sprocket, "vision-model").expect("vision model");
+        let vision = select_catalog_model(&catalog_payload().sprocket, "vision-model")
+            .expect("vision model");
         assert!(vision.supports_images);
         assert!(vision.supports_required_tool_choice);
         assert_eq!(vision.label, "Vision Model");
@@ -277,7 +286,7 @@ mod tests {
         assert_eq!(vision.context_budget.context_window_tokens, 100_000);
         assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
 
-        let long_context = select_catalog_model(catalog_payload().sprocket, "long-context-model")
+        let long_context = select_catalog_model(&catalog_payload().sprocket, "long-context-model")
             .expect("long-context model");
         assert!(!long_context.supports_images);
         assert_eq!(long_context.vendor, "other");
@@ -287,7 +296,7 @@ mod tests {
 
     #[test]
     fn missing_catalog_model_is_an_error() {
-        let error = select_catalog_model(catalog_payload().sprocket, "no-such-model")
+        let error = select_catalog_model(&catalog_payload().sprocket, "no-such-model")
             .expect_err("unknown model")
             .to_string();
         assert!(error.contains("no-such-model"));
@@ -300,17 +309,19 @@ mod tests {
             CompletionProvider::Chatgpt,
             CompletionProvider::Openai,
         ] {
-            let (handoff, capabilities, removed) = select_handoff_model(
-                catalog_payload().sprocket,
+            let (handoff, capabilities) = select_handoff_model(
+                &catalog_payload().sprocket,
                 ProviderHandoff {
                     completion_provider: provider,
                     selected_model: "retired-model".to_string(),
                     reasoning_effort: "max".to_string(),
                     fast_mode: true,
                 },
+                provider,
+                "openai",
             )
-            .expect("available handoff fallback");
-            assert!(removed);
+            .expect("available handoff fallback")
+            .expect("unknown historical vendor requires a handoff");
             assert_eq!(handoff.completion_provider, provider);
             assert_eq!(handoff.selected_model, "vision-model");
             assert_eq!(handoff.reasoning_effort, "high");
@@ -327,17 +338,19 @@ mod tests {
         ] {
             let mut catalog = catalog_payload().sprocket;
             catalog.default_model_id = "long-context-model".to_string();
-            let (handoff, capabilities, removed) = select_handoff_model(
-                catalog,
+            let (handoff, capabilities) = select_handoff_model(
+                &catalog,
                 ProviderHandoff {
                     completion_provider: provider,
                     selected_model: "retired-model".to_string(),
                     reasoning_effort: "high".to_string(),
                     fast_mode: true,
                 },
+                provider,
+                "other",
             )
-            .expect("provider-compatible handoff fallback");
-            assert!(removed);
+            .expect("provider-compatible handoff fallback")
+            .expect("unknown historical vendor requires a handoff");
             assert_eq!(handoff.completion_provider, provider);
             if provider == CompletionProvider::Spikonado {
                 assert_eq!(handoff.selected_model, "long-context-model");
@@ -354,19 +367,45 @@ mod tests {
     }
 
     #[test]
-    fn listed_handoff_model_keeps_its_settings() {
-        let (handoff, capabilities, removed) = select_handoff_model(
-            catalog_payload().sprocket,
+    fn listed_handoff_model_keeps_its_settings_when_the_vendor_changes() {
+        let (handoff, capabilities) = select_handoff_model(
+            &catalog_payload().sprocket,
             ProviderHandoff {
                 completion_provider: CompletionProvider::Spikonado,
                 selected_model: "long-context-model".to_string(),
                 reasoning_effort: "none".to_string(),
                 fast_mode: false,
             },
+            CompletionProvider::Spikonado,
+            "openai",
         )
-        .expect("original handoff model");
-        assert!(!removed);
+        .expect("original handoff model")
+        .expect("vendor change requires a handoff");
         assert_eq!(handoff.selected_model, "long-context-model");
+        assert_eq!(handoff.reasoning_effort, "none");
+        assert!(!handoff.fast_mode);
         assert_eq!(capabilities.vendor, "other");
+    }
+
+    #[test]
+    fn same_vendor_keeps_history_only_on_the_same_provider() {
+        for target_provider in [CompletionProvider::Spikonado, CompletionProvider::Openai] {
+            let handoff = select_handoff_model(
+                &catalog_payload().sprocket,
+                ProviderHandoff {
+                    completion_provider: CompletionProvider::Spikonado,
+                    selected_model: "vision-model".to_string(),
+                    reasoning_effort: "medium".to_string(),
+                    fast_mode: true,
+                },
+                target_provider,
+                "openai",
+            )
+            .expect("listed source model");
+            assert_eq!(
+                handoff.is_some(),
+                target_provider != CompletionProvider::Spikonado
+            );
+        }
     }
 }
