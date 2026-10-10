@@ -561,7 +561,7 @@ describe('usage-limit recovery query and client opt-in', () => {
 
 	it.each([undefined, false] as const)(
 		'discards quota recovery without true opt-in (%s)',
-		async (optIn) => {
+		async (supportsUsageLimitResume) => {
 			const { asUser, finalize, runId, queryArgs, recoveryArgs } = await setup();
 			await finalize();
 
@@ -570,7 +570,7 @@ describe('usage-limit recovery query and client opt-in', () => {
 					...queryArgs,
 					submissionId,
 					continuationOfRunId: runId,
-					supportsUsageLimitResume: optIn
+					supportsUsageLimitResume
 				};
 
 				expect(await asUser.query(api.runRecovery.state, args)).toEqual({ state: 'discard' });
