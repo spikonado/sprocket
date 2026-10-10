@@ -56,6 +56,10 @@ export default function SettingsProviders({
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
 	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
+	const loginGenerationRef = useRef(0);
+	const pendingOperationRef = useRef<number | null>(null);
+	const selectionEpochRef = useRef(0);
+	const loginEpochRef = useRef(0);
 
 	const activeAccount =
 		chatGptStatus?.accounts.find(
@@ -84,8 +88,29 @@ export default function SettingsProviders({
 			.catch(() => {});
 	}
 
+	function beginChatGptPending(generation: number) {
+		pendingOperationRef.current = generation;
+		setChatGptPending(true);
+	}
+
+	function endChatGptPending(generation: number) {
+		if (pendingOperationRef.current !== generation) return;
+
+		pendingOperationRef.current = null;
+		setChatGptPending(false);
+	}
+
+	function clearUnownedChatGptPending() {
+		if (pendingOperationRef.current) return;
+
+		setChatGptPending(false);
+	}
+
 	function cancelLogin() {
 		generationRef.current += 1;
+		loginGenerationRef.current += 1;
+		pendingOperationRef.current = null;
+
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
 		setBrowserLoginActive(false);
@@ -103,6 +128,9 @@ export default function SettingsProviders({
 
 		return () => {
 			generationRef.current += 1;
+			loginGenerationRef.current += 1;
+			pendingOperationRef.current = null;
+
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
 			closeLoginWindow();
@@ -120,10 +148,13 @@ export default function SettingsProviders({
 		api: DesktopApi,
 		generation: number
 	) {
+		let closedPendingPolls = 0;
+		const selectionAtStart = selectionEpochRef.current;
+
 		for (;;) {
 			await new Promise((resolve) => setTimeout(resolve, 1_500));
 
-			if (generation !== generationRef.current) return;
+			if (generation !== loginGenerationRef.current) return;
 
 			try {
 				const result = await api.fetchChatGptBrowserLoginResult({
@@ -131,28 +162,53 @@ export default function SettingsProviders({
 					state: pending.login.state
 				});
 
-				if (generation !== generationRef.current) return;
+				if (generation !== loginGenerationRef.current) return;
 
-				if (result.status === 'pending') continue;
+				if (result.status === 'pending') {
+					if (loginWindowRef.current?.closed) {
+						closedPendingPolls += 1;
+
+						if (closedPendingPolls === 2) {
+							setBrowserLogin(pending.userId, null);
+
+							clearUnownedChatGptPending();
+						}
+					}
+
+					continue;
+				}
+
 				setBrowserLogin(pending.userId, null);
-				setChatGptPending(false);
+
+				clearUnownedChatGptPending();
 
 				if (result.status === 'error') {
-					setChatGptError(result.error ?? 'ChatGPT sign-in failed.');
+					if (closedPendingPolls < 2) {
+						setChatGptError(result.error ?? 'ChatGPT sign-in failed.');
+					}
 
 					return;
 				}
 
 				const status = await api.fetchChatGptStatus({ userId: pending.userId });
 
-				if (generation !== generationRef.current || api !== desktopApi) return;
+				if (generation !== loginGenerationRef.current || api !== desktopApi) return;
+
+				if (selectionEpochRef.current !== selectionAtStart) return;
+
+				loginEpochRef.current += 1;
 				onChatGptStatusChange(status);
 
 				return;
 			} catch (error) {
-				if (generation !== generationRef.current) return;
+				if (generation !== loginGenerationRef.current) return;
+
+				if (closedPendingPolls >= 2) return;
+
 				setBrowserLogin(pending.userId, null);
-				setChatGptPending(false);
+
+				clearUnownedChatGptPending();
+
 				setChatGptError(
 					errorMessage(
 						z.instanceof(Error).catch(new Error()).parse(error),
@@ -174,7 +230,9 @@ export default function SettingsProviders({
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
-		const generation = ++generationRef.current;
+
+		generationRef.current += 1;
+		const generation = ++loginGenerationRef.current;
 		const bridge = window.sprocketDesktopBridge;
 		let loginWindow: Window | null = null;
 		let pending: PendingBrowserLogin | null = null;
@@ -195,7 +253,7 @@ export default function SettingsProviders({
 
 			pending = { userId: userIdAtStart, login };
 
-			if (generation !== generationRef.current) {
+			if (generation !== loginGenerationRef.current) {
 				cancelLoginOnServer(pending);
 
 				return;
@@ -207,7 +265,7 @@ export default function SettingsProviders({
 				loginWindow?.location.replace(login.authorizeUrl);
 			}
 
-			if (generation !== generationRef.current) {
+			if (generation !== loginGenerationRef.current) {
 				cancelLoginOnServer(pending);
 
 				return;
@@ -220,7 +278,7 @@ export default function SettingsProviders({
 
 			if (pending) cancelLoginOnServer(pending);
 
-			if (generation !== generationRef.current) return;
+			if (generation !== loginGenerationRef.current) return;
 			setBrowserLoginActive(false);
 			setChatGptError(
 				errorMessage(
@@ -242,14 +300,18 @@ export default function SettingsProviders({
 		const api = desktopApi;
 
 		if (!api || chatGptPending) return;
-		setChatGptPending(true);
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 
+		beginChatGptPending(generation);
+
 		try {
 			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
+
+			if (generation !== generationRef.current || api !== desktopApi) return;
+			selectionEpochRef.current += 1;
 			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
 
 			if (generation !== generationRef.current || api !== desktopApi) return;
@@ -263,7 +325,7 @@ export default function SettingsProviders({
 				)
 			);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			endChatGptPending(generation);
 		}
 	}
 
@@ -272,13 +334,17 @@ export default function SettingsProviders({
 
 		if (!api || chatGptPending) return;
 		const generation = ++generationRef.current;
-		setChatGptPending(true);
+		const loginEpochAtStart = loginEpochRef.current;
+
+		beginChatGptPending(generation);
 		setChatGptError(null);
 
 		try {
 			const status = await api.fetchChatGptStatus({ userId });
 
-			if (generation === generationRef.current) onChatGptStatusChange(status);
+			if (generation === generationRef.current && loginEpochRef.current === loginEpochAtStart) {
+				onChatGptStatusChange(status);
+			}
 		} catch (error) {
 			if (generation === generationRef.current)
 				setChatGptError(
@@ -288,7 +354,7 @@ export default function SettingsProviders({
 					)
 				);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			endChatGptPending(generation);
 		}
 	}
 
@@ -299,11 +365,12 @@ export default function SettingsProviders({
 		const pendingLogin = cancelLogin();
 
 		if (pendingLogin) cancelLoginOnServer(pendingLogin);
-		setChatGptPending(true);
 		setChatGptError(null);
 		setSignOutWarning(null);
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
+
+		beginChatGptPending(generation);
 
 		try {
 			const warning = await api.disconnectChatGptAccount({
@@ -342,7 +409,7 @@ export default function SettingsProviders({
 				)
 			);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			endChatGptPending(generation);
 		}
 	}
 
