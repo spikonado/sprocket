@@ -2752,6 +2752,7 @@ export default function App({
 									<PromptComposer
 										notices={
 											<ConversationNotices
+												key={currentThreadId}
 												error={conversationError}
 												runError={runError}
 												reconnecting={Boolean(
