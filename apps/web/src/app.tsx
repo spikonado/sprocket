@@ -74,6 +74,7 @@ import {
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
+import { useMessageQueue } from '$lib/home/use-message-queue';
 import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
@@ -115,6 +116,7 @@ import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sp
 import { clearLaunchHash, readWorkspaceLaunchFromHash, resolveDesktopApi } from '$lib/local/client';
 import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 import type {
+	AgentRunRequest,
 	ChatGptStatus,
 	DesktopApi,
 	ExecutorJob,
@@ -987,8 +989,23 @@ export default function App({
 
 	const hasPendingAgentLaunch = isAgentLaunchPending(pendingAgentLaunches, currentThreadId);
 
+	const {
+		queue: messageQueue,
+		messages: queuedMessages,
+		isLoaded: isMessageQueueLoaded
+	} = useMessageQueue({
+		client: convexClient,
+		desktopApi,
+		userId: authReady ? signedInUserId : null,
+		onError: setCurrentError
+	});
+
+	const currentQueuedMessages = queuedMessages.filter(
+		(message) => message.threadId === currentThreadId && message.userId === signedInUserId
+	);
+
 	const latestRunResumeKind =
-		hasPendingAgentLaunch || isRunInProgress
+		hasPendingAgentLaunch || isRunInProgress || currentQueuedMessages.length > 0
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.lastError);
 
@@ -1015,12 +1032,13 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
+		isMessageQueueLoaded &&
 		(pendingAgentQuestion || selectedCompletionProvider !== 'chatgpt' || chatGptConfigured) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
 		!hasPendingAgentLaunch &&
-		((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
+		(isLatestRunReady || pendingAgentQuestion)
 	);
 
 	const recentProjectDirectories = useMemo(() => {
@@ -1680,6 +1698,60 @@ export default function App({
 		const submittedCompletionProvider = selectedCompletionProvider;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
+
+		const queuedRequest: AgentRunRequest = {
+			userId: submittedUserId,
+			threadId: selectedThreadId ?? undefined,
+			submissionId: crypto.randomUUID(),
+			executionSecret: crypto.randomUUID() + crypto.randomUUID(),
+			workspacePath,
+			prompt: submittedPrompt,
+			storageIds: submittedStorageIds,
+			selectedModel: submittedModel,
+			completionProvider: submittedCompletionProvider,
+			reasoningEffort: submittedReasoningEffort,
+			fastMode: submittedFastMode
+		};
+
+		if (
+			selectedThreadId &&
+			!options?.answeredQuestionId &&
+			(isRunInProgress ||
+				currentQueuedMessages.length > 0 ||
+				messageQueue.hasPendingSubmission(queuedRequest))
+		) {
+			const queueScope = `thread:${selectedThreadId}`;
+			const queueSequence = ++nextSubmissionSequence.current;
+			submittingPromptScopes.set(queueScope, queueSequence);
+			bumpSubmissionTracking();
+
+			try {
+				await messageQueue.enqueue(queuedRequest);
+			} catch (error) {
+				if (isSubmittedUserCurrent()) {
+					setCurrentError(error instanceof Error ? error.message : 'Failed to queue message.');
+				}
+
+				return;
+			} finally {
+				clearSubmittingPrompt(queueScope, queueSequence);
+			}
+
+			if (
+				!isSubmittedUserCurrent() ||
+				currentThreadIdRef.current !== selectedThreadId ||
+				currentWorkspacePathRef.current !== workspacePath
+			)
+				return;
+
+			setPrompt('');
+			composerAttachments.clear({ discard: false });
+			setComposerContinuationOfRunId(null);
+			setAutoSubmitComposerContinuation(false);
+			setCurrentError(null);
+
+			return;
+		}
 
 		const submittedContinuationOfRunId =
 			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
@@ -2805,6 +2877,10 @@ export default function App({
 										}
 										isStarting={hasPendingAgentLaunch}
 										isRunning={!hasPendingAgentLaunch && isStopAvailable}
+										isQueuing={isRunInProgress || currentQueuedMessages.length > 0}
+										queuedMessages={currentQueuedMessages}
+										onRemoveQueuedMessage={(id) => messageQueue.remove(id)}
+										onRetryQueuedMessage={(id) => messageQueue.retry(id)}
 										runStartedAt={isRunInProgress ? (runState?.startedAt ?? null) : null}
 										projectSkills={composerProjectSkills}
 										projectPaths={composerProjectPaths}

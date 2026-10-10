@@ -107,6 +107,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		listProjectAttachments: async () => [],
 		attachProject: unused,
 		runAgent: unused,
+		enqueueMessage: unused,
 		fetchTranscriptDisplay: async () => emptyDisplayPage('replica-1'),
 		fetchTranscriptDisplayDetails: unused,
 		watchTranscript: () => new Promise<void>(() => {}),
@@ -137,6 +138,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 function createConvexFixtures(): ConvexTestClient {
 	const client = new ConvexTestClient();
 	client.registerQuery(api.uiPreferences.getMine, null);
+	client.registerQuery(api.messageQueue.list, []);
 	client.registerQuery(api.usage.getMyUsage, {
 		tier: 'free',
 		tierLabel: 'Free',

@@ -9,6 +9,7 @@ mod command_sync;
 mod config;
 mod machine_identity;
 mod machines;
+mod message_queue;
 mod native_auth;
 mod package_update;
 mod profile;
@@ -377,6 +378,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
             command_cleanup_sessions.prune().await;
         }
     });
+    let message_queue = message_queue::spawn(state.clone());
     let recovery = run_recovery::spawn(state.clone());
     let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
@@ -417,6 +419,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     recovery.abort();
     let _ = recovery.await;
     let _ = cleanup.await;
+    message_queue.abort();
+    let _ = message_queue.await;
     command_cleanup.abort();
     let _ = command_cleanup.await;
     command_sessions.stop_all().await;

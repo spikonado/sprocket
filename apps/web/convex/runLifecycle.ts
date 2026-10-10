@@ -14,6 +14,7 @@ import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { cancelPendingQuestionsForThread } from '@convex/agentQuestions';
+import { isDurableQueuedRun, MESSAGE_QUEUE_LEASE_MS } from '@convex/lib/messageQueue';
 import {
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange
@@ -53,6 +54,14 @@ export const checkRun = internalMutation({
 		const run = await getRunWithExecution(ctx.db, runId);
 
 		if (!run) return null;
+
+		// An unclaimed run created from the durable queue is still pending work.
+		// Preserve it while its machine is offline; the next worker reuses it.
+		if (await isDurableQueuedRun(ctx, run)) {
+			await scheduleRunLifecycleCheck(ctx, state, Date.now() + MESSAGE_QUEUE_LEASE_MS);
+
+			return null;
+		}
 
 		const deadline = runDeadline(run);
 

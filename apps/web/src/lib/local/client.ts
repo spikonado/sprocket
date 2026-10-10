@@ -432,6 +432,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
+		enqueueMessage: async (requestBody) => {
+			await request('/api/agent/queue', z.object({ queued: z.literal(true) }), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
 		fetchTranscriptDisplay: async (requestBody, signal) =>
 			await request('/api/transcript/display', displayPageSchema, {
 				method: 'POST',

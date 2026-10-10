@@ -353,15 +353,15 @@ export async function questionContinuation(
 		.order('asc')
 		.collect();
 
-	const prompt = formatQuestionContinuationPrompt(
-		runQuestions.flatMap((entry) =>
-			entry.requiresContinuation && entry.answer
-				? [{ question: entry.question, answer: entry.answer }]
-				: []
-		)
+	const answers = runQuestions.flatMap((entry) =>
+		entry.requiresContinuation && entry.answer
+			? [{ question: entry.question, answer: entry.answer }]
+			: []
 	);
 
-	return { runId: continuationOfRunId, prompt };
+	if (answers.length === 0) return undefined;
+
+	return { runId: continuationOfRunId, prompt: formatQuestionContinuationPrompt(answers) };
 }
 
 export const timeout = internalMutation({
