@@ -60,6 +60,14 @@ describe('Conversation notices', () => {
 			view.rerender(composer(notices({ syncing: true, reconnecting: true })));
 			expect(screen.getAllByRole('status')).toHaveLength(1);
 			expect(screen.getByRole('status').textContent).toContain('Reconnecting');
+			view.rerender(composer(notices({ syncing: true })));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(1_999));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(1));
+			expect(screen.getByRole('status').textContent).toContain(
+				'Conversation history is still loading.'
+			);
 			view.rerender(composer(notices()));
 			expect(screen.queryByRole('status')).toBeNull();
 		} finally {
