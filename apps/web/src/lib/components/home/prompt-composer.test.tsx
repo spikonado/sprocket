@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
+import type { ChangeLoopMode } from '$lib/home/change-loops';
 import PromptComposerTestHarness from './prompt-composer-test-harness';
 import type { PromptComposerViewProps } from './prompt-composer';
 import type { TranscriptScopeRequest, WorkspaceSearchResult } from '$lib/types/sprocket';
@@ -186,6 +187,134 @@ describe('PromptComposer running commands', () => {
 		expect(props.onContinueWorking).toHaveBeenCalledOnce();
 		await click(toggle);
 		expect(screen.getByRole('button', { name: 'Stop command: bun run dev' })).toBeTruthy();
+	});
+});
+
+describe('PromptComposer change loops', () => {
+	function renderChangeLoop(overrides: Partial<PromptComposerViewProps> = {}) {
+		return renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
+			changeLoopThreadId: 'thread-one',
+			onRunChangeLoop: vi.fn(),
+			...overrides
+		});
+	}
+
+	it('places separate loop and Continue working actions above the composer in a wrapping row', async () => {
+		const { composer, props, rerender } = renderChangeLoop({
+			showContinueWorking: true,
+			onContinueWorking: vi.fn()
+		});
+
+		const continueButton = screen.getByRole('button', { name: 'Continue working' });
+		const runButton = screen.getByRole('button', { name: 'Run cleanup and review loop' });
+		const row = continueButton.parentElement;
+		expect(runButton.parentElement?.parentElement).toBe(row);
+		expect(row?.classList.contains('flex-wrap')).toBe(true);
+		expect(row?.nextElementSibling).toBe(composer);
+		await click(continueButton);
+		expect(props.onContinueWorking).toHaveBeenCalledOnce();
+		expect(props.onRunChangeLoop).not.toHaveBeenCalled();
+
+		rerender({ ...props, showContinueWorking: false });
+		expect(screen.queryByRole('button', { name: 'Continue working' })).toBeNull();
+		expect(runButton.parentElement?.parentElement?.nextElementSibling).toBe(composer);
+		rerender({ ...props, changeLoopThreadId: undefined });
+		expect(screen.queryByRole('button', { name: 'Select change loop' })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Continue working' })).toBeTruthy();
+	});
+
+	it.each<{ mode: ChangeLoopMode; label: string }>([
+		{ mode: 'cleanup', label: 'Run cleanup loop' },
+		{ mode: 'review', label: 'Run review loop' }
+	])(
+		'selects $mode without running, invokes it explicitly, and resets for the next run',
+		async ({ mode, label }) => {
+			const { props } = renderChangeLoop();
+			const selector = screen.getByRole('button', { name: 'Select change loop' });
+			expect(selector.textContent).toBe('');
+			await click(selector);
+			const menu = screen.getByRole('dialog', { name: 'Change loop' });
+			await click(within(menu).getByRole('button', { name: label }));
+			expect(screen.queryByRole('dialog', { name: 'Change loop' })).toBeNull();
+			expect(props.onRunChangeLoop).not.toHaveBeenCalled();
+			await click(screen.getByRole('button', { name: label }));
+			expect(props.onRunChangeLoop).toHaveBeenCalledExactlyOnceWith(mode);
+			await click(screen.getByRole('button', { name: 'Run cleanup and review loop' }));
+			expect(props.onRunChangeLoop).toHaveBeenNthCalledWith(2, 'cleanup-and-review');
+			expect(props.onSubmit).not.toHaveBeenCalled();
+		}
+	);
+
+	it('keeps the selection on the same thread and remounts it when the thread changes', async () => {
+		const { props, rerender } = renderChangeLoop();
+		await click(screen.getByRole('button', { name: 'Select change loop' }));
+		await click(
+			within(screen.getByRole('dialog', { name: 'Change loop' })).getByRole('button', {
+				name: 'Run review loop'
+			})
+		);
+		rerender({ ...props, changeLoopDisabled: true });
+		expect(
+			screen.getByRole<HTMLButtonElement>('button', { name: 'Run review loop' }).disabled
+		).toBe(true);
+		rerender(props);
+		await click(screen.getByRole('button', { name: 'Select change loop' }));
+		rerender({ ...props, changeLoopThreadId: 'thread-two' });
+		expect(screen.queryByRole('dialog', { name: 'Change loop' })).toBeNull();
+		await click(screen.getByRole('button', { name: 'Run cleanup and review loop' }));
+		expect(props.onRunChangeLoop).toHaveBeenCalledExactlyOnceWith('cleanup-and-review');
+	});
+
+	it.each<{ state: string; overrides: Partial<PromptComposerViewProps> }>([
+		{ state: 'explicitly disabled', overrides: { changeLoopDisabled: true } },
+		{ state: 'submitting', overrides: { isSubmitting: true } },
+		{ state: 'starting', overrides: { isStarting: true } },
+		{ state: 'running', overrides: { isRunning: true } },
+		{
+			state: 'answering a question',
+			overrides: {
+				pendingQuestion: { questionId: 'question-one', question: 'Which board?', options: [] }
+			}
+		},
+		{ state: 'unable to send', overrides: { canSend: false } },
+		{ state: 'missing callback', overrides: { onRunChangeLoop: undefined } },
+		{ state: 'loading models', overrides: { modelCatalog: undefined } },
+		{ state: 'loading usage', overrides: { usage: undefined } },
+		{
+			state: 'out of usage',
+			overrides: { usage: { tier: 'pro', exhausted: true, resetsAt: null } }
+		},
+		{
+			state: 'provider not ready',
+			overrides: { selectedCompletionProvider: 'chatgpt', providersReady: false }
+		}
+	])('disables both split-button sections while $state', ({ overrides }) => {
+		renderChangeLoop(overrides);
+		expect(
+			screen.getByRole<HTMLButtonElement>('button', { name: 'Run cleanup and review loop' })
+				.disabled
+		).toBe(true);
+		expect(
+			screen.getByRole<HTMLButtonElement>('button', { name: 'Select change loop' }).disabled
+		).toBe(true);
+	});
+
+	it('allows a configured external provider to run despite exhausted platform usage', async () => {
+		const { props } = renderChangeLoop({
+			modelCatalog: {
+				...modelCatalog,
+				models: [{ ...modelCatalog.models[0], provider: 'openai' }]
+			},
+			configuredProviders: ['chatgpt'],
+			selectedCompletionProvider: 'chatgpt',
+			usage: { tier: 'pro', exhausted: true, resetsAt: null }
+		});
+
+		await click(screen.getByRole('button', { name: 'Run cleanup and review loop' }));
+		expect(props.onRunChangeLoop).toHaveBeenCalledExactlyOnceWith('cleanup-and-review');
 	});
 });
 
@@ -631,6 +760,25 @@ describe('PromptComposer mobile selectors', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
+	});
+
+	it('selects a loop from the mobile sheet and runs only from the main button', async () => {
+		const { props } = renderComposer({
+			modelCatalog,
+			selectedModel: 'model-one',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
+			changeLoopThreadId: 'thread-one',
+			onRunChangeLoop: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select change loop' }));
+		const sheet = screen.getByRole('dialog', { name: 'Change loop' });
+		await click(within(sheet).getByRole('button', { name: 'Run cleanup loop' }));
+		expect(screen.queryByRole('dialog', { name: 'Change loop' })).toBeNull();
+		expect(props.onRunChangeLoop).not.toHaveBeenCalled();
+		await click(screen.getByRole('button', { name: 'Run cleanup loop' }));
+		expect(props.onRunChangeLoop).toHaveBeenCalledExactlyOnceWith('cleanup');
+		expect(screen.getByRole('button', { name: 'Run cleanup and review loop' })).toBeTruthy();
 	});
 
 	it('applies model, reasoning, and speed together after Done', async () => {

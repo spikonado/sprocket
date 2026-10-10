@@ -37,7 +37,6 @@ All of these are core priorities; try your best to achieve all of them without h
 ## PR Workflow
 
 - Unless requested, PRs should be made only against the default branch and should not be a draft.
-- After a PR is made, don't perform any code review using subagents; let Greptile review the code.
 
 1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
 2. Wait for the Greptile AI code review CI to complete and give its review of your changes.

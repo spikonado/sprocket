@@ -26,6 +26,8 @@ import ComposerAttachments from '$lib/components/home/composer-attachments';
 import ComposerSkillMenu from '$lib/components/home/composer-skill-menu';
 import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import ComposerNotice from '$lib/components/home/composer-notice';
+import ChangeLoopButton from '$lib/components/home/change-loop-button';
+import type { ChangeLoopMode } from '$lib/home/change-loops';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
 import OptionSelector from '$lib/components/option-selector';
@@ -64,6 +66,9 @@ export type PromptComposerProps = {
 	pendingQuestion?: PendingAgentQuestion | null;
 	showContinueWorking?: boolean;
 	onContinueWorking?: () => void;
+	changeLoopThreadId?: string;
+	changeLoopDisabled?: boolean;
+	onRunChangeLoop?: (mode: ChangeLoopMode) => void;
 	runningCommands?: { api: CommandApi; scope: TranscriptScopeRequest } | null;
 	selectedQuestionOptionId?: string | null;
 	onSelectedQuestionOptionIdChange?: (optionId: string | null) => void;
@@ -127,6 +132,9 @@ export function PromptComposerView({
 	pendingQuestion = null,
 	showContinueWorking = false,
 	onContinueWorking,
+	changeLoopThreadId,
+	changeLoopDisabled = false,
+	onRunChangeLoop,
 	runningCommands = null,
 	selectedQuestionOptionId = null,
 	onSelectedQuestionOptionIdChange,
@@ -742,16 +750,35 @@ export function PromptComposerView({
 						<RunningCommands {...runningCommands} collapseWhen={continueWorkingVisible} />
 					)}
 
-					{continueWorkingVisible ? (
-						<div className="mx-auto mb-3 w-full max-w-[48rem] px-4">
-							<button
-								type="button"
-								className="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
-								onClick={onContinueWorking}
-								disabled={isSubmitting}
-							>
-								Continue working
-							</button>
+					{continueWorkingVisible || changeLoopThreadId !== undefined ? (
+						<div className="mx-auto mb-3 flex w-full max-w-[48rem] flex-wrap items-center gap-2 px-4">
+							{continueWorkingVisible ? (
+								<button
+									type="button"
+									className="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
+									onClick={onContinueWorking}
+									disabled={isSubmitting}
+								>
+									Continue working
+								</button>
+							) : null}
+							{changeLoopThreadId !== undefined ? (
+								<ChangeLoopButton
+									key={changeLoopThreadId}
+									disabled={
+										changeLoopDisabled ||
+										!onRunChangeLoop ||
+										!canSend ||
+										!canSubmitWithModel ||
+										usageBlocked ||
+										isSubmitting ||
+										isStarting ||
+										isRunning ||
+										answeringQuestion
+									}
+									onRun={onRunChangeLoop}
+								/>
+							) : null}
 						</div>
 					) : null}
 
