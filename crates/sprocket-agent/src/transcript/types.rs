@@ -15,6 +15,9 @@ pub struct TranscriptState {
     pub history_from_number: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
+    /// Inclusive transcript part through which reasoning replay is omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_stripped_through_part_number: Option<i64>,
     pub downloaded_ranges: Vec<DownloadedRange>,
     pub stale: bool,
 }
@@ -28,6 +31,7 @@ impl TranscriptState {
             remote_total_parts: 0,
             history_from_number: 0,
             context_summary: None,
+            reasoning_stripped_through_part_number: None,
             downloaded_ranges: Vec::new(),
             stale: false,
         }

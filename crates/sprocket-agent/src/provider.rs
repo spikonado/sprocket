@@ -29,6 +29,7 @@ use crate::live::{
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
+use crate::transcript::history::without_reasoning_traces;
 use crate::types::{
     CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
 };
@@ -110,6 +111,8 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
     pub(crate) defer_prompt_for_context_handoff: bool,
+    /// The previous provider could not write a handoff. Continue without reasoning replay.
+    pub(crate) omit_prior_reasoning: bool,
     pub(crate) gateway_url: String,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<crate::TranscriptStore>>,
@@ -165,7 +168,7 @@ impl AgentProvider {
             chatgpt_client: self.chatgpt_client.clone(),
             provider_handoff: None,
         });
-        let model = match source
+        let model_result = source
             .as_ref()
             .unwrap_or(&self)
             .completion_model(
@@ -177,21 +180,40 @@ impl AgentProvider {
                     .as_deref()
                     .unwrap_or(&request.base_instructions),
             )
-            .await
-        {
-            Ok(model) => model,
+            .await;
+        drop(source);
+        let (model, provider_switch) = match model_result {
+            Ok(model) => (model, handoff.map(|handoff| (self, handoff))),
+            Err(error) if handoff.is_some() => {
+                eprintln!(
+                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                );
+                request.omit_prior_reasoning = true;
+                match self
+                    .completion_model(
+                        &runtime,
+                        &request.run_id,
+                        &request.claim_id,
+                        &request.base_instructions,
+                    )
+                    .await
+                {
+                    Ok(model) => (model, None),
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
+                }
+            }
             Err(error) => {
                 return AgentProviderResult::Failed {
                     text: String::new(),
-                    error: if handoff.is_some() {
-                        error.context("Provider switch context handoff failed. The previous provider must remain available. Retry to continue.")
-                    } else {
-                        error
-                    },
+                    error,
                 };
             }
         };
-        let provider_switch = handoff.map(|handoff| (self, handoff));
         match run_with_completion_model(model, runtime, request, provider_switch).await {
             AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
                 text,
@@ -288,6 +310,101 @@ pub(crate) async fn resume_context_handoff(
         None => handoff,
     };
     Ok(Some((history, prompt)))
+}
+
+pub(crate) async fn resume_without_provider_handoff(
+    agent: &mut rig::Agent,
+    history: Vec<Message>,
+    prompt: Message,
+    record: impl std::future::Future<Output = anyhow::Result<bool>>,
+    next_model: impl std::future::Future<Output = anyhow::Result<DynModel<Completion>>>,
+) -> anyhow::Result<Option<(Vec<Message>, Message)>> {
+    if !record.await? {
+        return Ok(None);
+    }
+    agent.set_model(next_model.await?);
+    Ok(Some((without_reasoning_traces(history), prompt)))
+}
+
+enum ProviderSwitchFallback {
+    Continued {
+        history: Vec<Message>,
+        prompt: Message,
+    },
+    Cancelled,
+    Failed(anyhow::Error),
+}
+
+async fn record_reasoning_strip(
+    runtime: &RuntimeClient,
+    request: &AgentProviderRequest,
+) -> anyhow::Result<bool> {
+    match runtime
+        .omit_reasoning_replay(
+            &request.run_id,
+            &request.claim_id,
+            request.defer_prompt_for_context_handoff,
+        )
+        .await
+    {
+        Ok(active) => Ok(active),
+        Err(error) => {
+            eprintln!("sprocket-agent: could not record omitted reasoning replay: {error:#}");
+            Ok(true)
+        }
+    }
+}
+
+async fn abandon_provider_switch_handoff(
+    reason: impl std::fmt::Display,
+    agent: &mut rig::Agent,
+    provider_switch: &mut Option<(AgentProvider, ProviderHandoff)>,
+    runtime: &RuntimeClient,
+    request: &AgentProviderRequest,
+    resume: Option<&(Vec<Message>, Message)>,
+) -> ProviderSwitchFallback {
+    let Some((provider, _)) = provider_switch.take() else {
+        return ProviderSwitchFallback::Failed(anyhow!(
+            "Context handoff failed. Retry to continue the conversation."
+        ));
+    };
+    let Some((history, prompt)) = resume.cloned() else {
+        return ProviderSwitchFallback::Failed(anyhow!(
+            "Context handoff failed. Retry to continue the conversation."
+        ));
+    };
+    eprintln!(
+        "sprocket-agent: provider switch context handoff failed ({reason}); continuing on the selected provider without it"
+    );
+    let next_model = match provider
+        .completion_model(
+            runtime,
+            &request.run_id,
+            &request.claim_id,
+            &request.base_instructions,
+        )
+        .await
+    {
+        Ok(model) => model,
+        Err(error) => {
+            return ProviderSwitchFallback::Failed(
+                error.context("The selected provider could not continue the conversation."),
+            );
+        }
+    };
+    match resume_without_provider_handoff(
+        agent,
+        history,
+        prompt,
+        record_reasoning_strip(runtime, request),
+        async move { Ok(next_model) },
+    )
+    .await
+    {
+        Ok(Some((history, prompt))) => ProviderSwitchFallback::Continued { history, prompt },
+        Ok(None) => ProviderSwitchFallback::Cancelled,
+        Err(error) => ProviderSwitchFallback::Failed(error),
+    }
 }
 
 async fn run_with_completion_model(
@@ -446,6 +563,24 @@ async fn run_with_completion_model(
     let mut completed_attempt = None;
     let mut handoff_processed_tokens = 0_u64;
 
+    if request.omit_prior_reasoning {
+        match record_reasoning_strip(&runtime, &request).await {
+            Ok(false) => {
+                return AgentProviderResult::Cancelled {
+                    text: String::new(),
+                };
+            }
+            Ok(true) => {}
+            Err(error) => {
+                eprintln!("sprocket-agent: could not record omitted reasoning replay: {error:#}");
+            }
+        }
+        history = without_reasoning_traces(history);
+    }
+    let provider_switch_resume = provider_switch
+        .is_some()
+        .then(|| (history.clone(), prompt.clone()));
+
     if provider_switch.is_some() {
         before_prompt = request.defer_prompt_for_context_handoff;
         if before_prompt {
@@ -455,6 +590,48 @@ async fn run_with_completion_model(
         }
         prompt = developer_message(HANDOFF_PROMPT);
         context_handoff_hook.start_handoff();
+    }
+
+    macro_rules! continue_without_handoff {
+        ($stream:ident, $generations:lifetime, $agent_run:lifetime, $reason:expr) => {{
+            drop($stream);
+            match abandon_provider_switch_handoff(
+                $reason,
+                &mut agent,
+                &mut provider_switch,
+                &runtime,
+                &request,
+                provider_switch_resume.as_ref(),
+            )
+            .await
+            {
+                ProviderSwitchFallback::Continued {
+                    history: next_history,
+                    prompt: next_prompt,
+                } => {
+                    history = next_history;
+                    prompt = next_prompt;
+                    additional_params = target_params.clone();
+                    context_handoff_hook.restart();
+                    handoff_processed_tokens = 0;
+                    final_text.clear();
+                    final_response_received = false;
+                    streamed_text.clear();
+                    continue $generations;
+                }
+                ProviderSwitchFallback::Cancelled => {
+                    break $agent_run AgentProviderResult::Cancelled {
+                        text: streamed_text,
+                    };
+                }
+                ProviderSwitchFallback::Failed(error) => {
+                    break $agent_run AgentProviderResult::Failed {
+                        text: streamed_text,
+                        error,
+                    };
+                }
+            }
+        }};
     }
 
     'agent_run: {
@@ -537,12 +714,16 @@ async fn run_with_completion_model(
                                     transcript.record_completion(call.message_id.as_deref());
                                 }
                                 if let Some(error) = incomplete_completion_error(call.finish_reason.as_ref()) {
-                                    break 'agent_run AgentProviderResult::Failed {
-                                        text: streamed_text,
-                                        error: if context_handoff_hook.is_writing() {
-                                            error.context("Context handoff failed: the model response was incomplete.")
-                                        } else { error },
-                                    };
+                                    if context_handoff_hook.is_writing() && provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, format!("{error:#}"));
+                                    } else {
+                                        break 'agent_run AgentProviderResult::Failed {
+                                            text: streamed_text,
+                                            error: if context_handoff_hook.is_writing() {
+                                                error.context("Context handoff failed: the model response was incomplete.")
+                                            } else { error },
+                                        };
+                                    }
                                 }
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
@@ -585,6 +766,9 @@ async fn run_with_completion_model(
                             Some(Err(rig::completion::PromptError::Cancelled { reason, .. }))
                                 if reason == HANDOFF_SUBMITTED => {
                                 let Some(summary) = context_handoff_hook.take_summary() else {
+                                    if provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, "no valid document was submitted");
+                                    }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff failed: no valid document was submitted."),
@@ -632,6 +816,9 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
                                 if context_handoff_hook.is_writing() {
+                                    if provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, "no valid document was submitted");
+                                    }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff failed: no valid document was submitted."),
@@ -655,33 +842,43 @@ async fn run_with_completion_model(
                                     context_handoff_hook.start_handoff();
                                     continue 'generations;
                                 }
-                                if context_handoff_hook.is_writing() {
+                                if context_handoff_hook.is_writing() && provider_switch.is_some() {
+                                    continue_without_handoff!(stream, 'generations, 'agent_run, format!("{error:#}"));
+                                } else if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!(error).context("Context handoff failed. Retry to continue the conversation."),
                                     };
-                                }
-                                let text = if final_text.is_empty() {
-                                    streamed_text
                                 } else {
-                                    final_text
-                                };
-                                let result = match classify_provider_error(&error) {
-                                    ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
-                                        error: anyhow!(error),
-                                    },
-                                    ProviderErrorDisposition::Cancelled => {
-                                        AgentProviderResult::Cancelled { text }
-                                    }
-                                    ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
-                                        text,
-                                        error: anyhow!(error),
-                                    },
-                                };
-                                break 'agent_run result;
+                                    let text = if final_text.is_empty() {
+                                        streamed_text
+                                    } else {
+                                        final_text
+                                    };
+                                    let result = match classify_provider_error(&error) {
+                                        ProviderErrorDisposition::Superseded => {
+                                            AgentProviderResult::Superseded {
+                                                error: anyhow!(error),
+                                            }
+                                        }
+                                        ProviderErrorDisposition::Cancelled => {
+                                            AgentProviderResult::Cancelled { text }
+                                        }
+                                        ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
+                                            text,
+                                            error: anyhow!(error),
+                                        },
+                                    };
+                                    break 'agent_run result;
+                                }
                             }
                             None => {
                                 if context_handoff_hook.is_writing() {
+                                    if provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run,
+                                            "the handoff ended without submitting a document"
+                                        );
+                                    }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff ended without submitting a document."),

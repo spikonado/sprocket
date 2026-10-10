@@ -349,6 +349,9 @@ export default defineSchema({
 		contextSummaryThroughPartNumber: v.optional(v.number()),
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
+		// Inclusive last part whose reasoning replay is omitted after a failed
+		// provider-switch handoff. Ordinary messages and tool history stay.
+		reasoningStrippedThroughPartNumber: v.optional(v.number()),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})

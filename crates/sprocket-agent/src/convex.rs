@@ -473,6 +473,18 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn omit_reasoning_replay(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        before_prompt: bool,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
+        self.mutation_json("agentRuntime:omitReasoningReplay", args)
+            .await
+    }
+
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {
         self.query_json("agentRuntime:isFinished", self.run_args(run_id))
             .await

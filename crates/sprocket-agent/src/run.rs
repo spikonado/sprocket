@@ -867,7 +867,7 @@ pub async fn run_agent(
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
 
-    let (capabilities, handoff_model) =
+    let (capabilities, mut handoff_model) =
         match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
             .await
         {
@@ -876,6 +876,7 @@ pub async fn run_agent(
         };
     context.provider_handoff = handoff_model.as_ref().map(|(handoff, _)| handoff.clone());
 
+    let mut omit_prior_reasoning = false;
     let chatgpt_client = if chatgpt_client.is_none()
         && context
             .provider_handoff
@@ -891,7 +892,15 @@ pub async fn run_agent(
             .and_then(crate::chatgpt::ChatGptClient::new);
         match previous_client {
             Ok(client) => Some(client),
-            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+            Err(error) => {
+                eprintln!(
+                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                );
+                context.provider_handoff = None;
+                handoff_model = None;
+                omit_prior_reasoning = true;
+                None
+            }
         }
     } else {
         chatgpt_client
@@ -1092,6 +1101,7 @@ pub async fn run_agent(
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
+                    omit_prior_reasoning,
                     gateway_url: gateway_url.clone(),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),

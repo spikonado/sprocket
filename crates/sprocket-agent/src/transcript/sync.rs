@@ -19,6 +19,23 @@ pub struct RemoteTranscriptState {
     pub history_from_number: u32,
     #[serde(default)]
     pub context_summary: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_convex_i64")]
+    pub reasoning_stripped_through_part_number: Option<i64>,
+}
+
+fn deserialize_optional_convex_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<f64>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(serde::de::Error::custom(format!(
+            "expected an integer-compatible Convex number, got {value}"
+        )));
+    }
+    Ok(Some(value as i64))
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -163,6 +180,8 @@ pub async fn apply_remote_state(
             state.remote_total_parts = remote.total_parts;
             state.history_from_number = remote.history_from_number;
             state.context_summary = remote.context_summary.clone();
+            state.reasoning_stripped_through_part_number =
+                remote.reasoning_stripped_through_part_number;
             state.stale = stale;
         })
         .await

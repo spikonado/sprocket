@@ -347,6 +347,7 @@ mod tests {
                 total_parts: 500,
                 history_from_number: 0,
                 context_summary: None,
+                reasoning_stripped_through_part_number: None,
             },
         )
         .await

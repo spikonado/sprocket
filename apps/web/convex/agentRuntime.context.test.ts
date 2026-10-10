@@ -876,6 +876,72 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
+	it('records an omitted reasoning replay without replacing the conversation', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'omit-reasoning-secret';
+
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'omit-reasoning',
+			executionSecret,
+			'Continue on the new provider'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-omit',
+			executionSecret
+		});
+
+		const completion = await finalizeTextCompletion(asUser, {
+			runId,
+			claimId: 'claim-omit',
+			executionSecret,
+			attemptSeq: 1,
+			streamId: 'stream-omit',
+			text: 'Visible answer',
+			usage: { contextTokens: 10, processedTokens: 10 }
+		});
+
+		expect(completion?.number).toBe(1);
+		await expect(
+			asUser.mutation(api.agentRuntime.omitReasoningReplay, {
+				runId,
+				claimId: 'wrong-claim',
+				executionSecret,
+				beforePrompt: false
+			})
+		).resolves.toBe(false);
+		await expect(
+			asUser.mutation(api.agentRuntime.omitReasoningReplay, {
+				runId,
+				claimId: 'claim-omit',
+				executionSecret,
+				beforePrompt: false
+			})
+		).resolves.toBe(true);
+		await expect(
+			asUser.mutation(api.agentRuntime.omitReasoningReplay, {
+				runId,
+				claimId: 'claim-omit',
+				executionSecret,
+				beforePrompt: true
+			})
+		).resolves.toBe(true);
+
+		const thread = await t.run(async (ctx) => ctx.db.get('threadRecords', threadId));
+
+		expect(thread?.contextSummary).toBeUndefined();
+		expect(thread?.reasoningStrippedThroughPartNumber).toBe(1);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			historyFromNumber: 0,
+			reasoningStrippedThroughPartNumber: 1
+		});
+	});
+
 	it('covers prior parts on a continuation that has no current-run parts', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
