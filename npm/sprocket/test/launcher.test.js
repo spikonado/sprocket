@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -121,9 +121,13 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 			`waits for native shutdown when ${signal} is sent to the ${target}`,
 			{ skip: process.platform === 'win32', timeout: 10_000 },
 			async (t) => {
+				const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-shutdown-'));
+				const completed = path.join(directory, 'completed');
+				t.after(() => rmSync(directory, { recursive: true, force: true }));
+
 				const launcher = spawn(
 					process.execPath,
-					[path.join(import.meta.dirname, 'launcher-shutdown-helper.mjs')],
+					[path.join(import.meta.dirname, 'launcher-shutdown-helper.mjs'), completed],
 					{ detached: true, stdio: ['ignore', 'pipe', 'inherit'] }
 				);
 
@@ -157,10 +161,11 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 				]);
 				process.kill(target === 'launcher' ? launcher.pid : -launcher.pid, signal);
 				const [code, exitSignal] = await exited;
+				assert.ok(existsSync(completed), 'native shutdown must complete before the launcher exits');
+				await closed;
 				assert.match(output, /SHUTDOWN_COMPLETED/);
 				assert.equal(code, null);
 				assert.equal(exitSignal, signal);
-				await closed;
 			}
 		);
 	}
