@@ -80,10 +80,9 @@ export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null)
 // Model IDs are opaque. The local runner resolves vendor changes from the live catalog.
 export async function getProviderHandoff(
 	ctx: QueryCtx | MutationCtx,
-	run: Doc<'runs'>
+	run: Doc<'runs'>,
+	thread: Doc<'threadRecords'> | null
 ): Promise<Infer<typeof vProviderHandoff> | undefined> {
-	const thread = await ctx.db.get('threadRecords', run.threadId);
-
 	const completions = ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_kind_number', (query) =>

@@ -233,7 +233,8 @@ export const issueGatewayCredential = mutation({
 
 		if (
 			(run.completionProvider ?? 'spikonado') !== 'spikonado' &&
-			(await getProviderHandoff(ctx, run))?.completionProvider !== 'spikonado'
+			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
+				?.completionProvider !== 'spikonado'
 		) {
 			throw new Error('Run is not configured to use the Spikonado gateway.');
 		}
@@ -354,7 +355,7 @@ export const getContext = query({
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 		const parentThreadId = thread?.parentThreadId;
-		const providerHandoff = await getProviderHandoff(ctx, run);
+		const providerHandoff = await getProviderHandoff(ctx, run, thread);
 
 		if (!promptPart?.prompt && !run.continuationOfRunId) {
 			throw new Error('Run does not contain a user prompt.');

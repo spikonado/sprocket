@@ -420,7 +420,8 @@ export const authorizeOpenAiCredential = internalQuery({
 
 		if (
 			(run.completionProvider ?? 'spikonado') !== 'openai' &&
-			(await getProviderHandoff(ctx, run))?.completionProvider !== 'openai'
+			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
+				?.completionProvider !== 'openai'
 		) {
 			throw new Error('Run is not configured to use OpenAI directly.');
 		}
