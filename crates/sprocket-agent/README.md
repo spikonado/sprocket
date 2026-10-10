@@ -46,6 +46,9 @@ including its in-run handoffs, and does not carry into later requests or
 model-generated subagent prompts. Promptless recovery keeps the original
 request's invocation. These skills still appear in the user's
 skill picker. This controls skill loading, not shell or filesystem access.
+Eagerly loaded skills share a conservative budget of one quarter of the model's
+context window in bytes, capped at 256 KiB. Requests that exceed it fail with
+guidance to invoke fewer skills or choose a larger-context model.
 
 This is a [Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill)
 and [Cursor](https://cursor.com/docs/skills#disabling-automatic-invocation)

@@ -82,15 +82,21 @@ impl SkillInvocations {
     pub(crate) fn load_context(
         &self,
         skills: &[WorkspaceSkill],
+        max_bytes: usize,
     ) -> Result<Vec<rig::completion::Message>, ToolExecutionError> {
+        let mut remaining = max_bytes;
         skills
             .iter()
             .filter(|skill| skill.disable_model_invocation && self.allows(skill))
             .map(|skill| {
                 let content = resolve_read_skill(skills, self, &skill.name)?;
-                Ok(rig::completion::Message::user(format!(
+                let text = format!(
                     "# Explicitly invoked skill\n\n{content}"
-                )))
+                );
+                remaining = remaining.checked_sub(text.len()).ok_or_else(|| {
+                    tool_failure("Explicitly invoked skills exceed the model's skill context budget. Invoke fewer skills in this request or select a model with a larger context window.")
+                })?;
+                Ok(rig::completion::Message::user(text))
             })
             .collect()
     }
@@ -224,7 +230,12 @@ mod tests {
                 .to_string()
                 .contains("requires an explicit user $deploy")
         );
-        assert!(unprompted.load_context(&skills).unwrap().is_empty());
+        assert!(
+            unprompted
+                .load_context(&skills, 256 * 1024)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             resolve_read_skill(&skills, &unprompted, "ordinary").unwrap()["content"],
             "# Ordinary instructions\n"
@@ -235,7 +246,7 @@ mod tests {
             resolve_read_skill(&skills, &invoked, "deploy").unwrap()["content"],
             "# Deploy instructions\n"
         );
-        assert_eq!(invoked.load_context(&skills).unwrap().len(), 1);
+        assert_eq!(invoked.load_context(&skills, 256 * 1024).unwrap().len(), 1);
         assert!(resolve_read_skill(&skills, &invoked, "release").is_err());
 
         let next_request = SkillInvocations::from_user_prompt(&skills, "Review the result");
@@ -312,9 +323,38 @@ mod tests {
         let skills = skills();
         let delegated = SkillInvocations::from_run_prompt(&skills, "Use $deploy", false);
         assert!(resolve_read_skill(&skills, &delegated, "deploy").is_err());
-        assert!(delegated.load_context(&skills).unwrap().is_empty());
+        assert!(
+            delegated
+                .load_context(&skills, 256 * 1024)
+                .unwrap()
+                .is_empty()
+        );
         let user = SkillInvocations::from_run_prompt(&skills, "Use $deploy", true);
-        assert_eq!(user.load_context(&skills).unwrap().len(), 1);
+        assert_eq!(user.load_context(&skills, 256 * 1024).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn explicit_skill_context_obeys_a_combined_budget() {
+        let mut skills = skills();
+        skills[1].source = skills[0].source.clone();
+        let invoked = SkillInvocations::from_run_prompt(&skills, "$deploy $release", true);
+        let messages = invoked.load_context(&skills, 256 * 1024).unwrap();
+        let bytes: usize = messages
+            .iter()
+            .map(|message| match message {
+                rig::completion::Message::User { content } => content
+                    .iter()
+                    .map(|part| match part {
+                        rig::message::UserContent::Text(text) => text.text.len(),
+                        _ => panic!("expected text"),
+                    })
+                    .sum::<usize>(),
+                _ => panic!("expected user message"),
+            })
+            .sum();
+        assert_eq!(invoked.load_context(&skills, bytes).unwrap().len(), 2);
+        let error = invoked.load_context(&skills, bytes - 1).unwrap_err();
+        assert!(error.to_string().contains("Invoke fewer skills"));
     }
 
     #[test]
@@ -344,7 +384,9 @@ mod tests {
         assert_eq!(value["dir"], project_skill.to_string_lossy().as_ref());
         assert_eq!(value["truncated"], true);
         assert!(value["content"].as_str().unwrap().len() <= 64 * 1024);
-        let context = invocations.load_context(&loaded.skills).unwrap();
+        let context = invocations
+            .load_context(&loaded.skills, 256 * 1024)
+            .unwrap();
         assert_eq!(context.len(), 1);
         assert!(
             serde_json::to_string(&context)

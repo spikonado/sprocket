@@ -958,7 +958,10 @@ pub async fn run_agent(
             &transcript_dir,
         );
         let mut initial_context = vec![prompt_context.initial_context];
-        initial_context.extend(skill_invocations.load_context(&skills)?);
+        // Budget one byte per token and leave most of the window for history and output.
+        let skill_context_bytes =
+            (capabilities.context_budget.context_window_tokens / 4).min(256 * 1024) as usize;
+        initial_context.extend(skill_invocations.load_context(&skills, skill_context_bytes)?);
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -1281,7 +1284,7 @@ mod tests {
             assert!(!metadata.contains("Deploy production"));
             assert!(!workspace_context.base_instructions.contains("deploy"));
             let mut initial_context = vec![workspace_context.initial_context];
-            initial_context.extend(invocations.load_context(&skills).unwrap());
+            initial_context.extend(invocations.load_context(&skills, 256 * 1024).unwrap());
 
             for deferred in [None, Some(Message::user(user_prompt))] {
                 let (history, prompt) = crate::provider::context_after_handoff(

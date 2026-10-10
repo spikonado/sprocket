@@ -126,7 +126,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
-        let key = key.trim();
+        let key = strip_yaml_quotes(key.trim());
         let value = value.trim();
 
         match key {
@@ -764,6 +764,8 @@ mod tests {
             ("", false),
             ("disable-model-invocation: false\n", false),
             ("disable-model-invocation: true\n", true),
+            ("\"disable-model-invocation\": true\n", true),
+            ("'disable-model-invocation': false\n", false),
             ("disable-model-invocation: False\n", false),
             ("disable-model-invocation: TRUE\n", true),
             ("disable-model-invocation: true # explicit only\n", true),
@@ -818,6 +820,12 @@ mod tests {
                 "{error}"
             );
         }
+        let contents = "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: true\n\"disable-model-invocation\": false\n---\nbody\n";
+        assert!(
+            parse_skill_markdown(contents)
+                .unwrap_err()
+                .contains("duplicate disable-model-invocation")
+        );
     }
 
     #[test]

@@ -220,7 +220,8 @@ export function normalizeQuestionAnswer(args: {
 }
 
 function formatAnswer(answer: AgentQuestionAnswer): string {
-	return [answer.optionLabel, answer.text]
+	// Labels are model-authored, so their dollar tokens must not grant skill access.
+	return [answer.optionLabel?.replaceAll('$', '\\$'), answer.text]
 		.filter((part): part is string => Boolean(part))
 		.join(': ');
 }
