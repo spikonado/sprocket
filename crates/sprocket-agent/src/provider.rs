@@ -72,6 +72,19 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
     }
 }
 
+fn strip_workspace_preamble(mut prompt: Message, workspace_context: &str) -> Message {
+    if let Message::User { content } = &mut prompt
+        && let Some(rig::message::UserContent::Text(text)) = content.first_mut()
+        && let Some(stripped) = text
+            .text
+            .strip_prefix(workspace_context)
+            .and_then(|rest| rest.strip_prefix("\n\n"))
+    {
+        text.text = stripped.to_string();
+    }
+    prompt
+}
+
 pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
     gateway_url: String,
@@ -94,7 +107,9 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
-    pub(crate) initial_context: Vec<Message>,
+    pub(crate) initial_workspace_context: Option<String>,
+    pub(crate) current_workspace_context: String,
+    pub(crate) prompt_includes_workspace_context: bool,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
@@ -341,7 +356,9 @@ async fn run_with_completion_model(
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
-    let initial_context: Arc<[Message]> = request.initial_context.into();
+    let initial_context = request.initial_workspace_context.map(Message::user);
+    let handoff_context = request.current_workspace_context;
+    let mut prompt_includes_workspace_context = request.prompt_includes_workspace_context;
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -353,8 +370,7 @@ async fn run_with_completion_model(
     };
 
     let mut history: Vec<_> = initial_context
-        .iter()
-        .cloned()
+        .into_iter()
         .chain(request.prior_history)
         .collect();
     let mut prompt = request.prompt;
@@ -502,7 +518,7 @@ async fn run_with_completion_model(
                                 match runtime.save_context_handoff(
                                     &request.run_id, &request.claim_id, &summary,
                                     transcript.attempt_seq, before_prompt,
-                                    handoff_processed_tokens,
+                                    handoff_processed_tokens, &handoff_context,
                                 ).await {
                                     Ok(true) => {}
                                     Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
@@ -511,8 +527,8 @@ async fn run_with_completion_model(
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
-                                history = initial_context.to_vec();
-                                let handoff = Message::user(context_summary_text(&summary));
+                                history = Vec::new();
+                                let handoff = Message::user(context_summary_text(&format!("{handoff_context}\n\n{summary}")));
                                 prompt = match deferred_prompt.take() {
                                     Some(pending) => { history.push(handoff); pending }
                                     None => handoff,
@@ -544,7 +560,14 @@ async fn run_with_completion_model(
                                     handoff_processed_tokens = 0;
                                     history = handoff.history;
                                     prompt = developer_message(HANDOFF_PROMPT);
-                                    deferred_prompt = handoff.deferred_prompt;
+                                    deferred_prompt = handoff.deferred_prompt.map(|pending| {
+                                        if prompt_includes_workspace_context {
+                                            strip_workspace_preamble(pending, &handoff_context)
+                                        } else {
+                                            pending
+                                        }
+                                    });
+                                    prompt_includes_workspace_context = false;
                                     before_prompt = handoff.before_prompt;
                                     context_handoff_hook.start_handoff();
                                     continue 'generations;
@@ -976,11 +999,74 @@ fn preserve_text_message_id(
 mod tests {
     use std::collections::HashMap;
 
+    use rig::completion::Message;
+
     use super::{
         ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, apply_completed_text,
-        classify_provider_error, durable_items_json, visible_live_parts,
+        classify_provider_error, durable_items_json, strip_workspace_preamble, visible_live_parts,
     };
     use crate::live::LiveAssistantPart;
+
+    const PREAMBLE: &str = "# Thread-Scoped Workspace Context\n\npreamble body";
+
+    fn first_user_text(message: &Message) -> &str {
+        match message {
+            Message::User { content } => match &content[0] {
+                rig::message::UserContent::Text(text) => &text.text,
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected a user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deferred_prompt_strips_only_an_exact_preamble_prefix() {
+        let prompt = strip_workspace_preamble(
+            Message::user(format!("{PREAMBLE}\n\nfinish the board")),
+            PREAMBLE,
+        );
+        assert_eq!(first_user_text(&prompt), "finish the board");
+
+        let quoted = format!("the preamble says:\n{PREAMBLE}");
+        let prompt = strip_workspace_preamble(Message::user(quoted.clone()), PREAMBLE);
+        assert_eq!(first_user_text(&prompt), quoted);
+
+        let missing_separator = format!("{PREAMBLE} finish the board");
+        let prompt = strip_workspace_preamble(Message::user(missing_separator.clone()), PREAMBLE);
+        assert_eq!(first_user_text(&prompt), missing_separator);
+    }
+
+    #[test]
+    fn deferred_prompt_keeps_attachments_and_later_text() {
+        let image =
+            rig::message::UserContent::image_url("https://files.example/shot.png", None, None);
+        let prompt = strip_workspace_preamble(
+            Message::User {
+                content: vec![
+                    rig::message::UserContent::text(format!("{PREAMBLE}\n\nlook at this")),
+                    image,
+                    rig::message::UserContent::text(format!("{PREAMBLE}\n\nquoted by the user")),
+                ],
+            },
+            PREAMBLE,
+        );
+
+        let Message::User { content } = prompt else {
+            panic!("expected a user prompt");
+        };
+        assert_eq!(content.len(), 3);
+        assert_eq!(
+            first_user_text(&Message::User {
+                content: content.clone()
+            }),
+            "look at this"
+        );
+        assert!(matches!(&content[1], rig::message::UserContent::Image(_)));
+        let rig::message::UserContent::Text(later_text) = &content[2] else {
+            panic!("expected the later text content");
+        };
+        assert_eq!(later_text.text, format!("{PREAMBLE}\n\nquoted by the user"));
+    }
 
     #[test]
     fn live_projection_omits_empty_reasoning_without_removing_durable_state() {

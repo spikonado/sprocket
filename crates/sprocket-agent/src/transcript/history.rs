@@ -9,9 +9,46 @@ use crate::types::{
 
 use super::types::{TranscriptPromptBody, TranscriptState};
 
+pub(crate) fn workspace_context_after_handoff<'a>(
+    prompt: &'a TranscriptPromptBody,
+    number: u32,
+    state: &TranscriptState,
+) -> Option<&'a str> {
+    prompt.workspace_context.as_deref().filter(|context| {
+        number != state.history_from_number
+            || !state.context_summary.as_deref().is_some_and(|summary| {
+                summary
+                    .strip_prefix(context)
+                    .is_some_and(|rest| rest.starts_with("\n\n"))
+            })
+    })
+}
+
+pub(crate) fn prompt_text_after_handoff(
+    prompt: &TranscriptPromptBody,
+    number: u32,
+    state: &TranscriptState,
+) -> String {
+    prompt_text_with_context(
+        prompt,
+        workspace_context_after_handoff(prompt, number, state),
+    )
+}
+
 pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
+    prompt_text_with_context(prompt, prompt.workspace_context.as_deref())
+}
+
+fn prompt_text_with_context(
+    prompt: &TranscriptPromptBody,
+    workspace_context: Option<&str>,
+) -> String {
+    let prompt_text = match workspace_context {
+        Some(context) => format!("{context}\n\n{}", prompt.text),
+        None => prompt.text.clone(),
+    };
     if prompt.image_uploads.is_empty() {
-        return prompt.text.clone();
+        return prompt_text;
     }
     let attachments = prompt
         .image_uploads
@@ -26,7 +63,7 @@ pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> Str
         .collect::<Vec<_>>();
     format!(
         "{}\n\nAttached files in the local transcript cache:\n{}",
-        prompt.text,
+        prompt_text,
         serde_json::json!(attachments)
     )
 }
@@ -166,7 +203,7 @@ pub fn agent_history_from_parts(
             TranscriptPartKind::Prompt => {
                 if let Some(prompt) = &part.prompt {
                     let mut contents = Vec::new();
-                    let text = prompt_text_with_attachments(prompt);
+                    let text = prompt_text_after_handoff(prompt, part.number, state);
                     if !text.trim().is_empty() {
                         contents.push(AgentHistoryContent::Text {
                             text,
@@ -329,11 +366,129 @@ mod tests {
             prompt: Some(TranscriptPromptBody {
                 text: text.to_string(),
                 image_uploads: Vec::new(),
+                workspace_context: None,
             }),
             completion: None,
             tool: None,
             work: Default::default(),
         }
+    }
+
+    #[test]
+    fn workspace_updates_preserve_prior_history_and_stay_with_their_prompt() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let old_parts = [
+            prompt(0, "old", "first request"),
+            completion_with_call(1, "call"),
+        ];
+        let old_history = agent_history_from_parts(&state, &old_parts, None);
+        let mut parts = [
+            old_parts[0].clone(),
+            old_parts[1].clone(),
+            prompt(2, "new", "second request"),
+        ];
+        parts[2].prompt.as_mut().unwrap().workspace_context =
+            Some("updated instructions and skills".into());
+        let before_completion = agent_history_from_parts(&state, &parts, Some("new"));
+        assert_eq!(
+            serde_json::to_value(&before_completion).unwrap(),
+            serde_json::to_value(&old_history).unwrap(),
+        );
+
+        let after_completion = agent_history_from_parts(&state, &parts, None);
+        assert_eq!(after_completion.len(), before_completion.len() + 1);
+        assert_eq!(
+            serde_json::to_value(&after_completion[..before_completion.len()]).unwrap(),
+            serde_json::to_value(&before_completion).unwrap(),
+        );
+        assert_eq!(
+            serde_json::to_value(after_completion.last().unwrap()).unwrap()["contents"][0]["text"],
+            "updated instructions and skills\n\nsecond request",
+        );
+    }
+
+    #[test]
+    fn resumed_completion_replays_context_before_its_prompt() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let mut completion = completion_with_call(3, "call");
+        completion.run_id = "current".into();
+        let mut parts = [prompt(2, "current", "user request"), completion];
+        parts[0].prompt.as_mut().unwrap().workspace_context = Some("updated instructions".into());
+        let resumed = agent_history_from_parts(&state, &parts, Some("current"));
+        let next_run = agent_history_from_parts(&state, &parts, None);
+        assert_eq!(
+            serde_json::to_value(&resumed).unwrap(),
+            serde_json::to_value(&next_run).unwrap(),
+        );
+        let messages = serde_json::to_value(&resumed).unwrap();
+        assert_eq!(
+            messages[0]["contents"][0]["text"],
+            "updated instructions\n\nuser request"
+        );
+        assert_eq!(messages[1]["role"], "assistant");
+    }
+
+    #[test]
+    fn workspace_preamble_stays_with_the_prompt_after_a_handoff() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("handoff summary".into());
+        state.history_from_number = 5;
+        let mut parts = [prompt(5, "current", "fresh request")];
+        parts[0].prompt.as_mut().unwrap().workspace_context = Some("changed instructions".into());
+        let history = agent_history_from_parts(&state, &parts, None);
+        let messages = serde_json::to_value(&history).unwrap();
+        assert_eq!(messages.as_array().unwrap().len(), 2);
+        assert_eq!(
+            messages[0]["contents"][0]["text"],
+            context_summary_text("handoff summary"),
+        );
+        assert_eq!(
+            messages[1]["contents"][0]["text"],
+            "changed instructions\n\nfresh request"
+        );
+    }
+
+    #[test]
+    fn before_prompt_handoff_reload_shows_the_preamble_once() {
+        let preamble = "# Thread-Scoped Workspace Context\n\nsame instructions";
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some(format!("{preamble}\n\nhandoff summary"));
+        state.history_from_number = 1;
+        let mut parts = [prompt(1, "current", "fresh request")];
+        parts[0].prompt.as_mut().unwrap().workspace_context = Some(preamble.to_string());
+        let history = agent_history_from_parts(&state, &parts, None);
+        let messages = serde_json::to_value(&history).unwrap();
+        assert_eq!(messages.as_array().unwrap().len(), 2);
+        assert_eq!(
+            messages[0]["contents"][0]["text"],
+            context_summary_text(&format!("{preamble}\n\nhandoff summary"))
+        );
+        assert_eq!(messages[1]["contents"][0]["text"], "fresh request");
+        assert_eq!(
+            prompt_text_after_handoff(parts[0].prompt.as_ref().unwrap(), 1, &state),
+            "fresh request"
+        );
+    }
+
+    #[test]
+    fn later_preambles_and_user_text_remain_verbatim_after_a_handoff() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("preamble\n\nhandoff summary".into());
+        state.history_from_number = 1;
+        let mut first = prompt(1, "current", "preamble\n\nquoted by the user");
+        first.prompt.as_mut().unwrap().workspace_context = Some("preamble".into());
+        let mut later = prompt(2, "later", "next request");
+        later.prompt.as_mut().unwrap().workspace_context = Some("updated preamble".into());
+        let history = agent_history_from_parts(&state, &[first, later], None);
+        let messages = serde_json::to_value(&history).unwrap();
+        assert_eq!(
+            messages[1]["contents"][0]["text"],
+            "preamble\n\nquoted by the user"
+        );
+        assert_eq!(
+            messages[2]["contents"][0]["text"],
+            "updated preamble\n\nnext request"
+        );
     }
 
     fn tool_part(
@@ -654,6 +809,7 @@ mod tests {
                     created_at: None,
                     prompt: Some(TranscriptPromptBody {
                         text: "see this".into(),
+                        workspace_context: Some("workspace preamble".into()),
                         image_uploads: vec![TranscriptAttachmentMeta {
                             name: "shot.png".into(),
                             media_type: "image/png".into(),
@@ -697,6 +853,7 @@ mod tests {
         assert!(!serialized.contains("https://files.example/shot.png"));
         assert!(!serialized.contains("Image {"));
         assert!(serialized.contains("/cache/user/blobs/st"));
+        assert!(serialized.contains("workspace preamble\\n\\nsee this"));
         assert!(serialized.contains("rs_123"));
         assert!(serialized.contains("encrypted"));
         assert!(serialized.contains("enc"));

@@ -876,7 +876,9 @@ export const vTranscriptCompletionItem = v.union(
 
 export const vTranscriptPromptBody = v.object({
 	text: v.string(),
-	imageUploads: v.array(vTranscriptAttachmentMeta)
+	imageUploads: v.array(vTranscriptAttachmentMeta),
+	// Missing means unprepared; null means prepared with an unchanged preamble.
+	workspaceContext: v.optional(v.union(v.string(), v.null()))
 });
 
 export const vTranscriptCompletionBody = v.object({

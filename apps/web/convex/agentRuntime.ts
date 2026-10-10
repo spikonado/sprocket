@@ -2,7 +2,7 @@ import { action, internalMutation, mutation, query } from '@convex/_generated/se
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, getDocumentSize, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { latestRunForThread, patchRunExecution } from '@convex/lib/runExecution';
@@ -66,7 +66,8 @@ import {
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
-	vTranscriptCompletionItem
+	vTranscriptCompletionItem,
+	vTranscriptPromptBody
 } from '@convex/lib/validators';
 
 type RunClaimPatch = {
@@ -404,6 +405,102 @@ export const completionActor = query({
 	}
 });
 
+export const prepareWorkspacePrompt = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		text: v.string()
+	},
+	returns: v.union(
+		v.object({
+			prompt: v.union(vTranscriptPromptBody, v.null()),
+			workspaceContext: v.string(),
+			initialWorkspaceContext: v.optional(v.string())
+		}),
+		v.null()
+	),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return null;
+
+		await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		const prompt = await getPromptPart(ctx, run.threadId, run._id);
+
+		if (prompt?.prompt?.workspaceContext != null) {
+			return { prompt: prompt.prompt, workspaceContext: prompt.prompt.workspaceContext };
+		}
+
+		const earlierPrompts = ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_kind_and_number', (q) =>
+				prompt
+					? q.eq('threadId', run.threadId).eq('kind', 'prompt').lt('number', prompt.number)
+					: q.eq('threadId', run.threadId).eq('kind', 'prompt')
+			)
+			.order('desc');
+
+		let earlierContext: string | undefined;
+
+		for await (const part of earlierPrompts) {
+			if (part.prompt?.workspaceContext != null) {
+				earlierContext = part.prompt.workspaceContext;
+				break;
+			}
+		}
+
+		if (prompt?.prompt?.workspaceContext === null) {
+			if (earlierContext === undefined) throw new Error('Prepared workspace context is missing.');
+
+			return {
+				prompt: prompt.prompt,
+				workspaceContext: earlierContext
+			};
+		}
+
+		const completion =
+			prompt &&
+			(await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_runId_and_number', (q) =>
+					q.eq('threadId', run.threadId).eq('runId', run._id)
+				)
+				.filter((q) => q.eq(q.field('kind'), 'completion'))
+				.first());
+
+		if (!prompt || completion) {
+			return {
+				prompt: prompt?.prompt ?? null,
+				workspaceContext: earlierContext ?? args.text,
+				initialWorkspaceContext: earlierContext === undefined ? args.text : undefined
+			};
+		}
+
+		const changed = earlierContext !== args.text;
+
+		if (changed && !args.text.trim()) throw new Error('Invalid workspace context.');
+
+		const workspaceContext = changed ? args.text : null;
+		const preparedPrompt = { ...prompt.prompt!, workspaceContext };
+
+		if (getDocumentSize({ ...prompt, prompt: preparedPrompt }) > 1024 * 1024) {
+			throw new ConvexError(
+				'User prompt and workspace context exceed the 1 MiB transcript limit. Shorten the prompt or AGENTS.md/skills preamble and retry.'
+			);
+		}
+
+		await ctx.db.patch('threadTranscriptParts', prompt._id, {
+			prompt: preparedPrompt
+		});
+
+		return {
+			prompt: preparedPrompt,
+			workspaceContext: args.text
+		};
+	}
+});
+
 /** Persist the hidden handoff after all covered visible parts have been finalized. */
 export const saveContextHandoff = mutation({
 	args: {
@@ -413,6 +510,7 @@ export const saveContextHandoff = mutation({
 		summary: v.string(),
 		completionAttemptSeq: v.number(),
 		beforePrompt: v.boolean(),
+		workspaceContext: v.optional(v.string()),
 		processedTokens: v.optional(v.number())
 	},
 	returns: v.boolean(),
@@ -425,8 +523,17 @@ export const saveContextHandoff = mutation({
 			return false;
 		}
 
+		const summary =
+			args.workspaceContext !== undefined
+				? `${args.workspaceContext}\n\n${args.summary}`
+				: args.summary;
+
 		if (!args.summary.trim()) {
 			throw new Error('Invalid context handoff.');
+		}
+
+		if (args.workspaceContext !== undefined && !args.workspaceContext.trim()) {
+			throw new Error('Invalid workspace context.');
 		}
 
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
@@ -445,7 +552,7 @@ export const saveContextHandoff = mutation({
 				throw new Error('Invalid context handoff cutoff.');
 			}
 
-			if (thread.contextSummary !== args.summary) {
+			if (thread.contextSummary !== summary) {
 				throw new Error('Conflicting context handoff retry.');
 			}
 
@@ -457,7 +564,7 @@ export const saveContextHandoff = mutation({
 		}
 
 		await ctx.db.patch('threadRecords', thread._id, {
-			contextSummary: args.summary,
+			contextSummary: summary,
 			contextSummaryThroughPartNumber: throughPartNumber,
 			contextSummaryHandoffKey: handoffKey
 		});

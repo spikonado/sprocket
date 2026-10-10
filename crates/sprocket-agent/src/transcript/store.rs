@@ -220,7 +220,37 @@ impl TranscriptStore {
         }
         for start in starts {
             let path = chunk_path(&dir, start);
-            let existing = recover_and_read_chunk(&path).await?;
+            let mut existing = recover_and_read_chunk(&path).await?;
+            let mut enriched = false;
+            for incoming in &grouped[&start] {
+                if let Some(context) = incoming
+                    .prompt
+                    .as_ref()
+                    .and_then(|prompt| prompt.workspace_context.as_ref())
+                    && let Some(prompt) = existing
+                        .iter_mut()
+                        .find(|part| part.number == incoming.number)
+                        .and_then(|part| part.prompt.as_mut())
+                    && prompt.workspace_context.is_none()
+                {
+                    prompt.workspace_context = Some(context.clone());
+                    enriched = true;
+                }
+            }
+            if enriched {
+                let mut payload = String::new();
+                for part in &existing {
+                    payload.push_str(&serde_json::to_string(&part.without_ephemeral_urls())?);
+                    payload.push('\n');
+                }
+                let temporary = tempfile::NamedTempFile::new_in(&dir)?;
+                let (file, temporary_path) = temporary.into_parts();
+                let mut file = tokio::fs::File::from_std(file);
+                file.write_all(payload.as_bytes()).await?;
+                file.flush().await?;
+                drop(file);
+                temporary_path.persist(&path)?;
+            }
             let mut seen = existing
                 .into_iter()
                 .map(|part| part.number)
@@ -403,11 +433,32 @@ mod tests {
             prompt: Some(TranscriptPromptBody {
                 text: text.to_string(),
                 image_uploads: Vec::new(),
+                workspace_context: None,
             }),
             completion: None,
             tool: None,
             work: Default::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn caches_a_prepared_prompt_preamble_without_replacing_user_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_path_buf());
+        store
+            .append_parts("user", "thread", &[prompt(0, "original")])
+            .await
+            .unwrap();
+        let mut prepared = prompt(0, "different");
+        prepared.prompt.as_mut().unwrap().workspace_context = Some("instructions".into());
+        store
+            .append_parts("user", "thread", &[prepared])
+            .await
+            .unwrap();
+        let parts = store.read_parts("user", "thread", &[0]).await.unwrap();
+        let body = parts[0].prompt.as_ref().unwrap();
+        assert_eq!(body.text, "original");
+        assert_eq!(body.workspace_context.as_deref(), Some("instructions"));
     }
 
     #[tokio::test]

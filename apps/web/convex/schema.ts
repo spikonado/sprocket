@@ -461,7 +461,8 @@ export default defineSchema({
 		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_kind_number', ['threadId', 'kind', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
-		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
+		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number'])
+		.index('by_threadId_and_kind_and_number', ['threadId', 'kind', 'number']),
 	threadTranscriptWorkSections: defineTable({
 		threadId: v.id('threadRecords'),
 		...workSectionFields,

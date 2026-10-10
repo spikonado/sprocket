@@ -53,6 +53,8 @@ struct RemoteTranscriptPart {
 struct RemotePrompt {
     text: String,
     image_uploads: Vec<RemoteAttachment>,
+    #[serde(default)]
+    workspace_context: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -121,6 +123,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         created_at: part.created_at,
         prompt: part.prompt.map(|prompt| TranscriptPromptBody {
             text: prompt.text,
+            workspace_context: prompt.workspace_context,
             image_uploads: prompt
                 .image_uploads
                 .into_iter()
@@ -232,6 +235,7 @@ mod tests {
             prompt: Some(TranscriptPromptBody {
                 text: format!("{number}"),
                 image_uploads: Vec::new(),
+                workspace_context: None,
             }),
             completion: None,
             tool: None,

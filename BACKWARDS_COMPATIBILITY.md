@@ -203,6 +203,25 @@ JSON test fixture. Keep the save triggered by attachment validation changes.
 
 ## Convex Backwards Compatibility
 
+### Workspace preambles in transcript prompts
+
+Released agents omit `prompt.workspaceContext`, and historical transcript
+prompts cannot reconstruct their original workspace preambles. The
+`prepareWorkspacePrompt` mutation pins a changed preamble on the prompt that
+starts the run; `null` means the current preamble matches the latest earlier
+recorded value. Once prepared, the prompt is returned unchanged on retries.
+Promptless continuations and prompts with finished completions do not gain a
+new preamble. When no earlier preamble is available, the mutation returns the
+current preamble ephemerally as `initialWorkspaceContext`. User-visible prompt
+text and transcript history remain unchanged.
+
+The handoff mutation accepts an optional `workspaceContext` from new agents and
+prepends it to the stored `contextSummary`. Older agents omit the argument and
+continue saving the summary alone. Keep the prompt field and handoff argument
+optional while supporting released agents; retain missing-field deserialization
+and the ephemeral fallback while old transcript history can be resumed without
+a recorded preamble. No backfill can recover the historical file contents.
+
 ### Subagent follow-up tool routing
 
 `spawn_subagent` creates children and rejects `threadId` at runtime. Follow-ups
