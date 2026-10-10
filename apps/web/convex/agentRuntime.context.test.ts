@@ -953,6 +953,92 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
+	it('preserves the invocation prompt through a handoff and promptless recovery', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const parentSecret = 'handoff-invocation-parent-secret';
+
+		const parent = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'handoff-invocation-parent',
+			parentSecret,
+			'$deploy'
+		);
+
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: parent.runId,
+			claimId: 'claim-invocation-parent',
+			executionSecret: parentSecret
+		});
+		await finalizeTextCompletion(asUser, {
+			runId: parent.runId,
+			claimId: 'claim-invocation-parent',
+			executionSecret: parentSecret,
+			attemptSeq: 1,
+			streamId: 'stream-invocation-parent',
+			text: 'Prepared the deployment'
+		});
+		await registerCompletionAttempt(asUser, {
+			runId: parent.runId,
+			claimId: 'claim-invocation-parent',
+			executionSecret: parentSecret,
+			attemptSeq: 2
+		});
+		await expect(
+			asUser.mutation(api.agentRuntime.saveContextHandoff, {
+				runId: parent.runId,
+				claimId: 'claim-invocation-parent',
+				executionSecret: parentSecret,
+				summary: 'Deployment is prepared.',
+				completionAttemptSeq: 2,
+				beforePrompt: false
+			})
+		).resolves.toBe(true);
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: parent.runId,
+			expectedStatus: 'running',
+			expectedClaimId: 'claim-invocation-parent',
+			text: '',
+			status: 'failed',
+			lastError: 'Executor interrupted after handoff',
+			executionSecret: parentSecret
+		});
+
+		const recoverySecret = 'handoff-invocation-recovery-secret';
+
+		const recovery = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'handoff-invocation-recovery',
+			executionSecret: recoverySecret,
+			prompt: '',
+			continuationOfRunId: parent.runId
+		});
+
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: recovery.runId,
+			claimId: 'claim-invocation-recovery',
+			executionSecret: recoverySecret
+		});
+
+		expect(parent.promptPart).toMatchObject({ number: 0, prompt: { text: '$deploy' } });
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			historyFromNumber: 2,
+			contextSummary: 'Deployment is prepared.'
+		});
+		expect(
+			await asUser.query(api.agentRuntime.getContext, {
+				runId: recovery.runId,
+				executionSecret: recoverySecret
+			})
+		).toMatchObject({
+			prompt: '',
+			invocationPrompt: '$deploy',
+			invocationPromptIsUser: true
+		});
+	});
+
 	it('rejects stale claims and completion attempts without persisting a handoff', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

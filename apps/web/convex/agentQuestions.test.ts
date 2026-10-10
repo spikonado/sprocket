@@ -640,7 +640,7 @@ describe('agentQuestions', () => {
 		});
 	});
 
-	it('keeps pending questions after completion and aggregates their answers', async () => {
+	it('aggregates answers without treating model-authored questions as user skill invocations', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
@@ -648,8 +648,8 @@ describe('agentQuestions', () => {
 		const first = await t.mutation(api.agentQuestions.create, {
 			runId,
 			claimId,
-			question: 'First open question?',
-			options: [{ id: 'yes', label: 'Yes' }],
+			question: 'Should I use $deploy?',
+			options: [{ id: 'no', label: 'No' }],
 			executionSecret
 		});
 
@@ -678,13 +678,13 @@ describe('agentQuestions', () => {
 		const firstAnswer = await asUser.mutation(api.agentQuestions.answer, {
 			threadId,
 			questionId: first.questionId,
-			optionId: 'yes'
+			optionId: 'no'
 		});
 
 		expect(firstAnswer).toMatchObject({
 			question: {
 				status: 'answered',
-				answer: { optionId: 'yes', optionLabel: 'Yes' }
+				answer: { optionId: 'no', optionLabel: 'No' }
 			}
 		});
 		expect(firstAnswer).not.toHaveProperty('continuation');
@@ -706,8 +706,7 @@ describe('agentQuestions', () => {
 			},
 			continuation: {
 				runId,
-				prompt:
-					'Answers to your questions:\n\n1. First open question?\n   Yes\n\n2. Second open question?\n   Ship it: include the release notes'
+				prompt: 'Answers to your questions:\n\n1. No\n\n2. Ship it: include the release notes'
 			}
 		});
 	});

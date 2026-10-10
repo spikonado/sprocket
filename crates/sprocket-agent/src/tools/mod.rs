@@ -33,6 +33,7 @@ use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
 use self::questions::{AskQuestionTool, PollQuestionTool};
 use self::skills::ReadSkillTool;
+pub(crate) use self::skills::SkillInvocations;
 use self::subagents::{
     ControlSubagentTool, ListSubagentModelsTool, ListSubagentsTool, PollSubagentTool,
     SpawnSubagentTool,
@@ -150,6 +151,7 @@ pub(crate) fn agent_tools(
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
+    skill_invocations: SkillInvocations,
     command_sessions: CommandSessionManager,
     subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
 ) -> AgentToolSet {
@@ -188,6 +190,7 @@ pub(crate) fn agent_tools(
         read_skill: ReadSkillTool {
             context: context.clone(),
             skills,
+            invocations: skill_invocations,
         },
         scrape_url: ScrapeUrlTool(context.clone()),
         screenshot_url: ScreenshotUrlTool(context.clone()),
@@ -339,12 +342,14 @@ mod tests {
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Demo skill".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: demo\ndescription: Demo skill\n---\n# Do it\n",
             },
         }];
 
-        let value = resolve_read_skill(&skills, "demo").expect("should resolve");
+        let value = resolve_read_skill(&skills, &SkillInvocations::default(), "demo")
+            .expect("should resolve");
         assert_eq!(value["name"], "demo");
         assert_eq!(value["description"], "Demo skill");
         assert_eq!(value["content"], "# Do it\n");
@@ -358,16 +363,19 @@ mod tests {
             WorkspaceSkill {
                 name: "alpha".to_string(),
                 description: "A".to_string(),
+                disable_model_invocation: false,
                 source: SkillSource::BuiltIn { contents: "" },
             },
             WorkspaceSkill {
                 name: "bravo".to_string(),
                 description: "B".to_string(),
+                disable_model_invocation: false,
                 source: SkillSource::BuiltIn { contents: "" },
             },
         ];
 
-        let error = resolve_read_skill(&skills, "missing").expect_err("should fail");
+        let error = resolve_read_skill(&skills, &SkillInvocations::default(), "missing")
+            .expect_err("should fail");
         let message = error.to_string();
         assert!(message.contains("Unknown skill 'missing'"));
         assert!(message.contains("alpha, bravo"));

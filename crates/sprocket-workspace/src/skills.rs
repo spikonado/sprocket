@@ -13,6 +13,7 @@ const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
 pub struct WorkspaceSkill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub source: SkillSource,
 }
 
@@ -32,6 +33,7 @@ pub struct WorkspaceSkills {
 pub(crate) struct ParsedSkill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub body: String,
 }
 
@@ -105,7 +107,7 @@ pub fn load_workspace_skills(
     WorkspaceSkills { skills, warnings }
 }
 
-/// Parse SKILL.md frontmatter (`name`, `description`) and return the body.
+/// Parse SKILL.md frontmatter and return the body.
 pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
     let Some((frontmatter, body)) = split_frontmatter(contents) else {
         return Err("missing YAML frontmatter".to_string());
@@ -113,6 +115,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
 
     let mut name: Option<String> = None;
     let mut description: Option<String> = None;
+    let mut disable_model_invocation: Option<bool> = None;
 
     for line in frontmatter.lines() {
         if line.trim().is_empty() || starts_with_yaml_indent(line) {
@@ -142,6 +145,24 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
                     description = Some(value.to_string());
                 }
             }
+            "disable-model-invocation" => {
+                if disable_model_invocation.is_some() {
+                    return Err("duplicate disable-model-invocation field".to_string());
+                }
+                let scalar = value
+                    .split_once('#')
+                    .filter(|(prefix, _)| prefix.ends_with(char::is_whitespace))
+                    .map_or(value, |(prefix, _)| prefix.trim_end());
+                disable_model_invocation = Some(match scalar {
+                    "true" | "True" | "TRUE" => true,
+                    "false" | "False" | "FALSE" => false,
+                    _ => {
+                        return Err(format!(
+                            "disable-model-invocation must be a YAML boolean (true or false), got {value:?}"
+                        ));
+                    }
+                });
+            }
             _ => {}
         }
     }
@@ -155,6 +176,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     Ok(ParsedSkill {
         name,
         description,
+        disable_model_invocation: disable_model_invocation.unwrap_or(false),
         body: body.to_string(),
     })
 }
@@ -226,6 +248,7 @@ fn parse_and_validate_builtin(
     Ok(WorkspaceSkill {
         name: parsed.name,
         description: parsed.description,
+        disable_model_invocation: parsed.disable_model_invocation,
         source: SkillSource::BuiltIn { contents },
     })
 }
@@ -330,6 +353,7 @@ fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, S
     Ok(WorkspaceSkill {
         name: parsed.name,
         description: parsed.description,
+        disable_model_invocation: parsed.disable_model_invocation,
         source: SkillSource::File { skill_md_path },
     })
 }
@@ -407,11 +431,21 @@ mod tests {
     use super::*;
 
     fn write_skill(dir: &Path, name: &str, description: &str, body: &str) {
+        write_skill_with_frontmatter(dir, name, description, body, "");
+    }
+
+    fn write_skill_with_frontmatter(
+        dir: &Path,
+        name: &str,
+        description: &str,
+        body: &str,
+        frontmatter: &str,
+    ) {
         let skill_dir = dir.join(name);
         fs::create_dir_all(&skill_dir).expect("skill dir");
         fs::write(
             skill_dir.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: {description}\n---\n{body}\n"),
+            format!("---\nname: {name}\ndescription: {description}\n{frontmatter}---\n{body}\n"),
         )
         .expect("skill file");
     }
@@ -426,11 +460,37 @@ mod tests {
         fs::create_dir_all(&project_skills).expect("project skills");
 
         write_skill(&project_skills, "alpha", "from project", "project body");
-        write_skill(&project_skills, "shared", "project wins", "project shared");
+        write_skill_with_frontmatter(
+            &project_skills,
+            "shared",
+            "project wins",
+            "project shared",
+            "disable-model-invocation: true\n",
+        );
+        write_skill_with_frontmatter(
+            &sprocket_user,
+            "alpha",
+            "shadowed user",
+            "user alpha",
+            "disable-model-invocation: true\n",
+        );
         write_skill(&sprocket_user, "shared", "sprocket user", "sprocket shared");
-        write_skill(&sprocket_user, "bravo", "from sprocket", "sprocket body");
+        write_skill_with_frontmatter(
+            &sprocket_user,
+            "bravo",
+            "from sprocket",
+            "sprocket body",
+            "disable-model-invocation: true\n",
+        );
+        write_skill(&agents_user, "bravo", "shadowed user", "agents bravo");
         write_skill(&agents_user, "shared", "agents user", "agents shared");
-        write_skill(&agents_user, "charlie", "from agents", "agents body");
+        write_skill_with_frontmatter(
+            &agents_user,
+            "charlie",
+            "from agents",
+            "agents body",
+            "disable-model-invocation: false\n",
+        );
 
         let builtin = [
             (
@@ -438,8 +498,16 @@ mod tests {
                 "---\nname: shared\ndescription: built-in\n---\nbuiltin body\n",
             ),
             (
+                "bravo",
+                "---\nname: bravo\ndescription: shadowed builtin\n---\nbuiltin bravo\n",
+            ),
+            (
+                "charlie",
+                "---\nname: charlie\ndescription: shadowed builtin\ndisable-model-invocation: true\n---\nbuiltin charlie\n",
+            ),
+            (
                 "delta",
-                "---\nname: delta\ndescription: from builtin\n---\nbuiltin delta\n",
+                "---\nname: delta\ndescription: from builtin\ndisable-model-invocation: true\n---\nbuiltin delta\n",
             ),
         ];
 
@@ -455,6 +523,28 @@ mod tests {
             .map(|skill| skill.name.as_str())
             .collect();
         assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta", "shared"]);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let policies: Vec<_> = loaded
+            .skills
+            .iter()
+            .map(|skill| skill.disable_model_invocation)
+            .collect();
+        assert_eq!(policies, vec![false, true, false, true, true]);
+        let bodies: Vec<_> = loaded
+            .skills
+            .iter()
+            .map(|skill| read_skill_content(skill).expect("winning content").content)
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                "project body\n",
+                "sprocket body\n",
+                "agents body\n",
+                "builtin delta\n",
+                "project shared\n",
+            ]
+        );
 
         let shared = loaded
             .skills
@@ -474,6 +564,127 @@ mod tests {
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(sprocket_user).ok();
         fs::remove_dir_all(agents_user).ok();
+    }
+
+    #[test]
+    fn invocation_policy_is_preserved_for_project_user_and_builtin_skills() {
+        let root = temp_workspace();
+        let project_skills = root.join(".sprocket/skills");
+        let user_skills = temp_workspace();
+        gix::init(&root).expect("git repository");
+
+        let cases = [
+            (
+                "",
+                false,
+                "---\nname: builtin\ndescription: builtin skill\n---\nbuiltin body\n",
+            ),
+            (
+                "disable-model-invocation: false\n",
+                false,
+                "---\nname: builtin\ndescription: builtin skill\ndisable-model-invocation: false\n---\nbuiltin body\n",
+            ),
+            (
+                "disable-model-invocation: true\n",
+                true,
+                "---\nname: builtin\ndescription: builtin skill\ndisable-model-invocation: true\n---\nbuiltin body\n",
+            ),
+        ];
+        for (frontmatter, expected, builtin_contents) in cases {
+            write_skill_with_frontmatter(
+                &project_skills,
+                "project",
+                "project skill",
+                "project body",
+                frontmatter,
+            );
+            write_skill_with_frontmatter(
+                &user_skills,
+                "user",
+                "user skill",
+                "user body",
+                frontmatter,
+            );
+            let loaded = load_workspace_skills(
+                &root,
+                std::slice::from_ref(&user_skills),
+                &[("builtin", builtin_contents)],
+            );
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(loaded.skills.len(), 3);
+            for skill in &loaded.skills {
+                assert_eq!(skill.disable_model_invocation, expected, "{}", skill.name);
+                let content = read_skill_content(skill).expect("skill content");
+                assert_eq!(content.content, format!("{} body\n", skill.name));
+                assert!(!content.truncated);
+                match skill.name.as_str() {
+                    "builtin" => {
+                        assert!(matches!(skill.source, SkillSource::BuiltIn { .. }));
+                        assert_eq!(content.dir, None);
+                    }
+                    "project" | "user" => {
+                        let dir = if skill.name == "project" {
+                            project_skills.join("project")
+                        } else {
+                            user_skills.join("user")
+                        };
+                        assert!(matches!(skill.source, SkillSource::File { .. }));
+                        assert_eq!(content.dir.as_deref(), Some(dir.to_string_lossy().as_ref()));
+                    }
+                    _ => panic!("unexpected skill {}", skill.name),
+                }
+            }
+        }
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(user_skills).ok();
+    }
+
+    #[test]
+    fn invalid_invocation_policies_are_skipped_with_source_warnings() {
+        let root = temp_workspace();
+        let project_skills = root.join(".sprocket/skills");
+        let user_skills = temp_workspace();
+        gix::init(&root).expect("git repository");
+        let frontmatter = "disable-model-invocation: maybe\n";
+        write_skill_with_frontmatter(
+            &project_skills,
+            "project",
+            "project skill",
+            "body",
+            frontmatter,
+        );
+        write_skill_with_frontmatter(&user_skills, "user", "user skill", "body", frontmatter);
+        let loaded = load_workspace_skills(
+            &root,
+            std::slice::from_ref(&user_skills),
+            &[(
+                "builtin",
+                "---\nname: builtin\ndescription: builtin skill\ndisable-model-invocation: maybe\n---\nbody\n",
+            )],
+        );
+        assert!(loaded.skills.is_empty());
+        assert_eq!(loaded.warnings.len(), 3);
+        for source in [
+            project_skills
+                .join("project/SKILL.md")
+                .display()
+                .to_string(),
+            user_skills.join("user/SKILL.md").display().to_string(),
+            "built-in skill 'builtin'".to_string(),
+        ] {
+            let warning = loaded
+                .warnings
+                .iter()
+                .find(|warning| warning.contains(&source))
+                .expect("warning identifies source");
+            assert!(warning.contains("disable-model-invocation"));
+            assert!(warning.contains("YAML boolean (true or false)"));
+            assert!(warning.contains("maybe"));
+        }
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(user_skills).ok();
     }
 
     #[test]
@@ -548,6 +759,68 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_invocation_policy_as_yaml_boolean() {
+        for (frontmatter, expected) in [
+            ("", false),
+            ("disable-model-invocation: false\n", false),
+            ("disable-model-invocation: true\n", true),
+            ("disable-model-invocation: False\n", false),
+            ("disable-model-invocation: TRUE\n", true),
+            ("disable-model-invocation: true # explicit only\n", true),
+            ("disable-model-invocation: false\t# automatic\n", false),
+            ("metadata:\n  disable-model-invocation: true\n", false),
+        ] {
+            let contents =
+                format!("---\nname: demo\ndescription: demo skill\n{frontmatter}---\nbody\n");
+            let parsed = parse_skill_markdown(&contents).expect("valid policy");
+            assert_eq!(parsed.disable_model_invocation, expected, "{frontmatter}");
+            assert_eq!(parsed.body, "body\n");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_and_duplicate_invocation_policies() {
+        for value in [
+            "",
+            "maybe",
+            "yes",
+            "no",
+            "on",
+            "off",
+            "1",
+            "0",
+            "null",
+            "~",
+            "\"true\"",
+            "'false'",
+            "[]",
+            "{}",
+            ">\n  true",
+            "|\n  false",
+            "true#comment",
+            "tRuE",
+        ] {
+            let contents = format!(
+                "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: {value}\n---\nbody\n"
+            );
+            let error = parse_skill_markdown(&contents).expect_err(value);
+            assert!(error.contains("disable-model-invocation"), "{error}");
+            assert!(error.contains("YAML boolean (true or false)"), "{error}");
+        }
+        for values in [("true", "false"), ("false", "true"), ("true", "true")] {
+            let contents = format!(
+                "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: {}\ndisable-model-invocation: {}\n---\nbody\n",
+                values.0, values.1
+            );
+            let error = parse_skill_markdown(&contents).expect_err("duplicate policy");
+            assert!(
+                error.contains("duplicate disable-model-invocation"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_block_scalar_descriptions() {
         let folded = "---\nname: folded\ndescription: >-\n  A long description\n---\nbody\n";
         let error = parse_skill_markdown(folded).expect_err("folded description");
@@ -559,37 +832,76 @@ mod tests {
     }
 
     #[test]
-    fn discovery_and_content_reads_stay_byte_capped() {
+    fn explicit_only_discovery_and_content_reads_stay_byte_capped() {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
         let skill_dir = skills.join("huge");
         gix::init(&root).expect("git repository");
         fs::create_dir_all(&skill_dir).unwrap();
 
-        let mut contents = String::from("---\nname: huge\ndescription: oversized\n---\n");
+        let mut contents = String::from(
+            "---\nname: huge\ndescription: oversized\ndisable-model-invocation: true\n---\n",
+        );
+        let frontmatter_bytes = contents.len();
         contents.push_str(&"x".repeat(MAX_SKILL_CONTENT_BYTES + 8 * 1024));
         fs::write(skill_dir.join("SKILL.md"), &contents).unwrap();
 
         let loaded = load_workspace_skills(&root, &[], &[]);
         assert_eq!(loaded.skills.len(), 1);
         assert_eq!(loaded.skills[0].name, "huge");
+        assert!(loaded.skills[0].disable_model_invocation);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
 
         let content = read_skill_content(&loaded.skills[0]).expect("read");
         assert!(content.truncated);
-        assert!(content.content.len() <= MAX_SKILL_CONTENT_BYTES);
+        assert_eq!(
+            content.content,
+            "x".repeat(MAX_SKILL_CONTENT_BYTES - frontmatter_bytes)
+        );
+
+        let builtin_contents = Box::leak(contents.into_boxed_str());
+        let builtin_skill = parse_and_validate_builtin("huge", builtin_contents).expect("builtin");
+        assert!(builtin_skill.disable_model_invocation);
+        let builtin_content = read_skill_content(&builtin_skill).expect("builtin read");
+        assert_eq!(builtin_content.content, content.content);
+        assert!(builtin_content.truncated);
+        assert_eq!(builtin_content.dir, None);
+
+        let oversized_frontmatter = format!(
+            "---\nname: too-large\ndescription: oversized\n# {}\ndisable-model-invocation: true\n---\nbody\n",
+            "x".repeat(MAX_FRONTMATTER_BYTES)
+        );
+        let oversized_dir = skills.join("too-large");
+        fs::create_dir_all(&oversized_dir).unwrap();
+        fs::write(oversized_dir.join("SKILL.md"), oversized_frontmatter).unwrap();
+        let loaded = load_workspace_skills(&root, &[], &[]);
+        assert_eq!(loaded.skills.len(), 1);
+        assert!(loaded.warnings.iter().any(|warning| {
+            warning.contains("too-large") && warning.contains("missing YAML frontmatter")
+        }));
 
         fs::remove_dir_all(root).ok();
     }
 
     #[test]
-    fn read_skill_content_strips_frontmatter_and_returns_dir() {
+    fn explicit_only_content_resolves_project_path_from_nested_cwd() {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
         gix::init(&root).expect("git repository");
-        write_skill(&skills, "demo", "A demo skill", "# Instructions\n\nGo.");
+        write_skill_with_frontmatter(
+            &skills,
+            "demo",
+            "A demo skill",
+            "# Instructions\n\nGo.",
+            "disable-model-invocation: true\n",
+        );
+        let cwd = root.join("src/nested");
+        fs::create_dir_all(&cwd).unwrap();
 
-        let loaded = load_workspace_skills(&root, &[], &[]);
+        let loaded = load_workspace_skills(&cwd, &[], &[]);
         let skill = loaded.skills.iter().find(|s| s.name == "demo").unwrap();
+        assert!(skill.disable_model_invocation);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         let content = read_skill_content(skill).expect("read");
         assert_eq!(content.name, "demo");
         assert_eq!(content.description, "A demo skill");

@@ -163,17 +163,18 @@ fn build_workspace_prompt_context(
         blocks.join("\n\n")
     };
 
-    let skills_block = if skills.is_empty() {
+    let entries = skills
+        .iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .map(|skill| {
+            let description = collapse_whitespace(&skill.description);
+            format!("- name: {}\n  description: {description}", skill.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let skills_block = if entries.is_empty() {
         "No skills are installed.".to_string()
     } else {
-        let entries = skills
-            .iter()
-            .map(|skill| {
-                let description = collapse_whitespace(&skill.description);
-                format!("- name: {}\n  description: {description}", skill.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
@@ -923,6 +924,12 @@ pub async fn run_agent(
             eprintln!("sprocket-agent: {warning}");
         }
         let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
+        let (invocation_prompt, invocation_prompt_is_user) = context.skill_invocation_source();
+        let skill_invocations = crate::tools::SkillInvocations::from_run_prompt(
+            &skills,
+            invocation_prompt,
+            invocation_prompt_is_user,
+        );
         let is_continuation = context.run.continuation_of_run_id.is_some()
             || request.continuation_of_run_id.is_some();
         let prompt_text = prior_history
@@ -950,6 +957,8 @@ pub async fn run_agent(
             &context.run.thread_id,
             &transcript_dir,
         );
+        let mut initial_context = vec![prompt_context.initial_context];
+        initial_context.extend(skill_invocations.load_context(&skills)?);
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -958,13 +967,23 @@ pub async fn run_agent(
         Ok((
             prompt,
             provider,
-            prompt_context,
+            prompt_context.base_instructions,
+            initial_context,
             skills,
+            skill_invocations,
             continue_without_prompt,
         ))
     })();
 
-    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
+    let (
+        prompt,
+        provider,
+        base_instructions,
+        initial_context,
+        skills,
+        skill_invocations,
+        continue_without_prompt,
+    ) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -1023,8 +1042,8 @@ pub async fn run_agent(
                     run_started_at: context.run.started_at,
                     live: live.clone(),
                     prompt,
-                    base_instructions: prompt_context.base_instructions,
-                    initial_context: vec![prompt_context.initial_context],
+                    base_instructions,
+                    initial_context,
                     prior_history: prior_history.messages,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),
@@ -1035,6 +1054,7 @@ pub async fn run_agent(
                     command_sessions: command_sessions.clone(),
                     workspace_root,
                     skills,
+                    skill_invocations,
                     reasoning_effort,
                     fast_mode,
                     context_budget: capabilities.context_budget,
@@ -1203,6 +1223,7 @@ mod tests {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),
             description: "Handle PDFs".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
@@ -1228,10 +1249,66 @@ mod tests {
     }
 
     #[test]
+    fn explicit_only_skills_stay_hidden_after_handoff_and_context_reconstruction() {
+        let skills = [
+            WorkspaceSkill {
+                name: "deploy".to_string(),
+                description: "Deploy production".to_string(),
+                disable_model_invocation: true,
+                source: SkillSource::BuiltIn {
+                    contents: "---\nname: deploy\ndescription: Deploy production\ndisable-model-invocation: true\n---\n# Deployment instructions\n",
+                },
+            },
+            WorkspaceSkill {
+                name: "ordinary".to_string(),
+                description: "Ordinary skill".to_string(),
+                disable_model_invocation: false,
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+        ];
+        for invoked in [false, true] {
+            let user_prompt = if invoked {
+                "Use $deploy"
+            } else {
+                "Review the app"
+            };
+            let invocations =
+                crate::tools::SkillInvocations::from_run_prompt(&skills, user_prompt, true);
+            let workspace_context = build_test_prompt_context(&[], &skills);
+            let metadata = initial_context_text(&workspace_context.initial_context);
+            assert!(metadata.contains("- name: ordinary"));
+            assert!(!metadata.contains("deploy"));
+            assert!(!metadata.contains("Deploy production"));
+            assert!(!workspace_context.base_instructions.contains("deploy"));
+            let mut initial_context = vec![workspace_context.initial_context];
+            initial_context.extend(invocations.load_context(&skills).unwrap());
+
+            for deferred in [None, Some(Message::user(user_prompt))] {
+                let (history, prompt) = crate::provider::context_after_handoff(
+                    &initial_context,
+                    "Work remains to be done.",
+                    deferred,
+                );
+                let serialized = serde_json::to_string(&(history, prompt)).unwrap();
+                assert!(serialized.contains("Ordinary skill"));
+                assert_eq!(serialized.contains("Deploy production"), invoked);
+                assert_eq!(serialized.contains("# Deployment instructions"), invoked);
+            }
+        }
+
+        let rebuilt = build_test_prompt_context(&[], &skills);
+        assert!(!initial_context_text(&rebuilt.initial_context).contains("deploy"));
+        let only_explicit = build_test_prompt_context(&[], &skills[..1]);
+        assert!(!initial_context_text(&only_explicit.initial_context).contains("deploy"));
+        assert!(!initial_context_text(&only_explicit.initial_context).contains("<SKILLS>"));
+    }
+
+    #[test]
     fn initial_context_collapses_multiline_skill_descriptions() {
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Line one\nline two".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },

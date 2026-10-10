@@ -98,6 +98,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
+    pub(crate) skill_invocations: crate::tools::SkillInvocations,
     pub(crate) reasoning_effort: String,
     pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
@@ -255,6 +256,7 @@ async fn run_with_completion_model(
         request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),
+        request.skill_invocations.clone(),
         request.command_sessions.clone(),
         request.subagent_launcher.clone(),
     );
@@ -511,12 +513,11 @@ async fn run_with_completion_model(
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
-                                history = initial_context.to_vec();
-                                let handoff = Message::user(context_summary_text(&summary));
-                                prompt = match deferred_prompt.take() {
-                                    Some(pending) => { history.push(handoff); pending }
-                                    None => handoff,
-                                };
+                                (history, prompt) = context_after_handoff(
+                                    &initial_context,
+                                    &summary,
+                                    deferred_prompt.take(),
+                                );
                                 context_handoff_hook.restart();
                                 handoff_processed_tokens = 0;
                                 final_text.clear();
@@ -602,6 +603,23 @@ async fn run_with_completion_model(
             }
         }
     }
+}
+
+pub(crate) fn context_after_handoff(
+    initial_context: &[Message],
+    summary: &str,
+    deferred_prompt: Option<Message>,
+) -> (Vec<Message>, Message) {
+    let mut history = initial_context.to_vec();
+    let handoff = Message::user(context_summary_text(summary));
+    let prompt = match deferred_prompt {
+        Some(pending) => {
+            history.push(handoff);
+            pending
+        }
+        None => handoff,
+    };
+    (history, prompt)
 }
 
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);

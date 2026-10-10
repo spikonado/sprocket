@@ -32,6 +32,31 @@ Built-in skills live in [`sprocket-workspace/skills`](../sprocket-workspace/skil
 and are discovered at run time with project and user skills. See that crate for
 the on-disk layout.
 
+`SKILL.md` accepts an optional `disable-model-invocation` YAML boolean, defaulting
+to `false`. Setting it to `true` keeps the skill in host discovery with normal
+project, user, and built-in precedence for explicit `$skill-name` invocation,
+but disables automatic model invocation. Invalid values and duplicate policy
+fields skip the skill with a discovery warning.
+
+Explicit-only names and descriptions are omitted from normal model context,
+including context rebuilt after handoff. An explicit invocation in the current
+user prompt loads the body through the normal size-capped reader. `read_skill`
+rejects reads without that invocation. Authorization lasts for that request,
+including its in-run handoffs, and does not carry into later requests or
+model-generated subagent prompts. Promptless recovery keeps the original
+request's invocation. These skills still appear in the user's
+skill picker. This controls skill loading, not shell or filesystem access.
+
+This is a [Claude Code](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill)
+and [Cursor](https://cursor.com/docs/skills#disabling-automatic-invocation)
+compatibility extension, not a required field in the
+[Agent Skills specification](https://agentskills.io/specification).
+[Codex](https://developers.openai.com/codex/skills#optional-metadata) expresses
+explicit-only invocation through `policy.allow_implicit_invocation: false` in
+`agents/openai.yaml`. This extension does not add support for that sidecar policy.
+See [issue #339](https://github.com/spikonado/sprocket/issues/339) for the policy
+requirements and source references.
+
 ## Tools
 
 Message attachments can contain any file type, with no application size or count

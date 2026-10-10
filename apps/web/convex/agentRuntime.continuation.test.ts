@@ -9,7 +9,16 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 	it('creates a linked run without a visible prompt and is idempotent', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const parent = await createQueuedRun(t, asUser, threadId, 'sub-parent', 'parent-secret');
+
+		const parent = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-parent',
+			'parent-secret',
+			'$deploy'
+		);
+
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: parent.runId,
 			text: '',
@@ -58,7 +67,11 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			executionSecret: 'continue-secret'
 		});
 
-		expect(context.prompt).toBe('');
+		expect(context).toMatchObject({
+			prompt: '',
+			invocationPrompt: '$deploy',
+			invocationPromptIsUser: true
+		});
 		expect(context.run.continuationOfRunId).toBe(parent.runId);
 	});
 
@@ -71,7 +84,8 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			asUser,
 			threadId,
 			'sub-answered-parent',
-			'parent-secret'
+			'parent-secret',
+			'$deploy'
 		);
 
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
@@ -114,7 +128,11 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 				runId: created.runId,
 				executionSecret: args.executionSecret
 			})
-		).toMatchObject({ prompt: args.prompt });
+		).toMatchObject({
+			prompt: args.prompt,
+			invocationPrompt: args.prompt,
+			invocationPromptIsUser: true
+		});
 
 		await expect(insertQueuedRun(t, asUser, args)).resolves.toMatchObject({
 			created: false,
@@ -127,10 +145,199 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => [part.runId, part.prompt?.text])).toEqual([
-			[parent.runId, 'Do the thing'],
+			[parent.runId, '$deploy'],
 			[created.runId, args.prompt]
 		]);
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: created.runId,
+			executionSecret: args.executionSecret,
+			text: '',
+			status: 'failed'
+		});
+
+		const recovery = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'newer-prompt-recovery',
+			executionSecret: 'newer-prompt-recovery-secret',
+			prompt: '',
+			continuationOfRunId: created.runId
+		});
+
+		expect(
+			await asUser.query(api.agentRuntime.getContext, {
+				runId: recovery.runId,
+				executionSecret: 'newer-prompt-recovery-secret'
+			})
+		).toMatchObject({ prompt: '', invocationPrompt: args.prompt, invocationPromptIsUser: true });
 	});
+
+	it('uses an attachment-only request instead of an earlier skill invocation on recovery', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, subject } = await seedOwnedThread(t);
+
+		const parent = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'attachment-parent',
+			'parent-secret',
+			'$deploy'
+		);
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: parent.runId,
+			executionSecret: 'parent-secret',
+			text: '',
+			status: 'completed'
+		});
+
+		const imageUploadId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['notes'], { type: 'text/plain' }));
+
+			return await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'notes.txt',
+				mediaType: 'text/plain',
+				size: 5,
+				attached: false
+			});
+		});
+
+		const attachmentRequest = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'attachment-request',
+			executionSecret: 'attachment-secret',
+			prompt: '',
+			imageUploadIds: [imageUploadId],
+			continuationOfRunId: parent.runId
+		});
+
+		expect(attachmentRequest.promptPart?.prompt?.text).toBe('');
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: attachmentRequest.runId,
+			executionSecret: 'attachment-secret',
+			text: '',
+			status: 'failed'
+		});
+
+		const recovery = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'attachment-recovery',
+			executionSecret: 'attachment-recovery-secret',
+			prompt: '',
+			continuationOfRunId: attachmentRequest.runId
+		});
+
+		expect(
+			await asUser.query(api.agentRuntime.getContext, {
+				runId: recovery.runId,
+				executionSecret: 'attachment-recovery-secret'
+			})
+		).toMatchObject({ prompt: '', invocationPrompt: '', invocationPromptIsUser: true });
+	});
+
+	it.each([64, 65])(
+		'resolves a continuation chain of %i hops within the lookup bound',
+		async (hops) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+
+			const parent = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'bounded-parent',
+				'parent-secret',
+				'$deploy'
+			);
+
+			const runId = await t.run(async (ctx) => {
+				const parentRun = await ctx.db.get('runs', parent.runId);
+
+				if (!parentRun) throw new Error('Missing test run.');
+				let continuationOfRunId = parentRun._id;
+
+				for (let index = 0; index < hops; index++) {
+					continuationOfRunId = await ctx.db.insert('runs', {
+						threadId,
+						userId: parentRun.userId,
+						status: 'queued',
+						executionSecretHash: parentRun.executionSecretHash,
+						selectedModel: parentRun.selectedModel,
+						reasoningEffort: parentRun.reasoningEffort,
+						fastMode: parentRun.fastMode,
+						startedAt: parentRun.startedAt,
+						modelInitiated: false,
+						submissionId: `bounded-continuation-${index}`,
+						continuationOfRunId
+					});
+				}
+
+				return continuationOfRunId;
+			});
+
+			expect(
+				await t.query(api.agentRuntime.getContext, { runId, executionSecret: 'parent-secret' })
+			).toMatchObject({
+				prompt: '',
+				invocationPrompt: hops === 64 ? '$deploy' : '',
+				invocationPromptIsUser: hops === 64
+			});
+		}
+	);
+
+	it.each(['other user', 'other thread', 'missing run', 'cycle'])(
+		'withholds invocation authorization for a continuation linked to %s',
+		async (invalidLink) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+
+			const parent = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'invalid-parent',
+				'parent-secret',
+				'$deploy'
+			);
+
+			await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: parent.runId,
+				executionSecret: 'parent-secret',
+				text: '',
+				status: 'failed'
+			});
+
+			const recovery = await insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'invalid-recovery',
+				executionSecret: 'recovery-secret',
+				prompt: '',
+				continuationOfRunId: parent.runId
+			});
+
+			const { threadId: otherThreadId } = await seedOwnedThread(t);
+			await t.run(async (ctx) => {
+				if (invalidLink === 'other user') {
+					await ctx.db.patch('runs', parent.runId, { userId: 'another-user' });
+				} else if (invalidLink === 'other thread') {
+					await ctx.db.patch('runs', parent.runId, { threadId: otherThreadId });
+				} else if (invalidLink === 'missing run') {
+					await ctx.db.delete('runs', parent.runId);
+				} else {
+					await ctx.db.patch('runs', recovery.runId, { continuationOfRunId: recovery.runId });
+				}
+			});
+			expect(
+				await t.query(api.agentRuntime.getContext, {
+					runId: recovery.runId,
+					executionSecret: 'recovery-secret'
+				})
+			).toMatchObject({ prompt: '', invocationPrompt: '', invocationPromptIsUser: false });
+		}
+	);
 
 	it('rejects active and non-latest parents', async () => {
 		const t = initConvexTest();

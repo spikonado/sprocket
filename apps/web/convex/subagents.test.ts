@@ -139,6 +139,142 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
+describe('agentRuntime.getContext prompt provenance', () => {
+	it('marks a direct user root prompt as user-initiated', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+
+		expect(
+			await t.query(api.agentRuntime.getContext, {
+				runId: caller.runId,
+				executionSecret: caller.executionSecret
+			})
+		).toMatchObject({ prompt: 'Root task', promptIsUser: true });
+		expect(await t.run((ctx) => ctx.db.get('runs', caller.runId))).toMatchObject({
+			modelInitiated: false
+		});
+	});
+
+	it('keeps a model-spawned child prompt model-initiated even with a raw skill invocation', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const args = createArgs(caller, { prompt: '$deploy' });
+		const child = await t.mutation(api.subagents.createOrSend, args);
+		await claimChildRun(t, child, args.childExecutionSecret);
+
+		expect(
+			await t.query(api.agentRuntime.getContext, {
+				runId: child.runId,
+				executionSecret: args.childExecutionSecret
+			})
+		).toMatchObject({ prompt: '$deploy', promptIsUser: false });
+		expect(await t.run((ctx) => ctx.db.get('runs', child.runId))).toMatchObject({
+			modelInitiated: true
+		});
+	});
+
+	it.each([true, undefined])(
+		'keeps model child invocation provenance on promptless recovery with stored value %s',
+		async (modelInitiated) => {
+			const t = initConvexTest();
+			const caller = await startCallerRun(t);
+			const args = createArgs(caller, { prompt: '$deploy' });
+			const child = await t.mutation(api.subagents.createOrSend, args);
+			await claimChildRun(t, child, args.childExecutionSecret);
+			await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+				runId: child.runId,
+				executionSecret: args.childExecutionSecret,
+				text: '',
+				status: 'failed'
+			});
+			await t.run((ctx) => ctx.db.patch('runs', child.runId, { modelInitiated }));
+
+			const recovery = await insertQueuedRun(t, caller.asUser, {
+				threadId: child.threadId,
+				submissionId: 'model-child-recovery',
+				executionSecret: 'model-child-recovery-secret',
+				prompt: '',
+				continuationOfRunId: child.runId
+			});
+
+			expect(
+				await t.query(api.agentRuntime.getContext, {
+					runId: recovery.runId,
+					executionSecret: 'model-child-recovery-secret'
+				})
+			).toMatchObject({
+				prompt: '',
+				promptIsUser: true,
+				invocationPrompt: '$deploy',
+				invocationPromptIsUser: false
+			});
+		}
+	);
+
+	it('marks a subsequent direct user queued prompt in a child thread as user-initiated', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const args = createArgs(caller);
+		const child = await t.mutation(api.subagents.createOrSend, args);
+		await claimChildRun(t, child, args.childExecutionSecret);
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: child.runId,
+			executionSecret: args.childExecutionSecret,
+			text: 'Done',
+			status: 'completed'
+		});
+
+		const executionSecret = 'direct-user-child-secret';
+
+		const queued = await createQueuedRun(
+			t,
+			caller.asUser,
+			child.threadId,
+			'direct-user-child-submission',
+			executionSecret,
+			'$deploy'
+		);
+
+		await claimChildRun(t, queued, executionSecret);
+
+		expect(
+			await t.query(api.agentRuntime.getContext, { runId: queued.runId, executionSecret })
+		).toMatchObject({ prompt: '$deploy', promptIsUser: true });
+		expect(await t.run((ctx) => ctx.db.get('runs', queued.runId))).toMatchObject({
+			modelInitiated: false
+		});
+	});
+
+	it.each([
+		{ childThread: false, promptIsUser: true },
+		{ childThread: true, promptIsUser: false }
+	])(
+		'defaults legacy provenance for childThread=$childThread',
+		async ({ childThread, promptIsUser }) => {
+			const t = initConvexTest();
+			const caller = await startCallerRun(t);
+			const args = createArgs(caller, { prompt: '$deploy' });
+
+			const run = childThread
+				? await claimChildRun(
+						t,
+						await t.mutation(api.subagents.createOrSend, args),
+						args.childExecutionSecret
+					)
+				: caller;
+
+			await t.run((ctx) => ctx.db.patch('runs', run.runId, { modelInitiated: undefined }));
+
+			expect(
+				await t.query(api.agentRuntime.getContext, {
+					runId: run.runId,
+					executionSecret: run.executionSecret
+				})
+			).toMatchObject({ prompt: childThread ? '$deploy' : 'Root task', promptIsUser });
+		}
+	);
+});
+
 describe('subagents.createOrSend', () => {
 	it('rejects delegated child follow-ups until prior results are committed', async () => {
 		vi.useFakeTimers();
@@ -229,7 +365,8 @@ describe('subagents.createOrSend', () => {
 			await t.mutation(api.agentRuntime.start, { ...auth, claimId: 'queued-claim' })
 		).toMatchObject({ claimed: true });
 		expect(await t.query(api.agentRuntime.getContext, auth)).toMatchObject({
-			prompt: 'Use the results'
+			prompt: 'Use the results',
+			promptIsUser: false
 		});
 	});
 

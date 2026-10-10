@@ -53,6 +53,7 @@ export type QueuedRunRequest = {
 	// Native delegation only; never accepted from ordinary client submissions.
 	parentThreadId?: Id<'threadRecords'>;
 	prompt: string;
+	modelInitiated?: boolean;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
 	completionProvider?: CompletionProvider;
@@ -288,6 +289,7 @@ export async function createQueuedRunRecord(
 		threadId: threadRecord._id,
 		userId: args.userId,
 		submissionId: args.submissionId,
+		modelInitiated: args.modelInitiated ?? false,
 		status: 'queued' as const,
 		executionSecretHash: secretHash,
 		selectedModel: args.selectedModel,

@@ -231,10 +231,9 @@ export function formatQuestionContinuationPrompt(questions: AnsweredAgentQuestio
 	}
 
 	const entries = questions.map((question, index) => {
-		const questionText = question.question.replaceAll('\n', '\n   ');
 		const answerText = formatAnswer(question.answer).replaceAll('\n', '\n   ');
 
-		return `${index + 1}. ${questionText}\n   ${answerText}`;
+		return `${index + 1}. ${answerText}`;
 	});
 
 	return `Answers to your questions:\n\n${entries.join('\n\n')}`;

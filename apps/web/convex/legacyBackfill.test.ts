@@ -5,6 +5,46 @@ import { initConvexTest, seedOwnedThread } from './test.setup';
 const oneBatch = { cursor: null, dryRun: false, oneBatchOnly: true } as const;
 
 describe('legacy compat backfill migrations', () => {
+	it.each([
+		{ thread: 'root', modelInitiated: undefined, expected: false },
+		{ thread: 'child', modelInitiated: undefined, expected: true },
+		{ thread: 'root', modelInitiated: false, expected: false },
+		{ thread: 'root', modelInitiated: true, expected: true },
+		{ thread: 'child', modelInitiated: false, expected: false },
+		{ thread: 'child', modelInitiated: true, expected: true }
+	])(
+		'backfills $thread run provenance from $modelInitiated to $expected idempotently',
+		async ({ thread, modelInitiated, expected }) => {
+			const t = initConvexTest();
+			const { threadId: rootThreadId } = await seedOwnedThread(t);
+			const threadId = thread === 'child' ? (await seedOwnedThread(t)).threadId : rootThreadId;
+
+			const runId = await t.run(async (ctx) => {
+				if (thread === 'child') {
+					await ctx.db.patch('threadRecords', threadId, { parentThreadId: rootThreadId });
+				}
+
+				const run = await ctx.db
+					.query('runs')
+					.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+					.unique();
+
+				if (!run) throw new Error('Missing test fixture.');
+				await ctx.db.patch('runs', run._id, { modelInitiated });
+
+				return run._id;
+			});
+
+			await t.mutation(internal.migrations.backfillRunPromptProvenance, oneBatch);
+			const after = await t.run((ctx) => ctx.db.get('runs', runId));
+
+			expect(after?.modelInitiated).toBe(expected);
+
+			await t.mutation(internal.migrations.backfillRunPromptProvenance, oneBatch);
+			expect(await t.run((ctx) => ctx.db.get('runs', runId))).toEqual(after);
+		}
+	);
+
 	it('reconciles historical terminal tool results before releasing follow-ups', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
@@ -517,20 +557,21 @@ describe('legacy compat backfill migrations', () => {
 		expect(registry).not.toHaveProperty('rekeyTo');
 	});
 
-	it('backfills command inputs after the previous schedule completed', async () => {
+	it('backfills command inputs and run provenance after previous schedules completed', async () => {
 		vi.useFakeTimers();
 
 		try {
 			const t = initConvexTest();
 			const { threadId } = await seedOwnedThread(t);
 
-			const commandPartId = await t.run(async (ctx) => {
+			const { commandPartId, runId } = await t.run(async (ctx) => {
 				const run = await ctx.db
 					.query('runs')
 					.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
 					.unique();
 
 				if (!run) throw new Error('Missing test fixture.');
+				await ctx.db.patch('runs', run._id, { modelInitiated: undefined });
 				await ctx.db.insert('executorJobs', {
 					threadId,
 					runId: run._id,
@@ -542,7 +583,7 @@ describe('legacy compat backfill migrations', () => {
 					sequence: 0
 				});
 
-				return await ctx.db.insert('threadTranscriptParts', {
+				const commandPartId = await ctx.db.insert('threadTranscriptParts', {
 					threadId,
 					userId: run.userId,
 					runId: run._id,
@@ -557,6 +598,8 @@ describe('legacy compat backfill migrations', () => {
 					},
 					work: { ranges: [] }
 				});
+
+				return { commandPartId, runId: run._id };
 			});
 
 			await t.run((ctx) =>
@@ -577,6 +620,15 @@ describe('legacy compat backfill migrations', () => {
 				})
 			);
 
+			const commandInputScheduleId = await t.run((ctx) =>
+				ctx.db.insert('migrationSchedules', {
+					name: 'legacy-compat-backfill-2026-10-command-inputs',
+					notBefore: 1,
+					startedAt: 1,
+					completedAt: 2
+				})
+			);
+
 			await t.mutation(internal.migrations.runLegacyCompatBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 			await t.mutation(internal.migrations.runLegacyCompatBackfillAutomatically, {});
@@ -585,7 +637,7 @@ describe('legacy compat backfill migrations', () => {
 				ctx.db
 					.query('migrationSchedules')
 					.withIndex('by_name', (q) =>
-						q.eq('name', 'legacy-compat-backfill-2026-10-command-inputs')
+						q.eq('name', 'legacy-compat-backfill-2026-10-run-prompt-provenance')
 					)
 					.unique()
 			);
@@ -594,6 +646,11 @@ describe('legacy compat backfill migrations', () => {
 			expect(
 				(await t.run((ctx) => ctx.db.get('migrationSchedules', previousScheduleId)))?.completedAt
 			).toBe(2);
+			expect(
+				(await t.run((ctx) => ctx.db.get('migrationSchedules', commandInputScheduleId)))
+					?.completedAt
+			).toBe(2);
+			expect((await t.run((ctx) => ctx.db.get('runs', runId)))?.modelInitiated).toBe(false);
 			expect(
 				(await t.run((ctx) => ctx.db.get('threadTranscriptParts', commandPartId)))?.tool?.input
 			).toEqual({ sessionId: 'scheduled' });

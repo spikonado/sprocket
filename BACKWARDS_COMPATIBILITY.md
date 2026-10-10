@@ -484,6 +484,38 @@ completion. Current agents send usage with `finalizeCompletionCall` and
 or a successful handoff. Keep the standalone mutation until released agents
 using it have aged out, then remove the mutation and its direct tests.
 
+### Run prompt provenance
+
+`runs.modelInitiated` stays optional for historical rows. Current run creation
+stores `false` by default; `subagents.createOrSend` stores `true` for model
+prompts. `agentRuntime.getContext` returns the required top-level
+`promptIsUser` as the inverse of that stored value. Until backfill finishes,
+missing values use the thread's `parentThreadId`: root prompts are user prompts
+and child prompts are model prompts. Explicit `false` and `true` remain
+authoritative regardless of thread ancestry.
+
+`backfillRunPromptProvenance` fills only missing values using the same ancestry
+rule in the automatic legacy runner. Require the stored field and remove the
+missing-field fallback and migration only after the backfill completes on all
+deployments, scans find no runs missing it, and no writers omit it.
+
+`promptIsUser` is an additive response field. Released clients can ignore it;
+existing request shapes and stored transcript formats remain unchanged.
+New agents default a missing response field to `false`, withholding explicit-only
+skill authorization when connected to an older backend. Remove this serde
+default once every supported deployment returns the field.
+
+`invocationPrompt` and `invocationPromptIsUser` are optional response fields for
+older backends. Current backends return both, resolving the nearest stored
+prompt through at most 64 same-user, same-thread continuation links. Empty-text
+attachment requests stop this lookup. Missing, invalid, or overlong chains return
+an empty invocation with user provenance `false`. Context handoff cutoffs do not
+hide the stored source prompt. The current `prompt` remains empty for promptless
+recovery; invocation provenance comes from the source run, not the recovery run.
+Clients use the invocation fields only when both exist, otherwise falling back
+to current prompt/provenance. Remove that response fallback only when every
+supported backend returns both fields. Stored data needs no additional migration.
+
 ### Descendant thread working counts
 
 Released hierarchy states may contain `ownActive`, `ownStatus`, and
@@ -511,21 +543,22 @@ Keep the total counter for expansion and inactive subagent labels.
 
 ### Current Migrations
 
-`convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10-command-inputs` once the migrations component reports every migration finished.
+`convex/migrations.ts` ships backfills for legacy stored shapes that current writers no longer produce.
+The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10-run-prompt-provenance` once the migrations component reports every migration finished.
 In serial order: `removeTranscriptStateWorkThrough`,
 `removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
 `backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
 part's job, so it runs after the job backfill),
 `backfillCommandToolInputs` (resolves retained jobs after invocation IDs migrate),
 `normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
-`removeSectionLinkedParts`, and
-`removeArtifactRegistryRekeyTargets`.
+`removeSectionLinkedParts`,
+`removeArtifactRegistryRekeyTargets`, and `backfillRunPromptProvenance`.
 
-The command-input backfill uses a new schedule name so completed
-`legacy-compat-backfill-2026-10` schedules do not block it. Already-finished
-migrations remain finished in the migrations component. The old schedule rows
-may be deleted after the command-input backfill completes.
+The run-provenance backfill uses a new schedule name so completed
+`legacy-compat-backfill-2026-10` and
+`legacy-compat-backfill-2026-10-command-inputs` schedules do not block it.
+Already-finished migrations remain finished in the migrations component. The
+old schedule rows may be deleted after the run-provenance backfill completes.
 
 After the runner reports completion and production scans confirm no row carries
 the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
