@@ -11,7 +11,12 @@ import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import type { UpdateState } from '$lib/updates';
-import type { DesktopApi, ProjectAttachment, TranscriptDisplayPage } from '$lib/types/sprocket';
+import type {
+	DesktopApi,
+	ProjectAttachment,
+	TranscriptDisplayPage,
+	TranscriptDisplayRow
+} from '$lib/types/sprocket';
 import App, { type AppRuntime } from './app';
 
 const modelCatalog: ModelCatalog = {
@@ -78,6 +83,7 @@ function emptyDisplayPage(replicaId: string): TranscriptDisplayPage {
 		replicaId,
 		rows: [],
 		indexing: false,
+		syncing: false,
 		stale: false,
 		endSequence: 0,
 		revision: 0,
@@ -984,6 +990,100 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 		watchers.get(thread._id)?.({ eventType: 'updated', stale: false });
 	});
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
+});
+
+it('renders remote history progressively and allows sending while older parts load', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Remote robot work');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const initial = Promise.withResolvers<TranscriptDisplayPage>();
+	let update: Parameters<DesktopApi['watchTranscript']>[1]['onEvent'] | undefined;
+
+	const recent: TranscriptDisplayRow = {
+		id: 'text-40-0',
+		threadId: thread._id,
+		// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
+		runId: 'prior-run' as Id<'runs'>,
+		sequence: 40,
+		kind: 'text',
+		text: 'The latest robot update',
+		itemCount: 0,
+		pendingTools: 0,
+		closed: true,
+		revision: 1
+	};
+
+	let synced = false;
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: 0,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'completed',
+		run: { runId: recent.runId, startedAt: 1 }
+	});
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				runAgent,
+				fetchTranscriptDisplay: async ({ before }) => {
+					if (!synced && before === undefined) return await initial.promise;
+
+					return {
+						...emptyDisplayPage('remote-replica'),
+						rows: synced
+							? [{ ...recent, id: 'text-1-0', sequence: 1, text: 'An older robot update' }, recent]
+							: [],
+						indexing: !synced,
+						syncing: !synced,
+						revision: synced ? 2 : 1
+					};
+				},
+				watchTranscript: (_request, handlers) => {
+					update = handlers.onEvent;
+
+					return new Promise<void>(() => {});
+				}
+			})
+		)
+	);
+	fireEvent.click(await screen.findByText('Remote robot work'));
+	expect(await screen.findByText('Loading conversation history...')).toBeTruthy();
+	await act(async () => {
+		initial.resolve({
+			...emptyDisplayPage('remote-replica'),
+			rows: [recent],
+			syncing: true,
+			nextBefore: 40,
+			revision: 1
+		});
+	});
+	expect(await screen.findByText('The latest robot update')).toBeTruthy();
+	expect(screen.getByRole('status').textContent).toContain(
+		'Conversation history is still loading.'
+	);
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Continue with the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	expect(runAgent).toHaveBeenCalledWith(
+		expect.objectContaining({ threadId: thread._id, prompt: 'Continue with the robot' })
+	);
+	await act(async () => {
+		synced = true;
+		update?.({ eventType: 'updated', stale: false });
+	});
+	expect(await screen.findByText('An older robot update')).toBeTruthy();
+	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());
 });
 
 it('launches the continuation prompt after an agent question is answered', async () => {

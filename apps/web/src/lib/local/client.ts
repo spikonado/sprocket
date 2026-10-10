@@ -129,6 +129,7 @@ const displayPageSchema = z.object({
 	replicaId: z.string(),
 	rows: z.array(displayRowSchema),
 	indexing: z.boolean(),
+	syncing: z.boolean(),
 	stale: z.boolean(),
 	nextBefore: z.int().nonnegative().optional(),
 	endSequence: z.int().nonnegative(),

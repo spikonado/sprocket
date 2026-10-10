@@ -164,6 +164,7 @@ describe('display transcript pages', () => {
 		const response = {
 			rows: [row],
 			indexing: false,
+			syncing: true,
 			stale: false,
 			nextBefore: 499,
 			endSequence: 500,
@@ -202,6 +203,7 @@ describe('display transcript pages', () => {
 		const fetch = vi.fn(async () =>
 			Response.json({
 				indexing: false,
+				syncing: false,
 				stale: false,
 				endSequence: 1,
 				revision: 1,

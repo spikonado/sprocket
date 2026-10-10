@@ -54,6 +54,27 @@ fn newest_first_parts_converge_to_one_section() {
         json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}]}),
     );
     replica.save_parts("thread", &[later]).unwrap();
+    let page = replica
+        .page(
+            None,
+            10,
+            None,
+            &[("run".into(), "1".into()), ("run".into(), "live".into())],
+            false,
+        )
+        .unwrap();
+    assert_eq!(page["indexing"], false);
+    assert_eq!(page["syncing"], true);
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(page["rows"][0]["itemCount"], 1);
+    assert_eq!(
+        page["persistedStreams"],
+        json!([{"runId":"run","streamId":"1"}])
+    );
+    let next = page["nextBefore"].as_u64().unwrap();
+    let older = replica.page(Some(next), 10, None, &[], false).unwrap();
+    assert_eq!(older["indexing"], true);
+    assert_eq!(older["syncing"], true);
     let first = assigned_part(
         0,
         vec![json!({"type":"reasoning","text":"first","startedAt":10,"completedAt":20})],
@@ -64,6 +85,7 @@ fn newest_first_parts_converge_to_one_section() {
     let page = replica.page(None, 10, None, &[], false).unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     assert_eq!(page["rows"][0]["itemCount"], 2);
+    assert_eq!(page["syncing"], false);
     let details = replica
         .details("section", None, None, true, 10, false)
         .unwrap();

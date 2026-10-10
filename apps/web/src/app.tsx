@@ -2759,6 +2759,11 @@ export default function App({
 													transcript.threadId === currentThreadId &&
 													transcript.stale
 												)}
+												syncing={Boolean(
+													currentThreadId &&
+													transcript.threadId === currentThreadId &&
+													transcript.syncing
+												)}
 												catalogError={catalogError !== null}
 												catalogLoading={catalogLoading}
 												onRetryCatalog={() => void loadModelCatalog()}

@@ -166,6 +166,7 @@ export type TranscriptDisplayPage = {
 	replicaId: string;
 	rows: TranscriptDisplayRow[];
 	indexing: boolean;
+	syncing: boolean;
 	stale: boolean;
 	nextBefore?: number;
 	endSequence: number;
