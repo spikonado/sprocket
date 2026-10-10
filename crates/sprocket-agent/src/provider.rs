@@ -29,7 +29,7 @@ use crate::live::{
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
-use crate::transcript::history::without_reasoning_traces;
+use crate::transcript::without_reasoning_traces;
 use crate::types::{
     CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
 };
@@ -326,87 +326,6 @@ pub(crate) async fn resume_without_provider_handoff(
     Ok(Some((without_reasoning_traces(history), prompt)))
 }
 
-enum ProviderSwitchFallback {
-    Continued {
-        history: Vec<Message>,
-        prompt: Message,
-    },
-    Cancelled,
-    Failed(anyhow::Error),
-}
-
-async fn record_reasoning_strip(
-    runtime: &RuntimeClient,
-    request: &AgentProviderRequest,
-) -> anyhow::Result<bool> {
-    match runtime
-        .omit_reasoning_replay(
-            &request.run_id,
-            &request.claim_id,
-            request.defer_prompt_for_context_handoff,
-        )
-        .await
-    {
-        Ok(active) => Ok(active),
-        Err(error) => {
-            eprintln!("sprocket-agent: could not record omitted reasoning replay: {error:#}");
-            Ok(true)
-        }
-    }
-}
-
-async fn abandon_provider_switch_handoff(
-    reason: impl std::fmt::Display,
-    agent: &mut rig::Agent,
-    provider_switch: &mut Option<(AgentProvider, ProviderHandoff)>,
-    runtime: &RuntimeClient,
-    request: &AgentProviderRequest,
-    resume: Option<&(Vec<Message>, Message)>,
-) -> ProviderSwitchFallback {
-    let Some((provider, _)) = provider_switch.take() else {
-        return ProviderSwitchFallback::Failed(anyhow!(
-            "Context handoff failed. Retry to continue the conversation."
-        ));
-    };
-    let Some((history, prompt)) = resume.cloned() else {
-        return ProviderSwitchFallback::Failed(anyhow!(
-            "Context handoff failed. Retry to continue the conversation."
-        ));
-    };
-    eprintln!(
-        "sprocket-agent: provider switch context handoff failed ({reason}); continuing on the selected provider without it"
-    );
-    let next_model = match provider
-        .completion_model(
-            runtime,
-            &request.run_id,
-            &request.claim_id,
-            &request.base_instructions,
-        )
-        .await
-    {
-        Ok(model) => model,
-        Err(error) => {
-            return ProviderSwitchFallback::Failed(
-                error.context("The selected provider could not continue the conversation."),
-            );
-        }
-    };
-    match resume_without_provider_handoff(
-        agent,
-        history,
-        prompt,
-        record_reasoning_strip(runtime, request),
-        async move { Ok(next_model) },
-    )
-    .await
-    {
-        Ok(Some((history, prompt))) => ProviderSwitchFallback::Continued { history, prompt },
-        Ok(None) => ProviderSwitchFallback::Cancelled,
-        Err(error) => ProviderSwitchFallback::Failed(error),
-    }
-}
-
 async fn run_with_completion_model(
     model: DynModel<Completion>,
     runtime: RuntimeClient,
@@ -564,20 +483,25 @@ async fn run_with_completion_model(
     let mut handoff_processed_tokens = 0_u64;
 
     if request.omit_prior_reasoning {
-        match record_reasoning_strip(&runtime, &request).await {
+        match runtime
+            .omit_reasoning_replay(
+                &request.run_id,
+                &request.claim_id,
+                request.defer_prompt_for_context_handoff,
+            )
+            .await
+        {
+            Ok(true) => {}
             Ok(false) => {
                 return AgentProviderResult::Cancelled {
                     text: String::new(),
                 };
             }
-            Ok(true) => {}
-            Err(error) => {
-                eprintln!("sprocket-agent: could not record omitted reasoning replay: {error:#}");
-            }
+            Err(error) => return transcript_error(error, &final_text, &streamed_text),
         }
         history = without_reasoning_traces(history);
     }
-    let provider_switch_resume = provider_switch
+    let mut provider_switch_resume = provider_switch
         .is_some()
         .then(|| (history.clone(), prompt.clone()));
 
@@ -595,22 +519,37 @@ async fn run_with_completion_model(
     macro_rules! continue_without_handoff {
         ($stream:ident, $generations:lifetime, $agent_run:lifetime, $reason:expr) => {{
             drop($stream);
-            match abandon_provider_switch_handoff(
-                $reason,
+            let (provider, _) = provider_switch.take().expect("provider-switch handoff");
+            let (resume_history, resume_prompt) = provider_switch_resume
+                .take()
+                .expect("provider-switch conversation");
+            eprintln!(
+                "sprocket-agent: provider switch context handoff failed ({}); continuing on the selected provider without it",
+                $reason
+            );
+            match resume_without_provider_handoff(
                 &mut agent,
-                &mut provider_switch,
-                &runtime,
-                &request,
-                provider_switch_resume.as_ref(),
+                resume_history,
+                resume_prompt,
+                runtime.omit_reasoning_replay(
+                    &request.run_id,
+                    &request.claim_id,
+                    request.defer_prompt_for_context_handoff,
+                ),
+                provider.completion_model(
+                    &runtime,
+                    &request.run_id,
+                    &request.claim_id,
+                    &request.base_instructions,
+                ),
             )
             .await
             {
-                ProviderSwitchFallback::Continued {
-                    history: next_history,
-                    prompt: next_prompt,
-                } => {
+                Ok(Some((next_history, next_prompt))) => {
                     history = next_history;
                     prompt = next_prompt;
+                    deferred_prompt = None;
+                    before_prompt = false;
                     additional_params = target_params.clone();
                     context_handoff_hook.restart();
                     handoff_processed_tokens = 0;
@@ -619,12 +558,12 @@ async fn run_with_completion_model(
                     streamed_text.clear();
                     continue $generations;
                 }
-                ProviderSwitchFallback::Cancelled => {
+                Ok(None) => {
                     break $agent_run AgentProviderResult::Cancelled {
                         text: streamed_text,
                     };
                 }
-                ProviderSwitchFallback::Failed(error) => {
+                Err(error) => {
                     break $agent_run AgentProviderResult::Failed {
                         text: streamed_text,
                         error,

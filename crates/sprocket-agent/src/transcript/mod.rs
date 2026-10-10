@@ -11,8 +11,8 @@ mod store;
 mod sync;
 pub(crate) mod types;
 
-pub(crate) use history::prompt_text_with_attachments;
 pub use history::{agent_history_from_parts, current_run_has_finished_turns};
+pub(crate) use history::{prompt_text_with_attachments, without_reasoning_traces};
 pub use store::TranscriptStore;
 pub use sync::{
     RemoteTranscriptState, apply_remote_state, fetch_missing_parts, fetch_parts_by_numbers,

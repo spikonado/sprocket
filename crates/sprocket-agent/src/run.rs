@@ -867,16 +867,26 @@ pub async fn run_agent(
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
 
-    let (capabilities, mut handoff_model) =
+    let (capabilities, handoff_model) =
         match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
             .await
         {
             Ok(models) => models,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
+    let mut omit_prior_reasoning = false;
+    let mut handoff_model = match handoff_model {
+        Ok(model) => model,
+        Err(error) => {
+            eprintln!(
+                "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+            );
+            omit_prior_reasoning = true;
+            None
+        }
+    };
     context.provider_handoff = handoff_model.as_ref().map(|(handoff, _)| handoff.clone());
 
-    let mut omit_prior_reasoning = false;
     let chatgpt_client = if chatgpt_client.is_none()
         && context
             .provider_handoff

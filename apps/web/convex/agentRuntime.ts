@@ -14,7 +14,6 @@ import {
 	contextHandoffKey,
 	existingThroughPartNumber,
 	getProviderHandoff,
-	recordOmittedReasoningReplay,
 	throughPartNumberForHandoff
 } from '@convex/lib/contextHandoff';
 import {
@@ -480,7 +479,6 @@ export const saveContextHandoff = mutation({
 	}
 });
 
-/** Keep the conversation after a provider-switch handoff fails, without its reasoning replay. */
 export const omitReasoningReplay = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -502,7 +500,11 @@ export const omitReasoningReplay = mutation({
 			beforePrompt: args.beforePrompt
 		});
 
-		await recordOmittedReasoningReplay(ctx, thread, throughPartNumber);
+		if (throughPartNumber > (thread.reasoningStrippedThroughPartNumber ?? -1)) {
+			await ctx.db.patch('threadRecords', thread._id, {
+				reasoningStrippedThroughPartNumber: throughPartNumber
+			});
+		}
 
 		return true;
 	}

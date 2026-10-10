@@ -32,7 +32,8 @@ history with reasoning replay omitted. The thread may store optional
 clients ignore the field. Transcript state responses include it when set, and
 older local transcript state files load without it. Parts, summaries and
 provider settings stay in their existing formats, so no migration is required.
-Remove the cutoff once clients that replay covered reasoning age out.
+The cutoff is persistent replay state, not a compatibility shim. Keep it until
+a migration removes the covered reasoning from stored transcript parts.
 
 ### Rig 0.43 upstream revision
 

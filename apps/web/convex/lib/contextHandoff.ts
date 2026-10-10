@@ -70,21 +70,6 @@ export function existingThroughPartNumber(thread: Doc<'threadRecords'>): number 
 	return cutoff;
 }
 
-/** Advance the inclusive cutoff for reasoning that must not be replayed. */
-export async function recordOmittedReasoningReplay(
-	ctx: MutationCtx,
-	thread: Doc<'threadRecords'>,
-	throughPartNumber: number
-): Promise<void> {
-	const existing = thread.reasoningStrippedThroughPartNumber;
-
-	if (existing !== undefined && existing >= throughPartNumber) return;
-
-	await ctx.db.patch('threadRecords', thread._id, {
-		reasoningStrippedThroughPartNumber: throughPartNumber
-	});
-}
-
 export function transcriptHistoryFromNumber(thread: Doc<'threadRecords'> | null): number {
 	if (!thread) return 0;
 	const throughPartNumber = existingThroughPartNumber(thread);

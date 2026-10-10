@@ -20,8 +20,13 @@ pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
             Message::Assistant { id, mut content } => {
                 content.retain(|part| !matches!(part, AssistantContent::Reasoning(_)));
                 for part in &mut content {
-                    if let AssistantContent::ToolCall(call) = part {
-                        call.signature = None;
+                    match part {
+                        AssistantContent::ToolCall(call) => {
+                            call.signature = None;
+                            call.additional_params = None;
+                        }
+                        AssistantContent::Text(text) => text.additional_params = None,
+                        _ => {}
                     }
                 }
                 (!content.is_empty()).then_some(Message::Assistant { id, content })
@@ -29,12 +34,6 @@ pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
             other => Some(other),
         })
         .collect()
-}
-
-fn reasoning_replay_omitted(state: &TranscriptState, part_number: u32) -> bool {
-    state
-        .reasoning_stripped_through_part_number
-        .is_some_and(|cutoff| i64::from(part_number) <= cutoff)
 }
 
 pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
@@ -212,7 +211,9 @@ pub fn agent_history_from_parts(
             }
             TranscriptPartKind::Completion => {
                 if let Some(completion) = &part.completion {
-                    let omit_reasoning = reasoning_replay_omitted(state, part.number);
+                    let omit_reasoning = state
+                        .reasoning_stripped_through_part_number
+                        .is_some_and(|cutoff| i64::from(part.number) <= cutoff);
                     let contents: Vec<_> = completion
                         .items
                         .iter()
@@ -265,7 +266,10 @@ fn completion_item_to_history(
         "reasoning" if omit_reasoning => None,
         "text" => Some(AgentHistoryContent::Text {
             text: item.get("text")?.as_str()?.to_string(),
-            additional_params_json: item.get("providerMetadata").map(|value| value.to_string()),
+            additional_params_json: item
+                .get("providerMetadata")
+                .filter(|_| !omit_reasoning)
+                .map(|value| value.to_string()),
         }),
         "reasoning" => {
             let item_id = openai_field(item, "itemId")
@@ -323,22 +327,19 @@ fn completion_item_to_history(
                 .cloned()
                 .unwrap_or(serde_json::json!({}))
                 .to_string(),
-            signature: (!omit_reasoning)
-                .then(|| {
-                    item.get("providerMetadata")
-                        .and_then(|metadata| metadata.get("signature"))
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string)
-                })
-                .flatten(),
-            additional_params_json: item.get("providerMetadata").and_then(|metadata| {
-                let params = if omit_reasoning {
-                    metadata.get("toolCallAdditionalParams")?
-                } else {
-                    metadata.get("toolCallAdditionalParams").unwrap_or(metadata)
-                };
-                (!params.is_null()).then(|| params.to_string())
-            }),
+            signature: item
+                .get("providerMetadata")
+                .filter(|_| !omit_reasoning)
+                .and_then(|metadata| metadata.get("signature"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            additional_params_json: item
+                .get("providerMetadata")
+                .filter(|_| !omit_reasoning)
+                .and_then(|metadata| {
+                    let params = metadata.get("toolCallAdditionalParams").unwrap_or(metadata);
+                    (!params.is_null()).then(|| params.to_string())
+                }),
         }),
         _ => None,
     }
@@ -933,7 +934,7 @@ mod tests {
     fn omitted_reasoning_replay_keeps_visible_history_and_later_reasoning() {
         let mut state = TranscriptState::new("user".into(), "thread".into());
         state.reasoning_stripped_through_part_number = Some(1);
-        let covered = reasoning_completion(
+        let mut covered = reasoning_completion(
             1,
             serde_json::json!({
                 "type": "reasoning",
@@ -946,28 +947,22 @@ mod tests {
                 }
             }),
         );
-        let mut covered = covered;
-        covered
-            .completion
-            .as_mut()
-            .unwrap()
-            .items
-            .push(serde_json::json!({
-                "type": "text",
-                "text": "visible answer"
-            }));
-        covered
-            .completion
-            .as_mut()
-            .unwrap()
-            .items
-            .push(serde_json::json!({
-                "type": "tool-call",
-                "callId": "call_keep",
-                "name": "exec_cmd",
-                "input": { "cmd": "pwd" },
-                "providerMetadata": { "signature": "thought-signature" }
-            }));
+        let items = &mut covered.completion.as_mut().unwrap().items;
+        items.push(serde_json::json!({
+            "type": "text",
+            "text": "visible answer",
+            "providerMetadata": { "thought_signature": "text-signature" }
+        }));
+        items.push(serde_json::json!({
+            "type": "tool-call",
+            "callId": "call_keep",
+            "name": "exec_cmd",
+            "input": { "cmd": "pwd" },
+            "providerMetadata": {
+                "signature": "thought-signature",
+                "toolCallAdditionalParams": { "thought_signature": "nested-signature" }
+            }
+        }));
         let later = reasoning_completion(
             2,
             serde_json::json!({
@@ -991,6 +986,8 @@ mod tests {
         assert!(!serialized.contains("rs_old"));
         assert!(!serialized.contains("sgr1.secret"));
         assert!(!serialized.contains("thought-signature"));
+        assert!(!serialized.contains("text-signature"));
+        assert!(!serialized.contains("nested-signature"));
     }
 
     #[test]
@@ -1012,7 +1009,12 @@ mod tests {
                 content: vec![
                     AssistantContent::Text(rig::message::Text {
                         text: "visible answer".into(),
-                        additional_params: None,
+                        additional_params: Some(
+                            serde_json::from_value(
+                                serde_json::json!({ "thought_signature": "text-signature" }),
+                            )
+                            .unwrap(),
+                        ),
                     }),
                     AssistantContent::ToolCall(ToolCall {
                         id: CallId::from_wire("call_keep"),
@@ -1021,7 +1023,9 @@ mod tests {
                             arguments: serde_json::json!({ "cmd": "pwd" }),
                         },
                         signature: Some("thought-signature".into()),
-                        additional_params: None,
+                        additional_params: Some(
+                            serde_json::json!({ "thought_signature": "nested-signature" }),
+                        ),
                     }),
                 ],
             },
@@ -1033,6 +1037,8 @@ mod tests {
         assert!(!serialized.contains("sgr1.secret"));
         assert!(!serialized.contains("rs_old"));
         assert!(!serialized.contains("thought-signature"));
+        assert!(!serialized.contains("text-signature"));
+        assert!(!serialized.contains("nested-signature"));
         assert_eq!(history.len(), 2);
     }
 }

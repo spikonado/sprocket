@@ -766,10 +766,11 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     const OLD_CALL_ID: &str = "call_old_provider_exec";
     const TARGET_MODEL: &str = "new-provider-model";
 
+    let (old_url, old_server) = spawn_responses_sse(vec![text_sse("no handoff document", 4, 4)]);
     let (new_url, new_server) =
         spawn_responses_sse(vec![text_sse("continued without a handoff", 4, 4)]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
-    let mut agent = test_agent("http://127.0.0.1:1", &hook);
+    let mut agent = test_agent(&old_url, &hook);
     let history = vec![
         Message::user(INITIAL_CONTEXT),
         Message::user(OLD_CONTEXT),
@@ -810,18 +811,40 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
         },
     ];
     let pending_prompt = Message::user(DEFERRED_PROMPT);
+    hook.start_handoff();
+    match drive(
+        &agent,
+        &hook,
+        developer_message(HANDOFF_PROMPT),
+        history.clone(),
+    )
+    .await
+    {
+        DriveEnd::Finished(_) => assert!(hook.is_writing()),
+        other => panic!("expected a handoff without a document, got {other:?}"),
+    }
+    let old_requests = old_server.join().expect("old provider mock thread");
+    assert_eq!(old_requests.len(), 1);
+    assert!(input_blob(&parse_request(&old_requests[0])).contains(HANDOFF_PROMPT));
     let target_model = stateless_responses_model(
         openai::OpenAIConfig::new("test-key")
             .with_base_url(&new_url)
             .with_instructions("context handoff fixture"),
         TARGET_MODEL,
     );
+    let recorded = std::cell::Cell::new(false);
     let (history, prompt) = resume_without_provider_handoff(
         &mut agent,
         history,
         pending_prompt,
-        async { Ok(true) },
-        async { Ok(target_model) },
+        async {
+            recorded.set(true);
+            Ok(true)
+        },
+        async {
+            assert!(recorded.get(), "save the cutoff before switching models");
+            Ok(target_model)
+        },
     )
     .await
     .expect("failed handoff falls back to the selected provider")
@@ -854,6 +877,22 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
             .iter()
             .all(|item| item["type"] != "reasoning")
     );
+}
+
+#[tokio::test]
+async fn provider_switch_waits_for_a_durable_reasoning_cutoff() {
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let mut agent = test_agent("http://127.0.0.1:1", &hook);
+    let error = resume_without_provider_handoff(
+        &mut agent,
+        vec![Message::user(OLD_CONTEXT)],
+        Message::user(DEFERRED_PROMPT),
+        async { Err(anyhow::anyhow!("cutoff save failed")) },
+        async { panic!("must save the cutoff before selecting the new model") },
+    )
+    .await
+    .expect_err("a missing cutoff would replay old reasoning on the next turn");
+    assert_eq!(error.to_string(), "cutoff save failed");
 }
 
 #[tokio::test]
