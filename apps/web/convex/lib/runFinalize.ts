@@ -128,13 +128,25 @@ export async function finalizeRunRecord(
 			usageLimit = usageLimitAfterFailure(
 				run.usageLimit,
 				args.providerUsageLimit.resetsAt,
-				completedAt
+				completedAt,
+				run.taskDeadlineAt
 			);
 		}
 	}
 
 	if (run.usageLimit !== undefined || usageLimit !== undefined) {
 		await ctx.db.patch('runs', run._id, { usageLimit });
+	}
+
+	if (usageLimit?.retryAt !== undefined) {
+		await ctx.scheduler.runAt(
+			usageLimit.deadlineAt + 1,
+			internal.runLifecycle.expireUsageLimitWait,
+			{
+				runId: run._id,
+				deadlineAt: usageLimit.deadlineAt
+			}
+		);
 	}
 
 	await setRunAndThreadStatus(ctx, run, finalStatus, {

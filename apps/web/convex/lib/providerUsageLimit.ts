@@ -40,10 +40,16 @@ export function hasPendingUsageLimitResume(run: UsageLimitRun, now = Date.now())
 export function usageLimitAfterFailure(
 	previous: Doc<'runs'>['usageLimit'],
 	resetsAt: number | undefined,
-	now: number
+	now: number,
+	taskDeadlineAt?: number
 ): Doc<'runs'>['usageLimit'] {
 	const attempts = previous?.attempts ?? 0;
-	const deadlineAt = previous?.deadlineAt ?? now + USAGE_LIMIT_WINDOW_MS;
+
+	const deadlineAt = Math.min(
+		previous?.deadlineAt ?? now + USAGE_LIMIT_WINDOW_MS,
+		taskDeadlineAt ?? Infinity
+	);
+
 	const budget = { attempts, deadlineAt };
 
 	if (attempts >= MAX_USAGE_LIMIT_RESUMPTIONS || now >= deadlineAt) return budget;

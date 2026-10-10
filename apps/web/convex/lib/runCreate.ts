@@ -307,6 +307,13 @@ export async function createQueuedRunRecord(
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 
 	if (
+		args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
+		latestRun?.taskDeadlineAt !== undefined
+	) {
+		runRecord.taskDeadlineAt = latestRun.taskDeadlineAt;
+	}
+
+	if (
 		continuationOfRunId &&
 		latestRun?.usageLimit &&
 		completionProvider === latestRun.completionProvider
@@ -330,6 +337,13 @@ export async function createQueuedRunRecord(
 
 	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+
+	if (runRecord.taskDeadlineAt !== undefined) {
+		await ctx.scheduler.runAt(runRecord.taskDeadlineAt, internal.subagents.enforceTaskDeadline, {
+			runId,
+			deadlineAt: runRecord.taskDeadlineAt
+		});
+	}
 
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);

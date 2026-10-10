@@ -34,6 +34,11 @@ attempt counts to the original 24-hour abandonment policy. Keep these defaults
 until supported data directories have been rewritten by a usage-limit-aware
 server. Old servers ignore the added journal fields.
 
+`runs.taskDeadlineAt` is optional. New native subagent runs save their existing
+timeout deadline so automatic continuations retain it. Older runs have only a
+scheduled timeout and cannot recover this timestamp. Remove the missing-deadline
+fallback once pre-feature timed runs have finished or been pruned.
+
 ### Rig 0.43 upstream revision
 
 Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the

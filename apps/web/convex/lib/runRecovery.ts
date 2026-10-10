@@ -13,9 +13,12 @@ export function isAutomaticallyRecoverableRun(
 		| 'machineId'
 		| 'completionProvider'
 		| 'usageLimit'
+		| 'taskDeadlineAt'
 	>,
 	machineId: string
 ): boolean {
+	if (run.taskDeadlineAt !== undefined && run.taskDeadlineAt <= Date.now()) return false;
+
 	if (run.usageLimit?.retryAt !== undefined) {
 		return (
 			run.machineId === machineId &&

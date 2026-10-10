@@ -56,6 +56,7 @@ export const state = query({
 			latest?._id !== run._id ||
 			!thread ||
 			thread.userId !== userId ||
+			(run.taskDeadlineAt !== undefined && run.taskDeadlineAt <= Date.now()) ||
 			(await threadRoot(ctx.db, thread)).archivedAt !== undefined
 		) {
 			return { state: 'discard' };

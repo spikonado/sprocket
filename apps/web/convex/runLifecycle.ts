@@ -72,6 +72,33 @@ export const checkRun = internalMutation({
 	}
 });
 
+export const expireUsageLimitWait = internalMutation({
+	args: { runId: v.id('runs'), deadlineAt: v.number() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const run = await ctx.db.get('runs', args.runId);
+		const limit = run?.usageLimit;
+
+		if (!run || limit?.retryAt === undefined || limit.deadlineAt !== args.deadlineAt) return null;
+
+		if (Date.now() <= limit.deadlineAt) {
+			await ctx.scheduler.runAt(
+				limit.deadlineAt + 1,
+				internal.runLifecycle.expireUsageLimitWait,
+				args
+			);
+
+			return null;
+		}
+
+		await ctx.db.patch('runs', run._id, {
+			usageLimit: { attempts: limit.attempts, deadlineAt: limit.deadlineAt }
+		});
+
+		return null;
+	}
+});
+
 export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
 	const current = await ctx.db.get('runs', run._id);
 

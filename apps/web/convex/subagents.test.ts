@@ -1822,6 +1822,19 @@ describe('subagents.control delegated answer retries', () => {
 });
 
 describe('subagents task deadline', () => {
+	it('stores the original timeout for automatic continuations', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const deadlineAt = Date.now() + 30_000;
+		const args = createArgs(caller, { timeoutMs: 30_000 });
+		const child = await t.mutation(api.subagents.createOrSend, args);
+
+		expect((await t.run((ctx) => ctx.db.get('runs', child.runId)))?.taskDeadlineAt).toBe(
+			deadlineAt
+		);
+	});
+
 	it('a task deadline also stops descendant work', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();

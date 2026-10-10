@@ -796,6 +796,78 @@ describe('usage-limit cancellation, new work, and provider changes', () => {
 });
 
 describe('automatic quota recovery mutation guards', () => {
+	it('retains and enforces the original task deadline after a quota continuation', async () => {
+		const { t, asUser, finalize, runId, readRun, recoveryArgs } = await setup();
+		const deadlineAt = NOW + 30_000;
+
+		await t.run((ctx) => ctx.db.patch('runs', runId, { taskDeadlineAt: deadlineAt }));
+		await finalize({ providerUsageLimit: { resetsAt: NOW + 1 } });
+		vi.setSystemTime(NOW + 15_000);
+
+		const child = await insertQueuedRun(t, asUser, recoveryArgs);
+		expect((await readRun(child.runId))?.taskDeadlineAt).toBe(deadlineAt);
+		await vi.advanceTimersByTimeAsync(15_000);
+		await t.finishInProgressScheduledFunctions();
+
+		expect(await readRun(child.runId)).toMatchObject({
+			status: 'cancelled',
+			lastError: 'Task deadline exceeded.'
+		});
+	});
+
+	it('leaves a short timed task terminal when the next quota retry would exceed its deadline', async () => {
+		const { t, finalize, runId, readRun, asUser, queryArgs } = await setup();
+		await t.run((ctx) => ctx.db.patch('runs', runId, { taskDeadlineAt: NOW + 30_000 }));
+		await finalize();
+
+		expect((await readRun())?.usageLimit).toEqual({ attempts: 0, deadlineAt: NOW + 30_000 });
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
+	});
+
+	it('rejects a due quota continuation after its task deadline even with a stale saved quota window', async () => {
+		const { t, finalize, runId, asUser, queryArgs, recoveryArgs, refreshMachine } = await setup();
+		await finalize();
+		await t.run((ctx) => ctx.db.patch('runs', runId, { taskDeadlineAt: NOW + 30_000 }));
+		vi.setSystemTime(NOW + 15 * MINUTE);
+		await refreshMachine();
+
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
+		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
+			'This run cannot recover automatically.'
+		);
+	});
+
+	it('expires a cloud wait without a local recovery worker and preserves its budget', async () => {
+		const { t, finalize, readRun, lifecycle } = await setup();
+		await finalize();
+		await vi.advanceTimersByTimeAsync(WINDOW + 1);
+		await t.finishInProgressScheduledFunctions();
+
+		expect((await readRun())?.usageLimit).toEqual({ attempts: 0, deadlineAt: NOW + WINDOW });
+		expect((await lifecycle()).run?.usageLimitRetryAt).toBeUndefined();
+	});
+
+	it('does not expire the unscheduled budget of an active continuation', async () => {
+		const { t, asUser, finalize, readRun, recoveryArgs } = await setup();
+		await finalize();
+		vi.setSystemTime(NOW + 1);
+
+		const child = await insertQueuedRun(t, asUser, {
+			...recoveryArgs,
+			submissionId: 'manual-before-expiry'
+		});
+
+		await t.mutation(internal.runLifecycle.expireUsageLimitWait, {
+			runId: child.runId,
+			deadlineAt: NOW + WINDOW
+		});
+
+		expect((await readRun(child.runId))?.usageLimit).toEqual({
+			attempts: 0,
+			deadlineAt: NOW + WINDOW
+		});
+	});
+
 	it('creates one continuation when two workers submit the same recovery concurrently', async () => {
 		const {
 			t,

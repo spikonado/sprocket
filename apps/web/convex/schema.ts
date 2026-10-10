@@ -412,6 +412,7 @@ export default defineSchema({
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		usageLimit: v.optional(vRunUsageLimit),
+		taskDeadlineAt: v.optional(v.number()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number())
 	})
