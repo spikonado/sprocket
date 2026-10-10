@@ -773,13 +773,13 @@ async fn load_prior_history(
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
-    apply_remote_state(store, user_id, thread_id, &remote, false).await?;
+    let state = apply_remote_state(store, user_id, thread_id, &remote, false).await?;
     fetch_missing_parts(
         store,
         user_id,
         thread_id,
-        remote.history_from_number,
-        remote.total_parts,
+        state.history_from_number,
+        state.remote_total_parts,
         |numbers| {
             let runtime = runtime.clone();
             let run_id = run_id.to_string();
@@ -787,7 +787,6 @@ async fn load_prior_history(
         },
     )
     .await?;
-    let state = store.load_state(user_id, thread_id).await?;
     let current_run_had_context_handoff =
         if state.context_summary.is_some() && state.history_from_number > 0 {
             runtime

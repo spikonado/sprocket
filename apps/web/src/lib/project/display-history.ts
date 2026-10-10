@@ -34,6 +34,7 @@ export class DisplayHistory {
 	loadingOlder = false;
 	windowVersion = 0;
 	stale = false;
+	syncing = false;
 	error: string | null = null;
 	private stopped = false;
 	private refreshing = false;
@@ -147,12 +148,14 @@ export class DisplayHistory {
 
 				if (page.indexing) {
 					this.stale = page.stale;
+					this.syncing = page.syncing;
 					this.changed();
 					this.retryRefresh(500);
 					break;
 				}
 
 				if (page.stale) this.retryRefresh(2_000);
+				else if (page.syncing) this.retryRefresh(500);
 				else {
 					clearTimeout(this.retry);
 					this.retry = undefined;
@@ -192,11 +195,13 @@ export class DisplayHistory {
 				for (const number of this.rows.keys()) if (number >= lower) this.rows.delete(number);
 				this.commit(page);
 
-				for (const stream of streamRequest.streams ?? [])
-					this.checkedStreams.add(streamKey(stream));
+				if (!page.syncing)
+					for (const stream of streamRequest.streams ?? [])
+						this.checkedStreams.add(streamKey(stream));
 				this.changesCursor = page.changesCursor;
 				this.refreshPending ||= page.moreChanges;
 				this.refreshPending ||=
+					!page.syncing &&
 					page.persistedStreams.length > 0 &&
 					this.unpersisted(this.overlays).some(
 						(overlay) => !this.checkedStreams.has(streamKey(overlay))
@@ -282,6 +287,7 @@ export class DisplayHistory {
 			this.nextBefore = page.nextBefore;
 
 			if (page.stale) this.retryRefresh(2_000);
+			else if (page.syncing) this.retryRefresh(500);
 		} catch {
 			if (!this.stopped && version === this.windowVersion) {
 				this.stale = true;
@@ -308,13 +314,19 @@ export class DisplayHistory {
 			}
 
 			if (!change.row) this.rows.delete(existing.sequence);
-			else if (change.row.revision > existing.revision)
+			else if (change.row.revision > existing.revision) {
+				this.rows.delete(existing.sequence);
 				this.rows.set(change.row.sequence, change.row);
+			}
 		}
 
 		for (const row of page.rows) {
 			const existing = this.rows.get(row.sequence) ?? previous.get(row.id);
-			this.rows.set(row.sequence, existing && existing.revision >= row.revision ? existing : row);
+
+			const next = existing && existing.revision >= row.revision ? existing : row;
+
+			if (existing && existing.sequence !== next.sequence) this.rows.delete(existing.sequence);
+			this.rows.set(next.sequence, next);
 		}
 
 		const messages = [...this.rows.entries()]
@@ -327,6 +339,7 @@ export class DisplayHistory {
 		)
 			this.messages = messages;
 		this.stale = page.stale;
+		this.syncing = page.syncing;
 		this.revision = Math.max(this.revision, page.revision);
 
 		for (const stream of page.persistedStreams)

@@ -470,31 +470,23 @@ impl WorkReplica {
         }
         let complete = downloaded_prefix >= total;
         let mut persisted = Vec::new();
-        if complete {
-            for (run, stream) in streams {
-                let source_key = format!("completion:{run}:{stream}");
-                let found = self
-                    .db
-                    .query_row(
-                        "SELECT 1 FROM parts WHERE source_key=?",
-                        params![source_key],
-                        |_| Ok(()),
-                    )
-                    .optional()?
-                    .is_some();
-                if found {
-                    persisted.push(json!({"runId":run,"streamId":stream}));
-                }
+        for (run, stream) in streams {
+            let source_key = format!("completion:{run}:{stream}");
+            let found = self
+                .db
+                .query_row(
+                    "SELECT 1 FROM parts WHERE source_key=?",
+                    params![source_key],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if found {
+                persisted.push(json!({"runId":run,"streamId":stream}));
             }
         }
-        let handoff_pending = persisted.len() < streams.len() && !complete;
-        let indexing = handoff_pending
-            || (!stale && !complete)
-            || (rows.is_empty()
-                && before > 0
-                && (!complete
-                    || i64::from(ready_prefix) * i64::try_from(POSITION_STRIDE)? < before));
-        let mut result = json!({"replicaId":self.state::<String>("replicaId")?,"rows":rows,"indexing":indexing,"stale":stale,"endSequence":end,"revision":generation,
+        let indexing = rows.is_empty() && before > 0 && !complete;
+        let mut result = json!({"replicaId":self.state::<String>("replicaId")?,"rows":rows,"indexing":indexing,"syncing":!complete,"stale":stale,"endSequence":end,"revision":generation,
             "persistedStreams":persisted,"changes":changes,"changesCursor":change_cursor,"moreChanges":more_changes});
         if let Some(next) = next {
             result["nextBefore"] = json!(next);
