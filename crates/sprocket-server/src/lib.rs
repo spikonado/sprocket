@@ -211,7 +211,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::health::routes())
         .merge(routes::config::routes())
         .merge(routes::auth::routes())
-        .merge(chatgpt_oauth::routes())
+        .merge(routes::chatgpt::routes())
         .merge(routes::cli::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())

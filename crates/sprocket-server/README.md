@@ -121,9 +121,9 @@ credential file to another host is not a supported import mechanism.
 - `native_auth.rs`: native WorkOS login, credential persistence, and token
   refresh.
 - `routes/auth.rs`: local session endpoints and the native loopback callback.
-- `chatgpt_credentials.rs` and `chatgpt_oauth.rs`: local SIWC credentials and callback.
+- `chatgpt_credentials.rs` and `chatgpt_oauth.rs`: local SIWC credentials and the loopback callback listener.
 - `project_attachments.rs`: local folder list (`workspacePath` + `repositoryKey`).
-- `routes/`: HTTP boundaries for configuration, workspaces, auth, and agents.
+- `routes/`: HTTP boundaries for configuration, workspaces, auth, ChatGPT, and agents.
 - `static_dir.rs` and `static_files.rs`: web-build discovery and serving.
 - `config.rs`: process configuration.
 - `lib.rs`: shared state, router construction, and server lifecycle.
