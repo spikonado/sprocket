@@ -170,7 +170,7 @@ mod tests {
         }
 
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(TranscriptStore::new(dir.path().to_owned()));
+        let store = TranscriptStore::new(dir.path().to_owned());
         store
             .append_parts("user", "thread", &[prompt(115), prompt(210)])
             .await
@@ -195,21 +195,27 @@ mod tests {
         let changed = move |total| {
             changed_tx.send(total).unwrap();
         };
-        let fetch = |start: u32, end: u32, _order| {
-            let mut requests = requests.lock().unwrap();
-            if requests.is_empty() {
-                states.send_modify(|state| state.total_parts = 251);
+        let mut downloading = tokio::spawn({
+            let store = Arc::clone(&store);
+            let requests = Arc::clone(&requests);
+            let fetched_numbers = Arc::clone(&fetched_numbers);
+            async move {
+                let fetch = |start: u32, end: u32, _order| {
+                    let mut requests = requests.lock().unwrap();
+                    if requests.is_empty() {
+                        states.send_modify(|state| state.total_parts = 251);
+                    }
+                    requests.push((start, end));
+                    let numbers: Vec<_> = (start.max(end.saturating_sub(20))..end).rev().collect();
+                    fetched_numbers
+                        .lock()
+                        .unwrap()
+                        .extend(numbers.iter().copied());
+                    std::future::ready(Ok(numbers.into_iter().map(prompt).collect()))
+                };
+                download(&store, "user", "thread", state_rx, &changed, fetch).await
             }
-            requests.push((start, end));
-            let numbers: Vec<_> = (start.max(end.saturating_sub(20))..end).rev().collect();
-            fetched_numbers
-                .lock()
-                .unwrap()
-                .extend(numbers.iter().copied());
-            std::future::ready(Ok(numbers.into_iter().map(prompt).collect()))
-        };
-        let downloading = download(&store, "user", "thread", state_rx, &changed, fetch);
-        tokio::pin!(downloading);
+        });
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 tokio::select! {
@@ -234,6 +240,8 @@ mod tests {
         })
         .await
         .unwrap();
+        downloading.abort();
+        assert!(downloading.await.unwrap_err().is_cancelled());
         {
             let requests = requests.lock().unwrap();
             assert_eq!(requests[0], (211, 250));
