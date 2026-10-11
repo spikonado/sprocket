@@ -330,6 +330,7 @@ export default function App({
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	const deleteArtifactRecord = useMutation(api.artifacts.deleteArtifact);
 	const renameThreadRecord = useMutation(api.threads.rename);
+	const regenerateThreadTitleRecord = useAction(api.threadTitles.regenerate);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
@@ -1438,6 +1439,17 @@ export default function App({
 			await renameThreadRecord({ threadId, title });
 		} catch (error) {
 			setCurrentError(error instanceof Error ? error.message : 'Failed to rename thread.');
+			throw error;
+		}
+	}
+
+	async function regenerateThreadTitle(threadId: Id<'threadRecords'>) {
+		try {
+			await regenerateThreadTitleRecord({ threadId });
+		} catch (error) {
+			setCurrentError(
+				error instanceof Error ? error.message : 'Failed to regenerate thread title.'
+			);
 			throw error;
 		}
 	}
@@ -2629,6 +2641,7 @@ export default function App({
 							onSettings={openSettings}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
+							onRegenerateTitle={(thread) => regenerateThreadTitle(thread._id)}
 						/>
 					)}
 				</div>

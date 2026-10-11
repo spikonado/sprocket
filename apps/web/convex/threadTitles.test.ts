@@ -62,8 +62,9 @@ describe('automatic thread titles', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('names and renames through each prompt using only conversation text across pages', async () => {
+	it('names only the first prompt and regenerates from conversation text across pages', async () => {
 		const t = initConvexTest();
+		const alice = t.withIdentity({ subject: 'alice' });
 
 		const fetchMock = vi
 			.fn<typeof fetch>()
@@ -120,6 +121,12 @@ describe('automatic thread titles', () => {
 		);
 		await finishTitle(t);
 		expect(await t.run((ctx) => ctx.db.get('threadRecords', first.threadId))).toMatchObject({
+			title: 'Robot project'
+		});
+		expect(fetchMock).toHaveBeenCalledOnce();
+		await alice.action(api.threadTitles.regenerate, { threadId: first.threadId });
+		await finishTitle(t);
+		expect(await t.run((ctx) => ctx.db.get('threadRecords', first.threadId))).toMatchObject({
 			title: 'Robot obstacle avoidance',
 			selectedModel: 'gpt-6.1-sol',
 			completionProvider: 'chatgpt',
@@ -138,15 +145,15 @@ describe('automatic thread titles', () => {
 
 		expect(body).toEqual({
 			model: 'gpt-6-luna',
-			reasoning: { effort: 'low' },
+			reasoning: { effort: 'high' },
 			input:
-				'User:\nBuild a robot\n\nAssistant:\nThe robot uses two motors.\n\nUser:\nAdd obstacle avoidance'
+				'User:\nBuild a robot\n\nAssistant:\nThe robot uses two motors.\n\nUser:\nAdd obstacle avoidance\n\nAssistant:\nLater response'
 		});
 		const token = new Headers(options?.headers).get('Authorization')!.slice('Bearer '.length);
 		expect(await verifyGatewayToken(secret, token)).toMatchObject({ userId: 'alice' });
 	});
 
-	it('keeps manual names when disabled and resumes naming after re-enabling', async () => {
+	it('keeps manual names after re-enabling and allows regeneration while disabled', async () => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });
 		await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
@@ -167,12 +174,21 @@ describe('automatic thread titles', () => {
 		expect(
 			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
 		).toMatchObject({
+			title: 'My robot'
+		});
+		expect(fetchMock).not.toHaveBeenCalled();
+		await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
+		await alice.action(api.threadTitles.regenerate, { threadId: first.threadId });
+		await finishTitle(t);
+		expect(
+			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
+		).toMatchObject({
 			title: 'Robot navigation'
 		});
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
-	it('keeps the newest title when a previous prompt finishes naming late', async () => {
+	it('applies first-prompt naming even when another prompt arrives before it finishes', async () => {
 		const t = initConvexTest();
 		const first = await createRun(t, 'first');
 		await finishRun(t, first.runId);
@@ -181,16 +197,71 @@ describe('automatic thread titles', () => {
 		await t.mutation(internal.threadTitles.apply, {
 			...request,
 			runId: first.runId,
-			title: 'Old title'
+			title: 'Robot project'
 		});
 		await t.mutation(internal.threadTitles.apply, {
 			...request,
 			runId: second.runId,
-			title: 'Obstacle avoidance'
+			title: 'Ignored follow-up title'
 		});
 		expect(await t.run((ctx) => ctx.db.get('threadRecords', first.threadId))).toMatchObject({
-			title: 'Obstacle avoidance'
+			title: 'Robot project'
 		});
+		await finishTitle(t);
+	});
+
+	it('only lets the newest regeneration request apply its title', async () => {
+		const t = initConvexTest();
+		const alice = t.withIdentity({ subject: 'alice' });
+		const first = await createRun(t, 'first');
+		vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse('Robot project')));
+		await finishTitle(t);
+		await alice.mutation(internal.threadTitles.requestRegeneration, { threadId: first.threadId });
+		const previous = await t.run((ctx) => ctx.db.get('threadRecords', first.threadId));
+		await alice.mutation(internal.threadTitles.requestRegeneration, { threadId: first.threadId });
+		const newest = await t.run((ctx) => ctx.db.get('threadRecords', first.threadId));
+
+		const part = await t.run((ctx) =>
+			ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (query) => query.eq('threadId', first.threadId))
+				.first()
+		);
+
+		await t.mutation(internal.threadTitles.apply, {
+			runId: first.runId,
+			expectedTitle: 'Robot project',
+			expectedRenameKey: previous!.titleRenameKey,
+			throughNumber: part!.number,
+			title: 'Older title'
+		});
+		expect(
+			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
+		).toMatchObject({ title: 'Robot project' });
+		await t.mutation(internal.threadTitles.apply, {
+			runId: first.runId,
+			expectedTitle: 'Robot project',
+			expectedRenameKey: newest!.titleRenameKey,
+			throughNumber: part!.number,
+			title: 'Newest title'
+		});
+		expect(
+			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
+		).toMatchObject({
+			title: 'Newest title'
+		});
+		await finishTitle(t);
+	});
+
+	it('requires ownership to regenerate a title', async () => {
+		const t = initConvexTest();
+		vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse('Robot project')));
+		const first = await createRun(t, 'first');
+		await expect(
+			t.withIdentity({ subject: 'bob' }).action(api.threadTitles.regenerate, {
+				threadId: first.threadId
+			})
+		).rejects.toThrow();
 		await finishTitle(t);
 	});
 
@@ -253,9 +324,39 @@ describe('automatic thread titles', () => {
 				return titleResponse('Generated title');
 			})
 		);
+		await alice.action(api.threadTitles.regenerate, { threadId: first.threadId });
 		await finishTitle(t);
 		expect(
 			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
 		).toMatchObject({ title: 'My title' });
 	});
+
+	it.each(['gateway error', 'timeout', 'empty title'])(
+		'reports manual generation failure: %s',
+		async (failure) => {
+			const t = initConvexTest();
+			const alice = t.withIdentity({ subject: 'alice' });
+			await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
+			const first = await createRun(t, 'first');
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			const fetchMock = vi.fn<typeof fetch>();
+
+			if (failure === 'timeout') {
+				fetchMock.mockRejectedValue(new DOMException('Timed out', 'TimeoutError'));
+			} else {
+				fetchMock.mockResolvedValue(
+					failure === 'empty title' ? titleResponse('') : new Response('', { status: 503 })
+				);
+			}
+
+			vi.stubGlobal('fetch', fetchMock);
+			await expect(
+				alice.action(api.threadTitles.regenerate, { threadId: first.threadId })
+			).rejects.toThrow('Could not regenerate thread title. Try again.');
+			expect(
+				await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
+			).toMatchObject({ title: 'Build a robot' });
+			await finishTitle(t);
+		}
+	);
 });

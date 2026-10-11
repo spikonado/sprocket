@@ -344,12 +344,22 @@ export async function createQueuedRunRecord(
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 
 	if (created.promptPart) {
+		const firstPrompt = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_kind_number', (query) =>
+				query.eq('threadId', threadRecord._id).eq('kind', 'prompt')
+			)
+			.first();
+
 		const preferences = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
 			.unique();
 
-		if (preferences?.automaticThreadTitles !== false) {
+		if (
+			firstPrompt?._id === created.promptPart._id &&
+			preferences?.automaticThreadTitles !== false
+		) {
 			await ctx.scheduler.runAfter(0, internal.threadTitles.generate, {
 				runId,
 				expectedTitle: threadUpdates.title,

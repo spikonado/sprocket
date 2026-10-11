@@ -66,7 +66,7 @@ export default function SettingsGeneral() {
 								id="automatic-thread-titles-description"
 								className="text-muted-foreground mt-1 block text-[13px]"
 							>
-								Name and update threads after every user prompt.
+								Name threads after the first user prompt.
 							</span>
 						</span>
 						<span
