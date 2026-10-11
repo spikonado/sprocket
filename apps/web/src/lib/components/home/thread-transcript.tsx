@@ -379,8 +379,7 @@ export default function ThreadTranscript({
 		}
 	}
 
-	function beforeDetailChange(follow: boolean) {
-		if (!follow) stickToBottomRef.current = false;
+	function beforeDetailChange() {
 		const root = viewportRef.current;
 		const anchor = root && !stickToBottomRef.current ? firstVisibleAnchor(root) : undefined;
 		const offset = anchor?.getBoundingClientRect().top;
@@ -746,7 +745,7 @@ export default function ThreadTranscript({
 	return (
 		<div className="relative min-h-0 flex-1">
 			<div
-				className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto"
+				className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto [overflow-anchor:none]"
 				role="region"
 				aria-label="Conversation history"
 				tabIndex={0}

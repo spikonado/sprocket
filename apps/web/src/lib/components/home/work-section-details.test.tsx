@@ -128,7 +128,7 @@ describe('scrolling work details', () => {
 			.mockResolvedValueOnce(page([1], undefined, 1))
 			.mockResolvedValueOnce(page([2], 2));
 
-		const { viewport, edges, props, restore } = await render(load);
+		const { viewport, edges, restore } = await render(load);
 		expect(load.mock.calls[0][1]).toEqual({});
 		act(() => within(viewport).getByRole('button', { name: 'Reasoned' }).click());
 		const reasoning = within(viewport).getByText('Reason 1');
@@ -145,7 +145,6 @@ describe('scrolling work details', () => {
 		expect(
 			viewport.querySelector('[class~="overflow-auto"], [class~="overflow-y-auto"]')
 		).toBeNull();
-		expect(props.beforeChange).toHaveBeenLastCalledWith(false);
 		expect(restore).toHaveBeenCalledTimes(2);
 	});
 
@@ -158,7 +157,6 @@ describe('scrolling work details', () => {
 
 		const { viewport, edges, props, setProps } = await render(load, true);
 		expect(load.mock.calls[0][1]).toEqual({});
-		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 
 		const originalTool = [...viewport.querySelectorAll('[data-tool-row]')].find((row) =>
 			row.textContent?.includes('echo 2')
@@ -181,7 +179,6 @@ describe('scrolling work details', () => {
 				(item) => item.querySelector('.truncate')?.textContent
 			)
 		).toEqual(['echo 2', 'echo 3', 'echo 4', 'echo 5', 'echo 6', 'echo 7']);
-		expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 		load.mockResolvedValue(tools([2, 3, 4, 5, 6, 7]));
 		setProps({ row: { ...props.row, revision: 2 } });
 		await settle();
@@ -254,7 +251,6 @@ describe('scrolling work details', () => {
 			setProps({ row: { ...props.row, revision } });
 			await settle();
 			expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(revision);
-			expect(props.beforeChange).toHaveBeenLastCalledWith(true);
 		}
 	});
 

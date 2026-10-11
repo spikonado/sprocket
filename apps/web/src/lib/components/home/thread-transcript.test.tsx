@@ -81,7 +81,7 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 	let scrollTop = 0;
 	// jsdom has no layout. Model fixed-height rows while exercising the real DOM and effects.
 	Object.defineProperties(viewport, {
-		clientHeight: { get: () => viewportHeight },
+		clientHeight: { configurable: true, get: () => viewportHeight },
 		scrollHeight: {
 			configurable: true,
 			get: () => Math.max(viewportHeight, messageElements().length * 300)
@@ -402,9 +402,8 @@ describe('transcript viewport paging', () => {
 
 		const { viewport, setProps } = await renderTranscript([response]);
 		setProps({ activeRunId: response.runId });
-		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
 		const work = within(viewport).getByRole('button', { name: /^Working/ });
-		click(work);
+		expect(work.getAttribute('aria-expanded')).toBe('true');
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
 		expect(
 			[...viewport.querySelectorAll('[data-tool-kind] [data-tool-row]')].map(
@@ -432,6 +431,9 @@ describe('transcript viewport paging', () => {
 		setProps({ messages: [settled], activeRunId: null });
 		await settle();
 		expect(within(viewport).getByRole('button', { name: /^Worked/ })).toBe(work);
+		expect(work.getAttribute('aria-expanded')).toBe('false');
+		expect(viewport.querySelector('[data-tool-kind]')).toBeNull();
+		click(work);
 		expect(work.getAttribute('aria-expanded')).toBe('true');
 		expect(viewport.querySelectorAll('[data-tool-kind]')).toHaveLength(3);
 		expect(viewport.querySelector('.animate-spin')).toBeNull();
@@ -467,8 +469,11 @@ describe('transcript viewport paging', () => {
 			const { viewport, setProps } = await renderTranscript([response]);
 			setProps({ activeRunId: response.runId });
 			await settle();
-			click(viewport.querySelector('button[aria-expanded]'));
-			await settle();
+			expect(
+				within(viewport)
+					.getByRole('button', { name: /^Working/ })
+					.getAttribute('aria-expanded')
+			).toBe('true');
 
 			expect(
 				[...viewport.querySelectorAll('[data-tool-row]')].some((row) =>
@@ -761,8 +766,11 @@ describe('transcript viewport paging', () => {
 		const { viewport, setProps } = await renderTranscript([launch, poll]);
 		setProps({ activeRunId: poll.runId });
 		await settle();
-		click(within(viewport).getByRole('button', { name: /^Working/ }));
-		await settle();
+		expect(
+			within(viewport)
+				.getByRole('button', { name: /^Working/ })
+				.getAttribute('aria-expanded')
+		).toBe('true');
 		expect(viewport.querySelector('[data-tool-kind="poll_cmd"] [data-tool-row]')?.textContent).toBe(
 			'sleep 10'
 		);
@@ -825,11 +833,7 @@ describe('transcript viewport paging', () => {
 		);
 
 		expect(workButtons).toHaveLength(1);
-		expect(workButtons[0].getAttribute('aria-expanded')).toBe('false');
-		expect(props.loadSectionDetails).not.toHaveBeenCalled();
-		expect(viewport.textContent).not.toContain('Current reasoning');
-		click(workButtons[0]);
-		await settle();
+		expect(workButtons[0].getAttribute('aria-expanded')).toBe('true');
 		expect(props.loadSectionDetails).toHaveBeenCalledWith(work, {}, expect.any(AbortSignal));
 
 		expect(viewport.textContent).toContain('Reasoned');
@@ -893,7 +897,7 @@ describe('transcript viewport paging', () => {
 
 		expect(workButtons.map((button) => button.getAttribute('aria-expanded'))).toEqual([
 			'false',
-			'false'
+			'true'
 		]);
 		expect(viewport.textContent).toContain('Visible boundary');
 	});
@@ -1093,9 +1097,7 @@ describe('transcript viewport paging', () => {
 				(button) => button.textContent?.trim().startsWith('Working')
 			);
 
-			expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
-			click(disclosure);
-			await settle();
+			expect(disclosure?.getAttribute('aria-expanded')).toBe('true');
 			expect(load).toHaveBeenCalledTimes(1);
 
 			const anchor = viewingError
@@ -1182,6 +1184,57 @@ describe('transcript viewport paging', () => {
 		setProps({ messages: [...props.messages, message(7)] });
 		await settle();
 		expect(viewport.scrollTop).toBe(1500);
+	});
+
+	it('keeps following output after completed work details load at the thread end', async () => {
+		const work: TranscriptDisplayRow = {
+			...message(5),
+			id: 'work:5',
+			kind: 'work',
+			itemCount: 1
+		};
+
+		const { props, viewport, setProps } = await renderTranscript([
+			...[1, 2, 3, 4].map(message),
+			work
+		]);
+
+		setProps({
+			loadSectionDetails: vi.fn().mockResolvedValue({
+				parts: [{ type: 'reasoning', text: 'Completed work details' }],
+				revision: 1,
+				indexing: false,
+				stale: false
+			})
+		});
+		click(within(viewport).getByRole('button', { name: /^Worked/ }));
+		await settle();
+		expect(within(viewport).getByRole('button', { name: 'Reasoned' })).toBeTruthy();
+		setProps({ messages: [...props.messages, message(6)] });
+		await settle();
+		expect(viewport.scrollTop).toBe(viewport.scrollHeight - viewport.clientHeight);
+	});
+
+	it('follows content growth and viewport resizing at the thread end', async () => {
+		const { viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+		let height = viewport.scrollHeight;
+		let clientHeight = viewport.clientHeight;
+		Object.defineProperty(viewport, 'scrollHeight', { get: () => height });
+		Object.defineProperty(viewport, 'clientHeight', { get: () => clientHeight });
+		height += 200;
+		act(() => resize());
+		expect(viewport.scrollTop).toBe(height - clientHeight);
+		clientHeight -= 100;
+		act(() => resize());
+		expect(viewport.scrollTop).toBe(height - clientHeight);
+		scrollTo(400);
+		height += 200;
+		act(() => resize());
+		expect(viewport.scrollTop).toBe(400);
+		scrollTo(height - clientHeight);
+		height += 200;
+		act(() => resize());
+		expect(viewport.scrollTop).toBe(height - clientHeight);
 	});
 
 	it.each(['wheel', 'touch', 'ArrowUp', 'PageUp', 'Home', 'Shift+Space'])(

@@ -26,7 +26,7 @@ type Props = {
 	inProgress: boolean;
 	commands: ReadonlyMap<string, string>;
 	viewport: HTMLDivElement | null;
-	beforeChange: (follow: boolean) => () => void;
+	beforeChange: () => () => void;
 };
 
 const PREFETCH_VIEWPORTS = 3;
@@ -51,13 +51,11 @@ export default function WorkSectionDetails({
 
 	const loadRef = useRef(load);
 	const rowRef = useRef(row);
-	const inProgressRef = useRef(inProgress);
 	const beforeChangeRef = useRef(beforeChange);
 	const viewportRef = useRef(viewport);
 	useLayoutEffect(() => {
 		loadRef.current = load;
 		rowRef.current = row;
-		inProgressRef.current = inProgress;
 		beforeChangeRef.current = beforeChange;
 		viewportRef.current = viewport;
 	});
@@ -89,7 +87,7 @@ export default function WorkSectionDetails({
 					? distanceFromViewport(edge === 'older' ? topRef.current : bottomRef.current)
 					: undefined;
 
-				const restore = beforeChangeRef.current(inProgressRef.current && edge !== 'older');
+				const restore = beforeChangeRef.current();
 				flushSync(update);
 				restore();
 				lastTopRef.current = viewportRef.current?.scrollTop ?? 0;
