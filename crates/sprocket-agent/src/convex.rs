@@ -473,6 +473,31 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn omit_reasoning_replay(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        before_prompt: bool,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
+        for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
+            match self
+                .mutation_checked("agentRuntime:omitReasoningReplay", args.clone())
+                .await
+            {
+                Ok(active) => return Ok(active),
+                Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
+                    sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
+                }
+                Err(MutationFailure::Transport(error) | MutationFailure::Functional(error)) => {
+                    return Err(error);
+                }
+            }
+        }
+        unreachable!("reasoning replay save attempts exhausted")
+    }
+
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {
         self.query_json("agentRuntime:isFinished", self.run_args(run_id))
             .await

@@ -184,15 +184,15 @@ pub(crate) async fn catalog_models_for_run(
     handoff: Option<ProviderHandoff>,
 ) -> anyhow::Result<(
     CatalogModelCapabilities,
-    Option<(ProviderHandoff, CatalogModelCapabilities)>,
+    anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>>,
 )> {
     let catalog = fetch_catalog(gateway_url).await?;
     let selected = select_catalog_model(&catalog, &run.selected_model)?;
     let handoff = match handoff {
         Some(handoff) => {
-            select_handoff_model(&catalog, handoff, run.completion_provider, &selected.vendor)?
+            select_handoff_model(&catalog, handoff, run.completion_provider, &selected.vendor)
         }
-        None => None,
+        None => Ok(None),
     };
     Ok((selected, handoff))
 }
