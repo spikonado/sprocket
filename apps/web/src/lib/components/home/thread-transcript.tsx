@@ -745,7 +745,7 @@ export default function ThreadTranscript({
 	return (
 		<div className="relative min-h-0 flex-1">
 			<div
-				className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto [overflow-anchor:none]"
+				className="hide-scrollbar h-full overflow-x-hidden overflow-y-auto"
 				role="region"
 				aria-label="Conversation history"
 				tabIndex={0}
