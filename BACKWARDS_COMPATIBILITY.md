@@ -11,6 +11,15 @@ endpoints. Stored transcript formats are unchanged.
 
 ## Development tooling compatibility
 
+### Automatic agent continuation preference
+
+Missing `uiPreferences.automaticAgentContinuation` means enabled, preserving
+automatic recovery for existing accounts. The recovery query still returns
+`discard` when disabled, which released servers already understand; automatic
+submission creation also checks the preference. Remove the missing-field default
+only after a migration backfills existing rows and supported clients always write
+the field. No existing data needs rewriting for this optional addition.
+
 ### TypeScript compiler API
 
 The web workspace aliases `typescript` to `@typescript/typescript6` for ESLint

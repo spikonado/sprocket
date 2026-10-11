@@ -22,6 +22,7 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import {
 	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
+	automaticAgentContinuationEnabled,
 	isAutomaticallyRecoverableRun
 } from '@convex/lib/runRecovery';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
@@ -247,6 +248,7 @@ export async function createQueuedRunRecord(
 		if (
 			args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
 			(!machineId ||
+				!(await automaticAgentContinuationEnabled(ctx.db, args.userId)) ||
 				!isAutomaticallyRecoverableRun(parent, machineId) ||
 				recordsPrompt ||
 				(await threadRoot(ctx.db, threadRecord)).archivedAt !== undefined)

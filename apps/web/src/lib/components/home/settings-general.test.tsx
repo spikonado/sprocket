@@ -28,6 +28,10 @@ function toggle() {
 	return screen.getByRole('switch', { name: 'Automatically name threads' });
 }
 
+function continuationToggle() {
+	return screen.getByRole('switch', { name: 'Continue agents automatically after restarts' });
+}
+
 it.each([null, preferences])(
 	'defaults to enabled for missing preferences or field: %j',
 	async (data) => {
@@ -37,6 +41,13 @@ it.each([null, preferences])(
 		expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
 		expect(toggle().getAttribute('aria-checked')).toBe('true');
 		expect(toggle()).toHaveProperty('disabled', false);
+		expect(continuationToggle().getAttribute('aria-checked')).toBe('true');
+		expect(continuationToggle()).toHaveProperty('disabled', false);
+		expect(
+			screen.getByText(
+				'Automatically resume interrupted agent after an update, crash, or machine restart.'
+			)
+		).toBeTruthy();
 	}
 );
 
@@ -122,6 +133,7 @@ it('waits for preferences to load before allowing changes', async () => {
 	await mount(client);
 	expect(screen.getByRole('status').textContent).toBe('Loading preferences...');
 	expect(toggle()).toHaveProperty('disabled', true);
+	expect(continuationToggle()).toHaveProperty('disabled', true);
 	await act(async () => {
 		client.registerQuery(api.uiPreferences.getMine, {
 			...preferences,
@@ -131,6 +143,7 @@ it('waits for preferences to load before allowing changes', async () => {
 	expect(screen.queryByRole('status')).toBeNull();
 	expect(toggle().getAttribute('aria-checked')).toBe('false');
 	expect(toggle()).toHaveProperty('disabled', false);
+	expect(continuationToggle()).toHaveProperty('disabled', false);
 });
 
 it('shows a preference load error inline', async () => {
@@ -147,4 +160,90 @@ it('shows a preference load error inline', async () => {
 		expect(screen.getByRole('alert').textContent).toBe("Couldn't load your preferences right now.");
 	});
 	expect(toggle()).toHaveProperty('disabled', true);
+	expect(continuationToggle()).toHaveProperty('disabled', true);
+});
+
+it('reflects saved automatic continuation preferences and remote changes', async () => {
+	const client = new ConvexTestClient();
+	client.registerQuery(api.uiPreferences.getMine, {
+		...preferences,
+		automaticAgentContinuation: false
+	});
+	await mount(client);
+	expect(continuationToggle().getAttribute('aria-checked')).toBe('false');
+	expect(toggle().getAttribute('aria-checked')).toBe('true');
+	await act(async () => {
+		client.registerQuery(api.uiPreferences.getMine, {
+			...preferences,
+			automaticAgentContinuation: true
+		});
+	});
+	expect(continuationToggle().getAttribute('aria-checked')).toBe('true');
+});
+
+it.each([true, false])(
+	'saves automatic continuation opposite to %s and blocks repeat clicks while saving',
+	async (enabled) => {
+		const client = new ConvexTestClient();
+		const save = Promise.withResolvers<null>();
+		client.registerQuery(api.uiPreferences.getMine, {
+			...preferences,
+			automaticAgentContinuation: enabled
+		});
+		client.registerMutation(api.uiPreferences.setAutomaticAgentContinuation, save.promise);
+		const mutation = vi.spyOn(client, 'mutation');
+		await mount(client);
+		fireEvent.click(continuationToggle());
+		expect(continuationToggle().getAttribute('aria-checked')).toBe(String(!enabled));
+		expect(continuationToggle()).toHaveProperty('disabled', true);
+		expect(toggle()).toHaveProperty('disabled', false);
+		expect(toggle().getAttribute('aria-checked')).toBe('true');
+		fireEvent.click(continuationToggle());
+		expect(mutation).toHaveBeenCalledTimes(1);
+		expect(getFunctionName(mutation.mock.calls[0]![0])).toBe(
+			'uiPreferences:setAutomaticAgentContinuation'
+		);
+		expect(mutation.mock.calls[0]![1]).toEqual({ enabled: !enabled });
+		await act(async () => {
+			client.registerQuery(api.uiPreferences.getMine, {
+				...preferences,
+				automaticAgentContinuation: !enabled
+			});
+			save.resolve(null);
+		});
+		expect(continuationToggle()).toHaveProperty('disabled', false);
+		expect(continuationToggle().getAttribute('aria-checked')).toBe(String(!enabled));
+	}
+);
+
+it('restores automatic continuation after a failed save and allows retrying', async () => {
+	const client = new ConvexTestClient();
+	const save = Promise.withResolvers<null>();
+	client.registerQuery(api.uiPreferences.getMine, preferences);
+	client.registerMutation(api.uiPreferences.setAutomaticAgentContinuation, save.promise);
+	const mutation = vi.spyOn(client, 'mutation');
+	await mount(client);
+	fireEvent.click(continuationToggle());
+	await act(async () => {
+		save.reject(new Error('Unavailable'));
+	});
+	expect(screen.getByRole('alert').textContent).toBe("Couldn't save your preference. Try again.");
+	expect(continuationToggle().getAttribute('aria-checked')).toBe('true');
+	expect(continuationToggle()).toHaveProperty('disabled', false);
+	expect(toggle().getAttribute('aria-checked')).toBe('true');
+	expect(toggle()).toHaveProperty('disabled', false);
+	const retry = Promise.withResolvers<null>();
+	client.registerMutation(api.uiPreferences.setAutomaticAgentContinuation, retry.promise);
+	fireEvent.click(continuationToggle());
+	expect(screen.queryByRole('alert')).toBeNull();
+	expect(mutation).toHaveBeenCalledTimes(2);
+	await act(async () => {
+		client.registerQuery(api.uiPreferences.getMine, {
+			...preferences,
+			automaticAgentContinuation: false
+		});
+		retry.resolve(null);
+	});
+	expect(continuationToggle().getAttribute('aria-checked')).toBe('false');
+	expect(continuationToggle()).toHaveProperty('disabled', false);
 });

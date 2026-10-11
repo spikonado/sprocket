@@ -5,6 +5,33 @@ import schema from '@convex/schema';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
 
+export const setAutomaticAgentContinuation = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+
+		const existing = await ctx.db
+			.query('uiPreferences')
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.unique();
+
+		if (existing) {
+			await ctx.db.patch('uiPreferences', existing._id, {
+				automaticAgentContinuation: args.enabled
+			});
+		} else {
+			await ctx.db.insert('uiPreferences', {
+				userId,
+				theme: 'light',
+				automaticAgentContinuation: args.enabled
+			});
+		}
+
+		return null;
+	}
+});
+
 export const setAutomaticThreadTitles = mutation({
 	args: { enabled: v.boolean() },
 	returns: v.null(),

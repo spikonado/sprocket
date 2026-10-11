@@ -56,6 +56,47 @@ async function setup() {
 }
 
 describe('automatic run recovery', () => {
+	it('discards automatic recovery when disabled but allows manual continuation', async () => {
+		const { t, asUser, runId, queryArgs, recoveryArgs, abandon } = await setup();
+		await abandon();
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
+		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
+			'This run cannot recover automatically.'
+		);
+
+		const manual = await insertQueuedRun(t, asUser, {
+			...recoveryArgs,
+			submissionId: 'manual-continuation'
+		});
+
+		expect(manual.created).toBe(true);
+		expect(manual.promptPart).toBeUndefined();
+		expect(manual.runId).not.toBe(runId);
+	});
+
+	it('checks the preference again when creating a continuation and can be re-enabled', async () => {
+		const { t, asUser, runId, threadId, queryArgs, recoveryArgs, abandon } = await setup();
+		await asUser.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
+		await abandon();
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
+			'This run cannot recover automatically.'
+		);
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: true });
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+		expect((await insertQueuedRun(t, asUser, recoveryArgs)).created).toBe(true);
+	});
+
 	it('recovers an executor-reported lease failure before the lifecycle deadline', async () => {
 		vi.useFakeTimers();
 		const { t, asUser, threadId, runId, queryArgs, recoveryArgs } = await setup();

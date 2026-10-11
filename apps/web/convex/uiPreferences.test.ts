@@ -3,6 +3,36 @@ import { api } from '@convex/_generated/api';
 import { initConvexTest } from './test.setup';
 
 describe('theme preferences', () => {
+	it('syncs automatic continuation per account and preserves other preferences', async () => {
+		const t = initConvexTest();
+		const alice = t.withIdentity({ subject: 'alice' });
+		const otherSession = t.withIdentity({ subject: 'alice' });
+		const bob = t.withIdentity({ subject: 'bob' });
+		await alice.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
+		await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
+		await alice.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+		expect(await otherSession.query(api.uiPreferences.getMine, {})).toMatchObject({
+			theme: 'dark',
+			automaticThreadTitles: false,
+			automaticAgentContinuation: false
+		});
+		await otherSession.mutation(api.uiPreferences.setTheme, { theme: 'light' });
+		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({
+			theme: 'light',
+			automaticAgentContinuation: false
+		});
+		await bob.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: true });
+		expect(await bob.query(api.uiPreferences.getMine, {})).toMatchObject({
+			automaticAgentContinuation: true
+		});
+		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({
+			automaticAgentContinuation: false
+		});
+		await expect(
+			t.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false })
+		).rejects.toThrow('Authentication required');
+	});
+
 	it('syncs automatic naming per account and preserves the theme', async () => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });

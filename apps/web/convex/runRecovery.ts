@@ -1,6 +1,9 @@
 import { query } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
-import { isAutomaticallyRecoverableRun } from '@convex/lib/runRecovery';
+import {
+	automaticAgentContinuationEnabled,
+	isAutomaticallyRecoverableRun
+} from '@convex/lib/runRecovery';
 import { threadRoot } from '@convex/lib/threadHierarchy';
 import { v, type Infer } from 'convex/values';
 
@@ -20,6 +23,10 @@ export const state = query({
 	returns: vRecoveryState,
 	handler: async (ctx, args): Promise<Infer<typeof vRecoveryState>> => {
 		const userId = await getUserId(ctx);
+
+		if (!(await automaticAgentContinuationEnabled(ctx.db, userId))) {
+			return { state: 'discard' };
+		}
 
 		const submitted = await ctx.db
 			.query('runs')
