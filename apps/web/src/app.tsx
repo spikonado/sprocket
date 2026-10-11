@@ -330,7 +330,7 @@ export default function App({
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	const deleteArtifactRecord = useMutation(api.artifacts.deleteArtifact);
 	const renameThreadRecord = useMutation(api.threads.rename);
-	const regenerateThreadTitleRecord = useMutation(api.threadTitles.regenerate);
+	const regenerateThreadTitleRecord = useAction(api.threadTitles.regenerate);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);

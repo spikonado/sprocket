@@ -124,7 +124,7 @@ describe('automatic thread titles', () => {
 			title: 'Robot project'
 		});
 		expect(fetchMock).toHaveBeenCalledOnce();
-		await alice.mutation(api.threadTitles.regenerate, { threadId: first.threadId });
+		await alice.action(api.threadTitles.regenerate, { threadId: first.threadId });
 		await finishTitle(t);
 		expect(await t.run((ctx) => ctx.db.get('threadRecords', first.threadId))).toMatchObject({
 			title: 'Robot obstacle avoidance',
@@ -178,7 +178,7 @@ describe('automatic thread titles', () => {
 		});
 		expect(fetchMock).not.toHaveBeenCalled();
 		await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
-		await alice.mutation(api.threadTitles.regenerate, { threadId: first.threadId });
+		await alice.action(api.threadTitles.regenerate, { threadId: first.threadId });
 		await finishTitle(t);
 		expect(
 			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
@@ -216,9 +216,9 @@ describe('automatic thread titles', () => {
 		const first = await createRun(t, 'first');
 		vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse('Robot project')));
 		await finishTitle(t);
-		await alice.mutation(api.threadTitles.regenerate, { threadId: first.threadId });
+		await alice.mutation(internal.threadTitles.requestRegeneration, { threadId: first.threadId });
 		const previous = await t.run((ctx) => ctx.db.get('threadRecords', first.threadId));
-		await alice.mutation(api.threadTitles.regenerate, { threadId: first.threadId });
+		await alice.mutation(internal.threadTitles.requestRegeneration, { threadId: first.threadId });
 		const newest = await t.run((ctx) => ctx.db.get('threadRecords', first.threadId));
 
 		const part = await t.run((ctx) =>
@@ -258,7 +258,7 @@ describe('automatic thread titles', () => {
 		vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse('Robot project')));
 		const first = await createRun(t, 'first');
 		await expect(
-			t.withIdentity({ subject: 'bob' }).mutation(api.threadTitles.regenerate, {
+			t.withIdentity({ subject: 'bob' }).action(api.threadTitles.regenerate, {
 				threadId: first.threadId
 			})
 		).rejects.toThrow();
@@ -312,7 +312,6 @@ describe('automatic thread titles', () => {
 		await alice.mutation(api.threads.rename, { threadId: first.threadId, title: 'My title' });
 		await finishRun(t, first.runId);
 		await createRun(t, 'second', first.threadId);
-		await alice.mutation(api.threadTitles.regenerate, { threadId: first.threadId });
 		vi.stubGlobal(
 			'fetch',
 			vi.fn<typeof fetch>().mockImplementation(async () => {
@@ -325,9 +324,39 @@ describe('automatic thread titles', () => {
 				return titleResponse('Generated title');
 			})
 		);
+		await alice.action(api.threadTitles.regenerate, { threadId: first.threadId });
 		await finishTitle(t);
 		expect(
 			await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
 		).toMatchObject({ title: 'My title' });
 	});
+
+	it.each(['gateway error', 'timeout', 'empty title'])(
+		'reports manual generation failure: %s',
+		async (failure) => {
+			const t = initConvexTest();
+			const alice = t.withIdentity({ subject: 'alice' });
+			await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
+			const first = await createRun(t, 'first');
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			const fetchMock = vi.fn<typeof fetch>();
+
+			if (failure === 'timeout') {
+				fetchMock.mockRejectedValue(new DOMException('Timed out', 'TimeoutError'));
+			} else {
+				fetchMock.mockResolvedValue(
+					failure === 'empty title' ? titleResponse('') : new Response('', { status: 503 })
+				);
+			}
+
+			vi.stubGlobal('fetch', fetchMock);
+			await expect(
+				alice.action(api.threadTitles.regenerate, { threadId: first.threadId })
+			).rejects.toThrow('Could not regenerate thread title. Try again.');
+			expect(
+				await alice.query(api.threads.getByThreadId, { threadId: first.threadId })
+			).toMatchObject({ title: 'Build a robot' });
+			await finishTitle(t);
+		}
+	);
 });
