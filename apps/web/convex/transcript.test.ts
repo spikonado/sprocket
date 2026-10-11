@@ -978,63 +978,6 @@ describe('transcript range reads', () => {
 		return { ...owned, runId, executionSecret };
 	}
 
-	it('fetches 100 contiguous numbers with one transcript query and only requested reads', async () => {
-		const t = initConvexTest();
-
-		const { asUser, threadId } = await seedParts(
-			t,
-			Array.from({ length: 104 }, (_, number) => number)
-		);
-
-		const numbers = Array.from({ length: 100 }, (_, index) => 101 - index);
-
-		const measured = await asUser.query(async (ctx) => {
-			const before = await ctx.meta.getTransactionMetrics();
-			const result = await ctx.runQuery(api.transcript.getParts, { threadId, numbers });
-			const after = await ctx.meta.getTransactionMetrics();
-
-			return {
-				result,
-				queries: after.databaseQueries.used - before.databaseQueries.used,
-				reads: after.documentsRead.used - before.documentsRead.used
-			};
-		});
-
-		expect(measured.result.parts.map((part) => part.number)).toEqual(numbers);
-		expect(measured.queries).toBe(2);
-		expect(measured.reads).toBe(101);
-	});
-
-	it('preserves sparse request order and duplicates without reading intervening parts', async () => {
-		const t = initConvexTest();
-
-		const { asUser, threadId, runId, executionSecret } = await seedParts(
-			t,
-			Array.from({ length: 12 }, (_, number) => number).filter((number) => number !== 7)
-		);
-
-		const numbers = [9, 2, 9, 7, 8, 99, -1, 0.5];
-
-		const measured = await asUser.query(async (ctx) => {
-			const before = await ctx.meta.getTransactionMetrics();
-			const result = await ctx.runQuery(api.transcript.getParts, { threadId, numbers });
-			const after = await ctx.meta.getTransactionMetrics();
-
-			return {
-				result,
-				queries: after.databaseQueries.used - before.databaseQueries.used,
-				reads: after.documentsRead.used - before.documentsRead.used
-			};
-		});
-
-		expect(measured.result.parts.map((part) => part.number)).toEqual([9, 2, 9, 8]);
-		expect(measured.queries).toBe(4);
-		expect(measured.reads).toBe(4);
-		expect(
-			await t.query(api.transcript.getPartsForRun, { runId, executionSecret, numbers })
-		).toEqual(measured.result);
-	});
-
 	it.each([undefined, 'asc', 'desc'] as const)(
 		'returns at most 100 parts in order %s',
 		async (order) => {
@@ -1303,29 +1246,16 @@ describe('transcript attachment identity', () => {
 		).toEqual(page);
 	});
 
-	it('returns only requested attachment URLs and null for deleted storage', async () => {
+	it('returns the requested attachment URL and null for deleted storage', async () => {
 		const t = initConvexTest();
 		const { runId, executionSecret, file } = await seedAttachedPrompt(t);
-		const args = { runId, executionSecret, partNumber: 0, storageIds: [file.storageId] };
-		expect(await t.query(api.transcript.attachmentUrlsForRun, args)).toEqual([
-			{ storageId: file.storageId, url: expect.any(String) }
-		]);
-		expect(await t.query(api.transcript.attachmentUrlsForRun, { ...args, storageIds: [] })).toEqual(
-			[]
-		);
-		expect(
-			await t.query(api.transcript.attachmentUrlsForRun, {
-				...args,
-				storageIds: Array.from({ length: 100 }, () => file.storageId)
-			})
-		).toHaveLength(100);
+		const args = { runId, executionSecret, partNumber: 0, storageId: file.storageId };
+		expect(await t.query(api.transcript.attachmentUrlForRun, args)).toEqual(expect.any(String));
 		await t.run((ctx) => ctx.storage.delete(file.storageId));
-		expect(await t.query(api.transcript.attachmentUrlsForRun, args)).toEqual([
-			{ storageId: file.storageId, url: null }
-		]);
+		expect(await t.query(api.transcript.attachmentUrlForRun, args)).toBeNull();
 	});
 
-	it('restricts attachment URLs to the exact prompt part and run capability', async () => {
+	it('restricts the attachment URL to the exact prompt part and run capability', async () => {
 		const t = initConvexTest();
 		const first = await seedAttachedPrompt(t);
 		const other = await seedAttachedPrompt(t);
@@ -1354,43 +1284,36 @@ describe('transcript attachment identity', () => {
 			runId: first.runId,
 			executionSecret: first.executionSecret,
 			partNumber: 0,
-			storageIds: [first.file.storageId]
+			storageId: first.file.storageId
 		};
 
 		await expect(
-			t.query(api.transcript.attachmentUrlsForRun, { ...args, executionSecret: 'wrong' })
+			t.query(api.transcript.attachmentUrlForRun, { ...args, executionSecret: 'wrong' })
 		).rejects.toThrow('Run not found.');
 		await expect(
-			t.query(api.transcript.attachmentUrlsForRun, { ...args, runId: other.runId })
+			t.query(api.transcript.attachmentUrlForRun, { ...args, runId: other.runId })
 		).rejects.toThrow('Run not found.');
 		await expect(
-			t.query(api.transcript.attachmentUrlsForRun, {
+			t.query(api.transcript.attachmentUrlForRun, {
 				...args,
-				storageIds: [first.file.storageId, other.file.storageId]
+				storageId: other.file.storageId
 			})
 		).rejects.toThrow('Attachment not found in transcript part.');
 		await expect(
-			t.query(api.transcript.attachmentUrlsForRun, { ...args, partNumber: 1 })
+			t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber: 1 })
 		).rejects.toThrow('Attachment not found in transcript part.');
 
 		for (const partNumber of [2, 3]) {
 			await expect(
-				t.query(api.transcript.attachmentUrlsForRun, { ...args, partNumber })
+				t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber })
 			).rejects.toThrow('Transcript prompt part not found.');
 		}
 
 		for (const partNumber of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
 			await expect(
-				t.query(api.transcript.attachmentUrlsForRun, { ...args, partNumber })
+				t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber })
 			).rejects.toThrow('Invalid transcript part number.');
 		}
-
-		await expect(
-			t.query(api.transcript.attachmentUrlsForRun, {
-				...args,
-				storageIds: Array.from({ length: 101 }, () => first.file.storageId)
-			})
-		).rejects.toThrow('Request at most 100 attachment URLs.');
 	});
 
 	it('downloads an owned file by storageId and hides foreign files', async () => {

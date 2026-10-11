@@ -116,18 +116,7 @@ where
     Ok(tokio::fs::canonicalize(path).await?)
 }
 
-#[cfg(test)]
-async fn cache_prompt_attachments(
-    store: &TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    parts: &mut [TranscriptPart],
-) -> anyhow::Result<()> {
-    cache_prompt_attachments_with_urls(store, user_id, thread_id, parts, |_, _| async { Ok(None) })
-        .await
-}
-
-pub(crate) async fn cache_prompt_attachments_with_urls<F, Fut>(
+pub(crate) async fn cache_prompt_attachments<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
     thread_id: &str,
@@ -228,7 +217,7 @@ mod tests {
         }
         let mut parts = vec![prompt_part(7, attachments)];
         let mut calls = 0;
-        cache_prompt_attachments_with_urls(&store, "user", "thread", &mut parts, |_, _| {
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
             calls += 1;
             async { anyhow::bail!("resolver must not be called") }
         })
@@ -271,7 +260,7 @@ mod tests {
         }
         let mut parts = vec![prompt_part(7, attachments)];
         let mut calls = 0;
-        cache_prompt_attachments_with_urls(&store, "user", "thread", &mut parts, |_, _| {
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
             calls += 1;
             async { anyhow::bail!("resolver must not be called") }
         })
@@ -301,7 +290,7 @@ mod tests {
         non_prompt.prompt = None;
         let mut calls = 0;
         for mut parts in [Vec::new(), vec![prompt_part(7, Vec::new()), non_prompt]] {
-            cache_prompt_attachments_with_urls(&store, "user", "thread", &mut parts, |_, _| {
+            cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
                 calls += 1;
                 async { anyhow::bail!("resolver must not be called") }
             })
@@ -320,7 +309,7 @@ mod tests {
         meta.url = Some(url);
         let mut parts = vec![prompt_part(7, vec![meta])];
         let mut calls = 0;
-        cache_prompt_attachments_with_urls(&store, "user", "thread", &mut parts, |_, _| {
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
             calls += 1;
             async { anyhow::bail!("resolver must not be called") }
         })
@@ -358,16 +347,8 @@ mod tests {
         let (first_result, second_result) =
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 tokio::join!(
-                    cache_prompt_attachments_with_urls(
-                        &store, "user", "thread", &mut first, resolve
-                    ),
-                    cache_prompt_attachments_with_urls(
-                        &store,
-                        "user",
-                        "thread",
-                        &mut second,
-                        resolve
-                    )
+                    cache_prompt_attachments(&store, "user", "thread", &mut first, resolve),
+                    cache_prompt_attachments(&store, "user", "thread", &mut second, resolve)
                 )
             })
             .await
@@ -395,7 +376,7 @@ mod tests {
         let path = store.attachment_path("user", "thread", &meta);
         let mut parts = vec![prompt_part(7, vec![meta])];
         let mut calls = 0;
-        cache_prompt_attachments_with_urls(
+        cache_prompt_attachments(
             &store,
             "user",
             "thread",
@@ -427,7 +408,7 @@ mod tests {
             let meta = attachment("expired", 4);
             let path = store.attachment_path("user", "thread", &meta);
             let mut parts = vec![prompt_part(7, vec![meta])];
-            cache_prompt_attachments_with_urls(&store, "user", "thread", &mut parts, |_, _| {
+            cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
                 let url = url.clone();
                 async move { Ok(Some(url)) }
             })
@@ -450,13 +431,9 @@ mod tests {
         let meta = attachment("resolver-error", 4);
         let path = store.attachment_path("user", "thread", &meta);
         let mut parts = vec![prompt_part(7, vec![meta])];
-        let error = cache_prompt_attachments_with_urls(
-            &store,
-            "user",
-            "thread",
-            &mut parts,
-            |_, _| async { anyhow::bail!("URL lookup failed") },
-        )
+        let error = cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
+            anyhow::bail!("URL lookup failed")
+        })
         .await
         .unwrap_err();
         assert_eq!(error.to_string(), "URL lookup failed");
@@ -471,13 +448,12 @@ mod tests {
         let meta = attachment("download-error", 4);
         let path = store.attachment_path("user", "thread", &meta);
         let mut parts = vec![prompt_part(7, vec![meta])];
-        let error =
-            cache_prompt_attachments_with_urls(&store, "user", "thread", &mut parts, |_, _| {
-                let url = url.clone();
-                async move { Ok(Some(url)) }
-            })
-            .await
-            .unwrap_err();
+        let error = cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+            let url = url.clone();
+            async move { Ok(Some(url)) }
+        })
+        .await
+        .unwrap_err();
         assert_eq!(
             error.downcast_ref::<reqwest::Error>().unwrap().status(),
             Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
@@ -641,9 +617,11 @@ mod tests {
             tool: None,
             work: Default::default(),
         }];
-        cache_prompt_attachments(&store, "user", "thread", &mut parts)
-            .await
-            .unwrap();
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
+            Ok(None)
+        })
+        .await
+        .unwrap();
         let prompt = parts[0].prompt.as_ref().unwrap();
         for meta in &prompt.image_uploads {
             let path = Path::new(meta.local_path.as_ref().unwrap());
@@ -779,9 +757,11 @@ mod tests {
             tool: None,
             work: Default::default(),
         }];
-        cache_prompt_attachments(&store, "user", "thread", &mut parts)
-            .await
-            .unwrap();
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
+            Ok(None)
+        })
+        .await
+        .unwrap();
         let prompt = parts[0].prompt.as_ref().unwrap();
         assert!(prompt.image_uploads[0].local_path.is_some());
         assert!(prompt.image_uploads[1].local_path.is_none());

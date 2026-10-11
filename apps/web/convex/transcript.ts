@@ -136,20 +136,16 @@ export const getPartsPageForRun = query({
 	}
 });
 
-export const attachmentUrlsForRun = query({
+export const attachmentUrlForRun = query({
 	args: {
 		runId: v.id('runs'),
 		executionSecret: v.string(),
 		partNumber: v.number(),
-		storageIds: v.array(v.id('_storage'))
+		storageId: v.id('_storage')
 	},
-	returns: v.array(v.object({ storageId: v.id('_storage'), url: v.union(v.string(), v.null()) })),
+	returns: v.union(v.string(), v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-
-		if (args.storageIds.length > 100) {
-			throw new Error('Request at most 100 attachment URLs.');
-		}
 
 		if (!Number.isSafeInteger(args.partNumber) || args.partNumber < 0) {
 			throw new Error('Invalid transcript part number.');
@@ -166,18 +162,11 @@ export const attachmentUrlsForRun = query({
 			throw new Error('Transcript prompt part not found.');
 		}
 
-		const allowedStorageIds = new Set(part.prompt.imageUploads.map((upload) => upload.storageId));
-
-		if (args.storageIds.some((storageId) => !allowedStorageIds.has(storageId))) {
+		if (!part.prompt.imageUploads.some((upload) => upload.storageId === args.storageId)) {
 			throw new Error('Attachment not found in transcript part.');
 		}
 
-		return await Promise.all(
-			args.storageIds.map(async (storageId) => ({
-				storageId,
-				url: await ctx.storage.getUrl(storageId)
-			}))
-		);
+		return await ctx.storage.getUrl(args.storageId);
 	}
 });
 

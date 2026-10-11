@@ -82,22 +82,6 @@ struct ResumeEntry {
     patch: bool,
 }
 
-pub async fn read_monitor_page(
-    store: &TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    cursor: Option<&str>,
-    max_chars: usize,
-) -> anyhow::Result<MonitorPage> {
-    let cursor = cursor.map(parse_cursor).transpose()?;
-    let thread = thread_id.to_string();
-    store
-        .with_work_replica(user_id, thread_id, move |replica| {
-            read_page(replica, &thread, cursor, max_chars)
-        })
-        .await
-}
-
 fn parse_cursor(encoded: &str) -> anyhow::Result<MonitorCursor> {
     let bytes = URL_SAFE_NO_PAD
         .decode(encoded)
@@ -121,22 +105,17 @@ where
         .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
         .await?;
     loop {
-        let page = read_monitor_page(store, user, thread, cursor, MONITOR_PAGE_CHAR_LIMIT).await?;
-        if !page.entries.is_empty() || !page.has_more {
-            return Ok(page);
-        }
-        let prefix: u32 = store
-            .with_work_replica(user, thread, |replica| {
-                Ok(replica
-                    .db
-                    .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-                        row.get(0)
-                    })
-                    .optional()?
-                    .unwrap_or(0))
+        let parsed_cursor = cursor.map(parse_cursor).transpose()?;
+        let thread_id = thread.to_owned();
+        let (page, prefix) = store
+            .with_work_replica(user, thread, move |replica| {
+                Ok((
+                    read_page(replica, &thread_id, parsed_cursor, MONITOR_PAGE_CHAR_LIMIT)?,
+                    replica.downloaded_prefix()?,
+                ))
             })
             .await?;
-        if prefix >= total {
+        if !page.entries.is_empty() || !page.has_more || prefix >= total {
             return Ok(page);
         }
         store
@@ -176,13 +155,7 @@ fn read_page(
     };
     let max_chars = max_chars.clamp(1, MONITOR_PAGE_CHAR_LIMIT);
 
-    let prefix: u32 = replica
-        .db
-        .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-            row.get(0)
-        })
-        .optional()?
-        .unwrap_or(0);
+    let prefix = replica.downloaded_prefix()?;
     let ready_end = u64::from(prefix) * POSITION_STRIDE;
 
     if let Some(resume) = cursor.resume.take() {
@@ -455,13 +428,7 @@ impl WorkReplica {
         let Some(number) = self.patch_result_number(source)? else {
             return Ok(None);
         };
-        let prefix: u32 = self
-            .db
-            .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-                row.get(0)
-            })
-            .optional()?
-            .unwrap_or(0);
+        let prefix = self.downloaded_prefix()?;
         if number >= prefix {
             return Ok(None);
         }

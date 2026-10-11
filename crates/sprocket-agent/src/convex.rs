@@ -214,26 +214,11 @@ impl RuntimeClient {
         part_number: u32,
         storage_id: &str,
     ) -> anyhow::Result<Option<String>> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct AttachmentUrl {
-            storage_id: String,
-            url: Option<String>,
-        }
         let mut args = self.run_args(run_id);
         args.insert("partNumber".into(), Value::Float64(f64::from(part_number)));
-        args.insert(
-            "storageIds".into(),
-            Value::Array(vec![storage_id.to_owned().into()]),
-        );
-        let mut urls: Vec<AttachmentUrl> = self
-            .query_json("transcript:attachmentUrlsForRun", args)
-            .await?;
-        anyhow::ensure!(
-            urls.len() == 1 && urls[0].storage_id == storage_id,
-            "invalid attachment URL response"
-        );
-        Ok(urls.pop().expect("one URL result").url)
+        args.insert("storageId".into(), storage_id.to_owned().into());
+        self.query_json("transcript:attachmentUrlForRun", args)
+            .await
     }
 
     pub(crate) async fn create_run(

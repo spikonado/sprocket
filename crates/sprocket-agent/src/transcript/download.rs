@@ -32,34 +32,25 @@ impl TranscriptStore {
             DownloadOrder::Asc => (start, start.saturating_add(TRANSCRIPT_CHUNK_SIZE).min(end)),
             DownloadOrder::Desc => (end.saturating_sub(TRANSCRIPT_CHUNK_SIZE).max(start), end),
         };
-        let numbers: Vec<_> = (lower..upper).collect();
+        let mut numbers: Vec<_> = (lower..upper).collect();
+        if matches!(order, DownloadOrder::Desc) {
+            numbers.reverse();
+        }
         let mut parts = self.read_parts(user, thread, &numbers).await?;
         let mut missing = numbers
             .iter()
             .copied()
             .filter(|number| !parts.iter().any(|part| part.number == *number));
-        let range = match order {
-            DownloadOrder::Asc => missing.next().map(|first| {
-                let mut end = first + 1;
-                for number in missing {
-                    if number != end {
-                        break;
-                    }
-                    end += 1;
+        let range = missing.next().map(|first| {
+            let mut last = first;
+            for number in missing {
+                if number.abs_diff(last) != 1 {
+                    break;
                 }
-                (first, end)
-            }),
-            DownloadOrder::Desc => missing.next_back().map(|last| {
-                let mut start = last;
-                for number in missing.rev() {
-                    if number + 1 != start {
-                        break;
-                    }
-                    start = number;
-                }
-                (start, last + 1)
-            }),
-        };
+                last = number;
+            }
+            (first.min(last), first.max(last) + 1)
+        });
         let remaining = if let Some((from, to)) = range {
             // A failing user-authenticated watcher must not monopolize the shared download lock.
             let fetched =

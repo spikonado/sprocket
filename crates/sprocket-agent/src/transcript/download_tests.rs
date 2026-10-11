@@ -459,51 +459,6 @@ async fn invalid_pages_leave_no_partial_files_or_indexes_and_can_be_retried() {
     }
 }
 
-#[tokio::test]
-async fn fixed_ranges_finish_while_new_parts_are_appended_remotely() {
-    for order in [DownloadOrder::Asc, DownloadOrder::Desc] {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().to_owned());
-        let mut state = store.load_state("user", "thread").await.unwrap();
-        state.remote_total_parts = 125;
-        store.save_state("user", "thread", &state).await.unwrap();
-        let mut appended = false;
-        store
-            .ensure_parts("user", "thread", 0, 125, order, |start, end, order| {
-                assert!(end <= 125);
-                let append_tail = !appended;
-                appended = true;
-                let store = Arc::clone(&store);
-                async move {
-                    if append_tail {
-                        let mut state = store.load_state("user", "thread").await?;
-                        state.remote_total_parts = 165;
-                        store.save_state("user", "thread", &state).await?;
-                    }
-                    Ok(page(start, end, order, 20))
-                }
-            })
-            .await
-            .unwrap();
-        assert_saved(&store, 0, 125).await;
-        assert_eq!(
-            store
-                .load_state("user", "thread")
-                .await
-                .unwrap()
-                .remote_total_parts,
-            165
-        );
-        assert_eq!(
-            store
-                .missing_numbers("user", "thread", 125, 165)
-                .await
-                .unwrap(),
-            (125..165).collect::<Vec<_>>()
-        );
-    }
-}
-
 fn monitor_part(number: u32) -> TranscriptPart {
     if number == 0 {
         return prompt(0, &"界".repeat(MONITOR_PAGE_CHAR_LIMIT * 2 + 37));
@@ -678,13 +633,7 @@ async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_t
     );
     store
         .with_work_replica("user", "thread", |replica| {
-            let prefix: u32 =
-                replica
-                    .db
-                    .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-                        row.get(0)
-                    })?;
-            assert_eq!(prefix, 160);
+            assert_eq!(replica.downloaded_prefix()?, 160);
             Ok(())
         })
         .await

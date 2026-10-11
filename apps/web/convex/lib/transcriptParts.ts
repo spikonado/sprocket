@@ -273,34 +273,19 @@ export async function loadTranscriptPartsByNumbers(
 		throw new Error(`Request at most ${MAX_TRANSCRIPT_PARTS_PER_QUERY} transcript parts.`);
 	}
 
-	const unique = [...new Set(numbers)]
-		.filter((value) => Number.isInteger(value) && value >= 0)
-		.sort((a, b) => a - b);
-
-	const ranges: { start: number; end: number }[] = [];
-
-	for (const number of unique) {
-		const last = ranges.at(-1);
-
-		if (last && last.end === number) {
-			last.end = number + 1;
-		} else {
-			ranges.push({ start: number, end: number + 1 });
-		}
-	}
-
+	const unique = [...new Set(numbers)].filter((value) => Number.isInteger(value) && value >= 0);
 	const byNumber = new Map<number, Doc<'threadTranscriptParts'>>();
 	await Promise.all(
-		ranges.map(async ({ start, end }) => {
-			const parts = await ctx.db
+		unique.map(async (number) => {
+			const part = await ctx.db
 				.query('threadTranscriptParts')
 				.withIndex('by_threadId_and_number', (query) =>
-					query.eq('threadId', threadId).gte('number', start).lt('number', end)
+					query.eq('threadId', threadId).eq('number', number)
 				)
-				.take(end - start);
+				.unique();
 
-			for (const part of parts) {
-				byNumber.set(part.number, part);
+			if (part) {
+				byNumber.set(number, part);
 			}
 		})
 	);

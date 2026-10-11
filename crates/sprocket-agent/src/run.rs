@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
-use crate::attachments::cache_prompt_attachments_with_urls;
+use crate::attachments::cache_prompt_attachments;
 use crate::catalog::catalog_models_for_run;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
@@ -788,7 +788,7 @@ async fn load_prior_history(
         },
     )
     .await?;
-    cache_prompt_attachments_with_urls(
+    cache_prompt_attachments(
         store,
         user_id,
         thread_id,
@@ -1240,22 +1240,6 @@ mod tests {
         .unwrap();
         assert_eq!(cached, parts);
         assert!(handoff);
-    }
-
-    #[tokio::test]
-    async fn context_readiness_propagates_fetch_failure() {
-        use crate::transcript::{TranscriptState, TranscriptStore};
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().to_owned());
-        let mut state = TranscriptState::new("user".into(), "thread".into());
-        state.remote_total_parts = 1;
-        let error =
-            super::load_context_parts(&store, "user", "thread", &state, "run", |_, _, _| async {
-                Err(anyhow::anyhow!("run capability revoked"))
-            })
-            .await
-            .unwrap_err();
-        assert_eq!(error.to_string(), "run capability revoked");
     }
 
     #[test]

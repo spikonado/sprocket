@@ -417,6 +417,16 @@ impl WorkReplica {
         Self::put_state(&self.db, "total", &total.max(known_total))
     }
 
+    pub(super) fn downloaded_prefix(&self) -> anyhow::Result<u32> {
+        Ok(self
+            .db
+            .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .unwrap_or(0))
+    }
+
     pub fn page(
         &self,
         before: Option<u64>,
@@ -435,13 +445,7 @@ impl WorkReplica {
         let more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
         rows.reverse();
-        let downloaded_prefix: u32 = self
-            .db
-            .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-                row.get(0)
-            })
-            .optional()?
-            .unwrap_or(0);
+        let downloaded_prefix = self.downloaded_prefix()?;
         let ready_prefix = downloaded_prefix;
         let first_sequence = rows.first().and_then(|row| row["sequence"].as_u64());
         let missing_older = first_sequence.is_some_and(|sequence| {
