@@ -29,14 +29,13 @@ use crate::subagents::{
     resolve_subagent_settings,
 };
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
-use crate::transcript::monitor::MONITOR_PAGE_CHAR_LIMIT;
 use crate::types::CompletionProvider;
 
 const CREATE_OR_SEND: &str = "subagents:createOrSend";
 const RECOVER_SUBMISSION: &str = "subagents:recoverSubmission";
 const SNAPSHOT: &str = "subagents:snapshot";
 const MONITOR_INFO: &str = "subagents:threadMonitorInfo";
-const TRANSCRIPT_PARTS: &str = "subagents:transcriptParts";
+const TRANSCRIPT_PARTS_PAGE: &str = "subagents:transcriptPartsPage";
 const CONTROL: &str = "subagents:control";
 const LIST_CHILDREN: &str = "subagents:listChildren";
 
@@ -1255,38 +1254,26 @@ async fn read_transcript_snapshot(
     crate::transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
         .await
         .map_err(tool_error)?;
-    crate::transcript::fetch_missing_parts(
-        store,
-        user_id,
-        thread_id,
-        0,
-        transcript.total_parts,
-        |numbers| async move {
-            let mut fields = thread_args(context, thread_id);
-            fields.insert(
-                "numbers".to_string(),
-                Value::Array(
-                    numbers
-                        .iter()
-                        .map(|number| Value::Float64(*number as f64))
-                        .collect(),
-                ),
-            );
-            let value: serde_json::Value = context
-                .runtime
-                .mutation_json(TRANSCRIPT_PARTS, fields)
-                .await?;
-            crate::transcript::parse_remote_parts(value)
-        },
-    )
-    .await
-    .map_err(tool_error)?;
-    let page = crate::transcript::monitor::read_monitor_page(
+    let page = crate::transcript::monitor::download_monitor_page(
         store,
         user_id,
         thread_id,
         cursor,
-        MONITOR_PAGE_CHAR_LIMIT,
+        transcript.total_parts,
+        |start, end, order| async move {
+            let mut fields = thread_args(context, thread_id);
+            fields.insert("start".into(), Value::Float64(f64::from(start)));
+            fields.insert("end".into(), Value::Float64(f64::from(end)));
+            fields.insert(
+                "order".into(),
+                Value::try_from(serde_json::to_value(order)?)?,
+            );
+            let value: serde_json::Value = context
+                .runtime
+                .mutation_json(TRANSCRIPT_PARTS_PAGE, fields)
+                .await?;
+            crate::transcript::parse_remote_page(value, thread_id)
+        },
     )
     .await
     .map_err(tool_error)?;

@@ -3,6 +3,7 @@ import type { FunctionArgs } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
+import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
@@ -646,6 +647,249 @@ describe('subagent tool job results', () => {
 			});
 		}
 	);
+});
+
+describe('subagents transcript pages', () => {
+	async function seedChildParts(t: ConvexTestInstance, count: number, text = '') {
+		const caller = await startCallerRun(t);
+		const child = await createChild(t, caller);
+		await t.run(async (ctx) => {
+			for (let number = 1; number < count; number++) {
+				await appendTranscriptPart(ctx, {
+					threadId: child.threadId,
+					userId: 'user_alice',
+					runId: child.runId,
+					sourceKey: `prompt:${number}`,
+					kind: 'prompt',
+					prompt: { text: `Part ${number}${text}`, imageUploads: [] },
+					work: { ranges: [] }
+				});
+			}
+		});
+
+		const args = {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			threadId: child.threadId,
+			start: 0,
+			end: count
+		};
+
+		return { caller, child, args };
+	}
+
+	it.each([undefined, 'asc', 'desc'] as const)(
+		'returns at most 100 descendant parts in order %s',
+		async (order) => {
+			const t = initConvexTest();
+			const { child, args } = await seedChildParts(t, 104);
+
+			const page = await t.mutation(api.subagents.transcriptPartsPage, {
+				...args,
+				start: 1,
+				end: 103,
+				order
+			});
+
+			expect(page.threadId).toBe(child.threadId);
+			expect(page.parts.map((part) => part.number)).toEqual(
+				Array.from({ length: 100 }, (_, index) => (order === 'asc' ? index + 1 : 102 - index))
+			);
+		}
+	);
+
+	it.each(['asc', 'desc'] as const)(
+		'resumes byte-limited descendant pages in %s order without gaps',
+		async (order) => {
+			const t = initConvexTest();
+			const { child, args } = await seedChildParts(t, 8, 'x'.repeat(400_000));
+
+			const measured = await t.mutation(async (ctx) => {
+				const before = await ctx.meta.getTransactionMetrics();
+				const result = await ctx.runMutation(api.subagents.transcriptPartsPage, { ...args, order });
+				const after = await ctx.meta.getTransactionMetrics();
+
+				return { result, bytes: after.bytesRead.used - before.bytesRead.used };
+			});
+
+			expect(measured.result.parts.length).toBeGreaterThan(0);
+			expect(measured.result.parts.length).toBeLessThan(args.end);
+			expect(measured.bytes).toBeGreaterThanOrEqual(1_000_000);
+			expect(measured.bytes).toBeLessThan(1_500_000);
+			await t.run((ctx) =>
+				appendTranscriptPart(ctx, {
+					threadId: child.threadId,
+					userId: 'user_alice',
+					runId: child.runId,
+					sourceKey: 'prompt:live',
+					kind: 'prompt',
+					prompt: { text: 'Appended live', imageUploads: [] },
+					work: { ranges: [] }
+				})
+			);
+
+			let start = args.start;
+			let end = args.end;
+			let page = measured.result;
+			const fetched: number[] = [];
+
+			for (let attempt = 0; attempt < args.end && start < end; attempt++) {
+				expect(page.parts.map((part) => part.number)).toEqual(
+					Array.from({ length: page.parts.length }, (_, index) =>
+						order === 'asc' ? start + index : end - 1 - index
+					)
+				);
+				fetched.push(...page.parts.map((part) => part.number));
+				expect(page.parts.length).toBeGreaterThan(0);
+				const lastNumber = page.parts.at(-1)!.number;
+
+				if (order === 'asc') start = lastNumber + 1;
+				else end = lastNumber;
+
+				if (start < end) {
+					page = await t.mutation(api.subagents.transcriptPartsPage, {
+						...args,
+						start,
+						end,
+						order
+					});
+				}
+			}
+
+			expect(start).toBe(end);
+			expect(fetched).toEqual(
+				Array.from({ length: args.end }, (_, index) =>
+					order === 'asc' ? index : args.end - 1 - index
+				)
+			);
+		}
+	);
+
+	it('strips legacy attachment IDs without hydrating page URLs and keeps number reads hydrated', async () => {
+		const t = initConvexTest();
+		const { args } = await seedChildParts(t, 1);
+
+		const storageId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: 'user_alice',
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true
+			});
+
+			const part = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', args.threadId).eq('number', 0))
+				.unique();
+
+			if (!part?.prompt) throw new Error('Missing fixture prompt.');
+			await ctx.db.patch('threadTranscriptParts', part._id, {
+				prompt: {
+					...part.prompt,
+					imageUploads: [
+						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
+					]
+				}
+			});
+
+			return storageId;
+		});
+
+		const metadata = { storageId, name: 'file.txt', mediaType: 'text/plain', size: 4 };
+		const page = await t.mutation(api.subagents.transcriptPartsPage, args);
+		expect(page.parts[0]?.prompt?.imageUploads).toEqual([metadata]);
+
+		const legacy = await t.mutation(api.subagents.transcriptParts, {
+			runId: args.runId,
+			claimId: args.claimId,
+			executionSecret: args.executionSecret,
+			threadId: args.threadId,
+			numbers: [0]
+		});
+
+		expect(legacy.parts[0]?.prompt?.imageUploads).toEqual([
+			{ ...metadata, url: expect.any(String) }
+		]);
+	});
+
+	it('requires a live claim and descendant access, including for grandchild pages', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const childArgs = createArgs(caller);
+		const child = await t.mutation(api.subagents.createOrSend, childArgs);
+		const childCaller = await claimChildRun(t, child, childArgs.childExecutionSecret);
+		const grandchild = await t.mutation(api.subagents.createOrSend, createArgs(childCaller));
+		const sibling = await createChild(t, caller);
+		const unrelated = await seedOwnedThread(t);
+		const foreign = await seedOwnedThread(t, 'user_bob');
+
+		const args = {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			threadId: grandchild.threadId,
+			start: 0,
+			end: 1
+		};
+
+		expect(await t.mutation(api.subagents.transcriptPartsPage, args)).toMatchObject({
+			threadId: grandchild.threadId,
+			parts: [{ number: 0 }]
+		});
+
+		for (const threadId of [caller.threadId, unrelated.threadId, foreign.threadId]) {
+			await expect(
+				t.mutation(api.subagents.transcriptPartsPage, { ...args, threadId })
+			).rejects.toThrow('Thread not found.');
+		}
+
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, {
+				...args,
+				...childCaller,
+				threadId: sibling.threadId
+			})
+		).rejects.toThrow('Thread not found.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, {
+				...args,
+				...childCaller,
+				threadId: caller.threadId
+			})
+		).rejects.toThrow('Thread not found.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, { ...args, executionSecret: 'wrong' })
+		).rejects.toThrow('Run not found.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, { ...args, claimId: 'stale' })
+		).rejects.toThrow('Run is no longer active.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, { ...args, start: -1 })
+		).rejects.toThrow('Invalid transcript range.');
+		await t.run(async (ctx) => {
+			const execution = await ctx.db
+				.query('runExecutionStates')
+				.withIndex('by_runId', (q) => q.eq('runId', caller.runId))
+				.unique();
+
+			if (!execution) throw new Error('Missing fixture execution.');
+			await ctx.db.patch('runExecutionStates', execution._id, { claimExpiresAt: Date.now() - 1 });
+		});
+		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toThrow(
+			'Run is no longer active.'
+		);
+		await t.run((ctx) =>
+			ctx.db.patch('runs', caller.runId, { cancellationRequestedAt: Date.now() })
+		);
+		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toThrow(
+			'Run is cancelled.'
+		);
+	});
 });
 
 describe('subagents access control', () => {

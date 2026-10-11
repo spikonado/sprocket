@@ -22,8 +22,8 @@ use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
-    TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
+    DownloadOrder, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
+    current_run_has_finished_turns, parse_remote_parts, prompt_text_with_attachments,
 };
 use crate::types::{
     CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
@@ -777,59 +777,29 @@ async fn load_prior_history(
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
     let state = apply_remote_state(store, user_id, thread_id, &remote, false).await?;
-    fetch_missing_parts(
+    let (mut parts, current_run_had_context_handoff) = load_context_parts(
         store,
         user_id,
         thread_id,
-        state.history_from_number,
-        state.remote_total_parts,
-        |numbers| {
-            let runtime = runtime.clone();
-            let run_id = run_id.to_string();
-            async move { runtime.transcript_parts_for_run(&run_id, &numbers).await }
+        &state,
+        run_id,
+        |start, end, order| {
+            runtime.transcript_parts_page_for_run(run_id, thread_id, start, end, order)
         },
     )
     .await?;
-    let current_run_had_context_handoff =
-        if state.context_summary.is_some() && state.history_from_number > 0 {
+    cache_prompt_attachments(
+        store,
+        user_id,
+        thread_id,
+        &mut parts,
+        |number, storage_id| async move {
             runtime
-                .transcript_parts_for_run(run_id, &[state.history_from_number - 1])
-                .await?
-                .iter()
-                .any(|part| part.run_id == run_id)
-        } else {
-            false
-        };
-    let numbers: Vec<u32> = (state.history_from_number..state.remote_total_parts).collect();
-    let local_parts = store.read_parts(user_id, thread_id, &numbers).await?;
-    let missing = numbers
-        .iter()
-        .filter(|number| !local_parts.iter().any(|part| part.number == **number))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "required transcript parts {:?} are missing locally after sync",
-            missing
-        );
-    }
-    let mut parts = match fetch_parts_by_numbers(&numbers, |batch| {
-        let runtime = runtime.clone();
-        let run_id = run_id.to_string();
-        async move { runtime.transcript_parts_for_run(&run_id, &batch).await }
-    })
-    .await
-    {
-        Ok(hydrated)
-            if numbers
-                .iter()
-                .all(|number| hydrated.iter().any(|part| part.number == *number)) =>
-        {
-            hydrated
-        }
-        Ok(_) | Err(_) => local_parts,
-    };
-    cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
+                .attachment_url_for_run(run_id, number, &storage_id)
+                .await
+        },
+    )
+    .await?;
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
@@ -842,6 +812,41 @@ async fn load_prior_history(
         continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
+}
+
+async fn load_context_parts<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    state: &TranscriptState,
+    run_id: &str,
+    fetch: F,
+) -> anyhow::Result<(Vec<crate::transcript::TranscriptPart>, bool)>
+where
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<crate::transcript::TranscriptPart>>>,
+{
+    let check_handoff = state.context_summary.is_some() && state.history_from_number > 0;
+    let start = state.history_from_number - u32::from(check_handoff);
+    let end = state.remote_total_parts;
+    anyhow::ensure!(
+        state.history_from_number <= end,
+        "invalid transcript context range"
+    );
+    store
+        .ensure_parts(user, thread, start, end, DownloadOrder::Desc, fetch)
+        .await?;
+    let numbers: Vec<_> = (start..end).collect();
+    let mut parts = store.read_parts(user, thread, &numbers).await?;
+    anyhow::ensure!(
+        parts.len() == numbers.len(),
+        "required transcript parts are missing locally after sync"
+    );
+    let had_handoff = check_handoff && parts.first().is_some_and(|part| part.run_id == run_id);
+    if check_handoff {
+        parts.remove(0);
+    }
+    Ok((parts, had_handoff))
 }
 
 pub async fn run_agent(
@@ -1158,6 +1163,84 @@ mod tests {
 
     const MODEL_LABEL: &str = "GPT-5.6 Sol";
     const MODEL_ID: &str = "gpt-5.6-sol";
+
+    #[tokio::test]
+    async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
+        use crate::transcript::{DownloadOrder, TranscriptPart, TranscriptState, TranscriptStore};
+        use std::sync::Mutex;
+
+        fn prompt(number: u32) -> TranscriptPart {
+            serde_json::from_value(serde_json::json!({
+                "number": number, "sourceKey": format!("prompt:{number}"),
+                "runId": if number == 109 { "current-run" } else { "old-run" },
+                "kind": "prompt", "prompt": {"text": format!("Part {number}"), "imageUploads": []}
+            }))
+            .unwrap()
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_owned());
+        store
+            .append_parts("user", "thread", &[prompt(109)])
+            .await
+            .unwrap();
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.history_from_number = 110;
+        state.remote_total_parts = 120;
+        state.context_summary = Some("Captured summary".into());
+        state.reasoning_stripped_through_part_number = Some(112);
+        let requests = Mutex::new(Vec::new());
+        let (parts, handoff) = super::load_context_parts(
+            &store,
+            "user",
+            "thread",
+            &state,
+            "current-run",
+            |start, end, order| {
+                assert!(matches!(order, DownloadOrder::Desc));
+                requests.lock().unwrap().push((start, end));
+                let store = store.clone();
+                async move {
+                    store.append_parts("user", "thread", &[prompt(120)]).await?;
+                    store
+                        .update_state("user", "thread", |state| {
+                            state.history_from_number = 120;
+                            state.remote_total_parts = 121;
+                            state.context_summary = Some("Newer summary".into());
+                        })
+                        .await?;
+                    Ok((start.max(end - 3)..end).rev().map(prompt).collect())
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert!(handoff);
+        assert_eq!(parts, (110..120).map(prompt).collect::<Vec<_>>());
+        assert!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|&(start, end)| start >= 110 && end <= 120)
+        );
+        let (cached, handoff) = super::load_context_parts(
+            &store,
+            "user",
+            "thread",
+            &state,
+            "current-run",
+            |_, _, _| async {
+                Err(anyhow::anyhow!(
+                    "cached context requested remote transcript parts"
+                ))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cached, parts);
+        assert!(handoff);
+    }
 
     #[test]
     fn prompted_continuations_use_their_user_prompt() {

@@ -325,6 +325,10 @@ impl TranscriptStore {
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
             "invalid transcript thread ID"
         );
+        let download_lock = self
+            .lock_key(format!("download/{user_id}/{thread_id}"))
+            .await;
+        let _download_guard = download_lock.lock().await;
         let lock = self.lock_thread(user_id, thread_id).await;
         let _guard = lock.lock().await;
         let dir = self.thread_dir(user_id, thread_id);

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use convex::{QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_agent::RemoteTranscriptState;
+use sprocket_agent::DownloadOrder;
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
 use tokio::time::sleep;
 
@@ -21,27 +21,24 @@ impl UserConvexClient {
         self.client.subscribe(function, args).await
     }
 
-    pub async fn transcript_parts(
+    pub async fn transcript_parts_page(
         &self,
         thread_id: &str,
-        numbers: &[u32],
+        start: u32,
+        end: u32,
+        order: DownloadOrder,
     ) -> anyhow::Result<Vec<sprocket_agent::TranscriptPart>> {
         let mut args = thread_id_args(thread_id);
+        args.insert("start".into(), Value::Float64(f64::from(start)));
+        args.insert("end".into(), Value::Float64(f64::from(end)));
         args.insert(
-            "numbers".into(),
-            Value::Array(
-                numbers
-                    .iter()
-                    .map(|n| Value::Float64(f64::from(*n)))
-                    .collect(),
-            ),
+            "order".into(),
+            Value::try_from(serde_json::to_value(order)?)?,
         );
-        sprocket_agent::parse_remote_parts(self.query_json("transcript:getParts", args).await?)
-    }
-
-    pub async fn transcript_state(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {
-        self.query_json("transcript:getState", thread_id_args(thread_id))
-            .await
+        sprocket_agent::parse_remote_page(
+            self.query_json("transcript:getPartsPage", args).await?,
+            thread_id,
+        )
     }
 
     pub async fn connect_with_fetcher(

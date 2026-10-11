@@ -2,6 +2,13 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Transcript download compatibility
+
+Keep `transcript:getParts`, `transcript:getPartsForRun` and
+`subagents:transcriptParts` unchanged for released clients. Remove them once
+clients that request explicit part numbers age out. New clients use page
+endpoints. Stored transcript formats are unchanged.
+
 ## Development tooling compatibility
 
 ### TypeScript compiler API

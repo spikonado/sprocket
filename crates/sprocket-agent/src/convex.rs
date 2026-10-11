@@ -187,23 +187,38 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn transcript_parts_for_run(
+    pub(crate) async fn transcript_parts_page_for_run(
         &self,
         run_id: &str,
-        numbers: &[u32],
+        thread_id: &str,
+        start: u32,
+        end: u32,
+        order: crate::transcript::DownloadOrder,
     ) -> anyhow::Result<Vec<crate::transcript::TranscriptPart>> {
         let mut args = self.run_args(run_id);
+        args.insert("start".into(), Value::Float64(f64::from(start)));
+        args.insert("end".into(), Value::Float64(f64::from(end)));
         args.insert(
-            "numbers".to_string(),
-            Value::Array(
-                numbers
-                    .iter()
-                    .map(|number| Value::Float64(*number as f64))
-                    .collect(),
-            ),
+            "order".into(),
+            Value::try_from(serde_json::to_value(order)?)?,
         );
-        let value: serde_json::Value = self.query_json("transcript:getPartsForRun", args).await?;
-        crate::transcript::parse_remote_parts(value)
+        let value = self
+            .query_json("transcript:getPartsPageForRun", args)
+            .await?;
+        crate::transcript::parse_remote_page(value, thread_id)
+    }
+
+    pub(crate) async fn attachment_url_for_run(
+        &self,
+        run_id: &str,
+        part_number: u32,
+        storage_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let mut args = self.run_args(run_id);
+        args.insert("partNumber".into(), Value::Float64(f64::from(part_number)));
+        args.insert("storageId".into(), storage_id.to_owned().into());
+        self.query_json("transcript:attachmentUrlForRun", args)
+            .await
     }
 
     pub(crate) async fn create_run(
