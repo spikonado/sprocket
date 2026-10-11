@@ -11,6 +11,7 @@ use super::read_index::DISPLAY_ITEM;
 use super::sections::POSITION_STRIDE;
 use super::sections::WorkItem;
 use super::store::TranscriptStore;
+use super::{DownloadOrder, TranscriptPart};
 
 pub const MONITOR_PAGE_CHAR_LIMIT: usize = 20_000;
 
@@ -102,6 +103,47 @@ fn parse_cursor(encoded: &str) -> anyhow::Result<MonitorCursor> {
         .decode(encoded)
         .map_err(|_| MonitorReadError::MalformedCursor)?;
     serde_json::from_slice(&bytes).map_err(|_| MonitorReadError::MalformedCursor.into())
+}
+
+pub(crate) async fn download_monitor_page<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    cursor: Option<&str>,
+    total: u32,
+    mut fetch: F,
+) -> anyhow::Result<MonitorPage>
+where
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
+{
+    store
+        .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
+        .await?;
+    loop {
+        let page = read_monitor_page(store, user, thread, cursor, MONITOR_PAGE_CHAR_LIMIT).await?;
+        if !page.entries.is_empty() || !page.has_more {
+            return Ok(page);
+        }
+        let prefix: u32 = store
+            .with_work_replica(user, thread, |replica| {
+                Ok(replica
+                    .db
+                    .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
+                        row.get(0)
+                    })
+                    .optional()?
+                    .unwrap_or(0))
+            })
+            .await?;
+        if prefix >= total {
+            return Ok(page);
+        }
+        store
+            .download_parts_page(user, thread, prefix, total, DownloadOrder::Asc, &mut fetch)
+            .await?;
+        tokio::task::yield_now().await;
+    }
 }
 
 fn encode_cursor(cursor: &MonitorCursor) -> anyhow::Result<String> {

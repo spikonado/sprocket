@@ -4,11 +4,14 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 ## Transcript download compatibility
 
-Released clients still call `transcript:getParts` and
-`transcript:getPartsForRun` with explicit part numbers. Keep their request and
+Released clients still call `transcript:getParts`, `transcript:getPartsForRun`
+and `subagents:transcriptParts` with explicit part numbers. Keep their request and
 response shapes, including request order, duplicates and missing-number handling,
-until those clients age out. New servers use `transcript:getPartsPage` for
-byte-limited, newest-first history downloads. Convex parts and local transcript
+until those clients age out. New clients use byte-limited page endpoints with
+user, run or descendant authorization. They share one per-thread download path
+for display history, fixed agent context ranges and oldest-first subagent monitor
+pages. Attachment URLs are resolved separately, under run authorization, only
+when a local or staged file is missing. Convex parts and local transcript
 files keep their existing formats, so no data migration is needed.
 
 ## Development tooling compatibility

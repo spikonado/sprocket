@@ -313,10 +313,11 @@ export async function loadTranscriptPartsByNumbers(
 }
 
 export async function loadTranscriptPartsPage(
-	ctx: QueryCtx,
+	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>,
 	start: number,
-	end: number
+	end: number,
+	order: 'asc' | 'desc' = 'desc'
 ): Promise<Doc<'threadTranscriptParts'>[]> {
 	if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(end) || end <= start) {
 		throw new Error('Invalid transcript range.');
@@ -327,7 +328,7 @@ export async function loadTranscriptPartsPage(
 		.withIndex('by_threadId_and_number', (query) =>
 			query.eq('threadId', threadId).gte('number', start).lt('number', end)
 		)
-		.order('desc')
+		.order(order)
 		.paginate({
 			cursor: null,
 			numItems: MAX_TRANSCRIPT_PARTS_PER_QUERY,

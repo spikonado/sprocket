@@ -4,7 +4,8 @@ use std::sync::Arc;
 use convex::Value;
 use futures::StreamExt;
 use sprocket_agent::{
-    RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TranscriptStore, apply_remote_state,
+    DownloadOrder, RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TranscriptStore,
+    apply_remote_state,
 };
 use sprocket_convex::decode_labeled_function_result;
 use tokio::sync::{broadcast, watch};
@@ -24,18 +25,6 @@ fn pop_download_page(pending: &mut Vec<(u32, u32)>) -> Option<(u32, u32)> {
         pending.push((start, lower));
     }
     Some((lower, end))
-}
-
-fn newest_missing_range(numbers: &[u32]) -> Option<(u32, u32)> {
-    let &last = numbers.last()?;
-    let mut start = last;
-    for &number in numbers.iter().rev().skip(1) {
-        if number + 1 != start {
-            break;
-        }
-        start = number;
-    }
-    Some((start, last + 1))
 }
 
 async fn metadata(
@@ -81,7 +70,7 @@ async fn download<F, Fut>(
     mut fetch: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(u32, u32) -> Fut,
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<Vec<sprocket_agent::TranscriptPart>>>,
 {
     let mut seen_total = 0;
@@ -96,53 +85,14 @@ where
             states.changed().await?;
             continue;
         };
-        let numbers = store
-            .with_work_replica(user, thread, move |replica| {
-                (lower..end)
-                    .filter_map(|number| match replica.has_part(number) {
-                        Ok(true) => None,
-                        Ok(false) => Some(Ok(number)),
-                        Err(error) => Some(Err(error)),
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()
-            })
+        let remaining = store
+            .download_parts_page(user, thread, lower, end, DownloadOrder::Desc, &mut fetch)
             .await?;
-        if numbers.is_empty() {
-            continue;
+        if remaining.0 < remaining.1 {
+            pending.push(remaining);
         }
-        let mut parts = store.read_parts(user, thread, &numbers).await?;
-        let missing: Vec<_> = numbers
-            .iter()
-            .copied()
-            .filter(|number| !parts.iter().any(|part| part.number == *number))
-            .collect();
-        if let Some((start, end)) = newest_missing_range(&missing) {
-            let fetched = fetch(start, end).await?;
-            let next_end = fetched.last().map(|part| part.number).unwrap_or(end);
-            anyhow::ensure!(
-                next_end >= start
-                    && next_end < end
-                    && fetched.len() == (end - next_end) as usize
-                    && fetched
-                        .iter()
-                        .zip((next_end..end).rev())
-                        .all(|(part, number)| part.number == number),
-                "incomplete transcript download"
-            );
-            store.append_parts(user, thread, &fetched).await?;
-            parts.extend(fetched);
-            if next_end > lower {
-                pending.push((lower, next_end));
-            }
-        }
-        parts.sort_by_key(|part| part.number);
-        let thread_id = thread.to_owned();
-        store
-            .with_work_replica(user, thread, move |replica| {
-                replica.save_parts(&thread_id, &parts)
-            })
-            .await?;
         changed(total);
+        tokio::task::yield_now().await;
     }
 }
 
@@ -179,8 +129,8 @@ pub(crate) async fn synchronize(
         result = async {
             tokio::try_join!(
                 metadata(&client, &store, &user, &thread, states, &changed),
-                download(&store, &user, &thread, state_rx, &changed, |start, end| {
-                    client.transcript_parts_page(&thread, start, end)
+                download(&store, &user, &thread, state_rx, &changed, |start, end, order| {
+                    client.transcript_parts_page(&thread, start, end, order)
                 }),
             )
         } => { result?; }
@@ -203,13 +153,6 @@ mod tests {
             }
             assert_eq!(pop_download_page(&mut pending), None);
         }
-    }
-
-    #[test]
-    fn missing_ranges_skip_cached_parts() {
-        assert_eq!(newest_missing_range(&[1, 2, 5, 7, 8, 9]), Some((7, 10)));
-        assert_eq!(newest_missing_range(&[1, 2, 5]), Some((5, 6)));
-        assert_eq!(newest_missing_range(&[]), None);
     }
 
     #[tokio::test]
@@ -252,7 +195,7 @@ mod tests {
         let changed = move |total| {
             changed_tx.send(total).unwrap();
         };
-        let fetch = |start: u32, end: u32| {
+        let fetch = |start: u32, end: u32, _order| {
             let mut requests = requests.lock().unwrap();
             if requests.is_empty() {
                 states.send_modify(|state| state.total_parts = 251);
