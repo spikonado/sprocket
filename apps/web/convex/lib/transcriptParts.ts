@@ -273,19 +273,34 @@ export async function loadTranscriptPartsByNumbers(
 		throw new Error(`Request at most ${MAX_TRANSCRIPT_PARTS_PER_QUERY} transcript parts.`);
 	}
 
-	const unique = [...new Set(numbers)].filter((value) => Number.isInteger(value) && value >= 0);
+	const unique = [...new Set(numbers)]
+		.filter((value) => Number.isInteger(value) && value >= 0)
+		.sort((a, b) => a - b);
+
+	const ranges: { start: number; end: number }[] = [];
+
+	for (const number of unique) {
+		const last = ranges.at(-1);
+
+		if (last && last.end === number) {
+			last.end = number + 1;
+		} else {
+			ranges.push({ start: number, end: number + 1 });
+		}
+	}
+
 	const byNumber = new Map<number, Doc<'threadTranscriptParts'>>();
 	await Promise.all(
-		unique.map(async (number) => {
-			const part = await ctx.db
+		ranges.map(async ({ start, end }) => {
+			const parts = await ctx.db
 				.query('threadTranscriptParts')
 				.withIndex('by_threadId_and_number', (query) =>
-					query.eq('threadId', threadId).eq('number', number)
+					query.eq('threadId', threadId).gte('number', start).lt('number', end)
 				)
-				.unique();
+				.take(end - start);
 
-			if (part) {
-				byNumber.set(number, part);
+			for (const part of parts) {
+				byNumber.set(part.number, part);
 			}
 		})
 	);
@@ -295,6 +310,32 @@ export async function loadTranscriptPartsByNumbers(
 
 		return part ? [part] : [];
 	});
+}
+
+export async function loadTranscriptPartsPage(
+	ctx: QueryCtx,
+	threadId: Id<'threadRecords'>,
+	start: number,
+	end: number
+): Promise<Doc<'threadTranscriptParts'>[]> {
+	if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(end) || end <= start) {
+		throw new Error('Invalid transcript range.');
+	}
+
+	const result = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_number', (query) =>
+			query.eq('threadId', threadId).gte('number', start).lt('number', end)
+		)
+		.order('desc')
+		.paginate({
+			cursor: null,
+			numItems: MAX_TRANSCRIPT_PARTS_PER_QUERY,
+			maximumRowsRead: MAX_TRANSCRIPT_PARTS_PER_QUERY,
+			maximumBytesRead: 1_000_000
+		});
+
+	return result.page;
 }
 
 export async function attachmentMetaForUploads(

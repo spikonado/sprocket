@@ -21,22 +21,16 @@ impl UserConvexClient {
         self.client.subscribe(function, args).await
     }
 
-    pub async fn transcript_parts(
+    pub async fn transcript_parts_page(
         &self,
         thread_id: &str,
-        numbers: &[u32],
+        start: u32,
+        end: u32,
     ) -> anyhow::Result<Vec<sprocket_agent::TranscriptPart>> {
         let mut args = thread_id_args(thread_id);
-        args.insert(
-            "numbers".into(),
-            Value::Array(
-                numbers
-                    .iter()
-                    .map(|n| Value::Float64(f64::from(*n)))
-                    .collect(),
-            ),
-        );
-        sprocket_agent::parse_remote_parts(self.query_json("transcript:getParts", args).await?)
+        args.insert("start".into(), Value::Float64(f64::from(start)));
+        args.insert("end".into(), Value::Float64(f64::from(end)));
+        sprocket_agent::parse_remote_parts(self.query_json("transcript:getPartsPage", args).await?)
     }
 
     pub async fn transcript_state(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {

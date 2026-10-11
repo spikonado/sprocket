@@ -3,13 +3,15 @@ use std::sync::Arc;
 
 use convex::Value;
 use futures::StreamExt;
-use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
+use sprocket_agent::{
+    RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TranscriptStore, apply_remote_state,
+};
 use sprocket_convex::decode_labeled_function_result;
 use tokio::sync::{broadcast, watch};
 
 use crate::transcript_client::UserConvexClient;
 
-const DOWNLOAD_PAGE_SIZE: u32 = 4;
+const DOWNLOAD_PAGE_SIZE: u32 = TRANSCRIPT_CHUNK_SIZE;
 
 fn thread_args(thread: &str) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), thread.to_owned().into())])
@@ -24,6 +26,18 @@ fn pop_download_page(pending: &mut Vec<(u32, u32)>) -> Option<(u32, u32)> {
     Some((lower, end))
 }
 
+fn newest_missing_range(numbers: &[u32]) -> Option<(u32, u32)> {
+    let &last = numbers.last()?;
+    let mut start = last;
+    for &number in numbers.iter().rev().skip(1) {
+        if number + 1 != start {
+            break;
+        }
+        start = number;
+    }
+    Some((start, last + 1))
+}
+
 async fn metadata(
     client: &UserConvexClient,
     store: &TranscriptStore,
@@ -36,17 +50,22 @@ async fn metadata(
     let subscription = client
         .subscribe("transcript:getState", thread_args(thread))
         .await?;
+    let mut previous = None;
     while let Some(results) = updates.next().await {
         let Some(result) = results.get(subscription.id()).cloned() else {
             continue;
         };
         let state: RemoteTranscriptState =
             decode_labeled_function_result(result, "transcript:getState")?;
+        if previous.as_ref() == Some(&state) {
+            continue;
+        }
         apply_remote_state(store, user, thread, &state, false).await?;
         let total = state.total_parts;
         store
             .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
             .await?;
+        previous = Some(state.clone());
         states.send_replace(state);
         changed(total);
     }
@@ -93,18 +112,26 @@ async fn download(
             .copied()
             .filter(|number| !parts.iter().any(|part| part.number == *number))
             .collect();
-        if !missing.is_empty() {
-            let fetched = client.transcript_parts(thread, &missing).await?;
+        if let Some((start, end)) = newest_missing_range(&missing) {
+            let fetched = client.transcript_parts_page(thread, start, end).await?;
+            let next_end = fetched.last().map(|part| part.number).unwrap_or(end);
             anyhow::ensure!(
-                fetched.len() == missing.len()
-                    && missing
+                next_end >= start
+                    && next_end < end
+                    && fetched.len() == (end - next_end) as usize
+                    && fetched
                         .iter()
-                        .all(|number| fetched.iter().any(|part| part.number == *number)),
+                        .zip((next_end..end).rev())
+                        .all(|(part, number)| part.number == number),
                 "incomplete transcript download"
             );
             store.append_parts(user, thread, &fetched).await?;
             parts.extend(fetched);
+            if next_end > lower {
+                pending.push((lower, next_end));
+            }
         }
+        parts.sort_by_key(|part| part.number);
         let thread_id = thread.to_owned();
         store
             .with_work_replica(user, thread, move |replica| {
@@ -162,13 +189,35 @@ mod tests {
 
     #[test]
     fn downloads_newest_pages_first_without_shifting_old_pages() {
-        for total in 13..=16 {
+        for total in 301..=304 {
             let mut pending = vec![(0, total)];
-            assert_eq!(pop_download_page(&mut pending), Some((12, total)));
-            for range in [(8, 12), (4, 8), (0, 4)] {
+            assert_eq!(pop_download_page(&mut pending), Some((300, total)));
+            for range in [(200, 300), (100, 200), (0, 100)] {
                 assert_eq!(pop_download_page(&mut pending), Some(range));
             }
             assert_eq!(pop_download_page(&mut pending), None);
         }
+    }
+
+    #[test]
+    fn missing_ranges_skip_cached_parts() {
+        assert_eq!(newest_missing_range(&[1, 2, 5, 7, 8, 9]), Some((7, 10)));
+        assert_eq!(newest_missing_range(&[1, 2, 5]), Some((5, 6)));
+        assert_eq!(newest_missing_range(&[]), None);
+    }
+
+    #[test]
+    fn byte_limited_pages_resume_without_skipping_history() {
+        let mut pending = vec![(0, 250)];
+        assert_eq!(pop_download_page(&mut pending), Some((200, 250)));
+        pending.push((200, 230));
+        assert_eq!(pop_download_page(&mut pending), Some((200, 230)));
+        assert_eq!(pop_download_page(&mut pending), Some((100, 200)));
+        pending.push((100, 150));
+        pending.push((250, 251));
+        assert_eq!(pop_download_page(&mut pending), Some((250, 251)));
+        assert_eq!(pop_download_page(&mut pending), Some((100, 150)));
+        assert_eq!(pop_download_page(&mut pending), Some((0, 100)));
+        assert_eq!(pop_download_page(&mut pending), None);
     }
 }

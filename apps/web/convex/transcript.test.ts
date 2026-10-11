@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
+import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import {
 	createQueuedRun,
@@ -7,7 +8,8 @@ import {
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
-	toolTranscriptAssignment
+	toolTranscriptAssignment,
+	type ConvexTestInstance
 } from './test.setup';
 
 describe('numbered transcript parts', () => {
@@ -936,6 +938,201 @@ describe('numbered transcript parts', () => {
 			[0, 'prompt'],
 			[1, 'completion']
 		]);
+	});
+});
+
+describe('transcript range reads', () => {
+	async function seedParts(t: ConvexTestInstance, numbers: number[], text = '') {
+		const owned = await seedOwnedThread(t);
+		const executionSecret = 'range-parts-secret';
+
+		const runId = await t.run(async (ctx) => {
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', owned.threadId))
+				.unique();
+
+			if (!run) throw new Error('Missing fixture run.');
+
+			await ctx.db.patch('runs', run._id, {
+				executionSecretHash: await executionSecretHash(executionSecret)
+			});
+
+			for (const number of numbers) {
+				await ctx.db.insert('threadTranscriptParts', {
+					threadId: owned.threadId,
+					userId: owned.subject,
+					runId: run._id,
+					number,
+					sourceKey: `prompt:${number}`,
+					kind: 'prompt',
+					prompt: { text: `Part ${number}${text}`, imageUploads: [] },
+					work: { ranges: [] }
+				});
+			}
+
+			return run._id;
+		});
+
+		return { ...owned, runId, executionSecret };
+	}
+
+	it('fetches 100 contiguous numbers with one transcript query and only requested reads', async () => {
+		const t = initConvexTest();
+
+		const { asUser, threadId } = await seedParts(
+			t,
+			Array.from({ length: 104 }, (_, number) => number)
+		);
+
+		const numbers = Array.from({ length: 100 }, (_, index) => 101 - index);
+
+		const measured = await asUser.query(async (ctx) => {
+			const before = await ctx.meta.getTransactionMetrics();
+			const result = await ctx.runQuery(api.transcript.getParts, { threadId, numbers });
+			const after = await ctx.meta.getTransactionMetrics();
+
+			return {
+				result,
+				queries: after.databaseQueries.used - before.databaseQueries.used,
+				reads: after.documentsRead.used - before.documentsRead.used
+			};
+		});
+
+		expect(measured.result.parts.map((part) => part.number)).toEqual(numbers);
+		expect(measured.queries).toBe(2);
+		expect(measured.reads).toBe(101);
+	});
+
+	it('preserves sparse request order and duplicates without reading intervening parts', async () => {
+		const t = initConvexTest();
+
+		const { asUser, threadId, runId, executionSecret } = await seedParts(
+			t,
+			Array.from({ length: 12 }, (_, number) => number).filter((number) => number !== 7)
+		);
+
+		const numbers = [9, 2, 9, 7, 8, 99, -1, 0.5];
+
+		const measured = await asUser.query(async (ctx) => {
+			const before = await ctx.meta.getTransactionMetrics();
+			const result = await ctx.runQuery(api.transcript.getParts, { threadId, numbers });
+			const after = await ctx.meta.getTransactionMetrics();
+
+			return {
+				result,
+				queries: after.databaseQueries.used - before.databaseQueries.used,
+				reads: after.documentsRead.used - before.documentsRead.used
+			};
+		});
+
+		expect(measured.result.parts.map((part) => part.number)).toEqual([9, 2, 9, 8]);
+		expect(measured.queries).toBe(4);
+		expect(measured.reads).toBe(4);
+		expect(
+			await t.query(api.transcript.getPartsForRun, { runId, executionSecret, numbers })
+		).toEqual(measured.result);
+	});
+
+	it('returns the newest 100 parts inside the requested half-open range', async () => {
+		const t = initConvexTest();
+
+		const { asUser, threadId } = await seedParts(
+			t,
+			Array.from({ length: 104 }, (_, number) => number)
+		);
+
+		const page = await asUser.query(api.transcript.getPartsPage, {
+			threadId,
+			start: 1,
+			end: 103
+		});
+
+		expect(page.threadId).toBe(threadId);
+		expect(page.parts.map((part) => part.number)).toEqual(
+			Array.from({ length: 100 }, (_, index) => 102 - index)
+		);
+	});
+
+	it('resumes byte-limited pages without gaps and excludes live appends beyond the original end', async () => {
+		const t = initConvexTest();
+		const numbers = Array.from({ length: 8 }, (_, number) => number);
+		const { asUser, subject, threadId, runId } = await seedParts(t, numbers, 'x'.repeat(400_000));
+
+		const measured = await asUser.query(async (ctx) => {
+			const before = await ctx.meta.getTransactionMetrics();
+
+			const result = await ctx.runQuery(api.transcript.getPartsPage, {
+				threadId,
+				start: 0,
+				end: numbers.length
+			});
+
+			const after = await ctx.meta.getTransactionMetrics();
+
+			return { result, bytes: after.bytesRead.used - before.bytesRead.used };
+		});
+
+		expect(measured.result.parts.length).toBeGreaterThan(0);
+		expect(measured.result.parts.length).toBeLessThan(numbers.length);
+		expect(measured.bytes).toBeGreaterThanOrEqual(1_000_000);
+		// Pagination includes the document that crosses the byte target.
+		expect(measured.bytes).toBeLessThan(1_500_000);
+		await t.run((ctx) =>
+			ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: subject,
+				runId,
+				number: numbers.length,
+				sourceKey: 'prompt:live',
+				kind: 'prompt',
+				prompt: { text: 'Appended live', imageUploads: [] },
+				work: { ranges: [] }
+			})
+		);
+
+		const fetched: number[] = [];
+		let page = measured.result;
+		let end = numbers.length;
+
+		for (let attempt = 0; attempt < numbers.length && end > 0; attempt++) {
+			expect(page.parts.map((part) => part.number)).toEqual(
+				Array.from({ length: page.parts.length }, (_, index) => end - 1 - index)
+			);
+			fetched.push(...page.parts.map((part) => part.number));
+			const nextEnd = page.parts.at(-1)?.number ?? end;
+			expect(nextEnd).toBeLessThan(end);
+			end = nextEnd;
+
+			if (end > 0) {
+				page = await asUser.query(api.transcript.getPartsPage, { threadId, start: 0, end });
+			}
+		}
+
+		expect(end).toBe(0);
+		expect(fetched).toEqual(numbers.toReversed());
+
+		const live = await asUser.query(api.transcript.getPartsPage, {
+			threadId,
+			start: numbers.length,
+			end: numbers.length + 1
+		});
+
+		expect(live.parts.map((part) => part.number)).toEqual([numbers.length]);
+	});
+
+	it('requires the thread owner to fetch a page', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedParts(t, [0]);
+		const args = { threadId, start: 0, end: 1 };
+
+		expect((await asUser.query(api.transcript.getPartsPage, args)).parts).toHaveLength(1);
+		await expect(
+			t.withIdentity({ subject: 'bob' }).query(api.transcript.getPartsPage, args)
+		).rejects.toThrow('Thread not found.');
+		await expect(t.query(api.transcript.getPartsPage, args)).rejects.toThrow(
+			'Authentication required.'
+		);
 	});
 });
 

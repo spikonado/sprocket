@@ -13,6 +13,7 @@ import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import {
 	getTranscriptState,
 	loadTranscriptPartsByNumbers,
+	loadTranscriptPartsPage,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
@@ -56,6 +57,25 @@ export const getParts = query({
 		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
+		);
+
+		return { threadId: args.threadId, parts };
+	}
+});
+
+export const getPartsPage = query({
+	args: {
+		threadId: v.id('threadRecords'),
+		start: v.number(),
+		end: v.number()
+	},
+	returns: vTranscriptPartsResult,
+	handler: async (ctx, args) => {
+		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+
+		const parts = await transcriptPartsForClient(
+			ctx,
+			await loadTranscriptPartsPage(ctx, args.threadId, args.start, args.end)
 		);
 
 		return { threadId: args.threadId, parts };
