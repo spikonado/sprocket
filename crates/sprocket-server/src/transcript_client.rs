@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use convex::{QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_agent::{DownloadOrder, RemoteTranscriptState};
+use sprocket_agent::DownloadOrder;
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
 use tokio::time::sleep;
 
@@ -39,11 +39,6 @@ impl UserConvexClient {
             self.query_json("transcript:getPartsPage", args).await?,
             thread_id,
         )
-    }
-
-    pub async fn transcript_state(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {
-        self.query_json("transcript:getState", thread_id_args(thread_id))
-            .await
     }
 
     pub async fn connect_with_fetcher(

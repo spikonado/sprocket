@@ -526,6 +526,66 @@ fn monitor_part(number: u32) -> TranscriptPart {
 }
 
 #[tokio::test]
+async fn stale_monitor_total_preserves_newer_cached_answers_and_known_history() {
+    for known_total in [2, 3] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_owned());
+        let answer: TranscriptPart = serde_json::from_value(json!({
+            "number": 1,
+            "sourceKey": "completion:run:1",
+            "kind": "completion",
+            "runId": "run-0",
+            "completion": {
+                "streamId": "1",
+                "items": [{"type": "text", "text": "final answer"}]
+            }
+        }))
+        .unwrap();
+        let parts = vec![prompt(0, "question"), answer];
+        store.append_parts("user", "thread", &parts).await.unwrap();
+        store
+            .with_work_replica("user", "thread", move |replica| {
+                replica.set_remote_total(known_total)?;
+                replica.save_parts("thread", &parts)
+            })
+            .await
+            .unwrap();
+
+        let monitor = download_monitor_page(&store, "user", "thread", None, 1, |_, _, _| {
+            ready(Err(anyhow::anyhow!(
+                "cached monitor output triggered a fetch"
+            )))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            monitor.entries,
+            vec![
+                MonitorEntry::Prompt {
+                    id: "prompt-0".into(),
+                    text: "question".into(),
+                },
+                MonitorEntry::Text {
+                    id: "text-1-0".into(),
+                    text: "final answer".into(),
+                },
+            ]
+        );
+        assert_eq!(monitor.has_more, known_total > 2);
+        store
+            .with_work_replica("user", "thread", move |replica| {
+                assert_eq!(replica.state::<u32>("total")?, Some(known_total));
+                let display = replica.page(None, 10, None, &[], false)?;
+                assert_eq!(display["rows"][1]["text"], "final answer");
+                assert_eq!(display["syncing"], known_total > 2);
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn monitor_returns_the_prompt_then_cached_cursor_output_before_advancing_the_prefix() {
     let dir = tempfile::tempdir().unwrap();
     let store = TranscriptStore::new(dir.path().to_owned());

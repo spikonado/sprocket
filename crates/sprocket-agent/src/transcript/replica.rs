@@ -413,7 +413,8 @@ impl WorkReplica {
     }
 
     pub fn set_remote_total(&mut self, total: u32) -> anyhow::Result<()> {
-        Self::put_state(&self.db, "total", &total)
+        let known_total: u32 = self.state("total")?.unwrap_or(0);
+        Self::put_state(&self.db, "total", &total.max(known_total))
     }
 
     pub fn page(
