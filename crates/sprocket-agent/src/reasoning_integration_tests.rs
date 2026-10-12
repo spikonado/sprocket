@@ -444,7 +444,11 @@ async fn openai_fractional_timestamp_stream_delivers_text_reasoning_and_tools() 
         }
     }
     assert_eq!(text, TEXT);
-    assert_eq!(reasoning.unwrap().id.as_deref(), Some(ITEM_ID));
+    let reasoning = reasoning.unwrap();
+    assert_eq!(
+        reasoning.open(reasoning.issuer()).unwrap().id.as_deref(),
+        Some(ITEM_ID)
+    );
     assert_eq!(tool.unwrap().id.wire(), TOOL_CALL_ID);
     assert_eq!(server.join().unwrap().len(), 1);
 }
