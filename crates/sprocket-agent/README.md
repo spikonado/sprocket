@@ -84,14 +84,15 @@ retains the existing model limits.
 Repository landing pages, directories, and issue pages keep normal scraping.
 
 For extensionless paths, the agent first requests the URL path with `.md`
-appended, preserving query parameters and dropping the fragment. It removes
-trailing slashes before checking the last path segment. Paths with any file
-extension, including `.html`, skip the probe. Existing `.md` URLs are read
-directly without appending again. Extension detection decodes percent escapes;
-dots in parent directories, query parameters, and fragments do not count.
-A successful UTF-8 markdown or plain-text response bypasses Firecrawl. Failed
-requests, non-200 responses, HTML, binary content, and empty responses fall back
-to Firecrawl using the original URL supplied by the model. The probe has a
+appended, then `{path}/index.md` if that request is not usable markdown. Query
+parameters are preserved and the fragment is dropped. It removes trailing
+slashes before checking the last path segment. Paths with any file extension,
+including `.html`, skip the probe. Existing `.md` URLs are read directly without
+appending again. Extension detection decodes percent escapes; dots in parent
+directories, query parameters, and fragments do not count. A successful UTF-8
+markdown or plain-text response bypasses Firecrawl. Failed requests, non-200
+responses, HTML, binary content, and empty responses on both candidates fall
+back to Firecrawl using the original URL supplied by the model. The probe has a
 10-second timeout, five-redirect limit, and 64 MiB download limit. Image requests
 retain their existing handling before this probe.
 Direct markdown returns an explicit "summary not generated" value and an empty

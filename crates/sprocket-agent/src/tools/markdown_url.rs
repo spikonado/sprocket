@@ -16,16 +16,23 @@ pub(super) async fn try_markdown_url(
         biased;
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
         result = async {
-            match markdown_url(url) {
-                Some(url) => fetch_markdown(url, MAX_SCRAPE_BYTES).await.ok(),
-                None => None,
+            for url in markdown_urls(url) {
+                if let Ok(result) = fetch_markdown(url, MAX_SCRAPE_BYTES).await {
+                    return Some(result);
+                }
             }
+            None
         } => Ok(result),
     }
 }
 
-fn markdown_url(mut url: Url) -> Option<Url> {
-    let path = url.path().trim_end_matches('/');
+#[cfg(test)]
+fn markdown_url(url: Url) -> Option<Url> {
+    markdown_urls(url).into_iter().next()
+}
+
+fn markdown_urls(mut url: Url) -> Vec<Url> {
+    let path = url.path().trim_end_matches('/').to_owned();
     let filename = percent_encoding::percent_decode_str(path.rsplit('/').next().unwrap_or(""))
         .decode_utf8_lossy();
     let extension = filename
@@ -34,12 +41,19 @@ fn markdown_url(mut url: Url) -> Option<Url> {
         .map(|(_, extension)| extension);
     match extension {
         Some(extension) if extension.eq_ignore_ascii_case("md") => {}
-        Some(_) => return None,
+        Some(_) => return Vec::new(),
         None if filename.eq_ignore_ascii_case(".md") => {}
-        None => url.set_path(&format!("{path}.md")),
+        None => {
+            let mut index = url.clone();
+            url.set_path(&format!("{path}.md"));
+            url.set_fragment(None);
+            index.set_path(&format!("{path}/index.md"));
+            index.set_fragment(None);
+            return vec![url, index];
+        }
     }
     url.set_fragment(None);
-    Some(url)
+    vec![url]
 }
 
 async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<Value> {
@@ -212,6 +226,52 @@ mod tests {
         }
     }
 
+    #[test]
+    fn documentation_roots_also_probe_index_markdown() {
+        for (source, expected) in [
+            (
+                "https://developers.cloudflare.com/tunnel/",
+                [
+                    "https://developers.cloudflare.com/tunnel.md",
+                    "https://developers.cloudflare.com/tunnel/index.md",
+                ],
+            ),
+            (
+                "https://developers.cloudflare.com/tunnel",
+                [
+                    "https://developers.cloudflare.com/tunnel.md",
+                    "https://developers.cloudflare.com/tunnel/index.md",
+                ],
+            ),
+            (
+                "https://example.com/docs/?q=a%26b#heading",
+                [
+                    "https://example.com/docs.md?q=a%26b",
+                    "https://example.com/docs/index.md?q=a%26b",
+                ],
+            ),
+            (
+                "https://example.com/",
+                ["https://example.com/.md", "https://example.com/index.md"],
+            ),
+        ] {
+            assert_eq!(
+                markdown_urls(Url::parse(source).unwrap())
+                    .iter()
+                    .map(Url::as_str)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        assert_eq!(
+            markdown_urls(Url::parse("https://example.com/README.MD?raw=true").unwrap())
+                .iter()
+                .map(Url::as_str)
+                .collect::<Vec<_>>(),
+            ["https://example.com/README.MD?raw=true"]
+        );
+    }
+
     #[tokio::test]
     async fn file_extensions_skip_the_probe_without_a_request() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -311,10 +371,35 @@ mod tests {
             response(200, "text/markdown", b" \n"),
             b"HTTP/1.1 200 OK\r\nContent-Type: text/markdown\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial".to_vec(),
         ] {
-            let (url, server) = serve(vec![bytes]).await;
+            let (url, server) = serve(vec![bytes.clone(), bytes]).await;
             assert!(try_markdown_url(url, &WorkspaceCancellation::new()).await.unwrap().is_none());
             server.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn index_markdown_is_used_when_the_suffixed_path_is_missing() {
+        let (mut url, server) = serve(vec![
+            response(404, "text/plain", b"Not found"),
+            response(200, "text/markdown", b"# Tunnel"),
+        ])
+        .await;
+        url.set_path("/tunnel/");
+        let result = try_markdown_url(url, &WorkspaceCancellation::new())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["markdown"], "# Tunnel");
+        assert!(
+            result["url"]
+                .as_str()
+                .unwrap()
+                .ends_with("/tunnel/index.md?lang=en")
+        );
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /tunnel.md?lang=en HTTP/1.1"));
+        assert!(requests[1].starts_with("GET /tunnel/index.md?lang=en HTTP/1.1"));
     }
 
     #[tokio::test]
