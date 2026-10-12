@@ -26,6 +26,7 @@ pub(super) async fn try_markdown_url(
     }
 }
 
+#[cfg(test)]
 fn markdown_url(url: Url) -> Option<Url> {
     markdown_urls(url).into_iter().next()
 }
