@@ -195,10 +195,11 @@ mod tests {
             "response.failed",
             "response.incomplete",
         ] {
-            for timestamp in [
-                json!(1791807140.125),
-                json!(1791807140.0),
-                json!(1791807140),
+            for (timestamp, whole_seconds) in [
+                (json!(0.125), 0),
+                (json!(1791807140.125), 1791807140),
+                (json!(1791807140.0), 1791807140),
+                (json!(1791807140), 1791807140),
             ] {
                 let event = json!({
                     "type": kind,
@@ -217,7 +218,7 @@ mod tests {
                 else {
                     panic!("expected lifecycle event: {raw}");
                 };
-                assert_eq!(chunk.response.created_at, 1791807140);
+                assert_eq!(chunk.response.created_at, whole_seconds);
                 assert_eq!(preserved, raw);
             }
         }
