@@ -51,6 +51,17 @@ types but unifies streamed and awaited run errors as `PromptError`.
 Return to a registry release only once it contains that fix and the provider,
 replay, recovery, and handoff regressions pass. Never substitute unpinned main.
 
+### Responses fractional timestamps
+
+OpenAI's Responses schema allows fractional `created_at` seconds. Rig 0.43
+requires `u64`, so the Responses decoder truncates valid nonnegative fractional
+timestamps in lifecycle events to whole seconds. It keeps the original event
+for provider error diagnostics. Other invalid fields still fail decoding.
+Requests, stored transcripts, and released clients are unchanged.
+
+Remove this adapter once the pinned Rig revision accepts fractional timestamps
+and the fractional-timestamp stream regression passes without it.
+
 ### SIWC streaming content type
 
 The ChatGPT SIWC route can omit `Content-Type` on a successful streaming
