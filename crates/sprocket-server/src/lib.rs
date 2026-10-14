@@ -1,7 +1,6 @@
 mod artifact_watch;
 mod auth;
 mod chatgpt_credentials;
-mod chatgpt_oauth;
 pub mod cli_protocol;
 mod cli_sessions;
 mod command_sessions;
@@ -98,7 +97,7 @@ pub struct AppState {
     pub auth: Arc<auth::AuthState>,
     pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
     pub(crate) chatgpt_credentials: Arc<chatgpt_credentials::ChatGptService>,
-    pub(crate) chatgpt_oauth: Arc<chatgpt_oauth::PendingLogins>,
+    pub(crate) chatgpt_oauth: Arc<routes::chatgpt::PendingLogins>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
@@ -174,8 +173,10 @@ impl AppState {
         let chatgpt_credentials =
             chatgpt_credentials::ChatGptService::load_or_unavailable(&data_dir)
                 .expect("ChatGPT credential service");
-        let chatgpt_oauth =
-            chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
+        let chatgpt_oauth = routes::chatgpt::PendingLogins::new(
+            Arc::clone(&chatgpt_credentials),
+            Arc::clone(&auth),
+        );
         Self {
             lifetime: cli_sessions::ServerLifetime::new(false),
             auth,
@@ -211,7 +212,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::health::routes())
         .merge(routes::config::routes())
         .merge(routes::auth::routes())
-        .merge(chatgpt_oauth::routes())
+        .merge(routes::chatgpt::routes())
         .merge(routes::cli::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
@@ -273,7 +274,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
 
     let chatgpt_credentials = chatgpt_credentials::ChatGptService::load_or_unavailable(&data_dir)?;
     let pending_chatgpt_oauth =
-        chatgpt_oauth::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
+        routes::chatgpt::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
 
     let state = AppState {
         lifetime: Arc::clone(&lifetime),
@@ -437,7 +438,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     {
         tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
     }
-    chatgpt_oauth::shutdown(&pending_chatgpt_oauth).await;
+    routes::chatgpt::shutdown(&pending_chatgpt_oauth).await;
     machines.shutdown().await;
     result?;
     Ok(())
