@@ -136,17 +136,23 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
                 }
             }
             "description" => {
-                let mut scalar = value.to_string();
+                let mut scalar = format!("description: {value}");
+                let quoted = value.starts_with(['\'', '"']);
                 while let Some(line) = lines.next_if(|line| {
                     line.trim().is_empty()
                         || starts_with_yaml_indent(line)
                         || line.trim_start().starts_with('#')
+                        || (quoted
+                            && serde_yaml_ng::from_str::<HashMap<String, Option<String>>>(&scalar)
+                                .is_err())
                 }) {
                     scalar.push('\n');
                     scalar.push_str(line);
                 }
-                let value = serde_yaml_ng::from_str::<Option<String>>(&scalar)
+                let value = serde_yaml_ng::from_str::<HashMap<String, Option<String>>>(&scalar)
                     .map_err(|error| format!("invalid description: {error}"))?
+                    .remove("description")
+                    .flatten()
                     .unwrap_or_default()
                     .split_whitespace()
                     .collect::<Vec<_>>()
@@ -645,6 +651,9 @@ mod tests {
             "\n  Handle PDFs\n  when needed",
             "'Handle PDFs\n  when needed'",
             "\"Handle PDFs\n  when needed\"",
+            "'Handle PDFs\nwhen needed'",
+            "\"Handle PDFs\nwhen needed\"",
+            "\"Handle PDFs\nwhen\\nneeded\"",
             "\"  Handle\\tPDFs\\nwhen   needed  \"",
             "Handle PDFs when needed # inline comment",
         ] {
@@ -656,6 +665,26 @@ mod tests {
             assert_eq!(parsed.name, "demo");
             assert!(parsed.disable_model_invocation);
             assert_eq!(parsed.body, "# Body\n");
+        }
+    }
+
+    #[test]
+    fn preserves_description_document_markers_and_quoted_content() {
+        for (scalar, expected) in [
+            ("---", "---"),
+            ("--- Use this skill", "--- Use this skill"),
+            ("...", "..."),
+            ("'Handle ''quoted''\nPDFs'", "Handle 'quoted' PDFs"),
+            ("\"Handle \\\"quoted\\\"\nPDFs\"", "Handle \"quoted\" PDFs"),
+            (
+                "\"Handle PDFs\ndisable-model-invocation: true\"",
+                "Handle PDFs disable-model-invocation: true",
+            ),
+        ] {
+            let contents = format!("---\nname: demo\ndescription: {scalar}\n---\nbody\n");
+            let parsed = parse_skill_markdown(&contents).expect(scalar);
+            assert_eq!(parsed.description, expected);
+            assert!(!parsed.disable_model_invocation);
         }
     }
 
