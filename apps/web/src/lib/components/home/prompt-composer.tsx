@@ -44,7 +44,7 @@ export type PendingAgentQuestion = {
 };
 
 export type PromptComposerProps = {
-	notices?: ReactNode;
+	notices?: (state: { usageBlocked: boolean }) => ReactNode;
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
 	attachments: ComposerAttachment[];
@@ -798,7 +798,7 @@ export function PromptComposerView({
 									aria-label="Conversation notices"
 									tabIndex={0}
 								>
-									{notices}
+									{notices?.({ usageBlocked })}
 									{composerNotice ? (
 										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
 									) : null}
