@@ -15,6 +15,7 @@ gix = { version = "0.89", default-features = false, features = ["sha1", "max-per
 libc = "0.2.186"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+serde_yaml_ng = "0.10.0"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
