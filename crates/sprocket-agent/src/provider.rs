@@ -1280,14 +1280,10 @@ fn apply_completed_text(
                 }
             }
         }
-        let mut metadata = serde_json::json!({ "rigNative": item });
-        if let Some(phase) = native.get("phase") {
-            metadata["openai_responses"]["phase"] = phase.clone();
-        }
-        if let Some(message_id) = native.get("id") {
-            metadata["openai_responses"]["message_id"] = message_id.clone();
-        }
-        provider_metadata.insert(format!("text:{id}"), metadata);
+        provider_metadata.insert(
+            format!("text:{id}"),
+            serde_json::json!({ "rigNative": item }),
+        );
     }
     previous
 }
@@ -1301,29 +1297,16 @@ fn apply_completed_tool_call(
 ) {
     let call_id = call.id.wire().into_owned();
     let key = part_id.clone().unwrap_or_else(|| call_id.clone());
-    let mut metadata =
-        serde_json::Map::from_iter([("toolCallAdditionalParams".into(), serde_json::Value::Null)]);
     let block = AssistantContent::ToolCall(call.clone());
     if let Some(native) = block.native_item() {
-        if let Some(item_id) = native.get("id") {
-            metadata.insert("openai".into(), serde_json::json!({ "itemId": item_id }));
+        let mut item = native.clone();
+        if let Some(item) = item.as_object_mut() {
+            item.remove("arguments");
         }
-        if let Some(signature) = native
-            .get("signature")
-            .or_else(|| native.get("thought_signature"))
-        {
-            metadata.insert("signature".into(), signature.clone());
-        }
-        let mut additional_params = native.as_object().cloned().unwrap_or_default();
-        for field in ["type", "id", "call_id", "name", "arguments"] {
-            additional_params.remove(field);
-        }
-        metadata.insert("toolCallAdditionalParams".into(), additional_params.into());
-        let mut item = native.as_object().cloned().unwrap_or_default();
-        item.remove("arguments");
-        metadata.insert("rigNative".into(), item.into());
+        provider_metadata.insert(key, serde_json::json!({ "rigNative": item }));
+    } else {
+        provider_metadata.remove(&key);
     }
-    provider_metadata.insert(key, metadata.into());
     parts.apply_tool_call(
         part_id,
         call_id,
@@ -1428,12 +1411,12 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            durable[0]["providerMetadata"]["openai_responses"]["phase"],
+            durable[0]["providerMetadata"]["rigNative"]["phase"],
             "commentary"
         );
         assert_eq!(durable[1]["text"], "Done");
         assert_eq!(
-            durable[1]["providerMetadata"]["openai_responses"]["phase"],
+            durable[1]["providerMetadata"]["rigNative"]["phase"],
             "final_answer"
         );
 

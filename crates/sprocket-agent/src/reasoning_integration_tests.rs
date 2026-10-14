@@ -928,17 +928,13 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     assert_eq!(items[3]["name"], TOOL_NAME);
     assert!(items[3]["providerMetadata"]["rigNative"].is_null());
     assert_eq!(items[5]["callId"], "call_2");
-    assert_eq!(items[5]["providerMetadata"]["openai"]["itemId"], "fc_2");
-    assert_eq!(
-        items[1]["providerMetadata"]["openai_responses"]["message_id"],
-        "msg_commentary"
-    );
+    assert_eq!(items[5]["providerMetadata"]["rigNative"]["id"], "fc_2");
     assert_eq!(
         items[1]["providerMetadata"]["rigNative"]["id"],
         "msg_commentary"
     );
     assert_eq!(
-        items[4]["providerMetadata"]["openai_responses"]["message_id"],
+        items[4]["providerMetadata"]["rigNative"]["id"],
         "msg_between"
     );
     assert_eq!(
@@ -975,7 +971,7 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
         assert_eq!(answer.as_deref(), Some(TEXT));
         assert_eq!(completed_turns.len(), 2);
         assert_eq!(
-            completed_turns[1].0[0]["providerMetadata"]["openai_responses"]["message_id"],
+            completed_turns[1].0[0]["providerMetadata"]["rigNative"]["id"],
             "msg_final"
         );
         dispatches.sort_by(|(_, left), (_, right)| left.call_id.cmp(&right.call_id));

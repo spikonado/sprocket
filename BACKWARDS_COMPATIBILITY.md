@@ -42,38 +42,37 @@ provider settings stay in their existing formats, so no migration is required.
 The cutoff is persistent replay state, not a compatibility shim. Keep it until
 a migration removes the covered reasoning from stored transcript parts.
 
-### Rig 0.44 history reader
+### Released completion item metadata
 
-Rig uses the crates.io 0.44.0 release. Sprocket's history reader converts
-released assistant records to item-shaped turns. Tool-result correlators become
-Rig's single call ID; distinct provider item IDs move into native function-call
-items. Legacy `openai_responses` text extras, including `message_id`, phase and
-content annotations, become native message items. The reader also accepts
-compact `rigNative` items in text and tool-call metadata. Text and arguments
-are rebuilt from their existing transcript fields. Only fingerprint-matching
-native items are persisted, so edits cannot restore stale provider data.
+New completion items store Rig 0.44's native provider item in
+`providerMetadata.rigNative`, without the text or arguments that the item's
+`text` and `input` fields already hold. Every completion item also records the
+turn's `providerMetadata.origin`. Older clients reading these transcripts are
+not supported.
 
-Reasoning still persists one encrypted payload in the existing OpenAI metadata.
-The reader accepts released block arrays and issuer-tagged blocks, projecting
-summaries and ciphertext into native OpenAI reasoning items. Raw text,
-signatures and redacted legacy payloads are not projected. Missing historical
-issuers still mean `openai`. Native replay needs the originating API, provider
-and model on the assistant turn. Do not replay ciphertext across provider
-handoffs.
-The reader restores the turn's `origin` from the first valid
-`providerMetadata.origin` among its completion items. The caller may explicitly
-assign its selected context origin to unidentified legacy turns with
-`assign_unidentified_legacy_history_origin`;
-known origins are never overwritten. Keep this fallback until every supported
-transcript has recorded provenance or a versioned migration supplies it.
+Transcripts written by released clients use other `providerMetadata` fields.
+When an item has no `rigNative`, the reader in `transcript/history.rs` rebuilds
+the native item from them:
 
-Stored local JSONL and Convex records are not rewritten. Keep these readers
-until supported clients age out or a versioned migration rewrites all supported
-histories. Media source JSON remains compatible with 0.44. Image/audio
-`additional_params` are no longer consumed by Rig; their stored JSON remains
-untouched. Video/document object metadata is retained. Do not adopt post-release
-document source types or widen new metadata to scalars while old clients remain
-supported.
+- Text: `openai_responses` extras become a native message item. `message_id`
+  becomes its ID, `phase` stays on the item, and other extras such as
+  `annotations` move to its content part.
+- Tool calls: `openai.itemId` becomes the item ID, falling back to `callId`.
+  `toolCallAdditionalParams` (or the whole metadata object when it is absent)
+  supplies extra fields, and `signature` supplies the signature.
+- Turns without `origin` are assigned the selected model's origin by
+  `assign_unidentified_legacy_history_origin`. Known origins are never
+  overwritten.
+
+Keep these fallbacks until a versioned migration rewrites all stored local
+JSONL and Convex transcripts.
+
+Reasoning items use the same format for new and released clients: summary text,
+`openai.itemId`, one encrypted payload in `openai.reasoningEncryptedContent`,
+and `reasoningIssuer`. A missing issuer means `openai`, which is the released
+default. Only OpenAI reasoning becomes a native reasoning item, so ciphertext
+is never replayed to another provider. Keep the missing-issuer default until
+the same migration supplies the issuer.
 
 ### SIWC streaming content type
 
@@ -111,54 +110,17 @@ configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
 ### Rig developer messages
 
 Rig 0.44's message type has no developer role. Sprocket represents application
-instructions as Rig system messages and converts them to `developer` in the
-shared Responses wire. Base instructions use the provider's `instructions`
-configuration directly. Late instructions stay at their conversation position
-on gateway, BYOK, and SIWC routes. User content and tool results keep their roles;
-stored transcript formats are unchanged. Remove this mapping when a released
-Rig version supports developer messages natively and the handoff, continuation,
-and SIWC prefix tests pass without it.
-
-### Rig history identities
-
-Released Sprocket history records carry separate `id` and optional `callId`
-fields and omit tool names on results. The Rust history reader reconstructs
-Rig 0.44's `CallId` and preserves distinct item IDs in native items. It
-resolves each result's required name from its preceding call. Historical
-OpenAI-shaped reasoning blocks become native OpenAI reasoning items when loaded.
-No stored data is rewritten: local JSONL and Convex transcript formats remain
-compatible with released clients.
-
-New reasoning items retain summaries as display text, one opaque encrypted
-replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
-ID in `providerMetadata.openai.itemId`, and the issuer in
-`providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
-are not persisted. Encrypted payload bytes are preserved verbatim without
-duplication. The Rust reader reconstructs native summary/encrypted items; missing
-issuers default to `openai` for released histories. The history fields remain
-`id` and `blocksJson`; issuer-aware histories encode projected reasoning
-inside `blocksJson`, while the reader still accepts released block arrays.
-This additive metadata format needs no backfill. Keep the existing replay
-fields, array reader and missing-issuer default until supported clients age out
-or a versioned migration rewrites all supported histories. Stateless BYOK/SIWC
-replay still requires a nonempty encrypted payload.
-
-New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
-the opaque signature in `providerMetadata.signature`, and native additional
-parameters in `providerMetadata.toolCallAdditionalParams`. `callId` stays the
-provider's tool-result correlator. Explicit `null` additional parameters mean
-the native call had none. Released readers ignore the added metadata;
-new readers fall back to `callId` and the historical metadata shape for old
-items. This additive format widening needs no backfill; IDs already discarded
-by older releases cannot be recovered.
-
-Text items preserve Rig's `openai_responses` extras, including their message ID
-and phase. Single-message completions add the call's message ID there when Rig
-only reports it on the terminal response; multi-message item IDs take precedence.
-
-Keep this boundary conversion while Sprocket's transcript protocol uses these
-fields. Remove it only with a versioned protocol migration that rewrites all
-supported histories and supports direct upgrades from released clients.
+instructions such as the handoff and continuation prompts as Rig system
+messages. `DeveloperResponses` in `openai.rs` keeps them in `input` and
+rewrites their role to `developer` on gateway, BYOK, and SIWC routes. Base
+instructions stay in the top-level `instructions` field, and a late
+instruction stays at its position, so the request prefix before it is
+unchanged and the provider's prompt cache still matches. Stored transcripts are
+unaffected. Remove this mapping when a released Rig version supports developer
+messages natively and these tests pass without it:
+`siwc_body_keeps_late_application_instructions_as_developer_messages`,
+`completion_and_stream_use_the_refreshed_credential`, and the handoff request
+assertions in `context_handoff_integration_tests.rs`.
 
 ## Local data directory backwards compatibility
 
