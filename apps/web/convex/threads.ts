@@ -23,7 +23,10 @@ async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch('threadRecords', threadId, { title: trimmedTitle });
+	await ctx.db.patch('threadRecords', threadId, {
+		title: trimmedTitle,
+		titleRenameKey: crypto.randomUUID()
+	});
 
 	return { userId, record };
 }

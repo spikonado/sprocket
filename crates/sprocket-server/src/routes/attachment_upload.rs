@@ -3,9 +3,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use axum::Json;
-use axum::extract::{Query, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, header};
-use axum_extra::extract::CookieJar;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sprocket_convex::deserialize_convex_u64;
@@ -14,6 +13,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
+use crate::routes::session::{AuthorizedJson, AuthorizedQuery, UserScoped};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -22,6 +22,12 @@ pub(super) struct UploadQuery {
     name: String,
     #[serde(rename = "threadId")]
     _thread_id: Option<String>,
+}
+
+impl UserScoped for UploadQuery {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -44,14 +50,10 @@ enum RegistrationResult {
 
 pub(super) async fn upload_handler(
     State(state): State<AppState>,
-    Query(query): Query<UploadQuery>,
+    AuthorizedQuery(query): AuthorizedQuery<UploadQuery>,
     headers: HeaderMap,
-    jar: CookieJar,
     request: Request,
 ) -> Result<Json<UploadedAttachment>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &query.user_id)
-        .await?;
     let media_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -148,15 +150,16 @@ pub(super) struct DiscardRequest {
     storage_id: String,
 }
 
+impl UserScoped for DiscardRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 pub(super) async fn discard_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<DiscardRequest>,
+    AuthorizedJson(payload): AuthorizedJson<DiscardRequest>,
 ) -> Result<Json<bool>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     discard(
         &state,
         &payload.user_id,
@@ -191,34 +194,4 @@ async fn discard(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::{Body, Bytes};
-
-    #[tokio::test]
-    async fn stages_large_binary_uploads_without_a_body_size_limit() {
-        let temp = tempfile::NamedTempFile::new().unwrap();
-        let chunks = futures::stream::iter(
-            (0..12).map(|_| Ok::<_, std::io::Error>(Bytes::from(vec![0xff; 1024 * 1024]))),
-        );
-        let size = stage_body(Body::from_stream(chunks), temp.path())
-            .await
-            .unwrap();
-        assert_eq!(size, 12 * 1024 * 1024);
-        assert_eq!(tokio::fs::metadata(temp.path()).await.unwrap().len(), size);
-    }
-
-    #[tokio::test]
-    async fn failed_upload_stream_is_not_reported_as_complete() {
-        let temp = tempfile::NamedTempFile::new().unwrap();
-        let chunks = futures::stream::iter([
-            Ok(Bytes::from_static(b"partial")),
-            Err(std::io::Error::other("connection closed")),
-        ]);
-        assert!(
-            stage_body(Body::from_stream(chunks), temp.path())
-                .await
-                .is_err()
-        );
-    }
-}
+mod tests;

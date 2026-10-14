@@ -2,6 +2,13 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Transcript download compatibility
+
+Keep `transcript:getParts`, `transcript:getPartsForRun` and
+`subagents:transcriptParts` unchanged for released clients. Remove them once
+clients that request explicit part numbers age out. New clients use page
+endpoints. Stored transcript formats are unchanged.
+
 ## Development tooling compatibility
 
 ### TypeScript compiler API
@@ -15,14 +22,57 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
-### Rig 0.43 upstream revision
+### Provider and model-vendor context handoffs
 
-Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
-first merged post-0.43 revision removing an unconditional partial-conversation
-stderr dump from invalid-tool recovery. This revision retains 0.43's history
-types but unifies streamed and awaited run errors as `PromptError`.
-Return to a registry release only once it contains that fix and the provider,
-replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+Run context responses optionally include `providerHandoff` with the previous
+provider's model settings. Released clients ignore this field. Keep it optional
+and keep the Rust missing-field default until those clients age out.
+
+The source comes from uncovered transcript completions and uses the existing
+summary cutoff. Missing historical provider IDs still mean `spikonado`. Local
+transcripts, saved provider settings and Convex documents keep their existing
+formats, so existing threads need no migration.
+
+If that handoff fails, the selected provider continues from the same visible
+history with reasoning replay omitted. The thread may store optional
+`reasoningStrippedThroughPartNumber`, an inclusive part cutoff. Released
+clients ignore the field. Transcript state responses include it when set, and
+older local transcript state files load without it. Parts, summaries and
+provider settings stay in their existing formats, so no migration is required.
+The cutoff is persistent replay state, not a compatibility shim. Keep it until
+a migration removes the covered reasoning from stored transcript parts.
+
+### Released completion item metadata
+
+New completion items store Rig 0.44's native provider item in
+`providerMetadata.rigNative`, without the text or arguments that the item's
+`text` and `input` fields already hold. Every completion item also records the
+turn's `providerMetadata.origin`. Older clients reading these transcripts are
+not supported.
+
+Transcripts written by released clients use other `providerMetadata` fields.
+When an item has no `rigNative`, the reader in `transcript/history.rs` rebuilds
+the native item from them:
+
+- Text: `openai_responses` extras become a native message item. `message_id`
+  becomes its ID, `phase` stays on the item, and other extras such as
+  `annotations` move to its content part.
+- Tool calls: `openai.itemId` becomes the item ID, falling back to `callId`.
+  `toolCallAdditionalParams` (or the whole metadata object when it is absent)
+  supplies extra fields, and `signature` supplies the signature.
+- Turns without `origin` are assigned the selected model's origin by
+  `assign_unidentified_legacy_history_origin`. Known origins are never
+  overwritten.
+
+Keep these fallbacks until a versioned migration rewrites all stored local
+JSONL and Convex transcripts.
+
+Reasoning items use the same format for new and released clients: summary text,
+`openai.itemId`, one encrypted payload in `openai.reasoningEncryptedContent`,
+and `reasoningIssuer`. A missing issuer means `openai`, which is the released
+default. Only OpenAI reasoning becomes a native reasoning item, so ciphertext
+is never replayed to another provider. Keep the missing-issuer default until
+the same migration supplies the issuer.
 
 ### SIWC streaming content type
 
@@ -48,67 +98,29 @@ supported upgrade window. Model selections and Convex data need no migration.
 
 ### Stateless OpenAI reasoning replay
 
-Rig 0.43 preserves and inlines Responses message and function items with their
-native IDs, so the old `OpenAiReplayClient` ID-clearing workaround is removed.
-Sprocket's `StatelessResponses` wire sets `store: false`, requests encrypted
-reasoning, and omits reasoning without a nonempty encrypted payload. Summary-only
-reasoning cannot be replayed without server storage. Function call IDs continue
-to pair tool results; existing transcript formats remain unchanged.
+Sprocket's `StatelessResponses` wire only sets `store: false`. Rig 0.44 requests
+encrypted reasoning and filters stateless reasoning without ciphertext.
+Summary-only reasoning cannot be replayed without server storage. Function
+call IDs continue to pair tool results; existing transcript formats remain
+unchanged.
 
 Remove this wire wrapper once Rig exposes an equivalent stateless Responses
 configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
 
 ### Rig developer messages
 
-Rig's pinned message type has no developer role. Sprocket represents application
-instructions as Rig system messages and converts them to `developer` in the
-shared Responses wire. Base instructions use the provider's `instructions`
-configuration directly. Late instructions stay at their conversation position
-on gateway, BYOK, and SIWC routes. User content and tool results keep their roles;
-stored transcript formats are unchanged. Remove this mapping when a released
-Rig version supports developer messages natively and the handoff, continuation,
-and SIWC prefix tests pass without it.
-
-### Rig history identities
-
-Released Sprocket history records carry separate `id` and optional `callId`
-fields and omit tool names on results. The Rust history reader reconstructs
-Rig 0.43's unified `CallId`, preserving a distinct item ID when present, and
-resolves each result's required name from its preceding call. Historical
-OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
-No stored data is rewritten: local JSONL and Convex transcript formats remain
-compatible with released clients.
-
-New reasoning items retain summaries as display text, one opaque encrypted
-replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
-ID in `providerMetadata.openai.itemId`, and the issuer in
-`providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
-are not persisted. Encrypted payload bytes are preserved verbatim without
-duplication. The Rust reader reconstructs summary/encrypted blocks; missing
-issuers default to `openai` for released histories. The history fields remain
-`id` and `blocksJson`; issuer-aware histories encode sealed projected reasoning
-inside `blocksJson`, while the reader still accepts released block arrays.
-This additive metadata format needs no backfill. Keep the existing replay
-fields, array reader and missing-issuer default until supported clients age out
-or a versioned migration rewrites all supported histories. Stateless BYOK/SIWC
-replay still requires a nonempty encrypted payload.
-
-New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
-the opaque signature in `providerMetadata.signature`, and native additional
-parameters in `providerMetadata.toolCallAdditionalParams`. `callId` stays the
-provider's tool-result correlator. Explicit `null` additional parameters mean
-the native call had none. Released readers ignore the added metadata;
-new readers fall back to `callId` and the historical metadata shape for old
-items. This additive format widening needs no backfill; IDs already discarded
-by older releases cannot be recovered.
-
-Text items preserve Rig's `openai_responses` extras, including their message ID
-and phase. Single-message completions add the call's message ID there when Rig
-only reports it on the terminal response; multi-message item IDs take precedence.
-
-Keep this boundary conversion while Sprocket's transcript protocol uses these
-fields. Remove it only with a versioned protocol migration that rewrites all
-supported histories and supports direct upgrades from released clients.
+Rig 0.44's message type has no developer role. Sprocket represents application
+instructions such as the handoff and continuation prompts as Rig system
+messages. `DeveloperResponses` in `openai.rs` keeps them in `input` and
+rewrites their role to `developer` on gateway, BYOK, and SIWC routes. Base
+instructions stay in the top-level `instructions` field, and a late
+instruction stays at its position, so the request prefix before it is
+unchanged and the provider's prompt cache still matches. Stored transcripts are
+unaffected. Remove this mapping when a released Rig version supports developer
+messages natively and these tests pass without it:
+`siwc_body_keeps_late_application_instructions_as_developer_messages`,
+`completion_and_stream_use_the_refreshed_credential`, and the handoff request
+assertions in `context_handoff/integration_tests.rs`.
 
 ## Local data directory backwards compatibility
 
@@ -248,6 +260,19 @@ for `exec_cmd` and `control_cmd`; `poll_cmd` returns output in both
 modes, subject to its running-session zero-wait cooldown.
 Keep the permissive historical payload validators permanently because transcript
 history records the original calls. No stored-data rewrite is needed.
+
+### Retired exec_cmd workdir
+
+New Rust agents run `exec_cmd` in the thread's cwd, set by `set_cwd`, and no
+longer advertise a `workdir` argument. `vExecCommandPayload` keeps an optional
+`workdir` so released agents can still dispatch it and stored jobs still
+validate. The UI keeps showing `(cwd …)` for historical calls that carry it.
+Rust argument parsing ignores the field when old history is replayed.
+
+Keep the optional validator field and the UI label permanently because
+transcript history records the original calls. Released agents ignore the new
+optional `cwd` in run context responses, and threads without a saved `cwd`
+start at the workspace root, so no stored-data rewrite is needed.
 
 ### Retired command control tool
 
@@ -593,6 +618,13 @@ Firecrawl integration may omit `summary` and `images`. The validators accept
 both shapes so executor history and local JSONL transcripts remain readable.
 `normalizeScrapeUrlResults` drops `truncated` and backfills the Firecrawl
 default summary with an empty image list.
+
+#### Historical skill results
+
+`read_skill` returns complete bodies and no longer emits `truncated`.
+The stored result validator still accepts that optional field for released
+clients and historical results. Remove it only after those clients age out and
+stored results are migrated. Local transcripts must continue accepting it.
 
 #### Hosted parse files
 

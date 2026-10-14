@@ -4,7 +4,8 @@ use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    CatalogModelCapabilities, CompletionProvider, ContextBudget, gateway_api_v1_url,
+    CatalogModelCapabilities, CompletionProvider, ContextBudget, ProviderHandoff, RunSnapshot,
+    gateway_api_v1_url,
 };
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
@@ -157,7 +158,7 @@ pub async fn catalog_for_provider(
 }
 
 fn select_catalog_model(
-    catalog: GatewaySprocketCatalog,
+    catalog: &GatewaySprocketCatalog,
     model_id: &str,
 ) -> anyhow::Result<CatalogModelCapabilities> {
     let model = catalog
@@ -167,6 +168,7 @@ fn select_catalog_model(
         .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
     Ok(CatalogModelCapabilities {
         label: model.label.clone(),
+        vendor: model.provider.clone(),
         context_budget: ContextBudget {
             context_window_tokens: model.context_window_tokens,
             auto_handoff_token_limit: model.auto_handoff_token_limit,
@@ -176,77 +178,62 @@ fn select_catalog_model(
     })
 }
 
-/// Fetch model capabilities for `model_id` from one catalog GET.
-pub async fn catalog_capabilities_for_model(
+pub(crate) async fn catalog_models_for_run(
     gateway_url: &str,
-    model_id: &str,
-) -> anyhow::Result<CatalogModelCapabilities> {
+    run: &RunSnapshot,
+    handoff: Option<ProviderHandoff>,
+) -> anyhow::Result<(
+    CatalogModelCapabilities,
+    anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>>,
+)> {
     let catalog = fetch_catalog(gateway_url).await?;
-    select_catalog_model(catalog, model_id)
+    let selected = select_catalog_model(&catalog, &run.selected_model)?;
+    let handoff = match handoff {
+        Some(handoff) => {
+            select_handoff_model(&catalog, handoff, run.completion_provider, &selected.vendor)
+        }
+        None => Ok(None),
+    };
+    Ok((selected, handoff))
+}
+
+fn select_handoff_model(
+    catalog: &GatewaySprocketCatalog,
+    mut handoff: ProviderHandoff,
+    target_provider: CompletionProvider,
+    target_vendor: &str,
+) -> anyhow::Result<Option<(ProviderHandoff, CatalogModelCapabilities)>> {
+    let removed = !catalog
+        .models
+        .iter()
+        .any(|model| model.id == handoff.selected_model);
+    if removed {
+        let eligible = |model: &&GatewayCatalogModel| {
+            handoff.completion_provider == CompletionProvider::Spikonado
+                || model.provider == "openai"
+        };
+        let model = catalog
+            .models
+            .iter()
+            .filter(eligible)
+            .find(|model| model.id == catalog.default_model_id)
+            .or_else(|| catalog.models.iter().find(eligible))
+            .ok_or_else(|| {
+                anyhow!("no models are available for the previous completion provider")
+            })?;
+        handoff.selected_model = model.id.clone();
+        if !model.reasoning_efforts.contains(&handoff.reasoning_effort) {
+            handoff.reasoning_effort = model.default_reasoning_effort.clone();
+        }
+        handoff.fast_mode &= model.service_tiers.iter().any(|tier| tier == "fast");
+    }
+    let capabilities = select_catalog_model(catalog, &handoff.selected_model)?;
+    // A fallback cannot establish the historical vendor, so summarize instead of replaying it.
+    Ok((removed
+        || handoff.completion_provider != target_provider
+        || capabilities.vendor != target_vendor)
+        .then_some((handoff, capabilities)))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn catalog_payload() -> GatewayModelsResponse {
-        serde_json::from_value(serde_json::json!({
-            "sprocket": {
-                "protocolVersion": 1,
-                "defaultModelId": "vision-model",
-                "defaultServiceTier": "standard",
-                "models": [
-                    {
-                        "id": "vision-model",
-                        "label": "Vision Model",
-                        "provider": "openai",
-                        "reasoningEfforts": ["medium", "high"],
-                        "defaultReasoningEffort": "high",
-                        "serviceTiers": ["standard", "fast"],
-                        "supportsImages": true,
-                        "supportsRequiredToolChoice": true,
-                        "contextWindowTokens": 100000,
-                        "autoCompactTokenLimit": 80000
-                    },
-                    {
-                        "id": "long-context-model",
-                        "label": "Long Context Model",
-                        "provider": "other",
-                        "reasoningEfforts": ["none"],
-                        "defaultReasoningEffort": "none",
-                        "serviceTiers": ["standard"],
-                        "supportsImages": false,
-                        "contextWindowTokens": 1000000,
-                        "autoCompactTokenLimit": 900000
-                    }
-                ]
-            }
-        }))
-        .expect("catalog payload")
-    }
-
-    #[test]
-    fn reports_selected_model_metadata_from_one_payload() {
-        let vision =
-            select_catalog_model(catalog_payload().sprocket, "vision-model").expect("vision model");
-        assert!(vision.supports_images);
-        assert!(vision.supports_required_tool_choice);
-        assert_eq!(vision.label, "Vision Model");
-        assert_eq!(vision.context_budget.context_window_tokens, 100_000);
-        assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
-
-        let long_context = select_catalog_model(catalog_payload().sprocket, "long-context-model")
-            .expect("long-context model");
-        assert!(!long_context.supports_images);
-        assert!(!long_context.supports_required_tool_choice);
-        assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
-    }
-
-    #[test]
-    fn missing_catalog_model_is_an_error() {
-        let error = select_catalog_model(catalog_payload().sprocket, "no-such-model")
-            .expect_err("unknown model")
-            .to_string();
-        assert!(error.contains("no-such-model"));
-    }
-}
+mod tests;

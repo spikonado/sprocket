@@ -1,10 +1,18 @@
-import { ArrowLeft, ChartNoAxesColumn, CreditCard, KeyRound, UserRound } from 'lucide-react';
+import {
+	ArrowLeft,
+	ChartNoAxesColumn,
+	CreditCard,
+	KeyRound,
+	Settings,
+	UserRound
+} from 'lucide-react';
 import SidebarTopActions from '$lib/components/home/sidebar-top-actions';
 import type { SprocketTheme } from '$lib/theme';
 
-export type SettingsPage = 'account' | 'usage' | 'providers' | 'payments';
+export type SettingsPage = 'general' | 'account' | 'usage' | 'providers' | 'payments';
 
 const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
+	{ id: 'general', label: 'General', icon: Settings },
 	{ id: 'account', label: 'Account', icon: UserRound },
 	{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
 	{ id: 'providers', label: 'BYOK/BYOS', icon: KeyRound },

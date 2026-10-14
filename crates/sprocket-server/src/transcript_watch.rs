@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
+use sprocket_agent::TranscriptStore;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::{UserConvexClient, retry_after_failure};
+use crate::watch_registry::{WatchRegistry, WatchSession};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,13 +21,6 @@ pub struct TranscriptWatchEvent {
 struct WatchKey {
     user_id: String,
     thread_id: String,
-}
-
-struct WatchSlot {
-    id: uuid::Uuid,
-    refs: usize,
-    events: broadcast::Sender<TranscriptWatchEvent>,
-    task: JoinHandle<()>,
 }
 
 type WatchStarter = Arc<dyn Fn(WatchStart) -> JoinHandle<()> + Send + Sync>;
@@ -45,15 +38,12 @@ pub struct TranscriptWatchers {
     deployment_url: String,
     store: Arc<TranscriptStore>,
     native_auth: Arc<NativeAuthManager>,
-    inner: Mutex<HashMap<WatchKey, WatchSlot>>,
+    registry: Arc<WatchRegistry<WatchKey, TranscriptWatchEvent>>,
     start: WatchStarter,
 }
 
 pub struct TranscriptWatchSession {
-    watchers: Arc<TranscriptWatchers>,
-    key: WatchKey,
-    id: uuid::Uuid,
-    rx: broadcast::Receiver<TranscriptWatchEvent>,
+    session: WatchSession<WatchKey, TranscriptWatchEvent>,
 }
 
 impl TranscriptWatchers {
@@ -80,20 +70,16 @@ impl TranscriptWatchers {
             deployment_url,
             store,
             native_auth,
-            inner: Mutex::new(HashMap::new()),
+            registry: WatchRegistry::new(),
             start,
         })
     }
 
     pub async fn abort_thread(&self, user_id: &str, thread_id: &str) {
-        let key = WatchKey {
+        self.registry.abort(&WatchKey {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
-        };
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(slot) = inner.remove(&key) {
-            slot.task.abort();
-        }
+        });
     }
 
     pub async fn notify_local_update(
@@ -103,22 +89,17 @@ impl TranscriptWatchers {
         total_parts: u32,
         stale: bool,
     ) {
-        let key = WatchKey {
-            user_id: user_id.to_string(),
-            thread_id: thread_id.to_string(),
-        };
-        if let Some(slot) = self
-            .inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .get(&key)
-        {
-            let _ = slot.events.send(TranscriptWatchEvent {
+        self.registry.send_to(
+            &WatchKey {
+                user_id: user_id.to_string(),
+                thread_id: thread_id.to_string(),
+            },
+            TranscriptWatchEvent {
                 event_type: "updated",
                 total_parts: Some(total_parts),
                 stale,
-            });
-        }
+            },
+        );
     }
 
     pub async fn open(self: &Arc<Self>, user_id: &str, thread_id: &str) -> TranscriptWatchSession {
@@ -126,78 +107,28 @@ impl TranscriptWatchers {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
         };
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(slot) = inner.get_mut(&key) {
-            slot.refs += 1;
-            return TranscriptWatchSession {
-                watchers: Arc::clone(self),
-                key,
-                id: slot.id,
-                rx: slot.events.subscribe(),
-            };
-        }
-        let (events, rx) = broadcast::channel(16);
-        let id = uuid::Uuid::new_v4();
-        let task = (self.start)(WatchStart {
-            deployment_url: self.deployment_url.clone(),
-            store: Arc::clone(&self.store),
-            native_auth: Arc::clone(&self.native_auth),
-            user_id: user_id.to_string(),
-            thread_id: thread_id.to_string(),
-            events: events.clone(),
-        });
-        inner.insert(
+        let (session, ()) = self.registry.open_with(
             key.clone(),
-            WatchSlot {
-                id,
-                refs: 1,
-                events,
-                task,
+            16,
+            || (),
+            |events, ()| {
+                (self.start)(WatchStart {
+                    deployment_url: self.deployment_url.clone(),
+                    store: Arc::clone(&self.store),
+                    native_auth: Arc::clone(&self.native_auth),
+                    user_id: key.user_id.clone(),
+                    thread_id: key.thread_id.clone(),
+                    events,
+                })
             },
         );
-        TranscriptWatchSession {
-            watchers: Arc::clone(self),
-            key,
-            id,
-            rx,
-        }
-    }
-
-    fn close(&self, key: &WatchKey, id: uuid::Uuid) {
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(slot) = inner.get_mut(key) else {
-            return;
-        };
-        if slot.id != id {
-            return;
-        }
-        slot.refs = slot.refs.saturating_sub(1);
-        if slot.refs == 0 {
-            if let Some(slot) = inner.remove(key) {
-                slot.task.abort();
-            }
-        }
-    }
-
-    #[cfg(test)]
-    pub fn active_count(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .len()
+        TranscriptWatchSession { session }
     }
 }
 
 impl TranscriptWatchSession {
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<TranscriptWatchEvent> {
-        &mut self.rx
-    }
-}
-
-impl Drop for TranscriptWatchSession {
-    fn drop(&mut self) {
-        // Sync close so shutdown / no-runtime drops still release the slot.
-        self.watchers.close(&self.key, self.id);
+        self.session.receiver()
     }
 }
 
@@ -244,9 +175,6 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
             .auth_token_fetcher_for_user(start.user_id.clone()),
     )
     .await?;
-    let remote = client.transcript_state(&start.thread_id).await?;
-    apply_and_publish(start, &remote).await?;
-
     crate::work_sync::synchronize(
         client,
         Arc::clone(&start.store),
@@ -263,181 +191,5 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
     .await
 }
 
-async fn apply_and_publish(
-    start: &WatchStart,
-    remote: &RemoteTranscriptState,
-) -> anyhow::Result<()> {
-    apply_remote_state(
-        &start.store,
-        &start.user_id,
-        &start.thread_id,
-        remote,
-        false,
-    )
-    .await?;
-    let _ = start.events.send(TranscriptWatchEvent {
-        event_type: "updated",
-        total_parts: Some(remote.total_parts),
-        stale: false,
-    });
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn native_auth() -> Arc<NativeAuthManager> {
-        NativeAuthManager::configured_for_test(
-            crate::native_auth::NativeAuthConfig {
-                workos_client_id: "client_test".to_string(),
-            },
-            "http://127.0.0.1/callback".to_string(),
-        )
-    }
-
-    #[tokio::test]
-    async fn last_close_cancels_the_watch_task() {
-        let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
-        let store = TranscriptStore::new(dir.clone());
-        let live = Arc::new(AtomicUsize::new(0));
-        let live_task = live.clone();
-        let watchers = TranscriptWatchers::with_starter(
-            "https://example.convex.cloud".into(),
-            store,
-            native_auth(),
-            Arc::new(move |_start| {
-                let live_task = live_task.clone();
-                live_task.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    struct DropLive(Arc<AtomicUsize>);
-                    impl Drop for DropLive {
-                        fn drop(&mut self) {
-                            self.0.fetch_sub(1, Ordering::SeqCst);
-                        }
-                    }
-                    let _live = DropLive(live_task);
-                    std::future::pending::<()>().await;
-                })
-            }),
-        );
-
-        let first = watchers.open("user", "thread").await;
-        let second = watchers.open("user", "thread").await;
-        assert_eq!(watchers.active_count(), 1);
-        assert_eq!(live.load(Ordering::SeqCst), 1);
-        drop(first);
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        assert_eq!(watchers.active_count(), 1);
-        drop(second);
-        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-        assert_eq!(watchers.active_count(), 0);
-        assert_eq!(live.load(Ordering::SeqCst), 0);
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[tokio::test]
-    async fn local_updates_are_sent_to_open_sessions() {
-        let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
-        let store = TranscriptStore::new(dir.clone());
-        let watchers = TranscriptWatchers::with_starter(
-            "https://example.convex.cloud".into(),
-            store,
-            native_auth(),
-            Arc::new(|_start| tokio::spawn(std::future::pending())),
-        );
-        let mut session = watchers.open("user", "thread").await;
-
-        watchers
-            .notify_local_update("user", "thread", 4, true)
-            .await;
-
-        let event = session.receiver().recv().await.expect("local update");
-        assert_eq!(event.total_parts, Some(4));
-        assert!(event.stale);
-        drop(session);
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[tokio::test]
-    async fn closing_an_aborted_session_does_not_cancel_its_replacement() {
-        let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
-        let watchers = TranscriptWatchers::with_starter(
-            "https://example.convex.cloud".into(),
-            TranscriptStore::new(dir.clone()),
-            native_auth(),
-            Arc::new(|_start| tokio::spawn(std::future::pending())),
-        );
-        let old = watchers.open("user", "thread").await;
-        watchers.abort_thread("user", "thread").await;
-        let mut replacement = watchers.open("user", "thread").await;
-        drop(old);
-        assert_eq!(watchers.active_count(), 1);
-        watchers
-            .notify_local_update("user", "thread", 7, false)
-            .await;
-        assert_eq!(
-            replacement.receiver().recv().await.unwrap().total_parts,
-            Some(7)
-        );
-        drop(replacement);
-        assert_eq!(watchers.active_count(), 0);
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[tokio::test]
-    async fn connected_watch_clears_stale_without_waiting_for_part_bodies() {
-        let dir =
-            std::env::temp_dir().join(format!("sprocket-watch-metadata-{}", uuid::Uuid::new_v4()));
-        let store = TranscriptStore::new(dir.clone());
-        store
-            .update_state("user", "thread", |state| state.stale = true)
-            .await
-            .unwrap();
-        let (events, mut rx) = broadcast::channel(8);
-        let start = WatchStart {
-            deployment_url: "https://example.convex.cloud".into(),
-            store: Arc::clone(&store),
-            native_auth: native_auth(),
-            user_id: "user".into(),
-            thread_id: "thread".into(),
-            events,
-        };
-        apply_and_publish(
-            &start,
-            &RemoteTranscriptState {
-                thread_id: "thread".into(),
-                total_parts: 500,
-                history_from_number: 0,
-                context_summary: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let event = rx.recv().await.expect("metadata update");
-        assert_eq!(event.total_parts, Some(500));
-        assert!(!event.stale);
-
-        let state = store.load_state("user", "thread").await.unwrap();
-        assert_eq!(state.remote_total_parts, 500);
-        assert!(!state.stale);
-        assert!(state.downloaded_ranges.is_empty());
-        assert_eq!(
-            store
-                .missing_numbers("user", "thread", 0, 40)
-                .await
-                .unwrap(),
-            (0..40).collect::<Vec<_>>()
-        );
-        assert!(
-            store
-                .read_parts("user", "thread", &(0..40).collect::<Vec<_>>())
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-}
+mod tests;

@@ -59,7 +59,7 @@ async fn output_waits_for_local_execution_and_never_needs_a_backend_connection()
     request.after_revision = None;
     state
         .auth
-        .bind_session_user(&token, "other-user")
+        .sync_sessions_with_owner(Some("other-user"))
         .await
         .unwrap();
     assert_eq!(

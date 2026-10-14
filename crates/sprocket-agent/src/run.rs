@@ -5,27 +5,29 @@ use rig::message::UserContent;
 use sprocket_workspace::{
     BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
-    resolve_workspace_root,
+    resolve_directory, resolve_workspace_root, simplified_path,
 };
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use crate::attachments::cache_prompt_attachments;
-use crate::catalog::catalog_capabilities_for_model;
+use crate::catalog::catalog_models_for_run;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
-    TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
+    DownloadOrder, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
+    current_run_has_finished_turns, parse_remote_parts, prompt_text_with_attachments,
 };
-use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
+use crate::types::{
+    CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
+};
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
 // apps/web/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
@@ -47,7 +49,7 @@ const CONTINUE_PROMPT: &str = "continue";
 // Must match convex/lib/agentErrors.ts so executor-reported lease loss and
 // lifecycle-detected abandonment have the same automatic recovery policy.
 const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
-const DEVELOPER_PROMPT_TEMPLATE: &str = include_str!("developer_prompt.md");
+const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
 const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
@@ -125,6 +127,21 @@ struct WorkspacePromptContext {
     initial_context: Message,
 }
 
+/// Restores the thread's saved cwd, falling back to the workspace root when it
+/// is gone, e.g. a deleted worktree or a thread resumed on another machine.
+fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
+    saved
+        .and_then(|saved| {
+            resolve_directory(workspace_root, saved)
+                .map(simplified_path)
+                .inspect_err(|error| {
+                    eprintln!("sprocket-agent: resetting cwd to the workspace root: {error:#}")
+                })
+                .ok()
+        })
+        .unwrap_or_else(|| workspace_root.to_path_buf())
+}
+
 fn build_workspace_prompt_context(
     workspace_path: &str,
     workspace_instructions: &[WorkspaceInstruction],
@@ -163,22 +180,23 @@ fn build_workspace_prompt_context(
         blocks.join("\n\n")
     };
 
-    let skills_block = if skills.is_empty() {
+    let entries = skills
+        .iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .map(|skill| {
+            let description = collapse_whitespace(&skill.description);
+            format!("- name: {}\n  description: {description}", skill.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let skills_block = if entries.is_empty() {
         "No skills are installed.".to_string()
     } else {
-        let entries = skills
-            .iter()
-            .map(|skill| {
-                let description = collapse_whitespace(&skill.description);
-                format!("- name: {}\n  description: {description}", skill.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
     let model_identity = format!("Your model is {model_label} ({model_id}).");
-    let base_instructions = DEVELOPER_PROMPT_TEMPLATE
+    let base_instructions = SYSTEM_PROMPT_TEMPLATE
         .trim_end()
         .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
         .replace(THREAD_ID_PLACEHOLDER, thread_id)
@@ -773,61 +791,30 @@ async fn load_prior_history(
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
-    apply_remote_state(store, user_id, thread_id, &remote, false).await?;
-    fetch_missing_parts(
+    let state = apply_remote_state(store, user_id, thread_id, &remote, false).await?;
+    let (mut parts, current_run_had_context_handoff) = load_context_parts(
         store,
         user_id,
         thread_id,
-        remote.history_from_number,
-        remote.total_parts,
-        |numbers| {
-            let runtime = runtime.clone();
-            let run_id = run_id.to_string();
-            async move { runtime.transcript_parts_for_run(&run_id, &numbers).await }
+        &state,
+        run_id,
+        |start, end, order| {
+            runtime.transcript_parts_page_for_run(run_id, thread_id, start, end, order)
         },
     )
     .await?;
-    let state = store.load_state(user_id, thread_id).await?;
-    let current_run_had_context_handoff =
-        if state.context_summary.is_some() && state.history_from_number > 0 {
+    cache_prompt_attachments(
+        store,
+        user_id,
+        thread_id,
+        &mut parts,
+        |number, storage_id| async move {
             runtime
-                .transcript_parts_for_run(run_id, &[state.history_from_number - 1])
-                .await?
-                .iter()
-                .any(|part| part.run_id == run_id)
-        } else {
-            false
-        };
-    let numbers: Vec<u32> = (state.history_from_number..state.remote_total_parts).collect();
-    let local_parts = store.read_parts(user_id, thread_id, &numbers).await?;
-    let missing = numbers
-        .iter()
-        .filter(|number| !local_parts.iter().any(|part| part.number == **number))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "required transcript parts {:?} are missing locally after sync",
-            missing
-        );
-    }
-    let mut parts = match fetch_parts_by_numbers(&numbers, |batch| {
-        let runtime = runtime.clone();
-        let run_id = run_id.to_string();
-        async move { runtime.transcript_parts_for_run(&run_id, &batch).await }
-    })
-    .await
-    {
-        Ok(hydrated)
-            if numbers
-                .iter()
-                .all(|number| hydrated.iter().any(|part| part.number == *number)) =>
-        {
-            hydrated
-        }
-        Ok(_) | Err(_) => local_parts,
-    };
-    cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
+                .attachment_url_for_run(run_id, number, &storage_id)
+                .await
+        },
+    )
+    .await?;
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
@@ -840,6 +827,41 @@ async fn load_prior_history(
         continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
+}
+
+async fn load_context_parts<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    state: &TranscriptState,
+    run_id: &str,
+    fetch: F,
+) -> anyhow::Result<(Vec<crate::transcript::TranscriptPart>, bool)>
+where
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<crate::transcript::TranscriptPart>>>,
+{
+    let check_handoff = state.context_summary.is_some() && state.history_from_number > 0;
+    let start = state.history_from_number - u32::from(check_handoff);
+    let end = state.remote_total_parts;
+    anyhow::ensure!(
+        state.history_from_number <= end,
+        "invalid transcript context range"
+    );
+    store
+        .ensure_parts(user, thread, start, end, DownloadOrder::Desc, fetch)
+        .await?;
+    let numbers: Vec<_> = (start..end).collect();
+    let mut parts = store.read_parts(user, thread, &numbers).await?;
+    anyhow::ensure!(
+        parts.len() == numbers.len(),
+        "required transcript parts are missing locally after sync"
+    );
+    let had_handoff = check_handoff && parts.first().is_some_and(|part| part.run_id == run_id);
+    if check_handoff {
+        parts.remove(0);
+    }
+    Ok((parts, had_handoff))
 }
 
 pub async fn run_agent(
@@ -859,13 +881,62 @@ pub async fn run_agent(
         ..
     } = run;
 
-    let context: RunContextResponse = match runtime.run_context(&run_id).await {
+    let mut context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
+    let cwd = restore_cwd(&workspace_root, context.cwd.as_deref());
 
+    let (capabilities, handoff_model) =
+        match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
+            .await
+        {
+            Ok(models) => models,
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        };
+    let mut omit_prior_reasoning = false;
+    let mut handoff_model = match handoff_model {
+        Ok(model) => model,
+        Err(error) => {
+            eprintln!(
+                "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+            );
+            omit_prior_reasoning = true;
+            None
+        }
+    };
+    context.provider_handoff = handoff_model.as_ref().map(|(handoff, _)| handoff.clone());
+
+    let chatgpt_client = if chatgpt_client.is_none()
+        && context
+            .provider_handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
+    {
+        let previous_client = request
+            .chatgpt_credentials
+            .clone()
+            .context(
+                "The previous ChatGPT provider must remain connected to write the context handoff.",
+            )
+            .and_then(crate::chatgpt::ChatGptClient::new);
+        match previous_client {
+            Ok(client) => Some(client),
+            Err(error) => {
+                eprintln!(
+                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                );
+                context.provider_handoff = None;
+                handoff_model = None;
+                omit_prior_reasoning = true;
+                None
+            }
+        }
+    } else {
+        chatgpt_client
+    };
     let provider = match AgentProvider::default_for_run(&context, &gateway_url, chatgpt_client) {
         Ok(provider) => provider,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
@@ -873,18 +944,16 @@ pub async fn run_agent(
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let fast_mode = context.run.fast_mode;
-    let capabilities =
-        match catalog_capabilities_for_model(&gateway_url, &context.run.selected_model).await {
-            Ok(budget) => budget,
-            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-        };
-
     let prepare_history = load_prior_history(
         &runtime,
         &store,
         &context,
         &run_id,
-        capabilities.supports_images,
+        handoff_model
+            .as_ref()
+            .map(|(_, capabilities)| capabilities)
+            .unwrap_or(&capabilities)
+            .supports_images,
     );
     let prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
@@ -951,6 +1020,18 @@ pub async fn run_agent(
             &context.run.thread_id,
             &transcript_dir,
         );
+        let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
+            build_workspace_prompt_context(
+                &request.workspace_path,
+                &workspace_instructions,
+                &skills,
+                &capabilities.label,
+                &handoff.selected_model,
+                &context.run.thread_id,
+                &transcript_dir,
+            )
+            .base_instructions
+        });
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -960,12 +1041,20 @@ pub async fn run_agent(
             prompt,
             provider,
             prompt_context,
+            handoff_base_instructions,
             skills,
             continue_without_prompt,
         ))
     })();
 
-    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
+    let (
+        prompt,
+        provider,
+        prompt_context,
+        handoff_base_instructions,
+        skills,
+        continue_without_prompt,
+    ) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -1025,6 +1114,7 @@ pub async fn run_agent(
                     live: live.clone(),
                     prompt,
                     base_instructions: prompt_context.base_instructions,
+                    handoff_base_instructions,
                     initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
@@ -1035,6 +1125,7 @@ pub async fn run_agent(
                     ),
                     command_sessions: command_sessions.clone(),
                     workspace_root,
+                    cwd,
                     skills,
                     reasoning_effort,
                     fast_mode,
@@ -1043,6 +1134,7 @@ pub async fn run_agent(
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
+                    omit_prior_reasoning,
                     gateway_url: gateway_url.clone(),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
@@ -1074,377 +1166,7 @@ fn collapse_whitespace(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use rig::completion::Message;
-    use rig::message::UserContent;
-    use sprocket_workspace::{
-        SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
-    };
-
-    use super::{
-        build_workspace_prompt_context, should_continue_without_prompt,
-        submission_owned_by_another_executor,
-    };
-
-    const MODEL_LABEL: &str = "GPT-5.6 Sol";
-    const MODEL_ID: &str = "gpt-5.6-sol";
-
-    #[test]
-    fn prompted_continuations_use_their_user_prompt() {
-        assert!(!should_continue_without_prompt(false, true, "Ship it"));
-        assert!(should_continue_without_prompt(false, true, ""));
-        assert!(should_continue_without_prompt(true, true, "Ship it"));
-    }
-
-    fn initial_context_text(message: &Message) -> &str {
-        match message {
-            Message::User { content } => match content.first() {
-                Some(UserContent::Text(text)) => &text.text,
-                other => panic!("expected initial context text, got {other:?}"),
-            },
-            other => panic!("expected initial context user message, got {other:?}"),
-        }
-    }
-
-    fn build_test_prompt_context(
-        workspace_instructions: &[WorkspaceInstruction],
-        skills: &[WorkspaceSkill],
-    ) -> super::WorkspacePromptContext {
-        build_workspace_prompt_context(
-            "/tmp/project",
-            workspace_instructions,
-            skills,
-            MODEL_LABEL,
-            MODEL_ID,
-            "thread-id",
-            std::path::Path::new("/tmp/transcripts/user/thread-id"),
-        )
-    }
-
-    #[test]
-    fn submission_conflict_errors_match_the_convex_sentinel() {
-        assert!(submission_owned_by_another_executor(
-            "agentRuntime:createGatewayRun failed: Submission belongs to a different active executor."
-        ));
-        assert!(submission_owned_by_another_executor(
-            "Submission belongs to a different or incomplete run."
-        ));
-        assert!(!submission_owned_by_another_executor(
-            "timed out starting agent run"
-        ));
-        assert!(!submission_owned_by_another_executor(
-            "Submission prompt does not match the existing run."
-        ));
-    }
-
-    #[test]
-    fn base_instructions_include_the_selected_model_identity() {
-        let prompt_context = build_test_prompt_context(&[], &[]);
-
-        assert!(
-            prompt_context
-                .base_instructions
-                .lines()
-                .any(|line| line == "- Your model is GPT-5.6 Sol (gpt-5.6-sol).")
-        );
-        assert!(
-            !prompt_context
-                .base_instructions
-                .contains(super::MODEL_IDENTITY_PLACEHOLDER)
-        );
-    }
-
-    #[test]
-    fn identity_includes_the_current_thread_id_and_transcript_location() {
-        for (data_dir, thread_id) in [
-            ("/home/user/.sprocket", "first-thread-id"),
-            ("/srv/custom sprocket data", "second-thread-id"),
-        ] {
-            let store = crate::transcript::TranscriptStore::new(
-                std::path::Path::new(data_dir).join("transcripts"),
-            );
-            let transcript_dir = store.thread_dir("user-id", thread_id);
-            let prompt_context = build_workspace_prompt_context(
-                "/tmp/project",
-                &[],
-                &[],
-                MODEL_LABEL,
-                MODEL_ID,
-                thread_id,
-                &transcript_dir,
-            );
-            let identity = prompt_context
-                .base_instructions
-                .split_once("## Identity\n")
-                .unwrap()
-                .1
-                .split_once("\n## Basic instructions")
-                .unwrap()
-                .0;
-            assert!(identity.contains(&format!(
-                "- This conversation/thread's ID is {thread_id}. Thread transcripts and attachments are stored in `{}`.",
-                transcript_dir.display()
-            )));
-            assert!(
-                !prompt_context
-                    .base_instructions
-                    .contains(super::THREAD_ID_PLACEHOLDER)
-            );
-            assert!(
-                !prompt_context
-                    .base_instructions
-                    .contains(super::TRANSCRIPT_DIR_PLACEHOLDER)
-            );
-            assert!(!identity.contains("~/.sprocket/"));
-        }
-    }
-
-    #[test]
-    fn initial_context_renders_skills_block() {
-        let skills = [WorkspaceSkill {
-            name: "pdf-processing".to_string(),
-            description: "Handle PDFs".to_string(),
-            source: SkillSource::BuiltIn {
-                contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
-            },
-        }];
-        let prompt_context = build_test_prompt_context(&[], &skills);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
-        assert!(initial_context.starts_with("# Thread-Scoped Workspace Context\n"));
-        assert!(initial_context.contains("## Available Skills"));
-        assert!(initial_context.contains("<SKILLS>"));
-        assert!(initial_context.contains("- name: pdf-processing"));
-        assert!(initial_context.contains("description: Handle PDFs"));
-        assert!(!initial_context.contains("No skills are installed."));
-        assert!(!prompt_context.base_instructions.contains("pdf-processing"));
-    }
-
-    #[test]
-    fn initial_context_renders_empty_skills_line() {
-        let prompt_context = build_test_prompt_context(&[], &[]);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
-        assert!(initial_context.contains("## Available Skills"));
-        assert!(initial_context.contains("No skills are installed."));
-        assert!(!initial_context.contains("<SKILLS>"));
-    }
-
-    #[test]
-    fn initial_context_collapses_multiline_skill_descriptions() {
-        let skills = [WorkspaceSkill {
-            name: "demo".to_string(),
-            description: "Line one\nline two".to_string(),
-            source: SkillSource::BuiltIn {
-                contents: "---\nname: demo\ndescription: Line one\n---\n",
-            },
-        }];
-        let prompt_context = build_test_prompt_context(&[], &skills);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
-        assert!(initial_context.contains("description: Line one line two"));
-        assert!(!initial_context.contains("description: Line one\n"));
-    }
-
-    #[test]
-    fn initial_context_renders_user_instructions_before_workspace_instructions() {
-        let user_instructions = "Use the user's preferred test runner.";
-        let workspace_instructions = "Keep generated board files in hardware/output.";
-        let instructions = [
-            WorkspaceInstruction {
-                path: "/home/user/.agents/AGENTS.md".to_string(),
-                directory: "/home/user/.agents".to_string(),
-                contents: user_instructions.to_string(),
-                truncated: false,
-                source: WorkspaceInstructionSource::User,
-            },
-            WorkspaceInstruction {
-                path: "/tmp/project/AGENTS.md".to_string(),
-                directory: "/tmp/project".to_string(),
-                contents: workspace_instructions.to_string(),
-                truncated: false,
-                source: WorkspaceInstructionSource::Workspace,
-            },
-        ];
-
-        let prompt_context = build_test_prompt_context(&instructions, &[]);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
-
-        let user_heading = "### The user's AGENTS.md";
-        let workspace_heading = "### AGENTS.md instructions for /tmp/project";
-        let agents_heading = "## Preloaded AGENTS.md Instructions";
-        assert!(initial_context.contains(agents_heading));
-        assert!(initial_context.contains(user_heading));
-        assert!(initial_context.contains(workspace_heading));
-        assert!(initial_context.contains(user_instructions));
-        assert!(initial_context.contains(workspace_instructions));
-        assert!(
-            initial_context
-                .find(agents_heading)
-                .expect("agents heading")
-                < initial_context.find(user_heading).expect("user heading")
-        );
-        assert!(
-            initial_context.find(user_heading).expect("user heading")
-                < initial_context
-                    .find(workspace_heading)
-                    .expect("workspace heading")
-        );
-        assert!(!prompt_context.base_instructions.contains(user_instructions));
-        assert!(
-            !prompt_context
-                .base_instructions
-                .contains(workspace_instructions)
-        );
-    }
-}
+mod tests;
 
 #[cfg(test)]
-mod claim_lease_tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
-
-    use anyhow::anyhow;
-    use tokio::time::{Instant, sleep};
-
-    use super::{
-        RUN_ABANDONED_BY_AGENT, RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION,
-        RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease,
-        renew_claim_with,
-    };
-
-    /// Regression: a starved renewal tick (CPU saturation, slow reconnect)
-    /// must not fail an otherwise healthy run.
-    #[tokio::test(start_paused = true)]
-    async fn scheduling_stall_after_a_successful_renewal_does_not_fail_the_run() {
-        let renewals = AtomicUsize::new(0);
-        let result = drive_claim_lease(
-            "run-stalled-tick",
-            Instant::now(),
-            |_lease_deadline| {
-                let attempt = renewals.fetch_add(1, Ordering::SeqCst);
-                let request_started_at = Instant::now();
-                async move {
-                    if attempt == 0 {
-                        sleep(RUN_CLAIM_RENEW_INTERVAL + Duration::from_secs(25)).await;
-                    }
-                    Ok((true, request_started_at))
-                }
-            },
-            async {
-                sleep(Duration::from_secs(50)).await;
-                "done"
-            },
-        )
-        .await;
-        assert_eq!(result.ok(), Some("done"));
-        assert!(renewals.load(Ordering::SeqCst) >= 2);
-    }
-
-    /// The local deadline is only an estimate; a renewal tick pushed past it
-    /// must still be attempted.
-    #[tokio::test(start_paused = true)]
-    async fn renewal_is_attempted_after_the_estimated_lease_deadline() {
-        let renewals = AtomicUsize::new(0);
-        let result = drive_claim_lease(
-            "run-past-estimated-deadline",
-            Instant::now(),
-            |_lease_deadline| {
-                let attempt = renewals.fetch_add(1, Ordering::SeqCst);
-                let request_started_at = Instant::now();
-                async move {
-                    if attempt == 0 {
-                        sleep(RUN_CLAIM_LEASE_DURATION + Duration::from_secs(10)).await;
-                    }
-                    Ok((true, request_started_at))
-                }
-            },
-            async {
-                sleep(Duration::from_secs(100)).await;
-                "done"
-            },
-        )
-        .await;
-        assert_eq!(result.ok(), Some("done"));
-        assert!(renewals.load(Ordering::SeqCst) >= 2);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn renewal_failures_retry_until_the_lease_window_closes() {
-        let attempts = AtomicUsize::new(0);
-        let started_at = Instant::now();
-        let result = renew_claim_with("run-flaky", started_at + RUN_CLAIM_LEASE_DURATION, || {
-            attempts.fetch_add(1, Ordering::SeqCst);
-            async {
-                sleep(RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT).await;
-                Err(anyhow!("claim renewal timed out"))
-            }
-        })
-        .await;
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("initial attempt failed"), "{error}");
-        // Keeps renewing while another attempt can still land before the
-        // lease deadline, then stops.
-        assert!(attempts.load(Ordering::SeqCst) >= 3);
-        assert!(
-            Instant::now()
-                >= started_at + RUN_CLAIM_LEASE_DURATION
-                    - RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT
-                    - RUN_CLAIM_EXPIRY_SAFETY_MARGIN
-        );
-        assert!(Instant::now() <= started_at + RUN_CLAIM_LEASE_DURATION);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn lost_lease_is_not_retried() {
-        let attempts = AtomicUsize::new(0);
-        let result = renew_claim_with(
-            "run-lost",
-            Instant::now() + RUN_CLAIM_LEASE_DURATION,
-            || {
-                attempts.fetch_add(1, Ordering::SeqCst);
-                async { Ok((false, Instant::now())) }
-            },
-        )
-        .await;
-        assert_eq!(result.ok().map(|(renewed, _)| renewed), Some(false));
-        assert_eq!(attempts.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn drive_fails_the_run_when_the_lease_is_lost() {
-        let result: anyhow::Result<()> = drive_claim_lease(
-            "run-taken-over",
-            Instant::now(),
-            |_lease_deadline| async { Ok((false, Instant::now())) },
-            std::future::pending(),
-        )
-        .await;
-        let error = result.unwrap_err();
-        assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
-        assert!(format!("{error:#}").contains("was lost"));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn renewal_failure_is_abandonment_and_keeps_the_diagnostic() {
-        let result: anyhow::Result<()> = drive_claim_lease(
-            "run-disconnected",
-            Instant::now(),
-            |_lease_deadline| async { Err(anyhow!("claim renewal timed out")) },
-            std::future::pending(),
-        )
-        .await;
-        let error = result.unwrap_err();
-        assert_eq!(error.to_string(), RUN_ABANDONED_BY_AGENT);
-        assert!(format!("{error:#}").contains("claim renewal timed out"));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn operation_failure_is_not_classified_as_abandonment() {
-        let result = drive_claim_lease(
-            "run-provider-error",
-            Instant::now(),
-            |_lease_deadline| async { Ok((true, Instant::now())) },
-            async { Err::<(), _>(anyhow!("provider failure")) },
-        )
-        .await;
-        assert_eq!(result.unwrap().unwrap_err().to_string(), "provider failure");
-    }
-}
+mod claim_lease_tests;

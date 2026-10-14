@@ -5,10 +5,8 @@ use std::time::Duration;
 use anyhow::anyhow;
 use axum::Json;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
-use axum_extra::extract::CookieJar;
 use convex::Value;
 use futures::stream::unfold;
 use serde::Deserialize;
@@ -18,6 +16,7 @@ use tokio::time::timeout;
 use crate::AppState;
 use crate::artifact_watch::is_native_account_revoked;
 use crate::routes::api_error::ApiError;
+use crate::routes::session::{AuthorizedJson, UserScoped};
 
 const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -38,6 +37,18 @@ struct ArtifactDeleteRequest {
     artifact_id: String,
 }
 
+impl UserScoped for ArtifactWatchRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for ArtifactDeleteRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/artifacts/watch", post(watch_handler))
@@ -46,13 +57,8 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn delete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ArtifactDeleteRequest>,
+    AuthorizedJson(payload): AuthorizedJson<ArtifactDeleteRequest>,
 ) -> Result<Json<()>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     let artifact_id = payload.artifact_id.trim();
@@ -103,13 +109,8 @@ async fn delete_handler(
 
 async fn watch_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ArtifactWatchRequest>,
+    AuthorizedJson(payload): AuthorizedJson<ArtifactWatchRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     if repository_key.is_empty() || workspace_path.is_empty() {
@@ -128,19 +129,27 @@ async fn watch_handler(
         .open(&payload.user_id, repository_key, &attachment.workspace_path)
         .await;
     let stream = unfold(
-        (session.latest_event(), session),
-        |(initial, mut session)| async move {
-            if let Some(event) = initial {
-                return encode_watch_event(event).map(|event| (event, (None, session)));
+        (true, session.latest_event(), session),
+        |(first, last, mut session)| async move {
+            if first {
+                if let Some(event) = last.clone() {
+                    return encode_watch_event(event).map(|event| (event, (false, last, session)));
+                }
             }
             loop {
                 match session.receiver().recv().await {
+                    Ok(event) if last.as_ref() == Some(&event) => continue,
                     Ok(event) => {
-                        return encode_watch_event(event).map(|event| (event, (None, session)));
+                        return encode_watch_event(event.clone())
+                            .map(|encoded| (encoded, (false, Some(event), session)));
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         if let Some(event) = session.latest_event() {
-                            return encode_watch_event(event).map(|event| (event, (None, session)));
+                            if last.as_ref() == Some(&event) {
+                                continue;
+                            }
+                            return encode_watch_event(event.clone())
+                                .map(|encoded| (encoded, (false, Some(event), session)));
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
@@ -185,98 +194,4 @@ fn encode_watch_event(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt;
-
-    #[tokio::test]
-    async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails() {
-        let data = tempfile::tempdir().unwrap();
-        let workspace = tempfile::tempdir().unwrap();
-        let auth = crate::auth::AuthState::load(data.path()).unwrap();
-        let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
-        auth.bind_session_user(&token, "alice").await.unwrap();
-        let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-            crate::native_auth::NativeAuthConfig {
-                workos_client_id: "client_test".into(),
-            },
-            crate::auth::desktop_login_callback_url(7731),
-        );
-        native_auth.authenticate_for_test("alice").await;
-        let mut state = AppState::for_test(
-            auth,
-            native_auth,
-            data.path().to_path_buf(),
-            true,
-            crate::package_update::PackageUpdateManager::disabled(),
-        );
-        // Fail cloud initialization immediately without using the network.
-        state.convex_deployment_url.clear();
-        let bindings = state.artifact_watchers.bindings("alice", workspace.path());
-        std::fs::write(workspace.path().join("notes.md"), "local source").unwrap();
-        {
-            let mut guard = bindings.lock().await.unwrap();
-            guard
-                .bind(sprocket_agent::artifact_bindings::ArtifactBinding {
-                    registration_id: "registration".into(),
-                    artifact_id: Some("artifact".into()),
-                    local_path: "notes.md".into(),
-                    content_hash: sprocket_agent::artifact_bindings::content_hash("local source"),
-                })
-                .unwrap();
-            guard.persist().await.unwrap();
-        }
-        let app = routes().with_state(state.clone());
-        for (user_id, session, expected) in [
-            ("alice", None, StatusCode::UNAUTHORIZED),
-            ("bob", Some(token.as_str()), StatusCode::UNAUTHORIZED),
-            ("alice", Some(token.as_str()), StatusCode::BAD_REQUEST),
-        ] {
-            let mut request = Request::builder()
-                .method("POST")
-                .uri("/artifacts/delete")
-                .header("content-type", "application/json");
-            if let Some(session) = session {
-                request = request.header("authorization", format!("Bearer {session}"));
-            }
-            let response = app.clone().oneshot(request.body(Body::from(serde_json::json!({
-                "userId": user_id, "repositoryKey": "repo", "workspacePath": workspace.path(),
-                "artifactId": "artifact",
-            }).to_string())).unwrap()).await.unwrap();
-            assert_eq!(response.status(), expected);
-        }
-        assert_eq!(bindings.snapshot().await.unwrap().len(), 1);
-        assert!(workspace.path().join("notes.md").exists());
-        let attachment = state
-            .project_attachments
-            .attach(crate::project_attachments::AttachProjectRequest {
-                workspace_path: workspace.path().to_str().unwrap().into(),
-                replace_workspace_path: None,
-            })
-            .await
-            .unwrap();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/artifacts/delete")
-                    .header("content-type", "application/json")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::from(
-                        serde_json::json!({
-                            "userId": "alice", "repositoryKey": attachment.repository_key,
-                            "workspacePath": attachment.workspace_path, "artifactId": "artifact",
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert!(bindings.snapshot().await.unwrap().is_empty());
-        assert!(!workspace.path().join("notes.md").exists());
-    }
-}
+mod tests;

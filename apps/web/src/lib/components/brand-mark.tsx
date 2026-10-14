@@ -16,7 +16,7 @@ export default function BrandMark({
 
 	const content = (
 		<>
-			<img src="/logo.png" alt="" className={cn('shrink-0', sizeClass)} />
+			<img src="/logo.svg" alt="" className={cn('shrink-0', sizeClass)} />
 			<span
 				className={cn(
 					'font-brand text-foreground truncate font-semibold tracking-tight',

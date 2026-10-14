@@ -11,7 +11,16 @@ import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { RuntimeConfig } from '$lib/runtime-config';
 import type { UpdateState } from '$lib/updates';
-import type { DesktopApi, ProjectAttachment, TranscriptDisplayPage } from '$lib/types/sprocket';
+import {
+	readCompletionProviderPreference,
+	storeCompletionProviderPreference
+} from '$lib/home/completion-provider-preference';
+import type {
+	DesktopApi,
+	ProjectAttachment,
+	TranscriptDisplayPage,
+	TranscriptDisplayRow
+} from '$lib/types/sprocket';
 import App, { type AppRuntime } from './app';
 
 const modelCatalog: ModelCatalog = {
@@ -78,6 +87,7 @@ function emptyDisplayPage(replicaId: string): TranscriptDisplayPage {
 		replicaId,
 		rows: [],
 		indexing: false,
+		syncing: false,
 		stale: false,
 		endSequence: 0,
 		revision: 0,
@@ -218,6 +228,7 @@ async function openProjectFromHeading(from: string, target: string) {
 }
 
 beforeEach(() => {
+	localStorage.clear();
 	vi.stubGlobal(
 		'fetch',
 		vi.fn<typeof fetch>(async (input, options) => {
@@ -810,6 +821,125 @@ it('launches ChatGPT with a gateway model and a connected local account', async 
 	);
 });
 
+it.each([false, true])(
+	'restores the preferred provider for new drafts (saved: %s)',
+	async (saved) => {
+		if (saved) storeCompletionProviderPreference('user-a', 'chatgpt');
+		const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+		const thread = threadRecord('thread-1', 'repo-alpha', 'Existing Spikonado thread');
+		const status = Promise.withResolvers<Awaited<ReturnType<DesktopApi['fetchChatGptStatus']>>>();
+		const client = createConvexFixtures();
+		client.registerPaginatedQuery(api.inbox.list, [thread]);
+		client.registerQuery(api.threads.getByThreadId, {
+			...thread,
+			contextTokens: undefined,
+			totalTokensProcessed: 0
+		});
+		const runAgent = vi.fn<DesktopApi['runAgent']>(() => new Promise(() => {}));
+
+		const runtime = createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				fetchChatGptStatus: () => status.promise,
+				runAgent
+			})
+		);
+
+		runtime.fetchGatewayModelCatalog = async () => ({
+			...modelCatalog,
+			models: [
+				...modelCatalog.models,
+				{
+					...modelCatalog.models[0],
+					id: 'openai-model',
+					label: 'OpenAI model',
+					provider: 'openai'
+				}
+			]
+		});
+		await renderApp(client, runtime);
+		await projectTrigger('Alpha');
+		await act(async () => {
+			status.resolve({
+				accounts: [{ connectionId: 'chatgpt-1', label: 'ChatGPT account', connected: true }],
+				activeConnectionId: 'chatgpt-1',
+				loginAvailable: true
+			});
+		});
+
+		if (!saved) {
+			fireEvent.click(screen.getByRole('button', { name: 'Select provider' }));
+			fireEvent.click(screen.getByRole('button', { name: /ChatGPT Subscription/ }));
+		}
+
+		expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+			'ChatGPT'
+		);
+		fireEvent.click(screen.getByText('Existing Spikonado thread'));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+				'Spikonado'
+			)
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'New thread' }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Select provider' }).textContent).toContain(
+				'ChatGPT'
+			)
+		);
+		expect(readCompletionProviderPreference('user-a')).toBe('chatgpt');
+		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'New work' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await waitFor(() =>
+			expect(runAgent).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completionProvider: 'chatgpt',
+					prompt: 'New work',
+					selectedModel: 'openai-model'
+				})
+			)
+		);
+	}
+);
+
+it('can switch away from saved ChatGPT and send while its connection check is pending', async () => {
+	storeCompletionProviderPreference('user-a', 'chatgpt');
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => new Promise(() => {}));
+
+	await renderApp(
+		createConvexFixtures(),
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				fetchChatGptStatus: () => new Promise(() => {}),
+				runAgent
+			})
+		)
+	);
+	await projectTrigger('Alpha');
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'New work' } });
+	expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true);
+	const picker = screen.getByRole('button', { name: 'Select provider' });
+	expect(picker).toHaveProperty('disabled', false);
+	fireEvent.click(picker);
+	fireEvent.click(screen.getByRole('button', { name: 'Spikonado' }));
+	expect(readCompletionProviderPreference('user-a')).toBe('spikonado');
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() =>
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				completionProvider: 'spikonado',
+				prompt: 'New work'
+			})
+		)
+	);
+});
+
 it('enables run-bound Stop after the lifecycle arrives behind a pending question', async () => {
 	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
 	const thread = threadRecord('thread-1', 'repo-alpha', 'Fix the robot');
@@ -984,6 +1114,100 @@ it('shows reconnecting beside an empty selected conversation and clears it on re
 		watchers.get(thread._id)?.({ eventType: 'updated', stale: false });
 	});
 	await waitFor(() => expect(within(composer).queryByRole('status')).toBeNull());
+});
+
+it('renders remote history progressively and allows sending while older parts load', async () => {
+	const alpha = projectAttachment('/work/alpha', 'repo-alpha', 'Alpha');
+	const thread = threadRecord('thread-1', 'repo-alpha', 'Remote robot work');
+	const launch = Promise.withResolvers<Awaited<ReturnType<DesktopApi['runAgent']>>>();
+	const runAgent = vi.fn<DesktopApi['runAgent']>(() => launch.promise);
+	const initial = Promise.withResolvers<TranscriptDisplayPage>();
+	let update: Parameters<DesktopApi['watchTranscript']>[1]['onEvent'] | undefined;
+
+	const recent: TranscriptDisplayRow = {
+		id: 'text-40-0',
+		threadId: thread._id,
+		// SAFETY: fixture IDs are only compared as opaque Convex document identifiers.
+		runId: 'prior-run' as Id<'runs'>,
+		sequence: 40,
+		kind: 'text',
+		text: 'The latest robot update',
+		itemCount: 0,
+		pendingTools: 0,
+		closed: true,
+		revision: 1
+	};
+
+	let synced = false;
+	const client = createConvexFixtures();
+	client.registerPaginatedQuery(api.inbox.list, [thread]);
+	client.registerQuery(api.threads.getByThreadId, {
+		...thread,
+		contextTokens: 0,
+		totalTokensProcessed: 0
+	});
+	client.registerQuery(api.chat.selectedThreadLifecycle, {
+		threadId: thread._id,
+		phase: 'completed',
+		run: { runId: recent.runId, startedAt: 1 }
+	});
+	await renderApp(
+		client,
+		createRuntime(
+			createDesktopApi({
+				listProjectAttachments: async () => [alpha],
+				resolveWorkspacePath: async () => alpha,
+				runAgent,
+				fetchTranscriptDisplay: async ({ before }) => {
+					if (!synced && before === undefined) return await initial.promise;
+
+					return {
+						...emptyDisplayPage('remote-replica'),
+						rows: synced
+							? [{ ...recent, id: 'text-1-0', sequence: 1, text: 'An older robot update' }, recent]
+							: [],
+						indexing: !synced,
+						syncing: !synced,
+						revision: synced ? 2 : 1
+					};
+				},
+				watchTranscript: (_request, handlers) => {
+					update = handlers.onEvent;
+
+					return new Promise<void>(() => {});
+				}
+			})
+		)
+	);
+	fireEvent.click(await screen.findByText('Remote robot work'));
+	expect(await screen.findByText('Loading conversation history...')).toBeTruthy();
+	await act(async () => {
+		initial.resolve({
+			...emptyDisplayPage('remote-replica'),
+			rows: [recent],
+			syncing: true,
+			nextBefore: 40,
+			revision: 1
+		});
+	});
+	expect(await screen.findByText('The latest robot update')).toBeTruthy();
+	expect((await screen.findByRole('status', {}, { timeout: 3_000 })).textContent).toContain(
+		'Conversation history is still loading.'
+	);
+	fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Continue with the robot' } });
+	const send = screen.getByRole('button', { name: 'Send message' });
+	await waitFor(() => expect(send).toHaveProperty('disabled', false));
+	fireEvent.click(send);
+	await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+	expect(runAgent).toHaveBeenCalledWith(
+		expect.objectContaining({ threadId: thread._id, prompt: 'Continue with the robot' })
+	);
+	await act(async () => {
+		synced = true;
+		update?.({ eventType: 'updated', stale: false });
+	});
+	expect(await screen.findByText('An older robot update')).toBeTruthy();
+	await waitFor(() => expect(screen.queryByText('Loading history')).toBeNull());
 });
 
 it('launches the continuation prompt after an agent question is answered', async () => {
@@ -1168,6 +1392,20 @@ it('restores a ChatGPT continuation and launches after its connection is confirm
 	);
 });
 
+it('opens General by default and resets to it when reopening settings', async () => {
+	const client = createConvexFixtures();
+	await renderApp(client, createRuntime(createDesktopApi()));
+	fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
+	expect(screen.getByRole('button', { name: 'General', current: 'page' })).toBeTruthy();
+	expect(screen.getByRole('switch', { name: 'Automatically name threads' })).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+	expect(screen.getByRole('heading', { name: 'Account' })).toBeTruthy();
+	fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+	expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
+});
+
 it('floats logo and settings over a full-width transcript when the sidebar is closed', async () => {
 	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Close sidebar' }))[0]!);
@@ -1186,6 +1424,7 @@ it('floats logo and settings over a full-width transcript when the sidebar is cl
 it('shows a retained-account sign-out failure in Account settings', async () => {
 	await renderApp(createConvexFixtures(), createRuntime(createDesktopApi()));
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Settings' }))[0]!);
+	fireEvent.click(screen.getByRole('button', { name: 'Account' }));
 	await screen.findByRole('button', { name: 'Sign Out' });
 	await act(async () => {
 		authState.update((current) => ({ ...current, error: 'Could not delete saved credentials.' }));

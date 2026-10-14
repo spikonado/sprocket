@@ -10,7 +10,7 @@ export default function ProviderLogo({
 	className?: string;
 }) {
 	if (provider === 'spikonado') {
-		return <img src="/logo.png" alt="" className={cn('size-4 shrink-0', className)} />;
+		return <img src="/logo.svg" alt="" className={cn('size-4 shrink-0', className)} />;
 	}
 
 	if (provider === 'openai' || provider === 'chatgpt') {

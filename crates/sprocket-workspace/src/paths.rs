@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result, bail};
+
 pub fn expand_home(path: &str) -> String {
     if path == "~" {
         return home_dir()
@@ -26,6 +28,23 @@ pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+}
+
+/// Resolves `path` to an existing directory; relative paths start at `base`.
+pub fn resolve_directory(base: &Path, path: &str) -> Result<PathBuf> {
+    let expanded = PathBuf::from(expand_home(path.trim()));
+    let candidate = if expanded.is_absolute() {
+        expanded
+    } else {
+        base.join(expanded)
+    };
+    let resolved = candidate
+        .canonicalize()
+        .with_context(|| format!("failed to resolve directory {}", candidate.display()))?;
+    if !resolved.is_dir() {
+        bail!("not a directory: {}", resolved.display());
+    }
+    Ok(resolved)
 }
 
 pub fn normalize_windows_drive_root(path: &str) -> String {
@@ -58,30 +77,4 @@ fn simplified_path_str(path: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn simplified_path_strips_windows_verbatim_prefixes() {
-        assert_eq!(
-            simplified_path_str(r"\\?\D:\projects\robot"),
-            r"D:\projects\robot"
-        );
-        assert_eq!(
-            simplified_path_str(r"\\?\UNC\server\share\dir"),
-            r"\\server\share\dir"
-        );
-        assert_eq!(
-            simplified_path_str(r"\\?\Volume{abcd}\foo"),
-            r"\\?\Volume{abcd}\foo"
-        );
-        assert_eq!(simplified_path_str("/home/me/robot"), "/home/me/robot");
-    }
-
-    #[test]
-    fn normalize_windows_drive_root_appends_slash() {
-        assert_eq!(normalize_windows_drive_root("D:"), r"D:\");
-        assert_eq!(normalize_windows_drive_root(r"D:\code"), r"D:\code");
-        assert_eq!(normalize_windows_drive_root("/home/me"), "/home/me");
-    }
-}
+mod tests;

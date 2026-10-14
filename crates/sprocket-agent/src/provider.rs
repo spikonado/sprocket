@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::DynModel;
-use rig::agent::AgentBuilder;
-use rig::completion::{FinishReason, Message};
+use rig::agent::{
+    AgentBuilder, AgentHook, HookContext, OutcomeAction, OutcomeEvent, StepEventKind,
+};
+use rig::completion::{Effort, FinishReason, GenerationOptions, Message, Reasoning};
 use rig::message::AssistantContent;
 use rig::operation::Completion;
 use rig::providers::openai;
@@ -28,8 +30,12 @@ use crate::live::{
 };
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
-use crate::tools::agent_tools;
-use crate::types::{CompletionProvider, ContextBudget, RunContextResponse, gateway_api_v1_url};
+use crate::stream_recovery::StreamRecovery;
+use crate::tools::{agent_tools, working_directory_message};
+use crate::transcript::without_reasoning_traces;
+use crate::types::{
+    CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
+};
 
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -69,6 +75,7 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
             Some(anyhow!("The model stopped unexpectedly: {reason}"))
         }
         Some(FinishReason::Stop | FinishReason::ToolCalls) | None => None,
+        Some(reason) => Some(anyhow!("The model stopped unexpectedly: {reason:?}")),
     }
 }
 
@@ -77,6 +84,7 @@ pub(crate) struct AgentProvider {
     gateway_url: String,
     model: String,
     chatgpt_client: Option<ChatGptClient>,
+    provider_handoff: Option<ProviderHandoff>,
 }
 
 pub(crate) struct AgentProviderRequest {
@@ -94,9 +102,11 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) base_instructions: String,
+    pub(crate) handoff_base_instructions: Option<String>,
     pub(crate) initial_context: Vec<Message>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) cwd: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
     pub(crate) fast_mode: bool,
@@ -106,6 +116,8 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
     pub(crate) defer_prompt_for_context_handoff: bool,
+    /// The previous provider could not write a handoff. Continue without reasoning replay.
+    pub(crate) omit_prior_reasoning: bool,
     pub(crate) gateway_url: String,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     pub(crate) transcript_store: Option<Arc<crate::TranscriptStore>>,
@@ -124,7 +136,12 @@ impl AgentProvider {
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
     ) -> anyhow::Result<Self> {
-        let chatgpt_client = if context.run.completion_provider == CompletionProvider::Chatgpt {
+        let chatgpt_client = if context.run.completion_provider == CompletionProvider::Chatgpt
+            || context
+                .provider_handoff
+                .as_ref()
+                .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
+        {
             Some(chatgpt_client.ok_or_else(|| {
                 anyhow!("ChatGPT runs require the local ChatGPT credential service.")
             })?)
@@ -136,25 +153,96 @@ impl AgentProvider {
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
             chatgpt_client,
+            provider_handoff: context.provider_handoff.clone(),
         })
     }
 
     pub(crate) async fn run(
-        self,
+        mut self,
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
         if self.completion_provider != CompletionProvider::Spikonado {
             request.fast_mode = false;
         }
+        let handoff = self.provider_handoff.take();
+        let source = handoff.as_ref().map(|handoff| Self {
+            completion_provider: handoff.completion_provider,
+            gateway_url: self.gateway_url.clone(),
+            model: handoff.selected_model.clone(),
+            chatgpt_client: self.chatgpt_client.clone(),
+            provider_handoff: None,
+        });
+        let model_result = source
+            .as_ref()
+            .unwrap_or(&self)
+            .completion_model(
+                &runtime,
+                &request.run_id,
+                &request.claim_id,
+                request
+                    .handoff_base_instructions
+                    .as_deref()
+                    .unwrap_or(&request.base_instructions),
+            )
+            .await;
+        drop(source);
+        let (model, provider_switch) = match model_result {
+            Ok(model) => (model, handoff.map(|handoff| (self, handoff))),
+            Err(error) if handoff.is_some() => {
+                eprintln!(
+                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                );
+                request.omit_prior_reasoning = true;
+                match self
+                    .completion_model(
+                        &runtime,
+                        &request.run_id,
+                        &request.claim_id,
+                        &request.base_instructions,
+                    )
+                    .await
+                {
+                    Ok(model) => (model, None),
+                    Err(error) => {
+                        return AgentProviderResult::Failed {
+                            text: String::new(),
+                            error,
+                        };
+                    }
+                }
+            }
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error,
+                };
+            }
+        };
+        match run_with_completion_model(model, runtime, request, provider_switch).await {
+            AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
+                text,
+                error: crate::chatgpt::user_facing_error(error),
+            },
+            result => result,
+        }
+    }
+
+    async fn completion_model(
+        &self,
+        runtime: &RuntimeClient,
+        run_id: &str,
+        claim_id: &str,
+        base_instructions: &str,
+    ) -> anyhow::Result<DynModel<Completion>> {
         match self.completion_provider {
             CompletionProvider::Spikonado => {
                 let completion_client = GatewayClient::new(
                     gateway_api_v1_url(&self.gateway_url),
                     {
                         let runtime = runtime.clone();
-                        let run_id = request.run_id.clone();
-                        let claim_id = request.claim_id.clone();
+                        let run_id = run_id.to_string();
+                        let claim_id = claim_id.to_string();
                         move || {
                             let runtime = runtime.clone();
                             let run_id = run_id.clone();
@@ -163,84 +251,154 @@ impl AgentProvider {
                         }
                     },
                 );
-                run_with_completion_model(
-                    completion_client.completion_model(self.model, &request.base_instructions),
-                    runtime,
-                    request,
-                )
-                .await
+                Ok(completion_client.completion_model(&self.model, base_instructions))
             }
             CompletionProvider::Openai => {
-                let credential = match runtime
-                    .issue_openai_credential(&request.run_id, &request.claim_id)
-                    .await
-                {
-                    Ok(credential) => credential,
-                    Err(error) => {
-                        return AgentProviderResult::Failed {
-                            text: String::new(),
-                            error,
-                        };
-                    }
-                };
+                let credential = runtime.issue_openai_credential(run_id, claim_id).await?;
                 let model = stateless_responses_model(
                     openai::OpenAIConfig::new(credential.api_key)
-                        .with_instructions(&request.base_instructions),
-                    self.model,
+                        .with_instructions(base_instructions),
+                    &self.model,
                 );
-                run_with_completion_model(model, runtime, request).await
+                Ok(model)
             }
             CompletionProvider::Chatgpt => {
-                let Some(completion_client) = self.chatgpt_client else {
-                    return AgentProviderResult::Failed {
-                        text: String::new(),
-                        error: anyhow!(
-                            "ChatGPT runs require the local ChatGPT credential service."
-                        ),
-                    };
+                let Some(completion_client) = &self.chatgpt_client else {
+                    return Err(anyhow!(
+                        "ChatGPT runs require the local ChatGPT credential service."
+                    ));
                 };
-                match run_with_completion_model(
-                    completion_client.completion_model(self.model, &request.base_instructions),
-                    runtime,
-                    request,
-                )
-                .await
-                {
-                    AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
-                        text,
-                        error: crate::chatgpt::user_facing_error(error),
-                    },
-                    result => result,
-                }
+                Ok(completion_client.completion_model(&self.model, base_instructions))
             }
         }
     }
+}
+
+fn completion_parameters(
+    reasoning_effort: &str,
+    fast_mode: bool,
+) -> anyhow::Result<(GenerationOptions, serde_json::Value)> {
+    let reasoning = if reasoning_effort == "none" {
+        Reasoning::Off
+    } else {
+        serde_json::from_value::<Effort>(serde_json::Value::String(reasoning_effort.to_string()))
+            .map(Reasoning::from)
+            .map_err(|error| anyhow!("invalid reasoning effort: {error}"))?
+    };
+    // The gateway's "fast" tier is not Rig's portable Priority tier.
+    let additional_params = if fast_mode {
+        serde_json::json!({ "service_tier": "fast" })
+    } else {
+        serde_json::json!({})
+    };
+    Ok((
+        GenerationOptions::default().reasoning(reasoning),
+        additional_params,
+    ))
+}
+
+#[derive(Clone, Default)]
+struct CompletionOrigin(Arc<Mutex<Option<(usize, rig::message::Origin)>>>);
+
+impl CompletionOrigin {
+    fn take_for(&self, turn: usize) -> Option<rig::message::Origin> {
+        let mut saved = self.0.lock().ok()?;
+        if saved.as_ref()?.0 != turn {
+            return None;
+        }
+        saved.take().map(|(_, origin)| origin)
+    }
+}
+
+impl AgentHook for CompletionOrigin {
+    fn observes(&self, kind: StepEventKind) -> bool {
+        kind == StepEventKind::CompletionDispatch
+    }
+
+    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        if let Some(response) = event.completion()
+            && let Ok(mut origin) = self.0.lock()
+        {
+            *origin = Some((event.turn, response.origin.clone()));
+        }
+        OutcomeAction::Proceed
+    }
+}
+
+pub(crate) async fn resume_context_handoff(
+    agent: &mut rig::Agent,
+    initial_context: &[Message],
+    summary: &str,
+    deferred_prompt: Option<Message>,
+    save: impl std::future::Future<Output = anyhow::Result<bool>>,
+    next_model: impl std::future::Future<Output = anyhow::Result<Option<DynModel<Completion>>>>,
+) -> anyhow::Result<Option<(Vec<Message>, Message)>> {
+    if !save.await? {
+        return Ok(None);
+    }
+    if let Some(model) = next_model.await? {
+        agent.set_model(model);
+    }
+    let mut history = initial_context.to_vec();
+    let handoff = Message::user(context_summary_text(summary));
+    let prompt = match deferred_prompt {
+        Some(pending) => {
+            history.push(handoff);
+            pending
+        }
+        None => handoff,
+    };
+    Ok(Some((history, prompt)))
+}
+
+pub(crate) async fn resume_without_provider_handoff(
+    agent: &mut rig::Agent,
+    history: Vec<Message>,
+    prompt: Message,
+    record: impl std::future::Future<Output = anyhow::Result<bool>>,
+    next_model: impl std::future::Future<Output = anyhow::Result<DynModel<Completion>>>,
+) -> anyhow::Result<Option<(Vec<Message>, Message)>> {
+    if !record.await? {
+        return Ok(None);
+    }
+    agent.set_model(next_model.await?);
+    Ok(Some((without_reasoning_traces(history), prompt)))
 }
 
 async fn run_with_completion_model(
     model: DynModel<Completion>,
     runtime: RuntimeClient,
     request: AgentProviderRequest,
+    mut provider_switch: Option<(AgentProvider, ProviderHandoff)>,
 ) -> AgentProviderResult {
-    let reasoning_effort = match serde_json::from_value::<openai::responses_api::ReasoningEffort>(
-        serde_json::Value::String(request.reasoning_effort.clone()),
-    ) {
-        Ok(reasoning_effort) => reasoning_effort,
+    let legacy_origin = model
+        .id()
+        .map(|id| rig::message::Origin::new("openai.responses", model.name(), id));
+    let target_params = match completion_parameters(&request.reasoning_effort, request.fast_mode) {
+        Ok(params) => params,
         Err(error) => {
             return AgentProviderResult::Failed {
                 text: String::new(),
-                error: anyhow!("invalid OpenAI Responses API reasoning effort: {error}"),
+                error,
             };
         }
     };
-    let additional_params = openai::responses_api::AdditionalParameters {
-        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
-        service_tier: request
-            .fast_mode
-            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
-        ..Default::default()
-    }
-    .to_json();
+    let mut additional_params = if let Some((_, handoff)) = &provider_switch {
+        match completion_parameters(
+            &handoff.reasoning_effort,
+            handoff.fast_mode && handoff.completion_provider == CompletionProvider::Spikonado,
+        ) {
+            Ok(params) => params,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error,
+                };
+            }
+        }
+    } else {
+        target_params.clone()
+    };
     let tool_call_tracker = ToolCallTracker::new(&request.run_id, &request.claim_id);
     let tools = agent_tools(
         runtime.clone(),
@@ -248,6 +406,7 @@ async fn run_with_completion_model(
         request.claim_id.clone(),
         request.user_id.clone(),
         request.workspace_root.clone(),
+        request.cwd.clone(),
         request.transcript_dir.clone(),
         request.gateway_url.clone(),
         request.transcript_store.clone(),
@@ -258,13 +417,13 @@ async fn run_with_completion_model(
         request.command_sessions.clone(),
         request.subagent_launcher.clone(),
     );
+    let cwd = tools.cwd.clone();
     let context_handoff_hook = ContextHandoffHook::new(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
     );
     let agent = AgentBuilder::new(model)
-        .additional_params(additional_params)
         .tool(tools.apply_patch)
         .tool(tools.control_cmd)
         .tool(tools.exec_cmd)
@@ -283,6 +442,7 @@ async fn run_with_completion_model(
         .tool(tools.poll_subagent)
         .tool(tools.list_subagents)
         .tool(tools.list_subagent_models)
+        .tool(tools.set_cwd)
         .tool(context_handoff_hook.tool());
     let agent = if request.allow_interaction || request.is_child {
         agent.tool(tools.ask_question).tool(tools.poll_question)
@@ -303,7 +463,7 @@ async fn run_with_completion_model(
     } else {
         agent
     };
-    let agent = if request.supports_images {
+    let mut agent = if request.supports_images {
         agent.tool(tools.screenshot_url)
     } else {
         agent
@@ -341,6 +501,9 @@ async fn run_with_completion_model(
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
+    let completion_origin = CompletionOrigin::default();
+    let mut stream_recovery = StreamRecovery::default();
+    let mut recovery_delay = Duration::ZERO;
     let initial_context: Arc<[Message]> = request.initial_context.into();
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
@@ -355,8 +518,12 @@ async fn run_with_completion_model(
     let mut history: Vec<_> = initial_context
         .iter()
         .cloned()
+        .chain([working_directory_message(&cwd.get())])
         .chain(request.prior_history)
         .collect();
+    if let Some(origin) = &legacy_origin {
+        crate::types::assign_unidentified_legacy_history_origin(&mut history, origin);
+    }
     let mut prompt = request.prompt;
     let mut deferred_prompt = None;
     let mut before_prompt = false;
@@ -367,14 +534,115 @@ async fn run_with_completion_model(
     let mut completed_attempt = None;
     let mut handoff_processed_tokens = 0_u64;
 
+    if request.omit_prior_reasoning {
+        match runtime
+            .omit_reasoning_replay(
+                &request.run_id,
+                &request.claim_id,
+                request.defer_prompt_for_context_handoff,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return AgentProviderResult::Cancelled {
+                    text: String::new(),
+                };
+            }
+            Err(error) => return transcript_error(error, &final_text, &streamed_text),
+        }
+        history = without_reasoning_traces(history);
+    }
+    let mut provider_switch_resume = provider_switch
+        .is_some()
+        .then(|| (history.clone(), prompt.clone()));
+
+    if provider_switch.is_some() {
+        before_prompt = request.defer_prompt_for_context_handoff;
+        if before_prompt {
+            deferred_prompt = Some(prompt);
+        } else {
+            history.push(prompt);
+        }
+        prompt = developer_message(HANDOFF_PROMPT);
+        context_handoff_hook.start_handoff();
+    }
+
+    macro_rules! continue_without_handoff {
+        ($stream:ident, $generations:lifetime, $agent_run:lifetime, $reason:expr) => {{
+            drop($stream);
+            let (provider, _) = provider_switch.take().expect("provider-switch handoff");
+            let (resume_history, resume_prompt) = provider_switch_resume
+                .take()
+                .expect("provider-switch conversation");
+            eprintln!(
+                "sprocket-agent: provider switch context handoff failed ({}); continuing on the selected provider without it",
+                $reason
+            );
+            match resume_without_provider_handoff(
+                &mut agent,
+                resume_history,
+                resume_prompt,
+                runtime.omit_reasoning_replay(
+                    &request.run_id,
+                    &request.claim_id,
+                    request.defer_prompt_for_context_handoff,
+                ),
+                provider.completion_model(
+                    &runtime,
+                    &request.run_id,
+                    &request.claim_id,
+                    &request.base_instructions,
+                ),
+            )
+            .await
+            {
+                Ok(Some((next_history, next_prompt))) => {
+                    history = next_history;
+                    prompt = next_prompt;
+                    deferred_prompt = None;
+                    before_prompt = false;
+                    additional_params = target_params.clone();
+                    context_handoff_hook.restart();
+                    handoff_processed_tokens = 0;
+                    final_text.clear();
+                    final_response_received = false;
+                    streamed_text.clear();
+                    continue $generations;
+                }
+                Ok(None) => {
+                    break $agent_run AgentProviderResult::Cancelled {
+                        text: streamed_text,
+                    };
+                }
+                Err(error) => {
+                    break $agent_run AgentProviderResult::Failed {
+                        text: streamed_text,
+                        error,
+                    };
+                }
+            }
+        }};
+    }
+
     'agent_run: {
         'generations: loop {
+            let mut pending_origin_turn = None;
+            if let Ok(mut origin) = completion_origin.0.lock() {
+                *origin = None;
+            }
+            let ready_at = tokio::time::Instant::now() + recovery_delay;
+            recovery_delay = Duration::ZERO;
             let mut stream = agent
                 .prompt(prompt)
+                .options(additional_params.0.clone())
+                .replace_additional_params(additional_params.1.clone())
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
+                .add_hook(completion_origin.clone())
                 .add_hook(context_handoff_hook.clone())
                 .add_hook(prompt_hook.clone())
+                .add_hook(stream_recovery.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .stream();
             loop {
@@ -421,7 +689,15 @@ async fn run_with_completion_model(
                             }
                         }
                     }
-                    item = stream.next() => {
+                    item = async {
+                        tokio::time::sleep_until(ready_at).await;
+                        stream.next().await
+                    } => {
+                        if let Some(origin) = pending_origin_turn.and_then(|turn| completion_origin.take_for(turn))
+                        {
+                            transcript.record_origin(&origin);
+                            pending_origin_turn = None;
+                        }
                         let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
                             if completed_attempt == Some(transcript.attempt_seq) {
@@ -443,15 +719,21 @@ async fn run_with_completion_model(
                                         handoff_processed_tokens.saturating_add(tokens.unwrap_or(0));
                                 } else {
                                     transcript.record_usage(tokens);
-                                    transcript.record_completion(call.message_id.as_deref());
+                                    transcript.parts.order_stream_parts(&transcript.stream_id);
+                                    transcript.tool_call_tracker.record_parts(&transcript.parts.parts);
+                                    pending_origin_turn = Some(call.call_index + 1);
                                 }
                                 if let Some(error) = incomplete_completion_error(call.finish_reason.as_ref()) {
-                                    break 'agent_run AgentProviderResult::Failed {
-                                        text: streamed_text,
-                                        error: if context_handoff_hook.is_writing() {
-                                            error.context("Context handoff failed: the model response was incomplete.")
-                                        } else { error },
-                                    };
+                                    if context_handoff_hook.is_writing() && provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, format!("{error:#}"));
+                                    } else {
+                                        break 'agent_run AgentProviderResult::Failed {
+                                            text: streamed_text,
+                                            error: if context_handoff_hook.is_writing() {
+                                                error.context("Context handoff failed: the model response was incomplete.")
+                                            } else { error },
+                                        };
+                                    }
                                 }
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
@@ -463,6 +745,11 @@ async fn run_with_completion_model(
                             ))) => {
                                 transcript.push_streamed_text(part.index(), &text);
                                 streamed_text = join_assistant_text_parts(&transcript.parts.parts);
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                Item::Event(StreamEvent::Start { part, kind: rig::streaming::PartKind::Reasoning, .. }),
+                            ))) => {
+                                transcript.push_reasoning(&format!("reasoning:{}", part.index()), "");
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                                 Item::Event(StreamEvent::Reasoning { part, text }),
@@ -494,29 +781,52 @@ async fn run_with_completion_model(
                             Some(Err(rig::completion::PromptError::Cancelled { reason, .. }))
                                 if reason == HANDOFF_SUBMITTED => {
                                 let Some(summary) = context_handoff_hook.take_summary() else {
+                                    if provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, "no valid document was submitted");
+                                    }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff failed: no valid document was submitted."),
                                     };
                                 };
-                                match runtime.save_context_handoff(
+                                drop(stream);
+                                let switching_provider = provider_switch.is_some();
+                                let next_model = async {
+                                    match provider_switch.take() {
+                                        Some((provider, _)) => provider.completion_model(
+                                            &runtime, &request.run_id, &request.claim_id,
+                                            &request.base_instructions,
+                                        ).await.map(Some),
+                                        None => Ok(None),
+                                    }
+                                };
+                                let save = runtime.save_context_handoff(
                                     &request.run_id, &request.claim_id, &summary,
                                     transcript.attempt_seq, before_prompt,
                                     handoff_processed_tokens,
+                                );
+                                let handoff_context: Vec<_> = initial_context
+                                    .iter()
+                                    .cloned()
+                                    .chain([working_directory_message(&cwd.get())])
+                                    .collect();
+                                match resume_context_handoff(
+                                    &mut agent, &handoff_context, &summary,
+                                    deferred_prompt.take(), save, next_model,
                                 ).await {
-                                    Ok(true) => {}
-                                    Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
+                                    Ok(Some((next_history, next_prompt))) => {
+                                        history = next_history;
+                                        prompt = next_prompt;
+                                    }
+                                    Ok(None) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
                                     Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
                                 }
                                 if let Err(error) = transcript.advance_attempt().await {
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
-                                history = initial_context.to_vec();
-                                let handoff = Message::user(context_summary_text(&summary));
-                                prompt = match deferred_prompt.take() {
-                                    Some(pending) => { history.push(handoff); pending }
-                                    None => handoff,
-                                };
+                                if switching_provider {
+                                    additional_params = target_params.clone();
+                                }
                                 context_handoff_hook.restart();
                                 handoff_processed_tokens = 0;
                                 final_text.clear();
@@ -526,6 +836,9 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
                                 if context_handoff_hook.is_writing() {
+                                    if provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run, "no valid document was submitted");
+                                    }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff failed: no valid document was submitted."),
@@ -537,8 +850,21 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(_)))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::ToolCall { .. }))
-                            | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
-                            | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))) => {}
+                            | Some(Ok(rig::agent::MultiTurnStreamItem::ToolResult { .. })) => {}
+                            Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. })) => {
+                                if let Err(error) = transcript.advance_attempt().await {
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
+                                transcript.live.clear(&request.thread_id);
+                                if let Some(output) = &transcript.runtime.output {
+                                    output.notify_live_update();
+                                }
+                                completed_attempt = None;
+                                final_text.clear();
+                                final_response_received = false;
+                                streamed_text.clear();
+                            }
+                            Some(Ok(_)) => {}
                             Some(Err(error)) => {
                                 if let Some(handoff) = context_handoff_hook.take_request() {
                                     handoff_processed_tokens = 0;
@@ -549,33 +875,61 @@ async fn run_with_completion_model(
                                     context_handoff_hook.start_handoff();
                                     continue 'generations;
                                 }
-                                if context_handoff_hook.is_writing() {
+                                if let Some((next_history, next_prompt, delay)) = stream_recovery.resume(&error) {
+                                    drop(stream);
+                                    eprintln!("sprocket-agent: provider stream was truncated; retrying the failed turn in {delay:?}");
+                                    history = next_history;
+                                    prompt = next_prompt;
+                                    recovery_delay = delay;
+                                    if let Err(error) = transcript.advance_attempt().await {
+                                        break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                    }
+                                    transcript.live.clear(&request.thread_id);
+                                    if let Some(output) = &transcript.runtime.output {
+                                        output.notify_live_update();
+                                    }
+                                    final_text.clear();
+                                    final_response_received = false;
+                                    streamed_text.clear();
+                                    continue 'generations;
+                                }
+                                if context_handoff_hook.is_writing() && provider_switch.is_some() {
+                                    continue_without_handoff!(stream, 'generations, 'agent_run, format!("{error:#}"));
+                                } else if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!(error).context("Context handoff failed. Retry to continue the conversation."),
                                     };
-                                }
-                                let text = if final_text.is_empty() {
-                                    streamed_text
                                 } else {
-                                    final_text
-                                };
-                                let result = match classify_provider_error(&error) {
-                                    ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
-                                        error: anyhow!(error),
-                                    },
-                                    ProviderErrorDisposition::Cancelled => {
-                                        AgentProviderResult::Cancelled { text }
-                                    }
-                                    ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
-                                        text,
-                                        error: anyhow!(error),
-                                    },
-                                };
-                                break 'agent_run result;
+                                    let text = if final_text.is_empty() {
+                                        streamed_text
+                                    } else {
+                                        final_text
+                                    };
+                                    let result = match classify_provider_error(&error) {
+                                        ProviderErrorDisposition::Superseded => {
+                                            AgentProviderResult::Superseded {
+                                                error: anyhow!(error),
+                                            }
+                                        }
+                                        ProviderErrorDisposition::Cancelled => {
+                                            AgentProviderResult::Cancelled { text }
+                                        }
+                                        ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
+                                            text,
+                                            error: anyhow!(error),
+                                        },
+                                    };
+                                    break 'agent_run result;
+                                }
                             }
                             None => {
                                 if context_handoff_hook.is_writing() {
+                                    if provider_switch.is_some() {
+                                        continue_without_handoff!(stream, 'generations, 'agent_run,
+                                            "the handoff ended without submitting a document"
+                                        );
+                                    }
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff ended without submitting a document."),
@@ -607,7 +961,6 @@ async fn run_with_completion_model(
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
 
 #[cfg(test)]
-#[path = "reasoning_integration_tests.rs"]
 mod reasoning_integration_tests;
 
 fn transcript_error(
@@ -705,11 +1058,7 @@ impl TranscriptSink {
         self.publish_if_needed(false);
     }
 
-    fn complete_reasoning(
-        &mut self,
-        correlator: &str,
-        reasoning: &rig::message::Sealed<rig::message::Reasoning>,
-    ) {
+    fn complete_reasoning(&mut self, correlator: &str, reasoning: &rig::message::Reasoning) {
         self.streamed = true;
         self.unpublished += 1;
         apply_completed_reasoning(
@@ -801,9 +1150,8 @@ impl TranscriptSink {
         }
     }
 
-    fn record_completion(&mut self, message_id: Option<&str>) {
-        preserve_text_message_id(&self.parts.parts, &mut self.provider_metadata, message_id);
-        self.tool_call_tracker.record_parts(&self.parts.parts);
+    fn record_origin(&mut self, origin: &rig::message::Origin) {
+        apply_completion_origin(&self.parts.parts, &mut self.provider_metadata, origin);
     }
 
     fn publish_delay(&self) -> Duration {
@@ -894,6 +1242,26 @@ fn durable_items_json(
         .collect()
 }
 
+fn apply_completion_origin(
+    parts: &[LiveAssistantPart],
+    provider_metadata: &mut HashMap<String, serde_json::Value>,
+    origin: &rig::message::Origin,
+) {
+    for part in parts {
+        let key = match part {
+            LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
+            LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
+            LiveAssistantPart::ToolCall {
+                part_id, call_id, ..
+            } => part_id.clone().unwrap_or_else(|| call_id.clone()),
+        };
+        let metadata = provider_metadata
+            .entry(key)
+            .or_insert_with(|| serde_json::json!({}));
+        metadata["origin"] = serde_json::to_value(origin).expect("origin always serializes");
+    }
+}
+
 fn apply_completed_text(
     parts: &mut LiveAssistantParts,
     provider_metadata: &mut HashMap<String, serde_json::Value>,
@@ -908,8 +1276,23 @@ fn apply_completed_text(
         Some(stream_id.to_string()),
         now_ms(),
     );
-    if let Some(params) = &completed.additional_params {
-        provider_metadata.insert(format!("text:{id}"), params.clone().into_value());
+    let block = AssistantContent::Text(completed.clone());
+    if let Some(native) = block.native_item() {
+        let mut item = native.clone();
+        if let Some(content) = item
+            .get_mut("content")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for part in content {
+                if let Some(part) = part.as_object_mut() {
+                    part.remove("text");
+                }
+            }
+        }
+        provider_metadata.insert(
+            format!("text:{id}"),
+            serde_json::json!({ "rigNative": item }),
+        );
     }
     previous
 }
@@ -923,259 +1306,25 @@ fn apply_completed_tool_call(
 ) {
     let call_id = call.id.wire().into_owned();
     let key = part_id.clone().unwrap_or_else(|| call_id.clone());
-    let mut metadata = serde_json::Map::new();
-    if let Some(item_id) = call.id.provider().and_then(|id| id.item_id.as_ref()) {
-        metadata.insert("openai".into(), serde_json::json!({ "itemId": item_id }));
+    let block = AssistantContent::ToolCall(call.clone());
+    if let Some(native) = block.native_item() {
+        let mut item = native.clone();
+        if let Some(item) = item.as_object_mut() {
+            item.remove("arguments");
+        }
+        provider_metadata.insert(key, serde_json::json!({ "rigNative": item }));
+    } else {
+        provider_metadata.remove(&key);
     }
-    if let Some(signature) = call.signature {
-        metadata.insert("signature".into(), signature.into());
-    }
-    metadata.insert(
-        "toolCallAdditionalParams".into(),
-        call.additional_params.unwrap_or(serde_json::Value::Null),
-    );
-    provider_metadata.insert(key, metadata.into());
     parts.apply_tool_call(
         part_id,
         call_id,
         call.function.name.into(),
-        call.function.arguments,
+        call.function.arguments.into(),
         Some(stream_id.to_string()),
         now_ms(),
     );
 }
 
-fn preserve_text_message_id(
-    parts: &[LiveAssistantPart],
-    provider_metadata: &mut HashMap<String, serde_json::Value>,
-    message_id: Option<&str>,
-) {
-    let Some(message_id) = message_id.filter(|id| !id.is_empty()) else {
-        return;
-    };
-    for part in parts {
-        if let LiveAssistantPart::Text { id, .. } = part {
-            let metadata = provider_metadata
-                .entry(format!("text:{id}"))
-                .or_insert_with(|| serde_json::json!({}));
-            let extras = metadata
-                .as_object_mut()
-                .expect("text metadata is a JSON object")
-                .entry("openai_responses")
-                .or_insert_with(|| serde_json::json!({}));
-            if let Some(extras) = extras.as_object_mut() {
-                extras
-                    .entry("message_id")
-                    .or_insert_with(|| message_id.into());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use super::{
-        ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, apply_completed_text,
-        classify_provider_error, durable_items_json, visible_live_parts,
-    };
-    use crate::live::LiveAssistantPart;
-
-    #[test]
-    fn live_projection_omits_empty_reasoning_without_removing_durable_state() {
-        let parts = vec![
-            LiveAssistantPart::Reasoning {
-                id: "empty".into(),
-                text: " \n".into(),
-                started_at: None,
-                completed_at: None,
-                turn_id: None,
-            },
-            LiveAssistantPart::Reasoning {
-                id: "visible".into(),
-                text: "plan".into(),
-                started_at: None,
-                completed_at: None,
-                turn_id: None,
-            },
-        ];
-        let metadata = HashMap::from([("reasoning:empty".into(), reasoning_envelope())]);
-        let live = visible_live_parts(&parts);
-        assert_eq!(live.len(), 1);
-        assert!(matches!(&live[0], LiveAssistantPart::Reasoning { id, .. } if id == "visible"));
-        let durable = durable_items_json(&parts, &metadata);
-        assert_eq!(durable.len(), 2);
-        assert_eq!(durable[0]["providerMetadata"], reasoning_envelope());
-    }
-
-    #[test]
-    fn consecutive_text_parts_preserve_their_own_phase_and_authoritative_text() {
-        let mut parts = super::LiveAssistantParts::default();
-        let mut metadata = HashMap::new();
-        parts.apply_text_delta(
-            "text",
-            "stream:text:0".into(),
-            "partial",
-            Some("stream".into()),
-            1,
-        );
-        let commentary = rig::message::Text {
-            text: "Working".into(),
-            additional_params: Some(
-                serde_json::from_value(serde_json::json!({"openai_responses": {"phase": "commentary", "message_id": "msg_commentary"}})).unwrap(),
-            ),
-        };
-        assert_eq!(
-            apply_completed_text(&mut parts, &mut metadata, "stream", 0, &commentary),
-            "partial"
-        );
-        let answer = rig::message::Text {
-            text: "Done".into(),
-            additional_params: Some(
-                serde_json::from_value(
-                    serde_json::json!({"openai_responses": {"phase": "final_answer"}}),
-                )
-                .unwrap(),
-            ),
-        };
-        assert_eq!(
-            apply_completed_text(&mut parts, &mut metadata, "stream", 1, &answer),
-            ""
-        );
-        super::preserve_text_message_id(&parts.parts, &mut metadata, Some("msg_answer"));
-        let durable = durable_items_json(&parts.parts, &metadata);
-        assert_eq!(durable.len(), 2);
-        assert_eq!(durable[0]["text"], "Working");
-        assert_eq!(
-            durable[0]["providerMetadata"]["openai_responses"]["phase"],
-            "commentary"
-        );
-        assert_eq!(durable[1]["text"], "Done");
-        assert_eq!(
-            durable[1]["providerMetadata"]["openai_responses"]["phase"],
-            "final_answer"
-        );
-
-        let part = serde_json::from_value(serde_json::json!({
-            "number": 0, "sourceKey": "completion", "kind": "completion", "runId": "run",
-            "completion": {"streamId": "stream", "items": durable}
-        }))
-        .unwrap();
-        let history =
-            crate::types::deserialize_agent_history(crate::transcript::agent_history_from_parts(
-                &crate::transcript::TranscriptState::new("user".into(), "thread".into()),
-                &[part],
-                None,
-            ))
-            .unwrap();
-        let request = rig::providers::openai::responses_api::CompletionRequest::try_from(
-            rig::providers::openai::responses_api::ResponsesRequestParams {
-                model: "model".into(),
-                request: rig::completion::CompletionRequest::new("continue").messages(history),
-                system_instructions_placement: Default::default(),
-                issuers: vec!["openai".into()],
-            },
-        )
-        .unwrap();
-        let replay = serde_json::to_value(request).unwrap();
-        let input = replay["input"].as_array().unwrap();
-        let commentary = input
-            .iter()
-            .find(|item| item["id"] == "msg_commentary")
-            .unwrap();
-        let answer = input
-            .iter()
-            .find(|item| item["id"] == "msg_answer")
-            .unwrap();
-        assert_eq!(commentary["phase"], "commentary");
-        assert_eq!(answer["phase"], "final_answer");
-    }
-
-    #[test]
-    fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
-        use rig::message::{AssistantContent, ToolCall, ToolFunction, UserContent};
-        use serde_json::json;
-
-        let mut call = ToolCall::from_dual_wire(
-            "fc_1",
-            "call_1",
-            ToolFunction {
-                name: "exec_cmd".try_into().unwrap(),
-                arguments: json!({"cmd": "pwd"}),
-            },
-        );
-        call.signature = Some("opaque-signature".into());
-        call.additional_params = Some(json!({"native": {"futureField": "opaque"}}));
-        let mut parts = super::LiveAssistantParts::default();
-        let mut metadata = HashMap::new();
-        super::apply_completed_tool_call(
-            &mut parts,
-            &mut metadata,
-            "stream",
-            Some("stream:tool:0".into()),
-            call.clone(),
-        );
-        let durable = durable_items_json(&parts.parts, &metadata);
-        assert_eq!(durable[0]["callId"], "call_1");
-
-        let transcript = serde_json::from_value::<Vec<crate::transcript::TranscriptPart>>(json!([
-            {
-                "number": 0, "sourceKey": "completion", "kind": "completion", "runId": "run",
-                "completion": {"streamId": "stream", "items": durable}
-            },
-            {
-                "number": 1, "sourceKey": "tool", "kind": "tool", "runId": "run",
-                "tool": {"callId": "call_1", "name": "exec_cmd", "status": "completed", "output": "/workspace"}
-            }
-        ])).unwrap();
-        let history = crate::transcript::agent_history_from_parts(
-            &crate::transcript::TranscriptState::new("user".into(), "thread".into()),
-            &transcript,
-            None,
-        );
-        let messages = crate::types::deserialize_agent_history(history).unwrap();
-        let rig::message::Message::Assistant { content, .. } = &messages[0] else {
-            panic!("expected assistant call");
-        };
-        assert_eq!(content, &[AssistantContent::ToolCall(call.clone())]);
-        let rig::message::Message::User { content } = &messages[1] else {
-            panic!("expected tool result");
-        };
-        let UserContent::ToolResult(result) = &content[0] else {
-            panic!("expected tool result content");
-        };
-        assert_eq!(result.call, call.id);
-        assert_eq!(result.name, call.function.name);
-    }
-
-    #[test]
-    fn classifies_superseded_completion_without_treating_it_as_failure() {
-        let error =
-            anyhow::anyhow!("completion provider failed: SPROCKET_COMPLETION_STREAM_SUPERSEDED");
-
-        assert_eq!(
-            classify_provider_error(&error),
-            ProviderErrorDisposition::Superseded
-        );
-    }
-
-    #[test]
-    fn classifies_stopped_workspace_tool_as_cancellation() {
-        let error = anyhow::anyhow!("tool execution failed: {RUN_NO_LONGER_ACTIVE}");
-
-        assert_eq!(
-            classify_provider_error(&error),
-            ProviderErrorDisposition::Cancelled
-        );
-    }
-
-    fn reasoning_envelope() -> serde_json::Value {
-        serde_json::json!({
-            "openai": {
-                "itemId": "rs_1",
-                "reasoningEncryptedContent": "envelope"
-            }
-        })
-    }
-}
+mod tests;

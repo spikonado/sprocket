@@ -166,6 +166,7 @@ export type TranscriptDisplayPage = {
 	replicaId: string;
 	rows: TranscriptDisplayRow[];
 	indexing: boolean;
+	syncing: boolean;
 	stale: boolean;
 	nextBefore?: number;
 	endSequence: number;
@@ -215,6 +216,7 @@ export type FilesystemBrowseResult = {
 export type SkillSummary = {
 	name: string;
 	description: string;
+	disableModelInvocation: boolean;
 };
 
 export type WorkspaceSkillsResult = {

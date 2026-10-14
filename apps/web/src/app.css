@@ -445,6 +445,8 @@ body::after {
 	padding: 0.14rem 0.42rem;
 	font-family: var(--font-mono);
 	font-size: 0.8em;
+	-webkit-box-decoration-break: clone;
+	box-decoration-break: clone;
 }
 
 .chat-markdown pre {
@@ -581,17 +583,22 @@ body::after {
 
 .chat-markdown table {
 	display: block;
-	width: 100%;
+	width: max-content;
 	max-width: 100%;
 	overflow-x: auto;
 	border-collapse: collapse;
 	font-size: 0.92em;
+	/* `anywhere` shrinks min-content to one glyph, so columns collapse instead of scrolling. */
+	overflow-wrap: normal;
+	word-break: normal;
 }
 
 .chat-markdown th,
 .chat-markdown td {
+	max-width: min(24rem, 80vw);
 	border: 1px solid var(--border);
 	padding: 0.5rem 0.65rem;
+	overflow-wrap: break-word;
 }
 
 .chat-markdown th:not([align]),

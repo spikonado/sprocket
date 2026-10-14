@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -59,6 +60,20 @@ pub async fn cache_attachment(
     thread_id: &str,
     attachment: &TranscriptAttachmentMeta,
 ) -> anyhow::Result<PathBuf> {
+    cache_attachment_with_url(store, user_id, thread_id, attachment, || async { Ok(None) }).await
+}
+
+async fn cache_attachment_with_url<F, Fut>(
+    store: &TranscriptStore,
+    user_id: &str,
+    thread_id: &str,
+    attachment: &TranscriptAttachmentMeta,
+    resolve: F,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = anyhow::Result<Option<String>>>,
+{
     let lock = store.lock_attachment(user_id, &attachment.storage_id).await;
     let _guard = lock.lock().await;
     let path = store.attachment_path(user_id, thread_id, attachment);
@@ -72,8 +87,11 @@ pub async fn cache_attachment(
         if tokio::fs::try_exists(&staged).await? {
             tokio::fs::copy(&staged, temp.path()).await?;
         } else {
-            let url = attachment.url.as_deref().ok_or(AttachmentUnavailable)?;
-            download_attachment_to_file(url, temp.path(), attachment.size)
+            let url = match &attachment.url {
+                Some(url) => url.clone(),
+                None => resolve().await?.ok_or(AttachmentUnavailable)?,
+            };
+            download_attachment_to_file(&url, temp.path(), attachment.size)
                 .await
                 .with_context(|| format!("failed to retrieve attachment {}", attachment.name))?;
         }
@@ -98,19 +116,29 @@ pub async fn cache_attachment(
     Ok(tokio::fs::canonicalize(path).await?)
 }
 
-pub(crate) async fn cache_prompt_attachments(
+pub(crate) async fn cache_prompt_attachments<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
     thread_id: &str,
     parts: &mut [TranscriptPart],
-) -> anyhow::Result<()> {
+    mut resolve: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(u32, String) -> Fut,
+    Fut: Future<Output = anyhow::Result<Option<String>>>,
+{
     for part in parts {
+        let number = part.number;
         let Some(prompt) = &mut part.prompt else {
             continue;
         };
         for attachment in &mut prompt.image_uploads {
             attachment.local_path =
-                match cache_attachment(store, user_id, thread_id, attachment).await {
+                match cache_attachment_with_url(store, user_id, thread_id, attachment, || {
+                    resolve(number, attachment.storage_id.clone())
+                })
+                .await
+                {
                     Ok(path) => Some(path.to_string_lossy().into_owned()),
                     Err(error) if error.is::<AttachmentUnavailable>() => None,
                     Err(error) => return Err(error),
@@ -121,330 +149,4 @@ pub(crate) async fn cache_prompt_attachments(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transcript::types::{TranscriptPartKind, TranscriptPromptBody};
-
-    fn attachment(id: &str, size: u64) -> TranscriptAttachmentMeta {
-        TranscriptAttachmentMeta {
-            storage_id: format!("storage-{id}"),
-            name: "../notes.txt".into(),
-            media_type: "application/octet-stream".into(),
-            size,
-            url: None,
-            local_path: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn expires_abandoned_staging_without_removing_fresh_or_submitted_files() {
-        use std::time::{Duration, SystemTime};
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let now = SystemTime::now();
-        let old = now - Duration::from_secs(2 * 24 * 60 * 60);
-        let cutoff = now - Duration::from_secs(24 * 60 * 60);
-        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 0);
-
-        let stale = store.pending_attachment_path("user", "stale");
-        let fresh = store.pending_attachment_path("user", "fresh");
-        let crashed = store.pending_attachment_path("other", "upload");
-        let submitted = store.attachment_path("user", "thread", &attachment("submitted", 0));
-        for path in [&stale, &fresh, &crashed, &submitted] {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            let file = std::fs::File::create(path).unwrap();
-            file.set_modified(if path == &fresh { now } else { old })
-                .unwrap();
-        }
-        let guard = store.protect_pending_upload(&stale).await;
-        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 1);
-        assert!(stale.exists());
-        drop(guard);
-        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 1);
-        assert!(!stale.exists());
-        assert!(!crashed.exists());
-        assert!(fresh.exists());
-        assert!(submitted.exists());
-        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 0);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn pending_expiry_does_not_follow_directory_symlinks() {
-        let dir = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let target = outside.path().join("keep");
-        std::fs::write(&target, b"keep").unwrap();
-        let pending = store.pending_attachment_path("user", "ignored");
-        std::fs::create_dir_all(pending.parent().unwrap().parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(outside.path(), pending.parent().unwrap()).unwrap();
-        assert_eq!(
-            store
-                .prune_pending_attachments(std::time::SystemTime::now())
-                .await
-                .unwrap(),
-            0
-        );
-        assert!(target.exists());
-    }
-
-    #[test]
-    fn cache_filenames_keep_extensions_when_long_unicode_names_are_shortened() {
-        let store = TranscriptStore::new(PathBuf::from("/cache"));
-        let mut meta = attachment("long", 0);
-        meta.name = format!("{}.csv", "表".repeat(250));
-        let path = store.attachment_path("user", "thread", &meta);
-        assert_eq!(path.extension().unwrap(), "csv");
-        assert!(path.file_name().unwrap().to_string_lossy().len() <= 205);
-    }
-
-    #[test]
-    fn attachment_paths_keep_untrusted_ids_and_names_inside_the_cache() {
-        let root = std::env::temp_dir().join("attachment-path-test");
-        let store = TranscriptStore::new(root.clone());
-        for input in [
-            "../../outside",
-            r"..\..\outside",
-            "/etc/passwd",
-            r"C:\outside",
-        ] {
-            let mut meta = attachment("unsafe", 0);
-            meta.storage_id = input.into();
-            meta.name = input.into();
-            for path in [
-                store.attachment_path(input, input, &meta),
-                store.pending_attachment_path(input, input),
-            ] {
-                let relative = path.strip_prefix(&root).unwrap();
-                assert!(
-                    relative
-                        .components()
-                        .all(|part| matches!(part, std::path::Component::Normal(_))),
-                    "{}",
-                    path.display()
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn discarding_a_draft_removes_only_its_staging_and_thread_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let meta = attachment("draft", 4);
-        let staged = store.pending_attachment_path("user", &meta.storage_id);
-        tokio::fs::create_dir_all(staged.parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(&staged, b"data").await.unwrap();
-        let path = cache_attachment(&store, "user", "thread", &meta)
-            .await
-            .unwrap();
-        let unrelated = store.pending_attachment_path("user", "other");
-        tokio::fs::write(&unrelated, b"keep").await.unwrap();
-        store
-            .discard_attachment("user", Some("thread"), &meta.storage_id)
-            .await
-            .unwrap();
-        assert!(!path.exists());
-        assert!(!staged.exists());
-        assert!(unrelated.exists());
-        assert!(
-            store
-                .clear_thread("user", "pending-attachments")
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn moves_staged_files_into_their_thread_without_size_or_count_caps() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let mut attachments = Vec::new();
-        for id in 0..6 {
-            let meta = attachment(&id.to_string(), 11 * 1024 * 1024);
-            let staged = store.pending_attachment_path("user", &meta.storage_id);
-            tokio::fs::create_dir_all(staged.parent().unwrap())
-                .await
-                .unwrap();
-            tokio::fs::File::create(&staged)
-                .await
-                .unwrap()
-                .set_len(meta.size)
-                .await
-                .unwrap();
-            attachments.push(meta);
-        }
-        let mut parts = vec![TranscriptPart {
-            number: 0,
-            source_key: "prompt:0".into(),
-            kind: TranscriptPartKind::Prompt,
-            run_id: "run".into(),
-            created_at: None,
-            prompt: Some(TranscriptPromptBody {
-                text: String::new(),
-                image_uploads: attachments,
-            }),
-            completion: None,
-            tool: None,
-            work: Default::default(),
-        }];
-        cache_prompt_attachments(&store, "user", "thread", &mut parts)
-            .await
-            .unwrap();
-        let prompt = parts[0].prompt.as_ref().unwrap();
-        for meta in &prompt.image_uploads {
-            let path = Path::new(meta.local_path.as_ref().unwrap());
-            assert!(path.starts_with(store.thread_dir("user", "thread").join("attachments")));
-            assert_eq!(tokio::fs::metadata(path).await.unwrap().len(), meta.size);
-            assert!(
-                !store
-                    .pending_attachment_path("user", &meta.storage_id)
-                    .exists()
-            );
-        }
-        let text = crate::transcript::prompt_text_with_attachments(prompt);
-        assert_eq!(text.matches("local transcript cache").count(), 1);
-        assert_eq!(text.matches("file-.._notes.txt").count(), 6);
-        store.clear_thread("user", "thread").await.unwrap();
-        assert!(!store.thread_dir("user", "thread").exists());
-    }
-
-    #[tokio::test]
-    async fn writes_metadata_with_storage_identity_only() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let meta = attachment("metadata", 4);
-        let current = store.attachment_path("user", "thread", &meta);
-        let staged = store.pending_attachment_path("user", &meta.storage_id);
-        tokio::fs::create_dir_all(staged.parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(&staged, b"data").await.unwrap();
-        let path = cache_attachment(&store, "user", "thread", &meta)
-            .await
-            .unwrap();
-        assert_eq!(path, current);
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"data");
-        let written: serde_json::Value = serde_json::from_slice(
-            &tokio::fs::read(path.parent().unwrap().join("metadata.json"))
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(written["storageId"], meta.storage_id);
-        assert!(written.get("imageUploadId").is_none());
-        assert!(written.get("url").is_none());
-        assert!(written.get("localPath").is_none());
-        assert_eq!(
-            store
-                .attachment_metadata("user", "thread", &meta.storage_id)
-                .await
-                .unwrap(),
-            Some(meta.clone())
-        );
-        store
-            .discard_attachment("user", Some("thread"), &meta.storage_id)
-            .await
-            .unwrap();
-        assert!(!current.exists());
-    }
-
-    #[tokio::test]
-    async fn attachment_lookup_checks_identity_and_stays_in_its_thread() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let meta = attachment("one", 4);
-        store
-            .save_attachment_metadata("user", "thread", &meta)
-            .await
-            .unwrap();
-        assert!(
-            store
-                .attachment_metadata("user", "other", &meta.storage_id)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        let current = store.attachment_path("user", "thread", &meta);
-        let mut wrong = meta.clone();
-        wrong.storage_id = "other-storage".into();
-        tokio::fs::write(
-            current.parent().unwrap().join("metadata.json"),
-            serde_json::to_vec(&wrong).unwrap(),
-        )
-        .await
-        .unwrap();
-        assert!(
-            store
-                .attachment_metadata("user", "thread", &meta.storage_id)
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_corrupt_staging_without_publishing_partial_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let meta = attachment("bad", 5);
-        let staged = store.pending_attachment_path("user", &meta.storage_id);
-        tokio::fs::create_dir_all(staged.parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(&staged, b"data").await.unwrap();
-        assert!(
-            cache_attachment(&store, "user", "thread", &meta)
-                .await
-                .is_err()
-        );
-        assert!(!store.attachment_path("user", "thread", &meta).exists());
-        assert!(staged.exists());
-    }
-
-    #[tokio::test]
-    async fn expired_remote_files_do_not_block_history_and_cached_files_remain_usable() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TranscriptStore::new(dir.path().into());
-        let cached = attachment("cached", 4);
-        let missing = attachment("expired", 4);
-        let staged = store.pending_attachment_path("user", &cached.storage_id);
-        tokio::fs::create_dir_all(staged.parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(staged, b"data").await.unwrap();
-        let mut parts = vec![TranscriptPart {
-            number: 0,
-            source_key: "prompt:0".into(),
-            kind: TranscriptPartKind::Prompt,
-            run_id: "run".into(),
-            created_at: None,
-            prompt: Some(TranscriptPromptBody {
-                text: "Continue".into(),
-                image_uploads: vec![cached, missing],
-            }),
-            completion: None,
-            tool: None,
-            work: Default::default(),
-        }];
-        cache_prompt_attachments(&store, "user", "thread", &mut parts)
-            .await
-            .unwrap();
-        let prompt = parts[0].prompt.as_ref().unwrap();
-        assert!(prompt.image_uploads[0].local_path.is_some());
-        assert!(prompt.image_uploads[1].local_path.is_none());
-        let text = crate::transcript::prompt_text_with_attachments(prompt);
-        let (user_text, metadata) = text
-            .split_once("\n\nAttached files in the local transcript cache:\n")
-            .unwrap();
-        assert_eq!(user_text, "Continue");
-        let metadata: serde_json::Value = serde_json::from_str(metadata).unwrap();
-        assert_eq!(
-            metadata[0]["path"],
-            serde_json::json!(prompt.image_uploads[0].local_path)
-        );
-        assert_eq!(metadata[1]["path"], serde_json::Value::Null);
-    }
-}
+mod tests;

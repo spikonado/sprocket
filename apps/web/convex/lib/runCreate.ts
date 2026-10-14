@@ -1,4 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { internal } from '@convex/_generated/api';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -29,6 +30,7 @@ import {
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange,
 	registerChildThread,
+	assertThreadTreeAcceptsWork,
 	threadRoot,
 	unsettleRootOfThread
 } from '@convex/lib/threadHierarchy';
@@ -173,6 +175,7 @@ export async function createQueuedRunRecord(
 
 	if (args.threadId) {
 		threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
+		await assertThreadTreeAcceptsWork(ctx.db, threadRecord);
 	} else {
 		const repositoryKey = args.repositoryKey?.trim();
 
@@ -190,6 +193,8 @@ export async function createQueuedRunRecord(
 			) {
 				throw new Error('Parent thread not found.');
 			}
+
+			await assertThreadTreeAcceptsWork(ctx.db, parentThread);
 		}
 
 		const now = Date.now();
@@ -205,6 +210,7 @@ export async function createQueuedRunRecord(
 			completionProvider,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
+			cwd: parentThread?.cwd,
 			lastMessageAt: now
 		});
 
@@ -337,6 +343,31 @@ export async function createQueuedRunRecord(
 	};
 
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
+
+	if (created.promptPart) {
+		const firstPrompt = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_kind_number', (query) =>
+				query.eq('threadId', threadRecord._id).eq('kind', 'prompt')
+			)
+			.first();
+
+		const preferences = await ctx.db
+			.query('uiPreferences')
+			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
+			.unique();
+
+		if (
+			firstPrompt?._id === created.promptPart._id &&
+			preferences?.automaticThreadTitles !== false
+		) {
+			await ctx.scheduler.runAfter(0, internal.threadTitles.generate, {
+				runId,
+				expectedTitle: threadUpdates.title,
+				expectedRenameKey: threadRecord.titleRenameKey
+			});
+		}
+	}
 
 	await unsettleRootOfThread(ctx, threadRecord);
 	await updateThreadHierarchyAfterChange(ctx, before);

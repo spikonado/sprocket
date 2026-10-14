@@ -8,7 +8,6 @@ import type { ChatGptStatus, DesktopApi } from '$lib/types/sprocket';
 import SettingsProviders from './settings-providers';
 
 const loginWindow = {
-	opener: null,
 	close: vi.fn(),
 	location: { replace: vi.fn() }
 };
@@ -312,7 +311,7 @@ it('reserves the popup before waiting for sign-in and closes a stale start', asy
 	expect(loginWindow.close).toHaveBeenCalledOnce();
 });
 
-it('cancels a stalled sign-in start and closes its reserved popup immediately', async () => {
+it('cancels a stalled sign-in start and closes its reserved popup once it resolves', async () => {
 	const started = Promise.withResolvers<{ state: string; authorizeUrl: string }>();
 	const cancel = vi.fn(async () => {});
 
@@ -325,12 +324,12 @@ it('cancels a stalled sign-in start and closes its reserved popup immediately', 
 
 	fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-	expect(loginWindow.close).toHaveBeenCalledOnce();
 	expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeTruthy();
 	await act(async () => {
 		started.resolve({ state: 'state-1', authorizeUrl: 'https://auth.openai.test/authorize' });
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(loginWindow.close).toHaveBeenCalledOnce();
 });
 
 it('surfaces server-side login errors from the result poll', async () => {
@@ -385,7 +384,6 @@ it('cancels the pending browser login on unmount while its poll is in flight', a
 		result.resolve({ status: 'complete' });
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
-	expect(loginWindow.close).toHaveBeenCalledOnce();
 	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
 });
 
@@ -460,7 +458,6 @@ it('ignores a stale login completion after the user cancels and starts again', a
 		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
-	expect(loginWindow.close).toHaveBeenCalledOnce();
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});

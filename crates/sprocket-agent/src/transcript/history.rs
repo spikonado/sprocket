@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use rig::completion::Message;
+use rig::message::{AssistantContent, Origin};
+
 use crate::context_handoff::context_summary_text;
 use crate::reasoning::opaque_encrypted;
 use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
@@ -8,6 +11,34 @@ use crate::types::{
 };
 
 use super::types::{TranscriptPromptBody, TranscriptState};
+
+pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
+    history
+        .into_iter()
+        .filter_map(|message| match message {
+            Message::Assistant(mut assistant) => {
+                assistant.content.retain(|part| {
+                    !matches!(
+                        part,
+                        AssistantContent::Reasoning(_) | AssistantContent::Opaque(_)
+                    )
+                });
+                for part in &mut assistant.content {
+                    match part {
+                        AssistantContent::ToolCall(call) => {
+                            call.native = None;
+                        }
+                        AssistantContent::Text(text) => text.native = None,
+                        _ => {}
+                    }
+                }
+                assistant.origin = None;
+                (!assistant.content.is_empty()).then_some(Message::Assistant(assistant))
+            }
+            other => Some(other),
+        })
+        .collect()
+}
 
 pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
     if prompt.image_uploads.is_empty() {
@@ -71,7 +102,7 @@ fn tool_result_message(tool: &TranscriptToolBody) -> AgentHistoryMessage {
         .to_string();
     AgentHistoryMessage {
         role: AgentHistoryRole::User,
-        assistant_id: None,
+        origin: None,
         contents: vec![AgentHistoryContent::ToolResult {
             id: tool.call_id.clone(),
             call_id: Some(tool.call_id.clone()),
@@ -140,10 +171,10 @@ pub fn agent_history_from_parts(
     {
         history.push(AgentHistoryMessage {
             role: AgentHistoryRole::User,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::Text {
                 text: context_summary_text(summary),
-                additional_params_json: None,
+                native_item: None,
             }],
         });
     }
@@ -170,13 +201,13 @@ pub fn agent_history_from_parts(
                     if !text.trim().is_empty() {
                         contents.push(AgentHistoryContent::Text {
                             text,
-                            additional_params_json: None,
+                            native_item: None,
                         });
                     }
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
                             role: AgentHistoryRole::User,
-                            assistant_id: None,
+                            origin: None,
                             contents,
                         });
                     }
@@ -184,15 +215,28 @@ pub fn agent_history_from_parts(
             }
             TranscriptPartKind::Completion => {
                 if let Some(completion) = &part.completion {
+                    let omit_reasoning = state
+                        .reasoning_stripped_through_part_number
+                        .is_some_and(|cutoff| i64::from(part.number) <= cutoff);
+                    let origin = completion
+                        .items
+                        .iter()
+                        .filter(|_| !omit_reasoning)
+                        .find_map(|item| {
+                            serde_json::from_value::<Origin>(
+                                item.get("providerMetadata")?.get("origin")?.clone(),
+                            )
+                            .ok()
+                        });
                     let contents: Vec<_> = completion
                         .items
                         .iter()
-                        .filter_map(completion_item_to_history)
+                        .filter_map(|item| completion_item_to_history(item, omit_reasoning))
                         .collect();
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
                             role: AgentHistoryRole::Assistant,
-                            assistant_id: None,
+                            origin,
                             contents,
                         });
                     }
@@ -227,662 +271,152 @@ fn openai_field<'a>(item: &'a serde_json::Value, key: &str) -> Option<&'a serde_
     item.get("providerMetadata")?.get("openai")?.get(key)
 }
 
-fn completion_item_to_history(item: &serde_json::Value) -> Option<AgentHistoryContent> {
-    let kind = item.get("type")?.as_str()?;
-    match kind {
-        "text" => Some(AgentHistoryContent::Text {
-            text: item.get("text")?.as_str()?.to_string(),
-            additional_params_json: item.get("providerMetadata").map(|value| value.to_string()),
-        }),
-        "reasoning" => {
-            let item_id = openai_field(item, "itemId")
-                .and_then(|value| value.as_str())
-                .map(str::to_string);
-            let issuer = item
-                .get("providerMetadata")
-                .and_then(|metadata| metadata.get("reasoningIssuer"))
-                .and_then(|value| value.as_str());
-            let text = item
-                .get("text")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            let item_id = item_id.filter(|id| !id.is_empty());
-            let encrypted = opaque_encrypted(
-                openai_field(item, "reasoningEncryptedContent").and_then(|value| value.as_str()),
-            );
-            let mut blocks = Vec::new();
-            if !text.is_empty() {
-                blocks.push(serde_json::json!({ "type": "summary", "content": text }));
-            }
-            if let Some(content) = encrypted {
-                blocks.push(serde_json::json!({ "type": "encrypted", "content": content }));
-            }
-            if blocks.is_empty() && item_id.is_none() {
-                return None;
-            }
-            let blocks_json = match issuer {
-                Some(issuer) => serde_json::json!({
-                    "issuer": issuer,
-                    "id": item_id,
-                    "content": blocks
-                })
-                .to_string(),
-                None => serde_json::json!(blocks).to_string(),
-            };
-            Some(AgentHistoryContent::Reasoning {
-                id: item_id,
-                blocks_json,
+fn non_empty_str<'a>(value: Option<&'a serde_json::Value>) -> Option<&'a str> {
+    value?.as_str().filter(|value| !value.is_empty())
+}
+
+fn completion_item_to_history(
+    item: &serde_json::Value,
+    omit_reasoning: bool,
+) -> Option<AgentHistoryContent> {
+    let metadata = item.get("providerMetadata").filter(|_| !omit_reasoning);
+    match item.get("type")?.as_str()? {
+        "reasoning" if omit_reasoning => None,
+        "text" => {
+            let text = item.get("text")?.as_str()?;
+            Some(AgentHistoryContent::Text {
+                native_item: metadata.and_then(|metadata| text_native_item(text, metadata)),
+                text: text.to_string(),
             })
         }
-        "tool-call" => Some(AgentHistoryContent::ToolCall {
-            id: openai_field(item, "itemId")
-                .and_then(|value| value.as_str())
-                .filter(|id| !id.is_empty())
-                .or_else(|| item.get("callId")?.as_str())?
-                .to_string(),
-            call_id: item
-                .get("callId")
-                .and_then(|value| value.as_str())
-                .map(str::to_string),
-            name: item.get("name")?.as_str()?.to_string(),
-            arguments_json: item
-                .get("input")
-                .cloned()
-                .unwrap_or(serde_json::json!({}))
-                .to_string(),
-            signature: item
-                .get("providerMetadata")
-                .and_then(|metadata| metadata.get("signature"))
-                .and_then(|value| value.as_str())
-                .map(str::to_string),
-            additional_params_json: item.get("providerMetadata").and_then(|metadata| {
-                let params = metadata.get("toolCallAdditionalParams").unwrap_or(metadata);
-                (!params.is_null()).then(|| params.to_string())
-            }),
-        }),
+        "reasoning" => reasoning_history(item),
+        "tool-call" => {
+            let item_id = non_empty_str(openai_field(item, "itemId"));
+            let call_id = non_empty_str(item.get("callId"))
+                .or(item_id)
+                .or_else(|| item.get("callId")?.as_str())?;
+            let name = item.get("name")?.as_str()?;
+            let arguments = item.get("input").cloned().unwrap_or(serde_json::json!({}));
+            Some(AgentHistoryContent::ToolCall {
+                native_item: Some(tool_call_native_item(
+                    metadata,
+                    item_id.unwrap_or(call_id),
+                    call_id,
+                    name,
+                    &arguments,
+                )),
+                call_id: call_id.to_string(),
+                name: name.to_string(),
+                arguments,
+            })
+        }
         _ => None,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::live::LiveAssistantParts;
-    use crate::reasoning::{
-        apply_completed_reasoning, merge_provider_metadata, reasoning_summary_text,
-    };
-    use crate::transcript::types::{
-        TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPromptBody,
-        TranscriptToolBody,
-    };
-    use crate::types::deserialize_agent_history;
-    use rig::completion::Message;
-    use rig::message::{AssistantContent, Issuer, Reasoning, ReasoningContent};
-
-    fn prompt(number: u32, run_id: &str, text: &str) -> TranscriptPart {
-        TranscriptPart {
-            number,
-            source_key: format!("prompt:{number}"),
-            kind: TranscriptPartKind::Prompt,
-            run_id: run_id.to_string(),
-            created_at: None,
-            prompt: Some(TranscriptPromptBody {
-                text: text.to_string(),
-                image_uploads: Vec::new(),
-            }),
-            completion: None,
-            tool: None,
-            work: Default::default(),
-        }
-    }
-
-    fn tool_part(
-        number: u32,
-        source_key: &str,
-        call_id: &str,
-        status: &str,
-        output: Option<serde_json::Value>,
-        tool_invocation_id: Option<&str>,
-        job_id: Option<&str>,
-    ) -> TranscriptPart {
-        TranscriptPart {
-            number,
-            source_key: source_key.into(),
-            kind: TranscriptPartKind::Tool,
-            run_id: "run".into(),
-            created_at: None,
-            prompt: None,
-            completion: None,
-            tool: Some(TranscriptToolBody {
-                job_id: job_id.map(str::to_string),
-                tool_invocation_id: tool_invocation_id.map(str::to_string),
-                call_id: call_id.into(),
-                name: "exec_command".into(),
-                input: None,
-                output,
-                status: status.into(),
-            }),
-            work: Default::default(),
-        }
-    }
-
-    fn completion_with_call(number: u32, call_id: &str) -> TranscriptPart {
-        TranscriptPart {
-            number,
-            source_key: format!("completion:{number}"),
-            kind: TranscriptPartKind::Completion,
-            run_id: "run".into(),
-            created_at: None,
-            prompt: None,
-            completion: Some(TranscriptCompletionBody {
-                stream_id: Some("s".into()),
-                items: vec![serde_json::json!({
-                    "type": "tool-call",
-                    "callId": call_id,
-                    "name": "exec_command",
-                    "input": {}
-                })],
-            }),
-            tool: None,
-            work: Default::default(),
-        }
-    }
-
-    #[test]
-    fn skips_the_current_run_prompt_until_that_run_has_finished_turns() {
-        let mut state = TranscriptState::new("user".into(), "thread".into());
-        state.history_from_number = 1;
-        state.context_summary = Some("Prior work is done.".into());
-        let before_resume = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "old", "covered"),
-                prompt(1, "keep", "continue"),
-                prompt(2, "current", "this turn"),
-            ],
-            Some("current"),
-        );
-        let before = format!("{before_resume:?}");
-        assert!(before.contains("Prior work is done."));
-        assert!(before.contains("continue"));
-        assert!(!before.contains("covered"));
-        assert!(!before.contains("this turn"));
-
-        let after_resume = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "old", "covered"),
-                prompt(1, "keep", "continue"),
-                prompt(2, "current", "this turn"),
-                TranscriptPart {
-                    number: 3,
-                    source_key: "completion:current".into(),
-                    kind: TranscriptPartKind::Completion,
-                    run_id: "current".into(),
-                    created_at: None,
-                    prompt: None,
-                    completion: Some(TranscriptCompletionBody {
-                        stream_id: Some("s".into()),
-                        items: vec![serde_json::json!({ "type": "text", "text": "now" })],
-                    }),
-                    tool: None,
-                    work: Default::default(),
-                },
-            ],
-            Some("current"),
-        );
-        let after = format!("{after_resume:?}");
-        assert!(after.contains("this turn"));
-        assert!(after.contains("now"));
-    }
-
-    #[test]
-    fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
-        let mut state = TranscriptState::new("user".into(), "thread".into());
-        state.history_from_number = 0;
-        let history = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "parent", "original task"),
-                TranscriptPart {
-                    number: 1,
-                    source_key: "completion:parent".into(),
-                    kind: TranscriptPartKind::Completion,
-                    run_id: "parent".into(),
-                    created_at: None,
-                    prompt: None,
-                    completion: Some(TranscriptCompletionBody {
-                        stream_id: Some("s".into()),
-                        items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
-                    }),
-                    tool: None,
-                    work: Default::default(),
-                },
-            ],
-            Some("continuation"),
-        );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("original task"));
-        assert!(serialized.contains("partial work"));
-        assert!(!current_run_has_finished_turns(
-            &[prompt(0, "parent", "original task")],
-            "continuation"
-        ));
-    }
-
-    #[test]
-    fn skips_tool_parts_without_a_matching_completion_call() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let history = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "run", "do it"),
-                TranscriptPart {
-                    number: 1,
-                    source_key: "tool:orphan".into(),
-                    kind: TranscriptPartKind::Tool,
-                    run_id: "run".into(),
-                    created_at: None,
-                    prompt: None,
-                    completion: None,
-                    tool: Some(TranscriptToolBody {
-                        job_id: None,
-                        tool_invocation_id: None,
-                        call_id: "orphan".into(),
-                        name: "exec_command".into(),
-                        input: None,
-                        output: Some(serde_json::json!("orphan-output")),
-                        status: "completed".into(),
-                    }),
-                    work: Default::default(),
-                },
-                TranscriptPart {
-                    number: 2,
-                    source_key: "completion:run".into(),
-                    kind: TranscriptPartKind::Completion,
-                    run_id: "run".into(),
-                    created_at: None,
-                    prompt: None,
-                    completion: Some(TranscriptCompletionBody {
-                        stream_id: Some("s".into()),
-                        items: vec![serde_json::json!({
-                            "type": "tool-call",
-                            "callId": "keep",
-                            "name": "exec_command",
-                            "input": {}
-                        })],
-                    }),
-                    tool: None,
-                    work: Default::default(),
-                },
-                TranscriptPart {
-                    number: 3,
-                    source_key: "tool:keep".into(),
-                    kind: TranscriptPartKind::Tool,
-                    run_id: "run".into(),
-                    created_at: None,
-                    prompt: None,
-                    completion: None,
-                    tool: Some(TranscriptToolBody {
-                        job_id: None,
-                        tool_invocation_id: None,
-                        call_id: "keep".into(),
-                        name: "exec_command".into(),
-                        input: None,
-                        output: Some(serde_json::json!("keep-output")),
-                        status: "completed".into(),
-                    }),
-                    work: Default::default(),
-                },
-            ],
-            Some("run"),
-        );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("do it"));
-        assert!(serialized.contains("keep-output"));
-        assert!(!serialized.contains("orphan-output"));
-    }
-
-    #[test]
-    fn skips_started_tool_progress_and_emits_one_finished_result_after_the_call() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let history = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "run", "do it"),
-                tool_part(
-                    1,
-                    "tool:inv-1:started",
-                    "keep",
-                    "started",
-                    None,
-                    Some("inv-1"),
-                    None,
-                ),
-                tool_part(
-                    2,
-                    "tool:inv-1:finished",
-                    "keep",
-                    "completed",
-                    Some(serde_json::json!("keep-output")),
-                    Some("inv-1"),
-                    None,
-                ),
-                completion_with_call(3, "keep"),
-            ],
-            Some("run"),
-        );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("keep-output"));
-        assert_eq!(serialized.matches("keep-output").count(), 1);
-        assert!(!serialized.contains("started"));
-        let keep_at = serialized.find("keep-output").expect("result");
-        let call_at = serialized.find("ToolCall").expect("protocol call");
-        assert!(call_at < keep_at);
-    }
-
-    #[test]
-    fn first_terminal_tool_event_wins() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let history = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "run", "do it"),
-                completion_with_call(1, "keep"),
-                tool_part(
-                    2,
-                    "tool:inv-1:finished",
-                    "keep",
-                    "cancelled",
-                    Some(serde_json::json!({"error": "stopped", "status": "cancelled"})),
-                    Some("inv-1"),
-                    None,
-                ),
-                tool_part(
-                    3,
-                    "tool:inv-1:finished-dup",
-                    "keep",
-                    "completed",
-                    Some(serde_json::json!("should-not-win")),
-                    Some("inv-1"),
-                    None,
-                ),
-            ],
-            Some("run"),
-        );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("stopped"));
-        assert!(!serialized.contains("should-not-win"));
-    }
-
-    #[test]
-    fn reads_legacy_job_id_tool_parts() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let history = agent_history_from_parts(
-            &state,
-            &[
-                prompt(0, "run", "do it"),
-                completion_with_call(1, "keep"),
-                tool_part(
-                    2,
-                    "tool:legacy-job",
-                    "keep",
-                    "completed",
-                    Some(serde_json::json!("legacy-output")),
-                    None,
-                    Some("legacy-job"),
-                ),
-            ],
-            Some("run"),
-        );
-        let serialized = format!("{history:?}");
-        assert!(serialized.contains("legacy-output"));
-        assert!(serialized.contains("call_id: Some(\"keep\")"));
-    }
-
-    #[test]
-    fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let history = agent_history_from_parts(
-            &state,
-            &[
-                TranscriptPart {
-                    number: 0,
-                    source_key: "prompt:0".into(),
-                    kind: TranscriptPartKind::Prompt,
-                    run_id: "run".into(),
-                    created_at: None,
-                    prompt: Some(TranscriptPromptBody {
-                        text: "see this".into(),
-                        image_uploads: vec![TranscriptAttachmentMeta {
-                            name: "shot.png".into(),
-                            media_type: "image/png".into(),
-                            size: 12,
-                            storage_id: "st".into(),
-                            url: Some("https://files.example/shot.png".into()),
-                            local_path: Some("/cache/user/blobs/st".into()),
-                        }],
-                    }),
-                    completion: None,
-                    tool: None,
-                    work: Default::default(),
-                },
-                TranscriptPart {
-                    number: 1,
-                    source_key: "completion:1".into(),
-                    kind: TranscriptPartKind::Completion,
-                    run_id: "run".into(),
-                    created_at: None,
-                    prompt: None,
-                    completion: Some(TranscriptCompletionBody {
-                        stream_id: Some("s".into()),
-                        items: vec![serde_json::json!({
-                            "type": "reasoning",
-                            "text": "think",
-                            "providerMetadata": {
-                                "openai": {
-                                    "itemId": "rs_123",
-                                    "reasoningEncryptedContent": "enc"
-                                }
-                            }
-                        })],
-                    }),
-                    tool: None,
-                    work: Default::default(),
-                },
-            ],
-            None,
-        );
-        let serialized = format!("{history:?}");
-        assert!(!serialized.contains("https://files.example/shot.png"));
-        assert!(!serialized.contains("Image {"));
-        assert!(serialized.contains("/cache/user/blobs/st"));
-        assert!(serialized.contains("rs_123"));
-        assert!(serialized.contains("encrypted"));
-        assert!(serialized.contains("enc"));
-    }
-
-    fn reasoning_completion(number: u32, item: serde_json::Value) -> TranscriptPart {
-        TranscriptPart {
-            number,
-            source_key: format!("completion:{number}"),
-            kind: TranscriptPartKind::Completion,
-            run_id: "run".into(),
-            created_at: None,
-            prompt: None,
-            completion: Some(TranscriptCompletionBody {
-                stream_id: Some("s".into()),
-                items: vec![item],
-            }),
-            tool: None,
-            work: Default::default(),
-        }
-    }
-
-    #[test]
-    fn completed_reasoning_roundtrips_summary_and_one_envelope_with_issuer() {
-        let encrypted = "e".repeat(600_000);
-        let content = vec![
-            ReasoningContent::Text {
-                text: "  raw\n\0λ  ".into(),
-                signature: Some("  signed\n+/=  ".into()),
-            },
-            ReasoningContent::Summary(" first\nsummary ".into()),
-            ReasoningContent::Redacted {
-                data: "  redacted\n\0+/=  ".into(),
-            },
-            ReasoningContent::Encrypted(encrypted.clone()),
-            ReasoningContent::Summary(String::new()),
-            ReasoningContent::Summary("second".into()),
-        ];
-        for issuer in ["openai", "anthropic", "openrouter/anthropic"] {
-            let original = Reasoning {
-                id: Some("  item\nλ  ".into()),
-                content: content.clone(),
-            }
-            .sealed(issuer);
-            let mut parts = LiveAssistantParts::default();
-            parts.apply_text_delta("reasoning", "s:r".into(), "partial", None, 10);
-            let mut metadata = HashMap::new();
-            apply_completed_reasoning(&mut parts, &mut metadata, "s", "r", &original);
-            let item = merge_provider_metadata(&parts.parts[0], metadata.get("reasoning:s:r"));
-            assert_eq!(item["text"], " first\nsummary \n\nsecond");
-            assert_eq!(
-                item["providerMetadata"],
-                serde_json::json!({
-                    "openai": {
-                        "itemId": "  item\nλ  ",
-                        "reasoningEncryptedContent": encrypted
-                    },
-                    "reasoningIssuer": issuer
-                })
-            );
-
-            let stored = reasoning_completion(0, item);
-            let stored_json = serde_json::to_string(&stored).unwrap();
-            assert!(stored_json.len() < encrypted.len() + 1_000);
-            let stored: TranscriptPart = serde_json::from_str(&stored_json).unwrap();
-            let state = TranscriptState::new("user".into(), "thread".into());
-            let history = agent_history_from_parts(&state, &[stored], None);
-            let serialized = serde_json::to_value(&history).unwrap();
-            let history_item = serialized[0]["contents"][0].as_object().unwrap();
-            assert_eq!(history_item.len(), 3);
-            assert_eq!(history_item["type"], "reasoning");
-            assert!(history_item.contains_key("id"));
-            assert!(history_item.contains_key("blocksJson"));
-            let reloaded = deserialize_agent_history(serde_json::from_value(serialized).unwrap())
-                .expect("reloaded durable history");
-            let Message::Assistant { content, .. } = &reloaded[0] else {
-                panic!("expected assistant message");
-            };
-            let AssistantContent::Reasoning(restored) = &content[0] else {
-                panic!("expected reasoning");
-            };
-            assert_eq!(
-                restored,
-                &Reasoning {
-                    id: Some("  item\nλ  ".into()),
-                    content: vec![
-                        ReasoningContent::Summary(" first\nsummary \n\nsecond".into()),
-                        ReasoningContent::Encrypted(encrypted.clone()),
-                    ],
-                }
-                .sealed(issuer)
-            );
-            assert_eq!(
-                reasoning_summary_text(restored),
-                " first\nsummary \n\nsecond"
-            );
-            if issuer != "openai" {
-                assert!(restored.open(&Issuer::from("openai")).is_none());
-            }
-        }
-    }
-
-    #[test]
-    fn legacy_summary_and_encrypted_blocks_reload_verbatim_as_openai() {
-        let mut item = serde_json::json!({
-            "type": "reasoning",
-            "text": "  summary\nλ  ",
-            "providerMetadata": {
-                "openai": {
-                    "itemId": "  rs_legacy  ",
-                    "reasoningEncryptedContent": "  opaque\n+/=  "
+fn text_native_item(text: &str, metadata: &serde_json::Value) -> Option<serde_json::Value> {
+    if let Some(native) = metadata.get("rigNative") {
+        let mut native = native.clone();
+        if let Some(content) = native
+            .get_mut("content")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for part in content {
+                if part.get("type").and_then(serde_json::Value::as_str) == Some("output_text") {
+                    part["text"] = serde_json::json!(text);
                 }
             }
-        });
-        let history = completion_item_to_history(&item).unwrap();
-        let AgentHistoryContent::Reasoning { id, blocks_json } = history else {
-            panic!("expected reasoning history");
-        };
-        assert_eq!(id.as_deref(), Some("  rs_legacy  "));
-        let blocks: Vec<ReasoningContent> = serde_json::from_str(&blocks_json).unwrap();
-        assert_eq!(
-            blocks,
-            vec![
-                ReasoningContent::Summary("  summary\nλ  ".into()),
-                ReasoningContent::Encrypted("  opaque\n+/=  ".into()),
-            ]
-        );
-        let messages = deserialize_agent_history(vec![AgentHistoryMessage {
-            role: AgentHistoryRole::Assistant,
-            assistant_id: None,
-            contents: vec![AgentHistoryContent::Reasoning { id, blocks_json }],
-        }])
-        .unwrap();
-        let Message::Assistant { content, .. } = &messages[0] else {
-            panic!("expected assistant message");
-        };
-        let AssistantContent::Reasoning(reasoning) = &content[0] else {
-            panic!("expected reasoning");
-        };
-        assert_eq!(reasoning.issuer(), &Issuer::from("openai"));
-        assert_eq!(reasoning.open(reasoning.issuer()).unwrap().content, blocks);
-
-        item["providerMetadata"]["reasoningIssuer"] = serde_json::json!("anthropic");
-        let messages = deserialize_agent_history(vec![AgentHistoryMessage {
-            role: AgentHistoryRole::Assistant,
-            assistant_id: None,
-            contents: vec![completion_item_to_history(&item).unwrap()],
-        }])
-        .unwrap();
-        let Message::Assistant { content, .. } = &messages[0] else {
-            panic!("expected assistant message");
-        };
-        let AssistantContent::Reasoning(reasoning) = &content[0] else {
-            panic!("expected reasoning");
-        };
-        assert_eq!(reasoning.issuer(), &Issuer::from("anthropic"));
-        assert_eq!(reasoning.open(reasoning.issuer()).unwrap().content, blocks);
+        }
+        return Some(native);
     }
-
-    #[test]
-    fn reloads_empty_opaque_reasoning_without_inventing_ciphertext() {
-        let state = TranscriptState::new("user".into(), "thread".into());
-        let history = agent_history_from_parts(
-            &state,
-            &[reasoning_completion(
-                0,
-                serde_json::json!({
-                    "type": "reasoning",
-                    "text": "",
-                    "providerMetadata": {
-                        "openai": {
-                            "itemId": "rs_empty",
-                            "reasoningEncryptedContent": ""
-                        }
-                    }
-                }),
-            )],
-            None,
-        );
-        assert_eq!(history.len(), 1);
-        match &history[0].contents[0] {
-            AgentHistoryContent::Reasoning { id, blocks_json } => {
-                assert_eq!(id.as_deref(), Some("rs_empty"));
-                assert_eq!(blocks_json, "[]");
+    let extras = metadata.get("openai_responses")?;
+    let mut native = serde_json::json!({
+        "type": "message", "role": "assistant", "status": "completed",
+        "content": [{"type": "output_text", "text": text, "annotations": []}]
+    });
+    for (key, value) in extras.as_object().into_iter().flatten() {
+        match key.as_str() {
+            "message_id" => {
+                if let Some(id) = non_empty_str(Some(value)) {
+                    native["id"] = serde_json::json!(id);
+                }
             }
-            other => panic!("expected empty signed reasoning, got {other:?}"),
+            "phase" => native["phase"] = value.clone(),
+            _ => native["content"][0][key] = value.clone(),
         }
     }
+    Some(native)
 }
+
+fn reasoning_history(item: &serde_json::Value) -> Option<AgentHistoryContent> {
+    let summary = item
+        .get("text")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let item_id = non_empty_str(openai_field(item, "itemId"));
+    let encrypted = opaque_encrypted(
+        openai_field(item, "reasoningEncryptedContent").and_then(|value| value.as_str()),
+    );
+    if summary.is_empty() && encrypted.is_none() && item_id.is_none() {
+        return None;
+    }
+    // Released transcripts omit the issuer for OpenAI reasoning.
+    let issuer = item
+        .get("providerMetadata")
+        .and_then(|metadata| metadata.get("reasoningIssuer"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("openai");
+    let native_item = (issuer == "openai").then(|| {
+        let summary_parts: Vec<_> = (!summary.is_empty())
+            .then(|| serde_json::json!({ "type": "summary_text", "text": summary }))
+            .into_iter()
+            .collect();
+        let mut native = serde_json::json!({ "type": "reasoning", "summary": summary_parts });
+        if let Some(id) = item_id {
+            native["id"] = serde_json::json!(id);
+        }
+        if let Some(encrypted) = encrypted {
+            native["encrypted_content"] = serde_json::json!(encrypted);
+        }
+        native
+    });
+    Some(AgentHistoryContent::Reasoning {
+        summary: summary.to_string(),
+        native_item,
+    })
+}
+
+fn tool_call_native_item(
+    metadata: Option<&serde_json::Value>,
+    item_id: &str,
+    call_id: &str,
+    name: &str,
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    let arguments = serde_json::json!(arguments.to_string());
+    if let Some(native) = metadata.and_then(|metadata| metadata.get("rigNative")) {
+        let mut native = native.clone();
+        native["arguments"] = arguments;
+        return native;
+    }
+    let mut native = serde_json::json!({
+        "type": "function_call", "id": item_id, "call_id": call_id,
+        "name": name, "arguments": arguments, "status": "completed"
+    });
+    // Released transcripts store extra native fields beside the signature.
+    if let Some(metadata) = metadata {
+        let params = metadata.get("toolCallAdditionalParams").unwrap_or(metadata);
+        for (key, value) in params.as_object().into_iter().flatten() {
+            if key != "origin" {
+                native[key] = value.clone();
+            }
+        }
+        if let Some(signature) = metadata.get("signature").and_then(|value| value.as_str()) {
+            native["signature"] = serde_json::json!(signature);
+        }
+    }
+    native
+}
+
+#[cfg(test)]
+mod tests;

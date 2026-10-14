@@ -2,6 +2,7 @@ mod artifacts;
 mod async_tools;
 mod commands;
 mod context;
+mod cwd;
 mod firecrawl;
 mod github_url;
 mod hosted_parse;
@@ -25,7 +26,9 @@ use self::artifacts::{
     AddArtifactTool, DeleteArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool,
 };
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
-use self::context::AgentToolContext;
+use self::context::{AgentToolContext, WorkingDirectory};
+use self::cwd::SetCwdTool;
+pub(crate) use self::cwd::working_directory_message;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -40,21 +43,6 @@ use self::subagents::{
 use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
-
-// Helpers/constants brought into this module so `tests` can reach them via `super::*`.
-#[cfg(test)]
-use self::context::tool_error;
-#[cfg(test)]
-use self::job::mutation_args_from_payload;
-#[cfg(test)]
-use self::questions::{
-    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, MAX_QUESTION_CHARS,
-    prepare_ask_question,
-};
-#[cfg(test)]
-use self::skills::resolve_read_skill;
-#[cfg(test)]
-use sprocket_workspace::async_tools::DEFAULT_YIELD_MS;
 
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
@@ -78,6 +66,8 @@ pub(crate) struct AgentToolSet {
     pub(crate) edit_artifact: EditArtifactTool,
     pub(crate) save_artifact: SaveArtifactTool,
     pub(crate) delete_artifact: DeleteArtifactTool,
+    pub(crate) set_cwd: SetCwdTool,
+    pub(crate) cwd: WorkingDirectory,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -143,6 +133,7 @@ pub(crate) fn agent_tools(
     claim_id: String,
     user_id: String,
     workspace_root: PathBuf,
+    cwd: PathBuf,
     transcript_dir: PathBuf,
     gateway_url: String,
     transcript_store: Option<Arc<crate::TranscriptStore>>,
@@ -159,6 +150,7 @@ pub(crate) fn agent_tools(
         claim_id,
         user_id,
         workspace_root,
+        cwd: WorkingDirectory::new(cwd),
         transcript_dir,
         gateway_url,
         transcript_store,
@@ -203,6 +195,8 @@ pub(crate) fn agent_tools(
         edit_artifact: EditArtifactTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
         delete_artifact: DeleteArtifactTool(context.clone()),
+        set_cwd: SetCwdTool(context.clone()),
+        cwd: context.cwd.clone(),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),
@@ -212,191 +206,4 @@ pub(crate) fn agent_tools(
 }
 
 #[cfg(test)]
-mod tests {
-    use convex::Value;
-    use rig::tool::ToolErrorKind;
-    use sprocket_workspace::{SkillSource, WorkspaceOperationCancelled, WorkspaceSkill};
-
-    use super::*;
-
-    #[tokio::test]
-    async fn text_only_models_do_not_replay_cached_image_results() {
-        use crate::types::{
-            AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-        };
-        let output = serde_json::json!({
-            "outputType": "image", "path": "/missing-image.png", "mediaType": "image/png",
-            "source": {"type": "path", "path": "photo.png"}, "byteSize": 1.0, "width": 1.0, "height": 1.0
-        });
-        let part = serde_json::from_value(serde_json::json!({
-            "number": 1, "sourceKey": "tool:inv-1:finished", "kind": "tool", "runId": "run",
-            "tool": {"toolInvocationId": "inv-1", "callId": "call", "name": "parse_file", "status": "completed", "output": output}
-        })).unwrap();
-        let mut history = vec![AgentHistoryMessage {
-            role: AgentHistoryRole::User,
-            assistant_id: None,
-            contents: vec![AgentHistoryContent::ToolResult {
-                id: "call".into(),
-                call_id: Some("call".into()),
-                items: vec![AgentHistoryToolResultItem::Text {
-                    text: "old output".into(),
-                }],
-            }],
-        }];
-        hydrate_tool_history(&mut history, &[part], false).await;
-        let serialized = serde_json::to_string(&history).unwrap();
-        assert!(serialized.contains("Image omitted"));
-        assert!(!serialized.contains("not available"));
-        assert!(!serialized.contains("imageJson"));
-    }
-
-    #[test]
-    fn tool_error_includes_anyhow_context_chain() {
-        let error =
-            anyhow::anyhow!("invalid add-file line").context("failed to parse Begin Patch input");
-        let mapped = tool_error(error);
-        let message = mapped.model_feedback().expect("model feedback");
-        assert!(
-            message.contains("failed to parse Begin Patch input"),
-            "missing outer context: {message}"
-        );
-        assert!(
-            message.contains("invalid add-file line"),
-            "missing root cause: {message}"
-        );
-    }
-
-    #[test]
-    fn tool_error_maps_workspace_cancellation_to_cancelled_kind() {
-        let mapped = tool_error(anyhow::Error::new(WorkspaceOperationCancelled));
-        assert_eq!(mapped.kind(), ToolErrorKind::Cancelled);
-    }
-
-    #[test]
-    fn prepare_ask_question_normalizes_and_enforces_limits() {
-        let prepared = prepare_ask_question(&AskQuestionArgs {
-            question: "Which database?".to_string(),
-            options: vec![
-                AskQuestionOption {
-                    id: "pg".to_string(),
-                    label: "Postgres".to_string(),
-                },
-                AskQuestionOption {
-                    id: "sqlite".to_string(),
-                    label: "SQLite".to_string(),
-                },
-            ],
-            yield_time_ms: DEFAULT_YIELD_MS,
-            timeout_ms: None,
-        })
-        .expect("valid question");
-
-        assert_eq!(prepared.options.len(), 2);
-        assert_eq!(prepared.options[0].id, "pg");
-        assert_eq!(prepared.options[1].id, "sqlite");
-
-        let too_long_question = "x".repeat(MAX_QUESTION_CHARS + 1);
-        let error = prepare_ask_question(&AskQuestionArgs {
-            question: too_long_question,
-            options: vec![AskQuestionOption {
-                id: "a".to_string(),
-                label: "A".to_string(),
-            }],
-            yield_time_ms: 0,
-            timeout_ms: None,
-        })
-        .expect_err("overlong question");
-        assert!(error.to_string().contains("2000"));
-
-        // Multibyte Unicode must be counted by characters, matching Convex validation.
-        let unicode_question = "é".repeat(MAX_QUESTION_CHARS);
-        prepare_ask_question(&AskQuestionArgs {
-            question: unicode_question,
-            options: vec![AskQuestionOption {
-                id: "a".to_string(),
-                label: "café".to_string(),
-            }],
-            yield_time_ms: 0,
-            timeout_ms: None,
-        })
-        .expect("unicode within character limits");
-
-        let reserved = prepare_ask_question(&AskQuestionArgs {
-            question: "Pick one".to_string(),
-            options: vec![AskQuestionOption {
-                id: AGENT_DECIDE_OPTION_ID.to_string(),
-                label: "Nope".to_string(),
-            }],
-            yield_time_ms: 0,
-            timeout_ms: None,
-        })
-        .expect_err("reserved id");
-        assert!(reserved.to_string().contains("reserved"));
-    }
-
-    #[test]
-    fn read_skill_returns_builtin_content_without_dir() {
-        let skills = [WorkspaceSkill {
-            name: "demo".to_string(),
-            description: "Demo skill".to_string(),
-            source: SkillSource::BuiltIn {
-                contents: "---\nname: demo\ndescription: Demo skill\n---\n# Do it\n",
-            },
-        }];
-
-        let value = resolve_read_skill(&skills, "demo").expect("should resolve");
-        assert_eq!(value["name"], "demo");
-        assert_eq!(value["description"], "Demo skill");
-        assert_eq!(value["content"], "# Do it\n");
-        assert!(value.get("dir").is_none());
-        assert!(value.get("truncated").is_none());
-    }
-
-    #[test]
-    fn read_skill_unknown_name_lists_available() {
-        let skills = [
-            WorkspaceSkill {
-                name: "alpha".to_string(),
-                description: "A".to_string(),
-                source: SkillSource::BuiltIn { contents: "" },
-            },
-            WorkspaceSkill {
-                name: "bravo".to_string(),
-                description: "B".to_string(),
-                source: SkillSource::BuiltIn { contents: "" },
-            },
-        ];
-
-        let error = resolve_read_skill(&skills, "missing").expect_err("should fail");
-        let message = error.to_string();
-        assert!(message.contains("Unknown skill 'missing'"));
-        assert!(message.contains("alpha, bravo"));
-    }
-
-    #[test]
-    fn mutation_args_from_payload_merges_run_claim() {
-        let job_payload = serde_json::json!({"path": "doc.md"});
-        let job_args = mutation_args_from_payload("run-1", "claim-1", &job_payload).unwrap();
-        assert_eq!(job_args.get("runId"), Some(&Value::from("run-1")));
-        assert_eq!(job_args.get("claimId"), Some(&Value::from("claim-1")));
-        assert_eq!(job_args.get("path"), Some(&Value::from("doc.md")));
-        assert!(job_args.get("content").is_none());
-
-        let mutation_payload = serde_json::json!({
-            "localPath": "doc.md",
-            "content": "function App() { return null; }",
-            "title": "doc.md",
-            "contentType": "react"
-        });
-        let mutation_args =
-            mutation_args_from_payload("run-1", "claim-1", &mutation_payload).unwrap();
-        assert_eq!(mutation_args.get("localPath"), Some(&Value::from("doc.md")));
-        assert_eq!(
-            mutation_args.get("content"),
-            Some(&Value::from("function App() { return null; }"))
-        );
-        assert!(
-            mutation_args_from_payload("run-1", "claim-1", &serde_json::json!("nope")).is_err()
-        );
-    }
-}
+mod tests;

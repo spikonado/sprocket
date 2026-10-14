@@ -309,7 +309,8 @@ export default defineSchema({
 	}).index('by_key', ['key']),
 	uiPreferences: defineTable({
 		userId: v.string(),
-		theme: v.union(v.literal('light'), v.literal('dark'))
+		theme: v.union(v.literal('light'), v.literal('dark')),
+		automaticThreadTitles: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	providerCredentialStates: defineTable({
 		userId: v.string(),
@@ -334,9 +335,11 @@ export default defineSchema({
 		userId: v.string(),
 		submissionId: v.string(),
 		parentThreadId: v.optional(v.id('threadRecords')),
+		treeCancellation: v.optional(v.object({ generation: v.string(), pendingBatches: v.number() })),
 		status: vRunStatus,
 		repositoryKey: v.string(),
 		title: v.optional(v.string()),
+		titleRenameKey: v.optional(v.string()),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
 		reasoningEffort: vReasoningEffort,
@@ -346,11 +349,19 @@ export default defineSchema({
 		contextSummaryThroughPartNumber: v.optional(v.number()),
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
+		// Inclusive last part whose reasoning replay is omitted after a failed
+		// provider-switch handoff. Ordinary messages and tool history stay.
+		reasoningStrippedThroughPartNumber: v.optional(v.number()),
+		// Absolute local path from the latest set_cwd call; subagents inherit it.
+		cwd: v.optional(v.string()),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
+		// Tree cancellation needs stable cursors while transcript timestamps change.
+		// eslint-disable-next-line @convex-dev/no-duplicate-indexes
+		.index('by_userId_parentThreadId', ['userId', 'parentThreadId'])
 		.index('by_userId_and_parentThreadId_and_lastMessageAt', [
 			'userId',
 			'parentThreadId',
@@ -453,6 +464,7 @@ export default defineSchema({
 		work: workMembership
 	})
 		.index('by_threadId_and_number', ['threadId', 'number'])
+		.index('by_threadId_kind_number', ['threadId', 'kind', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
 	threadTranscriptWorkSections: defineTable({

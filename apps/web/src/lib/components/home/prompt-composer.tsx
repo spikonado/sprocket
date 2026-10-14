@@ -9,7 +9,7 @@ import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
-import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
+import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/chat/skill-mentions';
 import {
 	getCatalogModel,
 	modelOptionsForCompletionProvider,
@@ -44,7 +44,7 @@ export type PendingAgentQuestion = {
 };
 
 export type PromptComposerProps = {
-	notices?: ReactNode;
+	notices?: (state: { usageBlocked: boolean }) => ReactNode;
 	prompt?: string;
 	onPromptChange?: (prompt: string) => void;
 	attachments: ComposerAttachment[];
@@ -57,6 +57,7 @@ export type PromptComposerProps = {
 	providersReady?: boolean;
 	selectedCompletionProvider?: CompletionProvider;
 	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
+	onCompletionProviderSelect?: (provider: CompletionProvider) => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
 	fastMode?: boolean;
@@ -120,6 +121,7 @@ export function PromptComposerView({
 	providersReady = true,
 	selectedCompletionProvider = 'spikonado',
 	onSelectedCompletionProviderChange,
+	onCompletionProviderSelect,
 	selectedReasoningEffort = defaultReasoningEffort,
 	onSelectedReasoningEffortChange,
 	fastMode = false,
@@ -247,12 +249,14 @@ export function PromptComposerView({
 	const canSubmitContent = answeringQuestion ? canAnswerQuestion : hasMessageContent;
 	const attachmentsPending = attachments.some((attachment) => attachment.status !== 'ready');
 	const canAttachMore = !composerLocked && !answeringQuestion;
-	const dollarQuery = getActiveDollarQuery(prompt, caretPosition);
+	const skillMention = getActiveSkillMention(prompt, caretPosition);
+	const skillQuery = skillMention?.query ?? null;
+	const skillPrefix = skillMention?.prefix ?? '$';
 	const atMention = getActiveAtMention(prompt, caretPosition);
 	const atQuery = atMention?.query ?? null;
 
 	const skillsPopupOpen =
-		dollarQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
+		skillQuery !== null && atQuery === null && !skillsDismissed && !answeringQuestion;
 
 	const pathsPopupOpen = atQuery !== null && !pathsDismissed && !answeringQuestion && !isSubmitting;
 	const paths = useComposerPaths(projectPaths, pathsPopupOpen ? atQuery : null);
@@ -260,8 +264,14 @@ export function PromptComposerView({
 	const popupOpen = skillsPopupOpen || pathsPopupOpen;
 
 	const filteredSkills = useMemo(
-		() => (dollarQuery === null ? [] : filterSkills(skills, dollarQuery)),
-		[dollarQuery, skills]
+		() =>
+			skillQuery === null
+				? []
+				: filterSkills(
+						skillPrefix === '/' ? skills.filter((skill) => skill.disableModelInvocation) : skills,
+						skillQuery
+					),
+		[skillQuery, skillPrefix, skills]
 	);
 
 	const activeOptionId =
@@ -343,7 +353,7 @@ export function PromptComposerView({
 	);
 
 	function selectSkill(skill: SkillSummary) {
-		const selection = applySkillSelection(prompt, caretPosition, skill.name);
+		const selection = applySkillSelection(prompt, caretPosition, skill);
 
 		if (!selection) {
 			return;
@@ -524,14 +534,14 @@ export function PromptComposerView({
 			}
 
 			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
-				event.preventDefault();
 				const skill = filteredSkills[highlightedIndex];
 
 				if (skill) {
+					event.preventDefault();
 					selectSkill(skill);
-				}
 
-				return;
+					return;
+				}
 			}
 		}
 
@@ -576,14 +586,17 @@ export function PromptComposerView({
 	function handleProviderChange(provider: CompletionProvider) {
 		if (!modelCatalog) return;
 		onSelectedCompletionProviderChange?.(provider);
+		onCompletionProviderSelect?.(provider);
 
 		const modelId = resolveModelForCompletionProvider(modelCatalog, provider, selectedModel);
 
 		if (!modelId) return;
+		const model = getCatalogModel(modelCatalog, modelId);
 		onSelectedModelChange?.(modelId);
 		onSelectedReasoningEffortChange?.(
-			getCatalogModel(modelCatalog, modelId)?.defaultReasoningEffort ??
-				modelCatalog.defaultReasoningEffort
+			model?.reasoningEfforts.includes(selectedReasoningEffort)
+				? selectedReasoningEffort
+				: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
 		);
 		onFastModeChange?.(false);
 	}
@@ -607,10 +620,12 @@ export function PromptComposerView({
 		);
 
 		if (resolvedModel && resolvedModel !== selectedModel) {
+			const model = getCatalogModel(modelCatalog, resolvedModel);
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
-				getCatalogModel(modelCatalog, resolvedModel)?.defaultReasoningEffort ??
-					modelCatalog.defaultReasoningEffort
+				model?.reasoningEfforts.includes(selectedReasoningEffort)
+					? selectedReasoningEffort
+					: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
 			);
 			onFastModeChange?.(false);
 		}
@@ -620,6 +635,7 @@ export function PromptComposerView({
 		configuredProviders,
 		selectedCompletionProvider,
 		selectedModel,
+		selectedReasoningEffort,
 		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
@@ -690,7 +706,7 @@ export function PromptComposerView({
 			invalidateSkillsCache();
 		}
 
-		if (dollarQuery === null) {
+		if (skillQuery === null) {
 			setSkillsDismissed(false);
 
 			return;
@@ -701,7 +717,7 @@ export function PromptComposerView({
 		}
 
 		void ensureSkillsLoaded();
-	}, [projectSkills, dollarQuery, skillsDismissed, ensureSkillsLoaded, invalidateSkillsCache]);
+	}, [projectSkills, skillQuery, skillsDismissed, ensureSkillsLoaded, invalidateSkillsCache]);
 
 	useEffect(() => {
 		setHighlightedIndex(0);
@@ -782,7 +798,7 @@ export function PromptComposerView({
 									aria-label="Conversation notices"
 									tabIndex={0}
 								>
-									{notices}
+									{notices?.({ usageBlocked })}
 									{composerNotice ? (
 										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
 									) : null}
@@ -819,6 +835,7 @@ export function PromptComposerView({
 									) : null}
 									{skillsPopupOpen ? (
 										<ComposerSkillMenu
+											prefix={skillPrefix}
 											loadState={skillsLoadState}
 											skills={filteredSkills}
 											highlightedIndex={highlightedIndex}
@@ -919,7 +936,7 @@ export function PromptComposerView({
 											ariaLabel="Select provider"
 											menuTitle="Provider"
 											compactOnMobile
-											disabled={composerLocked || answeringQuestion || !providersReady}
+											disabled={composerLocked || answeringQuestion}
 											onValueChange={handleProviderChange}
 											className="z-20 shrink-0"
 											triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"

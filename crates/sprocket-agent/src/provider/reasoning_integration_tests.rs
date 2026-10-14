@@ -1,0 +1,1223 @@
+//! Native Rig streaming, durable transcript reload, and Responses API serialization.
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use futures::StreamExt;
+use rig::completion::{CompletionRequest, Message};
+use rig::message::{
+    AssistantContent, AssistantMessage, CallId, Origin, Reasoning, ToolCall, ToolFunction,
+    ToolName, ToolResult, ToolResultContent, UserContent,
+};
+use rig::providers::openai;
+use rig::streaming::{Item, PartKind, StreamEvent};
+use rig::tool::{DynamicTool, ToolOutput};
+use rig::wire::{Body, Mode, Operation, Wire};
+use serde_json::{Value as JsonValue, json};
+
+use super::{apply_completed_text, apply_completed_tool_call, durable_items_json};
+use crate::hooks::{AgentPromptHook, ToolCallTracker};
+use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
+use crate::openai::stateless_responses_model;
+use crate::reasoning::apply_completed_reasoning;
+use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
+use crate::types::{AgentHistoryMessage, deserialize_agent_history};
+
+const STREAM_ID: &str = "stream";
+const ITEM_ID: &str = "rs_gateway";
+const ENVELOPE: &str = "gway-envelope-v1";
+const DELTA_SUMMARY: &str = "partial";
+const DONE_SUMMARY: &str = "full gateway summary";
+const TOOL_CALL_ID: &str = "call_1";
+const TOOL_NAME: &str = "exec_cmd";
+const TEXT: &str = "done.";
+
+#[derive(Debug, PartialEq, Eq)]
+enum Observed {
+    ReasoningDelta,
+    ReasoningDone,
+    Text,
+    ToolCall,
+}
+
+fn sse(event: JsonValue) -> String {
+    format!("data: {event}\n\n")
+}
+
+fn gateway_response(status: &str, output: Vec<JsonValue>) -> JsonValue {
+    json!({
+        "id": "resp_gateway",
+        "object": "response",
+        "created_at": 0,
+        "status": status,
+        "model": "gateway-model",
+        "output": output,
+        "tools": [],
+        "usage": {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2
+        }
+    })
+}
+
+fn responses_wire(request: CompletionRequest) -> JsonValue {
+    let wire = openai::responses_api::wire::Responses::new(
+        openai::OpenAIConfig::new("test-key"),
+        "gateway-model",
+    );
+    let request = <rig::operation::Completion as Operation>::prepare(request, &wire.describe())
+        .expect("prepare native responses request");
+    let encoded = wire
+        .encode(request, Mode::Unary)
+        .expect("native responses request");
+    let Body::Bytes(bytes) = encoded.request.into_body() else {
+        panic!("Responses uses a JSON body");
+    };
+    serde_json::from_slice(&bytes).expect("deserialize responses request")
+}
+
+/// Gateway wire order: empty encrypted reasoning item, summary delta, then
+/// authoritative completed reasoning, then function call, then text.
+fn gateway_sse_body() -> String {
+    let empty_reasoning = json!({
+        "type": "reasoning",
+        "id": ITEM_ID,
+        "summary": [],
+        "content": [],
+        "encrypted_content": "",
+        "status": "in_progress"
+    });
+    let completed_reasoning = json!({
+        "type": "reasoning",
+        "id": ITEM_ID,
+        "summary": [{ "type": "summary_text", "text": DONE_SUMMARY }],
+        "encrypted_content": ENVELOPE,
+        "status": "completed"
+    });
+    let function_call = json!({
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": TOOL_CALL_ID,
+        "name": TOOL_NAME,
+        "arguments": "{\"cmd\":\"pwd\"}",
+        "status": "completed"
+    });
+    let message = json!({
+        "type": "message",
+        "id": "msg_1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{ "type": "output_text", "text": TEXT }]
+    });
+
+    [
+        sse(json!({
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": gateway_response("in_progress", vec![]),
+        })),
+        sse(json!({
+            "type": "response.output_item.added",
+            "item_id": ITEM_ID,
+            "output_index": 0,
+            "sequence_number": 1,
+            "item": empty_reasoning,
+        })),
+        sse(json!({
+            "type": "response.reasoning_summary_text.delta",
+            "item_id": ITEM_ID,
+            "output_index": 0,
+            "summary_index": 0,
+            "sequence_number": 2,
+            "delta": DELTA_SUMMARY,
+        })),
+        sse(json!({
+            "type": "response.output_item.done",
+            "item_id": ITEM_ID,
+            "output_index": 0,
+            "sequence_number": 3,
+            "item": completed_reasoning.clone(),
+        })),
+        sse(json!({
+            "type": "response.output_item.added",
+            "item_id": "fc_1",
+            "output_index": 1,
+            "sequence_number": 4,
+            "item": function_call.clone(),
+        })),
+        sse(json!({
+            "type": "response.output_item.done",
+            "item_id": "fc_1",
+            "output_index": 1,
+            "sequence_number": 5,
+            "item": function_call.clone(),
+        })),
+        sse(json!({
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
+            "output_index": 2,
+            "content_index": 0,
+            "sequence_number": 6,
+            "delta": TEXT,
+        })),
+        sse(json!({
+            "type": "response.completed",
+            "sequence_number": 7,
+            "response": gateway_response(
+                "completed",
+                vec![completed_reasoning, function_call, message],
+            ),
+        })),
+    ]
+    .concat()
+}
+
+fn header_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn content_length(headers: &str) -> usize {
+    headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            (name.eq_ignore_ascii_case("content-length"))
+                .then(|| value.trim().parse().ok())
+                .flatten()
+        })
+        .unwrap_or(0)
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 2048];
+    loop {
+        let read = match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+        buf.extend_from_slice(&chunk[..read]);
+        let Some(end) = header_end(&buf) else {
+            continue;
+        };
+        let headers = std::str::from_utf8(&buf[..end]).unwrap_or("");
+        let body_start = end + 4;
+        let needed = body_start + content_length(headers);
+        while buf.len() < needed {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => return buf.get(body_start..).unwrap_or_default().to_vec(),
+                Ok(read) => buf.extend_from_slice(&chunk[..read]),
+            }
+        }
+        return buf[body_start..needed].to_vec();
+    }
+    Vec::new()
+}
+
+fn spawn_responses_sse(bodies: Vec<String>) -> (String, thread::JoinHandle<Vec<Vec<u8>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("ephemeral listener");
+    listener.set_nonblocking(true).expect("nonblocking accept");
+    let addr = listener.local_addr().expect("listener address");
+    let handle = thread::spawn(move || {
+        let mut bodies = bodies.into_iter();
+        let mut captured = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut idle_since = None;
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                    captured.push(read_http_request(&mut stream));
+                    let sse_body = bodies.next().expect("unexpected completion request");
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\n\
+                         Content-Type: text/event-stream\r\n\
+                         Cache-Control: no-cache\r\n\
+                         Connection: close\r\n\
+                         Content-Length: {}\r\n\
+                         \r\n\
+                         {sse_body}",
+                        sse_body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                    if bodies.len() == 0 {
+                        idle_since = Some(Instant::now());
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if idle_since.is_some_and(|since| since.elapsed() > Duration::from_millis(250))
+                    {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+        captured
+    });
+    (format!("http://{addr}"), handle)
+}
+
+fn live_reasoning_text(parts: &[LiveAssistantPart]) -> Option<&str> {
+    parts.iter().find_map(|part| match part {
+        LiveAssistantPart::Reasoning { text, .. } => Some(text.as_str()),
+        _ => None,
+    })
+}
+
+async fn durable_history_from_parts(
+    parts: &[LiveAssistantPart],
+    provider_metadata: &HashMap<String, JsonValue>,
+    origin: &Origin,
+) -> Vec<AgentHistoryMessage> {
+    let mut items = durable_items_json(parts, provider_metadata);
+    for item in &mut items {
+        item["providerMetadata"]["origin"] = json!(origin);
+    }
+    let part: TranscriptPart = serde_json::from_value(json!({
+        "number": 0,
+        "sourceKey": "completion:test",
+        "kind": "completion",
+        "runId": "run",
+        "completion": { "streamId": STREAM_ID, "items": items }
+    }))
+    .expect("transcript fixture");
+    let tool_result: TranscriptPart = serde_json::from_value(json!({
+        "number": 1,
+        "sourceKey": "tool:test:finished",
+        "kind": "tool",
+        "runId": "run",
+        "tool": {
+            "toolInvocationId": "test",
+            "callId": TOOL_CALL_ID,
+            "name": TOOL_NAME,
+            "output": "/workspace",
+            "status": "completed"
+        }
+    }))
+    .expect("tool result fixture");
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::new(dir.path().to_path_buf());
+    store
+        .append_parts("user", "thread", &[part, tool_result])
+        .await
+        .unwrap();
+    let loaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
+    let state = store.load_state("user", "thread").await.unwrap();
+    agent_history_from_parts(&state, &loaded, None)
+}
+
+fn first_index(events: &[Observed], kind: Observed) -> Option<usize> {
+    events.iter().position(|event| *event == kind)
+}
+
+#[tokio::test]
+async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
+    const SUMMARY: &str = "completed pre-handoff work";
+    const CIPHERTEXT: &str = "  encrypted+state/=\n  ";
+    let summary = crate::context_handoff::context_summary_text(SUMMARY);
+    let native_assistant = Message::Assistant(
+        AssistantMessage::new(vec![
+            AssistantContent::Reasoning(Reasoning::new(DONE_SUMMARY)).with_native(json!({
+                "type": "reasoning",
+                "id": ITEM_ID,
+                "summary": [{ "type": "summary_text", "text": DONE_SUMMARY }],
+                "encrypted_content": CIPHERTEXT,
+            })),
+            AssistantContent::ToolCall(ToolCall {
+                id: CallId::from_wire(TOOL_CALL_ID),
+                function: ToolFunction::new(
+                    ToolName::new(TOOL_NAME).expect("fixture tool name"),
+                    json!({ "cmd": "pwd" }),
+                ),
+                native: None,
+            }),
+        ])
+        .with_origin(Origin::new("openai.responses", "openai", "gateway-model")),
+    );
+    let native_tool_result = Message::User {
+        content: vec![UserContent::ToolResult(ToolResult {
+            call: CallId::from_wire(TOOL_CALL_ID),
+            name: ToolName::new(TOOL_NAME).expect("fixture tool name"),
+            content: vec![ToolResultContent::text(json!("/workspace").to_string())],
+            is_error: false,
+        })],
+    };
+    let live = vec![
+        Message::user(summary),
+        Message::user("continue after handoff"),
+        native_assistant,
+        native_tool_result,
+    ];
+    let parts: Vec<TranscriptPart> = serde_json::from_value(json!([
+        {
+            "number": 0, "sourceKey": "completion:covered", "kind": "completion",
+            "runId": "run",
+            "completion": { "items": [
+                { "type": "reasoning", "text": "covered reasoning", "providerMetadata": {
+                    "openai": { "itemId": "rs_covered", "reasoningEncryptedContent": "covered-ciphertext" }
+                } },
+                { "type": "tool-call", "callId": "covered-call", "name": TOOL_NAME, "input": {} }
+            ] }
+        },
+        {
+            "number": 1, "sourceKey": "tool:covered", "kind": "tool", "runId": "run",
+            "tool": { "callId": "covered-call", "name": TOOL_NAME, "output": "covered output", "status": "completed" }
+        },
+        {
+            "number": 2, "sourceKey": "prompt:retained", "kind": "prompt", "runId": "run",
+            "prompt": { "text": "continue after handoff", "imageUploads": [] }
+        },
+        {
+            "number": 3, "sourceKey": "completion:retained", "kind": "completion", "runId": "run",
+            "completion": { "streamId": STREAM_ID, "items": [
+                { "type": "reasoning", "text": DONE_SUMMARY, "providerMetadata": {
+                    "openai": { "itemId": ITEM_ID, "reasoningEncryptedContent": CIPHERTEXT },
+                    "origin": Origin::new("openai.responses", "openai", "gateway-model")
+                } },
+                { "type": "tool-call", "callId": TOOL_CALL_ID, "name": TOOL_NAME, "input": { "cmd": "pwd" } }
+            ] }
+        },
+        {
+            "number": 4, "sourceKey": "tool:retained", "kind": "tool", "runId": "run",
+            "tool": { "callId": TOOL_CALL_ID, "name": TOOL_NAME, "output": "/workspace", "status": "completed" }
+        }
+    ])).expect("handoff transcript fixture");
+    let dir = tempfile::tempdir().expect("handoff replay cache directory");
+    let store = TranscriptStore::new(dir.path().to_path_buf());
+    store.append_parts("user", "thread", &parts).await.unwrap();
+    let mut state = store.load_state("user", "thread").await.unwrap();
+    state.context_summary = Some(SUMMARY.to_string());
+    state.history_from_number = 2;
+    state.remote_total_parts = 5;
+    store.save_state("user", "thread", &state).await.unwrap();
+
+    // Reopen the cache just as the next run does, including covered cached parts.
+    let reloaded_store = TranscriptStore::new(dir.path().to_path_buf());
+    let state = reloaded_store.load_state("user", "thread").await.unwrap();
+    let loaded = reloaded_store
+        .read_parts("user", "thread", &[0, 1, 2, 3, 4])
+        .await
+        .unwrap();
+    let reloaded = deserialize_agent_history(agent_history_from_parts(&state, &loaded, None))
+        .expect("reconstructed history");
+    let Message::Assistant(assistant) = &reloaded[2] else {
+        panic!("retained completion is an assistant turn");
+    };
+    assert_eq!(
+        assistant.origin,
+        Some(Origin::new("openai.responses", "openai", "gateway-model"))
+    );
+    let wire = |history| {
+        responses_wire(
+            CompletionRequest::new("next request")
+                .messages(history)
+                .additional_params(json!({"reasoning": {"effort": "medium"}})),
+        )
+    };
+    let live_wire = wire(live);
+    let reloaded_wire = wire(reloaded);
+    assert_eq!(reloaded_wire["input"], live_wire["input"]);
+}
+
+#[tokio::test]
+async fn openai_compatible_lifecycle_stream_delivers_text_reasoning_and_tools() {
+    for nullable_status in [None, Some(false), Some(true)] {
+        assert_openai_compatible_lifecycle_stream(nullable_status).await;
+    }
+}
+
+async fn assert_openai_compatible_lifecycle_stream(nullable_status: Option<bool>) {
+    let fixture: JsonValue =
+        serde_json::from_str(include_str!("test_fixtures/response_created_nullable.json")).unwrap();
+    let body = gateway_sse_body()
+        .lines()
+        .map(|line| {
+            let Some(data) = line.strip_prefix("data: ") else {
+                return format!("{line}\n");
+            };
+            let mut event: JsonValue = serde_json::from_str(data).unwrap();
+            if let Some(response) = event.get_mut("response") {
+                response["created_at"] = json!(1791807140.125);
+                if let Some(omit_nulls) = nullable_status {
+                    let response = response.as_object_mut().unwrap();
+                    for (key, value) in fixture["response"].as_object().unwrap() {
+                        if value.is_null() {
+                            if omit_nulls {
+                                response.remove(key);
+                            } else {
+                                response.insert(key.clone(), JsonValue::Null);
+                            }
+                        }
+                    }
+                }
+            }
+            format!("data: {event}\n")
+        })
+        .collect::<String>();
+    let (base_url, server) = spawn_responses_sse(vec![body]);
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        "gateway-model",
+    );
+    let mut stream = model.stream(CompletionRequest::new("hello")).unwrap();
+    let mut text = String::new();
+    let mut reasoning = None;
+    let mut tool = None;
+    while let Some(item) = stream.next().await {
+        match item.expect("compatible lifecycle stream item") {
+            Item::Event(StreamEvent::Text { text: delta, .. }) => text.push_str(&delta),
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::Reasoning(completed),
+                ..
+            }) => reasoning = Some(completed),
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::ToolCall(completed),
+                ..
+            }) => tool = Some(completed),
+            _ => {}
+        }
+    }
+    assert_eq!(text, TEXT);
+    let reasoning = reasoning.unwrap();
+    let reasoning = AssistantContent::Reasoning(reasoning);
+    assert_eq!(reasoning.native_item().unwrap()["id"], ITEM_ID);
+    assert_eq!(tool.unwrap().id.wire(), TOOL_CALL_ID);
+    assert_eq!(server.join().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn gateway_responses_stream_preserves_reasoning_replay_order() {
+    let (base_url, server) = spawn_responses_sse(vec![gateway_sse_body()]);
+    let model = openai::OpenAIConfig::new("test-key")
+        .with_base_url(&base_url)
+        .client()
+        .responses("gateway-model");
+    let mut stream = model
+        .stream(CompletionRequest::new("hello"))
+        .expect("mocked responses stream");
+
+    let mut parts = LiveAssistantParts::default();
+    let mut provider_metadata = HashMap::new();
+    let mut observed = Vec::new();
+
+    while let Some(item) = stream.next().await {
+        match item.expect("stream item") {
+            Item::Event(StreamEvent::Reasoning {
+                part,
+                text: reasoning,
+            }) => {
+                observed.push(Observed::ReasoningDelta);
+                parts.apply_text_delta(
+                    "reasoning",
+                    format!("{STREAM_ID}:reasoning:{}", part.index()),
+                    &reasoning,
+                    Some(STREAM_ID.to_string()),
+                    now_ms(),
+                );
+                let text = live_reasoning_text(&parts.parts).expect("live reasoning after delta");
+                assert_eq!(text, DELTA_SUMMARY);
+            }
+            Item::Event(StreamEvent::End {
+                part,
+                content: AssistantContent::Reasoning(reasoning),
+            }) => {
+                observed.push(Observed::ReasoningDone);
+                apply_completed_reasoning(
+                    &mut parts,
+                    &mut provider_metadata,
+                    STREAM_ID,
+                    &format!("reasoning:{}", part.index()),
+                    &reasoning,
+                );
+            }
+            Item::Event(StreamEvent::Text { part, text }) => {
+                observed.push(Observed::Text);
+                parts.apply_text_delta(
+                    "text",
+                    format!("{STREAM_ID}:text:{}", part.index()),
+                    &text,
+                    Some(STREAM_ID.to_string()),
+                    now_ms(),
+                );
+            }
+            Item::Event(StreamEvent::End {
+                part,
+                content: AssistantContent::Text(text),
+            }) => {
+                apply_completed_text(
+                    &mut parts,
+                    &mut provider_metadata,
+                    STREAM_ID,
+                    part.index(),
+                    &text,
+                );
+            }
+            Item::Event(StreamEvent::End {
+                part,
+                content: AssistantContent::ToolCall(tool_call),
+            }) => {
+                observed.push(Observed::ToolCall);
+                apply_completed_tool_call(
+                    &mut parts,
+                    &mut provider_metadata,
+                    STREAM_ID,
+                    Some(format!("{STREAM_ID}:tool:{}", part.index())),
+                    tool_call,
+                );
+            }
+            Item::Event(_) | Item::Unknown(_) => {}
+        }
+    }
+
+    let reasoning_delta = first_index(&observed, Observed::ReasoningDelta)
+        .expect("gateway summary delta must stream");
+    let reasoning_done = first_index(&observed, Observed::ReasoningDone)
+        .expect("gateway done item must yield completed reasoning");
+    let text = first_index(&observed, Observed::Text).expect("gateway text must stream");
+    let tool =
+        first_index(&observed, Observed::ToolCall).expect("gateway function call must stream");
+    assert!(reasoning_delta < tool && tool < reasoning_done && reasoning_done < text);
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|event| **event == Observed::ReasoningDone)
+            .count(),
+        1,
+        "empty added item must not yield a second completed reasoning, got {observed:?}"
+    );
+
+    let reasoning_part = parts
+        .parts
+        .iter()
+        .find(|part| matches!(part, LiveAssistantPart::Reasoning { .. }))
+        .expect("live reasoning part");
+    let live_text = live_reasoning_text(&parts.parts).expect("live reasoning text");
+    assert_eq!(live_text, DONE_SUMMARY);
+
+    let reasoning_key = match reasoning_part {
+        LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
+        _ => panic!("expected reasoning part"),
+    };
+    let metadata = &provider_metadata[&reasoning_key];
+    assert_eq!(
+        metadata["openai"],
+        json!({
+            "itemId": ITEM_ID,
+            "reasoningEncryptedContent": ENVELOPE
+        })
+    );
+    assert_eq!(metadata["reasoningIssuer"], "openai");
+    let origin = stream
+        .finish()
+        .await
+        .expect("completed gateway response")
+        .origin;
+    parts.order_stream_parts(STREAM_ID);
+    let history = deserialize_agent_history(
+        durable_history_from_parts(&parts.parts, &provider_metadata, &origin).await,
+    )
+    .expect("durable history conversion");
+    let Message::Assistant(assistant) = &history[0] else {
+        panic!("reloaded completion is an assistant turn");
+    };
+    assert_eq!(assistant.origin.as_ref(), Some(&origin));
+    let replay = responses_wire(
+        CompletionRequest::new("next")
+            .messages(std::iter::once(Message::user("hello")).chain(history))
+            .tools(vec![rig::completion::ToolDefinition::new(
+                ToolName::new(TOOL_NAME).unwrap(),
+                "Inspect the workspace",
+                json!({"type": "object"}),
+            )])
+            .additional_params(json!({"reasoning": {"effort": "medium"}})),
+    );
+    let reasoning_input = replay["input"]
+        .as_array()
+        .expect("replay input")
+        .iter()
+        .find(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"))
+        .expect("replay should carry the native reasoning item");
+    assert_eq!(reasoning_input["id"], ITEM_ID);
+    assert_eq!(reasoning_input["encrypted_content"], ENVELOPE);
+    assert!(replay.get("service_tier").is_none());
+    assert!(replay.get("store").is_none());
+    assert_eq!(replay["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(
+        reasoning_input["summary"],
+        json!([{ "type": "summary_text", "text": DONE_SUMMARY }])
+    );
+    let inputs = replay["input"].as_array().unwrap();
+    assert_eq!(inputs.len(), 6);
+    assert_eq!(inputs[1]["type"], "reasoning");
+    let (text_index, tool_index) = if text < tool { (2, 3) } else { (3, 2) };
+    assert_eq!(inputs[tool_index]["type"], "function_call");
+    assert_eq!(inputs[tool_index]["call_id"], TOOL_CALL_ID);
+    assert_eq!(inputs[tool_index]["name"], TOOL_NAME);
+    assert_eq!(inputs[tool_index]["arguments"], r#"{"cmd":"pwd"}"#);
+    assert_eq!(inputs[text_index]["role"], "assistant");
+    assert_eq!(inputs[text_index]["content"][0]["type"], "output_text");
+    assert_eq!(inputs[text_index]["content"][0]["text"], TEXT);
+    assert_eq!(inputs[4]["type"], "function_call_output");
+    assert_eq!(inputs[4]["call_id"], TOOL_CALL_ID);
+    assert!(inputs[4]["output"].to_string().contains("/workspace"));
+
+    let requests = server.join().expect("gateway mock thread");
+    assert!(
+        requests.iter().any(|body| {
+            let Ok(value) = serde_json::from_slice::<JsonValue>(body) else {
+                return false;
+            };
+            value.get("stream") == Some(&json!(true))
+                && value.get("model") == Some(&json!("gateway-model"))
+        }),
+        "mocked Responses API POST should be a stream request, got {requests:?}"
+    );
+}
+
+fn output_items_sse(output: Vec<JsonValue>) -> String {
+    output_items_sse_with_status(output, "completed")
+}
+
+fn output_items_sse_with_status(output: Vec<JsonValue>, status: &str) -> String {
+    let mut events = vec![json!({
+        "type": "response.created",
+        "response": gateway_response("in_progress", vec![]),
+    })];
+    for (index, item) in output.iter().enumerate() {
+        events.push(json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": item,
+        }));
+        if item["type"] == "message" {
+            events.push(json!({
+                "type": "response.output_text.delta",
+                "item_id": item["id"],
+                "output_index": index,
+                "content_index": 0,
+                "delta": item["content"][0]["text"],
+            }));
+        }
+        events.push(json!({
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": item,
+        }));
+    }
+    let mut response = gateway_response(status, output);
+    if status == "incomplete" {
+        response["incomplete_details"] = json!({ "reason": "max_output_tokens" });
+    }
+    events.push(json!({
+        "type": format!("response.{status}"),
+        "response": response,
+    }));
+    events
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, mut event)| {
+            event["sequence_number"] = json!(sequence);
+            sse(event)
+        })
+        .collect()
+}
+
+async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
+    use rig::agent::MultiTurnStreamItem;
+
+    let message = |id, text| {
+        json!({
+            "type": "message", "id": id, "role": "assistant", "status": "completed",
+            "content": [{ "type": "output_text", "text": text }],
+        })
+    };
+    let output = vec![
+        json!({
+            "type": "reasoning", "id": "rs_empty", "summary": [],
+            "encrypted_content": "empty-ciphertext", "status": "completed",
+        }),
+        message("msg_commentary", "Checking the workspace."),
+        json!({
+            "type": "reasoning", "id": ITEM_ID,
+            "summary": [{ "type": "summary_text", "text": DONE_SUMMARY }],
+            "encrypted_content": ENVELOPE, "status": "completed",
+        }),
+        json!({
+            "type": "function_call", "id": "fc_1", "call_id": TOOL_CALL_ID,
+            "name": "exec-cmd", "arguments": "{\"cmd\":\"pwd\"}", "status": "completed",
+        }),
+        message("msg_between", "Checking the directory entries."),
+        json!({
+            "type": "function_call", "id": "fc_2", "call_id": "call_2",
+            "name": TOOL_NAME, "arguments": "{\"cmd\":\"ls\"}", "status": "completed",
+        }),
+    ];
+    let mut bodies = vec![output_items_sse_with_status(
+        output,
+        if incomplete {
+            "incomplete"
+        } else {
+            "completed"
+        },
+    )];
+    if !incomplete {
+        bodies.push(output_items_sse(vec![message("msg_final", TEXT)]));
+    }
+    let (base_url, server) = spawn_responses_sse(bodies);
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        "gateway-model",
+    );
+    let tracker = ToolCallTracker::new("run", "claim");
+    tracker.begin_attempt(1, STREAM_ID);
+    let dispatches = Arc::new(Mutex::new(Vec::new()));
+    let tool_tracker = tracker.clone();
+    let tool_dispatches = dispatches.clone();
+    let agent = rig::AgentBuilder::new(model)
+        .dynamic_tool(DynamicTool::new(
+            ToolName::new(TOOL_NAME).expect("fixture tool name"),
+            "Inspect the workspace",
+            json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
+            move |args| {
+                let tracker = tool_tracker.clone();
+                let dispatches = tool_dispatches.clone();
+                Box::pin(async move {
+                    let assignment = tracker
+                        .claim_dispatch(TOOL_NAME, &args)
+                        .expect("CompletionCall must assign even a repaired call before dispatch");
+                    dispatches.lock().unwrap().push((args, assignment));
+                    Ok(ToolOutput::text("/workspace"))
+                })
+            },
+        ))
+        .build();
+    let mut stream = agent
+        .prompt("Inspect the workspace.")
+        .add_hook(AgentPromptHook::new(tracker.clone()))
+        .max_turns(2)
+        .stream();
+    let mut parts = LiveAssistantParts::default();
+    let mut provider_metadata = HashMap::new();
+    let mut completed_turns = Vec::new();
+    let mut error = None;
+    let mut answer = None;
+    let mut stream_id = STREAM_ID.to_string();
+    while let Some(item) = stream.next().await {
+        match item.expect("real Rig stream item") {
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(event)) => match event {
+                StreamEvent::Start {
+                    part,
+                    kind: PartKind::Reasoning,
+                    ..
+                } => parts.apply_text_delta(
+                    "reasoning",
+                    format!("{stream_id}:reasoning:{}", part.index()),
+                    "",
+                    Some(stream_id.clone()),
+                    now_ms(),
+                ),
+                StreamEvent::Text { part, text } => parts.apply_text_delta(
+                    "text",
+                    format!("{stream_id}:text:{}", part.index()),
+                    &text,
+                    Some(stream_id.clone()),
+                    now_ms(),
+                ),
+                StreamEvent::Reasoning { part, text } => parts.apply_text_delta(
+                    "reasoning",
+                    format!("{stream_id}:reasoning:{}", part.index()),
+                    &text,
+                    Some(stream_id.clone()),
+                    now_ms(),
+                ),
+                StreamEvent::End { part, content } => match content {
+                    AssistantContent::Text(text) => {
+                        apply_completed_text(
+                            &mut parts,
+                            &mut provider_metadata,
+                            &stream_id,
+                            part.index(),
+                            &text,
+                        );
+                    }
+                    AssistantContent::Reasoning(reasoning) => apply_completed_reasoning(
+                        &mut parts,
+                        &mut provider_metadata,
+                        &stream_id,
+                        &format!("reasoning:{}", part.index()),
+                        &reasoning,
+                    ),
+                    AssistantContent::ToolCall(call) => apply_completed_tool_call(
+                        &mut parts,
+                        &mut provider_metadata,
+                        &stream_id,
+                        Some(format!("{stream_id}:tool:{}", part.index())),
+                        call,
+                    ),
+                    _ => {}
+                },
+                _ => {}
+            },
+            MultiTurnStreamItem::CompletionCall(call) => {
+                if completed_turns.is_empty() {
+                    assert!(dispatches.lock().unwrap().is_empty());
+                }
+                parts.order_stream_parts(&stream_id);
+                tracker.record_parts(&parts.parts);
+                completed_turns.push((
+                    durable_items_json(&parts.parts, &provider_metadata),
+                    tracker.completion_assignments(),
+                ));
+                if let Some(incomplete) =
+                    super::incomplete_completion_error(call.finish_reason.as_ref())
+                {
+                    assert_eq!(
+                        call.finish_reason,
+                        Some(rig::completion::FinishReason::Length)
+                    );
+                    error = Some(incomplete.to_string());
+                    break;
+                }
+            }
+            MultiTurnStreamItem::ToolExecutionCommitted { .. } if !parts.parts.is_empty() => {
+                parts.clear();
+                provider_metadata.clear();
+                stream_id = format!("{STREAM_ID}:2");
+                tracker.begin_attempt(2, &stream_id);
+            }
+            MultiTurnStreamItem::FinalResponse(response) => {
+                answer = Some(response.output().to_string());
+            }
+            _ => {}
+        }
+    }
+    drop(stream);
+
+    let (items, assignments) = &completed_turns[0];
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "reasoning",
+            "text",
+            "reasoning",
+            "tool-call",
+            "text",
+            "tool-call"
+        ]
+    );
+    assert_eq!(items[0]["text"], "");
+    assert_eq!(
+        items[0]["providerMetadata"]["openai"]["reasoningEncryptedContent"],
+        "empty-ciphertext"
+    );
+    assert_eq!(items[2]["text"], DONE_SUMMARY);
+    assert_eq!(items[3]["callId"], TOOL_CALL_ID);
+    assert_eq!(items[3]["name"], TOOL_NAME);
+    assert!(items[3]["providerMetadata"]["rigNative"].is_null());
+    assert_eq!(items[5]["callId"], "call_2");
+    assert_eq!(items[5]["providerMetadata"]["rigNative"]["id"], "fc_2");
+    assert_eq!(
+        items[1]["providerMetadata"]["rigNative"]["id"],
+        "msg_commentary"
+    );
+    assert_eq!(
+        items[4]["providerMetadata"]["rigNative"]["id"],
+        "msg_between"
+    );
+    assert_eq!(
+        assignments
+            .work
+            .ranges
+            .iter()
+            .map(|range| (range.start, range.end))
+            .collect::<Vec<_>>(),
+        [(2, 4), (5, 6)]
+    );
+    assert_eq!(assignments.tool_invocations.len(), 2);
+    assert_eq!(assignments.tool_invocations[0].call_id, TOOL_CALL_ID);
+    assert_eq!(assignments.tool_invocations[1].call_id, "call_2");
+    assert_eq!(assignments.tool_invocations[0].section_ordinal, 1);
+    assert_eq!(assignments.tool_invocations[1].section_ordinal, 2);
+    for (invocation, range) in assignments
+        .tool_invocations
+        .iter()
+        .zip(&assignments.work.ranges)
+    {
+        assert_eq!(invocation.section_key, range.section_key);
+        assert_eq!(invocation.stream_id, STREAM_ID);
+        assert_eq!(invocation.attempt_seq, 1);
+    }
+    let mut dispatches = dispatches.lock().unwrap().clone();
+    if incomplete {
+        assert!(error.as_deref().unwrap().contains("output token limit"));
+        assert!(answer.is_none());
+        assert!(dispatches.is_empty());
+        assert_eq!(completed_turns.len(), 1);
+    } else {
+        assert!(error.is_none());
+        assert_eq!(answer.as_deref(), Some(TEXT));
+        assert_eq!(completed_turns.len(), 2);
+        assert_eq!(
+            completed_turns[1].0[0]["providerMetadata"]["rigNative"]["id"],
+            "msg_final"
+        );
+        dispatches.sort_by(|(_, left), (_, right)| left.call_id.cmp(&right.call_id));
+        assert_eq!(dispatches.len(), 2);
+        assert_eq!(
+            dispatches[0],
+            (
+                json!({ "cmd": "pwd" }),
+                assignments.tool_invocations[0].clone()
+            )
+        );
+        assert_eq!(
+            dispatches[1],
+            (
+                json!({ "cmd": "ls" }),
+                assignments.tool_invocations[1].clone()
+            )
+        );
+        assert_ne!(
+            dispatches[0].1.tool_invocation_id,
+            dispatches[1].1.tool_invocation_id
+        );
+    }
+    let requests = server.join().expect("tool tracking mock thread");
+    assert_eq!(requests.len(), if incomplete { 1 } else { 2 });
+    if !incomplete {
+        let replay: JsonValue = serde_json::from_slice(&requests[1]).unwrap();
+        let input = replay["input"].as_array().unwrap();
+        let outputs = input
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .collect::<Vec<_>>();
+        assert_eq!(outputs.len(), 2);
+        assert!(outputs.iter().any(|item| item["call_id"] == TOOL_CALL_ID));
+        assert!(outputs.iter().any(|item| item["call_id"] == "call_2"));
+    }
+}
+
+#[tokio::test]
+async fn repaired_multi_call_turn_tracks_dispatches_at_persisted_indices() {
+    assert_repaired_tool_turn_tracking(false).await;
+}
+
+#[tokio::test]
+async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
+    use rig::agent::MultiTurnStreamItem;
+
+    let tool_turn = output_items_sse(vec![json!({
+        "type": "function_call", "id": "fc_origin", "call_id": "call_origin",
+        "name": TOOL_NAME, "arguments": "{}", "status": "completed"
+    })]);
+    let final_turn = output_items_sse(vec![json!({
+        "type": "message", "id": "msg_origin", "role": "assistant", "status": "completed",
+        "content": [{"type": "output_text", "text": "done"}]
+    })]);
+    let (url, server) = spawn_responses_sse(vec![
+        tool_turn.clone(),
+        final_turn.clone(),
+        tool_turn,
+        final_turn,
+    ]);
+    let origin_hook = super::CompletionOrigin::default();
+    let agent = rig::AgentBuilder::new(stateless_responses_model(
+        openai::OpenAIConfig::new("test").with_base_url(url),
+        "gateway-model",
+    ))
+    .dynamic_tool(DynamicTool::new(
+        ToolName::new(TOOL_NAME).unwrap(),
+        "test",
+        json!({"type": "object"}),
+        |_| Box::pin(async { Ok(ToolOutput::text("ok")) }),
+    ))
+    .build();
+    let expected = Origin::new("openai.responses", "openai", "gateway-model");
+    for _ in 0..2 {
+        let mut stream = agent
+            .prompt("test")
+            .add_hook(origin_hook.clone())
+            .max_turns(2)
+            .stream();
+        let mut parts = LiveAssistantParts::default();
+        let mut metadata = HashMap::new();
+        let mut pending = None;
+        let mut saved = Vec::new();
+        while let Some(item) = stream.next().await {
+            if let Some(origin) = pending.and_then(|turn| origin_hook.take_for(turn)) {
+                super::apply_completion_origin(&parts.parts, &mut metadata, &origin);
+                saved.push(durable_items_json(&parts.parts, &metadata));
+                parts.clear();
+                metadata.clear();
+                pending = None;
+            }
+            match item.unwrap() {
+                MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
+                    part,
+                    content,
+                })) => match content {
+                    AssistantContent::Text(text) => {
+                        apply_completed_text(
+                            &mut parts,
+                            &mut metadata,
+                            STREAM_ID,
+                            part.index(),
+                            &text,
+                        );
+                    }
+                    AssistantContent::ToolCall(call) => {
+                        apply_completed_tool_call(&mut parts, &mut metadata, STREAM_ID, None, call);
+                    }
+                    _ => {}
+                },
+                MultiTurnStreamItem::CompletionCall(call) => pending = Some(call.call_index + 1),
+                _ => {}
+            }
+        }
+        assert_eq!(saved.len(), 2);
+        let transcript: Vec<TranscriptPart> = saved
+            .into_iter()
+            .enumerate()
+            .map(|(number, items)| {
+                serde_json::from_value(json!({
+                    "number": number, "sourceKey": format!("completion:{number}"),
+                    "kind": "completion", "runId": "run", "completion": {"items": items}
+                }))
+                .unwrap()
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        store
+            .append_parts("user", "thread", &transcript)
+            .await
+            .unwrap();
+        let state = store.load_state("user", "thread").await.unwrap();
+        let reloaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
+        let messages =
+            deserialize_agent_history(agent_history_from_parts(&state, &reloaded, None)).unwrap();
+        for message in messages {
+            let Message::Assistant(message) = message else {
+                continue;
+            };
+            let origin = message.origin.expect("persisted completion origin");
+            assert_eq!(origin.api, expected.api);
+            assert_eq!(origin.provider, expected.provider);
+            assert_eq!(origin.model, expected.model);
+            assert_eq!(origin.response_model.as_deref(), Some("gateway-model"));
+            assert_eq!(origin.response_id.as_deref(), Some("resp_gateway"));
+        }
+    }
+    assert_eq!(server.join().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn truncated_intermediate_tool_turn_is_rejected_before_dispatch() {
+    assert_repaired_tool_turn_tracking(true).await;
+}
+
+#[tokio::test]
+async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
+    let message = |id, text| {
+        json!({
+            "type": "message",
+            "id": id,
+            "role": "assistant",
+            "status": "completed",
+            "content": [{ "type": "output_text", "text": text }],
+        })
+    };
+    let (base_url, server) = spawn_responses_sse(vec![
+        output_items_sse(vec![
+            json!({
+                "type": "reasoning", "id": "rs_empty", "summary": [],
+                "status": "completed",
+            }),
+            message("msg_commentary", "Checking the workspace."),
+            json!({
+                "type": "reasoning", "id": ITEM_ID, "summary": [],
+                "encrypted_content": ENVELOPE, "status": "completed",
+            }),
+            json!({
+                "type": "function_call", "id": "fc_1", "call_id": TOOL_CALL_ID,
+                "name": TOOL_NAME, "arguments": "{\"cmd\":\"pwd\"}",
+                "status": "completed",
+            }),
+        ]),
+        output_items_sse(vec![message("msg_final", "The workspace is /workspace.")]),
+    ]);
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        "gateway-model",
+    );
+    let agent = rig::AgentBuilder::new(model)
+        .additional_params(json!({"reasoning": {"effort": "medium"}}))
+        .dynamic_tool(DynamicTool::new(
+            ToolName::new(TOOL_NAME).expect("fixture tool name"),
+            "Read the workspace path",
+            json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
+            |args| {
+                Box::pin(async move {
+                    assert_eq!(args, json!({ "cmd": "pwd" }));
+                    Ok(ToolOutput::text("/workspace"))
+                })
+            },
+        ))
+        .build();
+    let mut stream = agent
+        .prompt("Where is the workspace?")
+        .max_turns(2)
+        .stream();
+    let mut answer = None;
+    while let Some(item) = stream.next().await {
+        if let rig::agent::MultiTurnStreamItem::FinalResponse(response) = item.unwrap() {
+            answer = Some(response.output().to_string());
+        }
+    }
+    assert_eq!(answer.as_deref(), Some("The workspace is /workspace."));
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+    let requests = requests
+        .iter()
+        .map(|body| serde_json::from_slice::<JsonValue>(body).unwrap())
+        .collect::<Vec<_>>();
+    for request in &requests {
+        assert_eq!(request["store"], false);
+        assert_eq!(request["include"], json!(["reasoning.encrypted_content"]));
+    }
+    let replay = &requests[1];
+    let input = replay["input"].as_array().unwrap();
+    assert_eq!(input.len(), 5);
+    assert_eq!(input[0]["content"][0]["text"], "Where is the workspace?");
+    assert_eq!(input[1]["type"], "message");
+    assert_eq!(input[1]["role"], "assistant");
+    assert_eq!(input[1]["content"][0]["type"], "output_text");
+    assert_eq!(input[1]["content"][0]["text"], "Checking the workspace.");
+    assert_eq!(input[2]["type"], "reasoning");
+    assert_eq!(input[2]["id"], ITEM_ID);
+    assert_eq!(input[2]["encrypted_content"], ENVELOPE);
+    assert_eq!(
+        input[3],
+        json!({
+            "type": "function_call", "id": "fc_1", "call_id": TOOL_CALL_ID,
+            "name": TOOL_NAME, "arguments": "{\"cmd\":\"pwd\"}", "status": "completed",
+        })
+    );
+    assert_eq!(input[4]["type"], "function_call_output");
+    assert_eq!(input[4]["call_id"], TOOL_CALL_ID);
+    assert_eq!(input[4]["output"], "/workspace");
+}

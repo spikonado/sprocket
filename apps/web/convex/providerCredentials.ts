@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
+import { getProviderHandoff } from '@convex/lib/contextHandoff';
 
 const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
 
@@ -417,7 +418,11 @@ export const authorizeOpenAiCredential = internalQuery({
 			throw new Error(RUN_NO_LONGER_ACTIVE);
 		}
 
-		if ((run.completionProvider ?? 'spikonado') !== 'openai') {
+		if (
+			(run.completionProvider ?? 'spikonado') !== 'openai' &&
+			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
+				?.completionProvider !== 'openai'
+		) {
 			throw new Error('Run is not configured to use OpenAI directly.');
 		}
 

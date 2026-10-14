@@ -4,6 +4,7 @@ import {
 	vAgentQuestionStatus,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
+	vCompletionProvider,
 	vRunStatus,
 	vSubscriptionTier
 } from '@convex/lib/validators';
@@ -21,7 +22,8 @@ export const vTranscriptStateResult = v.object({
 	threadId: v.id('threadRecords'),
 	totalParts: v.number(),
 	historyFromNumber: v.number(),
-	contextSummary: v.optional(v.string())
+	contextSummary: v.optional(v.string()),
+	reasoningStrippedThroughPartNumber: v.optional(v.number())
 });
 
 export const vTranscriptPartsResult = v.object({
@@ -54,6 +56,11 @@ export const vAgentQuestionSnapshot = v.object({
 	answeredAt: v.optional(v.number())
 });
 
+export const vProviderHandoff = schema
+	.doc('runs')
+	.pick('selectedModel', 'reasoningEffort', 'fastMode')
+	.extend({ completionProvider: vCompletionProvider });
+
 export const vGetContextResult = v.object({
 	run: schema
 		.doc('runs')
@@ -72,7 +79,9 @@ export const vGetContextResult = v.object({
 			parentThreadId: v.optional(v.id('threadRecords'))
 		}),
 	prompt: v.string(),
-	contextTokens: v.optional(v.number())
+	contextTokens: v.optional(v.number()),
+	providerHandoff: v.optional(vProviderHandoff),
+	cwd: v.optional(v.string())
 });
 
 export const vCompletionActor = v.object({

@@ -3,13 +3,16 @@ use std::sync::Arc;
 
 use convex::Value;
 use futures::StreamExt;
-use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
+use sprocket_agent::{
+    DownloadOrder, RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TranscriptStore,
+    apply_remote_state,
+};
 use sprocket_convex::decode_labeled_function_result;
 use tokio::sync::{broadcast, watch};
 
 use crate::transcript_client::UserConvexClient;
 
-const DOWNLOAD_PAGE_SIZE: u32 = 4;
+const DOWNLOAD_PAGE_SIZE: u32 = TRANSCRIPT_CHUNK_SIZE;
 
 fn thread_args(thread: &str) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), thread.to_owned().into())])
@@ -36,31 +39,40 @@ async fn metadata(
     let subscription = client
         .subscribe("transcript:getState", thread_args(thread))
         .await?;
+    let mut previous = None;
     while let Some(results) = updates.next().await {
         let Some(result) = results.get(subscription.id()).cloned() else {
             continue;
         };
         let state: RemoteTranscriptState =
             decode_labeled_function_result(result, "transcript:getState")?;
+        if previous.as_ref() == Some(&state) {
+            continue;
+        }
         apply_remote_state(store, user, thread, &state, false).await?;
         let total = state.total_parts;
         store
             .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
             .await?;
+        previous = Some(state.clone());
         states.send_replace(state);
         changed(total);
     }
     anyhow::bail!("transcript state subscription ended")
 }
 
-async fn download(
-    client: &UserConvexClient,
+async fn download<F, Fut>(
     store: &TranscriptStore,
     user: &str,
     thread: &str,
     mut states: watch::Receiver<RemoteTranscriptState>,
     changed: &(impl Fn(u32) + Send + Sync),
-) -> anyhow::Result<()> {
+    mut fetch: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<sprocket_agent::TranscriptPart>>>,
+{
     let mut seen_total = 0;
     let mut pending = Vec::new();
     loop {
@@ -73,45 +85,14 @@ async fn download(
             states.changed().await?;
             continue;
         };
-        let numbers = store
-            .with_work_replica(user, thread, move |replica| {
-                (lower..end)
-                    .filter_map(|number| match replica.has_part(number) {
-                        Ok(true) => None,
-                        Ok(false) => Some(Ok(number)),
-                        Err(error) => Some(Err(error)),
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()
-            })
+        let remaining = store
+            .download_parts_page(user, thread, lower, end, DownloadOrder::Desc, &mut fetch)
             .await?;
-        if numbers.is_empty() {
-            continue;
+        if remaining.0 < remaining.1 {
+            pending.push(remaining);
         }
-        let mut parts = store.read_parts(user, thread, &numbers).await?;
-        let missing: Vec<_> = numbers
-            .iter()
-            .copied()
-            .filter(|number| !parts.iter().any(|part| part.number == *number))
-            .collect();
-        if !missing.is_empty() {
-            let fetched = client.transcript_parts(thread, &missing).await?;
-            anyhow::ensure!(
-                fetched.len() == missing.len()
-                    && missing
-                        .iter()
-                        .all(|number| fetched.iter().any(|part| part.number == *number)),
-                "incomplete transcript download"
-            );
-            store.append_parts(user, thread, &fetched).await?;
-            parts.extend(fetched);
-        }
-        let thread_id = thread.to_owned();
-        store
-            .with_work_replica(user, thread, move |replica| {
-                replica.save_parts(&thread_id, &parts)
-            })
-            .await?;
         changed(total);
+        tokio::task::yield_now().await;
     }
 }
 
@@ -142,12 +123,15 @@ pub(crate) async fn synchronize(
         total_parts: 0,
         history_from_number: 0,
         context_summary: None,
+        reasoning_stripped_through_part_number: None,
     });
     tokio::select! {
         result = async {
             tokio::try_join!(
                 metadata(&client, &store, &user, &thread, states, &changed),
-                download(&client, &store, &user, &thread, state_rx, &changed),
+                download(&store, &user, &thread, state_rx, &changed, |start, end, order| {
+                    client.transcript_parts_page(&thread, start, end, order)
+                }),
             )
         } => { result?; }
         result = wait_for_reset(resets, &user, &thread) => { return result; }
@@ -156,18 +140,4 @@ pub(crate) async fn synchronize(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn downloads_newest_pages_first_without_shifting_old_pages() {
-        for total in 13..=16 {
-            let mut pending = vec![(0, total)];
-            assert_eq!(pop_download_page(&mut pending), Some((12, total)));
-            for range in [(8, 12), (4, 8), (0, 4)] {
-                assert_eq!(pop_download_page(&mut pending), Some(range));
-            }
-            assert_eq!(pop_download_page(&mut pending), None);
-        }
-    }
-}
+mod tests;

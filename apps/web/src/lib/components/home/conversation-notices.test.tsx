@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
 import ConversationNotices from './conversation-notices';
@@ -7,12 +7,15 @@ import { PromptComposerView } from './prompt-composer';
 const usageLimit =
 	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
 
-function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}) {
-	return (
+function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}, key?: string) {
+	return ({ usageBlocked }: { usageBlocked: boolean }) => (
 		<ConversationNotices
+			key={key}
 			error={null}
 			runError={null}
+			usageBlocked={usageBlocked}
 			reconnecting={false}
+			syncing={false}
 			catalogError={false}
 			catalogLoading={false}
 			onRetryCatalog={vi.fn()}
@@ -45,6 +48,69 @@ function composer(
 }
 
 describe('Conversation notices', () => {
+	it('shows sustained history loading and clears the notice after syncing', () => {
+		vi.useFakeTimers();
+		const view = render(composer(notices({ syncing: true })));
+
+		try {
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(2_000));
+			expect(screen.getByRole('status').textContent).toContain(
+				'Conversation history is still loading. You can send a prompt while it loads.'
+			);
+			view.rerender(composer(notices({ syncing: true, reconnecting: true })));
+			expect(screen.getAllByRole('status')).toHaveLength(1);
+			expect(screen.getByRole('status').textContent).toContain('Reconnecting');
+			view.rerender(composer(notices({ syncing: true })));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(1_999));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(1));
+			expect(screen.getByRole('status').textContent).toContain(
+				'Conversation history is still loading.'
+			);
+			view.rerender(composer(notices()));
+			expect(screen.queryByRole('status')).toBeNull();
+		} finally {
+			view.unmount();
+			vi.useRealTimers();
+		}
+	});
+
+	it('starts a fresh notice delay for each brief live transcript sync and selected thread', () => {
+		vi.useFakeTimers();
+		const view = render(composer(notices()));
+
+		try {
+			for (let update = 0; update < 4; update += 1) {
+				view.rerender(composer(notices({ syncing: true })));
+				act(() => vi.advanceTimersByTime(500));
+				expect(screen.queryByRole('status')).toBeNull();
+				view.rerender(composer(notices()));
+				act(() => vi.advanceTimersByTime(2_000));
+				expect(screen.queryByRole('status')).toBeNull();
+			}
+
+			view.rerender(composer(notices({ syncing: true })));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(1_999));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(1));
+			expect(screen.getByRole('status').textContent).toContain(
+				'Conversation history is still loading.'
+			);
+			view.rerender(composer(notices({ syncing: true }, 'other-thread')));
+			expect(screen.queryByRole('status')).toBeNull();
+			act(() => vi.advanceTimersByTime(2_000));
+			expect(screen.getByRole('status').textContent).toContain(
+				'Conversation history is still loading.'
+			);
+		} finally {
+			view.unmount();
+			vi.useRealTimers();
+		}
+	});
+
 	it('shows run errors inside the composer using the same card as Sprocket usage limits', () => {
 		const view = render(composer(notices({ runError: usageLimit })));
 		const group = screen.getByRole('group', { name: 'Message composer' });
@@ -57,6 +123,17 @@ describe('Conversation notices', () => {
 		const usageAlert = within(group).getByRole('alert');
 		expect(usageAlert.textContent).toContain("You're out of usage");
 		expect(usageAlert.className).toBe(cardClass);
+	});
+
+	it('shows only the usage notice while usage is blocked, then the run error once unblocked', () => {
+		const runError = 'status 429 Too Many Requests';
+		const view = render(composer(notices({ runError }), true));
+		expect(screen.getByRole('alert').textContent).toContain("You're out of usage");
+
+		view.rerender(composer(notices({ runError })));
+		const alert = screen.getByRole('alert');
+		expect(alert.textContent).toContain("Run couldn't continue");
+		expect(alert.textContent).toContain(runError);
 	});
 
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {
