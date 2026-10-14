@@ -1,4 +1,4 @@
-// Vendored from ESLint Stylistic; see UPSTREAM.md and LICENSE in this directory.
+// Vendored from ESLint Stylistic; see LICENSE in this directory.
 import type {
 	ESTree,
 	Context as RuleContext,
