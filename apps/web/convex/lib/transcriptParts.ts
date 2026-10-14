@@ -297,6 +297,33 @@ export async function loadTranscriptPartsByNumbers(
 	});
 }
 
+export async function loadTranscriptPartsPage(
+	ctx: MutationCtx | QueryCtx,
+	threadId: Id<'threadRecords'>,
+	start: number,
+	end: number,
+	order: 'asc' | 'desc' = 'desc'
+): Promise<Doc<'threadTranscriptParts'>[]> {
+	if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(end) || end <= start) {
+		throw new Error('Invalid transcript range.');
+	}
+
+	const result = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_number', (query) =>
+			query.eq('threadId', threadId).gte('number', start).lt('number', end)
+		)
+		.order(order)
+		.paginate({
+			cursor: null,
+			numItems: MAX_TRANSCRIPT_PARTS_PER_QUERY,
+			maximumRowsRead: MAX_TRANSCRIPT_PARTS_PER_QUERY,
+			maximumBytesRead: 1_000_000
+		});
+
+	return result.page;
+}
+
 export async function attachmentMetaForUploads(
 	ctx: MutationCtx | QueryCtx,
 	imageUploadIds: Id<'imageUploads'>[] | undefined

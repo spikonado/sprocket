@@ -106,6 +106,7 @@ function props(records: Thread[]) {
 		onClose: vi.fn(),
 		onChange: vi.fn().mockResolvedValue(undefined),
 		onRename: vi.fn().mockResolvedValue(undefined),
+		onRegenerateTitle: vi.fn().mockResolvedValue(undefined),
 		expansion: expansionStub(),
 		resolveChildren: childrenResolverStub(),
 		readTreeSummary
@@ -383,11 +384,63 @@ it('shows an icon for every thread menu action without selection controls', asyn
 	expect(actions.map((action) => action.textContent?.trim())).toEqual([
 		'Settle',
 		'Rename',
+		'Regenerate thread title',
 		'Copy thread ID'
 	]);
 	expect(actions.every((action) => action.querySelector('svg'))).toBe(true);
 	expect(document.body.textContent).not.toContain('Select thread');
 	expect(document.body.textContent).not.toContain('Deselect thread');
+});
+
+it('requests title regeneration for the right-clicked thread and closes the menu', async () => {
+	const record = thread();
+	const input = await render([record]);
+
+	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+
+	const action = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+		(button) => button.textContent?.trim() === 'Regenerate thread title'
+	)!;
+
+	fireEvent.click(action);
+	await flush();
+
+	expect(input.onRegenerateTitle).toHaveBeenCalledExactlyOnceWith(record);
+	expect(document.querySelector('.inbox-context-menu')).toBeNull();
+	expect(input.onRename).not.toHaveBeenCalled();
+});
+
+it('disables title regeneration when mutations are unavailable', async () => {
+	const input = props([thread()]);
+	input.mutationsEnabled = false;
+	renderView(<Harness {...input} />);
+	await flush();
+
+	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+
+	const action = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+		(button) => button.textContent?.trim() === 'Regenerate thread title'
+	)!;
+
+	expect(action.disabled).toBe(true);
+});
+
+it('reports a title regeneration failure in the sidebar', async () => {
+	const input = props([thread()]);
+	input.onRegenerateTitle.mockRejectedValue(new Error('Generation unavailable'));
+	renderView(<Harness {...input} />);
+	await flush();
+
+	fireEvent.contextMenu(document.querySelector('.inbox-row')!);
+
+	const action = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+		(button) => button.textContent?.trim() === 'Regenerate thread title'
+	)!;
+
+	fireEvent.click(action);
+	await flush();
+
+	expect(document.querySelector('.inbox-notice')?.textContent).toContain('Generation unavailable');
 });
 
 it('does not attach keyboard context-menu behavior to thread rows', async () => {
@@ -806,7 +859,11 @@ it('hides settle and unsettle controls for child threads', async () => {
 
 	const actions = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
 
-	expect(actions.map((action) => action.textContent?.trim())).toEqual(['Rename', 'Copy thread ID']);
+	expect(actions.map((action) => action.textContent?.trim())).toEqual([
+		'Rename',
+		'Regenerate thread title',
+		'Copy thread ID'
+	]);
 });
 
 it.each([

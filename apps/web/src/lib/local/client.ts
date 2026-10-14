@@ -22,7 +22,13 @@ const filesystemBrowseResultSchema = z.object({
 });
 
 const workspaceSkillsResultSchema = z.object({
-	skills: z.array(z.object({ name: z.string(), description: z.string() })),
+	skills: z.array(
+		z.object({
+			name: z.string(),
+			description: z.string(),
+			disableModelInvocation: z.boolean()
+		})
+	),
 	warnings: z.array(z.string())
 });
 

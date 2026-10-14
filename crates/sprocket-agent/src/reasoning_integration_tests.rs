@@ -418,6 +418,42 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
 }
 
 #[tokio::test]
+async fn openai_fractional_timestamp_stream_delivers_text_reasoning_and_tools() {
+    let body = gateway_sse_body().replace("\"created_at\":0", "\"created_at\":1791807140.125");
+    let (base_url, server) = spawn_responses_sse(vec![body]);
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        "gateway-model",
+    );
+    let mut stream = model.stream(CompletionRequest::new("hello")).unwrap();
+    let mut text = String::new();
+    let mut reasoning = None;
+    let mut tool = None;
+    while let Some(item) = stream.next().await {
+        match item.expect("fractional timestamp stream item") {
+            Item::Event(StreamEvent::Text { text: delta, .. }) => text.push_str(&delta),
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::Reasoning(completed),
+                ..
+            }) => reasoning = Some(completed),
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::ToolCall(completed),
+                ..
+            }) => tool = Some(completed),
+            _ => {}
+        }
+    }
+    assert_eq!(text, TEXT);
+    let reasoning = reasoning.unwrap();
+    assert_eq!(
+        reasoning.open(reasoning.issuer()).unwrap().id.as_deref(),
+        Some(ITEM_ID)
+    );
+    assert_eq!(tool.unwrap().id.wire(), TOOL_CALL_ID);
+    assert_eq!(server.join().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let (base_url, server) = spawn_responses_sse(vec![gateway_sse_body()]);
     let model = openai::OpenAIConfig::new("test-key")

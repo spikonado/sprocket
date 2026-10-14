@@ -36,8 +36,8 @@ const modelCatalog: ModelCatalog = {
 };
 
 const skills = [
-	{ name: 'kicad', description: 'Author KiCad schematics' },
-	{ name: 'zap', description: 'Zap tooling' }
+	{ name: 'kicad', description: 'Author KiCad schematics', disableModelInvocation: false },
+	{ name: 'zap', description: 'Zap tooling', disableModelInvocation: true }
 ];
 
 function composerProps(overrides: Partial<PromptComposerViewProps> = {}): PromptComposerViewProps {
@@ -550,6 +550,56 @@ describe('PromptComposer attachments', () => {
 });
 
 describe('PromptComposer skill menu', () => {
+	it('submits a message ending in an unmatched slash token with Enter', async () => {
+		const { textarea, props } = renderComposer({
+			projectSkills: { workspacePath: '/demo', load: async () => skills },
+			modelCatalog,
+			selectedModel: 'model-one',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null }
+		});
+
+		await typeInComposer(textarea, 'inspect /tmp');
+		expect(screen.getByText('No matching commands')).toBeTruthy();
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).toHaveBeenCalledOnce();
+	});
+
+	it.each(['/', '$'])(
+		'inserts a disabled skill with slash when selected through %s',
+		async (prefix) => {
+			const { textarea, props } = renderComposer({
+				projectSkills: { workspacePath: '/demo', load: async () => skills },
+				onPromptChange: vi.fn(),
+				onSubmit: vi.fn()
+			});
+
+			await typeInComposer(textarea, prefix);
+
+			const listbox = await screen.findByRole('listbox', {
+				name: prefix === '/' ? 'Available commands' : 'Available skills'
+			});
+
+			expect(within(listbox).getAllByRole('option')).toHaveLength(prefix === '/' ? 1 : 2);
+			await click(within(listbox).getByText(`${prefix}zap`));
+			expect(props.onPromptChange).toHaveBeenCalledWith('/zap ');
+			expect(textarea.value).toBe('/zap ');
+			expect(document.activeElement).toBe(textarea);
+			expect(props.onSubmit).not.toHaveBeenCalled();
+		}
+	);
+
+	it('filters slash commands and selects with Tab', async () => {
+		const { textarea, props } = renderComposer({
+			projectSkills: { workspacePath: '/demo', load: async () => skills },
+			onPromptChange: vi.fn()
+		});
+
+		await typeInComposer(textarea, '/za');
+		expect(screen.getByRole('option').textContent).toContain('/zap');
+		await pressKey(textarea, { key: 'Tab' });
+		expect(props.onPromptChange).toHaveBeenCalledWith('/zap ');
+	});
+
 	it('loads project skills on $ and selects the highlighted one', async () => {
 		const { textarea, props } = renderComposer({
 			projectSkills: { workspacePath: '/demo', load: async () => skills },
@@ -567,8 +617,8 @@ describe('PromptComposer skill menu', () => {
 		expect(options[1]?.getAttribute('aria-selected')).toBe('true');
 
 		await pressKey(textarea, { key: 'Enter' });
-		expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
-		expect(textarea.value).toBe('$zap ');
+		expect(props.onPromptChange).toHaveBeenCalledWith('/zap ');
+		expect(textarea.value).toBe('/zap ');
 		expect(document.getElementById('composer-skills-listbox')).toBeNull();
 		expect(document.activeElement).toBe(textarea);
 	});
@@ -596,13 +646,13 @@ describe('PromptComposer skill menu', () => {
 			onPromptChange: vi.fn()
 		});
 
-		await typeInComposer(textarea, '$za');
+		await typeInComposer(textarea, '$ki');
 		const options = document.querySelectorAll<HTMLButtonElement>('[role="option"]');
 		expect(options).toHaveLength(1);
-		expect(options[0]?.textContent).toContain('$zap');
+		expect(options[0]?.textContent).toContain('$kicad');
 
 		await pressKey(textarea, { key: 'Tab' });
-		expect(props.onPromptChange).toHaveBeenCalledWith('$zap ');
+		expect(props.onPromptChange).toHaveBeenCalledWith('$kicad ');
 	});
 
 	it('retries a failed skill load', async () => {
@@ -694,6 +744,51 @@ describe('PromptComposer mobile selectors', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it.each([
+		['spikonado', 'chatgpt', 'ChatGPT Subscription'],
+		['spikonado', 'openai', 'OpenAI API'],
+		['chatgpt', 'openai', 'OpenAI API'],
+		['openai', 'spikonado', 'Spikonado']
+	] as const)('preserves supported model and reasoning from %s to %s', async (from, to, label) => {
+		const { props } = renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [modelCatalog.models[1], { ...modelCatalog.models[0], provider: 'openai' }]
+			},
+			configuredProviders: ['spikonado', 'openai', 'chatgpt'],
+			selectedCompletionProvider: from,
+			selectedModel: 'model-one',
+			selectedReasoningEffort: 'low',
+			onCompletionProviderSelect: vi.fn()
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		await click(screen.getByRole('button', { name: new RegExp(label) }));
+		expect(props.onCompletionProviderSelect).toHaveBeenCalledWith(to);
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Low');
+	});
+
+	it.each(['low', 'high'])('uses a supported fallback model with reasoning %s', async (effort) => {
+		renderComposer({
+			modelCatalog: {
+				...modelCatalog,
+				models: [
+					{ ...modelCatalog.models[1], reasoningEfforts: ['low', 'high'] },
+					{ ...modelCatalog.models[0], provider: 'openai' }
+				]
+			},
+			configuredProviders: ['spikonado', 'chatgpt'],
+			selectedModel: 'model-two',
+			selectedReasoningEffort: effort
+		});
+
+		await click(screen.getByRole('button', { name: 'Select provider' }));
+		await click(screen.getByRole('button', { name: /ChatGPT Subscription/ }));
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe(
+			effort === 'low' ? 'Model One · Low' : 'Model One · Medium'
+		);
+	});
+
 	it('keeps the provider menu anchored when a parent scrolls', async () => {
 		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
 		const trigger = screen.getByRole('button', { name: 'Select provider' });

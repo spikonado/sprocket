@@ -14,6 +14,7 @@ import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
 	contextHandoffKey,
 	existingThroughPartNumber,
+	getProviderHandoff,
 	throughPartNumberForHandoff
 } from '@convex/lib/contextHandoff';
 import {
@@ -224,11 +225,18 @@ export const issueGatewayCredential = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+		if (
+			run.cancellationRequestedAt !== undefined ||
+			!ownsActiveRunClaim(run, args.claimId, Date.now())
+		) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
 
-		if ((run.completionProvider ?? 'spikonado') !== 'spikonado') {
+		if (
+			(run.completionProvider ?? 'spikonado') !== 'spikonado' &&
+			(await getProviderHandoff(ctx, run, await ctx.db.get('threadRecords', run.threadId)))
+				?.completionProvider !== 'spikonado'
+		) {
 			throw new Error('Run is not configured to use the Spikonado gateway.');
 		}
 
@@ -309,6 +317,7 @@ function getContextResult(args: {
 	parentThreadId?: Doc<'threadRecords'>['_id'];
 	prompt: string;
 	contextTokens: number | undefined;
+	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
 		run: {
@@ -330,6 +339,8 @@ function getContextResult(args: {
 		result.contextTokens = args.contextTokens;
 	}
 
+	if (args.providerHandoff !== undefined) result.providerHandoff = args.providerHandoff;
+
 	return result;
 }
 
@@ -345,25 +356,18 @@ export const getContext = query({
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 		const parentThreadId = thread?.parentThreadId;
+		const providerHandoff = await getProviderHandoff(ctx, run, thread);
 
-		if (!promptPart?.prompt) {
-			if (!run.continuationOfRunId) {
-				throw new Error('Run does not contain a user prompt.');
-			}
-
-			return getContextResult({
-				run,
-				parentThreadId,
-				prompt: '',
-				contextTokens
-			});
+		if (!promptPart?.prompt && !run.continuationOfRunId) {
+			throw new Error('Run does not contain a user prompt.');
 		}
 
 		return getContextResult({
 			run,
 			parentThreadId,
-			prompt: promptPart.prompt.text,
-			contextTokens
+			prompt: promptPart?.prompt?.text ?? '',
+			contextTokens,
+			providerHandoff
 		});
 	}
 });
@@ -471,6 +475,37 @@ export const saveContextHandoff = mutation({
 		}
 
 		await clearThreadContextTokens(ctx, thread._id);
+
+		return true;
+	}
+});
+
+export const omitReasoningReplay = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		beforePrompt: v.boolean()
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			beforePrompt: args.beforePrompt
+		});
+
+		if (throughPartNumber > (thread.reasoningStrippedThroughPartNumber ?? -1)) {
+			await ctx.db.patch('threadRecords', thread._id, {
+				reasoningStrippedThroughPartNumber: throughPartNumber
+			});
+		}
 
 		return true;
 	}

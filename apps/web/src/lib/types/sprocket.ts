@@ -217,6 +217,7 @@ export type FilesystemBrowseResult = {
 export type SkillSummary = {
 	name: string;
 	description: string;
+	disableModelInvocation: boolean;
 };
 
 export type WorkspaceSkillsResult = {

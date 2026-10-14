@@ -55,6 +55,10 @@ import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
 import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
+import {
+	readCompletionProviderPreference,
+	storeCompletionProviderPreference
+} from '$lib/home/completion-provider-preference';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
@@ -328,6 +332,7 @@ export default function App({
 	const getMyProviderConfiguration = useAction(api.providerCredentials.getMyConfiguration);
 	const deleteArtifactRecord = useMutation(api.artifacts.deleteArtifact);
 	const renameThreadRecord = useMutation(api.threads.rename);
+	const regenerateThreadTitleRecord = useAction(api.threadTitles.regenerate);
 	const settleThreadRecord = useMutation(api.threads.settle);
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
@@ -520,6 +525,8 @@ export default function App({
 
 	const [selectedCompletionProvider, setSelectedCompletionProvider] =
 		useState<CompletionProvider>('spikonado');
+
+	const preferredCompletionProvider = useRef<CompletionProvider>('spikonado');
 
 	const [selectedReasoningEffort, setSelectedReasoningEffort] =
 		useState<string>(defaultReasoningEffort);
@@ -1155,6 +1162,8 @@ export default function App({
 		setCurrentThreadId(threadId);
 		setDraftWorkspacePath(draft ? workspacePath : null);
 
+		if (draft) setSelectedCompletionProvider(preferredCompletionProvider.current);
+
 		if (threadId !== pendingCreatedThreadId) {
 			setPendingCreatedThreadId(null);
 		}
@@ -1512,6 +1521,17 @@ export default function App({
 			await renameThreadRecord({ threadId, title });
 		} catch (error) {
 			setCurrentError(error instanceof Error ? error.message : 'Failed to rename thread.');
+			throw error;
+		}
+	}
+
+	async function regenerateThreadTitle(threadId: Id<'threadRecords'>) {
+		try {
+			await regenerateThreadTitleRecord({ threadId });
+		} catch (error) {
+			setCurrentError(
+				error instanceof Error ? error.message : 'Failed to regenerate thread title.'
+			);
 			throw error;
 		}
 	}
@@ -2204,7 +2224,8 @@ export default function App({
 		});
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId ?? defaultModelId);
-		setSelectedCompletionProvider('spikonado');
+		preferredCompletionProvider.current = readCompletionProviderPreference(userId);
+		setSelectedCompletionProvider(preferredCompletionProvider.current);
 		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort);
 		setFastMode(false);
 		setProjectPickerOpen(false);
@@ -2716,6 +2737,7 @@ export default function App({
 							onSettings={openSettings}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
+							onRegenerateTitle={(thread) => regenerateThreadTitle(thread._id)}
 						/>
 					)}
 				</div>
@@ -2848,6 +2870,7 @@ export default function App({
 									<PromptComposer
 										notices={
 											<ConversationNotices
+												key={currentThreadId}
 												error={conversationError}
 												runError={runError}
 												usageLimitRetryAt={usageLimitRetryAt}
@@ -2877,9 +2900,20 @@ export default function App({
 										selectedModel={selectedModel}
 										onSelectedModelChange={setSelectedModel}
 										configuredProviders={configuredProviders}
-										providersReady={providerConfigurationReady}
+										providersReady={
+											providerConfigurationReady &&
+											(selectedCompletionProvider !== 'chatgpt' ||
+												(desktopApiResolved &&
+													(!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)))
+										}
 										selectedCompletionProvider={selectedCompletionProvider}
 										onSelectedCompletionProviderChange={handleCompletionProviderChange}
+										onCompletionProviderSelect={(provider) => {
+											preferredCompletionProvider.current = provider;
+
+											if (signedInUserId)
+												storeCompletionProviderPreference(signedInUserId, provider);
+										}}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										fastMode={fastMode}

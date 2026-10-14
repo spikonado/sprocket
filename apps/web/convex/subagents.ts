@@ -36,6 +36,8 @@ import {
 import {
 	getPromptPart,
 	loadTranscriptPartsByNumbers,
+	loadTranscriptPartsPage,
+	stripLegacyAttachmentImageUploadIds,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 import {
@@ -473,6 +475,28 @@ export const transcriptParts = mutation({
 			const parts = await transcriptPartsForClient(
 				ctx,
 				await loadTranscriptPartsByNumbers(ctx, thread._id, args.numbers)
+			);
+
+			return { threadId: thread._id, parts };
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
+export const transcriptPartsPage = mutation({
+	args: vDescendantCaller.extend({
+		start: v.number(),
+		end: v.number(),
+		order: v.optional(v.union(v.literal('asc'), v.literal('desc')))
+	}).fields,
+	returns: vTranscriptPartsResult,
+	handler: async (ctx, args) => {
+		try {
+			const thread = await requireDescendantThread(ctx, args);
+
+			const parts = stripLegacyAttachmentImageUploadIds(
+				await loadTranscriptPartsPage(ctx, thread._id, args.start, args.end, args.order)
 			);
 
 			return { threadId: thread._id, parts };

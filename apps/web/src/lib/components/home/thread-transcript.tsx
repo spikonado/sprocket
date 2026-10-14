@@ -379,8 +379,7 @@ export default function ThreadTranscript({
 		}
 	}
 
-	function beforeDetailChange(follow: boolean) {
-		if (!follow) stickToBottomRef.current = false;
+	function beforeDetailChange() {
 		const root = viewportRef.current;
 		const anchor = root && !stickToBottomRef.current ? firstVisibleAnchor(root) : undefined;
 		const offset = anchor?.getBoundingClientRect().top;

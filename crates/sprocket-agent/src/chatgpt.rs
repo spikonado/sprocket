@@ -83,8 +83,13 @@ fn subscription_usage_limit(body: &serde_json::Value, now: u64) -> Option<Provid
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     let usage_limit = error.chain().find_map(|cause| {
         cause
-            .downcast_ref::<ProviderError>()
+            .downcast_ref::<rig::completion::PromptError>()
             .and_then(|error| error.provider_response_json().ok().flatten())
+            .or_else(|| {
+                cause
+                    .downcast_ref::<ProviderError>()
+                    .and_then(|error| error.provider_response_json().ok().flatten())
+            })
             .or_else(|| {
                 cause
                     .downcast_ref::<rig::ErrorReport>()
@@ -1165,29 +1170,29 @@ mod tests {
         ] {
             let raw_error = first_stream_error(stub_model(status, body)).await;
             let raw_diagnostic = raw_error.to_string();
-            let report_error = user_facing_error(anyhow::Error::new(raw_error.report()));
-            assert!(
-                report_error
-                    .downcast_ref::<SubscriptionUsageLimit>()
-                    .is_some()
-            );
-            let error = user_facing_error(
-                anyhow::Error::new(raw_error)
-                    .context("Context handoff failed. Retry to continue the conversation."),
-            );
-            assert_eq!(
-                error.to_string(),
-                "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
-            );
-            assert_eq!(
-                provider_usage_limit(&error).unwrap().resets_at,
-                Some(1_800_001_000_000)
-            );
-            assert!(
-                error
-                    .chain()
-                    .any(|cause| cause.to_string() == raw_diagnostic)
-            );
+            for error in [
+                anyhow::Error::new(raw_error.clone()),
+                anyhow::Error::new(raw_error.report()),
+                anyhow::Error::new(rig::completion::PromptError::from(raw_error.clone())),
+                anyhow::Error::new(rig::completion::PromptError::from(raw_error.report())),
+            ] {
+                let error = user_facing_error(
+                    error.context("Context handoff failed. Retry to continue the conversation."),
+                );
+                assert_eq!(
+                    error.to_string(),
+                    "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
+                );
+                assert_eq!(
+                    provider_usage_limit(&error).unwrap().resets_at,
+                    Some(1_800_001_000_000)
+                );
+                assert!(
+                    error
+                        .chain()
+                        .any(|cause| cause.to_string() == raw_diagnostic)
+                );
+            }
         }
     }
 
@@ -1271,9 +1276,14 @@ mod tests {
             json!({"error": {"code": "invalid_api_key", "message": "subscription_sharing_usage_limit_exceeded"}}).to_string(),
             "not JSON".to_string(),
         ] {
-            let error = anyhow::Error::new(ProviderError::from_provider_body(body));
-            let diagnostic = format!("{error:#}");
-            assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
+            let provider_error = ProviderError::from_provider_body(body);
+            for error in [
+                anyhow::Error::new(provider_error.clone()),
+                anyhow::Error::new(rig::completion::PromptError::from(provider_error)),
+            ] {
+                let diagnostic = format!("{error:#}");
+                assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
+            }
         }
     }
 

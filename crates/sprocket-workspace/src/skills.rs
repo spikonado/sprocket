@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -5,14 +6,12 @@ use crate::project_root::find_project_root;
 use crate::skill_name::validate_skill_name;
 
 const MAX_SKILLS: usize = 64;
-const MAX_FRONTMATTER_BYTES: usize = 8 * 1024;
-const MAX_DESCRIPTION_CHARS: usize = 1024;
-const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceSkill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub source: SkillSource,
 }
 
@@ -32,6 +31,7 @@ pub struct WorkspaceSkills {
 pub(crate) struct ParsedSkill {
     pub name: String,
     pub description: String,
+    pub disable_model_invocation: bool,
     pub body: String,
 }
 
@@ -113,6 +113,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
 
     let mut name: Option<String> = None;
     let mut description: Option<String> = None;
+    let mut disable_model_invocation = None;
 
     for line in frontmatter.lines() {
         if line.trim().is_empty() || starts_with_yaml_indent(line) {
@@ -123,7 +124,7 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
-        let key = key.trim();
+        let key = strip_yaml_quotes(key.trim());
         let value = value.trim();
 
         match key {
@@ -142,40 +143,46 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
                     description = Some(value.to_string());
                 }
             }
+            "disable-model-invocation" => {
+                if disable_model_invocation.is_some() {
+                    return Err("duplicate disable-model-invocation field".to_string());
+                }
+                let scalar = value
+                    .split_once('#')
+                    .filter(|(prefix, _)| prefix.ends_with(char::is_whitespace))
+                    .map_or(value, |(prefix, _)| prefix.trim_end());
+                disable_model_invocation = Some(match scalar {
+                    "true" | "True" | "TRUE" => true,
+                    "false" | "False" | "FALSE" => false,
+                    _ => {
+                        return Err(format!(
+                            "disable-model-invocation must be a YAML boolean (true or false), got {value:?}"
+                        ));
+                    }
+                });
+            }
             _ => {}
         }
     }
 
     let name = name.ok_or_else(|| "missing or empty name".to_string())?;
-    let mut description = description.ok_or_else(|| "missing or empty description".to_string())?;
-    if description.chars().count() > MAX_DESCRIPTION_CHARS {
-        description = description.chars().take(MAX_DESCRIPTION_CHARS).collect();
-    }
+    let description = description.ok_or_else(|| "missing or empty description".to_string())?;
 
     Ok(ParsedSkill {
         name,
         description,
+        disable_model_invocation: disable_model_invocation.unwrap_or(false),
         body: body.to_string(),
     })
 }
 
-/// Resolve skill body for `read_skill`, capped at 64 KiB.
 pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, String> {
-    let (raw, truncated) = match &skill.source {
-        SkillSource::File { skill_md_path } => {
-            read_file_capped(skill_md_path, MAX_SKILL_CONTENT_BYTES)
-                .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?
-        }
-        SkillSource::BuiltIn { contents } => {
-            let bytes = contents.as_bytes();
-            let truncated = bytes.len() > MAX_SKILL_CONTENT_BYTES;
-            let raw = if truncated {
-                bytes[..MAX_SKILL_CONTENT_BYTES].to_vec()
-            } else {
-                bytes.to_vec()
-            };
-            (raw, truncated)
-        }
+    let raw = match &skill.source {
+        SkillSource::File { skill_md_path } => Cow::Owned(
+            std::fs::read(skill_md_path)
+                .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?,
+        ),
+        SkillSource::BuiltIn { contents } => Cow::Borrowed(contents.as_bytes()),
     };
 
     let text = String::from_utf8_lossy(&raw);
@@ -195,7 +202,6 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
         description: skill.description.clone(),
         content: body.to_string(),
         dir,
-        truncated,
     })
 }
 
@@ -205,7 +211,6 @@ pub struct ReadSkillContent {
     pub description: String,
     pub content: String,
     pub dir: Option<String>,
-    pub truncated: bool,
 }
 
 fn parse_and_validate_builtin(
@@ -226,6 +231,7 @@ fn parse_and_validate_builtin(
     Ok(WorkspaceSkill {
         name: parsed.name,
         description: parsed.description,
+        disable_model_invocation: parsed.disable_model_invocation,
         source: SkillSource::BuiltIn { contents },
     })
 }
@@ -298,7 +304,7 @@ fn scan_skills_dir(
 
 fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, String> {
     let skill_md_path = skill_dir.join("SKILL.md");
-    let (data, _) = read_file_capped(&skill_md_path, MAX_FRONTMATTER_BYTES).map_err(|error| {
+    let data = std::fs::read(&skill_md_path).map_err(|error| {
         format!(
             "skipped skill '{dir_name}': failed to read {}: {error}",
             skill_md_path.display()
@@ -330,22 +336,9 @@ fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, S
     Ok(WorkspaceSkill {
         name: parsed.name,
         description: parsed.description,
+        disable_model_invocation: parsed.disable_model_invocation,
         source: SkillSource::File { skill_md_path },
     })
-}
-
-fn read_file_capped(path: &Path, max_bytes: usize) -> std::io::Result<(Vec<u8>, bool)> {
-    use std::io::Read;
-
-    let file = std::fs::File::open(path)?;
-    let mut limited = file.take(max_bytes.saturating_add(1) as u64);
-    let mut buf = Vec::new();
-    limited.read_to_end(&mut buf)?;
-    let truncated = buf.len() > max_bytes;
-    if truncated {
-        buf.truncate(max_bytes);
-    }
-    Ok((buf, truncated))
 }
 
 fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
@@ -407,11 +400,21 @@ mod tests {
     use super::*;
 
     fn write_skill(dir: &Path, name: &str, description: &str, body: &str) {
+        write_skill_with_frontmatter(dir, name, description, body, "");
+    }
+
+    fn write_skill_with_frontmatter(
+        dir: &Path,
+        name: &str,
+        description: &str,
+        body: &str,
+        frontmatter: &str,
+    ) {
         let skill_dir = dir.join(name);
         fs::create_dir_all(&skill_dir).expect("skill dir");
         fs::write(
             skill_dir.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: {description}\n---\n{body}\n"),
+            format!("---\nname: {name}\ndescription: {description}\n{frontmatter}---\n{body}\n"),
         )
         .expect("skill file");
     }
@@ -426,9 +429,21 @@ mod tests {
         fs::create_dir_all(&project_skills).expect("project skills");
 
         write_skill(&project_skills, "alpha", "from project", "project body");
-        write_skill(&project_skills, "shared", "project wins", "project shared");
+        write_skill_with_frontmatter(
+            &project_skills,
+            "shared",
+            "project wins",
+            "project shared",
+            "disable-model-invocation: true\n",
+        );
         write_skill(&sprocket_user, "shared", "sprocket user", "sprocket shared");
-        write_skill(&sprocket_user, "bravo", "from sprocket", "sprocket body");
+        write_skill_with_frontmatter(
+            &sprocket_user,
+            "bravo",
+            "from sprocket",
+            "sprocket body",
+            "disable-model-invocation: true\n",
+        );
         write_skill(&agents_user, "shared", "agents user", "agents shared");
         write_skill(&agents_user, "charlie", "from agents", "agents body");
 
@@ -439,7 +454,7 @@ mod tests {
             ),
             (
                 "delta",
-                "---\nname: delta\ndescription: from builtin\n---\nbuiltin delta\n",
+                "---\nname: delta\ndescription: from builtin\ndisable-model-invocation: true\n---\nbuiltin delta\n",
             ),
         ];
 
@@ -455,6 +470,13 @@ mod tests {
             .map(|skill| skill.name.as_str())
             .collect();
         assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta", "shared"]);
+        let hidden_names: Vec<_> = loaded
+            .skills
+            .iter()
+            .filter(|skill| skill.disable_model_invocation)
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert_eq!(hidden_names, vec!["bravo", "delta", "shared"]);
 
         let shared = loaded
             .skills
@@ -493,6 +515,13 @@ mod tests {
 
         write_skill(&skills, "BadName", "uppercase", "body");
         write_skill(&skills, "-leading", "leading hyphen", "body");
+        write_skill_with_frontmatter(
+            &skills,
+            "bad-policy",
+            "invalid invocation policy",
+            "body",
+            "disable-model-invocation: maybe\n",
+        );
 
         let no_desc = skills.join("no-desc");
         fs::create_dir_all(&no_desc).unwrap();
@@ -504,6 +533,10 @@ mod tests {
 
         let loaded = load_workspace_skills(&root, &[], &[]);
         assert!(loaded.skills.is_empty());
+        assert!(loaded.warnings.iter().any(|warning| {
+            warning.contains("bad-policy")
+                && warning.contains("disable-model-invocation must be a YAML boolean")
+        }));
         assert!(
             loaded
                 .warnings
@@ -548,6 +581,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_disable_model_invocation() {
+        for (frontmatter, expected) in [
+            ("", false),
+            ("disable-model-invocation: false\n", false),
+            ("disable-model-invocation: true\n", true),
+            ("\"disable-model-invocation\": true\n", true),
+            ("disable-model-invocation: TRUE # explicit only\n", true),
+            ("metadata:\n  disable-model-invocation: true\n", false),
+        ] {
+            let contents =
+                format!("---\nname: demo\ndescription: demo skill\n{frontmatter}---\nbody\n");
+            let parsed = parse_skill_markdown(&contents).expect("valid frontmatter");
+            assert_eq!(parsed.disable_model_invocation, expected, "{frontmatter}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_disable_model_invocation() {
+        for value in [
+            "",
+            "maybe",
+            "\"true\"",
+            "false\ndisable-model-invocation: true",
+        ] {
+            let contents = format!(
+                "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: {value}\n---\nbody\n"
+            );
+            let error = parse_skill_markdown(&contents).expect_err("invalid frontmatter");
+            assert!(error.contains("disable-model-invocation"), "{error}");
+        }
+    }
+
+    #[test]
     fn rejects_block_scalar_descriptions() {
         let folded = "---\nname: folded\ndescription: >-\n  A long description\n---\nbody\n";
         let error = parse_skill_markdown(folded).expect_err("folded description");
@@ -559,24 +625,29 @@ mod tests {
     }
 
     #[test]
-    fn discovery_and_content_reads_stay_byte_capped() {
+    fn discovers_large_frontmatter_and_returns_complete_file_content() {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
         let skill_dir = skills.join("huge");
         gix::init(&root).expect("git repository");
         fs::create_dir_all(&skill_dir).unwrap();
 
-        let mut contents = String::from("---\nname: huge\ndescription: oversized\n---\n");
-        contents.push_str(&"x".repeat(MAX_SKILL_CONTENT_BYTES + 8 * 1024));
+        let body = format!("{}\nFinal instruction.\n", "λ".repeat(40 * 1024));
+        let description = "λ".repeat(1500);
+        let metadata = "x".repeat(10 * 1024);
+        let contents = format!(
+            "---\nname: huge\ndescription: {description}\nmetadata: {metadata}\n---\n{body}"
+        );
         fs::write(skill_dir.join("SKILL.md"), &contents).unwrap();
 
         let loaded = load_workspace_skills(&root, &[], &[]);
         assert_eq!(loaded.skills.len(), 1);
         assert_eq!(loaded.skills[0].name, "huge");
+        assert_eq!(loaded.skills[0].description, description);
 
         let content = read_skill_content(&loaded.skills[0]).expect("read");
-        assert!(content.truncated);
-        assert!(content.content.len() <= MAX_SKILL_CONTENT_BYTES);
+        assert_eq!(content.description, description);
+        assert_eq!(content.content, body);
 
         fs::remove_dir_all(root).ok();
     }
@@ -594,7 +665,6 @@ mod tests {
         assert_eq!(content.name, "demo");
         assert_eq!(content.description, "A demo skill");
         assert_eq!(content.content, "# Instructions\n\nGo.\n");
-        assert!(!content.truncated);
         assert_eq!(
             content.dir.as_deref(),
             Some(skills.join("demo").to_string_lossy().as_ref())
