@@ -12,6 +12,7 @@ use rig::agent::{
 use rig::completion::{Effort, FinishReason, GenerationOptions, Message, Reasoning};
 use rig::message::AssistantContent;
 use rig::operation::Completion;
+use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
@@ -74,6 +75,7 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
             Some(anyhow!("The model stopped unexpectedly: {reason}"))
         }
         Some(FinishReason::Stop | FinishReason::ToolCalls) | None => None,
+        Some(reason) => Some(anyhow!("The model stopped unexpectedly: {reason:?}")),
     }
 }
 
