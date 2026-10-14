@@ -941,7 +941,7 @@ mod tests {
                     Err(error) => {
                         let (next_history, next_prompt, _) = recovery
                             .resume(&error)
-                            .expect("truncated turn is recoverable");
+                            .unwrap_or_else(|| panic!("truncated turn is recoverable: {error:?}"));
                         drop(stream);
                         history = next_history;
                         prompt = next_prompt;
