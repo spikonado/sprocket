@@ -65,8 +65,6 @@ export default function SettingsProviders({
 	const setBrowserLogin = (userIdForLogin: string, next: ChatGptBrowserLoginStart | null) => {
 		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
 		setBrowserLoginActive(Boolean(next));
-
-		if (!next) closeLoginWindow();
 	};
 
 	function closeLoginWindow() {
@@ -205,6 +203,7 @@ export default function SettingsProviders({
 				await bridge.openExternal(login.authorizeUrl);
 			} else {
 				loginWindow?.location.replace(login.authorizeUrl);
+				loginWindowRef.current = null;
 			}
 
 			if (generation !== generationRef.current) {
