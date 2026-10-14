@@ -32,12 +32,13 @@ async function copyRootPackage(output, web, version) {
 	const destination = path.join(output, 'sprocket');
 	await mkdir(destination, { recursive: true });
 
-	for (const entry of ['bin', 'lib', 'README.md', 'targets.json']) {
+	for (const entry of ['bin', 'lib', 'targets.json']) {
 		await cp(path.join(SOURCE_PACKAGE, entry), path.join(destination, entry), { recursive: true });
 	}
 
 	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);
 	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
+	await cp(path.join(ROOT, 'README.md'), path.join(destination, 'README.md'));
 	await cp(
 		path.join(ROOT, 'THIRD_PARTY_NOTICES.md'),
 		path.join(destination, 'THIRD_PARTY_NOTICES.md')
