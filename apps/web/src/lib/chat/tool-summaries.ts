@@ -65,11 +65,14 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Parsed File';
 		case 'screenshot_url':
 			return 'Captured Screenshot';
+		case 'set_cwd':
+			return 'Changed Directory';
 		default:
 			return titleizeSnakeCase(toolKey);
 	}
 }
 
+// Only historical exec_cmd calls carry a workdir; new ones run in the thread's cwd.
 function describeExecCommandOptions(input: JsonValue | undefined) {
 	const workdir = isJsonObject(input) ? jsonString(input.workdir) : undefined;
 
@@ -158,6 +161,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.url) ?? 'URL';
 		case 'parse_file':
 			return jsonString(fields?.path) ?? jsonString(fields?.url) ?? 'File';
+		case 'set_cwd':
+			return jsonString(fields?.path) ?? 'Directory';
 		case 'update_artifact':
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':

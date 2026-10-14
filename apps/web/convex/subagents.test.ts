@@ -351,6 +351,40 @@ describe('subagents.createOrSend', () => {
 		).rejects.toThrow(/nonempty prompt/);
 	});
 
+	it('persists set_cwd on the thread and hands it to new children', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const cwd = '/repo/.worktrees/feature';
+
+		const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			...toolTranscriptAssignment(caller.runId, caller.claimId),
+			kind: 'set_cwd',
+			payload: { path: '.worktrees/feature' }
+		});
+
+		await t.mutation(api.executor.complete, {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			jobId,
+			result: { cwd }
+		});
+
+		const context = await t.query(api.agentRuntime.getContext, {
+			runId: caller.runId,
+			executionSecret: caller.executionSecret
+		});
+
+		expect(context.cwd).toBe(cwd);
+
+		const child = await createChild(t, caller);
+		const childThread = await t.run((ctx) => ctx.db.get('threadRecords', child.threadId));
+		expect(childThread?.cwd).toBe(cwd);
+	});
+
 	it('rejects a busy follow-up without recording a prompt or mutating settings', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);

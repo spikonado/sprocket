@@ -29,7 +29,7 @@ use crate::live::{
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::StreamRecovery;
-use crate::tools::agent_tools;
+use crate::tools::{agent_tools, working_directory_message};
 use crate::transcript::without_reasoning_traces;
 use crate::types::{
     CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
@@ -103,6 +103,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) initial_context: Vec<Message>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) cwd: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
     pub(crate) fast_mode: bool,
@@ -365,6 +366,7 @@ async fn run_with_completion_model(
         request.claim_id.clone(),
         request.user_id.clone(),
         request.workspace_root.clone(),
+        request.cwd.clone(),
         request.transcript_dir.clone(),
         request.gateway_url.clone(),
         request.transcript_store.clone(),
@@ -375,6 +377,7 @@ async fn run_with_completion_model(
         request.command_sessions.clone(),
         request.subagent_launcher.clone(),
     );
+    let cwd = tools.cwd.clone();
     let context_handoff_hook = ContextHandoffHook::new(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
@@ -399,6 +402,7 @@ async fn run_with_completion_model(
         .tool(tools.poll_subagent)
         .tool(tools.list_subagents)
         .tool(tools.list_subagent_models)
+        .tool(tools.set_cwd)
         .tool(context_handoff_hook.tool());
     let agent = if request.allow_interaction || request.is_child {
         agent.tool(tools.ask_question).tool(tools.poll_question)
@@ -473,6 +477,7 @@ async fn run_with_completion_model(
     let mut history: Vec<_> = initial_context
         .iter()
         .cloned()
+        .chain([working_directory_message(&cwd.get())])
         .chain(request.prior_history)
         .collect();
     let mut prompt = request.prompt;
@@ -738,8 +743,13 @@ async fn run_with_completion_model(
                                     transcript.attempt_seq, before_prompt,
                                     handoff_processed_tokens,
                                 );
+                                let handoff_context: Vec<_> = initial_context
+                                    .iter()
+                                    .cloned()
+                                    .chain([working_directory_message(&cwd.get())])
+                                    .collect();
                                 match resume_context_handoff(
-                                    &mut agent, &initial_context, &summary,
+                                    &mut agent, &handoff_context, &summary,
                                     deferred_prompt.take(), save, next_model,
                                 ).await {
                                     Ok(Some((next_history, next_prompt))) => {

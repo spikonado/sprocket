@@ -299,6 +299,19 @@ modes, subject to its running-session zero-wait cooldown.
 Keep the permissive historical payload validators permanently because transcript
 history records the original calls. No stored-data rewrite is needed.
 
+### Retired exec_cmd workdir
+
+New Rust agents run `exec_cmd` in the thread's cwd, set by `set_cwd`, and no
+longer advertise a `workdir` argument. `vExecCommandPayload` keeps an optional
+`workdir` so released agents can still dispatch it and stored jobs still
+validate. The UI keeps showing `(cwd …)` for historical calls that carry it.
+Rust argument parsing ignores the field when old history is replayed.
+
+Keep the optional validator field and the UI label permanently because
+transcript history records the original calls. Released agents ignore the new
+optional `cwd` in run context responses, and threads without a saved `cwd`
+start at the workspace root, so no stored-data rewrite is needed.
+
 ### Retired command control tool
 
 New Rust agents advertise and execute `control_cmd` and `poll_cmd`
