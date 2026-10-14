@@ -317,6 +317,7 @@ function getContextResult(args: {
 	prompt: string;
 	contextTokens: number | undefined;
 	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
+	cwd: string | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
 		run: {
@@ -339,6 +340,8 @@ function getContextResult(args: {
 	}
 
 	if (args.providerHandoff !== undefined) result.providerHandoff = args.providerHandoff;
+
+	if (args.cwd !== undefined) result.cwd = args.cwd;
 
 	return result;
 }
@@ -366,7 +369,8 @@ export const getContext = query({
 			parentThreadId,
 			prompt: promptPart?.prompt?.text ?? '',
 			contextTokens,
-			providerHandoff
+			providerHandoff,
+			cwd: thread?.cwd
 		});
 	}
 });

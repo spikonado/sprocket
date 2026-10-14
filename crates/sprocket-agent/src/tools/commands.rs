@@ -19,21 +19,12 @@ pub(crate) struct ControlCmdTool(pub(super) AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PollCmdTool(pub(super) AgentToolContext);
 
-fn default_workdir() -> String {
-    ".".to_string()
-}
-
-fn is_default_workdir(workdir: &String) -> bool {
-    workdir == "."
-}
-
 fn is_default_shell(shell: &String) -> bool {
     shell == &default_command_shell()
 }
 
 pub(super) fn exec_command_parameters() -> serde_json::Value {
     let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
-    schema["properties"]["workdir"]["default"] = json!(default_workdir());
     schema["properties"]["yieldTimeMs"] = yield_time_schema(
         YieldMode::Action,
         "Maximum time to wait for completion before returning the tool call.",
@@ -88,13 +79,6 @@ pub(super) fn poll_command_parameters() -> serde_json::Value {
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     pub(crate) cmd: String,
-    /// Working directory for this command. Absolute paths and ~ may be anywhere on the machine; relative paths resolve from the project root.
-    #[serde(
-        default = "default_workdir",
-        skip_serializing_if = "is_default_workdir"
-    )]
-    #[schemars(default = "default_workdir")]
-    pub(crate) workdir: String,
     /// Shell binary to launch; resolved to an available shell when omitted.
     #[serde(
         default = "default_command_shell",
@@ -188,12 +172,13 @@ impl rig::tool::Tool for ExecCmdTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         execute_serialized_tool_job(&self.0, Self::NAME, &args, |cancellation| async {
+            let cwd = self.0.cwd.get();
             self.0
                 .command_sessions
                 .exec_command(
                     cancellation,
                     &args.cmd,
-                    &args.workdir,
+                    &cwd.to_string_lossy(),
                     &args.shell,
                     args.timeout_ms,
                     args.yield_time_ms,
@@ -283,14 +268,8 @@ mod tests {
     fn exec_command_schema_does_not_expose_the_preview_limit() {
         let schema = exec_command_parameters();
         let properties = schema["properties"].as_object().unwrap();
-        assert_eq!(properties.len(), 5);
+        assert_eq!(properties.len(), 4);
         assert!(!properties.contains_key("maxOutputChars"));
-        assert!(
-            properties["workdir"]["description"]
-                .as_str()
-                .unwrap()
-                .starts_with("Working directory for this command")
-        );
         assert_eq!(schema["required"], json!(["cmd"]));
         assert!(properties["timeoutMs"].get("default").is_none());
     }
@@ -518,10 +497,11 @@ mod tests {
     }
 
     #[test]
-    fn old_preview_limits_are_not_replayed_as_tool_arguments() {
+    fn removed_arguments_are_not_replayed_as_tool_arguments() {
         let args: ExecCommandArgs = serde_json::from_value(json!({
             "cmd": "pwd",
             "maxOutputChars": 1,
+            "workdir": "apps/web",
         }))
         .unwrap();
         assert_eq!(serde_json::to_value(args).unwrap(), json!({"cmd": "pwd"}));

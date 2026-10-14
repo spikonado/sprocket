@@ -127,6 +127,9 @@ pub struct RunContextResponse {
     pub context_tokens: u64,
     #[serde(default)]
     pub provider_handoff: Option<ProviderHandoff>,
+    /// Absent until the thread first calls set_cwd.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

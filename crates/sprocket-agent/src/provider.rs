@@ -28,7 +28,8 @@ use crate::live::{
 };
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
-use crate::tools::agent_tools;
+use crate::stream_recovery::StreamRecovery;
+use crate::tools::{agent_tools, working_directory_message};
 use crate::transcript::without_reasoning_traces;
 use crate::types::{
     CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
@@ -102,6 +103,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) initial_context: Vec<Message>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) cwd: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
     pub(crate) fast_mode: bool,
@@ -364,6 +366,7 @@ async fn run_with_completion_model(
         request.claim_id.clone(),
         request.user_id.clone(),
         request.workspace_root.clone(),
+        request.cwd.clone(),
         request.transcript_dir.clone(),
         request.gateway_url.clone(),
         request.transcript_store.clone(),
@@ -374,6 +377,7 @@ async fn run_with_completion_model(
         request.command_sessions.clone(),
         request.subagent_launcher.clone(),
     );
+    let cwd = tools.cwd.clone();
     let context_handoff_hook = ContextHandoffHook::new(
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
@@ -398,6 +402,7 @@ async fn run_with_completion_model(
         .tool(tools.poll_subagent)
         .tool(tools.list_subagents)
         .tool(tools.list_subagent_models)
+        .tool(tools.set_cwd)
         .tool(context_handoff_hook.tool());
     let agent = if request.allow_interaction || request.is_child {
         agent.tool(tools.ask_question).tool(tools.poll_question)
@@ -456,6 +461,8 @@ async fn run_with_completion_model(
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
+    let mut stream_recovery = StreamRecovery::default();
+    let mut recovery_delay = Duration::ZERO;
     let initial_context: Arc<[Message]> = request.initial_context.into();
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
@@ -470,6 +477,7 @@ async fn run_with_completion_model(
     let mut history: Vec<_> = initial_context
         .iter()
         .cloned()
+        .chain([working_directory_message(&cwd.get())])
         .chain(request.prior_history)
         .collect();
     let mut prompt = request.prompt;
@@ -575,6 +583,8 @@ async fn run_with_completion_model(
 
     'agent_run: {
         'generations: loop {
+            let ready_at = tokio::time::Instant::now() + recovery_delay;
+            recovery_delay = Duration::ZERO;
             let mut stream = agent
                 .prompt(prompt)
                 .replace_additional_params(additional_params.clone())
@@ -582,6 +592,7 @@ async fn run_with_completion_model(
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(context_handoff_hook.clone())
                 .add_hook(prompt_hook.clone())
+                .add_hook(stream_recovery.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .stream();
             loop {
@@ -628,7 +639,10 @@ async fn run_with_completion_model(
                             }
                         }
                     }
-                    item = stream.next() => {
+                    item = async {
+                        tokio::time::sleep_until(ready_at).await;
+                        stream.next().await
+                    } => {
                         let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
                             if completed_attempt == Some(transcript.attempt_seq) {
@@ -729,8 +743,13 @@ async fn run_with_completion_model(
                                     transcript.attempt_seq, before_prompt,
                                     handoff_processed_tokens,
                                 );
+                                let handoff_context: Vec<_> = initial_context
+                                    .iter()
+                                    .cloned()
+                                    .chain([working_directory_message(&cwd.get())])
+                                    .collect();
                                 match resume_context_handoff(
-                                    &mut agent, &initial_context, &summary,
+                                    &mut agent, &handoff_context, &summary,
                                     deferred_prompt.take(), save, next_model,
                                 ).await {
                                     Ok(Some((next_history, next_prompt))) => {
@@ -779,6 +798,24 @@ async fn run_with_completion_model(
                                     deferred_prompt = handoff.deferred_prompt;
                                     before_prompt = handoff.before_prompt;
                                     context_handoff_hook.start_handoff();
+                                    continue 'generations;
+                                }
+                                if let Some((next_history, next_prompt, delay)) = stream_recovery.resume(&error) {
+                                    drop(stream);
+                                    eprintln!("sprocket-agent: provider stream was truncated; retrying the failed turn in {delay:?}");
+                                    history = next_history;
+                                    prompt = next_prompt;
+                                    recovery_delay = delay;
+                                    if let Err(error) = transcript.advance_attempt().await {
+                                        break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                    }
+                                    transcript.live.clear(&request.thread_id);
+                                    if let Some(output) = &transcript.runtime.output {
+                                        output.notify_live_update();
+                                    }
+                                    final_text.clear();
+                                    final_response_received = false;
+                                    streamed_text.clear();
                                     continue 'generations;
                                 }
                                 if context_handoff_hook.is_writing() && provider_switch.is_some() {

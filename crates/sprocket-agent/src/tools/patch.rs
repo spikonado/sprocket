@@ -52,10 +52,9 @@ impl rig::tool::Tool for ApplyPatchTool {
             Self::NAME,
             serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
             |cancellation| async {
-                let output =
-                    apply_workspace_patch(self.0.workspace_root.clone(), cancellation, &args.patch)
-                        .await
-                        .map_err(tool_error)?;
+                let output = apply_workspace_patch(self.0.cwd.get(), cancellation, &args.patch)
+                    .await
+                    .map_err(tool_error)?;
                 serde_json::to_value(output).map_err(|e| tool_error(e.into()))
             },
         )

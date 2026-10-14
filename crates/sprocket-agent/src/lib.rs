@@ -12,6 +12,7 @@ mod output;
 mod provider;
 mod reasoning;
 mod run;
+mod stream_recovery;
 pub mod subagents;
 mod submission;
 mod tools;

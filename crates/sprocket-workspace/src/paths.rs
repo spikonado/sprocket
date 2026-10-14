@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result, bail};
+
 pub fn expand_home(path: &str) -> String {
     if path == "~" {
         return home_dir()
@@ -26,6 +28,23 @@ pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+}
+
+/// Resolves `path` to an existing directory; relative paths start at `base`.
+pub fn resolve_directory(base: &Path, path: &str) -> Result<PathBuf> {
+    let expanded = PathBuf::from(expand_home(path.trim()));
+    let candidate = if expanded.is_absolute() {
+        expanded
+    } else {
+        base.join(expanded)
+    };
+    let resolved = candidate
+        .canonicalize()
+        .with_context(|| format!("failed to resolve directory {}", candidate.display()))?;
+    if !resolved.is_dir() {
+        bail!("not a directory: {}", resolved.display());
+    }
+    Ok(resolved)
 }
 
 pub fn normalize_windows_drive_root(path: &str) -> String {

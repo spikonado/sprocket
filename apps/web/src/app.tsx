@@ -2772,11 +2772,12 @@ export default function App({
 									className={!currentThreadId ? 'create-thread-composer' : ''}
 								>
 									<PromptComposer
-										notices={
+										notices={({ usageBlocked }) => (
 											<ConversationNotices
 												key={currentThreadId}
 												error={conversationError}
 												runError={runError}
+												usageBlocked={usageBlocked}
 												reconnecting={Boolean(
 													currentThreadId &&
 													transcript.threadId === currentThreadId &&
@@ -2791,7 +2792,7 @@ export default function App({
 												catalogLoading={catalogLoading}
 												onRetryCatalog={() => void loadModelCatalog()}
 											/>
-										}
+										)}
 										prompt={prompt}
 										onPromptChange={setPrompt}
 										attachments={composerAttachments.items}
