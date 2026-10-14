@@ -190,9 +190,6 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
 
     let name = name.ok_or_else(|| "missing or empty name".to_string())?;
     let description = description.ok_or_else(|| "missing or empty description".to_string())?;
-    if description.chars().count() > 1024 {
-        return Err("description must be at most 1024 characters".to_string());
-    }
 
     Ok(ParsedSkill {
         name,
@@ -739,29 +736,14 @@ mod tests {
     }
 
     #[test]
-    fn validates_description_character_limit() {
-        for (length, valid) in [(1024, true), (1025, false)] {
-            let contents = format!(
-                "---\nname: demo\ndescription: |-\n  {}\n---\nbody\n",
-                "λ".repeat(length)
-            );
-            let result = parse_skill_markdown(&contents);
-            if valid {
-                assert_eq!(
-                    result
-                        .expect("valid description")
-                        .description
-                        .chars()
-                        .count(),
-                    length
-                );
-            } else {
-                assert_eq!(
-                    result.expect_err("long description"),
-                    "description must be at most 1024 characters"
-                );
-            }
-        }
+    fn accepts_and_normalizes_long_unicode_descriptions() {
+        let first = "λ".repeat(3000);
+        let last = "界".repeat(3000);
+        let contents =
+            format!("---\nname: demo\ndescription: |\n  {first}   \n\n    {last}   \n---\nbody\n");
+        let parsed = parse_skill_markdown(&contents).expect("long Unicode description");
+        assert_eq!(parsed.description, format!("{first} {last}"));
+        assert_eq!(parsed.body, "body\n");
     }
 
     #[test]
@@ -773,7 +755,7 @@ mod tests {
         fs::create_dir_all(&skill_dir).unwrap();
 
         let body = format!("{}\nFinal instruction.\n", "λ".repeat(40 * 1024));
-        let description = "λ".repeat(1024);
+        let description = "λ".repeat(6000);
         let metadata = "x".repeat(10 * 1024);
         let contents = format!(
             "---\nname: huge\ndescription: {description}\nmetadata: {metadata}\n---\n{body}"
