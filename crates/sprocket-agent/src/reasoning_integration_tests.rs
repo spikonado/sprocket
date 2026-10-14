@@ -14,7 +14,7 @@ use rig::message::{
     ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use rig::providers::openai;
-use rig::streaming::{Item, StreamEvent};
+use rig::streaming::{Item, PartKind, StreamEvent};
 use rig::tool::{DynamicTool, ToolOutput};
 use rig::wire::{Body, Mode, Operation, Wire};
 use serde_json::{Value as JsonValue, json};
@@ -586,7 +586,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let text = first_index(&observed, Observed::Text).expect("gateway text must stream");
     let tool =
         first_index(&observed, Observed::ToolCall).expect("gateway function call must stream");
-    assert!(reasoning_delta < reasoning_done && reasoning_done < text && reasoning_done < tool);
+    assert!(reasoning_delta < tool && tool < reasoning_done && reasoning_done < text);
     assert_eq!(
         observed
             .iter()
@@ -809,6 +809,17 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     while let Some(item) = stream.next().await {
         match item.expect("real Rig stream item") {
             MultiTurnStreamItem::StreamAssistantItem(Item::Event(event)) => match event {
+                StreamEvent::Start {
+                    part,
+                    kind: PartKind::Reasoning,
+                    ..
+                } => parts.apply_text_delta(
+                    "reasoning",
+                    format!("{stream_id}:reasoning:{}", part.index()),
+                    "",
+                    Some(stream_id.clone()),
+                    now_ms(),
+                ),
                 StreamEvent::Text { part, text } => parts.apply_text_delta(
                     "text",
                     format!("{stream_id}:text:{}", part.index()),
@@ -1099,7 +1110,12 @@ async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
             let Message::Assistant(message) = message else {
                 continue;
             };
-            assert_eq!(message.origin, Some(expected.clone()));
+            let origin = message.origin.expect("persisted completion origin");
+            assert_eq!(origin.api, expected.api);
+            assert_eq!(origin.provider, expected.provider);
+            assert_eq!(origin.model, expected.model);
+            assert_eq!(origin.response_model.as_deref(), Some("gateway-model"));
+            assert_eq!(origin.response_id.as_deref(), Some("resp_gateway"));
         }
     }
     assert_eq!(server.join().unwrap().len(), 4);
@@ -1184,13 +1200,13 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
     let input = replay["input"].as_array().unwrap();
     assert_eq!(input.len(), 5);
     assert_eq!(input[0]["content"][0]["text"], "Where is the workspace?");
-    assert_eq!(input[1]["type"], "reasoning");
-    assert_eq!(input[1]["id"], ITEM_ID);
-    assert_eq!(input[1]["encrypted_content"], ENVELOPE);
-    assert_eq!(input[2]["type"], "message");
-    assert_eq!(input[2]["role"], "assistant");
-    assert_eq!(input[2]["content"][0]["type"], "output_text");
-    assert_eq!(input[2]["content"][0]["text"], "Checking the workspace.");
+    assert_eq!(input[1]["type"], "message");
+    assert_eq!(input[1]["role"], "assistant");
+    assert_eq!(input[1]["content"][0]["type"], "output_text");
+    assert_eq!(input[1]["content"][0]["text"], "Checking the workspace.");
+    assert_eq!(input[2]["type"], "reasoning");
+    assert_eq!(input[2]["id"], ITEM_ID);
+    assert_eq!(input[2]["encrypted_content"], ENVELOPE);
     assert_eq!(
         input[3],
         json!({

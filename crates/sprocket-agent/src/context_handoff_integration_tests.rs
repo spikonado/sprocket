@@ -655,7 +655,12 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
                         json!({ "cmd": "pwd" }),
                     ),
                     native: None,
-                }),
+                })
+                .with_native(function_call_item(
+                    OLD_CALL_ID,
+                    "exec_cmd",
+                    "{\"cmd\":\"pwd\"}",
+                )),
             ])
             .with_origin(Origin::new("openai.responses", "openai", MODEL)),
         ),

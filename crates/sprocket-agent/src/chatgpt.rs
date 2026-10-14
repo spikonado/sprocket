@@ -1294,7 +1294,7 @@ mod tests {
             "data: [DONE]\n\n",
             "data: {not json}\n\n",
             "event: response.completed\n\n",
-            "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+            "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_truncated\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
         ] {
             let error =
                 first_stream_error(stub_model(http::StatusCode::OK, body.to_string())).await;
@@ -1530,8 +1530,9 @@ mod tests {
         chat_history: Vec<Message>,
         additional_params: serde_json::Value,
     ) -> CompletionRequest {
-        CompletionRequest::new("unused")
-            .messages(chat_history)
+        let mut request = CompletionRequest::new("unused");
+        request.chat_history = chat_history;
+        request
             .tools(vec![rig::completion::ToolDefinition {
                 name: ToolName::new("exec_command").unwrap(),
                 description: "Run a command".to_string(),

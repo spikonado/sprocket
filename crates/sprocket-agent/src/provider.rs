@@ -741,6 +741,11 @@ async fn run_with_completion_model(
                                 streamed_text = join_assistant_text_parts(&transcript.parts.parts);
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                Item::Event(StreamEvent::Start { part, kind: rig::streaming::PartKind::Reasoning, .. }),
+                            ))) => {
+                                transcript.push_reasoning(&format!("reasoning:{}", part.index()), "");
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                                 Item::Event(StreamEvent::Reasoning { part, text }),
                             ))) => {
                                 transcript.push_reasoning(&format!("reasoning:{}", part.index()), &text);
