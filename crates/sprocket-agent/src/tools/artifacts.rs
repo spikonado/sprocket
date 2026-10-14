@@ -34,7 +34,7 @@ pub(crate) struct DeleteArtifactArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AddArtifactArgs {
-    /// Existing UTF-8 file. Relative paths resolve against the current workspace.
+    /// Existing UTF-8 file. Relative paths resolve from the current working directory.
     pub(crate) path: String,
 }
 
@@ -42,7 +42,7 @@ pub(crate) struct AddArtifactArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct EditArtifactArgs {
     pub(crate) artifact_id: String,
-    /// Absolute or workspace-relative file path.
+    /// Absolute path, or a path relative to the current working directory.
     pub(crate) path: String,
 }
 

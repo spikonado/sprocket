@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use rig::completion::Message;
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,15 @@ use super::job::execute_tool_job;
 
 #[derive(Clone)]
 pub(crate) struct SetCwdTool(pub(super) AgentToolContext);
+
+/// Rebuilt from the live cwd whenever history is replaced, so a handoff never
+/// shows a model the directory a run started in.
+pub(crate) fn working_directory_message(cwd: &Path) -> Message {
+    Message::user(format!(
+        "Relative paths in tools resolve from the current working directory `{}`. Use set_cwd to change it.",
+        cwd.display()
+    ))
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SetCwdArgs {

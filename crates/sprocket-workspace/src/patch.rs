@@ -1,8 +1,7 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::Permissions;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 
 use anyhow::{Context, Result, anyhow, bail};
 use diffy::patch_set::{FileOperation, ParseOptions, PatchKind, PatchSet};
@@ -18,10 +17,10 @@ use crate::unified_diff::{
     normalize_unified_diff_hunk_counts, strip_surrounding_markdown_fence, unidiff_path_strip,
 };
 
-type WorkspacePatchLock = AsyncMutex<()>;
-
-static WORKSPACE_PATCH_LOCKS: OnceLock<StdMutex<HashMap<PathBuf, Weak<WorkspacePatchLock>>>> =
-    OnceLock::new();
+/// Patches may target any absolute path and runs may start from different
+/// directories, so one process-wide lock is the only key every overlapping
+/// write shares.
+static PATCH_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,67 +98,29 @@ pub async fn apply_workspace_patch(
     let workspace_root = tokio::fs::canonicalize(&workspace_root)
         .await
         .with_context(|| format!("failed to resolve workspace {}", workspace_root.display()))?;
-    let patch_lock = workspace_patch_lock(&workspace_root);
-    let patch_guard = tokio::select! {
-        guard = patch_lock.lock() => guard,
+    let _patch_guard = tokio::select! {
+        guard = PATCH_LOCK.lock() => guard,
         _ = cancellation.cancelled() => return Err(crate::commands::WorkspaceOperationCancelled.into()),
     };
-    let result = async {
-        cancellation.ensure_active()?;
-        let changes = prepare_changes(&workspace_root, patch).await?;
-        if changes.is_empty() {
-            bail!("patch does not contain any file changes");
+    cancellation.ensure_active()?;
+    let changes = prepare_changes(&workspace_root, patch).await?;
+    if changes.is_empty() {
+        bail!("patch does not contain any file changes");
+    }
+
+    let snapshots = snapshot_paths(&changes).await?;
+    let output = change_outputs(&workspace_root, &changes);
+
+    if let Err(error) = apply_changes(&cancellation, &changes).await {
+        if let Err(rollback_error) = restore_snapshot(&snapshots).await {
+            return Err(error).context(format!(
+                "patch failed and rollback also failed: {rollback_error:#}"
+            ));
         }
-
-        let snapshots = snapshot_paths(&changes).await?;
-        let output = change_outputs(&workspace_root, &changes);
-
-        if let Err(error) = apply_changes(&cancellation, &changes).await {
-            if let Err(rollback_error) = restore_snapshot(&snapshots).await {
-                return Err(error).context(format!(
-                    "patch failed and rollback also failed: {rollback_error:#}"
-                ));
-            }
-            return Err(error);
-        }
-
-        Ok(ApplyPatchOutput { changes: output })
-    }
-    .await;
-
-    drop(patch_guard);
-    release_workspace_patch_lock(&workspace_root, &patch_lock);
-    result
-}
-
-fn workspace_patch_lock(root: &Path) -> Arc<WorkspacePatchLock> {
-    let locks = WORKSPACE_PATCH_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
-    let mut locks = locks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(lock) = locks.get(root).and_then(Weak::upgrade) {
-        return lock;
+        return Err(error);
     }
 
-    let lock = Arc::new(WorkspacePatchLock::new(()));
-    locks.insert(root.to_owned(), Arc::downgrade(&lock));
-    lock
-}
-
-fn release_workspace_patch_lock(root: &Path, lock: &Arc<WorkspacePatchLock>) {
-    let Some(locks) = WORKSPACE_PATCH_LOCKS.get() else {
-        return;
-    };
-    let mut locks = locks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if Arc::strong_count(lock) == 1
-        && locks
-            .get(root)
-            .is_some_and(|registered| registered.ptr_eq(&Arc::downgrade(lock)))
-    {
-        locks.remove(root);
-    }
+    Ok(ApplyPatchOutput { changes: output })
 }
 
 /// Join relative paths against `root`, normalize `.`/`..`, and canonicalize

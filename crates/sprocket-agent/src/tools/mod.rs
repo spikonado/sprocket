@@ -28,6 +28,7 @@ use self::artifacts::{
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
+pub(crate) use self::cwd::working_directory_message;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -81,6 +82,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) save_artifact: SaveArtifactTool,
     pub(crate) delete_artifact: DeleteArtifactTool,
     pub(crate) set_cwd: SetCwdTool,
+    pub(crate) cwd: WorkingDirectory,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -209,6 +211,7 @@ pub(crate) fn agent_tools(
         save_artifact: SaveArtifactTool(context.clone()),
         delete_artifact: DeleteArtifactTool(context.clone()),
         set_cwd: SetCwdTool(context.clone()),
+        cwd: context.cwd.clone(),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),

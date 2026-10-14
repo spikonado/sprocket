@@ -20,14 +20,14 @@ pub(super) fn cancelled_error() -> ToolExecutionError {
 
 /// The thread's current working directory, shared by every tool in a run.
 #[derive(Clone)]
-pub(super) struct WorkingDirectory(Arc<RwLock<PathBuf>>);
+pub(crate) struct WorkingDirectory(Arc<RwLock<PathBuf>>);
 
 impl WorkingDirectory {
     pub(super) fn new(path: PathBuf) -> Self {
         Self(Arc::new(RwLock::new(path)))
     }
 
-    pub(super) fn get(&self) -> PathBuf {
+    pub(crate) fn get(&self) -> PathBuf {
         self.0
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

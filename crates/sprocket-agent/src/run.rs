@@ -144,7 +144,6 @@ fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
 
 fn build_workspace_prompt_context(
     workspace_path: &str,
-    cwd: &Path,
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
     model_label: &str,
@@ -218,13 +217,6 @@ fn build_workspace_prompt_context(
             "## Preloaded AGENTS.md Instructions",
             "",
             &instruction_block,
-            "",
-            "## Working Directory",
-            "",
-            &format!(
-                "Relative paths in tools resolve from `{}`. Use set_cwd to change it.",
-                cwd.display()
-            ),
         ]
         .join("\n"),
     );
@@ -1021,7 +1013,6 @@ pub async fn run_agent(
         };
         let prompt_context = build_workspace_prompt_context(
             &request.workspace_path,
-            &cwd,
             &workspace_instructions,
             &skills,
             &capabilities.label,
@@ -1032,7 +1023,6 @@ pub async fn run_agent(
         let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
             build_workspace_prompt_context(
                 &request.workspace_path,
-                &cwd,
                 &workspace_instructions,
                 &skills,
                 &capabilities.label,
@@ -1292,7 +1282,6 @@ mod tests {
     ) -> super::WorkspacePromptContext {
         build_workspace_prompt_context(
             "/tmp/project",
-            std::path::Path::new("/tmp/project/.worktrees/feature"),
             workspace_instructions,
             skills,
             MODEL_LABEL,
@@ -1347,7 +1336,6 @@ mod tests {
             let transcript_dir = store.thread_dir("user-id", thread_id);
             let prompt_context = build_workspace_prompt_context(
                 "/tmp/project",
-                std::path::Path::new("/tmp/project"),
                 &[],
                 &[],
                 MODEL_LABEL,
@@ -1400,15 +1388,6 @@ mod tests {
         assert!(initial_context.contains("description: Handle PDFs"));
         assert!(!initial_context.contains("No skills are installed."));
         assert!(!prompt_context.base_instructions.contains("pdf-processing"));
-    }
-
-    #[test]
-    fn initial_context_states_the_working_directory() {
-        let prompt_context = build_test_prompt_context(&[], &[]);
-        let initial_context = initial_context_text(&prompt_context.initial_context);
-        assert!(initial_context.ends_with(
-            "## Working Directory\n\nRelative paths in tools resolve from `/tmp/project/.worktrees/feature`. Use set_cwd to change it."
-        ));
     }
 
     #[test]
