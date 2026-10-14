@@ -435,7 +435,7 @@ impl NativeAuthManager {
 
     async fn sign_out_inner(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
-        let _store_lock = self.lock_refresh_token_store().await?;
+        let store_lock = self.lock_refresh_token_store().await;
         let login_generation = self.session.lock().await.login_generation.wrapping_add(1);
         let mut session = NativeSession::default();
         session.suppress_persisted_resume = true;
@@ -450,8 +450,12 @@ impl NativeAuthManager {
             }
             *current = session;
         }
-        let cleared = self.clear_refresh_token().await;
+        let cleared = match &store_lock {
+            Ok(_) => self.clear_refresh_token().await,
+            Err(_) => Ok(()),
+        };
         self.publish_session_change(None).await?;
+        store_lock?;
         cleared
     }
 
@@ -609,7 +613,7 @@ impl NativeAuthManager {
                         .context("WorkOS response omitted access token");
                 }
                 Err(error) if is_terminal_refresh_error(&error) => {
-                    let newer_token = self
+                    let (newer_token, cleared) = self
                         .clear_failed_refresh_token(refresh_token.clone())
                         .await?;
                     if let Some(token) = newer_token {
@@ -628,6 +632,7 @@ impl NativeAuthManager {
                     }
                     self.session.lock().await.clear_authenticated_state();
                     self.publish_session_change(None).await?;
+                    cleared?;
                     return Err(error).context(NATIVE_SESSION_EXPIRED);
                 }
                 Err(error) => {
@@ -766,18 +771,18 @@ impl NativeAuthManager {
         Ok(token)
     }
 
-    async fn clear_failed_refresh_token(&self, failed: String) -> anyhow::Result<Option<String>> {
+    async fn clear_failed_refresh_token(
+        &self,
+        failed: String,
+    ) -> anyhow::Result<(Option<String>, anyhow::Result<()>)> {
         let store = Arc::clone(&self.refresh_tokens);
         tokio::task::spawn_blocking(move || match store.load()? {
             Some(token) if token.trim().is_empty() => {
                 anyhow::bail!("stored WorkOS refresh token is empty")
             }
-            Some(token) if token != failed => Ok(Some(token)),
-            Some(_) => {
-                store.clear()?;
-                Ok(None)
-            }
-            None => Ok(None),
+            Some(token) if token != failed => Ok((Some(token), Ok(()))),
+            Some(_) => Ok((None, store.clear())),
+            None => Ok((None, Ok(()))),
         })
         .await
         .context("credential-store task failed")?
@@ -1006,6 +1011,7 @@ mod tests {
         fail_save: AtomicBool,
         fail_clear: AtomicBool,
         fail_load: AtomicBool,
+        fail_lock: AtomicBool,
     }
 
     impl MemoryRefreshTokenStore {
@@ -1019,6 +1025,7 @@ mod tests {
                 fail_save: AtomicBool::new(false),
                 fail_clear: AtomicBool::new(false),
                 fail_load: AtomicBool::new(false),
+                fail_lock: AtomicBool::new(false),
             })
         }
 
@@ -1028,6 +1035,13 @@ mod tests {
     }
 
     impl RefreshTokenStore for MemoryRefreshTokenStore {
+        fn lock(&self) -> anyhow::Result<Option<std::fs::File>> {
+            if self.fail_lock.load(Ordering::SeqCst) {
+                anyhow::bail!("credential lock unavailable");
+            }
+            Ok(None)
+        }
+
         fn load(&self) -> anyhow::Result<Option<String>> {
             if self.fail_load.load(Ordering::SeqCst) {
                 anyhow::bail!("credential store unavailable");
@@ -1984,6 +1998,62 @@ mod tests {
             first_store.load().unwrap().as_deref(),
             Some("refresh-newer")
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_signs_out_locally_when_credential_deletion_fails() {
+        let store = MemoryRefreshTokenStore::with_token("expired-refresh");
+        let manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({"error": "invalid_grant"}),
+        )
+        .await;
+        manager
+            .accept_authentication(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "expired-refresh",
+            ))
+            .await
+            .unwrap();
+        store.fail_clear.store(true, Ordering::SeqCst);
+        let mut changes = manager.subscribe_changes();
+
+        assert!(manager.browser_session(true).await.is_err());
+        assert!(changes.has_changed().unwrap());
+        changes.borrow_and_update();
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+        assert!(manager.session.lock().await.user.is_none());
+        assert_eq!(store.token().as_deref(), Some("expired-refresh"));
+    }
+
+    #[tokio::test]
+    async fn sign_out_clears_local_session_when_credential_lock_fails() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-current");
+        let manager = NativeAuthManager::with_store(
+            NativeAuthConfig {
+                workos_client_id: "client_test".into(),
+            },
+            "http://127.0.0.1/callback".into(),
+            store.clone(),
+        );
+        manager
+            .accept_authentication(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-current",
+            ))
+            .await
+            .unwrap();
+        store.fail_lock.store(true, Ordering::SeqCst);
+        let changes = manager.subscribe_changes();
+
+        assert!(manager.sign_out().await.is_err());
+        assert!(changes.has_changed().unwrap());
+        let session = manager.session.lock().await;
+        assert!(session.user.is_none());
+        assert!(session.access_token.is_none());
+        assert!(session.suppress_persisted_resume);
+        assert_eq!(store.token().as_deref(), Some("refresh-current"));
     }
 
     #[tokio::test]
