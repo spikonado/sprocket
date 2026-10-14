@@ -256,7 +256,11 @@ export async function createQueuedRunRecord(
 		if (
 			args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
 			(!machineId ||
+				parent.userId !== args.userId ||
 				!isAutomaticallyRecoverableRun(parent, machineId) ||
+				(parent.usageLimit?.retryAt !== undefined &&
+					(parent.completionProvider !== threadRecord.completionProvider ||
+						parent.completionProvider !== completionProvider)) ||
 				recordsPrompt ||
 				(await threadRoot(ctx.db, threadRecord)).archivedAt !== undefined)
 		) {
@@ -302,10 +306,44 @@ export async function createQueuedRunRecord(
 
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 
+	if (
+		args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
+		latestRun?.taskDeadlineAt !== undefined
+	) {
+		runRecord.taskDeadlineAt = latestRun.taskDeadlineAt;
+	}
+
+	if (
+		continuationOfRunId &&
+		latestRun?.usageLimit &&
+		completionProvider === latestRun.completionProvider
+	) {
+		runRecord.usageLimit = {
+			attempts:
+				latestRun.usageLimit.attempts +
+				Number(
+					latestRun.usageLimit.retryAt !== undefined &&
+						args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX)
+				),
+			deadlineAt: latestRun.usageLimit.deadlineAt
+		};
+	}
+
+	if (latestRun?.usageLimit) {
+		await ctx.db.patch('runs', latestRun._id, { usageLimit: undefined });
+	}
+
 	const before = await captureThreadActivityBeforeChange(ctx, threadRecord._id);
 
 	const runId = await ctx.db.insert('runs', runRecord);
 	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+
+	if (runRecord.taskDeadlineAt !== undefined) {
+		await ctx.scheduler.runAt(runRecord.taskDeadlineAt, internal.subagents.enforceTaskDeadline, {
+			runId,
+			deadlineAt: runRecord.taskDeadlineAt
+		});
+	}
 
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);

@@ -14,8 +14,10 @@ use crate::AppState;
 use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_recovery};
 
 const MAX_RECOVERIES: u8 = 3;
+const MAX_USAGE_LIMIT_RESUMPTIONS: u8 = 8;
 const MAX_RECORDS: usize = 256;
 const MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+const MAX_USAGE_LIMIT_AGE_MS: u64 = 8 * MAX_AGE_MS;
 const RETRY_DELAY_MS: u64 = 30_000;
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 // Must match convex/lib/runRecovery.ts.
@@ -28,6 +30,10 @@ pub(crate) struct RecoveryRecord {
     pub allow_interaction: bool,
     recoveries: u8,
     created_at: u64,
+    #[serde(default)]
+    usage_limit_started_at: Option<u64>,
+    #[serde(default)]
+    usage_limit_resumptions: u8,
 }
 
 impl RecoveryRecord {
@@ -46,6 +52,8 @@ impl RecoveryRecord {
             allow_interaction,
             recoveries: 0,
             created_at: crate::now_ms(),
+            usage_limit_started_at: None,
+            usage_limit_resumptions: 0,
         }
     }
 
@@ -53,12 +61,20 @@ impl RecoveryRecord {
         format!("{}:{}", self.request.user_id, self.request.submission_id)
     }
 
-    fn continuation(&self, run_id: String, thread_id: String) -> Option<Self> {
-        if self.recoveries >= MAX_RECOVERIES {
+    fn continuation(&self, run_id: String, thread_id: String, usage_limit: bool) -> Option<Self> {
+        if (usage_limit && self.usage_limit_resumptions >= MAX_USAGE_LIMIT_RESUMPTIONS)
+            || (!usage_limit && self.recoveries >= MAX_RECOVERIES)
+        {
             return None;
         }
         let mut next = self.clone();
-        next.recoveries += 1;
+        if usage_limit {
+            next.usage_limit_resumptions += 1;
+            next.usage_limit_started_at
+                .get_or_insert_with(crate::now_ms);
+        } else {
+            next.recoveries += 1;
+        }
         next.request.submission_id = format!("{SUBMISSION_PREFIX}{}", Uuid::new_v4());
         next.request.execution_secret = Some(new_execution_secret());
         next.request.thread_id = Some(thread_id);
@@ -67,6 +83,14 @@ impl RecoveryRecord {
         next.request.prompt.clear();
         next.request.storage_ids.clear();
         Some(next)
+    }
+
+    fn expired(&self, now: u64) -> bool {
+        let (started_at, max_age) = self
+            .usage_limit_started_at
+            .map(|started_at| (started_at, MAX_USAGE_LIMIT_AGE_MS))
+            .unwrap_or((self.created_at, MAX_AGE_MS));
+        now.saturating_sub(started_at) >= max_age
     }
 }
 
@@ -227,12 +251,15 @@ impl RunRecovery {
 enum RecoveryState {
     Discard,
     Pending,
+    Waiting,
     Missing,
     Recover {
         #[serde(rename = "runId")]
         run_id: String,
         #[serde(rename = "threadId")]
         thread_id: String,
+        #[serde(rename = "providerUsageLimit", default)]
+        provider_usage_limit: bool,
     },
 }
 
@@ -241,7 +268,9 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
     let Some(reservation) = state.run_recovery.track(key.clone(), true) else {
         return Ok(());
     };
-    if crate::now_ms().saturating_sub(record.created_at) >= MAX_AGE_MS {
+    if crate::now_ms().saturating_sub(record.created_at) >= MAX_USAGE_LIMIT_AGE_MS
+        && record.usage_limit_started_at.is_none()
+    {
         return state.run_recovery.replace(&key, None).await;
     }
     let recovery: RecoveryState = timeout(RPC_TIMEOUT, async {
@@ -255,6 +284,7 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
                 "machineId".into(),
                 state.machine_identity.installation_id.clone().into(),
             ),
+            ("supportsUsageLimitResume".into(), true.into()),
         ]);
         if let Some(parent) = &record.request.continuation_of_run_id {
             args.insert("continuationOfRunId".into(), parent.clone().into());
@@ -262,13 +292,38 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
         client.query("runRecovery:state", args).await
     })
     .await??;
+    let mut record = record;
+    if matches!(
+        recovery,
+        RecoveryState::Waiting
+            | RecoveryState::Recover {
+                provider_usage_limit: true,
+                ..
+            }
+    ) && record.usage_limit_started_at.is_none()
+    {
+        record.usage_limit_started_at = Some(crate::now_ms());
+        state
+            .run_recovery
+            .replace(&key, Some(record.clone()))
+            .await?;
+    }
+    if record.expired(crate::now_ms()) {
+        return state.run_recovery.replace(&key, None).await;
+    }
     let next = match recovery {
-        RecoveryState::Pending => return Ok(()),
+        RecoveryState::Pending | RecoveryState::Waiting => return Ok(()),
         RecoveryState::Discard => return state.run_recovery.replace(&key, None).await,
-        RecoveryState::Missing if record.recoveries > 0 => record,
+        RecoveryState::Missing if record.recoveries > 0 || record.usage_limit_resumptions > 0 => {
+            record
+        }
         RecoveryState::Missing => return state.run_recovery.replace(&key, None).await,
-        RecoveryState::Recover { run_id, thread_id } => {
-            let Some(next) = record.continuation(run_id, thread_id) else {
+        RecoveryState::Recover {
+            run_id,
+            thread_id,
+            provider_usage_limit,
+        } => {
+            let Some(next) = record.continuation(run_id, thread_id, provider_usage_limit) else {
                 return state.run_recovery.replace(&key, None).await;
             };
             // Persist the new id and capability before submitting it. Replaying
@@ -342,7 +397,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = RunRecovery::load(directory.path()).unwrap();
         let next = record()
-            .continuation("failed".into(), "thread".into())
+            .continuation("failed".into(), "thread".into(), false)
             .unwrap();
         let (_guard, _) = store.begin(next.clone(), false).await.unwrap();
         assert!(store.track(next.key(), true).is_none());
@@ -374,7 +429,7 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let store = RunRecovery::load(directory.path()).unwrap();
             let mut first = record()
-                .continuation("failed".into(), "thread".into())
+                .continuation("failed".into(), "thread".into(), false)
                 .unwrap();
             first.request.execution_secret = supplied_secrets.then(|| "first".into());
             let mut second = first.clone();
@@ -470,6 +525,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn usage_limit_wait_and_retry_budget_survive_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = RunRecovery::load(directory.path()).unwrap();
+        let mut waiting = record();
+        waiting.created_at = 10;
+        waiting.usage_limit_started_at = Some(20);
+        assert!(!waiting.expired(MAX_AGE_MS + 20));
+        assert!(waiting.expired(MAX_USAGE_LIMIT_AGE_MS + 20));
+        for _ in 0..MAX_USAGE_LIMIT_RESUMPTIONS {
+            waiting = waiting
+                .continuation("quota-run".into(), "thread".into(), true)
+                .unwrap();
+        }
+        assert!(
+            waiting
+                .continuation("quota-run".into(), "thread".into(), true)
+                .is_none()
+        );
+        assert_eq!(waiting.recoveries, 0);
+        drop(store.begin(waiting.clone(), false).await.unwrap());
+        let reloaded = RunRecovery::load(directory.path()).unwrap();
+        let saved = reloaded
+            .saved("alice", &waiting.request.submission_id)
+            .await
+            .unwrap();
+        assert_eq!(saved.usage_limit_started_at, waiting.usage_limit_started_at);
+        assert_eq!(saved.usage_limit_resumptions, MAX_USAGE_LIMIT_RESUMPTIONS);
+        assert!(
+            saved
+                .continuation("abandoned".into(), "thread".into(), false)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn old_recovery_records_keep_their_original_deadline() {
+        let mut value = serde_json::to_value(record()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("usage_limit_started_at");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("usage_limit_resumptions");
+        let saved: RecoveryRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(saved.usage_limit_resumptions, 0);
+        assert_eq!(saved.usage_limit_started_at, None);
+        assert!(saved.expired(saved.created_at + MAX_AGE_MS));
+    }
+
+    #[tokio::test]
     async fn replacement_is_durable_and_recovery_is_bounded() {
         let directory = tempfile::tempdir().unwrap();
         let store = RunRecovery::load(directory.path()).unwrap();
@@ -477,10 +584,12 @@ mod tests {
         drop(store.begin(original.clone(), false).await.unwrap());
         let mut next = original.clone();
         for _ in 0..MAX_RECOVERIES {
-            next = next.continuation("failed".into(), "thread".into()).unwrap();
+            next = next
+                .continuation("failed".into(), "thread".into(), false)
+                .unwrap();
         }
         assert!(
-            next.continuation("failed".into(), "thread".into())
+            next.continuation("failed".into(), "thread".into(), false)
                 .is_none()
         );
         store

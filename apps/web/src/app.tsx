@@ -83,6 +83,8 @@ import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
+	getCatalogModel,
+	resolveModelForCompletionProvider,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
@@ -541,6 +543,12 @@ export default function App({
 	const [autoSubmitComposerContinuation, setAutoSubmitComposerContinuation] = useState(false);
 	const [currentError, setCurrentError] = useState<string | null>(null);
 
+	const [cancellingAutoResumeRunId, setCancellingAutoResumeRunId] = useState<Id<'runs'> | null>(
+		null
+	);
+
+	const completionSettingsSaveGeneration = useRef(0);
+
 	const [pendingAgentLaunches, setPendingAgentLaunches] = useState<PendingAgentLaunches>({});
 	const [hasResolvedInitialSelection, setHasResolvedInitialSelection] = useState(false);
 	const projectSelectionGeneration = useRef(0);
@@ -797,6 +805,10 @@ export default function App({
 
 	const currentLifecycle = dataForThread(lifecycleQuery.data, currentThreadId);
 	const runState = currentLifecycle?.run ?? null;
+
+	const usageLimitRetryAt =
+		currentLifecycle?.phase === 'failed' ? runState?.usageLimitRetryAt : undefined;
+
 	const pendingAgentQuestion = dataForThread(pendingAgentQuestionQuery.data, currentThreadId);
 
 	useEffect(() => {
@@ -1362,6 +1374,76 @@ export default function App({
 		openProjectPicker('reconnect', workspacePath);
 	}
 
+	const handleCompletionProviderChange = useCallback(
+		async (completionProvider: CompletionProvider) => {
+			if (completionProvider === selectedCompletionProvider || !modelCatalog) return;
+
+			const nextModel = resolveModelForCompletionProvider(
+				modelCatalog,
+				completionProvider,
+				selectedModel
+			);
+
+			if (!nextModel) return;
+
+			const previous = {
+				completionProvider: selectedCompletionProvider,
+				selectedModel,
+				reasoningEffort: selectedReasoningEffort,
+				fastMode
+			};
+
+			const expectedUserId = signedInUserIdRef.current;
+			const expectedThreadId = currentThreadIdRef.current;
+			const generation = ++completionSettingsSaveGeneration.current;
+			setSelectedCompletionProvider(completionProvider);
+			setSelectedModel(nextModel);
+			setSelectedReasoningEffort(
+				getCatalogModel(modelCatalog, nextModel)?.defaultReasoningEffort ??
+					modelCatalog.defaultReasoningEffort
+			);
+			setFastMode(false);
+
+			if (!expectedUserId || !expectedThreadId) return;
+
+			try {
+				await convexClient.mutation(api.threads.setCompletionSettings, {
+					threadId: expectedThreadId,
+					selectedModel: nextModel,
+					completionProvider
+				});
+			} catch (error) {
+				if (
+					generation !== completionSettingsSaveGeneration.current ||
+					currentThreadIdRef.current !== expectedThreadId ||
+					signedInUserIdRef.current !== expectedUserId
+				)
+					return;
+
+				if (configuredProviders.includes(previous.completionProvider)) {
+					setSelectedCompletionProvider(previous.completionProvider);
+					setSelectedModel(previous.selectedModel);
+					setSelectedReasoningEffort(previous.reasoningEffort);
+					setFastMode(previous.fastMode);
+				}
+
+				setCurrentError(
+					(error instanceof Error && convexClientErrorMessage(error)) ||
+						'Failed to save provider settings.'
+				);
+			}
+		},
+		[
+			selectedCompletionProvider,
+			selectedModel,
+			selectedReasoningEffort,
+			fastMode,
+			modelCatalog,
+			convexClient,
+			configuredProviders
+		]
+	);
+
 	function handleProviderConfigurationChange(change: { provider: 'openai'; configured: boolean }) {
 		providerConfigurationGeneration.current += 1;
 
@@ -1370,7 +1452,7 @@ export default function App({
 		setProviderConfigurationError(null);
 
 		if (!change.configured && selectedCompletionProvider === change.provider) {
-			setSelectedCompletionProvider('spikonado');
+			void handleCompletionProviderChange('spikonado');
 		}
 	}
 
@@ -1388,7 +1470,7 @@ export default function App({
 		setChatGptConfigured(configured);
 
 		if (!configured && selectedCompletionProvider === 'chatgpt') {
-			setSelectedCompletionProvider('spikonado');
+			void handleCompletionProviderChange('spikonado');
 		}
 	}
 
@@ -1998,13 +2080,19 @@ export default function App({
 		composerContinuationOfRunId
 	]);
 
-	async function cancelRun() {
-		if (!isStopAvailable) return;
+	async function cancelRun(autoResume = false) {
+		if (autoResume ? usageLimitRetryAt === undefined : !isStopAvailable) return;
 		const expectedUserId = signedInUserIdRef.current;
 		const expectedThreadId = currentThreadId;
 		const expectedRunId = runState?.runId;
 
 		if (!expectedThreadId || !expectedRunId) return;
+
+		if (autoResume && cancellingAutoResumeRunId === expectedRunId) return;
+
+		if (autoResume) setCancellingAutoResumeRunId(expectedRunId);
+
+		setCurrentError(null);
 
 		try {
 			await convexClient.mutation(api.agentRuntime.requestCancellation, {
@@ -2017,7 +2105,14 @@ export default function App({
 				runStateRef.current?.runId !== expectedRunId
 			)
 				return;
-			setCurrentError(error instanceof Error ? error.message : 'Failed to stop run.');
+			setCurrentError(
+				(error instanceof Error && convexClientErrorMessage(error)) ||
+					(autoResume ? 'Failed to cancel auto-resume.' : 'Failed to stop run.')
+			);
+		} finally {
+			if (autoResume) {
+				setCancellingAutoResumeRunId((runId) => (runId === expectedRunId ? null : runId));
+			}
 		}
 	}
 
@@ -2210,6 +2305,7 @@ export default function App({
 
 		if (threadId === lastSyncedComposerThreadId.current) return;
 		lastSyncedComposerThreadId.current = threadId;
+		completionSettingsSaveGeneration.current += 1;
 		setComposerContinuationOfRunId(null);
 		setAutoSubmitComposerContinuation(false);
 
@@ -2777,6 +2873,9 @@ export default function App({
 												key={currentThreadId}
 												error={conversationError}
 												runError={runError}
+												usageLimitRetryAt={usageLimitRetryAt}
+												cancellingAutoResume={cancellingAutoResumeRunId === runState?.runId}
+												onCancelAutoResume={() => void cancelRun(true)}
 												reconnecting={Boolean(
 													currentThreadId &&
 													transcript.threadId === currentThreadId &&
@@ -2808,7 +2907,7 @@ export default function App({
 													(!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)))
 										}
 										selectedCompletionProvider={selectedCompletionProvider}
-										onSelectedCompletionProviderChange={setSelectedCompletionProvider}
+										onSelectedCompletionProviderChange={handleCompletionProviderChange}
 										onCompletionProviderSelect={(provider) => {
 											preferredCompletionProvider.current = provider;
 

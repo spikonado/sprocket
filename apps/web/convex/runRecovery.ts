@@ -1,6 +1,7 @@
 import { query } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
 import { isAutomaticallyRecoverableRun } from '@convex/lib/runRecovery';
+import { hasPendingUsageLimitResume } from '@convex/lib/providerUsageLimit';
 import { threadRoot } from '@convex/lib/threadHierarchy';
 import { v, type Infer } from 'convex/values';
 
@@ -8,14 +9,21 @@ const vRecoveryState = v.union(
 	v.object({ state: v.literal('discard') }),
 	v.object({ state: v.literal('pending') }),
 	v.object({ state: v.literal('missing') }),
-	v.object({ state: v.literal('recover'), runId: v.id('runs'), threadId: v.id('threadRecords') })
+	v.object({ state: v.literal('waiting'), retryAt: v.number() }),
+	v.object({
+		state: v.literal('recover'),
+		runId: v.id('runs'),
+		threadId: v.id('threadRecords'),
+		providerUsageLimit: v.optional(v.literal(true))
+	})
 );
 
 export const state = query({
 	args: {
 		submissionId: v.string(),
 		machineId: v.string(),
-		continuationOfRunId: v.optional(v.id('runs'))
+		continuationOfRunId: v.optional(v.id('runs')),
+		supportsUsageLimitResume: v.optional(v.boolean())
 	},
 	returns: vRecoveryState,
 	handler: async (ctx, args): Promise<Infer<typeof vRecoveryState>> => {
@@ -47,9 +55,29 @@ export const state = query({
 		if (
 			latest?._id !== run._id ||
 			!thread ||
+			thread.userId !== userId ||
+			(run.taskDeadlineAt !== undefined && run.taskDeadlineAt <= Date.now()) ||
 			(await threadRoot(ctx.db, thread)).archivedAt !== undefined
 		) {
 			return { state: 'discard' };
+		}
+
+		if (run.usageLimit?.retryAt !== undefined) {
+			if (
+				args.supportsUsageLimitResume !== true ||
+				thread.completionProvider !== run.completionProvider ||
+				!hasPendingUsageLimitResume(run)
+			) {
+				return { state: 'discard' };
+			}
+
+			if (run.usageLimit.retryAt > Date.now()) {
+				return { state: 'waiting', retryAt: run.usageLimit.retryAt };
+			}
+
+			return submitted
+				? { state: 'recover', runId: run._id, threadId: run.threadId, providerUsageLimit: true }
+				: { state: 'missing' };
 		}
 
 		if (isAutomaticallyRecoverableRun(run, args.machineId)) {

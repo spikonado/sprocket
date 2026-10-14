@@ -58,6 +58,7 @@ import type * as lib_payments_mandates from "../lib/payments/mandates.js";
 import type * as lib_payments_money from "../lib/payments/money.js";
 import type * as lib_payments_prava from "../lib/payments/prava.js";
 import type * as lib_pricingValidators from "../lib/pricingValidators.js";
+import type * as lib_providerUsageLimit from "../lib/providerUsageLimit.js";
 import type * as lib_rateLimits from "../lib/rateLimits.js";
 import type * as lib_runCancellation from "../lib/runCancellation.js";
 import type * as lib_runCreate from "../lib/runCreate.js";
@@ -161,6 +162,7 @@ declare const fullApi: ApiFromModules<{
   "lib/payments/money": typeof lib_payments_money;
   "lib/payments/prava": typeof lib_payments_prava;
   "lib/pricingValidators": typeof lib_pricingValidators;
+  "lib/providerUsageLimit": typeof lib_providerUsageLimit;
   "lib/rateLimits": typeof lib_rateLimits;
   "lib/runCancellation": typeof lib_runCancellation;
   "lib/runCreate": typeof lib_runCreate;
