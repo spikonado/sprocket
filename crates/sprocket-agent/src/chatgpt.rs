@@ -931,6 +931,7 @@ mod tests {
             let mut stream = agent
                 .prompt(prompt)
                 .history(history)
+                .max_turns(3)
                 .add_hook(recovery.clone())
                 .stream();
             while let Some(item) = stream.next().await {
