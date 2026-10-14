@@ -385,7 +385,7 @@ fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
             .map(|offset| index + offset)
             .unwrap_or(contents.len());
         let line = contents[index..next_newline].trim_end_matches('\r');
-        if line.trim() == "---" {
+        if line.trim_end() == "---" {
             let frontmatter = &contents[after_open..index];
             let mut body_start = next_newline;
             if body_start < contents.len() && contents.as_bytes()[body_start] == b'\n' {
@@ -684,6 +684,18 @@ mod tests {
             assert_eq!(parsed.description, "Handle PDFs when needed", "{scalar}");
             assert_eq!(parsed.name, "demo");
             assert!(parsed.disable_model_invocation);
+            assert_eq!(parsed.body, "# Body\n");
+        }
+    }
+
+    #[test]
+    fn preserves_indented_frontmatter_delimiters_in_descriptions() {
+        for closing in ["---", "--- \t"] {
+            let contents = format!(
+                "---\nname: demo\ndescription: |\n  First\n  ---\n  Last\n{closing}\n# Body\n"
+            );
+            let parsed = parse_skill_markdown(&contents).expect("literal description");
+            assert_eq!(parsed.description, "First --- Last");
             assert_eq!(parsed.body, "# Body\n");
         }
     }
