@@ -435,6 +435,7 @@ impl NativeAuthManager {
 
     async fn sign_out_inner(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
+        let _store_lock = self.lock_refresh_token_store().await?;
         let login_generation = self.session.lock().await.login_generation.wrapping_add(1);
         let mut session = NativeSession::default();
         session.suppress_persisted_resume = true;
@@ -568,6 +569,7 @@ impl NativeAuthManager {
         force_refresh: bool,
         refresh_generation: u64,
     ) -> anyhow::Result<String> {
+        let store_lock = self.lock_refresh_token_store().await?;
         let reusable = {
             let session = self.session.lock().await;
             reusable_access_token(&session, force_refresh, refresh_generation)
@@ -580,52 +582,73 @@ impl NativeAuthManager {
             return Err(anyhow!(NATIVE_SESSION_SIGNED_OUT));
         }
 
-        let refresh_token = self
-            .load_refresh_token()
+        let mut refresh_token = self
+            .load_refresh_token(store_lock.is_some())
             .await?
             .context(NATIVE_SESSION_SIGNED_OUT)?;
-        let response = self
-            .client()
-            .await?
-            .user_management()
-            .authenticate_with_refresh_token(AuthenticateWithRefreshTokenParams::new(refresh_token))
-            .await;
-        match response {
-            Ok(response) => {
-                self.accept_authentication(response).await?;
-                self.session
-                    .lock()
-                    .await
-                    .access_token
-                    .as_ref()
-                    .map(|token| token.value.clone())
-                    .context("WorkOS response omitted access token")
-            }
-            Err(error) if is_terminal_refresh_error(&error) => {
-                self.session.lock().await.clear_authenticated_state();
-                let cleared = self.clear_refresh_token().await;
-                self.publish_session_change(None).await?;
-                cleared?;
-                Err(error).context(NATIVE_SESSION_EXPIRED)
-            }
-            Err(error) => {
-                let session = self.session.lock().await;
-                let retained_access_token = session.access_token.as_ref().and_then(|token| {
-                    (!force_refresh && token.expires_at > unix_time_secs())
-                        .then(|| token.value.clone())
-                });
-                if let Some(access_token) = retained_access_token {
-                    let kind = if is_transient_refresh_error(&error) {
-                        "transient"
-                    } else {
-                        "unrecognized"
-                    };
-                    tracing::warn!(
-                        "native WorkOS refresh failed ({kind}); retaining current access token: {error}"
-                    );
-                    return Ok(access_token);
+        let mut retried = false;
+        loop {
+            let response = self
+                .client()
+                .await?
+                .user_management()
+                .authenticate_with_refresh_token(AuthenticateWithRefreshTokenParams::new(
+                    refresh_token.clone(),
+                ))
+                .await;
+            match response {
+                Ok(response) => {
+                    self.accept_authentication(response).await?;
+                    return self
+                        .session
+                        .lock()
+                        .await
+                        .access_token
+                        .as_ref()
+                        .map(|token| token.value.clone())
+                        .context("WorkOS response omitted access token");
                 }
-                Err(error).context("failed to refresh native WorkOS session")
+                Err(error) if is_terminal_refresh_error(&error) => {
+                    let newer_token = self
+                        .clear_failed_refresh_token(refresh_token.clone())
+                        .await?;
+                    if let Some(token) = newer_token {
+                        {
+                            let mut session = self.session.lock().await;
+                            session.refresh_token = Some(token.clone());
+                            session.refresh_token_persisted = true;
+                        }
+                        if retried {
+                            return Err(error)
+                                .context("native WorkOS refresh token changed again; retry later");
+                        }
+                        refresh_token = token;
+                        retried = true;
+                        continue;
+                    }
+                    self.session.lock().await.clear_authenticated_state();
+                    self.publish_session_change(None).await?;
+                    return Err(error).context(NATIVE_SESSION_EXPIRED);
+                }
+                Err(error) => {
+                    let session = self.session.lock().await;
+                    let retained_access_token = session.access_token.as_ref().and_then(|token| {
+                        (!force_refresh && token.expires_at > unix_time_secs())
+                            .then(|| token.value.clone())
+                    });
+                    if let Some(access_token) = retained_access_token {
+                        let kind = if is_transient_refresh_error(&error) {
+                            "transient"
+                        } else {
+                            "unrecognized"
+                        };
+                        tracing::warn!(
+                            "native WorkOS refresh failed ({kind}); retaining current access token: {error}"
+                        );
+                        return Ok(access_token);
+                    }
+                    return Err(error).context("failed to refresh native WorkOS session");
+                }
             }
         }
     }
@@ -652,6 +675,7 @@ impl NativeAuthManager {
     }
 
     async fn accept_new_login(&self, response: AuthenticateResponse) -> anyhow::Result<NativeUser> {
+        let _store_lock = self.lock_refresh_token_store().await?;
         self.accept_authentication_with_persistence(response, true)
             .await
     }
@@ -724,31 +748,56 @@ impl NativeAuthManager {
         result
     }
 
-    async fn load_refresh_token(&self) -> anyhow::Result<Option<String>> {
-        {
-            let session = self.session.lock().await;
-            if let Some(token) = &session.refresh_token {
-                return Ok(Some(token.clone()));
-            }
-        }
+    async fn lock_refresh_token_store(&self) -> anyhow::Result<Option<std::fs::File>> {
+        let store = Arc::clone(&self.refresh_tokens);
+        tokio::task::spawn_blocking(move || store.lock())
+            .await
+            .context("credential-store lock task failed")?
+    }
+
+    async fn read_persisted_refresh_token(&self) -> anyhow::Result<Option<String>> {
         let store = Arc::clone(&self.refresh_tokens);
         let token = tokio::task::spawn_blocking(move || store.load())
             .await
             .context("credential-store task failed")??;
-        match token {
+        if token.as_ref().is_some_and(|token| token.trim().is_empty()) {
+            anyhow::bail!("stored WorkOS refresh token is empty");
+        }
+        Ok(token)
+    }
+
+    async fn clear_failed_refresh_token(&self, failed: String) -> anyhow::Result<Option<String>> {
+        let store = Arc::clone(&self.refresh_tokens);
+        tokio::task::spawn_blocking(move || match store.load()? {
             Some(token) if token.trim().is_empty() => {
                 anyhow::bail!("stored WorkOS refresh token is empty")
             }
-            Some(token) => {
-                let mut session = self.session.lock().await;
-                if session.refresh_token.is_none() {
-                    session.refresh_token = Some(token.clone());
-                    session.refresh_token_persisted = true;
-                }
-                Ok(session.refresh_token.clone())
+            Some(token) if token != failed => Ok(Some(token)),
+            Some(_) => {
+                store.clear()?;
+                Ok(None)
             }
             None => Ok(None),
+        })
+        .await
+        .context("credential-store task failed")?
+    }
+
+    async fn load_refresh_token(&self, reload_persisted: bool) -> anyhow::Result<Option<String>> {
+        {
+            let session = self.session.lock().await;
+            // A failed save leaves the only usable rotated token in memory.
+            if let Some(token) = &session.refresh_token
+                && (!reload_persisted || !session.refresh_token_persisted)
+            {
+                return Ok(Some(token.clone()));
+            }
         }
+        let token = self.read_persisted_refresh_token().await?;
+        let mut session = self.session.lock().await;
+        session.refresh_token = token.clone();
+        session.refresh_token_persisted = true;
+        Ok(token)
     }
 
     async fn flush_refresh_token(&self) -> anyhow::Result<()> {
@@ -1046,22 +1095,21 @@ mod tests {
         .expect("authentication response")
     }
 
-    async fn manager_with_handler<H>(
-        store: Arc<MemoryRefreshTokenStore>,
-        handler: H,
-    ) -> Arc<NativeAuthManager>
+    async fn manager_with_handler<H, S>(store: Arc<S>, handler: H) -> Arc<NativeAuthManager>
     where
+        S: RefreshTokenStore + 'static,
         H: Fn(serde_json::Value) -> (StatusCode, serde_json::Value) + Clone + Send + Sync + 'static,
     {
         manager_with_delayed_handler(store, Duration::ZERO, handler).await
     }
 
-    async fn manager_with_delayed_handler<H>(
-        store: Arc<MemoryRefreshTokenStore>,
+    async fn manager_with_delayed_handler<H, S>(
+        store: Arc<S>,
         delay: Duration,
         handler: H,
     ) -> Arc<NativeAuthManager>
     where
+        S: RefreshTokenStore + 'static,
         H: Fn(serde_json::Value) -> (StatusCode, serde_json::Value) + Clone + Send + Sync + 'static,
     {
         let app = axum::Router::new().route("/user_management/authorize/device", post(|| async {
@@ -1721,6 +1769,221 @@ mod tests {
         assert_eq!(session.access_token, expected_access_token);
         assert_eq!(session.user, native_user());
         assert_eq!(store.token().as_deref(), Some("refresh-new"));
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_retries_a_token_rotated_by_another_process() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-new");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let expected_access_token = access_token(unix_time_secs() + 3_600);
+        let manager = manager_with_handler(Arc::clone(&store), {
+            let seen = Arc::clone(&seen);
+            let expected_access_token = expected_access_token.clone();
+            move |body| {
+                let token = body["refresh_token"].as_str().unwrap().to_string();
+                seen.lock().unwrap().push(token.clone());
+                if token == "refresh-old" {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({"error": "invalid_grant"}),
+                    );
+                }
+                assert_eq!(token, "refresh-new");
+                (
+                    StatusCode::OK,
+                    serde_json::to_value(authentication_response(
+                        expected_access_token.clone(),
+                        "refresh-newer",
+                    ))
+                    .unwrap(),
+                )
+            }
+        })
+        .await;
+        manager.session.lock().await.refresh_token = Some("refresh-old".into());
+        store.fail_clear.store(true, Ordering::SeqCst);
+
+        let session = manager.browser_session(false).await.unwrap().unwrap();
+
+        assert_eq!(session.access_token, expected_access_token);
+        assert_eq!(session.user, native_user());
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["refresh-old", "refresh-new"]
+        );
+        assert_eq!(store.token().as_deref(), Some("refresh-newer"));
+    }
+
+    #[tokio::test]
+    async fn terminal_retry_failure_clears_a_genuinely_revoked_newer_token() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-new");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = manager_with_handler(Arc::clone(&store), {
+            let seen = Arc::clone(&seen);
+            move |body| {
+                seen.lock()
+                    .unwrap()
+                    .push(body["refresh_token"].as_str().unwrap().to_string());
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": "invalid_grant"}),
+                )
+            }
+        })
+        .await;
+        manager.session.lock().await.refresh_token = Some("refresh-old".into());
+
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["refresh-old", "refresh-new"]
+        );
+        assert_eq!(store.token(), None);
+        assert!(manager.session.lock().await.suppress_persisted_resume);
+    }
+
+    #[tokio::test]
+    async fn terminal_retry_preserves_a_token_rotated_again_and_stops_after_one_retry() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-new");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = manager_with_handler(Arc::clone(&store), {
+            let store = Arc::clone(&store);
+            let seen = Arc::clone(&seen);
+            move |body| {
+                let token = body["refresh_token"].as_str().unwrap().to_string();
+                seen.lock().unwrap().push(token.clone());
+                if token == "refresh-new" {
+                    store.save("refresh-newer").unwrap();
+                }
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": "invalid_grant"}),
+                )
+            }
+        })
+        .await;
+        manager.session.lock().await.refresh_token = Some("refresh-old".into());
+        store.fail_clear.store(true, Ordering::SeqCst);
+
+        assert!(manager.browser_session(false).await.is_err());
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["refresh-old", "refresh-new"]
+        );
+        assert_eq!(store.token().as_deref(), Some("refresh-newer"));
+        assert_eq!(
+            manager.session.lock().await.refresh_token.as_deref(),
+            Some("refresh-newer")
+        );
+        assert!(!manager.session.lock().await.suppress_persisted_resume);
+    }
+
+    #[tokio::test]
+    async fn file_store_refresh_reloads_after_locking_instead_of_using_cached_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(ProfileCredentials::new(
+            "https://test.convex.cloud",
+            dir.path(),
+        ));
+        store
+            .select(crate::cli_protocol::CredentialStore::File)
+            .unwrap();
+        store.save("refresh-new").unwrap();
+        let expected_access_token = access_token(unix_time_secs() + 3_600);
+        let manager = manager_with_handler(Arc::clone(&store), {
+            let expected_access_token = expected_access_token.clone();
+            move |body| {
+                assert_eq!(body["refresh_token"], "refresh-new");
+                (
+                    StatusCode::OK,
+                    serde_json::to_value(authentication_response(
+                        expected_access_token.clone(),
+                        "refresh-newer",
+                    ))
+                    .unwrap(),
+                )
+            }
+        })
+        .await;
+        manager.session.lock().await.refresh_token = Some("refresh-old".into());
+
+        assert_eq!(
+            manager
+                .browser_session(false)
+                .await
+                .unwrap()
+                .unwrap()
+                .access_token,
+            expected_access_token
+        );
+        assert_eq!(store.load().unwrap().as_deref(), Some("refresh-newer"));
+    }
+
+    #[tokio::test]
+    async fn managers_sharing_a_file_store_serialize_refresh_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_store = Arc::new(ProfileCredentials::new(
+            "https://test.convex.cloud",
+            dir.path(),
+        ));
+        first_store
+            .select(crate::cli_protocol::CredentialStore::File)
+            .unwrap();
+        first_store.save("refresh-old").unwrap();
+        let second_store = Arc::new(ProfileCredentials::new(
+            "https://test.convex.cloud",
+            dir.path(),
+        ));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let handler = {
+            let seen = Arc::clone(&seen);
+            move |body: serde_json::Value| {
+                let token = body["refresh_token"].as_str().unwrap().to_string();
+                let mut seen = seen.lock().unwrap();
+                let next = if seen.is_empty() {
+                    assert_eq!(token, "refresh-old");
+                    "refresh-new"
+                } else {
+                    assert_eq!(token, "refresh-new");
+                    "refresh-newer"
+                };
+                seen.push(token);
+                (
+                    StatusCode::OK,
+                    serde_json::to_value(authentication_response(
+                        access_token(unix_time_secs() + 3_600),
+                        next,
+                    ))
+                    .unwrap(),
+                )
+            }
+        };
+        let first = manager_with_delayed_handler(
+            Arc::clone(&first_store),
+            Duration::from_millis(50),
+            handler.clone(),
+        )
+        .await;
+        let second = manager_with_handler(second_store, handler).await;
+        first.session.lock().await.refresh_token = Some("refresh-old".into());
+        second.session.lock().await.refresh_token = Some("refresh-old".into());
+
+        let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(first.browser_session(false), second.browser_session(false))
+        })
+        .await
+        .expect("refresh locks must be released");
+
+        assert_eq!(first.unwrap().unwrap().user, native_user());
+        assert_eq!(second.unwrap().unwrap().user, native_user());
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["refresh-old", "refresh-new"]
+        );
+        assert_eq!(
+            first_store.load().unwrap().as_deref(),
+            Some("refresh-newer")
+        );
     }
 
     #[tokio::test]

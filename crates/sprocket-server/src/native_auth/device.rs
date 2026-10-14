@@ -39,6 +39,7 @@ impl NativeAuthManager {
         }
         let credentials = Arc::clone(&self.refresh_tokens);
         tokio::task::spawn_blocking(move || {
+            let _store_lock = credentials.lock()?;
             anyhow::ensure!(
                 !matches!(credentials.load(), Ok(Some(_))),
                 "sign out before changing the credential store"

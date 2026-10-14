@@ -1,3 +1,4 @@
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -10,6 +11,10 @@ const KEYRING_SERVICE: &str = "dev.sprocket.native-auth";
 const KEYRING_ACCOUNT_PREFIX: &str = "workos-refresh-token";
 
 pub(super) trait RefreshTokenStore: Send + Sync {
+    fn lock(&self) -> anyhow::Result<Option<File>> {
+        Ok(None)
+    }
+
     fn select(&self, _store: CredentialStore) -> anyhow::Result<()> {
         anyhow::bail!("credential-store selection is unavailable")
     }
@@ -126,6 +131,18 @@ impl ProfileCredentials {
 }
 
 impl RefreshTokenStore for ProfileCredentials {
+    fn lock(&self) -> anyhow::Result<Option<File>> {
+        std::fs::create_dir_all(&self.directory)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.directory.join("refresh.lock"))?;
+        file.lock().context("failed to lock profile credentials")?;
+        Ok(Some(file))
+    }
+
     fn select(&self, store: CredentialStore) -> anyhow::Result<()> {
         if self.selected()? != store {
             match store {
@@ -196,6 +213,60 @@ impl RefreshTokenStore for ProfileCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_credentials_contend_until_lock_owner_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ProfileCredentials::new("https://test.convex.cloud", dir.path());
+        let second = ProfileCredentials::new("https://test.convex.cloud", dir.path());
+        let first_lock = first.lock().unwrap().unwrap();
+        let second_handle = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(second.directory.join("refresh.lock"))
+            .unwrap();
+
+        assert!(matches!(
+            second_handle.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(first_lock);
+        second_handle.try_lock().unwrap();
+    }
+
+    #[test]
+    fn rotation_and_unlock_let_the_next_owner_load_the_new_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ProfileCredentials::new("https://test.convex.cloud", dir.path());
+        let second = ProfileCredentials::new("https://test.convex.cloud", dir.path());
+        let first_lock = first.lock().unwrap().unwrap();
+        first.select(CredentialStore::File).unwrap();
+        first.save("first").unwrap();
+        assert_eq!(second.load().unwrap().as_deref(), Some("first"));
+
+        let second_handle = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(second.directory.join("refresh.lock"))
+            .unwrap();
+        assert!(matches!(
+            second_handle.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+
+        first.save("rotated").unwrap();
+        first_lock.unlock().unwrap();
+        second_handle.try_lock().unwrap();
+        second_handle.unlock().unwrap();
+
+        let second_lock = second.lock().unwrap().unwrap();
+        assert_eq!(second.load().unwrap().as_deref(), Some("rotated"));
+        assert!(matches!(
+            first_lock.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        second_lock.unlock().unwrap();
+    }
 
     #[test]
     fn explicit_file_selection_survives_restart_and_rotation() {
