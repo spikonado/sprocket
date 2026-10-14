@@ -54,7 +54,6 @@ export default function SettingsProviders({
 	const [signOutWarning, setSignOutWarning] = useState<string | null>(null);
 	const [chatGptError, setChatGptError] = useState<string | null>(null);
 	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
-	const loginWindowRef = useRef<Window | null>(null);
 	const generationRef = useRef(0);
 
 	const activeAccount =
@@ -66,11 +65,6 @@ export default function SettingsProviders({
 		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
 		setBrowserLoginActive(Boolean(next));
 	};
-
-	function closeLoginWindow() {
-		loginWindowRef.current?.close();
-		loginWindowRef.current = null;
-	}
 
 	function errorMessage(error: Error, fallback: string): string {
 		return convexClientErrorMessage(error) ?? fallback;
@@ -87,7 +81,6 @@ export default function SettingsProviders({
 		const pending = browserLoginRef.current;
 		browserLoginRef.current = null;
 		setBrowserLoginActive(false);
-		closeLoginWindow();
 		setChatGptPending(false);
 
 		return pending;
@@ -103,7 +96,6 @@ export default function SettingsProviders({
 			generationRef.current += 1;
 			const pending = browserLoginRef.current;
 			browserLoginRef.current = null;
-			closeLoginWindow();
 
 			if (pending) {
 				desktopApi
@@ -174,18 +166,12 @@ export default function SettingsProviders({
 		const userIdAtStart = userId;
 		const generation = ++generationRef.current;
 		const bridge = window.sprocketDesktopBridge;
-		let loginWindow: Window | null = null;
+		const loginWindow = bridge ? null : window.open('about:blank', '_blank');
 		let pending: PendingBrowserLogin | null = null;
 
 		try {
-			if (!bridge) {
-				loginWindow = window.open('about:blank', '_blank');
-				loginWindowRef.current = loginWindow;
-
-				if (!loginWindow)
-					throw new Error('Your browser blocked the sign-in window. Allow popups and try again.');
-				loginWindow.opener = null;
-			}
+			if (!bridge && !loginWindow)
+				throw new Error('Your browser blocked the sign-in window. Allow popups and try again.');
 
 			const login = await api.startChatGptBrowserLogin(
 				connectionId ? { userId: userIdAtStart, connectionId } : { userId: userIdAtStart }
@@ -194,6 +180,7 @@ export default function SettingsProviders({
 			pending = { userId: userIdAtStart, login };
 
 			if (generation !== generationRef.current) {
+				loginWindow?.close();
 				cancelLoginOnServer(pending);
 
 				return;
@@ -203,7 +190,6 @@ export default function SettingsProviders({
 				await bridge.openExternal(login.authorizeUrl);
 			} else {
 				loginWindow?.location.replace(login.authorizeUrl);
-				loginWindowRef.current = null;
 			}
 
 			if (generation !== generationRef.current) {
@@ -215,7 +201,7 @@ export default function SettingsProviders({
 			setBrowserLogin(userIdAtStart, login);
 			void waitForBrowserLogin(pending, api, generation);
 		} catch (error) {
-			if (loginWindowRef.current === loginWindow) closeLoginWindow();
+			loginWindow?.close();
 
 			if (pending) cancelLoginOnServer(pending);
 
