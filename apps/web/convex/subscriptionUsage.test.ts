@@ -274,6 +274,36 @@ describe('subscription and usage backend', () => {
 		expect(await used()).toBe(3 * UNITS_PER_DOLLAR);
 	});
 
+	it('rolls a weekly usage window when the client supplies a later now', async () => {
+		const t = initConvexTest();
+		await seedTiers(t);
+		const userId = 'user_usage_rollover';
+		const asUser = t.withIdentity({ subject: userId });
+		const chargedAt = Date.now();
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId,
+			count: 6 * UNITS_PER_DOLLAR
+		});
+
+		const duringWindow = await asUser.query(api.usage.getMyUsage, { now: chargedAt });
+		expect(duringWindow.exhausted).toBe(true);
+
+		const weeklyDuring = duringWindow.meters
+			.find((meter) => meter.id === 'modelUsage')
+			?.windows.find((window) => window.period === 'weekly');
+
+		const afterWeeklyWindow = await asUser.query(api.usage.getMyUsage, {
+			now: chargedAt + 8 * 24 * 60 * 60 * 1_000
+		});
+
+		const weeklyAfter = afterWeeklyWindow.meters
+			.find((meter) => meter.id === 'modelUsage')
+			?.windows.find((window) => window.period === 'weekly');
+
+		expect(weeklyAfter?.used).toBeLessThan(weeklyDuring?.used ?? 0);
+		expect(afterWeeklyWindow.exhausted).toBe(false);
+	});
+
 	it('uses only active subscriptions and ignores stale rows', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
