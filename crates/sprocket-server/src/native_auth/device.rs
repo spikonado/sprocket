@@ -314,21 +314,6 @@ impl NativeAuthManager {
         })
     }
 
-    #[cfg(test)]
-    pub async fn remote_device_status(&self, session_token: &str) -> NativeLoginStatus {
-        let session = self.session.lock().await;
-        let Some(attempt) = session.remote_devices.get(session_token) else {
-            return NativeLoginStatus::SignedOut;
-        };
-        match &attempt.result {
-            None => NativeLoginStatus::Pending,
-            Some(Ok(user)) => NativeLoginStatus::Authenticated { user: user.clone() },
-            Some(Err(error)) => NativeLoginStatus::Failed {
-                error: error.clone(),
-            },
-        }
-    }
-
     pub async fn complete_remote_device_login(
         &self,
         session_token: &str,

@@ -60,11 +60,6 @@ pub(crate) struct CapturedOutput {
 }
 
 impl CapturedOutput {
-    #[cfg(test)]
-    pub(crate) async fn create(log_root: &Path, max_chars: usize) -> Result<Self> {
-        Self::create_with_limits(log_root, max_chars, CommandOutputLimits::default()).await
-    }
-
     pub(crate) async fn create_with_limits(
         log_root: &Path,
         max_chars: usize,
@@ -354,5 +349,6 @@ impl PreviewBuffer {
 }
 
 #[cfg(test)]
-#[path = "command_output_tests.rs"]
+mod test_support;
+#[cfg(test)]
 mod tests;
