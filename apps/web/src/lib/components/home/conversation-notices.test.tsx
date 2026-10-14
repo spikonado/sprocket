@@ -8,11 +8,12 @@ const usageLimit =
 	"Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider.";
 
 function notices(props: Partial<ComponentProps<typeof ConversationNotices>> = {}, key?: string) {
-	return (
+	return ({ usageBlocked }: { usageBlocked: boolean }) => (
 		<ConversationNotices
 			key={key}
 			error={null}
 			runError={null}
+			usageBlocked={usageBlocked}
 			reconnecting={false}
 			syncing={false}
 			catalogError={false}
@@ -122,6 +123,17 @@ describe('Conversation notices', () => {
 		const usageAlert = within(group).getByRole('alert');
 		expect(usageAlert.textContent).toContain("You're out of usage");
 		expect(usageAlert.className).toBe(cardClass);
+	});
+
+	it('shows only the usage notice while usage is blocked, then the run error once unblocked', () => {
+		const runError = 'status 429 Too Many Requests';
+		const view = render(composer(notices({ runError }), true));
+		expect(screen.getByRole('alert').textContent).toContain("You're out of usage");
+
+		view.rerender(composer(notices({ runError })));
+		const alert = screen.getByRole('alert');
+		expect(alert.textContent).toContain("Run couldn't continue");
+		expect(alert.textContent).toContain(runError);
 	});
 
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {

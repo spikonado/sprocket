@@ -474,7 +474,7 @@ describe('PromptComposer submission', () => {
 			selectedModel: 'model-one',
 			prompt: 'Try again',
 			usage: { tier: 'pro', exhausted: false, resetsAt: null },
-			notices: <div role="alert">A previous run failed.</div>
+			notices: () => <div role="alert">A previous run failed.</div>
 		});
 
 		expect(composer.querySelector('[role="alert"]')?.textContent).toBe('A previous run failed.');
