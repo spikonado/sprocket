@@ -634,6 +634,11 @@ async fn gateway_responses_stream_preserves_reasoning_replay_order() {
     let replay = responses_wire(
         CompletionRequest::new("next")
             .messages(std::iter::once(Message::user("hello")).chain(history))
+            .tools(vec![rig::completion::ToolDefinition::new(
+                ToolName::new(TOOL_NAME).unwrap(),
+                "Inspect the workspace",
+                json!({"type": "object"}),
+            )])
             .additional_params(json!({"reasoning": {"effort": "medium"}})),
     );
     let reasoning_input = replay["input"]
