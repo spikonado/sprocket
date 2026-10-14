@@ -62,6 +62,18 @@ Requests, stored transcripts, and released clients are unchanged.
 Remove this adapter once the pinned Rig revision accepts fractional timestamps
 and the fractional-timestamp stream regression passes without it.
 
+### Responses nullable status
+
+OpenAI's Responses schema allows null or absent `status`. Rig's pinned response
+type deserializes it as a required string. The shared Responses decoder maps
+null or absent lifecycle status to Rig's empty unknown status, which produces
+no finish reason. Explicit statuses and original event bytes stay unchanged.
+Other nullable response fields already use optional types or tolerant metadata
+projection. Requests, stored transcripts, and released clients are unchanged.
+
+Remove this mapping once the pinned Rig revision accepts null and absent status
+and the nullable lifecycle and stream regressions pass without it.
+
 ### SIWC streaming content type
 
 The ChatGPT SIWC route can omit `Content-Type` on a successful streaming

@@ -149,6 +149,15 @@ impl<'id> Decoder<'id, Completion> for CompatibleResponsesDecoder<'id> {
                 Ok(_) => classified,
             };
         }
+        if let Some(response) = value["response"].as_object_mut() {
+            // Rig requires a status string; an empty unknown status has no finish reason.
+            if response
+                .get("status")
+                .is_none_or(serde_json::Value::is_null)
+            {
+                response.insert("status".to_string(), serde_json::json!(""));
+            }
+        }
         if let Some(timestamp) = value["response"]["created_at"].as_number()
             && timestamp.is_f64()
             && let Some(seconds) = timestamp.as_f64()
@@ -186,6 +195,58 @@ mod tests {
     use serde_json::{Value, json};
 
     #[test]
+    fn lifecycle_events_accept_null_and_absent_nullable_fields() {
+        let decoder = CompatibleResponsesDecoder(ResponsesDecoder::new("openai"));
+        let fixture: Value =
+            serde_json::from_str(include_str!("test_fixtures/response_created_nullable.json"))
+                .unwrap();
+        for kind in [
+            "response.created",
+            "response.in_progress",
+            "response.completed",
+            "response.failed",
+            "response.incomplete",
+        ] {
+            for omit_nulls in [false, true] {
+                let mut event = fixture.clone();
+                event["type"] = json!(kind);
+                if omit_nulls {
+                    event["response"]
+                        .as_object_mut()
+                        .unwrap()
+                        .retain(|_, value| !value.is_null());
+                }
+                let raw = event.to_string();
+                let WireEvent::Known(ResponsesEvent::Frame {
+                    raw: preserved,
+                    chunk: StreamingCompletionChunk::Response(chunk),
+                }) = decoder.classify(WireFrame::Text(raw.clone()))
+                else {
+                    panic!("expected nullable lifecycle event: {raw}");
+                };
+                assert_eq!(chunk.response.model, "gpt-5");
+                assert_eq!(
+                    chunk.response.status,
+                    rig::providers::openai::responses_api::ResponseStatus::Other(String::new())
+                );
+                assert!(chunk.response.instructions.is_none());
+                assert!(chunk.response.error.is_none());
+                assert!(chunk.response.incomplete_details.is_none());
+                assert!(chunk.response.usage.is_none());
+                assert!(
+                    chunk
+                        .response
+                        .additional_parameters
+                        .previous_response_id
+                        .is_none()
+                );
+                assert!(chunk.response.additional_parameters.service_tier.is_none());
+                assert_eq!(preserved, raw);
+            }
+        }
+    }
+
+    #[test]
     fn lifecycle_events_accept_fractional_and_integer_timestamps() {
         let decoder = CompatibleResponsesDecoder(ResponsesDecoder::new("openai"));
         for kind in [
@@ -219,6 +280,10 @@ mod tests {
                     panic!("expected lifecycle event: {raw}");
                 };
                 assert_eq!(chunk.response.created_at, whole_seconds);
+                assert_eq!(
+                    chunk.response.status,
+                    rig::providers::openai::responses_api::ResponseStatus::InProgress
+                );
                 assert_eq!(preserved, raw);
             }
         }
