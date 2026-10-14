@@ -22,7 +22,13 @@ const filesystemBrowseResultSchema = z.object({
 });
 
 const workspaceSkillsResultSchema = z.object({
-	skills: z.array(z.object({ name: z.string(), description: z.string() })),
+	skills: z.array(
+		z.object({
+			name: z.string(),
+			description: z.string(),
+			disableModelInvocation: z.boolean()
+		})
+	),
 	warnings: z.array(z.string())
 });
 
@@ -129,6 +135,7 @@ const displayPageSchema = z.object({
 	replicaId: z.string(),
 	rows: z.array(displayRowSchema),
 	indexing: z.boolean(),
+	syncing: z.boolean(),
 	stale: z.boolean(),
 	nextBefore: z.int().nonnegative().optional(),
 	endSequence: z.int().nonnegative(),

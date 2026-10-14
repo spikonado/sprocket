@@ -754,7 +754,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 
-	it('settles a root immediately after child cancellation while question cleanup is deferred', async () => {
+	it('settles a root immediately after child cancellation while job cleanup is deferred', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId: rootId, subject, repositoryKey } = await seedOwnedThread(t);
 		const threadId = await seedThreadRecord(t, subject, repositoryKey);
@@ -792,7 +792,7 @@ describe('bounded terminal cleanup', { timeout: 30_000 }, () => {
 			status: 'cancelled'
 		});
 		expect(await t.run((ctx) => ctx.db.query('agentQuestions').first())).toMatchObject({
-			status: 'pending'
+			status: 'cancelled'
 		});
 		expect(await rootSummary()).toMatchObject({ descendantCount: 1, anyActive: false });
 		await asUser.mutation(api.threads.settle, { threadId: rootId });

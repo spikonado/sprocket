@@ -50,8 +50,13 @@ fn is_subscription_usage_limit(body: &serde_json::Value) -> bool {
 pub(crate) fn user_facing_error(error: anyhow::Error) -> anyhow::Error {
     let usage_limit = error.chain().any(|cause| {
         cause
-            .downcast_ref::<ProviderError>()
+            .downcast_ref::<rig::completion::PromptError>()
             .and_then(|error| error.provider_response_json().ok().flatten())
+            .or_else(|| {
+                cause
+                    .downcast_ref::<ProviderError>()
+                    .and_then(|error| error.provider_response_json().ok().flatten())
+            })
             .or_else(|| {
                 cause
                     .downcast_ref::<rig::ErrorReport>()
@@ -863,6 +868,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn siwc_recovers_a_truncated_turn_without_repeating_committed_tools() {
+        let tool = |id: &str| {
+            json!({
+                "type": "function_call", "id": format!("fc_{id}"), "call_id": id,
+                "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}",
+                "status": "completed",
+            })
+        };
+        let partial = siwc_output_sse("resp-partial", vec![tool("call_partial")]);
+        let partial = partial
+            .lines()
+            .filter(|line| !line.contains("response.completed"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n\n";
+        let (endpoint, server) = spawn_siwc_sse(vec![
+            siwc_output_sse("resp-tool", vec![tool("call_committed")]),
+            partial,
+            siwc_output_sse(
+                "resp-final",
+                vec![json!({
+                    "type": "message", "id": "msg_final", "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "The workspace is /workspace."}],
+                })],
+            ),
+        ])
+        .await;
+        let (credentials, client) = stub_client("connection-1");
+        let model = Model::new(
+            StatelessResponses(openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("siwc-managed-by-transport"),
+                "gpt-6.1-sol",
+            )),
+            SiwcHttpClient {
+                inner: reqwest::Client::builder().no_proxy().build().unwrap(),
+                authorization: Some((credentials, Arc::clone(&client.connection))),
+                test_endpoint: Some(endpoint),
+            },
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool_calls = Arc::clone(&calls);
+        let agent = rig::AgentBuilder::new(model)
+            .dynamic_tool(rig::tool::DynamicTool::new(
+                "exec_command",
+                "Read the workspace path",
+                json!({"type": "object", "properties": {"cmd": {"type": "string"}}}),
+                move |_| {
+                    let calls = Arc::clone(&tool_calls);
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(rig::tool::ToolOutput::text("/workspace"))
+                    })
+                },
+            ))
+            .build();
+        let mut recovery = crate::stream_recovery::StreamRecovery::default();
+        let mut history = vec![];
+        let mut prompt = Message::user("Where is the workspace?");
+        let answer = 'attempts: loop {
+            let mut stream = agent
+                .prompt(prompt)
+                .history(history)
+                .max_turns(3)
+                .add_hook(recovery.clone())
+                .stream();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
+                        break 'attempts response.output().to_string();
+                    }
+                    Err(error) => {
+                        let (next_history, next_prompt, _) = recovery
+                            .resume(&error)
+                            .unwrap_or_else(|| panic!("truncated turn is recoverable: {error:?}"));
+                        drop(stream);
+                        history = next_history;
+                        prompt = next_prompt;
+                        continue 'attempts;
+                    }
+                    _ => {}
+                }
+            }
+            panic!("stream ended without a final response");
+        };
+        assert_eq!(answer, "The workspace is /workspace.");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1].body["input"], requests[2].body["input"]);
+        assert!(
+            requests[2].body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| {
+                    item["type"] == "function_call_output" && item["call_id"] == "call_committed"
+                })
+        );
+    }
+
+    #[tokio::test]
     async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn() {
         const ENVELOPE: &str = "  encrypted+state/=\n  ";
         let (endpoint, server) = spawn_siwc_sse(vec![
@@ -1115,25 +1222,25 @@ mod tests {
         ] {
             let raw_error = first_stream_error(stub_model(status, body)).await;
             let raw_diagnostic = raw_error.to_string();
-            let report_error = user_facing_error(anyhow::Error::new(raw_error.report()));
-            assert!(
-                report_error
-                    .downcast_ref::<SubscriptionUsageLimit>()
-                    .is_some()
-            );
-            let error = user_facing_error(
-                anyhow::Error::new(raw_error)
-                    .context("Context handoff failed. Retry to continue the conversation."),
-            );
-            assert_eq!(
-                error.to_string(),
-                "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
-            );
-            assert!(
-                error
-                    .chain()
-                    .any(|cause| cause.to_string() == raw_diagnostic)
-            );
+            for error in [
+                anyhow::Error::new(raw_error.clone()),
+                anyhow::Error::new(raw_error.report()),
+                anyhow::Error::new(rig::completion::PromptError::from(raw_error.clone())),
+                anyhow::Error::new(rig::completion::PromptError::from(raw_error.report())),
+            ] {
+                let error = user_facing_error(
+                    error.context("Context handoff failed. Retry to continue the conversation."),
+                );
+                assert_eq!(
+                    error.to_string(),
+                    "Your ChatGPT subscription's usage limit for connected apps has been reached. Try again after the limit resets, or switch to another provider."
+                );
+                assert!(
+                    error
+                        .chain()
+                        .any(|cause| cause.to_string() == raw_diagnostic)
+                );
+            }
         }
     }
 
@@ -1144,9 +1251,14 @@ mod tests {
             json!({"error": {"code": "invalid_api_key", "message": "subscription_sharing_usage_limit_exceeded"}}).to_string(),
             "not JSON".to_string(),
         ] {
-            let error = anyhow::Error::new(ProviderError::from_provider_body(body));
-            let diagnostic = format!("{error:#}");
-            assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
+            let provider_error = ProviderError::from_provider_body(body);
+            for error in [
+                anyhow::Error::new(provider_error.clone()),
+                anyhow::Error::new(rig::completion::PromptError::from(provider_error)),
+            ] {
+                let diagnostic = format!("{error:#}");
+                assert_eq!(format!("{:#}", user_facing_error(error)), diagnostic);
+            }
         }
     }
 

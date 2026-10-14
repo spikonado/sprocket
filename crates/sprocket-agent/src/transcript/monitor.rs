@@ -11,6 +11,7 @@ use super::read_index::DISPLAY_ITEM;
 use super::sections::POSITION_STRIDE;
 use super::sections::WorkItem;
 use super::store::TranscriptStore;
+use super::{DownloadOrder, TranscriptPart};
 
 pub const MONITOR_PAGE_CHAR_LIMIT: usize = 20_000;
 
@@ -81,27 +82,47 @@ struct ResumeEntry {
     patch: bool,
 }
 
-pub async fn read_monitor_page(
-    store: &TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    cursor: Option<&str>,
-    max_chars: usize,
-) -> anyhow::Result<MonitorPage> {
-    let cursor = cursor.map(parse_cursor).transpose()?;
-    let thread = thread_id.to_string();
-    store
-        .with_work_replica(user_id, thread_id, move |replica| {
-            read_page(replica, &thread, cursor, max_chars)
-        })
-        .await
-}
-
 fn parse_cursor(encoded: &str) -> anyhow::Result<MonitorCursor> {
     let bytes = URL_SAFE_NO_PAD
         .decode(encoded)
         .map_err(|_| MonitorReadError::MalformedCursor)?;
     serde_json::from_slice(&bytes).map_err(|_| MonitorReadError::MalformedCursor.into())
+}
+
+pub(crate) async fn download_monitor_page<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    cursor: Option<&str>,
+    total: u32,
+    mut fetch: F,
+) -> anyhow::Result<MonitorPage>
+where
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
+{
+    store
+        .with_work_replica(user, thread, move |replica| replica.set_remote_total(total))
+        .await?;
+    loop {
+        let parsed_cursor = cursor.map(parse_cursor).transpose()?;
+        let thread_id = thread.to_owned();
+        let (page, prefix) = store
+            .with_work_replica(user, thread, move |replica| {
+                Ok((
+                    read_page(replica, &thread_id, parsed_cursor, MONITOR_PAGE_CHAR_LIMIT)?,
+                    replica.downloaded_prefix()?,
+                ))
+            })
+            .await?;
+        if !page.entries.is_empty() || !page.has_more || prefix >= total {
+            return Ok(page);
+        }
+        store
+            .download_parts_page(user, thread, prefix, total, DownloadOrder::Asc, &mut fetch)
+            .await?;
+        tokio::task::yield_now().await;
+    }
 }
 
 fn encode_cursor(cursor: &MonitorCursor) -> anyhow::Result<String> {
@@ -134,13 +155,7 @@ fn read_page(
     };
     let max_chars = max_chars.clamp(1, MONITOR_PAGE_CHAR_LIMIT);
 
-    let prefix: u32 = replica
-        .db
-        .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-            row.get(0)
-        })
-        .optional()?
-        .unwrap_or(0);
+    let prefix = replica.downloaded_prefix()?;
     let ready_end = u64::from(prefix) * POSITION_STRIDE;
 
     if let Some(resume) = cursor.resume.take() {
@@ -413,13 +428,7 @@ impl WorkReplica {
         let Some(number) = self.patch_result_number(source)? else {
             return Ok(None);
         };
-        let prefix: u32 = self
-            .db
-            .query_row("SELECT end+1 FROM coverage WHERE start=0", [], |row| {
-                row.get(0)
-            })
-            .optional()?
-            .unwrap_or(0);
+        let prefix = self.downloaded_prefix()?;
         if number >= prefix {
             return Ok(None);
         }

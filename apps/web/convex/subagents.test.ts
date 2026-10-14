@@ -3,6 +3,7 @@ import type { FunctionArgs } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
+import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
@@ -100,6 +101,17 @@ function createArgs(
 
 async function createChild(t: ConvexTestInstance, caller: CallerRun) {
 	return await t.mutation(api.subagents.createOrSend, createArgs(caller));
+}
+
+async function finishTreeCancellation(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		await vi.advanceTimersByTimeAsync(1);
+		await t.finishInProgressScheduledFunctions();
+
+		if (!(await t.run((ctx) => ctx.db.get('threadRecords', threadId)))?.treeCancellation) return;
+	}
+
+	throw new Error('Tree cancellation did not finish.');
 }
 
 /** Claim a child's queued run with the exact secret chosen at create time —
@@ -637,6 +649,249 @@ describe('subagent tool job results', () => {
 	);
 });
 
+describe('subagents transcript pages', () => {
+	async function seedChildParts(t: ConvexTestInstance, count: number, text = '') {
+		const caller = await startCallerRun(t);
+		const child = await createChild(t, caller);
+		await t.run(async (ctx) => {
+			for (let number = 1; number < count; number++) {
+				await appendTranscriptPart(ctx, {
+					threadId: child.threadId,
+					userId: 'user_alice',
+					runId: child.runId,
+					sourceKey: `prompt:${number}`,
+					kind: 'prompt',
+					prompt: { text: `Part ${number}${text}`, imageUploads: [] },
+					work: { ranges: [] }
+				});
+			}
+		});
+
+		const args = {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			threadId: child.threadId,
+			start: 0,
+			end: count
+		};
+
+		return { caller, child, args };
+	}
+
+	it.each([undefined, 'asc', 'desc'] as const)(
+		'returns at most 100 descendant parts in order %s',
+		async (order) => {
+			const t = initConvexTest();
+			const { child, args } = await seedChildParts(t, 104);
+
+			const page = await t.mutation(api.subagents.transcriptPartsPage, {
+				...args,
+				start: 1,
+				end: 103,
+				order
+			});
+
+			expect(page.threadId).toBe(child.threadId);
+			expect(page.parts.map((part) => part.number)).toEqual(
+				Array.from({ length: 100 }, (_, index) => (order === 'asc' ? index + 1 : 102 - index))
+			);
+		}
+	);
+
+	it.each(['asc', 'desc'] as const)(
+		'resumes byte-limited descendant pages in %s order without gaps',
+		async (order) => {
+			const t = initConvexTest();
+			const { child, args } = await seedChildParts(t, 8, 'x'.repeat(400_000));
+
+			const measured = await t.mutation(async (ctx) => {
+				const before = await ctx.meta.getTransactionMetrics();
+				const result = await ctx.runMutation(api.subagents.transcriptPartsPage, { ...args, order });
+				const after = await ctx.meta.getTransactionMetrics();
+
+				return { result, bytes: after.bytesRead.used - before.bytesRead.used };
+			});
+
+			expect(measured.result.parts.length).toBeGreaterThan(0);
+			expect(measured.result.parts.length).toBeLessThan(args.end);
+			expect(measured.bytes).toBeGreaterThanOrEqual(1_000_000);
+			expect(measured.bytes).toBeLessThan(1_500_000);
+			await t.run((ctx) =>
+				appendTranscriptPart(ctx, {
+					threadId: child.threadId,
+					userId: 'user_alice',
+					runId: child.runId,
+					sourceKey: 'prompt:live',
+					kind: 'prompt',
+					prompt: { text: 'Appended live', imageUploads: [] },
+					work: { ranges: [] }
+				})
+			);
+
+			let start = args.start;
+			let end = args.end;
+			let page = measured.result;
+			const fetched: number[] = [];
+
+			for (let attempt = 0; attempt < args.end && start < end; attempt++) {
+				expect(page.parts.map((part) => part.number)).toEqual(
+					Array.from({ length: page.parts.length }, (_, index) =>
+						order === 'asc' ? start + index : end - 1 - index
+					)
+				);
+				fetched.push(...page.parts.map((part) => part.number));
+				expect(page.parts.length).toBeGreaterThan(0);
+				const lastNumber = page.parts.at(-1)!.number;
+
+				if (order === 'asc') start = lastNumber + 1;
+				else end = lastNumber;
+
+				if (start < end) {
+					page = await t.mutation(api.subagents.transcriptPartsPage, {
+						...args,
+						start,
+						end,
+						order
+					});
+				}
+			}
+
+			expect(start).toBe(end);
+			expect(fetched).toEqual(
+				Array.from({ length: args.end }, (_, index) =>
+					order === 'asc' ? index : args.end - 1 - index
+				)
+			);
+		}
+	);
+
+	it('strips legacy attachment IDs without hydrating page URLs and keeps number reads hydrated', async () => {
+		const t = initConvexTest();
+		const { args } = await seedChildParts(t, 1);
+
+		const storageId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: 'user_alice',
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true
+			});
+
+			const part = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', args.threadId).eq('number', 0))
+				.unique();
+
+			if (!part?.prompt) throw new Error('Missing fixture prompt.');
+			await ctx.db.patch('threadTranscriptParts', part._id, {
+				prompt: {
+					...part.prompt,
+					imageUploads: [
+						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
+					]
+				}
+			});
+
+			return storageId;
+		});
+
+		const metadata = { storageId, name: 'file.txt', mediaType: 'text/plain', size: 4 };
+		const page = await t.mutation(api.subagents.transcriptPartsPage, args);
+		expect(page.parts[0]?.prompt?.imageUploads).toEqual([metadata]);
+
+		const legacy = await t.mutation(api.subagents.transcriptParts, {
+			runId: args.runId,
+			claimId: args.claimId,
+			executionSecret: args.executionSecret,
+			threadId: args.threadId,
+			numbers: [0]
+		});
+
+		expect(legacy.parts[0]?.prompt?.imageUploads).toEqual([
+			{ ...metadata, url: expect.any(String) }
+		]);
+	});
+
+	it('requires a live claim and descendant access, including for grandchild pages', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const childArgs = createArgs(caller);
+		const child = await t.mutation(api.subagents.createOrSend, childArgs);
+		const childCaller = await claimChildRun(t, child, childArgs.childExecutionSecret);
+		const grandchild = await t.mutation(api.subagents.createOrSend, createArgs(childCaller));
+		const sibling = await createChild(t, caller);
+		const unrelated = await seedOwnedThread(t);
+		const foreign = await seedOwnedThread(t, 'user_bob');
+
+		const args = {
+			runId: caller.runId,
+			claimId: caller.claimId,
+			executionSecret: caller.executionSecret,
+			threadId: grandchild.threadId,
+			start: 0,
+			end: 1
+		};
+
+		expect(await t.mutation(api.subagents.transcriptPartsPage, args)).toMatchObject({
+			threadId: grandchild.threadId,
+			parts: [{ number: 0 }]
+		});
+
+		for (const threadId of [caller.threadId, unrelated.threadId, foreign.threadId]) {
+			await expect(
+				t.mutation(api.subagents.transcriptPartsPage, { ...args, threadId })
+			).rejects.toThrow('Thread not found.');
+		}
+
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, {
+				...args,
+				...childCaller,
+				threadId: sibling.threadId
+			})
+		).rejects.toThrow('Thread not found.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, {
+				...args,
+				...childCaller,
+				threadId: caller.threadId
+			})
+		).rejects.toThrow('Thread not found.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, { ...args, executionSecret: 'wrong' })
+		).rejects.toThrow('Run not found.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, { ...args, claimId: 'stale' })
+		).rejects.toThrow('Run is no longer active.');
+		await expect(
+			t.mutation(api.subagents.transcriptPartsPage, { ...args, start: -1 })
+		).rejects.toThrow('Invalid transcript range.');
+		await t.run(async (ctx) => {
+			const execution = await ctx.db
+				.query('runExecutionStates')
+				.withIndex('by_runId', (q) => q.eq('runId', caller.runId))
+				.unique();
+
+			if (!execution) throw new Error('Missing fixture execution.');
+			await ctx.db.patch('runExecutionStates', execution._id, { claimExpiresAt: Date.now() - 1 });
+		});
+		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toThrow(
+			'Run is no longer active.'
+		);
+		await t.run((ctx) =>
+			ctx.db.patch('runs', caller.runId, { cancellationRequestedAt: Date.now() })
+		);
+		await expect(t.mutation(api.subagents.transcriptPartsPage, args)).rejects.toThrow(
+			'Run is cancelled.'
+		);
+	});
+});
+
 describe('subagents access control', () => {
 	it('lets a grandparent control a grandchild but rejects siblings and unrelated threads', async () => {
 		const t = initConvexTest();
@@ -754,6 +1009,75 @@ describe('subagents access control', () => {
 });
 
 describe('subagents.control', () => {
+	it('stops a large historical tree in batches and blocks new descendant work during traversal', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const childArgs = createArgs(caller);
+		const child = await t.mutation(api.subagents.createOrSend, childArgs);
+		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
+		const grandchildArgs = createArgs(childRun);
+		const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
+		const grandchildRun = await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
+
+		for (let batch = 0; batch < 10; batch++) {
+			await t.run(async (ctx) => {
+				const thread = (await ctx.db.get('threadRecords', child.threadId))!;
+
+				for (let index = 0; index < 40; index++) {
+					const submissionId = `historical-${batch}-${index}`;
+
+					const threadId = await ctx.db.insert('threadRecords', {
+						userId: thread.userId,
+						submissionId,
+						parentThreadId: child.threadId,
+						status: 'completed',
+						repositoryKey: thread.repositoryKey,
+						selectedModel: thread.selectedModel,
+						reasoningEffort: thread.reasoningEffort,
+						fastMode: thread.fastMode,
+						lastMessageAt: Date.now() + 1
+					});
+
+					const runId = await ctx.db.insert('runs', {
+						threadId,
+						userId: thread.userId,
+						submissionId,
+						status: 'completed',
+						executionSecretHash: 'historical',
+						selectedModel: thread.selectedModel,
+						reasoningEffort: thread.reasoningEffort,
+						fastMode: thread.fastMode,
+						startedAt: Date.now(),
+						completedAt: Date.now()
+					});
+
+					await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+				}
+			});
+		}
+
+		await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
+		expect(
+			(await t.run((ctx) => ctx.db.get('threadRecords', child.threadId)))?.treeCancellation
+		).toBeDefined();
+		await expect(t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))).rejects.toThrow(
+			/tree is being stopped/
+		);
+		await expect(
+			insertQueuedRun(t, caller.asUser, {
+				threadId: grandchild.threadId,
+				submissionId: 'manual-during-tree-stop',
+				executionSecret: 'manual-secret',
+				prompt: 'New work'
+			})
+		).rejects.toThrow(/tree is being stopped/);
+		await finishTreeCancellation(t, child.threadId);
+		expect(
+			(await t.run((ctx) => ctx.db.get('runs', grandchild.runId)))?.cancellationRequestedAt
+		).toBeDefined();
+	}, 30_000);
+
 	async function childWithPendingQuestion(
 		t: ConvexTestInstance,
 		timeoutMs: number | null = 60_000
@@ -987,32 +1311,177 @@ describe('subagents.control', () => {
 		expect(stored?.answer).toMatchObject({ optionId: 'one' });
 	});
 
-	it('stop on an active child requests cancellation and leaves descendants running', async () => {
+	it.each(['tool', 'ui', 'executor'] as const)(
+		'%s stop cancels the entire descendant tree and leaves siblings running',
+		async (source) => {
+			vi.useFakeTimers();
+			const t = initConvexTest();
+			const caller = await startCallerRun(t);
+			const sibling = await createChild(t, caller);
+			const childArgs = createArgs(caller);
+			const child = await t.mutation(api.subagents.createOrSend, childArgs);
+			const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
+			const grandchildArgs = createArgs(childRun);
+			const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
+			const grandchildRun = await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
+
+			const greatGrandchild = await t.mutation(
+				api.subagents.createOrSend,
+				createArgs(grandchildRun)
+			);
+
+			const otherGrandchild = await t.mutation(api.subagents.createOrSend, createArgs(childRun));
+
+			if (source === 'tool') {
+				const stopped = await t.mutation(api.subagents.control, {
+					runId: caller.runId,
+					claimId: caller.claimId,
+					executionSecret: caller.executionSecret,
+					threadId: child.threadId,
+					action: 'stop'
+				});
+
+				expect(stopped.stoppedRunId).toBe(child.runId);
+			} else if (source === 'ui') {
+				expect(
+					await caller.asUser.mutation(api.agentRuntime.requestCancellation, {
+						runId: child.runId
+					})
+				).toBe(true);
+			} else {
+				await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+					runId: child.runId,
+					expectedClaimId: childRun.claimId,
+					executionSecret: childRun.executionSecret,
+					status: 'cancelled',
+					text: ''
+				});
+			}
+
+			await finishTreeCancellation(t, child.threadId);
+
+			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {
+				expect(await t.run((ctx) => ctx.db.get('runs', target.runId))).toMatchObject({
+					cancellationRequestedAt: expect.any(Number)
+				});
+			}
+
+			for (const target of [caller, sibling]) {
+				expect(
+					(await t.run((ctx) => ctx.db.get('runs', target.runId)))?.cancellationRequestedAt
+				).toBeUndefined();
+			}
+
+			await expect(
+				t.mutation(api.subagents.createOrSend, createArgs(grandchildRun))
+			).rejects.toThrow(/cancelled/);
+			await vi.advanceTimersByTimeAsync(10_000);
+			await t.finishInProgressScheduledFunctions();
+
+			for (const target of [child, grandchild, greatGrandchild, otherGrandchild]) {
+				expect((await t.run((ctx) => ctx.db.get('runs', target.runId)))?.status).toBe('cancelled');
+			}
+		}
+	);
+
+	it.each(['tool', 'ui'] as const)(
+		'%s stop traverses completed children and cancels descendant questions',
+		async (source) => {
+			vi.useFakeTimers();
+			const t = initConvexTest();
+			const { caller, child, childRun, questionId } = await childWithPendingQuestion(t);
+			const grandchildArgs = createArgs(childRun);
+			const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
+			const grandchildRun = await claimChildRun(t, grandchild, grandchildArgs.childExecutionSecret);
+			await t.mutation(api.agentRuntime.beginToolJob, {
+				runId: grandchild.runId,
+				claimId: grandchildRun.claimId,
+				executionSecret: grandchildRun.executionSecret,
+				...toolTranscriptAssignment(grandchild.runId, grandchildRun.claimId),
+				kind: 'ask_question',
+				payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] }
+			});
+
+			const descendantQuestion = await t.mutation(api.agentQuestions.create, {
+				runId: grandchild.runId,
+				claimId: grandchildRun.claimId,
+				executionSecret: grandchildRun.executionSecret,
+				question: 'Continue?',
+				options: [{ id: 'yes', label: 'Yes' }]
+			});
+
+			const greatGrandchild = await t.mutation(
+				api.subagents.createOrSend,
+				createArgs(grandchildRun)
+			);
+
+			for (const run of [childRun, grandchildRun]) {
+				await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+					runId: run.runId,
+					executionSecret: run.executionSecret,
+					status: 'completed',
+					text: ''
+				});
+			}
+
+			if (source === 'tool') {
+				await t.mutation(api.subagents.control, {
+					runId: caller.runId,
+					claimId: caller.claimId,
+					executionSecret: caller.executionSecret,
+					threadId: child.threadId,
+					action: 'stop'
+				});
+			} else {
+				await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId });
+			}
+
+			await finishTreeCancellation(t, child.threadId);
+
+			for (const id of [questionId, descendantQuestion.questionId]) {
+				expect((await t.run((ctx) => ctx.db.get('agentQuestions', id)))?.status).toBe('cancelled');
+			}
+
+			expect(
+				(await t.run((ctx) => ctx.db.get('runs', greatGrandchild.runId)))?.cancellationRequestedAt
+			).toBeDefined();
+
+			for (const run of [child, grandchild]) {
+				expect((await t.run((ctx) => ctx.db.get('runs', run.runId)))?.status).toBe('completed');
+			}
+		}
+	);
+
+	it('stopping an old child run leaves replacement descendants running', async () => {
 		const t = initConvexTest();
 		const caller = await startCallerRun(t);
 		const childArgs = createArgs(caller);
 		const child = await t.mutation(api.subagents.createOrSend, childArgs);
-		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
-
-		const grandchildArgs = createArgs(childRun);
-
-		const grandchild = await t.mutation(api.subagents.createOrSend, grandchildArgs);
-
-		const stopped = await t.mutation(api.subagents.control, {
-			runId: caller.runId,
-			claimId: caller.claimId,
-			executionSecret: caller.executionSecret,
-			threadId: child.threadId,
-			action: 'stop'
+		await t.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: child.runId,
+			executionSecret: childArgs.childExecutionSecret,
+			status: 'completed',
+			text: ''
 		});
+		const replacementArgs = createArgs(caller, { threadId: child.threadId });
+		const replacement = await t.mutation(api.subagents.createOrSend, replacementArgs);
 
-		expect(stopped.stoppedRunId).toBe(child.runId);
-		const childRunDoc = await t.run((ctx) => ctx.db.get('runs', child.runId));
-		expect(childRunDoc?.cancellationRequestedAt).toBeDefined();
+		const replacementRun = await claimChildRun(
+			t,
+			replacement,
+			replacementArgs.childExecutionSecret
+		);
 
-		const grandchildRun = await t.run((ctx) => ctx.db.get('runs', grandchild.runId));
-		expect(grandchildRun?.cancellationRequestedAt).toBeUndefined();
-		expect(grandchildRun?.status).toBe('queued');
+		const grandchild = await t.mutation(api.subagents.createOrSend, createArgs(replacementRun));
+		expect(
+			await caller.asUser.mutation(api.agentRuntime.requestCancellation, { runId: child.runId })
+		).toBe(false);
+
+		for (const run of [replacement, grandchild]) {
+			expect(
+				(await t.run((ctx) => ctx.db.get('runs', run.runId)))?.cancellationRequestedAt
+			).toBeUndefined();
+		}
 	});
 
 	it('stop on an abandoned child prevents automatic recovery', async () => {
@@ -1597,6 +2066,22 @@ describe('subagents.control delegated answer retries', () => {
 });
 
 describe('subagents task deadline', () => {
+	it('a task deadline also stops descendant work', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+		const childArgs = createArgs(caller, { timeoutMs: 30_000 });
+		const child = await t.mutation(api.subagents.createOrSend, childArgs);
+		const childRun = await claimChildRun(t, child, childArgs.childExecutionSecret);
+		const grandchild = await t.mutation(api.subagents.createOrSend, createArgs(childRun));
+		await vi.advanceTimersByTimeAsync(30_001);
+		await t.finishInProgressScheduledFunctions();
+		expect((await t.run((ctx) => ctx.db.get('runs', child.runId)))?.status).toBe('cancelled');
+		expect(
+			(await t.run((ctx) => ctx.db.get('runs', grandchild.runId)))?.cancellationRequestedAt
+		).toBeDefined();
+	});
+
 	it('A completes before its deadline, B starts running, then A deadline is a no-op', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();

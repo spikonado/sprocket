@@ -3,8 +3,11 @@ use rig::error::EncodeError;
 use rig::message::{AssistantContent, Message};
 use rig::operation::Completion;
 use rig::providers::openai::OpenAIConfig;
+use rig::providers::openai::responses_api::streaming::{
+    ItemChunk, ResponseChunk, ResponsesDecoder, ResponsesEvent, StreamingCompletionChunk,
+};
 use rig::providers::openai::responses_api::{SystemInstructionsPlacement, wire::Responses};
-use rig::wire::{Body, Descriptor, Encoded, Mode, Wire, WireFrame};
+use rig::wire::{Body, Decoder, Descriptor, Encoded, Flow, Mode, Out, Wire, WireEvent, WireFrame};
 use rig::{DynModel, Model};
 
 use crate::reasoning::opaque_reasoning_blob;
@@ -29,7 +32,7 @@ impl Wire for StatelessResponses {
     type Op = Completion;
     type Payload = Encoded;
     type Frame = WireFrame;
-    type Decoder<'id> = <Responses as Wire>::Decoder<'id>;
+    type Decoder<'id> = CompatibleResponsesDecoder<'id>;
 
     fn describe(&self) -> Descriptor<'_> {
         self.0.describe()
@@ -70,7 +73,7 @@ impl Wire for StatelessResponses {
     }
 
     fn decoder<'id>(&self) -> Self::Decoder<'id> {
-        self.0.decoder()
+        CompatibleResponsesDecoder(self.0.decoder())
     }
 }
 
@@ -81,7 +84,7 @@ impl Wire for DeveloperResponses {
     type Op = Completion;
     type Payload = Encoded;
     type Frame = WireFrame;
-    type Decoder<'id> = <Responses as Wire>::Decoder<'id>;
+    type Decoder<'id> = CompatibleResponsesDecoder<'id>;
 
     fn describe(&self) -> Descriptor<'_> {
         self.0.describe()
@@ -112,7 +115,77 @@ impl Wire for DeveloperResponses {
     }
 
     fn decoder<'id>(&self) -> Self::Decoder<'id> {
-        self.0.decoder()
+        CompatibleResponsesDecoder(self.0.decoder())
+    }
+}
+
+pub(crate) struct CompatibleResponsesDecoder<'id>(ResponsesDecoder<'id>);
+
+impl<'id> Decoder<'id, Completion> for CompatibleResponsesDecoder<'id> {
+    type Event = ResponsesEvent;
+
+    fn classify(&self, frame: WireFrame) -> WireEvent<Self::Event> {
+        let data = frame.as_str().into_owned();
+        let classified = self.0.classify(WireFrame::Text(data.clone()));
+        if !matches!(classified, WireEvent::Corrupt(_)) {
+            return classified;
+        }
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&data) else {
+            return classified;
+        };
+        let Some(kind) = value["type"].as_str().map(str::to_owned) else {
+            return classified;
+        };
+        if !matches!(
+            kind.as_str(),
+            "response.created"
+                | "response.in_progress"
+                | "response.completed"
+                | "response.failed"
+                | "response.incomplete"
+        ) {
+            return match serde_json::from_value::<ItemChunk>(value) {
+                Err(error) => WireEvent::malformed(format!("Invalid {kind} event: {error}")),
+                Ok(_) => classified,
+            };
+        }
+        if let Some(response) = value["response"].as_object_mut() {
+            // Rig requires a status string; an empty unknown status has no finish reason.
+            if response
+                .get("status")
+                .is_none_or(serde_json::Value::is_null)
+            {
+                response.insert("status".to_string(), serde_json::json!(""));
+            }
+        }
+        if let Some(timestamp) = value["response"]["created_at"].as_number()
+            && timestamp.is_f64()
+            && let Some(seconds) = timestamp.as_f64()
+            && seconds >= 0.0
+            && seconds < u64::MAX as f64
+        {
+            // OpenAI timestamps now allow fractions; Rig 0.43 stores whole seconds.
+            value["response"]["created_at"] = serde_json::json!(seconds as u64);
+        }
+        match serde_json::from_value::<ResponseChunk>(value) {
+            Ok(chunk) => WireEvent::Known(ResponsesEvent::Frame {
+                raw: data,
+                chunk: StreamingCompletionChunk::Response(chunk),
+            }),
+            Err(error) => WireEvent::malformed(format!("Invalid {kind} event: {error}")),
+        }
+    }
+
+    fn decode(
+        &mut self,
+        event: Self::Event,
+        out: Out<'id, Completion>,
+    ) -> Result<Flow, rig::ProviderError> {
+        self.0.decode(event, out)
+    }
+
+    fn eof(&mut self, out: Out<'id, Completion>) -> Result<Flow, rig::ProviderError> {
+        self.0.eof(out)
     }
 }
 
@@ -120,6 +193,132 @@ impl Wire for DeveloperResponses {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+
+    #[test]
+    fn lifecycle_events_accept_null_and_absent_nullable_fields() {
+        let decoder = CompatibleResponsesDecoder(ResponsesDecoder::new("openai"));
+        let fixture: Value =
+            serde_json::from_str(include_str!("test_fixtures/response_created_nullable.json"))
+                .unwrap();
+        for kind in [
+            "response.created",
+            "response.in_progress",
+            "response.completed",
+            "response.failed",
+            "response.incomplete",
+        ] {
+            for omit_nulls in [false, true] {
+                let mut event = fixture.clone();
+                event["type"] = json!(kind);
+                if omit_nulls {
+                    event["response"]
+                        .as_object_mut()
+                        .unwrap()
+                        .retain(|_, value| !value.is_null());
+                }
+                let raw = event.to_string();
+                let WireEvent::Known(ResponsesEvent::Frame {
+                    raw: preserved,
+                    chunk: StreamingCompletionChunk::Response(chunk),
+                }) = decoder.classify(WireFrame::Text(raw.clone()))
+                else {
+                    panic!("expected nullable lifecycle event: {raw}");
+                };
+                assert_eq!(chunk.response.model, "gpt-5");
+                assert_eq!(
+                    chunk.response.status,
+                    rig::providers::openai::responses_api::ResponseStatus::Other(String::new())
+                );
+                assert!(chunk.response.instructions.is_none());
+                assert!(chunk.response.error.is_none());
+                assert!(chunk.response.incomplete_details.is_none());
+                assert!(chunk.response.usage.is_none());
+                assert!(
+                    chunk
+                        .response
+                        .additional_parameters
+                        .previous_response_id
+                        .is_none()
+                );
+                assert!(chunk.response.additional_parameters.service_tier.is_none());
+                assert_eq!(preserved, raw);
+            }
+        }
+    }
+
+    #[test]
+    fn lifecycle_events_accept_fractional_and_integer_timestamps() {
+        let decoder = CompatibleResponsesDecoder(ResponsesDecoder::new("openai"));
+        for kind in [
+            "response.created",
+            "response.in_progress",
+            "response.completed",
+            "response.failed",
+            "response.incomplete",
+        ] {
+            for (timestamp, whole_seconds) in [
+                (json!(0.125), 0),
+                (json!(1791807140.125), 1791807140),
+                (json!(1791807140.0), 1791807140),
+                (json!(1791807140), 1791807140),
+            ] {
+                let event = json!({
+                    "type": kind,
+                    "sequence_number": 0,
+                    "response": {
+                        "id": "resp_test", "object": "response",
+                        "created_at": timestamp, "status": "in_progress",
+                        "model": "model", "output": [], "tools": [],
+                    },
+                });
+                let raw = event.to_string();
+                let WireEvent::Known(ResponsesEvent::Frame {
+                    raw: preserved,
+                    chunk: StreamingCompletionChunk::Response(chunk),
+                }) = decoder.classify(WireFrame::Text(raw.clone()))
+                else {
+                    panic!("expected lifecycle event: {raw}");
+                };
+                assert_eq!(chunk.response.created_at, whole_seconds);
+                assert_eq!(
+                    chunk.response.status,
+                    rig::providers::openai::responses_api::ResponseStatus::InProgress
+                );
+                assert_eq!(preserved, raw);
+            }
+        }
+    }
+
+    #[test]
+    fn lifecycle_schema_errors_identify_the_invalid_field() {
+        let decoder = CompatibleResponsesDecoder(ResponsesDecoder::new("openai"));
+        let event = json!({
+            "type": "response.created", "sequence_number": 0,
+            "response": {
+                "id": "resp_test", "object": "response", "created_at": 1791807140.125,
+                "status": "in_progress", "output": [], "tools": [],
+            },
+        });
+        let WireEvent::Corrupt(error) = decoder.classify(WireFrame::Text(event.to_string())) else {
+            panic!("expected schema error");
+        };
+        assert!(error.to_string().contains("response.created"));
+        assert!(error.to_string().contains("missing field `model`"));
+    }
+
+    #[test]
+    fn item_schema_errors_identify_the_event_and_missing_field() {
+        let decoder = CompatibleResponsesDecoder(ResponsesDecoder::new("openai"));
+        let event = json!({
+            "type": "response.output_text.delta", "sequence_number": 0,
+            "output_index": 0, "content_index": 0,
+        });
+        let WireEvent::Corrupt(error) = decoder.classify(WireFrame::Text(event.to_string())) else {
+            panic!("expected schema error");
+        };
+        assert!(error.to_string().contains("response.output_text.delta"));
+        assert!(error.to_string().contains("missing field `delta`"));
+    }
 
     fn body(request: CompletionRequest) -> Value {
         let encoded = StatelessResponses(Responses::new(

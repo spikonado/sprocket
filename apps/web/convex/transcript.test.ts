@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
+import type { QueryCtx } from '@convex/_generated/server';
+import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import {
 	createQueuedRun,
@@ -7,7 +9,8 @@ import {
 	initConvexTest,
 	insertQueuedRun,
 	seedOwnedThread,
-	toolTranscriptAssignment
+	toolTranscriptAssignment,
+	type ConvexTestInstance
 } from './test.setup';
 
 describe('numbered transcript parts', () => {
@@ -939,11 +942,224 @@ describe('numbered transcript parts', () => {
 	});
 });
 
-describe('transcript attachment identity', () => {
-	it('returns storage-only attachment metadata', async () => {
+describe('transcript range reads', () => {
+	async function seedParts(t: ConvexTestInstance, numbers: number[], text = '') {
+		const owned = await seedOwnedThread(t);
+		const executionSecret = 'range-parts-secret';
+
+		const runId = await t.run(async (ctx) => {
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', owned.threadId))
+				.unique();
+
+			if (!run) throw new Error('Missing fixture run.');
+
+			await ctx.db.patch('runs', run._id, {
+				executionSecretHash: await executionSecretHash(executionSecret)
+			});
+
+			for (const number of numbers) {
+				await ctx.db.insert('threadTranscriptParts', {
+					threadId: owned.threadId,
+					userId: owned.subject,
+					runId: run._id,
+					number,
+					sourceKey: `prompt:${number}`,
+					kind: 'prompt',
+					prompt: { text: `Part ${number}${text}`, imageUploads: [] },
+					work: { ranges: [] }
+				});
+			}
+
+			return run._id;
+		});
+
+		return { ...owned, runId, executionSecret };
+	}
+
+	it.each([undefined, 'asc', 'desc'] as const)(
+		'returns at most 100 parts in order %s',
+		async (order) => {
+			const t = initConvexTest();
+
+			const { asUser, threadId, runId, executionSecret } = await seedParts(
+				t,
+				Array.from({ length: 104 }, (_, number) => number)
+			);
+
+			const page = await asUser.query(api.transcript.getPartsPage, {
+				threadId,
+				start: 1,
+				end: 103,
+				order
+			});
+
+			expect(page.threadId).toBe(threadId);
+			expect(page.parts.map((part) => part.number)).toEqual(
+				Array.from({ length: 100 }, (_, index) => (order === 'asc' ? index + 1 : 102 - index))
+			);
+			expect(
+				await t.query(api.transcript.getPartsPageForRun, {
+					runId,
+					executionSecret,
+					start: 1,
+					end: 103,
+					order
+				})
+			).toEqual(page);
+		}
+	);
+
+	it.each([
+		{ caller: 'owner', order: 'desc' },
+		{ caller: 'owner', order: 'asc' },
+		{ caller: 'run', order: 'desc' },
+		{ caller: 'run', order: 'asc' }
+	] as const)(
+		'resumes byte-limited $caller pages in $order order without gaps or live appends',
+		async ({ caller, order }) => {
+			const t = initConvexTest();
+			const numbers = Array.from({ length: 8 }, (_, number) => number);
+
+			const { asUser, subject, threadId, runId, executionSecret } = await seedParts(
+				t,
+				numbers,
+				'x'.repeat(400_000)
+			);
+
+			const readPage = (ctx: QueryCtx, start: number, end: number) =>
+				caller === 'owner'
+					? ctx.runQuery(api.transcript.getPartsPage, { threadId, start, end, order })
+					: ctx.runQuery(api.transcript.getPartsPageForRun, {
+							runId,
+							executionSecret,
+							start,
+							end,
+							order
+						});
+
+			const measured = await asUser.query(async (ctx) => {
+				const before = await ctx.meta.getTransactionMetrics();
+
+				const result = await readPage(ctx, 0, numbers.length);
+
+				const after = await ctx.meta.getTransactionMetrics();
+
+				return { result, bytes: after.bytesRead.used - before.bytesRead.used };
+			});
+
+			expect(measured.result.parts.length).toBeGreaterThan(0);
+			expect(measured.result.parts.length).toBeLessThan(numbers.length);
+			expect(measured.bytes).toBeGreaterThanOrEqual(1_000_000);
+			// Pagination includes the document that crosses the byte target.
+			expect(measured.bytes).toBeLessThan(1_500_000);
+			await t.run((ctx) =>
+				ctx.db.insert('threadTranscriptParts', {
+					threadId,
+					userId: subject,
+					runId,
+					number: numbers.length,
+					sourceKey: 'prompt:live',
+					kind: 'prompt',
+					prompt: { text: 'Appended live', imageUploads: [] },
+					work: { ranges: [] }
+				})
+			);
+
+			const fetched: number[] = [];
+			let page = measured.result;
+			let start = 0;
+			let end = numbers.length;
+
+			for (let attempt = 0; attempt < numbers.length && start < end; attempt++) {
+				expect(page.parts.map((part) => part.number)).toEqual(
+					Array.from({ length: page.parts.length }, (_, index) =>
+						order === 'asc' ? start + index : end - 1 - index
+					)
+				);
+				fetched.push(...page.parts.map((part) => part.number));
+				expect(page.parts.length).toBeGreaterThan(0);
+				const lastNumber = page.parts.at(-1)!.number;
+
+				if (order === 'asc') start = lastNumber + 1;
+				else end = lastNumber;
+
+				if (start < end) {
+					page = await asUser.query((ctx) => readPage(ctx, start, end));
+				}
+			}
+
+			expect(start).toBe(end);
+			expect(fetched).toEqual(order === 'asc' ? numbers : numbers.toReversed());
+
+			const live = await asUser.query((ctx) => readPage(ctx, numbers.length, numbers.length + 1));
+
+			expect(live.parts.map((part) => part.number)).toEqual([numbers.length]);
+		}
+	);
+
+	it('requires the requested run execution secret to fetch a page', async () => {
 		const t = initConvexTest();
-		const { asUser, subject, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'storage-only-parts-secret';
+		const first = await seedParts(t, [0]);
+		const second = await seedParts(t, [0]);
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', second.runId, {
+				executionSecretHash: await executionSecretHash('second-secret')
+			});
+		});
+
+		const args = { runId: first.runId, executionSecret: first.executionSecret, start: 0, end: 1 };
+		expect(await t.query(api.transcript.getPartsPageForRun, args)).toMatchObject({
+			threadId: first.threadId,
+			parts: [{ number: 0, threadId: first.threadId }]
+		});
+		await expect(
+			t.query(api.transcript.getPartsPageForRun, { ...args, executionSecret: 'wrong' })
+		).rejects.toThrow('Run not found.');
+		await expect(
+			t.query(api.transcript.getPartsPageForRun, { ...args, runId: second.runId })
+		).rejects.toThrow('Run not found.');
+	});
+
+	it.each([
+		{ start: -1, end: 1 },
+		{ start: 0.5, end: 1 },
+		{ start: 1, end: 1 },
+		{ start: 2, end: 1 },
+		{ start: 0, end: 1.5 },
+		{ start: 0, end: Number.MAX_SAFE_INTEGER + 1 }
+	])('rejects invalid page range $start..$end', async (range) => {
+		const t = initConvexTest();
+		const { asUser, threadId, runId, executionSecret } = await seedParts(t, [0]);
+		await expect(asUser.query(api.transcript.getPartsPage, { threadId, ...range })).rejects.toThrow(
+			'Invalid transcript range.'
+		);
+		await expect(
+			t.query(api.transcript.getPartsPageForRun, { runId, executionSecret, ...range })
+		).rejects.toThrow('Invalid transcript range.');
+	});
+
+	it('requires the thread owner to fetch a page', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedParts(t, [0]);
+		const args = { threadId, start: 0, end: 1 };
+
+		expect((await asUser.query(api.transcript.getPartsPage, args)).parts).toHaveLength(1);
+		await expect(
+			t.withIdentity({ subject: 'bob' }).query(api.transcript.getPartsPage, args)
+		).rejects.toThrow('Thread not found.');
+		await expect(t.query(api.transcript.getPartsPage, args)).rejects.toThrow(
+			'Authentication required.'
+		);
+	});
+});
+
+describe('transcript attachment identity', () => {
+	async function seedAttachedPrompt(t: ConvexTestInstance) {
+		const owned = await seedOwnedThread(t);
+		const { asUser, subject, threadId } = owned;
+		const executionSecret = `storage-only-parts-secret-${threadId}`;
 
 		const file = await t.run(async (ctx) => {
 			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
@@ -961,12 +1177,37 @@ describe('transcript attachment identity', () => {
 		});
 
 		const created = await insertQueuedRun(t, asUser, {
-			submissionId: 'storage-only-parts',
+			submissionId: `storage-only-parts-${threadId}`,
 			threadId,
 			prompt: 'Read this',
 			imageUploadIds: [file.imageUploadId],
 			executionSecret
 		});
+
+		await t.run(async (ctx) => {
+			const part = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId).eq('number', 0))
+				.unique();
+
+			if (!part?.prompt) throw new Error('Missing fixture prompt.');
+			await ctx.db.patch('threadTranscriptParts', part._id, {
+				prompt: {
+					...part.prompt,
+					imageUploads: part.prompt.imageUploads.map((upload) => ({
+						...upload,
+						imageUploadId: file.imageUploadId
+					}))
+				}
+			});
+		});
+
+		return { ...owned, file, runId: created.runId, executionSecret };
+	}
+
+	it('hydrates legacy number endpoints but leaves page attachment URLs unresolved', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, file, runId, executionSecret } = await seedAttachedPrompt(t);
 
 		const parts = await asUser.query(api.transcript.getParts, {
 			threadId,
@@ -983,12 +1224,96 @@ describe('transcript attachment identity', () => {
 		expect(parts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 
 		const runParts = await t.query(api.transcript.getPartsForRun, {
-			runId: created.runId,
+			runId,
 			executionSecret,
 			numbers: [0]
 		});
 
 		expect(runParts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		expect(runParts).toEqual(parts);
+
+		const page = await asUser.query(api.transcript.getPartsPage, { threadId, start: 0, end: 1 });
+		expect(page.parts[0]?.prompt?.imageUploads).toEqual([
+			{
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				storageId: file.storageId
+			}
+		]);
+		expect(
+			await t.query(api.transcript.getPartsPageForRun, { runId, executionSecret, start: 0, end: 1 })
+		).toEqual(page);
+	});
+
+	it('returns the requested attachment URL and null for deleted storage', async () => {
+		const t = initConvexTest();
+		const { runId, executionSecret, file } = await seedAttachedPrompt(t);
+		const args = { runId, executionSecret, partNumber: 0, storageId: file.storageId };
+		expect(await t.query(api.transcript.attachmentUrlForRun, args)).toEqual(expect.any(String));
+		await t.run((ctx) => ctx.storage.delete(file.storageId));
+		expect(await t.query(api.transcript.attachmentUrlForRun, args)).toBeNull();
+	});
+
+	it('restricts the attachment URL to the exact prompt part and run capability', async () => {
+		const t = initConvexTest();
+		const first = await seedAttachedPrompt(t);
+		const other = await seedAttachedPrompt(t);
+		await t.run(async (ctx) => {
+			await appendTranscriptPart(ctx, {
+				threadId: first.threadId,
+				userId: first.subject,
+				runId: first.runId,
+				sourceKey: 'prompt:without-attachments',
+				kind: 'prompt',
+				prompt: { text: 'No attachments', imageUploads: [] },
+				work: { ranges: [] }
+			});
+			await appendTranscriptPart(ctx, {
+				threadId: first.threadId,
+				userId: first.subject,
+				runId: first.runId,
+				sourceKey: 'tool:without-attachments',
+				kind: 'tool',
+				tool: { callId: 'call', name: 'exec_cmd', status: 'completed' },
+				work: { ranges: [] }
+			});
+		});
+
+		const args = {
+			runId: first.runId,
+			executionSecret: first.executionSecret,
+			partNumber: 0,
+			storageId: first.file.storageId
+		};
+
+		await expect(
+			t.query(api.transcript.attachmentUrlForRun, { ...args, executionSecret: 'wrong' })
+		).rejects.toThrow('Run not found.');
+		await expect(
+			t.query(api.transcript.attachmentUrlForRun, { ...args, runId: other.runId })
+		).rejects.toThrow('Run not found.');
+		await expect(
+			t.query(api.transcript.attachmentUrlForRun, {
+				...args,
+				storageId: other.file.storageId
+			})
+		).rejects.toThrow('Attachment not found in transcript part.');
+		await expect(
+			t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber: 1 })
+		).rejects.toThrow('Attachment not found in transcript part.');
+
+		for (const partNumber of [2, 3]) {
+			await expect(
+				t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber })
+			).rejects.toThrow('Transcript prompt part not found.');
+		}
+
+		for (const partNumber of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+			await expect(
+				t.query(api.transcript.attachmentUrlForRun, { ...args, partNumber })
+			).rejects.toThrow('Invalid transcript part number.');
+		}
 	});
 
 	it('downloads an owned file by storageId and hides foreign files', async () => {

@@ -2,6 +2,13 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Transcript download compatibility
+
+Keep `transcript:getParts`, `transcript:getPartsForRun` and
+`subagents:transcriptParts` unchanged for released clients. Remove them once
+clients that request explicit part numbers age out. New clients use page
+endpoints. Stored transcript formats are unchanged.
+
 ## Development tooling compatibility
 
 ### TypeScript compiler API
@@ -15,6 +22,26 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Provider and model-vendor context handoffs
+
+Run context responses optionally include `providerHandoff` with the previous
+provider's model settings. Released clients ignore this field. Keep it optional
+and keep the Rust missing-field default until those clients age out.
+
+The source comes from uncovered transcript completions and uses the existing
+summary cutoff. Missing historical provider IDs still mean `spikonado`. Local
+transcripts, saved provider settings and Convex documents keep their existing
+formats, so existing threads need no migration.
+
+If that handoff fails, the selected provider continues from the same visible
+history with reasoning replay omitted. The thread may store optional
+`reasoningStrippedThroughPartNumber`, an inclusive part cutoff. Released
+clients ignore the field. Transcript state responses include it when set, and
+older local transcript state files load without it. Parts, summaries and
+provider settings stay in their existing formats, so no migration is required.
+The cutoff is persistent replay state, not a compatibility shim. Keep it until
+a migration removes the covered reasoning from stored transcript parts.
+
 ### Rig 0.43 upstream revision
 
 Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
@@ -23,6 +50,29 @@ stderr dump from invalid-tool recovery. This revision retains 0.43's history
 types but unifies streamed and awaited run errors as `PromptError`.
 Return to a registry release only once it contains that fix and the provider,
 replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+
+### Responses fractional timestamps
+
+OpenAI's Responses schema allows fractional `created_at` seconds. Rig 0.43
+requires `u64`, so the Responses decoder truncates valid nonnegative fractional
+timestamps in lifecycle events to whole seconds. It keeps the original event
+for provider error diagnostics. Other invalid fields still fail decoding.
+Requests, stored transcripts, and released clients are unchanged.
+
+Remove this adapter once the pinned Rig revision accepts fractional timestamps
+and the fractional-timestamp stream regression passes without it.
+
+### Responses nullable status
+
+OpenAI's Responses schema allows null or absent `status`. Rig's pinned response
+type deserializes it as a required string. The shared Responses decoder maps
+null or absent lifecycle status to Rig's empty unknown status, which produces
+no finish reason. Explicit statuses and original event bytes stay unchanged.
+Other nullable response fields already use optional types or tolerant metadata
+projection. Requests, stored transcripts, and released clients are unchanged.
+
+Remove this mapping once the pinned Rig revision accepts null and absent status
+and the nullable lifecycle and stream regressions pass without it.
 
 ### SIWC streaming content type
 
@@ -603,6 +653,13 @@ Firecrawl integration may omit `summary` and `images`. The validators accept
 both shapes so executor history and local JSONL transcripts remain readable.
 `normalizeScrapeUrlResults` drops `truncated` and backfills the Firecrawl
 default summary with an empty image list.
+
+#### Historical skill results
+
+`read_skill` returns complete bodies and no longer emits `truncated`.
+The stored result validator still accepts that optional field for released
+clients and historical results. Remove it only after those clients age out and
+stored results are migrated. Local transcripts must continue accepting it.
 
 #### Hosted parse files
 

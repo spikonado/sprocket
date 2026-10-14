@@ -15,17 +15,19 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use crate::attachments::cache_prompt_attachments;
-use crate::catalog::catalog_capabilities_for_model;
+use crate::catalog::catalog_models_for_run;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
-    TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
+    DownloadOrder, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
+    current_run_has_finished_turns, parse_remote_parts, prompt_text_with_attachments,
 };
-use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
+use crate::types::{
+    CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
+};
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
 // apps/web/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
@@ -47,7 +49,7 @@ const CONTINUE_PROMPT: &str = "continue";
 // Must match convex/lib/agentErrors.ts so executor-reported lease loss and
 // lifecycle-detected abandonment have the same automatic recovery policy.
 const RUN_ABANDONED_BY_AGENT: &str = "The local agent stopped responding before this run finished.";
-const DEVELOPER_PROMPT_TEMPLATE: &str = include_str!("developer_prompt.md");
+const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 const MODEL_IDENTITY_PLACEHOLDER: &str = "{{MODEL_IDENTITY}}";
 const THREAD_ID_PLACEHOLDER: &str = "{{THREAD_ID}}";
 const TRANSCRIPT_DIR_PLACEHOLDER: &str = "{{TRANSCRIPT_DIR}}";
@@ -163,22 +165,23 @@ fn build_workspace_prompt_context(
         blocks.join("\n\n")
     };
 
-    let skills_block = if skills.is_empty() {
+    let entries = skills
+        .iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .map(|skill| {
+            let description = collapse_whitespace(&skill.description);
+            format!("- name: {}\n  description: {description}", skill.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let skills_block = if entries.is_empty() {
         "No skills are installed.".to_string()
     } else {
-        let entries = skills
-            .iter()
-            .map(|skill| {
-                let description = collapse_whitespace(&skill.description);
-                format!("- name: {}\n  description: {description}", skill.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
     let model_identity = format!("Your model is {model_label} ({model_id}).");
-    let base_instructions = DEVELOPER_PROMPT_TEMPLATE
+    let base_instructions = SYSTEM_PROMPT_TEMPLATE
         .trim_end()
         .replace(MODEL_IDENTITY_PLACEHOLDER, &model_identity)
         .replace(THREAD_ID_PLACEHOLDER, thread_id)
@@ -773,61 +776,30 @@ async fn load_prior_history(
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
     let remote = runtime.transcript_state_for_run(run_id).await?;
-    apply_remote_state(store, user_id, thread_id, &remote, false).await?;
-    fetch_missing_parts(
+    let state = apply_remote_state(store, user_id, thread_id, &remote, false).await?;
+    let (mut parts, current_run_had_context_handoff) = load_context_parts(
         store,
         user_id,
         thread_id,
-        remote.history_from_number,
-        remote.total_parts,
-        |numbers| {
-            let runtime = runtime.clone();
-            let run_id = run_id.to_string();
-            async move { runtime.transcript_parts_for_run(&run_id, &numbers).await }
+        &state,
+        run_id,
+        |start, end, order| {
+            runtime.transcript_parts_page_for_run(run_id, thread_id, start, end, order)
         },
     )
     .await?;
-    let state = store.load_state(user_id, thread_id).await?;
-    let current_run_had_context_handoff =
-        if state.context_summary.is_some() && state.history_from_number > 0 {
+    cache_prompt_attachments(
+        store,
+        user_id,
+        thread_id,
+        &mut parts,
+        |number, storage_id| async move {
             runtime
-                .transcript_parts_for_run(run_id, &[state.history_from_number - 1])
-                .await?
-                .iter()
-                .any(|part| part.run_id == run_id)
-        } else {
-            false
-        };
-    let numbers: Vec<u32> = (state.history_from_number..state.remote_total_parts).collect();
-    let local_parts = store.read_parts(user_id, thread_id, &numbers).await?;
-    let missing = numbers
-        .iter()
-        .filter(|number| !local_parts.iter().any(|part| part.number == **number))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "required transcript parts {:?} are missing locally after sync",
-            missing
-        );
-    }
-    let mut parts = match fetch_parts_by_numbers(&numbers, |batch| {
-        let runtime = runtime.clone();
-        let run_id = run_id.to_string();
-        async move { runtime.transcript_parts_for_run(&run_id, &batch).await }
-    })
-    .await
-    {
-        Ok(hydrated)
-            if numbers
-                .iter()
-                .all(|number| hydrated.iter().any(|part| part.number == *number)) =>
-        {
-            hydrated
-        }
-        Ok(_) | Err(_) => local_parts,
-    };
-    cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
+                .attachment_url_for_run(run_id, number, &storage_id)
+                .await
+        },
+    )
+    .await?;
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
@@ -840,6 +812,41 @@ async fn load_prior_history(
         continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
+}
+
+async fn load_context_parts<F, Fut>(
+    store: &TranscriptStore,
+    user: &str,
+    thread: &str,
+    state: &TranscriptState,
+    run_id: &str,
+    fetch: F,
+) -> anyhow::Result<(Vec<crate::transcript::TranscriptPart>, bool)>
+where
+    F: FnMut(u32, u32, DownloadOrder) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<crate::transcript::TranscriptPart>>>,
+{
+    let check_handoff = state.context_summary.is_some() && state.history_from_number > 0;
+    let start = state.history_from_number - u32::from(check_handoff);
+    let end = state.remote_total_parts;
+    anyhow::ensure!(
+        state.history_from_number <= end,
+        "invalid transcript context range"
+    );
+    store
+        .ensure_parts(user, thread, start, end, DownloadOrder::Desc, fetch)
+        .await?;
+    let numbers: Vec<_> = (start..end).collect();
+    let mut parts = store.read_parts(user, thread, &numbers).await?;
+    anyhow::ensure!(
+        parts.len() == numbers.len(),
+        "required transcript parts are missing locally after sync"
+    );
+    let had_handoff = check_handoff && parts.first().is_some_and(|part| part.run_id == run_id);
+    if check_handoff {
+        parts.remove(0);
+    }
+    Ok((parts, had_handoff))
 }
 
 pub async fn run_agent(
@@ -859,13 +866,61 @@ pub async fn run_agent(
         ..
     } = run;
 
-    let context: RunContextResponse = match runtime.run_context(&run_id).await {
+    let mut context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
 
+    let (capabilities, handoff_model) =
+        match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
+            .await
+        {
+            Ok(models) => models,
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        };
+    let mut omit_prior_reasoning = false;
+    let mut handoff_model = match handoff_model {
+        Ok(model) => model,
+        Err(error) => {
+            eprintln!(
+                "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+            );
+            omit_prior_reasoning = true;
+            None
+        }
+    };
+    context.provider_handoff = handoff_model.as_ref().map(|(handoff, _)| handoff.clone());
+
+    let chatgpt_client = if chatgpt_client.is_none()
+        && context
+            .provider_handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
+    {
+        let previous_client = request
+            .chatgpt_credentials
+            .clone()
+            .context(
+                "The previous ChatGPT provider must remain connected to write the context handoff.",
+            )
+            .and_then(crate::chatgpt::ChatGptClient::new);
+        match previous_client {
+            Ok(client) => Some(client),
+            Err(error) => {
+                eprintln!(
+                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                );
+                context.provider_handoff = None;
+                handoff_model = None;
+                omit_prior_reasoning = true;
+                None
+            }
+        }
+    } else {
+        chatgpt_client
+    };
     let provider = match AgentProvider::default_for_run(&context, &gateway_url, chatgpt_client) {
         Ok(provider) => provider,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
@@ -873,18 +928,16 @@ pub async fn run_agent(
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let fast_mode = context.run.fast_mode;
-    let capabilities =
-        match catalog_capabilities_for_model(&gateway_url, &context.run.selected_model).await {
-            Ok(budget) => budget,
-            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-        };
-
     let prepare_history = load_prior_history(
         &runtime,
         &store,
         &context,
         &run_id,
-        capabilities.supports_images,
+        handoff_model
+            .as_ref()
+            .map(|(_, capabilities)| capabilities)
+            .unwrap_or(&capabilities)
+            .supports_images,
     );
     let prior_history = {
         let mut updates = match runtime.run_finished_subscription(&run_id).await {
@@ -951,6 +1004,18 @@ pub async fn run_agent(
             &context.run.thread_id,
             &transcript_dir,
         );
+        let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
+            build_workspace_prompt_context(
+                &request.workspace_path,
+                &workspace_instructions,
+                &skills,
+                &capabilities.label,
+                &handoff.selected_model,
+                &context.run.thread_id,
+                &transcript_dir,
+            )
+            .base_instructions
+        });
         let continue_without_prompt = should_continue_without_prompt(
             prior_history.continue_from_finished_turns,
             is_continuation,
@@ -960,12 +1025,20 @@ pub async fn run_agent(
             prompt,
             provider,
             prompt_context,
+            handoff_base_instructions,
             skills,
             continue_without_prompt,
         ))
     })();
 
-    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
+    let (
+        prompt,
+        provider,
+        prompt_context,
+        handoff_base_instructions,
+        skills,
+        continue_without_prompt,
+    ) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -1025,6 +1098,7 @@ pub async fn run_agent(
                     live: live.clone(),
                     prompt,
                     base_instructions: prompt_context.base_instructions,
+                    handoff_base_instructions,
                     initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
@@ -1043,6 +1117,7 @@ pub async fn run_agent(
                     transcript_dir,
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !continue_without_prompt,
+                    omit_prior_reasoning,
                     gateway_url: gateway_url.clone(),
                     subagent_launcher: request.subagent_launcher.clone(),
                     transcript_store: request.transcript_store.clone(),
@@ -1088,6 +1163,84 @@ mod tests {
 
     const MODEL_LABEL: &str = "GPT-5.6 Sol";
     const MODEL_ID: &str = "gpt-5.6-sol";
+
+    #[tokio::test]
+    async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
+        use crate::transcript::{DownloadOrder, TranscriptPart, TranscriptState, TranscriptStore};
+        use std::sync::Mutex;
+
+        fn prompt(number: u32) -> TranscriptPart {
+            serde_json::from_value(serde_json::json!({
+                "number": number, "sourceKey": format!("prompt:{number}"),
+                "runId": if number == 109 { "current-run" } else { "old-run" },
+                "kind": "prompt", "prompt": {"text": format!("Part {number}"), "imageUploads": []}
+            }))
+            .unwrap()
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_owned());
+        store
+            .append_parts("user", "thread", &[prompt(109)])
+            .await
+            .unwrap();
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.history_from_number = 110;
+        state.remote_total_parts = 120;
+        state.context_summary = Some("Captured summary".into());
+        state.reasoning_stripped_through_part_number = Some(112);
+        let requests = Mutex::new(Vec::new());
+        let (parts, handoff) = super::load_context_parts(
+            &store,
+            "user",
+            "thread",
+            &state,
+            "current-run",
+            |start, end, order| {
+                assert!(matches!(order, DownloadOrder::Desc));
+                requests.lock().unwrap().push((start, end));
+                let store = store.clone();
+                async move {
+                    store.append_parts("user", "thread", &[prompt(120)]).await?;
+                    store
+                        .update_state("user", "thread", |state| {
+                            state.history_from_number = 120;
+                            state.remote_total_parts = 121;
+                            state.context_summary = Some("Newer summary".into());
+                        })
+                        .await?;
+                    Ok((start.max(end - 3)..end).rev().map(prompt).collect())
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert!(handoff);
+        assert_eq!(parts, (110..120).map(prompt).collect::<Vec<_>>());
+        assert!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|&(start, end)| start >= 110 && end <= 120)
+        );
+        let (cached, handoff) = super::load_context_parts(
+            &store,
+            "user",
+            "thread",
+            &state,
+            "current-run",
+            |_, _, _| async {
+                Err(anyhow::anyhow!(
+                    "cached context requested remote transcript parts"
+                ))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cached, parts);
+        assert!(handoff);
+    }
 
     #[test]
     fn prompted_continuations_use_their_user_prompt() {
@@ -1204,6 +1357,7 @@ mod tests {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),
             description: "Handle PDFs".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
@@ -1229,10 +1383,39 @@ mod tests {
     }
 
     #[test]
+    fn initial_context_omits_disabled_skills() {
+        let skills = [
+            WorkspaceSkill {
+                name: "deploy".to_string(),
+                description: "Deploy production".to_string(),
+                disable_model_invocation: true,
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+            WorkspaceSkill {
+                name: "ordinary".to_string(),
+                description: "Ordinary skill".to_string(),
+                disable_model_invocation: false,
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+        ];
+        let prompt_context = build_test_prompt_context(&[], &skills);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.contains("- name: ordinary"));
+        assert!(!initial_context.contains("deploy"));
+        assert!(!initial_context.contains("Deploy production"));
+
+        let only_disabled = build_test_prompt_context(&[], &skills[..1]);
+        let initial_context = initial_context_text(&only_disabled.initial_context);
+        assert!(!initial_context.contains("deploy"));
+        assert!(!initial_context.contains("<SKILLS>"));
+    }
+
+    #[test]
     fn initial_context_collapses_multiline_skill_descriptions() {
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Line one\nline two".to_string(),
+            disable_model_invocation: false,
             source: SkillSource::BuiltIn {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },

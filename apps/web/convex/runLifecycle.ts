@@ -1,5 +1,9 @@
-import { v } from 'convex/values';
-import { getRunExecutionState, getRunWithExecution } from '@convex/lib/runExecution';
+import { v, type Infer } from 'convex/values';
+import {
+	getRunExecutionState,
+	getRunWithExecution,
+	latestRunForThread
+} from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
 import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -69,15 +73,11 @@ export const checkRun = internalMutation({
 });
 
 export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
-	const current = await getRunWithExecution(ctx.db, run._id);
+	const current = await ctx.db.get('runs', run._id);
 
 	if (!current) return false;
 
-	const latest = await ctx.db
-		.query('runs')
-		.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', current.threadId))
-		.order('desc')
-		.first();
+	const latest = await latestRunForThread(ctx.db, current.threadId);
 
 	const cancelledQuestions =
 		latest?._id === current._id
@@ -115,6 +115,115 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 
 	return true;
 }
+
+export async function requestThreadTreeCancellation(
+	ctx: MutationCtx,
+	thread: Doc<'threadRecords'>
+): Promise<{ stoppedRunId?: Id<'runs'>; cancelled: boolean }> {
+	const latest = await latestRunForThread(ctx.db, thread._id);
+
+	if (thread.treeCancellation) return { stoppedRunId: latest?._id, cancelled: true };
+
+	const cancelled = latest
+		? await requestRunCancellation(ctx, latest)
+		: await cancelPendingQuestionsForThread(ctx, thread._id);
+
+	const generation = crypto.randomUUID();
+	await ctx.db.patch('threadRecords', thread._id, {
+		treeCancellation: { generation, pendingBatches: 1 }
+	});
+
+	const descendantsCancelled = await cancelDescendantsPage(ctx, {
+		rootThreadId: thread._id,
+		parentThreadId: thread._id,
+		generation,
+		cursor: null
+	});
+
+	return { stoppedRunId: latest?._id, cancelled: cancelled || descendantsCancelled };
+}
+
+const vTreeCancellationBatch = v.object({
+	rootThreadId: v.id('threadRecords'),
+	parentThreadId: v.id('threadRecords'),
+	generation: v.string(),
+	cursor: v.union(v.string(), v.null())
+});
+
+async function cancelDescendantsPage(
+	ctx: MutationCtx,
+	args: Infer<typeof vTreeCancellationBatch>
+): Promise<boolean> {
+	const root = await ctx.db.get('threadRecords', args.rootThreadId);
+
+	if (!root?.treeCancellation || root.treeCancellation.generation !== args.generation) return false;
+
+	const result = await ctx.db
+		.query('threadRecords')
+		.withIndex('by_userId_parentThreadId', (q) =>
+			q.eq('userId', root.userId).eq('parentThreadId', args.parentThreadId)
+		)
+		.order('desc')
+		.paginate({
+			numItems: 16,
+			cursor: args.cursor,
+			maximumRowsRead: 16,
+			maximumBytesRead: 1024 * 1024
+		});
+
+	let pendingBatches = root.treeCancellation.pendingBatches - 1;
+
+	for (const child of result.page) {
+		const latest = await latestRunForThread(ctx.db, child._id);
+
+		if (latest) {
+			await requestRunCancellation(ctx, latest);
+		} else {
+			await cancelPendingQuestionsForThread(ctx, child._id);
+		}
+
+		const descendant = await ctx.db
+			.query('threadRecords')
+			.withIndex('by_userId_parentThreadId', (q) =>
+				q.eq('userId', root.userId).eq('parentThreadId', child._id)
+			)
+			.first();
+
+		if (descendant) {
+			await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
+				...args,
+				parentThreadId: child._id,
+				cursor: null
+			});
+			pendingBatches++;
+		}
+	}
+
+	if (!result.isDone) {
+		await ctx.scheduler.runAfter(0, internal.runLifecycle.cancelDescendants, {
+			...args,
+			cursor: result.continueCursor
+		});
+		pendingBatches++;
+	}
+
+	await ctx.db.patch('threadRecords', root._id, {
+		treeCancellation:
+			pendingBatches > 0 ? { generation: args.generation, pendingBatches } : undefined
+	});
+
+	return result.page.length > 0 || pendingBatches > 0;
+}
+
+export const cancelDescendants = internalMutation({
+	args: vTreeCancellationBatch.fields,
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await cancelDescendantsPage(ctx, args);
+
+		return null;
+	}
+});
 
 export const forceCancelRun = internalMutation({
 	args: { runId: v.id('runs') },

@@ -418,6 +418,74 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
 }
 
 #[tokio::test]
+async fn openai_compatible_lifecycle_stream_delivers_text_reasoning_and_tools() {
+    for nullable_status in [None, Some(false), Some(true)] {
+        assert_openai_compatible_lifecycle_stream(nullable_status).await;
+    }
+}
+
+async fn assert_openai_compatible_lifecycle_stream(nullable_status: Option<bool>) {
+    let fixture: JsonValue =
+        serde_json::from_str(include_str!("test_fixtures/response_created_nullable.json")).unwrap();
+    let body = gateway_sse_body()
+        .lines()
+        .map(|line| {
+            let Some(data) = line.strip_prefix("data: ") else {
+                return format!("{line}\n");
+            };
+            let mut event: JsonValue = serde_json::from_str(data).unwrap();
+            if let Some(response) = event.get_mut("response") {
+                response["created_at"] = json!(1791807140.125);
+                if let Some(omit_nulls) = nullable_status {
+                    let response = response.as_object_mut().unwrap();
+                    for (key, value) in fixture["response"].as_object().unwrap() {
+                        if value.is_null() {
+                            if omit_nulls {
+                                response.remove(key);
+                            } else {
+                                response.insert(key.clone(), JsonValue::Null);
+                            }
+                        }
+                    }
+                }
+            }
+            format!("data: {event}\n")
+        })
+        .collect::<String>();
+    let (base_url, server) = spawn_responses_sse(vec![body]);
+    let model = stateless_responses_model(
+        openai::OpenAIConfig::new("test-key").with_base_url(&base_url),
+        "gateway-model",
+    );
+    let mut stream = model.stream(CompletionRequest::new("hello")).unwrap();
+    let mut text = String::new();
+    let mut reasoning = None;
+    let mut tool = None;
+    while let Some(item) = stream.next().await {
+        match item.expect("compatible lifecycle stream item") {
+            Item::Event(StreamEvent::Text { text: delta, .. }) => text.push_str(&delta),
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::Reasoning(completed),
+                ..
+            }) => reasoning = Some(completed),
+            Item::Event(StreamEvent::End {
+                content: AssistantContent::ToolCall(completed),
+                ..
+            }) => tool = Some(completed),
+            _ => {}
+        }
+    }
+    assert_eq!(text, TEXT);
+    let reasoning = reasoning.unwrap();
+    assert_eq!(
+        reasoning.open(reasoning.issuer()).unwrap().id.as_deref(),
+        Some(ITEM_ID)
+    );
+    assert_eq!(tool.unwrap().id.wire(), TOOL_CALL_ID);
+    assert_eq!(server.join().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let (base_url, server) = spawn_responses_sse(vec![gateway_sse_body()]);
     let model = openai::OpenAIConfig::new("test-key")

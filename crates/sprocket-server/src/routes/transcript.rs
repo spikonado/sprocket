@@ -4,11 +4,10 @@ use anyhow::anyhow;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum_extra::extract::CookieJar;
 use futures::stream::unfold;
 use serde::Deserialize;
 use sprocket_agent::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
@@ -17,6 +16,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
+use crate::routes::session::{AuthorizedJson, UserScoped};
 use crate::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
@@ -34,6 +34,18 @@ struct TranscriptAttachmentRequest {
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
     storage_id: String,
+}
+
+impl UserScoped for TranscriptScope {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for TranscriptAttachmentRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
@@ -130,15 +142,22 @@ struct DisplayRequest {
     changes_after: Option<DisplayChangeCursor>,
 }
 
+impl UserScoped for DisplayDetailsRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for DisplayRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 async fn display_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<DisplayRequest>,
+    AuthorizedJson(payload): AuthorizedJson<DisplayRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let limit = payload.limit.unwrap_or(12);
     if !(1..=40).contains(&limit)
         || payload.streams.len() > 64
@@ -181,13 +200,8 @@ async fn display_handler(
 
 async fn display_details_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<DisplayDetailsRequest>,
+    AuthorizedJson(payload): AuthorizedJson<DisplayDetailsRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let limit = payload.limit.unwrap_or(5);
     if !(1..=5).contains(&limit)
         || [payload.after, payload.before]
@@ -226,13 +240,8 @@ async fn display_details_handler(
 
 async fn watch_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptScope>,
+    AuthorizedJson(payload): AuthorizedJson<TranscriptScope>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let session = state
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
@@ -264,13 +273,8 @@ fn encode_watch_event(event: TranscriptWatchEvent) -> Option<Result<Event, Infal
 
 async fn clear_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptScope>,
+    AuthorizedJson(payload): AuthorizedJson<TranscriptScope>,
 ) -> Result<StatusCode, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     state
         .transcript_watchers
         .abort_thread(&payload.user_id, &payload.thread_id)
@@ -285,13 +289,8 @@ async fn clear_handler(
 
 async fn attachment_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptAttachmentRequest>,
+    AuthorizedJson(payload): AuthorizedJson<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     if let Some(response) = serve_cached_attachment(
         &state,
         &payload.user_id,

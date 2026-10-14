@@ -108,6 +108,7 @@ export default function SidePanel({
 
 	return (
 		<aside
+			id="side-panel"
 			className={`bg-background flex h-full min-h-0 w-full flex-col ${expanded ? '' : 'border-l'}`}
 		>
 			<div className="flex items-center gap-1 border-b px-2 py-1.5">

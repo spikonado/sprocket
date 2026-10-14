@@ -5,10 +5,8 @@ use std::time::Duration;
 use anyhow::anyhow;
 use axum::Json;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
-use axum_extra::extract::CookieJar;
 use convex::Value;
 use futures::stream::unfold;
 use serde::Deserialize;
@@ -18,6 +16,7 @@ use tokio::time::timeout;
 use crate::AppState;
 use crate::artifact_watch::is_native_account_revoked;
 use crate::routes::api_error::ApiError;
+use crate::routes::session::{AuthorizedJson, UserScoped};
 
 const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -38,6 +37,18 @@ struct ArtifactDeleteRequest {
     artifact_id: String,
 }
 
+impl UserScoped for ArtifactWatchRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+impl UserScoped for ArtifactDeleteRequest {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/artifacts/watch", post(watch_handler))
@@ -46,13 +57,8 @@ pub fn routes() -> axum::Router<AppState> {
 
 async fn delete_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ArtifactDeleteRequest>,
+    AuthorizedJson(payload): AuthorizedJson<ArtifactDeleteRequest>,
 ) -> Result<Json<()>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     let artifact_id = payload.artifact_id.trim();
@@ -103,13 +109,8 @@ async fn delete_handler(
 
 async fn watch_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ArtifactWatchRequest>,
+    AuthorizedJson(payload): AuthorizedJson<ArtifactWatchRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    state
-        .require_session_user(&headers, &jar, &payload.user_id)
-        .await?;
     let repository_key = payload.repository_key.trim();
     let workspace_path = payload.workspace_path.trim();
     if repository_key.is_empty() || workspace_path.is_empty() {
@@ -128,19 +129,27 @@ async fn watch_handler(
         .open(&payload.user_id, repository_key, &attachment.workspace_path)
         .await;
     let stream = unfold(
-        (session.latest_event(), session),
-        |(initial, mut session)| async move {
-            if let Some(event) = initial {
-                return encode_watch_event(event).map(|event| (event, (None, session)));
+        (true, session.latest_event(), session),
+        |(first, last, mut session)| async move {
+            if first {
+                if let Some(event) = last.clone() {
+                    return encode_watch_event(event).map(|event| (event, (false, last, session)));
+                }
             }
             loop {
                 match session.receiver().recv().await {
+                    Ok(event) if last.as_ref() == Some(&event) => continue,
                     Ok(event) => {
-                        return encode_watch_event(event).map(|event| (event, (None, session)));
+                        return encode_watch_event(event.clone())
+                            .map(|encoded| (encoded, (false, Some(event), session)));
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         if let Some(event) = session.latest_event() {
-                            return encode_watch_event(event).map(|event| (event, (None, session)));
+                            if last.as_ref() == Some(&event) {
+                                continue;
+                            }
+                            return encode_watch_event(event.clone())
+                                .map(|encoded| (encoded, (false, Some(event), session)));
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,

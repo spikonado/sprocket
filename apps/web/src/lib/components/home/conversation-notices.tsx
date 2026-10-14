@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import ComposerNotice from './composer-notice';
 import Button from '$lib/components/ui/button/button';
 import { CATALOG_UNAVAILABLE_MESSAGE } from '$lib/chat/model-catalog';
@@ -6,6 +7,7 @@ type Props = {
 	error: string | null;
 	runError: string | null;
 	reconnecting: boolean;
+	syncing: boolean;
 	catalogError: boolean;
 	catalogLoading: boolean;
 	onRetryCatalog: () => void;
@@ -15,6 +17,7 @@ export default function ConversationNotices({
 	error,
 	runError,
 	reconnecting,
+	syncing,
 	catalogError,
 	catalogLoading,
 	onRetryCatalog
@@ -33,6 +36,8 @@ export default function ConversationNotices({
 				<ComposerNotice title="Reconnecting" tone="status">
 					Reconnecting to conversation history.
 				</ComposerNotice>
+			) : syncing ? (
+				<HistoryLoadingNotice />
 			) : null}
 			{catalogError ? (
 				<ComposerNotice
@@ -54,4 +59,20 @@ export default function ConversationNotices({
 			) : null}
 		</>
 	);
+}
+
+function HistoryLoadingNotice() {
+	const [visible, setVisible] = useState(false);
+
+	useEffect(() => {
+		const timeout = setTimeout(() => setVisible(true), 2_000);
+
+		return () => clearTimeout(timeout);
+	}, []);
+
+	return visible ? (
+		<ComposerNotice title="Loading history" tone="status">
+			Conversation history is still loading. You can send a prompt while it loads.
+		</ComposerNotice>
+	) : null;
 }

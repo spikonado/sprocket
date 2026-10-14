@@ -17,8 +17,14 @@ export default function WorkDisclosure({
 	completedAtMs,
 	children
 }: Props) {
-	const [expanded, setExpanded] = useState(false);
+	const [expanded, setExpanded] = useState(inProgress);
+	const [previousInProgress, setPreviousInProgress] = useState(inProgress);
 	const now = useTickingNow(inProgress);
+
+	if (inProgress !== previousInProgress) {
+		setPreviousInProgress(inProgress);
+		setExpanded(inProgress);
+	}
 
 	const duration = elapsedSeconds(startedAtMs, inProgress ? now : completedAtMs);
 

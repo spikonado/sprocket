@@ -1,12 +1,11 @@
-use anyhow::Context;
 use serde::Deserialize;
 use serde::Deserializer;
 use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
 use super::store::TranscriptStore;
 use super::types::{
-    TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart,
-    TranscriptPartKind, TranscriptPromptBody, TranscriptState, TranscriptToolBody,
+    TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPart, TranscriptPartKind,
+    TranscriptPromptBody, TranscriptState, TranscriptToolBody,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -19,6 +18,23 @@ pub struct RemoteTranscriptState {
     pub history_from_number: u32,
     #[serde(default)]
     pub context_summary: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_convex_i64")]
+    pub reasoning_stripped_through_part_number: Option<i64>,
+}
+
+fn deserialize_optional_convex_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<f64>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(serde::de::Error::custom(format!(
+            "expected an integer-compatible Convex number, got {value}"
+        )));
+    }
+    Ok(Some(value as i64))
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -158,59 +174,20 @@ pub async fn apply_remote_state(
     remote: &RemoteTranscriptState,
     stale: bool,
 ) -> anyhow::Result<TranscriptState> {
+    anyhow::ensure!(
+        remote.thread_id == thread_id,
+        "transcript state belongs to another thread"
+    );
     store
         .update_state(user_id, thread_id, |state| {
             state.remote_total_parts = remote.total_parts;
             state.history_from_number = remote.history_from_number;
             state.context_summary = remote.context_summary.clone();
+            state.reasoning_stripped_through_part_number =
+                remote.reasoning_stripped_through_part_number;
             state.stale = stale;
         })
         .await
-}
-
-pub async fn fetch_parts_by_numbers<F, Fut>(
-    numbers: &[u32],
-    mut fetch: F,
-) -> anyhow::Result<Vec<TranscriptPart>>
-where
-    F: FnMut(Vec<u32>) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
-{
-    let mut fetched = Vec::new();
-    for chunk in numbers.chunks(TRANSCRIPT_CHUNK_SIZE as usize) {
-        fetched.extend(
-            fetch(chunk.to_vec())
-                .await
-                .context("fetch transcript parts")?,
-        );
-    }
-    Ok(fetched)
-}
-
-pub async fn fetch_missing_parts<F, Fut>(
-    store: &TranscriptStore,
-    user_id: &str,
-    thread_id: &str,
-    start: u32,
-    end_exclusive: u32,
-    mut fetch: F,
-) -> anyhow::Result<Vec<TranscriptPart>>
-where
-    F: FnMut(Vec<u32>) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
-{
-    let missing = store
-        .missing_numbers(user_id, thread_id, start, end_exclusive)
-        .await?;
-    let mut fetched = Vec::new();
-    for chunk in missing.chunks(TRANSCRIPT_CHUNK_SIZE as usize) {
-        let parts = fetch(chunk.to_vec())
-            .await
-            .context("fetch transcript parts")?;
-        store.append_parts(user_id, thread_id, &parts).await?;
-        fetched.extend(parts);
-    }
-    Ok(fetched)
 }
 
 pub fn parse_remote_parts(value: serde_json::Value) -> anyhow::Result<Vec<TranscriptPart>> {
@@ -218,56 +195,20 @@ pub fn parse_remote_parts(value: serde_json::Value) -> anyhow::Result<Vec<Transc
     parsed.parts.into_iter().map(to_local_part).collect()
 }
 
+pub fn parse_remote_page(
+    value: serde_json::Value,
+    thread_id: &str,
+) -> anyhow::Result<Vec<TranscriptPart>> {
+    anyhow::ensure!(
+        value.get("threadId").and_then(serde_json::Value::as_str) == Some(thread_id),
+        "transcript page belongs to another thread"
+    );
+    parse_remote_parts(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn prompt(number: u32) -> TranscriptPart {
-        TranscriptPart {
-            number,
-            source_key: format!("prompt:{number}"),
-            kind: TranscriptPartKind::Prompt,
-            run_id: format!("run-{number}"),
-            created_at: None,
-            prompt: Some(TranscriptPromptBody {
-                text: format!("{number}"),
-                image_uploads: Vec::new(),
-            }),
-            completion: None,
-            tool: None,
-            work: Default::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn fetches_only_missing_numbers() {
-        let dir = std::env::temp_dir().join(format!("sprocket-sync-{}", uuid::Uuid::new_v4()));
-        let store = TranscriptStore::new(dir.clone());
-        store
-            .append_parts("user", "thread", &[prompt(1)])
-            .await
-            .unwrap();
-        let fetched = fetch_missing_parts(&store, "user", "thread", 0, 3, |numbers| async move {
-            Ok(numbers.into_iter().map(prompt).collect())
-        })
-        .await
-        .unwrap();
-        assert_eq!(
-            fetched.iter().map(|part| part.number).collect::<Vec<_>>(),
-            vec![0, 2]
-        );
-        assert_eq!(
-            store
-                .read_parts("user", "thread", &[0, 1, 2])
-                .await
-                .unwrap()
-                .iter()
-                .map(|part| part.number)
-                .collect::<Vec<_>>(),
-            vec![0, 1, 2]
-        );
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
 
     #[test]
     fn parses_embedded_work_without_exposing_metadata_as_completion_content() {

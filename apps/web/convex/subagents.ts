@@ -1,5 +1,5 @@
 import { internal } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import {
 	internalMutation,
 	mutation,
@@ -10,7 +10,6 @@ import { paginationOptsValidator, paginationResultValidator } from 'convex/serve
 import { v, type Infer } from 'convex/values';
 import {
 	answerPendingQuestion,
-	cancelPendingQuestionsForThread,
 	questionContinuation,
 	toAgentQuestionSnapshot
 } from '@convex/agentQuestions';
@@ -24,15 +23,21 @@ import {
 	vTranscriptStateResult
 } from '@convex/lib/docs';
 import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreate';
-import { requestRunCancellation } from '@convex/runLifecycle';
+import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { getRunWithExecution } from '@convex/lib/runExecution';
+import { getRunWithExecution, latestRunForThread } from '@convex/lib/runExecution';
 import { transcriptStateResult } from '@convex/transcript';
-import { assertDescendantThreadAccess, listDirectChildrenPage } from '@convex/lib/threadHierarchy';
+import {
+	assertDescendantThreadAccess,
+	assertThreadTreeAcceptsWork,
+	listDirectChildrenPage
+} from '@convex/lib/threadHierarchy';
 import {
 	getPromptPart,
 	loadTranscriptPartsByNumbers,
+	loadTranscriptPartsPage,
+	stripLegacyAttachmentImageUploadIds,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 import {
@@ -113,14 +118,6 @@ export const recoverSubmission = mutation({
 	}
 });
 
-async function latestRunForThread(ctx: QueryCtx | MutationCtx, threadId: Id<'threadRecords'>) {
-	return await ctx.db
-		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
-		.order('desc')
-		.first();
-}
-
 async function submissionRun(
 	ctx: QueryCtx | MutationCtx,
 	caller: Doc<'runs'>,
@@ -141,6 +138,12 @@ async function requireLiveCallerRun(ctx: MutationCtx, args: Infer<typeof vCaller
 	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 		throw new Error('Run is no longer active.');
 	}
+
+	const thread = await ctx.db.get('threadRecords', run.threadId);
+
+	if (!thread) throw new Error('Thread not found.');
+
+	await assertThreadTreeAcceptsWork(ctx.db, thread);
 
 	return run;
 }
@@ -286,6 +289,10 @@ export const enforceTaskDeadline = internalMutation({
 			return null;
 		}
 
+		const thread = await ctx.db.get('threadRecords', run.threadId);
+
+		if (thread) await requestThreadTreeCancellation(ctx, thread);
+
 		await finalizeRunRecord(ctx, run, {
 			text: 'Task deadline exceeded.',
 			status: 'cancelled',
@@ -344,7 +351,7 @@ export const listChildren = mutation({
 
 			const page = await Promise.all(
 				result.page.map(async (child) => {
-					const latest = await latestRunForThread(ctx, child._id);
+					const latest = await latestRunForThread(ctx.db, child._id);
 
 					return {
 						threadId: child._id,
@@ -385,15 +392,9 @@ export const control = mutation({
 			const thread = await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 
 			if (args.action === 'stop') {
-				const latest = await latestRunForThread(ctx, thread._id);
+				const { stoppedRunId } = await requestThreadTreeCancellation(ctx, thread);
 
-				if (latest) {
-					await requestRunCancellation(ctx, latest);
-				} else {
-					await cancelPendingQuestionsForThread(ctx, thread._id);
-				}
-
-				return { stoppedRunId: latest?._id };
+				return { stoppedRunId };
 			}
 
 			if (!args.questionId) {
@@ -482,6 +483,28 @@ export const transcriptParts = mutation({
 	}
 });
 
+export const transcriptPartsPage = mutation({
+	args: vDescendantCaller.extend({
+		start: v.number(),
+		end: v.number(),
+		order: v.optional(v.union(v.literal('asc'), v.literal('desc')))
+	}).fields,
+	returns: vTranscriptPartsResult,
+	handler: async (ctx, args) => {
+		try {
+			const thread = await requireDescendantThread(ctx, args);
+
+			const parts = stripLegacyAttachmentImageUploadIds(
+				await loadTranscriptPartsPage(ctx, thread._id, args.start, args.end, args.order)
+			);
+
+			return { threadId: thread._id, parts };
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
 export const threadMonitorInfo = mutation({
 	args: vDescendantCaller.extend({ targetRunId: v.optional(v.id('runs')) }).fields,
 	returns: v.object({
@@ -498,7 +521,7 @@ export const threadMonitorInfo = mutation({
 
 			const latest = args.targetRunId
 				? await ctx.db.get('runs', args.targetRunId)
-				: await latestRunForThread(ctx, thread._id);
+				: await latestRunForThread(ctx.db, thread._id);
 
 			if (args.targetRunId && (!latest || latest.threadId !== thread._id)) {
 				throw new Error('Target run does not belong to the descendant thread.');

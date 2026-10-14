@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -59,6 +60,20 @@ pub async fn cache_attachment(
     thread_id: &str,
     attachment: &TranscriptAttachmentMeta,
 ) -> anyhow::Result<PathBuf> {
+    cache_attachment_with_url(store, user_id, thread_id, attachment, || async { Ok(None) }).await
+}
+
+async fn cache_attachment_with_url<F, Fut>(
+    store: &TranscriptStore,
+    user_id: &str,
+    thread_id: &str,
+    attachment: &TranscriptAttachmentMeta,
+    resolve: F,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = anyhow::Result<Option<String>>>,
+{
     let lock = store.lock_attachment(user_id, &attachment.storage_id).await;
     let _guard = lock.lock().await;
     let path = store.attachment_path(user_id, thread_id, attachment);
@@ -72,8 +87,11 @@ pub async fn cache_attachment(
         if tokio::fs::try_exists(&staged).await? {
             tokio::fs::copy(&staged, temp.path()).await?;
         } else {
-            let url = attachment.url.as_deref().ok_or(AttachmentUnavailable)?;
-            download_attachment_to_file(url, temp.path(), attachment.size)
+            let url = match &attachment.url {
+                Some(url) => url.clone(),
+                None => resolve().await?.ok_or(AttachmentUnavailable)?,
+            };
+            download_attachment_to_file(&url, temp.path(), attachment.size)
                 .await
                 .with_context(|| format!("failed to retrieve attachment {}", attachment.name))?;
         }
@@ -98,19 +116,29 @@ pub async fn cache_attachment(
     Ok(tokio::fs::canonicalize(path).await?)
 }
 
-pub(crate) async fn cache_prompt_attachments(
+pub(crate) async fn cache_prompt_attachments<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
     thread_id: &str,
     parts: &mut [TranscriptPart],
-) -> anyhow::Result<()> {
+    mut resolve: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(u32, String) -> Fut,
+    Fut: Future<Output = anyhow::Result<Option<String>>>,
+{
     for part in parts {
+        let number = part.number;
         let Some(prompt) = &mut part.prompt else {
             continue;
         };
         for attachment in &mut prompt.image_uploads {
             attachment.local_path =
-                match cache_attachment(store, user_id, thread_id, attachment).await {
+                match cache_attachment_with_url(store, user_id, thread_id, attachment, || {
+                    resolve(number, attachment.storage_id.clone())
+                })
+                .await
+                {
                     Ok(path) => Some(path.to_string_lossy().into_owned()),
                     Err(error) if error.is::<AttachmentUnavailable>() => None,
                     Err(error) => return Err(error),
@@ -124,6 +152,8 @@ pub(crate) async fn cache_prompt_attachments(
 mod tests {
     use super::*;
     use crate::transcript::types::{TranscriptPartKind, TranscriptPromptBody};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::AsyncReadExt;
 
     fn attachment(id: &str, size: u64) -> TranscriptAttachmentMeta {
         TranscriptAttachmentMeta {
@@ -134,6 +164,302 @@ mod tests {
             url: None,
             local_path: None,
         }
+    }
+
+    fn prompt_part(number: u32, attachments: Vec<TranscriptAttachmentMeta>) -> TranscriptPart {
+        TranscriptPart {
+            number,
+            source_key: format!("prompt:{number}"),
+            kind: TranscriptPartKind::Prompt,
+            run_id: "run".into(),
+            created_at: None,
+            prompt: Some(TranscriptPromptBody {
+                text: "Continue".into(),
+                image_uploads: attachments,
+            }),
+            completion: None,
+            tool: None,
+            work: Default::default(),
+        }
+    }
+
+    async fn serve(status: u16, body: &str) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/attachment", listener.local_addr().unwrap());
+        let response = format!(
+            "HTTP/1.1 {status} Result\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).await.unwrap();
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        (url, server)
+    }
+
+    #[tokio::test]
+    async fn cached_attachments_skip_url_resolution_and_keep_canonical_paths_and_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let mut attachments = Vec::new();
+        for (id, url) in [("no-url", None), ("stale-url", Some("invalid-stale-url"))] {
+            let mut meta = attachment(id, 4);
+            meta.url = url.map(str::to_owned);
+            meta.local_path = Some("stale-local-path".into());
+            let path = store.attachment_path("user", "thread", &meta);
+            tokio::fs::create_dir_all(path.parent().unwrap())
+                .await
+                .unwrap();
+            tokio::fs::write(path, b"data").await.unwrap();
+            attachments.push(meta);
+        }
+        let mut parts = vec![prompt_part(7, attachments)];
+        let mut calls = 0;
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+            calls += 1;
+            async { anyhow::bail!("resolver must not be called") }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 0);
+        for meta in &parts[0].prompt.as_ref().unwrap().image_uploads {
+            let path = tokio::fs::canonicalize(store.attachment_path("user", "thread", meta))
+                .await
+                .unwrap();
+            assert_eq!(meta.local_path.as_deref(), path.to_str());
+            assert_eq!(tokio::fs::read(path).await.unwrap(), b"data");
+            let mut expected = meta.clone();
+            expected.url = None;
+            expected.local_path = None;
+            assert_eq!(
+                store
+                    .attachment_metadata("user", "thread", &meta.storage_id)
+                    .await
+                    .unwrap(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn staged_attachments_skip_url_resolution_and_publish_local_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let mut attachments = Vec::new();
+        for (id, url) in [("no-url", None), ("stale-url", Some("invalid-stale-url"))] {
+            let mut meta = attachment(id, 4);
+            meta.url = url.map(str::to_owned);
+            let staged = store.pending_attachment_path("user", &meta.storage_id);
+            tokio::fs::create_dir_all(staged.parent().unwrap())
+                .await
+                .unwrap();
+            tokio::fs::write(staged, b"data").await.unwrap();
+            attachments.push(meta);
+        }
+        let mut parts = vec![prompt_part(7, attachments)];
+        let mut calls = 0;
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+            calls += 1;
+            async { anyhow::bail!("resolver must not be called") }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 0);
+        for meta in &parts[0].prompt.as_ref().unwrap().image_uploads {
+            let path = tokio::fs::canonicalize(store.attachment_path("user", "thread", meta))
+                .await
+                .unwrap();
+            assert_eq!(meta.local_path.as_deref(), path.to_str());
+            assert_eq!(tokio::fs::read(path).await.unwrap(), b"data");
+            assert!(
+                !store
+                    .pending_attachment_path("user", &meta.storage_id)
+                    .exists()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn attachment_free_history_skips_url_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let mut non_prompt = prompt_part(8, Vec::new());
+        non_prompt.kind = TranscriptPartKind::Completion;
+        non_prompt.prompt = None;
+        let mut calls = 0;
+        for mut parts in [Vec::new(), vec![prompt_part(7, Vec::new()), non_prompt]] {
+            cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+                calls += 1;
+                async { anyhow::bail!("resolver must not be called") }
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(calls, 0);
+    }
+
+    #[tokio::test]
+    async fn existing_attachment_urls_download_without_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let (url, server) = serve(200, "data").await;
+        let mut meta = attachment("existing-url", 4);
+        meta.url = Some(url);
+        let mut parts = vec![prompt_part(7, vec![meta])];
+        let mut calls = 0;
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+            calls += 1;
+            async { anyhow::bail!("resolver must not be called") }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 0);
+        let meta = &parts[0].prompt.as_ref().unwrap().image_uploads[0];
+        assert_eq!(
+            tokio::fs::read(meta.local_path.as_ref().unwrap())
+                .await
+                .unwrap(),
+            b"data"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_caching_resolves_url_once_after_rechecking_local_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let (url, server) = serve(200, "data").await;
+        let mut first = vec![prompt_part(7, vec![attachment("concurrent", 4)])];
+        let mut second = first.clone();
+        let calls = AtomicUsize::new(0);
+        let resolve = |number, storage_id: String| {
+            assert_eq!(number, 7);
+            assert_eq!(storage_id, "storage-concurrent");
+            calls.fetch_add(1, Ordering::SeqCst);
+            let url = url.clone();
+            async move {
+                tokio::task::yield_now().await;
+                Ok(Some(url))
+            }
+        };
+        let (first_result, second_result) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::join!(
+                    cache_prompt_attachments(&store, "user", "thread", &mut first, resolve),
+                    cache_prompt_attachments(&store, "user", "thread", &mut second, resolve)
+                )
+            })
+            .await
+            .unwrap();
+        first_result.unwrap();
+        second_result.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(first, second);
+        let meta = &first[0].prompt.as_ref().unwrap().image_uploads[0];
+        assert_eq!(
+            tokio::fs::read(meta.local_path.as_ref().unwrap())
+                .await
+                .unwrap(),
+            b"data"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unresolved_remote_copy_clears_local_path_without_blocking_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let mut meta = attachment("missing", 4);
+        meta.local_path = Some("stale-local-path".into());
+        let path = store.attachment_path("user", "thread", &meta);
+        let mut parts = vec![prompt_part(7, vec![meta])];
+        let mut calls = 0;
+        cache_prompt_attachments(
+            &store,
+            "user",
+            "thread",
+            &mut parts,
+            |number, storage_id| {
+                assert_eq!(number, 7);
+                assert_eq!(storage_id, "storage-missing");
+                calls += 1;
+                async { Ok(None) }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert!(
+            parts[0].prompt.as_ref().unwrap().image_uploads[0]
+                .local_path
+                .is_none()
+        );
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn missing_or_expired_resolved_urls_leave_attachments_unavailable() {
+        for status in [404, 410] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = TranscriptStore::new(dir.path().into());
+            let (url, server) = serve(status, "").await;
+            let meta = attachment("expired", 4);
+            let path = store.attachment_path("user", "thread", &meta);
+            let mut parts = vec![prompt_part(7, vec![meta])];
+            cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+                let url = url.clone();
+                async move { Ok(Some(url)) }
+            })
+            .await
+            .unwrap();
+            assert!(
+                parts[0].prompt.as_ref().unwrap().image_uploads[0]
+                    .local_path
+                    .is_none()
+            );
+            assert!(!path.exists());
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn resolver_errors_propagate_without_publishing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let meta = attachment("resolver-error", 4);
+        let path = store.attachment_path("user", "thread", &meta);
+        let mut parts = vec![prompt_part(7, vec![meta])];
+        let error = cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
+            anyhow::bail!("URL lookup failed")
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "URL lookup failed");
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn resolved_download_errors_propagate_without_publishing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let (url, server) = serve(503, "").await;
+        let meta = attachment("download-error", 4);
+        let path = store.attachment_path("user", "thread", &meta);
+        let mut parts = vec![prompt_part(7, vec![meta])];
+        let error = cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| {
+            let url = url.clone();
+            async move { Ok(Some(url)) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<reqwest::Error>().unwrap().status(),
+            Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+        );
+        assert!(!path.exists());
+        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -291,9 +617,11 @@ mod tests {
             tool: None,
             work: Default::default(),
         }];
-        cache_prompt_attachments(&store, "user", "thread", &mut parts)
-            .await
-            .unwrap();
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
+            Ok(None)
+        })
+        .await
+        .unwrap();
         let prompt = parts[0].prompt.as_ref().unwrap();
         for meta in &prompt.image_uploads {
             let path = Path::new(meta.local_path.as_ref().unwrap());
@@ -429,9 +757,11 @@ mod tests {
             tool: None,
             work: Default::default(),
         }];
-        cache_prompt_attachments(&store, "user", "thread", &mut parts)
-            .await
-            .unwrap();
+        cache_prompt_attachments(&store, "user", "thread", &mut parts, |_, _| async {
+            Ok(None)
+        })
+        .await
+        .unwrap();
         let prompt = parts[0].prompt.as_ref().unwrap();
         assert!(prompt.image_uploads[0].local_path.is_some());
         assert!(prompt.image_uploads[1].local_path.is_none());

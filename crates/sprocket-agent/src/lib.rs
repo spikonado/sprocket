@@ -12,6 +12,7 @@ mod output;
 mod provider;
 mod reasoning;
 mod run;
+mod stream_recovery;
 pub mod subagents;
 mod submission;
 mod tools;
@@ -29,9 +30,9 @@ pub use sprocket_convex::AuthTokenFetcher;
 pub use transcript::WorkReplica;
 pub use transcript::sections;
 pub use transcript::{
-    RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptAttachmentMeta,
-    TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptStore, apply_remote_state,
-    fetch_missing_parts, parse_remote_parts,
+    DownloadOrder, RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE,
+    TranscriptAttachmentMeta, TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptStore,
+    apply_remote_state, parse_remote_page, parse_remote_parts,
 };
 pub use types::CompletionProvider;
 pub use types::RunAgentRequest;

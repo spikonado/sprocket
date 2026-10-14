@@ -96,6 +96,7 @@ type InboxSidebarProps = {
 	onClose: () => void;
 	onChange: (thread: Thread, state: InboxState) => Promise<void>;
 	onRename: (thread: Thread, title: string) => Promise<void>;
+	onRegenerateTitle: (thread: Thread) => Promise<void>;
 	expansion: UseExpandedThreads;
 	resolveChildren: SidebarChildrenResolver;
 	readTreeSummary?: ThreadTreeSummaryRead;
@@ -120,6 +121,7 @@ export default function InboxSidebar({
 	onClose,
 	onChange,
 	onRename,
+	onRegenerateTitle,
 	expansion,
 	resolveChildren,
 	readTreeSummary = useThreadTreeSummary
@@ -274,6 +276,23 @@ export default function InboxSidebar({
 			await onRename(thread, title);
 		} catch (error) {
 			setNotice(error instanceof Error ? error.message : 'Could not rename thread.');
+		}
+	}
+
+	async function regenerateTitle(thread: Thread) {
+		if (!mutationsEnabled || busyRef.current) return;
+		closeMenu();
+		busyRef.current = true;
+		setBusy(true);
+		setNotice(null);
+
+		try {
+			await onRegenerateTitle(thread);
+		} catch (error) {
+			setNotice(error instanceof Error ? error.message : 'Could not regenerate thread title.');
+		} finally {
+			busyRef.current = false;
+			setBusy(false);
 		}
 	}
 
@@ -620,6 +639,15 @@ export default function InboxSidebar({
 						>
 							<SquarePen size={14} />
 							Rename
+						</button>
+						<button
+							type="button"
+							role="menuitem"
+							disabled={!mutationsEnabled || busy}
+							onClick={() => void regenerateTitle(menuThread)}
+						>
+							<RotateCcw size={14} />
+							Regenerate thread title
 						</button>
 						<button
 							type="button"

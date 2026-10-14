@@ -31,6 +31,7 @@ function page(rows: TranscriptDisplayRow[], nextBefore?: number): TranscriptDisp
 		rows,
 		nextBefore,
 		indexing: false,
+		syncing: false,
 		stale: false,
 		endSequence: 100,
 		revision: 100,
@@ -42,6 +43,103 @@ function page(rows: TranscriptDisplayRow[], nextBefore?: number): TranscriptDisp
 }
 
 describe('DisplayHistory', () => {
+	it('shows downloaded rows immediately and polls until background sync finishes', async () => {
+		vi.useFakeTimers();
+
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ...page([row(40)], 40), syncing: true })
+			.mockResolvedValueOnce(page([row(1), row(40)]));
+
+		const history = new DisplayHistory(fetch, () => {});
+
+		try {
+			await history.refresh();
+			expect(history.messages.map((message) => message.sequence)).toEqual([40]);
+			expect(history.loading).toBe(false);
+			expect(history.syncing).toBe(true);
+			expect(history.nextBefore).toBe(40);
+			await vi.advanceTimersByTimeAsync(500);
+			expect(history.messages.map((message) => message.sequence)).toEqual([1, 40]);
+			expect(history.syncing).toBe(false);
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(fetch).toHaveBeenCalledTimes(2);
+		} finally {
+			history.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it('hands off a downloaded live stream while another stream and older history are missing', async () => {
+		const live: LiveCompletionOverlay = {
+			threadId: row(0).threadId,
+			runId: row(0).runId,
+			streamId: 'live',
+			runStatus: 'running',
+			runStartedAt: 1,
+			text: 'Answer',
+			parts: []
+		};
+
+		const answer = { ...row(40), kind: 'text' as const, text: 'Answer' };
+		const fetch = vi.fn().mockResolvedValue({ ...page([row(20)], 20), syncing: true });
+		const history = new DisplayHistory(fetch, () => {});
+		const pending = { ...live, streamId: 'pending' };
+		history.setOverlays([live, pending]);
+		await vi.waitFor(() => expect(history.loading).toBe(false));
+		expect(history.messages.map((message) => message.sequence)).toEqual([20]);
+		expect(history.visibleOverlays([live])).toEqual([]);
+		fetch.mockResolvedValue({
+			...page([row(20), answer], 20),
+			syncing: true,
+			persistedStreams: [{ runId: live.runId, streamId: live.streamId }]
+		});
+		await history.refresh();
+		expect(history.messages.map((message) => message.text).filter(Boolean)).toEqual(['Answer']);
+		expect(history.unpersisted([live])).toEqual([]);
+		expect(history.unpersisted([pending])).toEqual([pending]);
+		expect(history.visibleOverlays([pending])).toEqual([]);
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(history.syncing).toBe(true);
+		history.stop();
+	});
+
+	it('moves an existing section to its earlier position as older parts arrive', async () => {
+		const original = row(40);
+		const expanded = { ...original, sequence: 10, itemCount: 5_000, revision: 101 };
+
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ...page([original, row(50)], 40), syncing: true })
+			.mockResolvedValueOnce({
+				...page([row(50)], 50),
+				revision: 101,
+				changes: [{ id: expanded.id, row: expanded }]
+			});
+
+		const history = new DisplayHistory(fetch, () => {});
+		await history.refresh();
+		await history.refresh();
+		expect(history.messages).toEqual([expanded, row(50)]);
+		history.stop();
+	});
+
+	it('merges an older page that expands a section already shown in the recent page', async () => {
+		const original = row(40);
+		const expanded = { ...original, sequence: 10, itemCount: 5_000, revision: 101 };
+
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ...page([original, row(50)], 40), syncing: true })
+			.mockResolvedValueOnce({ ...page([expanded]), revision: 101 });
+
+		const history = new DisplayHistory(fetch, () => {});
+		await history.refresh();
+		await history.loadOlder();
+		expect(history.messages).toEqual([expanded, row(50)]);
+		history.stop();
+	});
+
 	it('checks overlays that arrive during an in-flight history request', async () => {
 		const live: LiveCompletionOverlay = {
 			threadId: row(0).threadId,

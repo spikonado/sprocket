@@ -13,6 +13,8 @@ import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import {
 	getTranscriptState,
 	loadTranscriptPartsByNumbers,
+	loadTranscriptPartsPage,
+	stripLegacyAttachmentImageUploadIds,
 	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
@@ -27,7 +29,8 @@ export async function transcriptStateResult(
 		threadId,
 		totalParts: state?.totalParts ?? 0,
 		historyFromNumber: transcriptHistoryFromNumber(thread),
-		contextSummary: thread?.contextSummary || undefined
+		contextSummary: thread?.contextSummary || undefined,
+		reasoningStrippedThroughPartNumber: thread?.reasoningStrippedThroughPartNumber
 	};
 }
 
@@ -55,6 +58,25 @@ export const getParts = query({
 		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
+		);
+
+		return { threadId: args.threadId, parts };
+	}
+});
+
+export const getPartsPage = query({
+	args: {
+		threadId: v.id('threadRecords'),
+		start: v.number(),
+		end: v.number(),
+		order: v.optional(v.union(v.literal('asc'), v.literal('desc')))
+	},
+	returns: vTranscriptPartsResult,
+	handler: async (ctx, args) => {
+		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), args.threadId);
+
+		const parts = stripLegacyAttachmentImageUploadIds(
+			await loadTranscriptPartsPage(ctx, args.threadId, args.start, args.end, args.order)
 		);
 
 		return { threadId: args.threadId, parts };
@@ -91,6 +113,60 @@ export const getPartsForRun = query({
 		);
 
 		return { threadId: run.threadId, parts };
+	}
+});
+
+export const getPartsPageForRun = query({
+	args: {
+		runId: v.id('runs'),
+		executionSecret: v.string(),
+		start: v.number(),
+		end: v.number(),
+		order: v.optional(v.union(v.literal('asc'), v.literal('desc')))
+	},
+	returns: vTranscriptPartsResult,
+	handler: async (ctx, args) => {
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
+		const parts = stripLegacyAttachmentImageUploadIds(
+			await loadTranscriptPartsPage(ctx, run.threadId, args.start, args.end, args.order)
+		);
+
+		return { threadId: run.threadId, parts };
+	}
+});
+
+export const attachmentUrlForRun = query({
+	args: {
+		runId: v.id('runs'),
+		executionSecret: v.string(),
+		partNumber: v.number(),
+		storageId: v.id('_storage')
+	},
+	returns: v.union(v.string(), v.null()),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
+
+		if (!Number.isSafeInteger(args.partNumber) || args.partNumber < 0) {
+			throw new Error('Invalid transcript part number.');
+		}
+
+		const part = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_number', (query) =>
+				query.eq('threadId', run.threadId).eq('number', args.partNumber)
+			)
+			.unique();
+
+		if (part?.kind !== 'prompt' || !part.prompt) {
+			throw new Error('Transcript prompt part not found.');
+		}
+
+		if (!part.prompt.imageUploads.some((upload) => upload.storageId === args.storageId)) {
+			throw new Error('Attachment not found in transcript part.');
+		}
+
+		return await ctx.storage.getUrl(args.storageId);
 	}
 });
 
