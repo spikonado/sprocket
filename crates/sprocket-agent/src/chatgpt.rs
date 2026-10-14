@@ -868,6 +868,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn siwc_recovers_a_truncated_turn_without_repeating_committed_tools() {
+        let tool = |id: &str| {
+            json!({
+                "type": "function_call", "id": format!("fc_{id}"), "call_id": id,
+                "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}",
+                "status": "completed",
+            })
+        };
+        let partial = siwc_output_sse("resp-partial", vec![tool("call_partial")]);
+        let partial = partial
+            .lines()
+            .filter(|line| !line.contains("response.completed"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n\n";
+        let (endpoint, server) = spawn_siwc_sse(vec![
+            siwc_output_sse("resp-tool", vec![tool("call_committed")]),
+            partial,
+            siwc_output_sse(
+                "resp-final",
+                vec![json!({
+                    "type": "message", "id": "msg_final", "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "The workspace is /workspace."}],
+                })],
+            ),
+        ])
+        .await;
+        let (credentials, client) = stub_client("connection-1");
+        let model = Model::new(
+            StatelessResponses(openai::responses_api::wire::Responses::new(
+                openai::OpenAIConfig::new("siwc-managed-by-transport"),
+                "gpt-6.1-sol",
+            )),
+            SiwcHttpClient {
+                inner: reqwest::Client::builder().no_proxy().build().unwrap(),
+                authorization: Some((credentials, Arc::clone(&client.connection))),
+                test_endpoint: Some(endpoint),
+            },
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool_calls = Arc::clone(&calls);
+        let agent = rig::AgentBuilder::new(model)
+            .dynamic_tool(rig::tool::DynamicTool::new(
+                "exec_command",
+                "Read the workspace path",
+                json!({"type": "object", "properties": {"cmd": {"type": "string"}}}),
+                move |_| {
+                    let calls = Arc::clone(&tool_calls);
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(rig::tool::ToolOutput::text("/workspace"))
+                    })
+                },
+            ))
+            .build();
+        let mut recovery = crate::stream_recovery::StreamRecovery::default();
+        let mut history = vec![];
+        let mut prompt = Message::user("Where is the workspace?");
+        let answer = 'attempts: loop {
+            let mut stream = agent
+                .prompt(prompt)
+                .history(history)
+                .add_hook(recovery.clone())
+                .stream();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
+                        break 'attempts response.output().to_string();
+                    }
+                    Err(error) => {
+                        let (next_history, next_prompt, _) = recovery
+                            .resume(&error)
+                            .expect("truncated turn is recoverable");
+                        drop(stream);
+                        history = next_history;
+                        prompt = next_prompt;
+                        continue 'attempts;
+                    }
+                    _ => {}
+                }
+            }
+            panic!("stream ended without a final response");
+        };
+        assert_eq!(answer, "The workspace is /workspace.");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1].body["input"], requests[2].body["input"]);
+        assert!(
+            requests[2].body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| {
+                    item["type"] == "function_call_output" && item["call_id"] == "call_committed"
+                })
+        );
+    }
+
+    #[tokio::test]
     async fn siwc_http_replays_reloaded_reasoning_and_tool_result_on_the_second_turn() {
         const ENVELOPE: &str = "  encrypted+state/=\n  ";
         let (endpoint, server) = spawn_siwc_sse(vec![
