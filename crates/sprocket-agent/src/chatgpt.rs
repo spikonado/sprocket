@@ -606,7 +606,7 @@ mod tests {
 
     use futures::future::BoxFuture;
     use rig::completion::Message;
-    use rig::message::{AssistantContent, Reasoning, ReasoningContent};
+    use rig::message::{AssistantContent, AssistantMessage, Reasoning, ToolName};
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -912,7 +912,7 @@ mod tests {
         let tool_calls = Arc::clone(&calls);
         let agent = rig::AgentBuilder::new(model)
             .dynamic_tool(rig::tool::DynamicTool::new(
-                "exec_command",
+                ToolName::new("exec_command").unwrap(),
                 "Read the workspace path",
                 json!({"type": "object", "properties": {"cmd": {"type": "string"}}}),
                 move |_| {
@@ -1033,7 +1033,7 @@ mod tests {
             .finish()
             .await
             .expect("headerless SIWC tool turn completes");
-        assert_eq!(first.response_id.as_deref(), Some("resp-siwc-0"));
+        assert_eq!(first.origin.response_id.as_deref(), Some("resp-siwc-0"));
         assert_eq!(first.provider_request_id.as_deref(), Some("req-siwc-0"));
         assert_eq!(
             first.finish_reason(),
@@ -1043,17 +1043,20 @@ mod tests {
         let AssistantContent::Reasoning(reasoning) = &first.choice[0] else {
             panic!("first turn must contain parsed reasoning");
         };
-        let opened_reasoning = reasoning.open(reasoning.issuer()).unwrap();
-        assert_eq!(opened_reasoning.id.as_deref(), Some("rs_1"));
-        assert_eq!(opened_reasoning.encrypted_content(), Some(ENVELOPE));
+        let native_reasoning = reasoning.native.as_ref().unwrap();
+        assert_eq!(native_reasoning.item["id"], "rs_1");
+        assert_eq!(
+            crate::reasoning::opaque_reasoning_blob(reasoning),
+            Some(ENVELOPE)
+        );
         let AssistantContent::ToolCall(call) = &first.choice[1] else {
             panic!("first turn must contain a parsed tool call");
         };
-        let provider_id = call.id.provider().unwrap();
-        assert_eq!(provider_id.item_id.as_deref(), Some("fc_1"));
+        let native_call = call.native.as_ref().unwrap();
+        assert_eq!(native_call.item["id"], "fc_1");
         assert_eq!(call.id.wire(), "call_1");
         assert_eq!(call.function.name, "exec_command");
-        assert_eq!(call.function.arguments, json!({"cmd": "pwd"}));
+        assert_eq!(call.function.arguments_value(), json!({"cmd": "pwd"}));
 
         let parts: Vec<TranscriptPart> = serde_json::from_value(json!([
             {
@@ -1062,13 +1065,14 @@ mod tests {
                     {
                         "type": "reasoning", "text": reasoning_summary_text(reasoning),
                         "providerMetadata": openai_reasoning_metadata(
-                            opened_reasoning.id.as_deref(), opened_reasoning.encrypted_content(),
+                            native_reasoning.item["id"].as_str(),
+                            crate::reasoning::opaque_reasoning_blob(reasoning),
                         ),
                     },
                     {
                         "type": "tool-call", "callId": call.id.wire(),
                         "name": call.function.name, "input": call.function.arguments,
-                        "providerMetadata": {"openai": {"itemId": provider_id.item_id}},
+                        "providerMetadata": {"openai": {"itemId": native_call.item["id"]}},
                     },
                 ]},
             },
@@ -1092,14 +1096,20 @@ mod tests {
         let state = reloaded_store.load_state("user", "thread").await.unwrap();
         let reloaded = agent_history_from_parts(&state, &parts, None);
         let mut history = vec![Message::user("Where is the workspace?")];
-        history.extend(deserialize_agent_history(reloaded).expect("reload SIWC history"));
+        let mut reloaded = deserialize_agent_history(reloaded).expect("reload SIWC history");
+        for message in &mut reloaded {
+            if let Message::Assistant(turn) = message {
+                turn.origin = Some(first.origin.clone());
+            }
+        }
+        history.extend(reloaded);
         let second = model
             .stream(request(history))
             .unwrap()
             .finish()
             .await
             .expect("replayed SIWC turn completes");
-        assert_eq!(second.response_id.as_deref(), Some("resp-siwc-1"));
+        assert_eq!(second.origin.response_id.as_deref(), Some("resp-siwc-1"));
         assert_eq!(second.provider_request_id.as_deref(), Some("req-siwc-1"));
         assert_eq!(
             second.finish_reason(),
@@ -1284,7 +1294,7 @@ mod tests {
             "data: [DONE]\n\n",
             "data: {not json}\n\n",
             "event: response.completed\n\n",
-            "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+            "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_truncated\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
         ] {
             let error =
                 first_stream_error(stub_model(http::StatusCode::OK, body.to_string())).await;
@@ -1520,29 +1530,23 @@ mod tests {
         chat_history: Vec<Message>,
         additional_params: serde_json::Value,
     ) -> CompletionRequest {
-        CompletionRequest {
-            model: None,
-            chat_history,
-            documents: Vec::new(),
-            tools: vec![rig::completion::ToolDefinition {
-                name: "exec_command".to_string(),
+        let mut request = CompletionRequest::new("unused");
+        request.chat_history = chat_history;
+        request
+            .tools(vec![rig::completion::ToolDefinition {
+                name: ToolName::new("exec_command").unwrap(),
                 description: "Run a command".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {"cmd": {"type": "string"}}
                 }),
-            }],
-            temperature: Some(0.7),
-            max_tokens: Some(1024),
-            tool_choice: None,
-            additional_params: Some(additional_params),
-            output_schema: None,
-            record_telemetry_content: false,
-        }
+            }])
+            .max_tokens(1024)
+            .additional_params(additional_params)
     }
 
     fn test_request(chat_history: Vec<Message>) -> CompletionRequest {
-        completion_request(chat_history, json!({"reasoning": {"effort": "high"}}))
+        completion_request(chat_history, json!({})).reasoning(rig::completion::Effort::High)
     }
 
     fn wire_body(request: CompletionRequest) -> serde_json::Value {
@@ -1608,19 +1612,20 @@ mod tests {
 
     #[test]
     fn siwc_body_drops_reasoning_items_without_encrypted_state() {
-        let mut request = test_request(vec![Message::Assistant {
-            id: None,
-            content: vec![
-                AssistantContent::Reasoning(
-                    Reasoning {
-                        id: Some("rs_summary_only".to_string()),
-                        content: vec![ReasoningContent::Summary("summary only".to_string())],
-                    }
-                    .sealed("openai"),
-                ),
+        let mut request = test_request(vec![Message::Assistant(
+            AssistantMessage::new(vec![
+                AssistantContent::Reasoning(Reasoning::new("summary only")).with_native(json!({
+                    "type": "reasoning", "id": "rs_summary_only",
+                    "summary": [{"type": "summary_text", "text": "summary only"}],
+                })),
                 AssistantContent::text("answer"),
-            ],
-        }]);
+            ])
+            .with_origin(rig::message::Origin::new(
+                rig::message::Api::from_static("openai.responses"),
+                "openai",
+                "gpt-5.3-codex",
+            )),
+        )]);
         request.chat_history.push(Message::user("next"));
         let body = shaped_body(request);
         let input = body["input"].as_array().unwrap();

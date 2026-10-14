@@ -10,8 +10,8 @@ use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::completion::{Message, PromptError};
 use rig::message::{
-    AssistantContent, CallId, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolName,
-    ToolResult, ToolResultContent, UserContent,
+    AssistantContent, AssistantMessage, CallId, Origin, Reasoning, ToolCall, ToolFunction,
+    ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
@@ -47,6 +47,16 @@ enum DriveEnd {
 
 fn sse(event: JsonValue) -> String {
     format!("data: {event}\n\n")
+}
+
+fn native_reasoning(id: &str, summary: &str, encrypted: &str) -> AssistantContent {
+    AssistantContent::Reasoning(Reasoning::new(summary)).with_native(json!({
+        "type": "reasoning",
+        "id": id,
+        "summary": [{ "type": "summary_text", "text": summary }],
+        "encrypted_content": encrypted,
+        "status": "completed",
+    }))
 }
 
 fn response_json(
@@ -351,7 +361,7 @@ fn spawn_responses_sse(bodies: Vec<String>) -> (String, thread::JoinHandle<Vec<V
 
 fn stub_tool() -> DynamicTool {
     DynamicTool::new(
-        "exec_cmd",
+        ToolName::new("exec_cmd").expect("fixture tool name"),
         "stub exec_cmd",
         json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
         |_args| Box::pin(async { Ok(ToolOutput::text(TOOL_RESULT)) }),
@@ -443,11 +453,11 @@ fn message_contains(message: &Message, needle: &str) -> bool {
             }),
             _ => false,
         }),
-        Message::Assistant { content, .. } => content.iter().any(|part| match part {
+        Message::Assistant(turn) => turn.content.iter().any(|part| match part {
             AssistantContent::Text(text) => text.text.contains(needle),
             AssistantContent::ToolCall(call) => {
-                call.function.name.contains(needle)
-                    || call.function.arguments.to_string().contains(needle)
+                call.function.name.as_str().contains(needle)
+                    || call.function.arguments_value().to_string().contains(needle)
             }
             _ => false,
         }),
@@ -582,7 +592,7 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
             match item {
                 Ok(MultiTurnStreamItem::CompletionCall(_)) => completion_calls += 1,
                 Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. })
-                | Ok(MultiTurnStreamItem::StreamUserItem(_))
+                | Ok(MultiTurnStreamItem::ToolResult { .. })
                 | Ok(MultiTurnStreamItem::FinalResponse(_)) => {
                     panic!(
                         "an accepted handoff must stop before committing or emitting its result"
@@ -635,35 +645,31 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let history = vec![
         initial_context.clone(),
         Message::user(OLD_CONTEXT),
-        Message::Assistant {
-            id: None,
-            content: vec![
-                AssistantContent::Reasoning(
-                    Reasoning {
-                        id: Some("rs_old_provider".to_string()),
-                        content: vec![
-                            ReasoningContent::Summary(REASONING_SUMMARY.to_string()),
-                            ReasoningContent::Encrypted(ENCRYPTED_REASONING.to_string()),
-                        ],
-                    }
-                    .sealed("openai"),
-                ),
+        Message::Assistant(
+            AssistantMessage::new(vec![
+                native_reasoning("rs_old_provider", REASONING_SUMMARY, ENCRYPTED_REASONING),
                 AssistantContent::ToolCall(ToolCall {
                     id: CallId::from_wire(OLD_CALL_ID),
-                    function: ToolFunction {
-                        name: ToolName::new("exec_cmd").expect("fixture tool name"),
-                        arguments: json!({ "cmd": "pwd" }),
-                    },
-                    signature: None,
-                    additional_params: None,
-                }),
-            ],
-        },
+                    function: ToolFunction::new(
+                        ToolName::new("exec_cmd").expect("fixture tool name"),
+                        json!({ "cmd": "pwd" }),
+                    ),
+                    native: None,
+                })
+                .with_native(function_call_item(
+                    OLD_CALL_ID,
+                    "exec_cmd",
+                    "{\"cmd\":\"pwd\"}",
+                )),
+            ])
+            .with_origin(Origin::new("openai.responses", "openai", MODEL)),
+        ),
         Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire(OLD_CALL_ID),
                 name: ToolName::new("exec_cmd").expect("fixture tool name"),
                 content: vec![ToolResultContent::text(TOOL_RESULT)],
+                is_error: false,
             })],
         },
         Message::assistant(OLD_ASSISTANT_TEXT),
@@ -774,39 +780,36 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     let history = vec![
         Message::user(INITIAL_CONTEXT),
         Message::user(OLD_CONTEXT),
-        Message::Assistant {
-            id: None,
-            content: vec![
-                AssistantContent::Reasoning(
-                    Reasoning {
-                        id: Some("rs_old_provider".to_string()),
-                        content: vec![
-                            ReasoningContent::Summary(REASONING_SUMMARY.to_string()),
-                            ReasoningContent::Encrypted(ENCRYPTED_REASONING.to_string()),
-                        ],
-                    }
-                    .sealed("openai"),
-                ),
-                AssistantContent::Text(rig::message::Text {
-                    text: OLD_ASSISTANT_TEXT.to_string(),
-                    additional_params: None,
-                }),
+        Message::Assistant(
+            AssistantMessage::new(vec![
+                native_reasoning("rs_old_provider", REASONING_SUMMARY, ENCRYPTED_REASONING),
+                AssistantContent::text(OLD_ASSISTANT_TEXT),
                 AssistantContent::ToolCall(ToolCall {
                     id: CallId::from_wire(OLD_CALL_ID),
-                    function: ToolFunction {
-                        name: ToolName::new("exec_cmd").expect("fixture tool name"),
-                        arguments: json!({ "cmd": "pwd" }),
-                    },
-                    signature: Some(THOUGHT_SIGNATURE.to_string()),
-                    additional_params: None,
-                }),
-            ],
-        },
+                    function: ToolFunction::new(
+                        ToolName::new("exec_cmd").expect("fixture tool name"),
+                        json!({ "cmd": "pwd" }),
+                    ),
+                    native: None,
+                })
+                .with_native(json!({
+                    "type": "function_call",
+                    "id": "fc_old_provider",
+                    "call_id": OLD_CALL_ID,
+                    "name": "exec_cmd",
+                    "arguments": "{\"cmd\":\"pwd\"}",
+                    "status": "completed",
+                    "thought_signature": THOUGHT_SIGNATURE,
+                })),
+            ])
+            .with_origin(Origin::new("openai.responses", "openai", MODEL)),
+        ),
         Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire(OLD_CALL_ID),
                 name: ToolName::new("exec_cmd").expect("fixture tool name"),
                 content: vec![ToolResultContent::text(TOOL_RESULT)],
+                is_error: false,
             })],
         },
     ];

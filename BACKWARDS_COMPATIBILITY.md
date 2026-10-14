@@ -42,37 +42,37 @@ provider settings stay in their existing formats, so no migration is required.
 The cutoff is persistent replay state, not a compatibility shim. Keep it until
 a migration removes the covered reasoning from stored transcript parts.
 
-### Rig 0.43 upstream revision
+### Released completion item metadata
 
-Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
-first merged post-0.43 revision removing an unconditional partial-conversation
-stderr dump from invalid-tool recovery. This revision retains 0.43's history
-types but unifies streamed and awaited run errors as `PromptError`.
-Return to a registry release only once it contains that fix and the provider,
-replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+New completion items store Rig 0.44's native provider item in
+`providerMetadata.rigNative`, without the text or arguments that the item's
+`text` and `input` fields already hold. Every completion item also records the
+turn's `providerMetadata.origin`. Older clients reading these transcripts are
+not supported.
 
-### Responses fractional timestamps
+Transcripts written by released clients use other `providerMetadata` fields.
+When an item has no `rigNative`, the reader in `transcript/history.rs` rebuilds
+the native item from them:
 
-OpenAI's Responses schema allows fractional `created_at` seconds. Rig 0.43
-requires `u64`, so the Responses decoder truncates valid nonnegative fractional
-timestamps in lifecycle events to whole seconds. It keeps the original event
-for provider error diagnostics. Other invalid fields still fail decoding.
-Requests, stored transcripts, and released clients are unchanged.
+- Text: `openai_responses` extras become a native message item. `message_id`
+  becomes its ID, `phase` stays on the item, and other extras such as
+  `annotations` move to its content part.
+- Tool calls: `openai.itemId` becomes the item ID, falling back to `callId`.
+  `toolCallAdditionalParams` (or the whole metadata object when it is absent)
+  supplies extra fields, and `signature` supplies the signature.
+- Turns without `origin` are assigned the selected model's origin by
+  `assign_unidentified_legacy_history_origin`. Known origins are never
+  overwritten.
 
-Remove this adapter once the pinned Rig revision accepts fractional timestamps
-and the fractional-timestamp stream regression passes without it.
+Keep these fallbacks until a versioned migration rewrites all stored local
+JSONL and Convex transcripts.
 
-### Responses nullable status
-
-OpenAI's Responses schema allows null or absent `status`. Rig's pinned response
-type deserializes it as a required string. The shared Responses decoder maps
-null or absent lifecycle status to Rig's empty unknown status, which produces
-no finish reason. Explicit statuses and original event bytes stay unchanged.
-Other nullable response fields already use optional types or tolerant metadata
-projection. Requests, stored transcripts, and released clients are unchanged.
-
-Remove this mapping once the pinned Rig revision accepts null and absent status
-and the nullable lifecycle and stream regressions pass without it.
+Reasoning items use the same format for new and released clients: summary text,
+`openai.itemId`, one encrypted payload in `openai.reasoningEncryptedContent`,
+and `reasoningIssuer`. A missing issuer means `openai`, which is the released
+default. Only OpenAI reasoning becomes a native reasoning item, so ciphertext
+is never replayed to another provider. Keep the missing-issuer default until
+the same migration supplies the issuer.
 
 ### SIWC streaming content type
 
@@ -98,67 +98,29 @@ supported upgrade window. Model selections and Convex data need no migration.
 
 ### Stateless OpenAI reasoning replay
 
-Rig 0.43 preserves and inlines Responses message and function items with their
-native IDs, so the old `OpenAiReplayClient` ID-clearing workaround is removed.
-Sprocket's `StatelessResponses` wire sets `store: false`, requests encrypted
-reasoning, and omits reasoning without a nonempty encrypted payload. Summary-only
-reasoning cannot be replayed without server storage. Function call IDs continue
-to pair tool results; existing transcript formats remain unchanged.
+Sprocket's `StatelessResponses` wire only sets `store: false`. Rig 0.44 requests
+encrypted reasoning and filters stateless reasoning without ciphertext.
+Summary-only reasoning cannot be replayed without server storage. Function
+call IDs continue to pair tool results; existing transcript formats remain
+unchanged.
 
 Remove this wire wrapper once Rig exposes an equivalent stateless Responses
 configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
 
 ### Rig developer messages
 
-Rig's pinned message type has no developer role. Sprocket represents application
-instructions as Rig system messages and converts them to `developer` in the
-shared Responses wire. Base instructions use the provider's `instructions`
-configuration directly. Late instructions stay at their conversation position
-on gateway, BYOK, and SIWC routes. User content and tool results keep their roles;
-stored transcript formats are unchanged. Remove this mapping when a released
-Rig version supports developer messages natively and the handoff, continuation,
-and SIWC prefix tests pass without it.
-
-### Rig history identities
-
-Released Sprocket history records carry separate `id` and optional `callId`
-fields and omit tool names on results. The Rust history reader reconstructs
-Rig 0.43's unified `CallId`, preserving a distinct item ID when present, and
-resolves each result's required name from its preceding call. Historical
-OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
-No stored data is rewritten: local JSONL and Convex transcript formats remain
-compatible with released clients.
-
-New reasoning items retain summaries as display text, one opaque encrypted
-replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
-ID in `providerMetadata.openai.itemId`, and the issuer in
-`providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
-are not persisted. Encrypted payload bytes are preserved verbatim without
-duplication. The Rust reader reconstructs summary/encrypted blocks; missing
-issuers default to `openai` for released histories. The history fields remain
-`id` and `blocksJson`; issuer-aware histories encode sealed projected reasoning
-inside `blocksJson`, while the reader still accepts released block arrays.
-This additive metadata format needs no backfill. Keep the existing replay
-fields, array reader and missing-issuer default until supported clients age out
-or a versioned migration rewrites all supported histories. Stateless BYOK/SIWC
-replay still requires a nonempty encrypted payload.
-
-New tool-call items retain the provider item ID in `providerMetadata.openai.itemId`,
-the opaque signature in `providerMetadata.signature`, and native additional
-parameters in `providerMetadata.toolCallAdditionalParams`. `callId` stays the
-provider's tool-result correlator. Explicit `null` additional parameters mean
-the native call had none. Released readers ignore the added metadata;
-new readers fall back to `callId` and the historical metadata shape for old
-items. This additive format widening needs no backfill; IDs already discarded
-by older releases cannot be recovered.
-
-Text items preserve Rig's `openai_responses` extras, including their message ID
-and phase. Single-message completions add the call's message ID there when Rig
-only reports it on the terminal response; multi-message item IDs take precedence.
-
-Keep this boundary conversion while Sprocket's transcript protocol uses these
-fields. Remove it only with a versioned protocol migration that rewrites all
-supported histories and supports direct upgrades from released clients.
+Rig 0.44's message type has no developer role. Sprocket represents application
+instructions such as the handoff and continuation prompts as Rig system
+messages. `DeveloperResponses` in `openai.rs` keeps them in `input` and
+rewrites their role to `developer` on gateway, BYOK, and SIWC routes. Base
+instructions stay in the top-level `instructions` field, and a late
+instruction stays at its position, so the request prefix before it is
+unchanged and the provider's prompt cache still matches. Stored transcripts are
+unaffected. Remove this mapping when a released Rig version supports developer
+messages natively and these tests pass without it:
+`siwc_body_keeps_late_application_instructions_as_developer_messages`,
+`completion_and_stream_use_the_refreshed_credential`, and the handoff request
+assertions in `context_handoff_integration_tests.rs`.
 
 ## Local data directory backwards compatibility
 

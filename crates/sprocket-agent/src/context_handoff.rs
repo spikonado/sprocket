@@ -305,13 +305,13 @@ mod tests {
     #[test]
     fn counts_provider_totals_without_counting_cache_or_reasoning_twice() {
         assert_eq!(
-            context_tokens(Usage {
-                input_tokens: Some(100),
-                output_tokens: Some(30),
-                cached_input_tokens: Some(80),
-                reasoning_tokens: Some(20),
-                ..Default::default()
-            }),
+            context_tokens(
+                Usage::new()
+                    .input_tokens(100)
+                    .output_tokens(30)
+                    .cached_input_tokens(80)
+                    .reasoning_tokens(20)
+            ),
             Some(130)
         );
     }
@@ -328,26 +328,14 @@ mod tests {
     #[test]
     fn partial_usage_preserves_context_without_persisting_an_incomplete_total() {
         let hook = ContextHandoffHook::new(100, 120, true);
-        assert_eq!(
-            hook.record_usage(Usage {
-                output_tokens: Some(30),
-                ..Default::default()
-            }),
-            None
-        );
+        assert_eq!(hook.record_usage(Usage::new().output_tokens(30)), None);
         assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
     }
 
     #[test]
     fn reported_total_updates_context_without_individual_counters() {
         let hook = ContextHandoffHook::new(100, 120, true);
-        assert_eq!(
-            hook.record_usage(Usage {
-                total_tokens: Some(150),
-                ..Default::default()
-            }),
-            Some(150)
-        );
+        assert_eq!(hook.record_usage(Usage::new().total_tokens(150)), Some(150));
         assert_eq!(hook.state.lock().unwrap().context_tokens, 150);
     }
 
@@ -355,11 +343,7 @@ mod tests {
     fn reported_zero_replaces_the_last_context_observation() {
         let hook = ContextHandoffHook::new(100, 120, true);
         assert_eq!(
-            hook.record_usage(Usage {
-                input_tokens: Some(0),
-                output_tokens: Some(0),
-                ..Default::default()
-            }),
+            hook.record_usage(Usage::new().input_tokens(0).output_tokens(0)),
             Some(0)
         );
         assert_eq!(hook.state.lock().unwrap().context_tokens, 0);

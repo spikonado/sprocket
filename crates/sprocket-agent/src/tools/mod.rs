@@ -223,7 +223,7 @@ pub(crate) fn agent_tools(
 #[cfg(test)]
 mod tests {
     use convex::Value;
-    use rig::tool::ToolErrorKind;
+    use rig::tool::{ToolErrorKind, ToolExecutionError};
     use sprocket_workspace::{SkillSource, WorkspaceOperationCancelled, WorkspaceSkill};
 
     use super::*;
@@ -243,7 +243,7 @@ mod tests {
         })).unwrap();
         let mut history = vec![AgentHistoryMessage {
             role: AgentHistoryRole::User,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::ToolResult {
                 id: "call".into(),
                 call_id: Some("call".into()),
@@ -260,10 +260,10 @@ mod tests {
     }
 
     #[test]
-    fn tool_error_includes_anyhow_context_chain() {
+    fn tool_error_preserves_anyhow_context_chain_through_dispatch_normalization() {
         let error =
             anyhow::anyhow!("invalid add-file line").context("failed to parse Begin Patch input");
-        let mapped = tool_error(error);
+        let mapped = ToolExecutionError::from_error(tool_error(error));
         let message = mapped.model_feedback().expect("model feedback");
         assert!(
             message.contains("failed to parse Begin Patch input"),
@@ -276,9 +276,16 @@ mod tests {
     }
 
     #[test]
-    fn tool_error_maps_workspace_cancellation_to_cancelled_kind() {
-        let mapped = tool_error(anyhow::Error::new(WorkspaceOperationCancelled));
+    fn tool_error_preserves_workspace_cancellation_through_dispatch_normalization() {
+        let mapped = ToolExecutionError::from_error(tool_error(anyhow::Error::new(
+            WorkspaceOperationCancelled,
+        )));
         assert_eq!(mapped.kind(), ToolErrorKind::Cancelled);
+        assert_eq!(mapped.retryable(), Some(false));
+        assert_eq!(
+            mapped.model_feedback(),
+            Some("Tool execution was cancelled.")
+        );
     }
 
     #[test]
