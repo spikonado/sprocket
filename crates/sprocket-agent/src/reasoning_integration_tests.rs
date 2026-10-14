@@ -1028,7 +1028,7 @@ async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
         ToolName::new(TOOL_NAME).unwrap(),
         "test",
         json!({"type": "object"}),
-        |_| async { Ok(ToolOutput::text("ok")) },
+        |_| Box::pin(async { Ok(ToolOutput::text("ok")) }),
     ))
     .build();
     let expected = Origin::new("openai.responses", "openai", "gateway-model");
