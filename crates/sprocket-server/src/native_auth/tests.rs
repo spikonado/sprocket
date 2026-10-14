@@ -966,7 +966,7 @@ async fn cancelling_a_token_consumer_does_not_cancel_refresh_rotation() {
 }
 
 #[tokio::test]
-async fn sign_out_clears_memory_when_credential_deletion_fails() {
+async fn failed_credential_deletion_keeps_the_user_signed_in() {
     let store = MemoryRefreshTokenStore::with_token("refresh-current");
     let manager = NativeAuthManager::with_store(
         NativeAuthConfig {
@@ -985,9 +985,9 @@ async fn sign_out_clears_memory_when_credential_deletion_fails() {
     store.fail_clear.store(true, Ordering::SeqCst);
 
     assert!(manager.sign_out().await.is_err());
-    assert!(manager.session.lock().await.user.is_none());
-    assert!(manager.session.lock().await.access_token.is_none());
-    assert!(manager.browser_session(false).await.unwrap().is_none());
+    let session = manager.browser_session(false).await.unwrap().unwrap();
+    assert_eq!(session.user.id, "user_123");
+    assert_eq!(store.token().as_deref(), Some("refresh-current"));
 }
 
 #[tokio::test]

@@ -371,6 +371,8 @@ impl NativeAuthManager {
 
     async fn sign_out_inner(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
+        // Stay signed in if deletion fails; otherwise a restart would revive the session.
+        self.clear_refresh_token().await?;
         let login_generation = self.session.lock().await.login_generation.wrapping_add(1);
         let mut session = NativeSession::default();
         session.suppress_persisted_resume = true;
@@ -385,9 +387,7 @@ impl NativeAuthManager {
             }
             *current = session;
         }
-        let cleared = self.clear_refresh_token().await;
-        self.publish_session_change(None).await?;
-        cleared
+        self.publish_session_change(None).await
     }
 
     pub fn auth_token_fetcher_for_user(
