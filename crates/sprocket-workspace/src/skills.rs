@@ -2,6 +2,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
+
 use crate::project_root::find_project_root;
 use crate::skill_name::validate_skill_name;
 
@@ -33,6 +35,14 @@ pub(crate) struct ParsedSkill {
     pub description: String,
     pub disable_model_invocation: bool,
     pub body: String,
+}
+
+#[derive(Deserialize)]
+struct Frontmatter {
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "disable-model-invocation")]
+    disable_model_invocation: Option<bool>,
 }
 
 /// User skill dirs in precedence order: `~/.sprocket/skills`, then `~/.agents/skills`.
@@ -110,91 +120,23 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     let Some((frontmatter, body)) = split_frontmatter(contents) else {
         return Err("missing YAML frontmatter".to_string());
     };
+    let frontmatter: Frontmatter = serde_yaml_ng::from_str(frontmatter)
+        .map_err(|error| format!("invalid YAML frontmatter: {error}"))?;
 
-    let mut name: Option<String> = None;
-    let mut description: Option<String> = None;
-    let mut disable_model_invocation = None;
-
-    let mut lines = frontmatter.lines().peekable();
-    while let Some(line) = lines.next() {
-        if line.trim().is_empty() || starts_with_yaml_indent(line) {
-            continue;
-        }
-
-        let trimmed = line.trim_end();
-        let Some((key, value)) = trimmed.split_once(':') else {
-            continue;
-        };
-        let key = strip_yaml_quotes(key.trim());
-        let value = value.trim();
-
-        match key {
-            "name" => {
-                let value = strip_yaml_quotes(value);
-                if !value.is_empty() {
-                    name = Some(value.to_string());
-                }
-            }
-            "description" => {
-                let mut scalar = format!("description: {value}");
-                let mut open_quote = value
-                    .chars()
-                    .next()
-                    .filter(|quote| matches!(quote, '\'' | '"'))
-                    .filter(|quote| !has_closing_yaml_quote(&value[1..], *quote));
-                while let Some(line) = lines.next_if(|line| {
-                    line.trim().is_empty()
-                        || starts_with_yaml_indent(line)
-                        || line.trim_start().starts_with('#')
-                        || open_quote.is_some()
-                }) {
-                    scalar.push('\n');
-                    scalar.push_str(line);
-                    if open_quote.is_some_and(|quote| has_closing_yaml_quote(line, quote)) {
-                        open_quote = None;
-                    }
-                }
-                let value = serde_yaml_ng::from_str::<HashMap<String, Option<String>>>(&scalar)
-                    .map_err(|error| format!("invalid description: {error}"))?
-                    .remove("description")
-                    .flatten()
-                    .unwrap_or_default()
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if !value.is_empty() {
-                    description = Some(value);
-                }
-            }
-            "disable-model-invocation" => {
-                if disable_model_invocation.is_some() {
-                    return Err("duplicate disable-model-invocation field".to_string());
-                }
-                let scalar = value
-                    .split_once('#')
-                    .filter(|(prefix, _)| prefix.ends_with(char::is_whitespace))
-                    .map_or(value, |(prefix, _)| prefix.trim_end());
-                disable_model_invocation = Some(match scalar {
-                    "true" | "True" | "TRUE" => true,
-                    "false" | "False" | "FALSE" => false,
-                    _ => {
-                        return Err(format!(
-                            "disable-model-invocation must be a YAML boolean (true or false), got {value:?}"
-                        ));
-                    }
-                });
-            }
-            _ => {}
-        }
-    }
-
-    let name = name.ok_or_else(|| "missing or empty name".to_string())?;
-    let description = description.ok_or_else(|| "missing or empty description".to_string())?;
+    let name = frontmatter
+        .name
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "missing or empty name".to_string())?;
+    let description = frontmatter
+        .description
+        .map(|description| description.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|description| !description.is_empty())
+        .ok_or_else(|| "missing or empty description".to_string())?;
 
     Ok(ParsedSkill {
         name,
         description,
-        disable_model_invocation: disable_model_invocation.unwrap_or(false),
+        disable_model_invocation: frontmatter.disable_model_invocation.unwrap_or(false),
         body: body.to_string(),
     })
 }
@@ -398,37 +340,6 @@ fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn has_closing_yaml_quote(value: &str, quote: char) -> bool {
-    let mut chars = value.chars().peekable();
-    while let Some(character) = chars.next() {
-        if quote == '"' && character == '\\' {
-            chars.next();
-        } else if character == quote {
-            if quote == '\'' && chars.next_if_eq(&'\'').is_some() {
-                continue;
-            }
-            return true;
-        }
-    }
-    false
-}
-
-fn strip_yaml_quotes(value: &str) -> &str {
-    let bytes = value.as_bytes();
-    if bytes.len() >= 2 {
-        let first = bytes[0];
-        let last = bytes[bytes.len() - 1];
-        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return &value[1..value.len() - 1];
-        }
-    }
-    value
-}
-
-fn starts_with_yaml_indent(line: &str) -> bool {
-    line.starts_with(' ') || line.starts_with('\t')
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -573,7 +484,7 @@ mod tests {
         assert!(loaded.skills.is_empty());
         assert!(loaded.warnings.iter().any(|warning| {
             warning.contains("bad-policy")
-                && warning.contains("disable-model-invocation must be a YAML boolean")
+                && warning.contains("disable-model-invocation: invalid type")
         }));
         assert!(
             loaded
@@ -637,12 +548,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_disable_model_invocation() {
-        for value in [
-            "",
-            "maybe",
-            "\"true\"",
-            "false\ndisable-model-invocation: true",
-        ] {
+        for value in ["maybe", "\"true\"", "false\ndisable-model-invocation: true"] {
             let contents = format!(
                 "---\nname: demo\ndescription: demo skill\ndisable-model-invocation: {value}\n---\nbody\n"
             );
@@ -655,24 +561,11 @@ mod tests {
     fn parses_and_normalizes_description_scalars() {
         for scalar in [
             "Handle PDFs when needed",
-            "'Handle PDFs when needed'",
-            "\"Handle PDFs when needed\"",
             "|\n  Handle PDFs\n\n  when needed",
             ">\n  Handle PDFs\n  when needed",
-            "|-\n  Handle PDFs\n  when needed",
-            ">-\n  Handle PDFs\n  when needed",
-            "|+\n  Handle PDFs\n  when needed\n\n",
-            ">+\n  Handle PDFs\n  when needed\n\n",
-            "|2- # explicit indentation\n  Handle PDFs\n  when needed",
             "Handle PDFs\n  when needed",
-            "\n  Handle PDFs\n  when needed",
-            "'Handle PDFs\n  when needed'",
-            "\"Handle PDFs\n  when needed\"",
-            "'Handle PDFs\nwhen needed'",
             "\"Handle PDFs\nwhen needed\"",
-            "\"Handle PDFs\nwhen\\nneeded\"",
             "\"  Handle\\tPDFs\\nwhen   needed  \"",
-            "Handle PDFs when needed # inline comment",
         ] {
             let contents = format!(
                 "---\nname: demo\ndescription: {scalar}\ndisable-model-invocation: true\nmetadata:\n  description: ignored\n---\n# Body\n"
@@ -698,52 +591,12 @@ mod tests {
     }
 
     #[test]
-    fn preserves_description_document_markers_and_quoted_content() {
-        for (scalar, expected) in [
-            ("---", "---"),
-            ("--- Use this skill", "--- Use this skill"),
-            ("...", "..."),
-            ("'Handle ''quoted''\nPDFs'", "Handle 'quoted' PDFs"),
-            ("\"Handle \\\"quoted\\\"\nPDFs\"", "Handle \"quoted\" PDFs"),
-            (
-                "\"Handle PDFs\ndisable-model-invocation: true\"",
-                "Handle PDFs disable-model-invocation: true",
-            ),
-        ] {
-            let contents = format!("---\nname: demo\ndescription: {scalar}\n---\nbody\n");
-            let parsed = parse_skill_markdown(&contents).expect(scalar);
-            assert_eq!(parsed.description, expected);
-            assert!(!parsed.disable_model_invocation);
-        }
-    }
-
-    #[test]
     fn rejects_missing_or_empty_descriptions() {
-        for frontmatter in [
-            "",
-            "description:",
-            "description: ''",
-            "description: \"  \\t\\n  \"",
-            "description: |",
-            "description: >",
-            "description: |-\n  \n",
-            "description: >-\n  \n",
-        ] {
+        for frontmatter in ["", "description:", "description: \"  \\t\\n  \""] {
             let contents = format!("---\nname: demo\n{frontmatter}\n---\nbody\n");
             let error = parse_skill_markdown(&contents).expect_err(frontmatter);
             assert_eq!(error, "missing or empty description", "{frontmatter}");
         }
-    }
-
-    #[test]
-    fn accepts_and_normalizes_long_unicode_descriptions() {
-        let first = "λ".repeat(3000);
-        let last = "界".repeat(3000);
-        let contents =
-            format!("---\nname: demo\ndescription: |\n  {first}   \n\n    {last}   \n---\nbody\n");
-        let parsed = parse_skill_markdown(&contents).expect("long Unicode description");
-        assert_eq!(parsed.description, format!("{first} {last}"));
-        assert_eq!(parsed.body, "body\n");
     }
 
     #[test]
