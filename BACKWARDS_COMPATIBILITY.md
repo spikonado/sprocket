@@ -120,7 +120,7 @@ unaffected. Remove this mapping when a released Rig version supports developer
 messages natively and these tests pass without it:
 `siwc_body_keeps_late_application_instructions_as_developer_messages`,
 `completion_and_stream_use_the_refreshed_credential`, and the handoff request
-assertions in `context_handoff_integration_tests.rs`.
+assertions in `context_handoff/integration_tests.rs`.
 
 ## Local data directory backwards compatibility
 

@@ -354,5 +354,4 @@ impl PreviewBuffer {
 }
 
 #[cfg(test)]
-#[path = "command_output_tests.rs"]
 mod tests;

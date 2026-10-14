@@ -27,6 +27,7 @@ All of these are core priorities; try your best to achieve all of them without h
 ## Maintaining code
 
 - Don't be afraid to completely refactor existing code to improve on any of the priorities.
+- Put Rust unit tests for `foo.rs` in `foo/tests.rs`, declared as `#[cfg(test)] mod tests;`.
 - Make sure that changes are made in all the layers of the app when needed.
 - Ship breaking changes with backwards compatibility for already-released clients, their sprocket data-dir, and data in the Convex deployment.
 - Record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
