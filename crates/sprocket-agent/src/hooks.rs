@@ -545,19 +545,22 @@ mod tests {
 
     #[test]
     fn malformed_arguments_retry_without_repairing_a_valid_tool_name() {
-        let action = resolve_invalid_tool_call(&InvalidToolCallContext {
-            tool_name: "exec_command".into(),
-            tool_call_id: None,
-            args: Some("{broken".into()),
-            available_tools: vec!["exec_command".into()],
-            allowed_tools: vec!["exec_command".into()],
-            tool_choice: None,
-            chat_history: Vec::new(),
-            is_streaming: true,
-            reason: InvalidToolCallReason::MalformedArguments {
-                error: "expected quoted key".into(),
-            },
-        });
+        let context = serde_json::from_value(serde_json::json!({
+            "tool_name": "exec_command",
+            "tool_call_id": null,
+            "args": "{broken",
+            "available_tools": ["exec_command"],
+            "allowed_tools": ["exec_command"],
+            "tool_choice": null,
+            "chat_history": [],
+            "is_streaming": true,
+            "reason": {
+                "reason": "malformed_arguments",
+                "error": "expected quoted key"
+            }
+        }))
+        .unwrap();
+        let action = resolve_invalid_tool_call(&context);
         let InvalidToolCallAction::Retry { feedback } = action else {
             panic!("malformed arguments must be retried, not repaired");
         };

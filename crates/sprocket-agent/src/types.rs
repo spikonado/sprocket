@@ -5,8 +5,8 @@ use anyhow::{Context, anyhow};
 use futures::future::BoxFuture;
 use rig::completion::Message;
 use rig::message::{
-    AdditionalParams, AssistantContent, CallId, Issuer, Reasoning, ReasoningContent, Sealed, Text,
-    ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent, UserContent,
+    AssistantContent, AssistantMessage, CallId, Origin, Reasoning, Text, ToolCall, ToolFunction,
+    ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
@@ -271,16 +271,68 @@ fn from_json_string<T: for<'de> Deserialize<'de>>(value: &str, what: &str) -> an
     serde_json::from_str(value).with_context(|| format!("failed to deserialize {what}"))
 }
 
-fn additional_params_from_json(
-    json: Option<&str>,
-    what: &str,
-) -> anyhow::Result<Option<AdditionalParams>> {
-    let Some(json) = json else {
-        return Ok(None);
+#[derive(Deserialize)]
+#[serde(tag = "type", content = "content", rename_all = "snake_case")]
+enum LegacyReasoningContent {
+    Summary(String),
+    Encrypted(String),
+    Text {},
+    Redacted {},
+}
+
+fn history_reasoning(id: Option<String>, json: &str) -> anyhow::Result<Reasoning> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StoredReasoning {
+        Current(Reasoning),
+        Legacy(Vec<LegacyReasoningContent>),
+        Sealed {
+            issuer: String,
+            id: Option<String>,
+            content: Vec<LegacyReasoningContent>,
+        },
+    }
+    let (issuer, id, content) = match from_json_string(json, "reasoning blocks")? {
+        StoredReasoning::Current(reasoning) => return Ok(reasoning),
+        StoredReasoning::Legacy(content) => ("openai".to_string(), id, content),
+        StoredReasoning::Sealed {
+            issuer,
+            id: sealed_id,
+            content,
+        } => (issuer, sealed_id.or(id), content),
     };
-    let value: serde_json::Value = from_json_string(json, what)?;
-    AdditionalParams::try_from_value(value)
-        .map_err(|value| anyhow!("{what} must be a JSON object, got {value}"))
+    let summary: Vec<_> = content
+        .iter()
+        .filter_map(|block| match block {
+            LegacyReasoningContent::Summary(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let block = AssistantContent::Reasoning(Reasoning::new(summary.join("\n")));
+    let block = if issuer == "openai" {
+        let mut item = serde_json::json!({
+            "type": "reasoning",
+            "summary": summary.iter().map(|text| serde_json::json!({
+                "type": "summary_text", "text": text
+            })).collect::<Vec<_>>()
+        });
+        if let Some(id) = id.filter(|id| !id.is_empty()) {
+            item["id"] = serde_json::json!(id);
+        }
+        if let Some(encrypted) = content.iter().find_map(|block| match block {
+            LegacyReasoningContent::Encrypted(content) if !content.is_empty() => Some(content),
+            _ => None,
+        }) {
+            item["encrypted_content"] = serde_json::json!(encrypted);
+        }
+        block.with_native(item)
+    } else {
+        block
+    };
+    let AssistantContent::Reasoning(reasoning) = block else {
+        unreachable!()
+    };
+    Ok(reasoning)
 }
 
 #[derive(Clone)]
@@ -304,6 +356,7 @@ impl AgentHistoryContent {
                 Ok(UserContent::ToolResult(ToolResult {
                     call: indexed.call.clone(),
                     name: indexed.name.clone(),
+                    is_error: false,
                     content: require_non_empty(
                         items
                             .into_iter()
@@ -338,34 +391,57 @@ impl AgentHistoryContent {
     fn into_assistant_content(
         self,
         tool_calls: &HashMap<String, IndexedToolCall>,
+        assistant_id: Option<&str>,
     ) -> anyhow::Result<AssistantContent> {
         match self {
             Self::Text {
                 text,
                 additional_params_json,
-            } => Ok(AssistantContent::Text(Text {
-                text,
-                additional_params: additional_params_from_json(
-                    additional_params_json.as_deref(),
-                    "text additional params",
-                )?,
-            })),
-            Self::Reasoning { id, blocks_json } => {
-                #[derive(Deserialize)]
-                #[serde(untagged)]
-                enum ReasoningBlocks {
-                    Legacy(Vec<ReasoningContent>),
-                    Sealed(Sealed<Reasoning>),
+            } => {
+                let block = AssistantContent::Text(Text::new(&text));
+                let metadata: Option<serde_json::Value> = additional_params_json
+                    .as_deref()
+                    .map(|json| from_json_string(json, "text additional params"))
+                    .transpose()?;
+                if let Some(native) = metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("rigNative"))
+                {
+                    return Ok(block.with_native(native.clone()));
                 }
-
-                let reasoning = match from_json_string(&blocks_json, "reasoning blocks")? {
-                    ReasoningBlocks::Legacy(content) => {
-                        Reasoning { id, content }.sealed(Issuer::from("openai"))
+                let extras = metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("openai_responses"));
+                let item_id = extras
+                    .and_then(|extras| extras.get("message_id"))
+                    .and_then(|id| id.as_str())
+                    .filter(|id| !id.is_empty())
+                    .or(assistant_id);
+                if item_id.is_none() && extras.is_none() {
+                    return Ok(block);
+                }
+                let mut item = serde_json::json!({
+                    "type": "message", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": text, "annotations": []}]
+                });
+                if let Some(id) = item_id {
+                    item["id"] = serde_json::json!(id);
+                }
+                if let Some(phase) = extras.and_then(|extras| extras.get("phase")) {
+                    item["phase"] = phase.clone();
+                }
+                if let Some(extras) = extras.and_then(serde_json::Value::as_object) {
+                    for (key, value) in extras {
+                        if key != "message_id" && key != "phase" {
+                            item["content"][0][key] = value.clone();
+                        }
                     }
-                    ReasoningBlocks::Sealed(reasoning) => reasoning,
-                };
-                Ok(AssistantContent::Reasoning(reasoning))
+                }
+                Ok(block.with_native(item))
             }
+            Self::Reasoning { id, blocks_json } => Ok(AssistantContent::Reasoning(
+                history_reasoning(id, &blocks_json)?,
+            )),
             Self::ToolCall {
                 id,
                 arguments_json,
@@ -376,18 +452,36 @@ impl AgentHistoryContent {
                 let indexed = tool_calls
                     .get(&id)
                     .ok_or_else(|| anyhow!("history tool call is not indexed: {id}"))?;
-                Ok(AssistantContent::ToolCall(ToolCall {
-                    id: indexed.call.clone(),
-                    function: ToolFunction {
-                        name: indexed.name.clone(),
-                        arguments: from_json_string(&arguments_json, "tool call arguments")?,
-                    },
-                    signature,
-                    additional_params: additional_params_json
-                        .as_deref()
-                        .map(|json| from_json_string(json, "tool call additional params"))
-                        .transpose()?,
-                }))
+                let call = ToolCall::new(
+                    indexed.call.clone(),
+                    ToolFunction::new(
+                        indexed.name.clone(),
+                        from_json_string(&arguments_json, "tool call arguments")?,
+                    ),
+                );
+                let mut item = serde_json::json!({
+                    "type": "function_call", "id": id,
+                    "call_id": call.id.wire(), "name": call.function.name.as_str(),
+                    "arguments": arguments_json, "status": "completed"
+                });
+                if let Some(json) = additional_params_json {
+                    let params: serde_json::Value =
+                        from_json_string(&json, "tool call additional params")?;
+                    if let Some(native) = params.get("rigNative") {
+                        return Ok(AssistantContent::ToolCall(call).with_native(native.clone()));
+                    }
+                    if let Some(params) = params.as_object() {
+                        for (key, value) in params {
+                            if key != "origin" {
+                                item[key] = value.clone();
+                            }
+                        }
+                    }
+                }
+                if let Some(signature) = signature {
+                    item["signature"] = serde_json::json!(signature);
+                }
+                Ok(AssistantContent::ToolCall(call).with_native(item))
             }
             Self::Image { image_json } => Ok(AssistantContent::Image(from_json_string(
                 &image_json,
@@ -419,6 +513,34 @@ fn history_message(
     message: AgentHistoryMessage,
     tool_calls: &HashMap<String, IndexedToolCall>,
 ) -> anyhow::Result<Message> {
+    let mut origin = None;
+    if matches!(message.role, AgentHistoryRole::Assistant) {
+        for content in &message.contents {
+            let json = match content {
+                AgentHistoryContent::Text {
+                    additional_params_json,
+                    ..
+                }
+                | AgentHistoryContent::ToolCall {
+                    additional_params_json,
+                    ..
+                } => additional_params_json.as_deref(),
+                AgentHistoryContent::Reasoning { blocks_json, .. } => Some(blocks_json.as_str()),
+                _ => None,
+            };
+            let Some(json) = json else { continue };
+            let metadata: serde_json::Value = from_json_string(json, "history metadata")?;
+            let Some(value) = metadata.get("origin").filter(|value| !value.is_null()) else {
+                continue;
+            };
+            let item_origin: Origin = serde_json::from_value(value.clone())
+                .context("failed to deserialize history origin")?;
+            if origin.as_ref().is_some_and(|origin| origin != &item_origin) {
+                return Err(anyhow!("assistant history contains conflicting origins"));
+            }
+            origin = Some(item_origin);
+        }
+    }
     match message.role {
         AgentHistoryRole::System => {
             let text = message
@@ -441,26 +563,24 @@ fn history_message(
                 "user history contents",
             )?,
         }),
-        AgentHistoryRole::Assistant => Ok(Message::Assistant {
-            id: message.assistant_id,
-            content: require_non_empty(
+        AgentHistoryRole::Assistant => Ok(Message::Assistant(
+            AssistantMessage::new(require_non_empty(
                 message
                     .contents
                     .into_iter()
-                    .map(|content| content.into_assistant_content(tool_calls))
+                    .map(|content| {
+                        content.into_assistant_content(tool_calls, message.assistant_id.as_deref())
+                    })
                     .collect::<anyhow::Result<Vec<_>>>()?,
                 "assistant history contents",
-            )?,
-        }),
+            )?)
+            .with_origin(origin),
+        )),
     }
 }
 
 fn history_call_id(id: String, call_id: Option<String>) -> CallId {
-    match call_id.filter(|call| !call.is_empty()) {
-        Some(call) if call != id => CallId::from_dual_wire(id, call),
-        Some(call) => CallId::from_wire(call),
-        None => CallId::from_wire(id),
-    }
+    CallId::from_wire(call_id.filter(|call| !call.is_empty()).unwrap_or(id))
 }
 
 pub(crate) fn deserialize_agent_history(
@@ -490,6 +610,29 @@ pub(crate) fn deserialize_agent_history(
         .collect()
 }
 
+/// Call only for legacy history whose provenance is unavailable. Known origins,
+/// including a previous model's origin, must never be replaced by the selected model.
+pub(crate) fn assign_unidentified_legacy_history_origin(history: &mut [Message], origin: &Origin) {
+    for message in history {
+        if let Message::Assistant(assistant) = message
+            && assistant.origin.is_none()
+            && assistant.content.iter().all(|block| match block {
+                AssistantContent::Text(_)
+                | AssistantContent::ToolCall(_)
+                | AssistantContent::Reasoning(_) => block.native_item().is_none_or(|item| {
+                    matches!(
+                        item.get("type").and_then(serde_json::Value::as_str),
+                        Some("message" | "function_call" | "reasoning")
+                    )
+                }),
+                _ => false,
+            })
+        {
+            assistant.origin = Some(origin.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rig::completion::Message;
@@ -497,8 +640,92 @@ mod tests {
 
     use super::{
         AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-        deserialize_agent_history,
+        deserialize_agent_history, history_reasoning,
     };
+
+    #[test]
+    fn reads_released_reasoning_without_exposing_raw_or_redacted_payloads() {
+        let reasoning = history_reasoning(
+            None,
+            &serde_json::json!({
+                "issuer": "openai", "id": "rs_1",
+                "content": [
+                    {"type": "summary", "content": " first "},
+                    {"type": "text", "content": {"text": "raw", "signature": "signature"}},
+                    {"type": "redacted", "content": {"data": "redacted"}},
+                    {"type": "encrypted", "content": " opaque\n+/= "},
+                    {"type": "summary", "content": "second"}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(reasoning.text, " first \nsecond");
+        assert_eq!(
+            crate::reasoning::opaque_reasoning_blob(&reasoning),
+            Some(" opaque\n+/= ")
+        );
+        assert_eq!(reasoning.native.as_ref().unwrap().item["id"], "rs_1");
+        let reloaded =
+            history_reasoning(None, &serde_json::to_string(&reasoning).unwrap()).unwrap();
+        assert_eq!(reloaded, reasoning);
+    }
+
+    #[test]
+    fn reads_legacy_text_item_identity_and_annotations() {
+        let messages =
+            deserialize_agent_history(vec![AgentHistoryMessage {
+                role: AgentHistoryRole::Assistant,
+                assistant_id: Some("msg_turn".into()),
+                contents: vec![AgentHistoryContent::Text {
+                text: "answer".into(),
+                additional_params_json: Some(serde_json::json!({
+                    "openai_responses": {
+                        "message_id": "msg_item", "phase": "final_answer",
+                        "annotations": [{"type": "url_citation", "url": "https://example.com"}]
+                    }
+                }).to_string()),
+            }],
+            }])
+            .unwrap();
+        let Message::Assistant(assistant) = &messages[0] else {
+            panic!("expected assistant")
+        };
+        let item = assistant.content[0].native_item().unwrap();
+        assert_eq!(item["id"], "msg_item");
+        assert_eq!(item["phase"], "final_answer");
+        assert_eq!(
+            item["content"][0]["annotations"][0]["url"],
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn restores_reasoning_only_origin_and_preserves_known_origins_during_fallback() {
+        let original = rig::message::Origin::new("openai.responses", "openai", "old-model");
+        let history = serde_json::from_value(serde_json::json!([
+            {
+                "role": "assistant", "contents": [{
+                    "type": "reasoning", "blocksJson": serde_json::json!({
+                        "issuer": "openai", "id": "rs_1", "content": [], "origin": original
+                    }).to_string()
+                }]
+            },
+            {"role": "assistant", "contents": [{"type": "text", "text": "legacy"}]}
+        ]))
+        .unwrap();
+        let mut messages = deserialize_agent_history(history).unwrap();
+        let selected = rig::message::Origin::new("openai.responses", "openai", "selected-model");
+        super::assign_unidentified_legacy_history_origin(&mut messages, &selected);
+        let Message::Assistant(first) = &messages[0] else {
+            panic!("expected assistant")
+        };
+        let Message::Assistant(second) = &messages[1] else {
+            panic!("expected assistant")
+        };
+        assert_eq!(first.origin.as_ref(), Some(&original));
+        assert_eq!(second.origin.as_ref(), Some(&selected));
+    }
 
     #[test]
     fn deserializes_tool_history_into_rig_messages_with_matching_ids() {
@@ -531,15 +758,12 @@ mod tests {
         let messages = deserialize_agent_history(history).expect("messages");
 
         match &messages[0] {
-            Message::Assistant { content, .. } => match content.iter().next() {
+            Message::Assistant(assistant) => match assistant.content.first() {
                 Some(AssistantContent::ToolCall(tool_call)) => {
                     assert_eq!(tool_call.id.wire(), "call_1");
+                    assert_eq!(tool_call.native.as_ref().unwrap().item["id"], "tool_call_1");
                     assert_eq!(
-                        tool_call.id.provider().unwrap().item_id.as_deref(),
-                        Some("tool_call_1")
-                    );
-                    assert_eq!(
-                        tool_call.id.provider().map(|id| id.call_id.as_str()),
+                        tool_call.id.provider().map(|id| id.as_str()),
                         Some("call_1")
                     );
                 }
@@ -554,7 +778,7 @@ mod tests {
                     assert_eq!(tool_result.call.wire(), "call_1");
                     assert_eq!(tool_result.name, "exec_command");
                     assert_eq!(
-                        tool_result.call.provider().map(|id| id.call_id.as_str()),
+                        tool_result.call.provider().map(|id| id.as_str()),
                         Some("call_1")
                     );
                 }
@@ -599,8 +823,8 @@ mod tests {
                     assert_eq!(tool_result.name, "exec_command");
                     assert_eq!(tool_result.call.wire(), "call_1");
                     assert_eq!(
-                        tool_result.call.provider().unwrap().item_id.as_deref(),
-                        Some("fc_1")
+                        tool_result.call.provider().map(|id| id.as_str()),
+                        Some("call_1")
                     );
                 }
                 other => panic!("expected user tool result, got {other:?}"),
@@ -629,10 +853,10 @@ mod tests {
         ]))
         .unwrap();
         let messages = deserialize_agent_history(history).unwrap();
-        let Message::Assistant { content, .. } = &messages[0] else {
+        let Message::Assistant(assistant) = &messages[0] else {
             panic!("expected assistant message");
         };
-        let AssistantContent::ToolCall(call) = &content[0] else {
+        let AssistantContent::ToolCall(call) = &assistant.content[0] else {
             panic!("expected tool call");
         };
         let Message::User { content } = &messages[1] else {
@@ -783,13 +1007,11 @@ mod tests {
 
         let messages = deserialize_agent_history(history).expect("messages");
         match &messages[0] {
-            Message::Assistant { content, .. } => match content.iter().next() {
-                Some(AssistantContent::Reasoning(sealed)) => {
-                    let reasoning = sealed.open(&rig::message::Issuer::from("openai")).unwrap();
-                    assert_eq!(reasoning.id.as_deref(), Some("rs_empty"));
-                    assert!(reasoning.content.is_empty());
-                    assert!(reasoning.encrypted_content().is_none());
-                    assert!(reasoning.display_text().is_empty());
+            Message::Assistant(assistant) => match assistant.content.first() {
+                Some(AssistantContent::Reasoning(reasoning)) => {
+                    assert_eq!(reasoning.native.as_ref().unwrap().item["id"], "rs_empty");
+                    assert!(crate::reasoning::opaque_reasoning_blob(reasoning).is_none());
+                    assert!(reasoning.text.is_empty());
                 }
                 other => panic!("expected empty signed reasoning, got {other:?}"),
             },

@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use rig::completion::{CompletionRequest, Message};
 use rig::message::{
-    AssistantContent, CallId, Reasoning, ReasoningContent, ToolCall, ToolFunction, ToolName,
-    ToolResult, ToolResultContent, UserContent,
+    AssistantContent, AssistantMessage, CallId, Origin, Reasoning, ToolCall, ToolFunction,
+    ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
 use rig::tool::{DynamicTool, ToolOutput};
+use rig::wire::{Body, Mode, Operation, Wire};
 use serde_json::{Value as JsonValue, json};
 
 use super::{apply_completed_text, apply_completed_tool_call, durable_items_json};
@@ -65,16 +66,19 @@ fn gateway_response(status: &str, output: Vec<JsonValue>) -> JsonValue {
 }
 
 fn responses_wire(request: CompletionRequest) -> JsonValue {
-    let wire = openai::responses_api::CompletionRequest::try_from(
-        openai::responses_api::ResponsesRequestParams {
-            model: "gateway-model".to_string(),
-            request,
-            system_instructions_placement: Default::default(),
-            issuers: vec!["openai".into()],
-        },
-    )
-    .expect("native responses request");
-    serde_json::to_value(wire).expect("serialize responses request")
+    let wire = openai::responses_api::wire::Responses::new(
+        openai::OpenAIConfig::new("test-key"),
+        "gateway-model",
+    );
+    let request = <rig::operation::Completion as Operation>::prepare(request, &wire.describe())
+        .expect("prepare native responses request");
+    let encoded = wire
+        .encode(request, Mode::Unary)
+        .expect("native responses request");
+    let Body::Bytes(bytes) = encoded.request.into_body() else {
+        panic!("Responses uses a JSON body");
+    };
+    serde_json::from_slice(&bytes).expect("deserialize responses request")
 }
 
 /// Gateway wire order: empty encrypted reasoning item, summary delta, then
@@ -273,8 +277,12 @@ fn live_reasoning_text(parts: &[LiveAssistantPart]) -> Option<&str> {
 async fn durable_history_from_parts(
     parts: &[LiveAssistantPart],
     provider_metadata: &HashMap<String, JsonValue>,
+    origin: &Origin,
 ) -> Vec<AgentHistoryMessage> {
-    let items = durable_items_json(parts, provider_metadata);
+    let mut items = durable_items_json(parts, provider_metadata);
+    for item in &mut items {
+        item["providerMetadata"]["origin"] = json!(origin);
+    }
     let part: TranscriptPart = serde_json::from_value(json!({
         "number": 0,
         "sourceKey": "completion:test",
@@ -317,35 +325,31 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
     const SUMMARY: &str = "completed pre-handoff work";
     const CIPHERTEXT: &str = "  encrypted+state/=\n  ";
     let summary = crate::context_handoff::context_summary_text(SUMMARY);
-    let native_assistant = Message::Assistant {
-        id: None,
-        content: vec![
-            AssistantContent::Reasoning(
-                Reasoning {
-                    id: Some(ITEM_ID.to_string()),
-                    content: vec![
-                        ReasoningContent::Summary(DONE_SUMMARY.to_string()),
-                        ReasoningContent::Encrypted(CIPHERTEXT.to_string()),
-                    ],
-                }
-                .sealed("openai"),
-            ),
+    let native_assistant = Message::Assistant(
+        AssistantMessage::new(vec![
+            AssistantContent::Reasoning(Reasoning::new(DONE_SUMMARY)).with_native(json!({
+                "type": "reasoning",
+                "id": ITEM_ID,
+                "summary": [{ "type": "summary_text", "text": DONE_SUMMARY }],
+                "encrypted_content": CIPHERTEXT,
+            })),
             AssistantContent::ToolCall(ToolCall {
                 id: CallId::from_wire(TOOL_CALL_ID),
-                function: ToolFunction {
-                    name: ToolName::new(TOOL_NAME).expect("fixture tool name"),
-                    arguments: json!({ "cmd": "pwd" }),
-                },
-                signature: None,
-                additional_params: None,
+                function: ToolFunction::new(
+                    ToolName::new(TOOL_NAME).expect("fixture tool name"),
+                    json!({ "cmd": "pwd" }),
+                ),
+                native: None,
             }),
-        ],
-    };
+        ])
+        .with_origin(Origin::new("openai.responses", "openai", "gateway-model")),
+    );
     let native_tool_result = Message::User {
         content: vec![UserContent::ToolResult(ToolResult {
             call: CallId::from_wire(TOOL_CALL_ID),
             name: ToolName::new(TOOL_NAME).expect("fixture tool name"),
             content: vec![ToolResultContent::text(json!("/workspace").to_string())],
+            is_error: false,
         })],
     };
     let live = vec![
@@ -377,7 +381,8 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
             "number": 3, "sourceKey": "completion:retained", "kind": "completion", "runId": "run",
             "completion": { "streamId": STREAM_ID, "items": [
                 { "type": "reasoning", "text": DONE_SUMMARY, "providerMetadata": {
-                    "openai": { "itemId": ITEM_ID, "reasoningEncryptedContent": CIPHERTEXT }
+                    "openai": { "itemId": ITEM_ID, "reasoningEncryptedContent": CIPHERTEXT },
+                    "origin": Origin::new("openai.responses", "openai", "gateway-model")
                 } },
                 { "type": "tool-call", "callId": TOOL_CALL_ID, "name": TOOL_NAME, "input": { "cmd": "pwd" } }
             ] }
@@ -405,6 +410,13 @@ async fn post_handoff_reload_preserves_the_live_responses_input_prefix() {
         .unwrap();
     let reloaded = deserialize_agent_history(agent_history_from_parts(&state, &loaded, None))
         .expect("reconstructed history");
+    let Message::Assistant(assistant) = &reloaded[2] else {
+        panic!("retained completion is an assistant turn");
+    };
+    assert_eq!(
+        assistant.origin,
+        Some(Origin::new("openai.responses", "openai", "gateway-model"))
+    );
     let wire = |history| {
         responses_wire(
             CompletionRequest::new("next request")
@@ -477,10 +489,8 @@ async fn assert_openai_compatible_lifecycle_stream(nullable_status: Option<bool>
     }
     assert_eq!(text, TEXT);
     let reasoning = reasoning.unwrap();
-    assert_eq!(
-        reasoning.open(reasoning.issuer()).unwrap().id.as_deref(),
-        Some(ITEM_ID)
-    );
+    let reasoning = AssistantContent::Reasoning(reasoning);
+    assert_eq!(reasoning.native_item().unwrap()["id"], ITEM_ID);
     assert_eq!(tool.unwrap().id.wire(), TOOL_CALL_ID);
     assert_eq!(server.join().unwrap().len(), 1);
 }
@@ -598,20 +608,28 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
         _ => panic!("expected reasoning part"),
     };
+    let metadata = &provider_metadata[&reasoning_key];
     assert_eq!(
-        provider_metadata[&reasoning_key],
+        metadata["openai"],
         json!({
-            "openai": {
-                "itemId": ITEM_ID,
-                "reasoningEncryptedContent": ENVELOPE
-            },
-            "reasoningIssuer": "openai"
+            "itemId": ITEM_ID,
+            "reasoningEncryptedContent": ENVELOPE
         })
     );
+    assert_eq!(metadata["reasoningIssuer"], "openai");
+    let origin = stream
+        .finish()
+        .await
+        .expect("completed gateway response")
+        .origin;
     let history = deserialize_agent_history(
-        durable_history_from_parts(&parts.parts, &provider_metadata).await,
+        durable_history_from_parts(&parts.parts, &provider_metadata, &origin).await,
     )
     .expect("durable history conversion");
+    let Message::Assistant(assistant) = &history[0] else {
+        panic!("reloaded completion is an assistant turn");
+    };
+    assert_eq!(assistant.origin.as_ref(), Some(&origin));
     let replay = responses_wire(
         CompletionRequest::new("next")
             .messages(std::iter::once(Message::user("hello")).chain(history))
@@ -641,7 +659,8 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     assert_eq!(inputs[tool_index]["name"], TOOL_NAME);
     assert_eq!(inputs[tool_index]["arguments"], r#"{"cmd":"pwd"}"#);
     assert_eq!(inputs[text_index]["role"], "assistant");
-    assert_eq!(inputs[text_index]["content"], TEXT);
+    assert_eq!(inputs[text_index]["content"][0]["type"], "output_text");
+    assert_eq!(inputs[text_index]["content"][0]["text"], TEXT);
     assert_eq!(inputs[4]["type"], "function_call_output");
     assert_eq!(inputs[4]["call_id"], TOOL_CALL_ID);
     assert!(inputs[4]["output"].to_string().contains("/workspace"));
@@ -760,7 +779,7 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     let tool_dispatches = dispatches.clone();
     let agent = rig::AgentBuilder::new(model)
         .dynamic_tool(DynamicTool::new(
-            TOOL_NAME,
+            ToolName::new(TOOL_NAME).expect("fixture tool name"),
             "Inspect the workspace",
             json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
             move |args| {
@@ -836,11 +855,6 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
                 if completed_turns.is_empty() {
                     assert!(dispatches.lock().unwrap().is_empty());
                 }
-                super::preserve_text_message_id(
-                    &parts.parts,
-                    &mut provider_metadata,
-                    call.message_id.as_deref(),
-                );
                 tracker.record_parts(&parts.parts);
                 completed_turns.push((
                     durable_items_json(&parts.parts, &provider_metadata),
@@ -895,10 +909,15 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     assert_eq!(items[3]["callId"], TOOL_CALL_ID);
     assert_eq!(items[3]["name"], TOOL_NAME);
     assert_eq!(items[3]["providerMetadata"]["openai"]["itemId"], "fc_1");
+    assert_eq!(items[3]["providerMetadata"]["rigNative"]["id"], "fc_1");
     assert_eq!(items[5]["callId"], "call_2");
     assert_eq!(items[5]["providerMetadata"]["openai"]["itemId"], "fc_2");
     assert_eq!(
         items[1]["providerMetadata"]["openai_responses"]["message_id"],
+        "msg_commentary"
+    );
+    assert_eq!(
+        items[1]["providerMetadata"]["rigNative"]["id"],
         "msg_commentary"
     );
     assert_eq!(
@@ -1025,7 +1044,7 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
     let agent = rig::AgentBuilder::new(model)
         .additional_params(json!({"reasoning": {"effort": "medium"}}))
         .dynamic_tool(DynamicTool::new(
-            TOOL_NAME,
+            ToolName::new(TOOL_NAME).expect("fixture tool name"),
             "Read the workspace path",
             json!({ "type": "object", "properties": { "cmd": { "type": "string" } } }),
             |args| {
@@ -1065,10 +1084,10 @@ async fn openai_byok_replays_contents_after_a_tool_turn_with_empty_reasoning() {
     assert_eq!(input[1]["type"], "reasoning");
     assert_eq!(input[1]["id"], ITEM_ID);
     assert_eq!(input[1]["encrypted_content"], ENVELOPE);
-    assert_eq!(
-        input[2],
-        message("msg_commentary", "Checking the workspace.")
-    );
+    assert_eq!(input[2]["type"], "message");
+    assert_eq!(input[2]["role"], "assistant");
+    assert_eq!(input[2]["content"][0]["type"], "output_text");
+    assert_eq!(input[2]["content"][0]["text"], "Checking the workspace.");
     assert_eq!(
         input[3],
         json!({

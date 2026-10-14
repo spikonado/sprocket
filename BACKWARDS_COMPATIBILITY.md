@@ -42,37 +42,35 @@ provider settings stay in their existing formats, so no migration is required.
 The cutoff is persistent replay state, not a compatibility shim. Keep it until
 a migration removes the covered reasoning from stored transcript parts.
 
-### Rig 0.43 upstream revision
+### Rig 0.44 history reader
 
-Rig is pinned to upstream `e02ddcc6bd39e54e96bb5f48693896a6ebf26546`, the
-first merged post-0.43 revision removing an unconditional partial-conversation
-stderr dump from invalid-tool recovery. This revision retains 0.43's history
-types but unifies streamed and awaited run errors as `PromptError`.
-Return to a registry release only once it contains that fix and the provider,
-replay, recovery, and handoff regressions pass. Never substitute unpinned main.
+Rig uses the crates.io 0.44.0 release. Sprocket's history reader converts
+released assistant records to item-shaped turns. Tool-result correlators become
+Rig's single call ID; distinct provider item IDs move into native function-call
+items. Legacy `openai_responses` text extras, including `message_id`, phase and
+content annotations, become native message items. The reader also accepts
+`rigNative` items in text and tool-call metadata.
 
-### Responses fractional timestamps
+Reasoning still persists one encrypted payload in the existing OpenAI metadata.
+The reader accepts released block arrays and issuer-tagged blocks, projecting
+summaries and ciphertext into native OpenAI reasoning items. It also accepts
+0.44's reasoning JSON. Raw text, signatures and redacted legacy payloads are not
+projected. Missing historical issuers still mean `openai`. Native replay needs
+the originating API, provider and model on the assistant turn. Do not replay
+ciphertext across provider handoffs.
+The reader restores `origin` from text/tool-call metadata or the top level of
+reasoning `blocksJson`. The caller may explicitly assign its selected context
+origin to unidentified legacy turns with `assign_unidentified_legacy_history_origin`;
+known origins are never overwritten. Keep this fallback until every supported
+transcript has recorded provenance or a versioned migration supplies it.
 
-OpenAI's Responses schema allows fractional `created_at` seconds. Rig 0.43
-requires `u64`, so the Responses decoder truncates valid nonnegative fractional
-timestamps in lifecycle events to whole seconds. It keeps the original event
-for provider error diagnostics. Other invalid fields still fail decoding.
-Requests, stored transcripts, and released clients are unchanged.
-
-Remove this adapter once the pinned Rig revision accepts fractional timestamps
-and the fractional-timestamp stream regression passes without it.
-
-### Responses nullable status
-
-OpenAI's Responses schema allows null or absent `status`. Rig's pinned response
-type deserializes it as a required string. The shared Responses decoder maps
-null or absent lifecycle status to Rig's empty unknown status, which produces
-no finish reason. Explicit statuses and original event bytes stay unchanged.
-Other nullable response fields already use optional types or tolerant metadata
-projection. Requests, stored transcripts, and released clients are unchanged.
-
-Remove this mapping once the pinned Rig revision accepts null and absent status
-and the nullable lifecycle and stream regressions pass without it.
+Stored local JSONL and Convex records are not rewritten. Keep these readers
+until supported clients age out or a versioned migration rewrites all supported
+histories. Media source JSON remains compatible with 0.44. Image/audio
+`additional_params` are no longer consumed by Rig; their stored JSON remains
+untouched. Video/document object metadata is retained. Do not adopt post-release
+document source types or widen new metadata to scalars while old clients remain
+supported.
 
 ### SIWC streaming content type
 
@@ -98,19 +96,18 @@ supported upgrade window. Model selections and Convex data need no migration.
 
 ### Stateless OpenAI reasoning replay
 
-Rig 0.43 preserves and inlines Responses message and function items with their
-native IDs, so the old `OpenAiReplayClient` ID-clearing workaround is removed.
-Sprocket's `StatelessResponses` wire sets `store: false`, requests encrypted
-reasoning, and omits reasoning without a nonempty encrypted payload. Summary-only
-reasoning cannot be replayed without server storage. Function call IDs continue
-to pair tool results; existing transcript formats remain unchanged.
+Sprocket's `StatelessResponses` wire only sets `store: false`. Rig 0.44 requests
+encrypted reasoning and filters stateless reasoning without ciphertext.
+Summary-only reasoning cannot be replayed without server storage. Function
+call IDs continue to pair tool results; existing transcript formats remain
+unchanged.
 
 Remove this wire wrapper once Rig exposes an equivalent stateless Responses
 configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
 
 ### Rig developer messages
 
-Rig's pinned message type has no developer role. Sprocket represents application
+Rig 0.44's message type has no developer role. Sprocket represents application
 instructions as Rig system messages and converts them to `developer` in the
 shared Responses wire. Base instructions use the provider's `instructions`
 configuration directly. Late instructions stay at their conversation position
@@ -123,9 +120,9 @@ and SIWC prefix tests pass without it.
 
 Released Sprocket history records carry separate `id` and optional `callId`
 fields and omit tool names on results. The Rust history reader reconstructs
-Rig 0.43's unified `CallId`, preserving a distinct item ID when present, and
+Rig 0.44's `CallId` and preserves distinct item IDs in native items. It
 resolves each result's required name from its preceding call. Historical
-OpenAI-shaped reasoning blocks are sealed to the `openai` issuer when loaded.
+OpenAI-shaped reasoning blocks become native OpenAI reasoning items when loaded.
 No stored data is rewritten: local JSONL and Convex transcript formats remain
 compatible with released clients.
 
@@ -134,9 +131,9 @@ replay payload in `providerMetadata.openai.reasoningEncryptedContent`, the item
 ID in `providerMetadata.openai.itemId`, and the issuer in
 `providerMetadata.reasoningIssuer`. Raw text, signatures and redacted blocks
 are not persisted. Encrypted payload bytes are preserved verbatim without
-duplication. The Rust reader reconstructs summary/encrypted blocks; missing
+duplication. The Rust reader reconstructs native summary/encrypted items; missing
 issuers default to `openai` for released histories. The history fields remain
-`id` and `blocksJson`; issuer-aware histories encode sealed projected reasoning
+`id` and `blocksJson`; issuer-aware histories encode projected reasoning
 inside `blocksJson`, while the reader still accepts released block arrays.
 This additive metadata format needs no backfill. Keep the existing replay
 fields, array reader and missing-issuer default until supported clients age out

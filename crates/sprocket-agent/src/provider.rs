@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::DynModel;
-use rig::agent::AgentBuilder;
-use rig::completion::{FinishReason, Message};
+use rig::agent::{
+    AgentBuilder, AgentHook, HookContext, OutcomeAction, OutcomeEvent, StepEventKind,
+};
+use rig::completion::{Effort, FinishReason, GenerationOptions, Message, Reasoning};
 use rig::message::AssistantContent;
 use rig::operation::Completion;
-use rig::providers::openai;
 use rig::streaming::{Item, StreamEvent};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::sleep;
@@ -273,18 +274,42 @@ impl AgentProvider {
 fn completion_parameters(
     reasoning_effort: &str,
     fast_mode: bool,
-) -> anyhow::Result<serde_json::Value> {
-    let reasoning_effort = serde_json::from_value::<openai::responses_api::ReasoningEffort>(
-        serde_json::Value::String(reasoning_effort.to_string()),
-    )
-    .map_err(|error| anyhow!("invalid OpenAI Responses API reasoning effort: {error}"))?;
-    Ok(openai::responses_api::AdditionalParameters {
-        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
-        service_tier: fast_mode
-            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
-        ..Default::default()
+) -> anyhow::Result<(GenerationOptions, serde_json::Value)> {
+    let reasoning = if reasoning_effort == "none" {
+        Reasoning::Off
+    } else {
+        serde_json::from_value::<Effort>(serde_json::Value::String(reasoning_effort.to_string()))
+            .map(Reasoning::from)
+            .map_err(|error| anyhow!("invalid reasoning effort: {error}"))?
+    };
+    // The gateway's "fast" tier is not Rig's portable Priority tier.
+    let additional_params = if fast_mode {
+        serde_json::json!({ "service_tier": "fast" })
+    } else {
+        serde_json::json!({})
+    };
+    Ok((
+        GenerationOptions::default().reasoning(reasoning),
+        additional_params,
+    ))
+}
+
+#[derive(Clone, Default)]
+struct CompletionOrigin(Arc<Mutex<Option<(usize, rig::message::Origin)>>>);
+
+impl AgentHook for CompletionOrigin {
+    fn observes(&self, kind: StepEventKind) -> bool {
+        kind == StepEventKind::CompletionDispatch
     }
-    .to_json())
+
+    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        if let Some(response) = event.completion()
+            && let Ok(mut origin) = self.0.lock()
+        {
+            *origin = Some((event.turn, response.origin.clone()));
+        }
+        OutcomeAction::Proceed
+    }
 }
 
 pub(crate) async fn resume_context_handoff(
@@ -333,6 +358,9 @@ async fn run_with_completion_model(
     request: AgentProviderRequest,
     mut provider_switch: Option<(AgentProvider, ProviderHandoff)>,
 ) -> AgentProviderResult {
+    let legacy_origin = model
+        .id()
+        .map(|id| rig::message::Origin::new("openai.responses", model.name(), id));
     let target_params = match completion_parameters(&request.reasoning_effort, request.fast_mode) {
         Ok(params) => params,
         Err(error) => {
@@ -457,6 +485,7 @@ async fn run_with_completion_model(
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker.clone());
+    let completion_origin = CompletionOrigin::default();
     let mut stream_recovery = StreamRecovery::default();
     let mut recovery_delay = Duration::ZERO;
     let initial_context: Arc<[Message]> = request.initial_context.into();
@@ -475,6 +504,9 @@ async fn run_with_completion_model(
         .cloned()
         .chain(request.prior_history)
         .collect();
+    if let Some(origin) = &legacy_origin {
+        crate::types::assign_unidentified_legacy_history_origin(&mut history, origin);
+    }
     let mut prompt = request.prompt;
     let mut deferred_prompt = None;
     let mut before_prompt = false;
@@ -578,13 +610,19 @@ async fn run_with_completion_model(
 
     'agent_run: {
         'generations: loop {
+            let mut pending_origin_turn = None;
+            if let Ok(mut origin) = completion_origin.0.lock() {
+                *origin = None;
+            }
             let ready_at = tokio::time::Instant::now() + recovery_delay;
             recovery_delay = Duration::ZERO;
             let mut stream = agent
                 .prompt(prompt)
-                .replace_additional_params(additional_params.clone())
+                .options(additional_params.0.clone())
+                .replace_additional_params(additional_params.1.clone())
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
+                .add_hook(completion_origin.clone())
                 .add_hook(context_handoff_hook.clone())
                 .add_hook(prompt_hook.clone())
                 .add_hook(stream_recovery.clone())
@@ -638,6 +676,13 @@ async fn run_with_completion_model(
                         tokio::time::sleep_until(ready_at).await;
                         stream.next().await
                     } => {
+                        let origin = completion_origin.0.lock().ok().and_then(|origin| origin.clone());
+                        if let Some((turn, origin)) = origin
+                            && pending_origin_turn == Some(turn)
+                        {
+                            transcript.record_origin(&origin);
+                            pending_origin_turn = None;
+                        }
                         let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
                             if completed_attempt == Some(transcript.attempt_seq) {
@@ -659,7 +704,8 @@ async fn run_with_completion_model(
                                         handoff_processed_tokens.saturating_add(tokens.unwrap_or(0));
                                 } else {
                                     transcript.record_usage(tokens);
-                                    transcript.record_completion(call.message_id.as_deref());
+                                    transcript.tool_call_tracker.record_parts(&transcript.parts.parts);
+                                    pending_origin_turn = Some(call.call_index + 1);
                                 }
                                 if let Some(error) = incomplete_completion_error(call.finish_reason.as_ref()) {
                                     if context_handoff_hook.is_writing() && provider_switch.is_some() {
@@ -778,8 +824,21 @@ async fn run_with_completion_model(
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(_)))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::ToolCall { .. }))
-                            | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
-                            | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))) => {}
+                            | Some(Ok(rig::agent::MultiTurnStreamItem::ToolResult { .. })) => {}
+                            Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. })) => {
+                                if let Err(error) = transcript.advance_attempt().await {
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
+                                transcript.live.clear(&request.thread_id);
+                                if let Some(output) = &transcript.runtime.output {
+                                    output.notify_live_update();
+                                }
+                                completed_attempt = None;
+                                final_text.clear();
+                                final_response_received = false;
+                                streamed_text.clear();
+                            }
+                            Some(Ok(_)) => {}
                             Some(Err(error)) => {
                                 if let Some(handoff) = context_handoff_hook.take_request() {
                                     handoff_processed_tokens = 0;
@@ -974,11 +1033,7 @@ impl TranscriptSink {
         self.publish_if_needed(false);
     }
 
-    fn complete_reasoning(
-        &mut self,
-        correlator: &str,
-        reasoning: &rig::message::Sealed<rig::message::Reasoning>,
-    ) {
+    fn complete_reasoning(&mut self, correlator: &str, reasoning: &rig::message::Reasoning) {
         self.streamed = true;
         self.unpublished += 1;
         apply_completed_reasoning(
@@ -1070,9 +1125,21 @@ impl TranscriptSink {
         }
     }
 
-    fn record_completion(&mut self, message_id: Option<&str>) {
-        preserve_text_message_id(&self.parts.parts, &mut self.provider_metadata, message_id);
-        self.tool_call_tracker.record_parts(&self.parts.parts);
+    fn record_origin(&mut self, origin: &rig::message::Origin) {
+        for part in &self.parts.parts {
+            let key = match part {
+                LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
+                LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
+                LiveAssistantPart::ToolCall {
+                    part_id, call_id, ..
+                } => part_id.clone().unwrap_or_else(|| call_id.clone()),
+            };
+            let metadata = self
+                .provider_metadata
+                .entry(key)
+                .or_insert_with(|| serde_json::json!({}));
+            metadata["origin"] = serde_json::to_value(origin).expect("origin always serializes");
+        }
     }
 
     fn publish_delay(&self) -> Duration {
@@ -1177,8 +1244,15 @@ fn apply_completed_text(
         Some(stream_id.to_string()),
         now_ms(),
     );
-    if let Some(params) = &completed.additional_params {
-        provider_metadata.insert(format!("text:{id}"), params.clone().into_value());
+    if let Some(native) = &completed.native {
+        let mut metadata = serde_json::json!({ "rigNative": native.item });
+        if let Some(phase) = native.item.get("phase") {
+            metadata["openai_responses"]["phase"] = phase.clone();
+        }
+        if let Some(message_id) = native.item.get("id") {
+            metadata["openai_responses"]["message_id"] = message_id.clone();
+        }
+        provider_metadata.insert(format!("text:{id}"), metadata);
     }
     previous
 }
@@ -1193,52 +1267,33 @@ fn apply_completed_tool_call(
     let call_id = call.id.wire().into_owned();
     let key = part_id.clone().unwrap_or_else(|| call_id.clone());
     let mut metadata = serde_json::Map::new();
-    if let Some(item_id) = call.id.provider().and_then(|id| id.item_id.as_ref()) {
-        metadata.insert("openai".into(), serde_json::json!({ "itemId": item_id }));
+    if let Some(native) = call.native {
+        if let Some(item_id) = native.item.get("id") {
+            metadata.insert("openai".into(), serde_json::json!({ "itemId": item_id }));
+        }
+        if let Some(signature) = native
+            .item
+            .get("signature")
+            .or_else(|| native.item.get("thought_signature"))
+        {
+            metadata.insert("signature".into(), signature.clone());
+        }
+        let mut additional_params = native.item.as_object().cloned().unwrap_or_default();
+        for field in ["type", "id", "call_id", "name", "arguments"] {
+            additional_params.remove(field);
+        }
+        metadata.insert("toolCallAdditionalParams".into(), additional_params.into());
+        metadata.insert("rigNative".into(), native.item);
     }
-    if let Some(signature) = call.signature {
-        metadata.insert("signature".into(), signature.into());
-    }
-    metadata.insert(
-        "toolCallAdditionalParams".into(),
-        call.additional_params.unwrap_or(serde_json::Value::Null),
-    );
     provider_metadata.insert(key, metadata.into());
     parts.apply_tool_call(
         part_id,
         call_id,
         call.function.name.into(),
-        call.function.arguments,
+        call.function.arguments.into(),
         Some(stream_id.to_string()),
         now_ms(),
     );
-}
-
-fn preserve_text_message_id(
-    parts: &[LiveAssistantPart],
-    provider_metadata: &mut HashMap<String, serde_json::Value>,
-    message_id: Option<&str>,
-) {
-    let Some(message_id) = message_id.filter(|id| !id.is_empty()) else {
-        return;
-    };
-    for part in parts {
-        if let LiveAssistantPart::Text { id, .. } = part {
-            let metadata = provider_metadata
-                .entry(format!("text:{id}"))
-                .or_insert_with(|| serde_json::json!({}));
-            let extras = metadata
-                .as_object_mut()
-                .expect("text metadata is a JSON object")
-                .entry("openai_responses")
-                .or_insert_with(|| serde_json::json!({}));
-            if let Some(extras) = extras.as_object_mut() {
-                extras
-                    .entry("message_id")
-                    .or_insert_with(|| message_id.into());
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1250,6 +1305,19 @@ mod tests {
         classify_provider_error, durable_items_json, visible_live_parts,
     };
     use crate::live::LiveAssistantPart;
+
+    #[test]
+    fn generation_options_keep_gateway_fast_tier_separate() {
+        let (options, params) = super::completion_parameters("xhigh", true).unwrap();
+        assert_eq!(
+            options.reasoning,
+            Some(rig::completion::Effort::XHigh.into())
+        );
+        assert_eq!(params, serde_json::json!({ "service_tier": "fast" }));
+        let (options, params) = super::completion_parameters("none", false).unwrap();
+        assert_eq!(options.reasoning, Some(rig::completion::Reasoning::Off));
+        assert_eq!(params, serde_json::json!({}));
+    }
 
     #[test]
     fn live_projection_omits_empty_reasoning_without_removing_durable_state() {
@@ -1289,30 +1357,30 @@ mod tests {
             Some("stream".into()),
             1,
         );
-        let commentary = rig::message::Text {
-            text: "Working".into(),
-            additional_params: Some(
-                serde_json::from_value(serde_json::json!({"openai_responses": {"phase": "commentary", "message_id": "msg_commentary"}})).unwrap(),
-            ),
+        let rig::message::AssistantContent::Text(commentary) =
+            rig::message::AssistantContent::text("Working").with_native(serde_json::json!({
+                "type": "message", "id": "msg_commentary", "phase": "commentary",
+                "role": "assistant", "content": [{"type": "output_text", "text": "Working"}]
+            }))
+        else {
+            unreachable!();
         };
         assert_eq!(
             apply_completed_text(&mut parts, &mut metadata, "stream", 0, &commentary),
             "partial"
         );
-        let answer = rig::message::Text {
-            text: "Done".into(),
-            additional_params: Some(
-                serde_json::from_value(
-                    serde_json::json!({"openai_responses": {"phase": "final_answer"}}),
-                )
-                .unwrap(),
-            ),
+        let rig::message::AssistantContent::Text(answer) =
+            rig::message::AssistantContent::text("Done").with_native(serde_json::json!({
+                "type": "message", "id": "msg_answer", "phase": "final_answer",
+                "role": "assistant", "content": [{"type": "output_text", "text": "Done"}]
+            }))
+        else {
+            unreachable!();
         };
         assert_eq!(
             apply_completed_text(&mut parts, &mut metadata, "stream", 1, &answer),
             ""
         );
-        super::preserve_text_message_id(&parts.parts, &mut metadata, Some("msg_answer"));
         let durable = durable_items_json(&parts.parts, &metadata);
         assert_eq!(durable.len(), 2);
         assert_eq!(durable[0]["text"], "Working");
@@ -1338,27 +1406,16 @@ mod tests {
                 None,
             ))
             .unwrap();
-        let request = rig::providers::openai::responses_api::CompletionRequest::try_from(
-            rig::providers::openai::responses_api::ResponsesRequestParams {
-                model: "model".into(),
-                request: rig::completion::CompletionRequest::new("continue").messages(history),
-                system_instructions_placement: Default::default(),
-                issuers: vec!["openai".into()],
-            },
-        )
-        .unwrap();
-        let replay = serde_json::to_value(request).unwrap();
-        let input = replay["input"].as_array().unwrap();
-        let commentary = input
-            .iter()
-            .find(|item| item["id"] == "msg_commentary")
-            .unwrap();
-        let answer = input
-            .iter()
-            .find(|item| item["id"] == "msg_answer")
-            .unwrap();
-        assert_eq!(commentary["phase"], "commentary");
-        assert_eq!(answer["phase"], "final_answer");
+        let rig::message::Message::Assistant(message) = &history[0] else {
+            panic!("expected assistant text");
+        };
+        assert_eq!(
+            message.content,
+            vec![
+                rig::message::AssistantContent::Text(commentary),
+                rig::message::AssistantContent::Text(answer),
+            ]
+        );
     }
 
     #[test]
@@ -1366,16 +1423,18 @@ mod tests {
         use rig::message::{AssistantContent, ToolCall, ToolFunction, UserContent};
         use serde_json::json;
 
-        let mut call = ToolCall::from_dual_wire(
-            "fc_1",
+        let call = ToolCall::from_wire(
             "call_1",
-            ToolFunction {
-                name: "exec_cmd".try_into().unwrap(),
-                arguments: json!({"cmd": "pwd"}),
-            },
+            ToolFunction::new("exec_cmd".try_into().unwrap(), json!({"cmd": "pwd"})),
         );
-        call.signature = Some("opaque-signature".into());
-        call.additional_params = Some(json!({"native": {"futureField": "opaque"}}));
+        let AssistantContent::ToolCall(call) =
+            AssistantContent::ToolCall(call).with_native(json!({
+                "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                "name": "exec_cmd", "arguments": "{\"cmd\":\"pwd\"}", "futureField": "opaque"
+            }))
+        else {
+            unreachable!();
+        };
         let mut parts = super::LiveAssistantParts::default();
         let mut metadata = HashMap::new();
         super::apply_completed_tool_call(
@@ -1404,10 +1463,13 @@ mod tests {
             None,
         );
         let messages = crate::types::deserialize_agent_history(history).unwrap();
-        let rig::message::Message::Assistant { content, .. } = &messages[0] else {
+        let rig::message::Message::Assistant(message) = &messages[0] else {
             panic!("expected assistant call");
         };
-        assert_eq!(content, &[AssistantContent::ToolCall(call.clone())]);
+        assert_eq!(
+            message.content,
+            vec![AssistantContent::ToolCall(call.clone())]
+        );
         let rig::message::Message::User { content } = &messages[1] else {
             panic!("expected tool result");
         };

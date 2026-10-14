@@ -7661,8 +7661,9 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
 name = "rig"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b75cffdc553348b30a4213837b75dc3f0f35634716bfa67e797627f49ea955"
 dependencies = [
  "rig-agent",
  "rig-cassette",
@@ -7679,8 +7680,9 @@ dependencies = [
 
 [[package]]
 name = "rig-agent"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e3fa130bb81762e875dff982301fb599046535bbc04d908a2ee1fea583d1c67"
 dependencies = [
  "async-stream",
  "futures",
@@ -7698,8 +7700,9 @@ dependencies = [
 
 [[package]]
 name = "rig-cassette"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a070cded1cbfc77deb6cd1fa783e05fd6bc5dc30b909ddd0788203f5fda7b1a"
 dependencies = [
  "futures",
  "rig-agent",
@@ -7710,8 +7713,9 @@ dependencies = [
 
 [[package]]
 name = "rig-core"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c60db6e3da7681abbdfa9637c1a76dbd5a713f935f0a6753d72c5d2770ed4c6"
 dependencies = [
  "async-stream",
  "base64 0.22.1",
@@ -7738,8 +7742,9 @@ dependencies = [
 
 [[package]]
 name = "rig-fastembed"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8690687213a4159d6cd7cd8003dc8a2fe9153a6f948a63d64d44794b98c77cdc"
 dependencies = [
  "fastembed",
  "futures",
@@ -7748,8 +7753,9 @@ dependencies = [
 
 [[package]]
 name = "rig-helixdb"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05bf3f0cf413af696f1323314a7f7562d5ddc4e25b27fadab54bb9b539ffa4dd"
 dependencies = [
  "reqwest 0.13.5",
  "rig-core",
@@ -7760,8 +7766,9 @@ dependencies = [
 
 [[package]]
 name = "rig-http"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9b68e5fe7258d64aeffb0a976ad0665ad2f94104d41eb4cdf463065ba57ec0b"
 dependencies = [
  "bytes",
  "futures",
@@ -7774,8 +7781,9 @@ dependencies = [
 
 [[package]]
 name = "rig-lancedb"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee736ccc6876177cd7d26b47a8abf6ce3e79024bfdad6de7efe2ecc675d8e91"
 dependencies = [
  "arrow-array",
  "futures",
@@ -7787,8 +7795,9 @@ dependencies = [
 
 [[package]]
 name = "rig-milvus"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a159a5aec532ef58d3119bc9b153d12da020679837cc9ff8dbd6620aa2d20921"
 dependencies = [
  "reqwest 0.13.5",
  "rig-core",
@@ -7799,8 +7808,9 @@ dependencies = [
 
 [[package]]
 name = "rig-reqwest"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d478ca821bdf7030b4cabfdc7acc07ab5f0449886f9a7e472de205a6ec4b2b1d"
 dependencies = [
  "bytes",
  "futures",
@@ -7814,8 +7824,9 @@ dependencies = [
 
 [[package]]
 name = "rig-tungstenite"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d145d2d41722fd040dbb47f05b797c8119884697bb4ee7e53fc5c1c1ec9610df"
 dependencies = [
  "futures",
  "rig-http",
@@ -7826,8 +7837,9 @@ dependencies = [
 
 [[package]]
 name = "rig-typesafeai"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4b100f45342e825569960d672a8ee919c1432fff56934b229f27afac7eb8a59"
 dependencies = [
  "http",
  "rig-core",
@@ -7838,8 +7850,9 @@ dependencies = [
 
 [[package]]
 name = "rig-vectorize"
-version = "0.43.0"
-source = "git+https://github.com/0xPlaygrounds/rig?rev=e02ddcc6bd39e54e96bb5f48693896a6ebf26546#e02ddcc6bd39e54e96bb5f48693896a6ebf26546"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b80eab27c6afc4c37cf6712e4a3d45ac24155c909f971954dd7249737583887f"
 dependencies = [
  "reqwest 0.13.5",
  "rig-core",
