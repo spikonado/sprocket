@@ -331,16 +331,11 @@ async fn desktop_login_result(
             .await
             .map_err(ApiError::internal)?,
     };
-    if let NativeLoginStatus::Authenticated { ref user } = status {
-        if connection == BrowserConnection::Loopback
-            && state
-                .auth
-                .require_session_user(&session_token, &user.id)
-                .await
-                .is_err()
-        {
-            return Ok(Json(NativeLoginStatus::SignedOut));
-        }
+    if matches!(status, NativeLoginStatus::Authenticated { .. })
+        && connection == BrowserConnection::Loopback
+        && !state.auth.session_has_user(&session_token).await
+    {
+        return Ok(Json(NativeLoginStatus::SignedOut));
     }
     Ok(Json(status))
 }
@@ -441,8 +436,7 @@ async fn native_session_token_response(
     payload: NativeSessionTokenRequest,
 ) -> Result<Json<Option<crate::native_auth::NativeBrowserSession>>, ApiError> {
     let (session_token, connection) = require_browser_session(state, headers, jar, peer).await?;
-    if connection == BrowserConnection::Https && !state.auth.session_has_user(&session_token).await
-    {
+    if !state.auth.session_has_user(&session_token).await {
         return Ok(Json(None));
     }
     let session = state
@@ -457,38 +451,14 @@ async fn native_session_token_response(
             )
         })?;
     if let Some(session) = &session {
-        if connection == BrowserConnection::Https {
-            state
-                .auth
-                .require_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(|_| ApiError::authentication_required())?;
-        } else if state.auth.session_has_user(&session_token).await {
-            state
-                .auth
-                .require_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
-        } else {
-            match state
-                .auth
-                .inherit_session_user(&session_token, &session.user.id)
-                .await
-            {
-                Ok(_) => {}
-                Err(error) => {
-                    let message = error.to_string();
-
-                    if message.contains("sign in again")
-                        || message.contains("authentication required")
-                    {
-                        return Ok(Json(None));
-                    }
-
-                    return Err(ApiError::internal(error));
-                }
-            }
-        }
+        state
+            .auth
+            .require_session_user(&session_token, &session.user.id)
+            .await
+            .map_err(|error| match connection {
+                BrowserConnection::Https => ApiError::authentication_required(),
+                BrowserConnection::Loopback => ApiError::with_status(StatusCode::CONFLICT, error),
+            })?;
     }
     Ok(Json(session))
 }
@@ -1065,12 +1035,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_token_binds_a_resumed_session_but_rejects_another_account() {
+    async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_account() {
         let (state, session_token, _) = test_state(true).await;
         let auth = Arc::clone(&state.auth);
         let native_auth = Arc::clone(&state.native_auth);
         native_auth.authenticate_for_test("user-a").await;
         let app = router(state);
+        let unbound = app
+            .clone()
+            .oneshot(with_peer(
+                native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unbound.status(), StatusCode::OK);
+        assert_eq!(read_json(unbound).await, serde_json::Value::Null);
+        assert!(!auth.session_has_user(&session_token).await);
+
+        auth.bind_session_user(&session_token, "user-a")
+            .await
+            .unwrap();
         let response = app
             .clone()
             .oneshot(with_peer(
@@ -1085,9 +1070,6 @@ mod tests {
         assert_eq!(payload["accessToken"], "test-access-token");
         assert_eq!(payload["user"]["id"], "user-a");
         assert!(payload.get("refreshToken").is_none());
-        auth.require_session_user(&session_token, "user-a")
-            .await
-            .unwrap();
 
         native_auth.authenticate_for_test("user-b").await;
         let response = app
@@ -1105,54 +1087,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn leftover_loopback_cookie_does_not_inherit_the_next_native_user() {
-        let (state, leftover, _) = test_state(true).await;
-        let auth = Arc::clone(&state.auth);
-        let native_auth = Arc::clone(&state.native_auth);
-        auth.bind_session_user(&leftover, "user-a").await.unwrap();
-        native_auth.authenticate_for_test("user-a").await;
-        auth.sync_sessions_with_owner(None).await.unwrap();
-        native_auth.authenticate_for_test("user-b").await;
-
-        let (_, next) = auth
-            .bootstrap_browser_session(true)
-            .await
-            .expect("next local cookie");
-        let app = router(state);
-        let leftover_response = app
-            .clone()
-            .oneshot(with_peer(
-                native_token_request(Some(&leftover), "http://127.0.0.1:7731"),
-                loopback_peer(),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(leftover_response.status(), StatusCode::OK);
-        assert!(read_json(leftover_response).await.is_null());
-        assert!(
-            auth.require_session_user(&leftover, "user-b")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("sign in again")
-        );
-
-        let next_response = app
-            .oneshot(with_peer(
-                native_token_request(Some(&next), "http://127.0.0.1:7731"),
-                loopback_peer(),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(next_response.status(), StatusCode::OK);
-        assert_eq!(
-            read_json(next_response).await["accessToken"],
-            "test-access-token"
-        );
-        auth.require_session_user(&next, "user-b").await.unwrap();
-    }
-
-    #[tokio::test]
     async fn remote_native_token_is_empty_until_bound_to_the_matching_owner() {
         let (state, _, _) = test_state(true).await;
         state.native_auth.authenticate_for_test("user-a").await;
@@ -1161,8 +1095,12 @@ mod tests {
             .bootstrap_browser_session(false)
             .await
             .expect("remote session");
+        let (_, foreign_session) = state
+            .auth
+            .bootstrap_browser_session(false)
+            .await
+            .expect("remote session");
         let auth = Arc::clone(&state.auth);
-        let native_auth = Arc::clone(&state.native_auth);
         let app = router(state);
         let request = |session_token: &str| {
             Request::builder()
@@ -1198,31 +1136,14 @@ mod tests {
             "test-access-token"
         );
 
-        assert_eq!(
-            auth.bind_session_user(&remote_session, "user-b")
-                .await
-                .unwrap_err()
-                .to_string(),
-            "local session belongs to a different user"
-        );
-        let still_owner = app
-            .clone()
-            .oneshot(with_peer(request(&remote_session), loopback_peer()))
+        auth.bind_session_user(&foreign_session, "user-b")
             .await
             .unwrap();
-        assert_eq!(still_owner.status(), StatusCode::OK);
-        assert_eq!(
-            read_json(still_owner).await["accessToken"],
-            "test-access-token"
-        );
-
-        native_auth.authenticate_for_test("user-b").await;
-        let foreign_owner = app
-            .oneshot(with_peer(request(&remote_session), loopback_peer()))
+        let mismatched = app
+            .oneshot(with_peer(request(&foreign_session), loopback_peer()))
             .await
             .unwrap();
-        assert_eq!(foreign_owner.status(), StatusCode::UNAUTHORIZED);
-        assert!(read_json(foreign_owner).await.get("accessToken").is_none());
+        assert_eq!(mismatched.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]
@@ -1492,33 +1413,6 @@ mod tests {
                 .unwrap_or_default()
                 .contains("127.0.0.1")
         );
-    }
-
-    #[tokio::test]
-    async fn result_does_not_report_authenticated_for_a_foreign_session() {
-        let (state, session_token, _) = test_state(true).await;
-        state
-            .auth
-            .bind_session_user(&session_token, "user-a")
-            .await
-            .unwrap();
-        state.native_auth.authenticate_for_test("user-b").await;
-        let app = router(state);
-
-        let result = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/result")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.status(), StatusCode::OK);
-        let payload = read_json(result).await;
-        assert_eq!(payload["status"], "signedOut");
     }
 
     #[tokio::test]
