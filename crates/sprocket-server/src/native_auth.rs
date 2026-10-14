@@ -1188,7 +1188,6 @@ mod tests {
         let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
         let directory = tempfile::tempdir().unwrap();
         let local = crate::auth::AuthState::load(directory.path()).unwrap();
-        let (_, desktop_session) = local.bootstrap_browser_session(true).await.unwrap();
         let (_, browser_session) = local.bootstrap_browser_session(true).await.unwrap();
         Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
         let mut changes = manager.subscribe_changes();
@@ -1207,11 +1206,7 @@ mod tests {
             .unwrap();
         let session = manager.browser_session(false).await.unwrap().unwrap();
         local
-            .require_session_user(&desktop_session, &session.user.id)
-            .await
-            .unwrap();
-        local
-            .require_session_user(&browser_session, &session.user.id)
+            .bind_session_user(&browser_session, &session.user.id)
             .await
             .unwrap();
         assert_eq!(
@@ -1223,18 +1218,7 @@ mod tests {
         );
         manager.sign_out().await.unwrap();
         assert!(manager.browser_session(false).await.unwrap().is_none());
-        assert!(
-            local
-                .require_session_user(&desktop_session, &session.user.id)
-                .await
-                .is_err()
-        );
-        assert!(
-            local
-                .require_session_user(&browser_session, &session.user.id)
-                .await
-                .is_err()
-        );
+        assert!(!local.session_has_user(&browser_session).await);
     }
 
     #[tokio::test]

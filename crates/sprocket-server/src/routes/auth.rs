@@ -436,8 +436,7 @@ async fn native_session_token_response(
     payload: NativeSessionTokenRequest,
 ) -> Result<Json<Option<crate::native_auth::NativeBrowserSession>>, ApiError> {
     let (session_token, connection) = require_browser_session(state, headers, jar, peer).await?;
-    if connection == BrowserConnection::Https && !state.auth.session_has_user(&session_token).await
-    {
+    if !state.auth.session_has_user(&session_token).await {
         return Ok(Json(None));
     }
     let session = state
@@ -452,25 +451,14 @@ async fn native_session_token_response(
             )
         })?;
     if let Some(session) = &session {
-        if connection == BrowserConnection::Https {
-            state
-                .auth
-                .require_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(|_| ApiError::authentication_required())?;
-        } else if state.auth.session_has_user(&session_token).await {
-            state
-                .auth
-                .require_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
-        } else {
-            state
-                .auth
-                .bind_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(ApiError::internal)?;
-        }
+        state
+            .auth
+            .require_session_user(&session_token, &session.user.id)
+            .await
+            .map_err(|error| match connection {
+                BrowserConnection::Https => ApiError::authentication_required(),
+                BrowserConnection::Loopback => ApiError::with_status(StatusCode::CONFLICT, error),
+            })?;
     }
     Ok(Json(session))
 }
@@ -1047,12 +1035,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_token_binds_a_resumed_session_but_rejects_another_account() {
+    async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_account() {
         let (state, session_token, _) = test_state(true).await;
         let auth = Arc::clone(&state.auth);
         let native_auth = Arc::clone(&state.native_auth);
         native_auth.authenticate_for_test("user-a").await;
         let app = router(state);
+        let unbound = app
+            .clone()
+            .oneshot(with_peer(
+                native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unbound.status(), StatusCode::OK);
+        assert_eq!(read_json(unbound).await, serde_json::Value::Null);
+        assert!(!auth.session_has_user(&session_token).await);
+
+        auth.bind_session_user(&session_token, "user-a")
+            .await
+            .unwrap();
         let response = app
             .clone()
             .oneshot(with_peer(
@@ -1067,9 +1070,6 @@ mod tests {
         assert_eq!(payload["accessToken"], "test-access-token");
         assert_eq!(payload["user"]["id"], "user-a");
         assert!(payload.get("refreshToken").is_none());
-        auth.require_session_user(&session_token, "user-a")
-            .await
-            .unwrap();
 
         native_auth.authenticate_for_test("user-b").await;
         let response = app
@@ -1091,6 +1091,11 @@ mod tests {
         let (state, _, _) = test_state(true).await;
         state.native_auth.authenticate_for_test("user-a").await;
         let (_, remote_session) = state
+            .auth
+            .bootstrap_browser_session(false)
+            .await
+            .expect("remote session");
+        let (_, foreign_session) = state
             .auth
             .bootstrap_browser_session(false)
             .await
@@ -1131,11 +1136,11 @@ mod tests {
             "test-access-token"
         );
 
-        auth.bind_session_user(&remote_session, "user-b")
+        auth.bind_session_user(&foreign_session, "user-b")
             .await
             .unwrap();
         let mismatched = app
-            .oneshot(with_peer(request(&remote_session), loopback_peer()))
+            .oneshot(with_peer(request(&foreign_session), loopback_peer()))
             .await
             .unwrap();
         assert_eq!(mismatched.status(), StatusCode::UNAUTHORIZED);

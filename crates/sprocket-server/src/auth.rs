@@ -255,22 +255,23 @@ impl AuthState {
         if session_is_expired(session) {
             anyhow::bail!("authentication required");
         }
-        if session.user_id.as_deref() == Some(user_id) {
-            return Ok(());
+        match session.user_id.as_deref() {
+            Some(existing) if existing == user_id => return Ok(()),
+            Some(_) => anyhow::bail!("local session belongs to a different user"),
+            None => {}
         }
         session.user_id = Some(user_id.to_string());
         self.save_sessions(sessions).await
     }
 
+    /// Sessions only gain a user through an explicit sign-in; owner changes can only unbind them.
     pub(crate) async fn sync_sessions_with_owner(
         &self,
         user_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         for session in sessions.values_mut() {
-            if session.ephemeral || session.local_browser {
-                session.user_id = user_id.map(str::to_owned);
-            } else if session.user_id.as_deref() != user_id {
+            if session.user_id.as_deref() != user_id {
                 session.user_id = None;
             }
         }
@@ -883,6 +884,13 @@ mod tests {
                 .to_string(),
             "local session belongs to a different user"
         );
+        assert_eq!(
+            auth.bind_session_user(&session_token, "user-2")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "local session belongs to a different user"
+        );
 
         let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
         reloaded
@@ -890,6 +898,27 @@ mod tests {
             .await
             .unwrap();
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn owner_changes_unbind_other_accounts_without_binding_new_sessions() {
+        let directory = tempfile::tempdir().unwrap();
+        let auth = AuthState::load(directory.path()).unwrap();
+        let (_, bound) = auth.bootstrap_browser_session(true).await.unwrap();
+        let (_, unbound) = auth.bootstrap_browser_session(true).await.unwrap();
+        auth.bind_session_user(&bound, "user-1").await.unwrap();
+
+        auth.sync_sessions_with_owner(Some("user-1")).await.unwrap();
+        auth.require_session_user(&bound, "user-1").await.unwrap();
+        assert!(!auth.session_has_user(&unbound).await);
+
+        auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
+        assert!(!auth.session_has_user(&bound).await);
+        assert!(!auth.session_has_user(&unbound).await);
+        auth.bind_session_user(&bound, "user-2").await.unwrap();
+
+        auth.sync_sessions_with_owner(None).await.unwrap();
+        assert!(!auth.session_has_user(&bound).await);
     }
 
     #[tokio::test]
