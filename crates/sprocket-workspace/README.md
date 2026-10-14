@@ -56,8 +56,11 @@ skills/
 ```
 
 `SKILL.md` must use YAML frontmatter whose `name` matches the directory name.
-`description` must be a single-line string (quoted or unquoted). Built-in skills
-under `skills/` are compiled into the binary by `build.rs`.
+`description` must be a non-empty YAML string, including multiline plain, quoted,
+literal (`|`), or folded (`>`) scalars. Whitespace is collapsed to single spaces
+and trimmed for display and prompts. The normalized description must be at most
+1024 characters. Built-in skills under `skills/` are compiled into the binary by
+`build.rs`.
 
 The crate exposes these capabilities through the re-exports in `src/lib.rs`.
 

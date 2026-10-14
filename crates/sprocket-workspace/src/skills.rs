@@ -115,7 +115,8 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
     let mut description: Option<String> = None;
     let mut disable_model_invocation = None;
 
-    for line in frontmatter.lines() {
+    let mut lines = frontmatter.lines().peekable();
+    while let Some(line) = lines.next() {
         if line.trim().is_empty() || starts_with_yaml_indent(line) {
             continue;
         }
@@ -135,12 +136,23 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
                 }
             }
             "description" => {
-                if value.starts_with('>') || value.starts_with('|') {
-                    return Err("description must be a single-line string".to_string());
+                let mut scalar = value.to_string();
+                while let Some(line) = lines.next_if(|line| {
+                    line.trim().is_empty()
+                        || starts_with_yaml_indent(line)
+                        || line.trim_start().starts_with('#')
+                }) {
+                    scalar.push('\n');
+                    scalar.push_str(line);
                 }
-                let value = strip_yaml_quotes(value);
+                let value = serde_yaml_ng::from_str::<Option<String>>(&scalar)
+                    .map_err(|error| format!("invalid description: {error}"))?
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 if !value.is_empty() {
-                    description = Some(value.to_string());
+                    description = Some(value);
                 }
             }
             "disable-model-invocation" => {
@@ -167,6 +179,9 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
 
     let name = name.ok_or_else(|| "missing or empty name".to_string())?;
     let description = description.ok_or_else(|| "missing or empty description".to_string())?;
+    if description.chars().count() > 1024 {
+        return Err("description must be at most 1024 characters".to_string());
+    }
 
     Ok(ParsedSkill {
         name,
@@ -614,14 +629,78 @@ mod tests {
     }
 
     #[test]
-    fn rejects_block_scalar_descriptions() {
-        let folded = "---\nname: folded\ndescription: >-\n  A long description\n---\nbody\n";
-        let error = parse_skill_markdown(folded).expect_err("folded description");
-        assert!(error.contains("single-line"));
+    fn parses_and_normalizes_description_scalars() {
+        for scalar in [
+            "Handle PDFs when needed",
+            "'Handle PDFs when needed'",
+            "\"Handle PDFs when needed\"",
+            "|\n  Handle PDFs\n\n  when needed",
+            ">\n  Handle PDFs\n  when needed",
+            "|-\n  Handle PDFs\n  when needed",
+            ">-\n  Handle PDFs\n  when needed",
+            "|+\n  Handle PDFs\n  when needed\n\n",
+            ">+\n  Handle PDFs\n  when needed\n\n",
+            "|2- # explicit indentation\n  Handle PDFs\n  when needed",
+            "Handle PDFs\n  when needed",
+            "\n  Handle PDFs\n  when needed",
+            "'Handle PDFs\n  when needed'",
+            "\"Handle PDFs\n  when needed\"",
+            "\"  Handle\\tPDFs\\nwhen   needed  \"",
+            "Handle PDFs when needed # inline comment",
+        ] {
+            let contents = format!(
+                "---\nname: demo\ndescription: {scalar}\ndisable-model-invocation: true\nmetadata:\n  description: ignored\n---\n# Body\n"
+            );
+            let parsed = parse_skill_markdown(&contents).expect(scalar);
+            assert_eq!(parsed.description, "Handle PDFs when needed", "{scalar}");
+            assert_eq!(parsed.name, "demo");
+            assert!(parsed.disable_model_invocation);
+            assert_eq!(parsed.body, "# Body\n");
+        }
+    }
 
-        let literal = "---\nname: literal\ndescription: |\n  line one\n---\nbody\n";
-        let error = parse_skill_markdown(literal).expect_err("literal description");
-        assert!(error.contains("single-line"));
+    #[test]
+    fn rejects_missing_or_empty_descriptions() {
+        for frontmatter in [
+            "",
+            "description:",
+            "description: ''",
+            "description: \"  \\t\\n  \"",
+            "description: |",
+            "description: >",
+            "description: |-\n  \n",
+            "description: >-\n  \n",
+        ] {
+            let contents = format!("---\nname: demo\n{frontmatter}\n---\nbody\n");
+            let error = parse_skill_markdown(&contents).expect_err(frontmatter);
+            assert_eq!(error, "missing or empty description", "{frontmatter}");
+        }
+    }
+
+    #[test]
+    fn validates_description_character_limit() {
+        for (length, valid) in [(1024, true), (1025, false)] {
+            let contents = format!(
+                "---\nname: demo\ndescription: |-\n  {}\n---\nbody\n",
+                "λ".repeat(length)
+            );
+            let result = parse_skill_markdown(&contents);
+            if valid {
+                assert_eq!(
+                    result
+                        .expect("valid description")
+                        .description
+                        .chars()
+                        .count(),
+                    length
+                );
+            } else {
+                assert_eq!(
+                    result.expect_err("long description"),
+                    "description must be at most 1024 characters"
+                );
+            }
+        }
     }
 
     #[test]
@@ -633,7 +712,7 @@ mod tests {
         fs::create_dir_all(&skill_dir).unwrap();
 
         let body = format!("{}\nFinal instruction.\n", "λ".repeat(40 * 1024));
-        let description = "λ".repeat(1500);
+        let description = "λ".repeat(1024);
         let metadata = "x".repeat(10 * 1024);
         let contents = format!(
             "---\nname: huge\ndescription: {description}\nmetadata: {metadata}\n---\n{body}"
