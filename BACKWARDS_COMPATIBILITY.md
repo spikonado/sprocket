@@ -55,14 +55,15 @@ native items are persisted, so edits cannot restore stale provider data.
 
 Reasoning still persists one encrypted payload in the existing OpenAI metadata.
 The reader accepts released block arrays and issuer-tagged blocks, projecting
-summaries and ciphertext into native OpenAI reasoning items. It also accepts
-0.44's reasoning JSON. Raw text, signatures and redacted legacy payloads are not
-projected. Missing historical issuers still mean `openai`. Native replay needs
-the originating API, provider and model on the assistant turn. Do not replay
-ciphertext across provider handoffs.
-The reader restores `origin` from text/tool-call metadata or the top level of
-reasoning `blocksJson`. The caller may explicitly assign its selected context
-origin to unidentified legacy turns with `assign_unidentified_legacy_history_origin`;
+summaries and ciphertext into native OpenAI reasoning items. Raw text,
+signatures and redacted legacy payloads are not projected. Missing historical
+issuers still mean `openai`. Native replay needs the originating API, provider
+and model on the assistant turn. Do not replay ciphertext across provider
+handoffs.
+The reader restores the turn's `origin` from the first valid
+`providerMetadata.origin` among its completion items. The caller may explicitly
+assign its selected context origin to unidentified legacy turns with
+`assign_unidentified_legacy_history_origin`;
 known origins are never overwritten. Keep this fallback until every supported
 transcript has recorded provenance or a versioned migration supplies it.
 

@@ -1301,7 +1301,8 @@ fn apply_completed_tool_call(
 ) {
     let call_id = call.id.wire().into_owned();
     let key = part_id.clone().unwrap_or_else(|| call_id.clone());
-    let mut metadata = serde_json::Map::new();
+    let mut metadata =
+        serde_json::Map::from_iter([("toolCallAdditionalParams".into(), serde_json::Value::Null)]);
     let block = AssistantContent::ToolCall(call.clone());
     if let Some(native) = block.native_item() {
         if let Some(item_id) = native.get("id") {

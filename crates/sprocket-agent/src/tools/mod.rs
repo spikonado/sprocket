@@ -234,7 +234,7 @@ mod tests {
         })).unwrap();
         let mut history = vec![AgentHistoryMessage {
             role: AgentHistoryRole::User,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::ToolResult {
                 id: "call".into(),
                 call_id: Some("call".into()),

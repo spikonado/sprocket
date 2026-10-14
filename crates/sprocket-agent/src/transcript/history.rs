@@ -102,7 +102,7 @@ fn tool_result_message(tool: &TranscriptToolBody) -> AgentHistoryMessage {
         .to_string();
     AgentHistoryMessage {
         role: AgentHistoryRole::User,
-        assistant_id: None,
+        origin: None,
         contents: vec![AgentHistoryContent::ToolResult {
             id: tool.call_id.clone(),
             call_id: Some(tool.call_id.clone()),
@@ -171,7 +171,7 @@ pub fn agent_history_from_parts(
     {
         history.push(AgentHistoryMessage {
             role: AgentHistoryRole::User,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::Text {
                 text: context_summary_text(summary),
                 additional_params_json: None,
@@ -207,7 +207,7 @@ pub fn agent_history_from_parts(
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
                             role: AgentHistoryRole::User,
-                            assistant_id: None,
+                            origin: None,
                             contents,
                         });
                     }
@@ -218,27 +218,25 @@ pub fn agent_history_from_parts(
                     let omit_reasoning = state
                         .reasoning_stripped_through_part_number
                         .is_some_and(|cutoff| i64::from(part.number) <= cutoff);
-                    let origin = completion.items.iter().find_map(|item| {
-                        serde_json::from_value::<Origin>(
-                            item.get("providerMetadata")?.get("origin")?.clone(),
-                        )
-                        .ok()
-                    });
+                    let origin = completion
+                        .items
+                        .iter()
+                        .filter(|_| !omit_reasoning)
+                        .find_map(|item| {
+                            serde_json::from_value::<Origin>(
+                                item.get("providerMetadata")?.get("origin")?.clone(),
+                            )
+                            .ok()
+                        });
                     let contents: Vec<_> = completion
                         .items
                         .iter()
-                        .filter_map(|item| {
-                            let mut content = completion_item_to_history(item, omit_reasoning)?;
-                            if let Some(origin) = origin.as_ref().filter(|_| !omit_reasoning) {
-                                carry_history_origin(&mut content, origin);
-                            }
-                            Some(content)
-                        })
+                        .filter_map(|item| completion_item_to_history(item, omit_reasoning))
                         .collect();
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
                             role: AgentHistoryRole::Assistant,
-                            assistant_id: None,
+                            origin,
                             contents,
                         });
                     }
@@ -271,40 +269,6 @@ pub fn agent_history_from_parts(
 
 fn openai_field<'a>(item: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
     item.get("providerMetadata")?.get("openai")?.get(key)
-}
-
-fn carry_history_origin(content: &mut AgentHistoryContent, origin: &Origin) {
-    let origin = serde_json::to_value(origin).expect("origin always serializes");
-    match content {
-        AgentHistoryContent::Text {
-            additional_params_json,
-            ..
-        }
-        | AgentHistoryContent::ToolCall {
-            additional_params_json,
-            ..
-        } => {
-            let mut metadata = additional_params_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-                .filter(serde_json::Value::is_object)
-                .unwrap_or_else(|| serde_json::json!({}));
-            metadata["origin"] = origin;
-            *additional_params_json = Some(metadata.to_string());
-        }
-        AgentHistoryContent::Reasoning { id, blocks_json } => {
-            let blocks: serde_json::Value =
-                serde_json::from_str(blocks_json).expect("generated reasoning blocks are JSON");
-            let mut blocks = if blocks.is_array() {
-                serde_json::json!({ "issuer": "openai", "id": id, "content": blocks })
-            } else {
-                blocks
-            };
-            blocks["origin"] = origin;
-            *blocks_json = blocks.to_string();
-        }
-        _ => {}
-    }
 }
 
 fn completion_item_to_history(
@@ -391,12 +355,10 @@ fn completion_item_to_history(
                         .get("toolCallAdditionalParams")
                         .unwrap_or(metadata)
                         .clone();
-                    if params.is_object() {
-                        for key in ["rigNative", "origin"] {
-                            if let Some(value) = metadata.get(key) {
-                                params[key] = value.clone();
-                            }
-                        }
+                    if params.is_object()
+                        && let Some(native) = metadata.get("rigNative")
+                    {
+                        params["rigNative"] = native.clone();
                     }
                     (!params.is_null()).then(|| params.to_string())
                 }),
@@ -950,42 +912,7 @@ mod tests {
             let state = TranscriptState::new("user".into(), "thread".into());
             let history = agent_history_from_parts(&state, &[part], None);
             assert_eq!(history[0].contents.len(), if mixed { 3 } else { 1 });
-            for content in &history[0].contents {
-                let json = match content {
-                    AgentHistoryContent::Reasoning { blocks_json, .. } => blocks_json,
-                    AgentHistoryContent::Text {
-                        additional_params_json,
-                        ..
-                    }
-                    | AgentHistoryContent::ToolCall {
-                        additional_params_json,
-                        ..
-                    } => additional_params_json.as_ref().unwrap(),
-                    other => panic!("unexpected content {other:?}"),
-                };
-                let metadata: serde_json::Value = serde_json::from_str(json).unwrap();
-                assert_eq!(metadata["origin"], origin_json);
-                match content {
-                    AgentHistoryContent::Reasoning { .. } => {
-                        assert_eq!(metadata["issuer"], "openai");
-                        assert_eq!(metadata["id"], "rs_origin");
-                        assert_eq!(
-                            metadata["content"],
-                            serde_json::json!([
-                                { "type": "summary", "content": "summary" },
-                                { "type": "encrypted", "content": "opaque" }
-                            ])
-                        );
-                    }
-                    AgentHistoryContent::Text { .. } => {
-                        assert_eq!(metadata["signature"], "text-sig")
-                    }
-                    AgentHistoryContent::ToolCall { .. } => {
-                        assert_eq!(metadata["signature"], "tool-sig")
-                    }
-                    _ => unreachable!(),
-                }
-            }
+            assert_eq!(history[0].origin.as_ref(), Some(&origin));
             let restored = deserialize_agent_history(history).unwrap();
             let Message::Assistant(message) = &restored[0] else {
                 panic!("expected assistant message");
@@ -1021,7 +948,7 @@ mod tests {
         );
         let messages = deserialize_agent_history(vec![AgentHistoryMessage {
             role: AgentHistoryRole::Assistant,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::Reasoning { id, blocks_json }],
         }])
         .unwrap();
@@ -1045,7 +972,7 @@ mod tests {
         item["providerMetadata"]["reasoningIssuer"] = serde_json::json!("anthropic");
         let messages = deserialize_agent_history(vec![AgentHistoryMessage {
             role: AgentHistoryRole::Assistant,
-            assistant_id: None,
+            origin: None,
             contents: vec![completion_item_to_history(&item, false).unwrap()],
         }])
         .unwrap();

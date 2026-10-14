@@ -165,7 +165,7 @@ pub struct CatalogModelCapabilities {
 pub struct AgentHistoryMessage {
     pub role: AgentHistoryRole,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub assistant_id: Option<String>,
+    pub origin: Option<Origin>,
     pub contents: Vec<AgentHistoryContent>,
 }
 
@@ -284,7 +284,6 @@ fn history_reasoning(id: Option<String>, json: &str) -> anyhow::Result<Reasoning
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum StoredReasoning {
-        Current(Reasoning),
         Legacy(Vec<LegacyReasoningContent>),
         Sealed {
             issuer: String,
@@ -293,7 +292,6 @@ fn history_reasoning(id: Option<String>, json: &str) -> anyhow::Result<Reasoning
         },
     }
     let (issuer, id, content) = match from_json_string(json, "reasoning blocks")? {
-        StoredReasoning::Current(reasoning) => return Ok(reasoning),
         StoredReasoning::Legacy(content) => ("openai".to_string(), id, content),
         StoredReasoning::Sealed {
             issuer,
@@ -391,7 +389,6 @@ impl AgentHistoryContent {
     fn into_assistant_content(
         self,
         tool_calls: &HashMap<String, IndexedToolCall>,
-        assistant_id: Option<&str>,
     ) -> anyhow::Result<AssistantContent> {
         match self {
             Self::Text {
@@ -428,8 +425,7 @@ impl AgentHistoryContent {
                 let item_id = extras
                     .and_then(|extras| extras.get("message_id"))
                     .and_then(|id| id.as_str())
-                    .filter(|id| !id.is_empty())
-                    .or(assistant_id);
+                    .filter(|id| !id.is_empty());
                 if item_id.is_none() && extras.is_none() {
                     return Ok(block);
                 }
@@ -487,9 +483,7 @@ impl AgentHistoryContent {
                     }
                     if let Some(params) = params.as_object() {
                         for (key, value) in params {
-                            if key != "origin" {
-                                item[key] = value.clone();
-                            }
+                            item[key] = value.clone();
                         }
                     }
                 }
@@ -528,34 +522,6 @@ fn history_message(
     message: AgentHistoryMessage,
     tool_calls: &HashMap<String, IndexedToolCall>,
 ) -> anyhow::Result<Message> {
-    let mut origin = None;
-    if matches!(message.role, AgentHistoryRole::Assistant) {
-        for content in &message.contents {
-            let json = match content {
-                AgentHistoryContent::Text {
-                    additional_params_json,
-                    ..
-                }
-                | AgentHistoryContent::ToolCall {
-                    additional_params_json,
-                    ..
-                } => additional_params_json.as_deref(),
-                AgentHistoryContent::Reasoning { blocks_json, .. } => Some(blocks_json.as_str()),
-                _ => None,
-            };
-            let Some(json) = json else { continue };
-            let metadata: serde_json::Value = from_json_string(json, "history metadata")?;
-            let Some(value) = metadata.get("origin").filter(|value| !value.is_null()) else {
-                continue;
-            };
-            let item_origin: Origin = serde_json::from_value(value.clone())
-                .context("failed to deserialize history origin")?;
-            if origin.as_ref().is_some_and(|origin| origin != &item_origin) {
-                return Err(anyhow!("assistant history contains conflicting origins"));
-            }
-            origin = Some(item_origin);
-        }
-    }
     match message.role {
         AgentHistoryRole::System => {
             let text = message
@@ -583,13 +549,11 @@ fn history_message(
                 message
                     .contents
                     .into_iter()
-                    .map(|content| {
-                        content.into_assistant_content(tool_calls, message.assistant_id.as_deref())
-                    })
+                    .map(|content| content.into_assistant_content(tool_calls))
                     .collect::<anyhow::Result<Vec<_>>>()?,
                 "assistant history contents",
             )?)
-            .with_origin(origin),
+            .with_origin(message.origin),
         )),
     }
 }
@@ -681,9 +645,6 @@ mod tests {
             Some(" opaque\n+/= ")
         );
         assert_eq!(reasoning.native.as_ref().unwrap().item["id"], "rs_1");
-        let reloaded =
-            history_reasoning(None, &serde_json::to_string(&reasoning).unwrap()).unwrap();
-        assert_eq!(reloaded, reasoning);
     }
 
     #[test]
@@ -691,7 +652,7 @@ mod tests {
         let messages =
             deserialize_agent_history(vec![AgentHistoryMessage {
                 role: AgentHistoryRole::Assistant,
-                assistant_id: Some("msg_turn".into()),
+                origin: None,
                 contents: vec![AgentHistoryContent::Text {
                 text: "answer".into(),
                 additional_params_json: Some(serde_json::json!({
@@ -716,13 +677,13 @@ mod tests {
     }
 
     #[test]
-    fn restores_reasoning_only_origin_and_preserves_known_origins_during_fallback() {
+    fn legacy_origin_fallback_preserves_known_origins() {
         let original = rig::message::Origin::new("openai.responses", "openai", "old-model");
         let history = serde_json::from_value(serde_json::json!([
             {
-                "role": "assistant", "contents": [{
+                "role": "assistant", "origin": original, "contents": [{
                     "type": "reasoning", "blocksJson": serde_json::json!({
-                        "issuer": "openai", "id": "rs_1", "content": [], "origin": original
+                        "issuer": "openai", "id": "rs_1", "content": []
                     }).to_string()
                 }]
             },
@@ -747,7 +708,7 @@ mod tests {
         let history = vec![
             AgentHistoryMessage {
                 role: AgentHistoryRole::Assistant,
-                assistant_id: None,
+                origin: None,
                 contents: vec![AgentHistoryContent::ToolCall {
                     id: "tool_call_1".to_string(),
                     call_id: Some("call_1".to_string()),
@@ -759,7 +720,7 @@ mod tests {
             },
             AgentHistoryMessage {
                 role: AgentHistoryRole::User,
-                assistant_id: None,
+                origin: None,
                 contents: vec![AgentHistoryContent::ToolResult {
                     id: "tool_call_1".to_string(),
                     call_id: Some("call_1".to_string()),
@@ -808,7 +769,7 @@ mod tests {
         let history = vec![
             AgentHistoryMessage {
                 role: AgentHistoryRole::Assistant,
-                assistant_id: None,
+                origin: None,
                 contents: vec![AgentHistoryContent::ToolCall {
                     id: "fc_1".to_string(),
                     call_id: Some("call_1".to_string()),
@@ -820,7 +781,7 @@ mod tests {
             },
             AgentHistoryMessage {
                 role: AgentHistoryRole::User,
-                assistant_id: None,
+                origin: None,
                 contents: vec![AgentHistoryContent::ToolResult {
                     id: "fr_1".to_string(),
                     call_id: Some("call_1".to_string()),
@@ -889,7 +850,7 @@ mod tests {
     fn rejects_orphaned_tool_results_before_provider_replay() {
         let history = vec![AgentHistoryMessage {
             role: AgentHistoryRole::User,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::ToolResult {
                 id: "missing-call".to_string(),
                 call_id: None,
@@ -991,7 +952,7 @@ mod tests {
         .to_string();
         let history = vec![AgentHistoryMessage {
             role: AgentHistoryRole::User,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::Image { image_json }],
         }];
 
@@ -1013,7 +974,7 @@ mod tests {
     fn reloads_empty_signed_reasoning_without_opaque_blocks() {
         let history = vec![AgentHistoryMessage {
             role: AgentHistoryRole::Assistant,
-            assistant_id: None,
+            origin: None,
             contents: vec![AgentHistoryContent::Reasoning {
                 id: Some("rs_empty".to_string()),
                 blocks_json: "[]".to_string(),
