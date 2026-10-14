@@ -91,6 +91,9 @@ export async function recordCompletionTranscript(
 		runId: Id<'runs'>;
 		streamId: string;
 		items: TranscriptCompletionItem[];
+		providerResponseId?: string;
+		providerRequestId?: string;
+		providerMessageId?: string;
 		work: PersistedWork;
 		sections: { sectionKey: string; sectionOrdinal: number; closed: boolean }[];
 		toolInvocations: { callId: string; toolInvocationId: string; sectionKey?: string }[];
@@ -119,7 +122,13 @@ export async function recordCompletionTranscript(
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
-		completion: { streamId: args.streamId, items: args.items },
+		completion: {
+			streamId: args.streamId,
+			items: args.items,
+			...(args.providerResponseId && { providerResponseId: args.providerResponseId }),
+			...(args.providerRequestId && { providerRequestId: args.providerRequestId }),
+			...(args.providerMessageId && { providerMessageId: args.providerMessageId })
+		},
 		work
 	});
 
