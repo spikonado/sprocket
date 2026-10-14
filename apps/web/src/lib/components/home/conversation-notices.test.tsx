@@ -125,10 +125,15 @@ describe('Conversation notices', () => {
 		expect(usageAlert.className).toBe(cardClass);
 	});
 
-	it('shows only the usage notice when a run stopped on the usage limit', () => {
-		render(composer(notices({ runError: 'status 429 Too Many Requests' }), true));
+	it('shows only the usage notice while usage is blocked, then the run error once unblocked', () => {
+		const runError = 'status 429 Too Many Requests';
+		const view = render(composer(notices({ runError }), true));
+		expect(screen.getByRole('alert').textContent).toContain("You're out of usage");
+
+		view.rerender(composer(notices({ runError })));
 		const alert = screen.getByRole('alert');
-		expect(alert.textContent).toContain("You're out of usage");
+		expect(alert.textContent).toContain("Run couldn't continue");
+		expect(alert.textContent).toContain(runError);
 	});
 
 	it('keeps distinct failures and reconnection status visible, then clears them on recovery', () => {
