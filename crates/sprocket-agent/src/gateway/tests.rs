@@ -22,7 +22,7 @@ fn request() -> CompletionRequest {
 async fn completion_and_stream_use_the_refreshed_credential() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
-    let server = tokio::spawn(timeout(TEST_TIMEOUT, async move {
+    let server = tokio::spawn(async move {
         let mut captured = Vec::new();
         for index in 0..3 {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -90,7 +90,7 @@ async fn completion_and_stream_use_the_refreshed_credential() {
             socket.write_all(response.as_bytes()).await.unwrap();
         }
         captured
-    }));
+    });
     let issued = Arc::new(AtomicUsize::new(0));
     let client = GatewayClient::new(base_url, {
         let issued = issued.clone();
@@ -113,7 +113,9 @@ async fn completion_and_stream_use_the_refreshed_credential() {
         .await
         .unwrap()
         .unwrap();
-    client.cached.lock().await.as_mut().unwrap().refresh_at = Instant::now();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(36 * 60 * 60)).await;
+    tokio::time::resume();
     timeout(TEST_TIMEOUT, async {
         let mut stream = model.stream(request()).unwrap();
         while let Some(item) = stream.next().await {
@@ -122,7 +124,7 @@ async fn completion_and_stream_use_the_refreshed_credential() {
     })
     .await
     .unwrap();
-    let headers = server.await.unwrap().unwrap();
+    let headers = timeout(TEST_TIMEOUT, server).await.unwrap().unwrap();
     assert_eq!(headers.len(), 3);
     assert!(
         headers[0]

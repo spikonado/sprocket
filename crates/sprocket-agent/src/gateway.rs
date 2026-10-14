@@ -93,8 +93,6 @@ where
 pub(crate) struct GatewayClient {
     base_url: String,
     http: DynHttpClient,
-    #[cfg(test)]
-    cached: Arc<Mutex<Option<CachedCredential>>>,
 }
 
 impl GatewayClient {
@@ -104,16 +102,9 @@ impl GatewayClient {
         Fut: Future<Output = anyhow::Result<GatewayCredential>> + Send + 'static,
     {
         let auth = GatewayAuth::new(issue_credential);
-        #[cfg(test)]
-        let cached = Arc::clone(&auth.cached);
         let http =
             DynHttpClient::new(ReqwestClient::from(reqwest::Client::new())).with_middleware(auth);
-        Self {
-            base_url,
-            http,
-            #[cfg(test)]
-            cached,
-        }
+        Self { base_url, http }
     }
 
     pub(crate) fn completion_model(

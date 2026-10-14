@@ -19,6 +19,7 @@ const CONNECTION_CHANGED: &str =
 const STREAM_REQUIRED: &str =
     "ChatGPT inference requires streaming; non-streaming completion is not supported.";
 const SIWC_TOOL_NAMESPACE: &str = "sprocket";
+const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const ERROR_BODY_LIMIT: usize = 64 * 1024;
 const ERROR_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -189,8 +190,7 @@ impl ChatGptClient {
 struct SiwcHttpClient {
     inner: reqwest::Client,
     authorization: Option<(Arc<dyn ChatGptCredentials>, SharedConnection)>,
-    #[cfg(test)]
-    test_endpoint: Option<String>,
+    responses_url: String,
 }
 
 impl std::fmt::Debug for SiwcHttpClient {
@@ -243,15 +243,13 @@ impl HttpClientExt for SiwcHttpClient {
                 .ok_or_else(|| stream_error(CONNECTION_CHANGED))?;
             check_connection(connection)?;
             let (parts, body) = req.into_parts();
-            if parts.uri.to_string() != "https://api.openai.com/v1/responses" {
+            let endpoint = parts.uri.to_string();
+            if endpoint != this.responses_url {
                 return Err(stream_error(
                     "ChatGPT inference requires the public Responses endpoint.",
                 ));
             }
             let body = rewrite_request_body(&body.into())?;
-            let endpoint = parts.uri.to_string();
-            #[cfg(test)]
-            let endpoint = this.test_endpoint.as_deref().unwrap_or(&endpoint);
             let request = this
                 .inner
                 .request(parts.method, endpoint)
@@ -578,8 +576,7 @@ impl ChatGptClient {
             SiwcHttpClient {
                 inner: self.http.clone(),
                 authorization: Some((Arc::clone(&self.credentials), Arc::clone(&self.connection))),
-                #[cfg(test)]
-                test_endpoint: None,
+                responses_url: OPENAI_RESPONSES_URL.to_string(),
             },
         )
         .erase()
