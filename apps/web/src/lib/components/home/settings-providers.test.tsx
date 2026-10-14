@@ -385,6 +385,7 @@ it('cancels the pending browser login on unmount while its poll is in flight', a
 		result.resolve({ status: 'complete' });
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(loginWindow.close).not.toHaveBeenCalled();
 	expect(view.onChatGptStatusChange).toHaveBeenCalledTimes(0);
 });
 
@@ -459,6 +460,7 @@ it('ignores a stale login completion after the user cancels and starts again', a
 		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 	});
 	expect(cancel).toHaveBeenCalledWith({ userId: 'user-a', state: 'state-1' });
+	expect(loginWindow.close).not.toHaveBeenCalled();
 	await act(async () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' }));
 	});
