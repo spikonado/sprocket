@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,7 +9,7 @@ use crate::async_tools::{YieldMode, ZeroPollCooldown};
 use crate::command_history::{CommandHistory, history_path};
 use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
 use crate::command_shell::resolve_command_shell;
-use crate::paths::expand_home;
+use crate::paths::resolve_directory;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -266,7 +266,7 @@ impl CommandSessionManager {
             bail!("command cannot be empty");
         }
 
-        let cwd = resolve_command_workdir(&self.workspace_root, workdir)?;
+        let cwd = resolve_directory(&self.workspace_root, workdir)?;
         let shell = resolve_command_shell(shell, &cwd)?;
         let output = Arc::new(Mutex::new(
             CapturedOutput::create_with_limits(
@@ -950,22 +950,6 @@ async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Res
             )
         }
     }
-}
-
-fn resolve_command_workdir(workspace_root: &Path, workdir: &str) -> Result<PathBuf> {
-    let expanded = PathBuf::from(expand_home(workdir.trim()));
-    let candidate = if expanded.is_absolute() {
-        expanded
-    } else {
-        workspace_root.join(expanded)
-    };
-    let resolved = candidate
-        .canonicalize()
-        .with_context(|| format!("failed to resolve command workdir {}", candidate.display()))?;
-    if !resolved.is_dir() {
-        bail!("command workdir is not a directory: {}", resolved.display());
-    }
-    Ok(resolved)
 }
 
 async fn terminate_child(child: &mut Child, process_id: Option<u32>) -> Result<ExitStatus> {

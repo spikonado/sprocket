@@ -210,6 +210,7 @@ export async function createQueuedRunRecord(
 			completionProvider,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
+			cwd: parentThread?.cwd,
 			lastMessageAt: now
 		});
 

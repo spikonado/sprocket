@@ -117,7 +117,7 @@ impl rig::tool::Tool for ParseFileTool {
     ) -> Result<Self::Output, Self::Error> {
         parse_file_args(&args).map_err(tool_error)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        let workspace_root = self.0.workspace_root.clone();
+        let cwd = self.0.cwd.get();
         let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let supports_images = self.0.supports_images;
         let persisted = execute_tool_job_with_id(
@@ -132,7 +132,7 @@ impl rig::tool::Tool for ParseFileTool {
                     job_id: &job_id,
                 };
                 let output = persist_parse_file(
-                    &workspace_root,
+                    &cwd,
                     &cache_dir,
                     cancellation,
                     supports_images,

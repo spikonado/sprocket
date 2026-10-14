@@ -5,10 +5,10 @@ use rig::message::UserContent;
 use sprocket_workspace::{
     BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
-    resolve_workspace_root,
+    resolve_directory, resolve_workspace_root, simplified_path,
 };
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
@@ -127,8 +127,24 @@ struct WorkspacePromptContext {
     initial_context: Message,
 }
 
+/// Restores the thread's saved cwd, falling back to the workspace root when it
+/// is gone, e.g. a deleted worktree or a thread resumed on another machine.
+fn restore_cwd(workspace_root: &Path, saved: Option<&str>) -> PathBuf {
+    saved
+        .and_then(|saved| {
+            resolve_directory(workspace_root, saved)
+                .map(simplified_path)
+                .inspect_err(|error| {
+                    eprintln!("sprocket-agent: resetting cwd to the workspace root: {error:#}")
+                })
+                .ok()
+        })
+        .unwrap_or_else(|| workspace_root.to_path_buf())
+}
+
 fn build_workspace_prompt_context(
     workspace_path: &str,
+    cwd: &Path,
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
     model_label: &str,
@@ -202,6 +218,13 @@ fn build_workspace_prompt_context(
             "## Preloaded AGENTS.md Instructions",
             "",
             &instruction_block,
+            "",
+            "## Working Directory",
+            "",
+            &format!(
+                "Relative paths in tools resolve from `{}`. Use set_cwd to change it.",
+                cwd.display()
+            ),
         ]
         .join("\n"),
     );
@@ -872,6 +895,7 @@ pub async fn run_agent(
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
     let transcript_dir = store.thread_dir(&context.run.user_id, &context.run.thread_id);
+    let cwd = restore_cwd(&workspace_root, context.cwd.as_deref());
 
     let (capabilities, handoff_model) =
         match catalog_models_for_run(&gateway_url, &context.run, context.provider_handoff.take())
@@ -997,6 +1021,7 @@ pub async fn run_agent(
         };
         let prompt_context = build_workspace_prompt_context(
             &request.workspace_path,
+            &cwd,
             &workspace_instructions,
             &skills,
             &capabilities.label,
@@ -1007,6 +1032,7 @@ pub async fn run_agent(
         let handoff_base_instructions = handoff_model.as_ref().map(|(handoff, capabilities)| {
             build_workspace_prompt_context(
                 &request.workspace_path,
+                &cwd,
                 &workspace_instructions,
                 &skills,
                 &capabilities.label,
@@ -1109,6 +1135,7 @@ pub async fn run_agent(
                     ),
                     command_sessions: command_sessions.clone(),
                     workspace_root,
+                    cwd,
                     skills,
                     reasoning_effort,
                     fast_mode,
@@ -1265,6 +1292,7 @@ mod tests {
     ) -> super::WorkspacePromptContext {
         build_workspace_prompt_context(
             "/tmp/project",
+            std::path::Path::new("/tmp/project/.worktrees/feature"),
             workspace_instructions,
             skills,
             MODEL_LABEL,
@@ -1319,6 +1347,7 @@ mod tests {
             let transcript_dir = store.thread_dir("user-id", thread_id);
             let prompt_context = build_workspace_prompt_context(
                 "/tmp/project",
+                std::path::Path::new("/tmp/project"),
                 &[],
                 &[],
                 MODEL_LABEL,
@@ -1371,6 +1400,36 @@ mod tests {
         assert!(initial_context.contains("description: Handle PDFs"));
         assert!(!initial_context.contains("No skills are installed."));
         assert!(!prompt_context.base_instructions.contains("pdf-processing"));
+    }
+
+    #[test]
+    fn initial_context_states_the_working_directory() {
+        let prompt_context = build_test_prompt_context(&[], &[]);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.ends_with(
+            "## Working Directory\n\nRelative paths in tools resolve from `/tmp/project/.worktrees/feature`. Use set_cwd to change it."
+        ));
+    }
+
+    #[test]
+    fn restore_cwd_uses_the_saved_directory_while_it_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = sprocket_workspace::simplified_path(
+            sprocket_workspace::resolve_directory(dir.path(), ".").unwrap(),
+        );
+        let nested = root.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+
+        assert_eq!(super::restore_cwd(&root, None), root);
+        assert_eq!(
+            super::restore_cwd(&root, Some(&nested.to_string_lossy())),
+            nested
+        );
+        std::fs::remove_dir(&nested).unwrap();
+        assert_eq!(
+            super::restore_cwd(&root, Some(&nested.to_string_lossy())),
+            root
+        );
     }
 
     #[test]

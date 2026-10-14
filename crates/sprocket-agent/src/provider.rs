@@ -103,6 +103,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) initial_context: Vec<Message>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) cwd: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
     pub(crate) fast_mode: bool,
@@ -365,6 +366,7 @@ async fn run_with_completion_model(
         request.claim_id.clone(),
         request.user_id.clone(),
         request.workspace_root.clone(),
+        request.cwd.clone(),
         request.transcript_dir.clone(),
         request.gateway_url.clone(),
         request.transcript_store.clone(),
@@ -399,6 +401,7 @@ async fn run_with_completion_model(
         .tool(tools.poll_subagent)
         .tool(tools.list_subagents)
         .tool(tools.list_subagent_models)
+        .tool(tools.set_cwd)
         .tool(context_handoff_hook.tool());
     let agent = if request.allow_interaction || request.is_child {
         agent.tool(tools.ask_question).tool(tools.poll_question)

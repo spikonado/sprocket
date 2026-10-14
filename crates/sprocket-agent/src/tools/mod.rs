@@ -2,6 +2,7 @@ mod artifacts;
 mod async_tools;
 mod commands;
 mod context;
+mod cwd;
 mod firecrawl;
 mod github_url;
 mod hosted_parse;
@@ -25,7 +26,8 @@ use self::artifacts::{
     AddArtifactTool, DeleteArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool,
 };
 use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
-use self::context::AgentToolContext;
+use self::context::{AgentToolContext, WorkingDirectory};
+use self::cwd::SetCwdTool;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -78,6 +80,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) edit_artifact: EditArtifactTool,
     pub(crate) save_artifact: SaveArtifactTool,
     pub(crate) delete_artifact: DeleteArtifactTool,
+    pub(crate) set_cwd: SetCwdTool,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -143,6 +146,7 @@ pub(crate) fn agent_tools(
     claim_id: String,
     user_id: String,
     workspace_root: PathBuf,
+    cwd: PathBuf,
     transcript_dir: PathBuf,
     gateway_url: String,
     transcript_store: Option<Arc<crate::TranscriptStore>>,
@@ -159,6 +163,7 @@ pub(crate) fn agent_tools(
         claim_id,
         user_id,
         workspace_root,
+        cwd: WorkingDirectory::new(cwd),
         transcript_dir,
         gateway_url,
         transcript_store,
@@ -203,6 +208,7 @@ pub(crate) fn agent_tools(
         edit_artifact: EditArtifactTool(context.clone()),
         save_artifact: SaveArtifactTool(context.clone()),
         delete_artifact: DeleteArtifactTool(context.clone()),
+        set_cwd: SetCwdTool(context.clone()),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),

@@ -67,6 +67,7 @@ async fn register_file(
     path: &str,
     mut fields: serde_json::Value,
 ) -> Result<serde_json::Value, ToolExecutionError> {
+    let path = &context.workspace_relative_path(path);
     let mut bindings = tokio::select! {
         _ = cancellation.cancelled() => return Err(cancelled_error()),
         result = context.artifact_bindings.lock() => result.map_err(tool_error)?,
@@ -282,7 +283,7 @@ impl rig::tool::Tool for SaveArtifactTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Save an artifact from this project to an absolute or workspace-relative file path, and bind the file so future edits sync. Existing files with different contents are never overwritten.".into()
+        "Save an artifact from this project to a file path, and bind the file so future edits sync. Existing files with different contents are never overwritten.".into()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -295,6 +296,7 @@ impl rig::tool::Tool for SaveArtifactTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|error| tool_error(error.into()))?;
+        let path = self.0.workspace_relative_path(&args.path);
         execute_tool_job(&self.0, Self::NAME, payload, |cancellation| async move {
                 let mut bindings = tokio::select! {
                     _ = cancellation.cancelled() => return Err(cancelled_error()),
@@ -308,11 +310,11 @@ impl rig::tool::Tool for SaveArtifactTool {
                 let mut binding = ArtifactBinding {
                     registration_id: artifact.registration_id,
                     artifact_id: Some(artifact.id.clone()),
-                    local_path: normalize_destination(&args.path).map_err(tool_error)?, content_hash: content_hash(&artifact.content),
+                    local_path: normalize_destination(&path).map_err(tool_error)?, content_hash: content_hash(&artifact.content),
                 };
                 bindings.validate_destination(&self.0.workspace_root, &binding).await.map_err(tool_error)?;
                 bindings.bind(binding.clone()).map_err(tool_error)?;
-                binding.local_path = save_new_file(&self.0.workspace_root, &args.path, &artifact.content).await.map_err(tool_error)?;
+                binding.local_path = save_new_file(&self.0.workspace_root, &path, &artifact.content).await.map_err(tool_error)?;
                 bindings.bind(binding).map_err(tool_error)?;
                 bindings.persist().await.map_err(tool_error)?;
                 Ok(json!({"artifactId": artifact.id, "revision": artifact.revision, "title": artifact.title,

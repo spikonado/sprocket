@@ -57,6 +57,7 @@ export const vApplyPatchPayload = v.object({
 
 export const vExecCommandPayload = v.object({
 	cmd: v.string(),
+	// Historical jobs only; exec_cmd now runs in the thread's cwd.
 	workdir: v.optional(v.string()),
 	shell: v.optional(v.string()),
 	timeoutMs: v.optional(v.number()),
@@ -119,6 +120,10 @@ export const vUpdateArtifactPayload = v.object({
 
 export const vReadSkillPayload = v.object({
 	name: v.string()
+});
+
+export const vSetCwdPayload = v.object({
+	path: v.string()
 });
 
 const vHistoricalBrowserActPayload = v.object({
@@ -268,6 +273,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vAwaitQuestionPayload,
 	vExecCommandPayload,
 	vReadSkillPayload,
+	vSetCwdPayload,
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
@@ -486,6 +492,10 @@ export const vReadSkillResult = v.object({
 	truncated: v.optional(v.boolean())
 });
 
+export const vSetCwdResult = v.object({
+	cwd: v.string()
+});
+
 export const vAskQuestionAnswer = v.object({
 	optionId: v.optional(v.string()),
 	optionLabel: v.optional(v.string()),
@@ -678,6 +688,7 @@ export const vExecutorJobResult = v.union(
 	vCommandStdinResult,
 	vLegacyCommandResult,
 	vReadSkillResult,
+	vSetCwdResult,
 	vScrapeUrlResult,
 	vWebImageResult,
 	vWebSearchResult,
@@ -718,6 +729,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('mandate_charge'),
 	v.literal('mandate_report'),
 	v.literal('read_skill'),
+	v.literal('set_cwd'),
 	v.literal('parse_file'),
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),

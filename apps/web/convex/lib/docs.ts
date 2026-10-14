@@ -80,7 +80,8 @@ export const vGetContextResult = v.object({
 		}),
 	prompt: v.string(),
 	contextTokens: v.optional(v.number()),
-	providerHandoff: v.optional(vProviderHandoff)
+	providerHandoff: v.optional(vProviderHandoff),
+	cwd: v.optional(v.string())
 });
 
 export const vCompletionActor = v.object({

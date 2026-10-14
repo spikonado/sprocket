@@ -352,6 +352,8 @@ export default defineSchema({
 		// Inclusive last part whose reasoning replay is omitted after a failed
 		// provider-switch handoff. Ordinary messages and tool history stay.
 		reasoningStrippedThroughPartNumber: v.optional(v.number()),
+		// Absolute local path from the latest set_cwd call; subagents inherit it.
+		cwd: v.optional(v.string()),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
