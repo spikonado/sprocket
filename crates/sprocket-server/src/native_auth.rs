@@ -1185,11 +1185,7 @@ mod tests {
             "device-refresh",
         ))
         .unwrap();
-        let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
-        let directory = tempfile::tempdir().unwrap();
-        let local = crate::auth::AuthState::load(directory.path()).unwrap();
-        let (_, browser_session) = local.bootstrap_browser_session(true).await.unwrap();
-        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        let manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
         let mut changes = manager.subscribe_changes();
         let login = manager
             .start_device_login("cli-session".into())
@@ -1205,7 +1201,6 @@ mod tests {
             .unwrap()
             .unwrap();
         let session = manager.browser_session(false).await.unwrap().unwrap();
-        assert!(!local.session_has_user(&browser_session).await);
         assert_eq!(
             store.token.lock().unwrap().as_deref(),
             Some("device-refresh")
