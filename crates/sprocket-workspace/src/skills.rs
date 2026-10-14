@@ -137,17 +137,22 @@ pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String
             }
             "description" => {
                 let mut scalar = format!("description: {value}");
-                let quoted = value.starts_with(['\'', '"']);
+                let mut open_quote = value
+                    .chars()
+                    .next()
+                    .filter(|quote| matches!(quote, '\'' | '"'))
+                    .filter(|quote| !has_closing_yaml_quote(&value[1..], *quote));
                 while let Some(line) = lines.next_if(|line| {
                     line.trim().is_empty()
                         || starts_with_yaml_indent(line)
                         || line.trim_start().starts_with('#')
-                        || (quoted
-                            && serde_yaml_ng::from_str::<HashMap<String, Option<String>>>(&scalar)
-                                .is_err())
+                        || open_quote.is_some()
                 }) {
                     scalar.push('\n');
                     scalar.push_str(line);
+                    if open_quote.is_some_and(|quote| has_closing_yaml_quote(line, quote)) {
+                        open_quote = None;
+                    }
                 }
                 let value = serde_yaml_ng::from_str::<HashMap<String, Option<String>>>(&scalar)
                     .map_err(|error| format!("invalid description: {error}"))?
@@ -394,6 +399,21 @@ fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
         index = next_newline + 1;
     }
     None
+}
+
+fn has_closing_yaml_quote(value: &str, quote: char) -> bool {
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        if quote == '"' && character == '\\' {
+            chars.next();
+        } else if character == quote {
+            if quote == '\'' && chars.next_if_eq(&'\'').is_some() {
+                continue;
+            }
+            return true;
+        }
+    }
+    false
 }
 
 fn strip_yaml_quotes(value: &str) -> &str {
