@@ -76,6 +76,39 @@ pub(crate) struct LiveAssistantParts {
 }
 
 impl LiveAssistantParts {
+    pub(crate) fn order_stream_parts(&mut self, stream_id: &str) {
+        self.parts.sort_by_key(|part| {
+            let id = match part {
+                LiveAssistantPart::Text { id, .. } | LiveAssistantPart::Reasoning { id, .. } => {
+                    Some(id.as_str())
+                }
+                LiveAssistantPart::ToolCall { part_id, .. } => part_id.as_deref(),
+            };
+            id.and_then(|id| id.strip_prefix(stream_id))
+                .and_then(|suffix| suffix.rsplit(':').next())
+                .and_then(|index| index.parse::<usize>().ok())
+                .unwrap_or(usize::MAX)
+        });
+        self.text_index.clear();
+        self.tool_index.clear();
+        for (index, part) in self.parts.iter().enumerate() {
+            match part {
+                LiveAssistantPart::Text { id, .. } => {
+                    self.text_index.insert(format!("text:{id}"), index);
+                }
+                LiveAssistantPart::Reasoning { id, .. } => {
+                    self.text_index.insert(format!("reasoning:{id}"), index);
+                }
+                LiveAssistantPart::ToolCall {
+                    part_id, call_id, ..
+                } => {
+                    self.tool_index
+                        .insert(part_id.clone().unwrap_or_else(|| call_id.clone()), index);
+                }
+            }
+        }
+    }
+
     pub fn clear(&mut self) {
         self.parts.clear();
         self.text_index.clear();

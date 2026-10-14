@@ -496,7 +496,7 @@ async fn assert_openai_compatible_lifecycle_stream(nullable_status: Option<bool>
 }
 
 #[tokio::test]
-async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
+async fn gateway_responses_stream_preserves_reasoning_replay_order() {
     let (base_url, server) = spawn_responses_sse(vec![gateway_sse_body()]);
     let model = openai::OpenAIConfig::new("test-key")
         .with_base_url(&base_url)
@@ -622,6 +622,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         .await
         .expect("completed gateway response")
         .origin;
+    parts.order_stream_parts(STREAM_ID);
     let history = deserialize_agent_history(
         durable_history_from_parts(&parts.parts, &provider_metadata, &origin).await,
     )
@@ -866,6 +867,7 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
                 if completed_turns.is_empty() {
                     assert!(dispatches.lock().unwrap().is_empty());
                 }
+                parts.order_stream_parts(&stream_id);
                 tracker.record_parts(&parts.parts);
                 completed_turns.push((
                     durable_items_json(&parts.parts, &provider_metadata),

@@ -714,6 +714,7 @@ async fn run_with_completion_model(
                                         handoff_processed_tokens.saturating_add(tokens.unwrap_or(0));
                                 } else {
                                     transcript.record_usage(tokens);
+                                    transcript.parts.order_stream_parts(&transcript.stream_id);
                                     transcript.tool_call_tracker.record_parts(&transcript.parts.parts);
                                     pending_origin_turn = Some(call.call_index + 1);
                                 }

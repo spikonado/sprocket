@@ -1182,7 +1182,7 @@ mod tests {
         assert_eq!(replay[2]["arguments"], "{\"cmd\":\"pwd\"}");
         assert_eq!(replay[3]["type"], "function_call_output");
         assert_eq!(replay[3]["call_id"], replay[2]["call_id"]);
-        assert_eq!(replay[3]["output"], "/workspace");
+        assert_eq!(replay[3]["output"], json!("/workspace").to_string());
     }
 
     #[tokio::test]
