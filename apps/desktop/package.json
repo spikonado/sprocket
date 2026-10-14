@@ -23,7 +23,7 @@
 		"appId": "com.spikonado.sprocket",
 		"productName": "Sprocket",
 		"executableName": "sprocket-desktop",
-		"icon": "../../assets/icon.png",
+		"icon": "../web/static/logo.svg",
 		"directories": {
 			"output": "dist"
 		},
