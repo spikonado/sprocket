@@ -1,5 +1,15 @@
 use super::*;
 
+impl RunRecovery {
+    async fn saved(&self, user_id: &str, submission_id: &str) -> Option<RecoveryRecord> {
+        self.records
+            .lock()
+            .await
+            .get(&format!("{user_id}:{submission_id}"))
+            .cloned()
+    }
+}
+
 fn record() -> RecoveryRecord {
     RecoveryRecord::new(
         serde_json::from_value(serde_json::json!({

@@ -156,15 +156,6 @@ impl RunRecovery {
         })
     }
 
-    #[cfg(test)]
-    async fn saved(&self, user_id: &str, submission_id: &str) -> Option<RecoveryRecord> {
-        self.records
-            .lock()
-            .await
-            .get(&format!("{user_id}:{submission_id}"))
-            .cloned()
-    }
-
     async fn replace(
         self: &Arc<Self>,
         key: &str,

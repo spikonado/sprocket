@@ -47,12 +47,7 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
     )
 }
 
-#[cfg(test)]
 pub(crate) fn reasoning_summary_text(reasoning: &Reasoning) -> String {
-    summary_text(reasoning)
-}
-
-fn summary_text(reasoning: &Reasoning) -> String {
     let Some(summary) = native_reasoning(reasoning)
         .filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"))
         .and_then(|item| item.get("summary"))
@@ -80,7 +75,7 @@ pub(crate) fn apply_completed_reasoning(
 ) {
     let id = format!("{stream_id}:{correlator}");
     let key = format!("reasoning:{id}");
-    let text = summary_text(reasoning);
+    let text = reasoning_summary_text(reasoning);
     let native = native_reasoning(reasoning);
     let openai =
         native.filter(|item| item.get("type").and_then(JsonValue::as_str) == Some("reasoning"));

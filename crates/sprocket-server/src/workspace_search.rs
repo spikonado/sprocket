@@ -110,11 +110,6 @@ impl WorkspaceSearchIndex {
         Ok(SearchOutcome { entries, scanning })
     }
 
-    #[cfg(test)]
-    fn cached_count(&self) -> usize {
-        self.pickers.lock().expect("picker cache").len()
-    }
-
     fn picker_for(&self, workspace_root: &Path) -> anyhow::Result<Arc<PickerHandle>> {
         let key = workspace_root.to_path_buf();
         let mut pickers = self

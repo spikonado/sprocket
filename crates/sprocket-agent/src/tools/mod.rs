@@ -44,21 +44,6 @@ use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
-// Helpers/constants brought into this module so `tests` can reach them via `super::*`.
-#[cfg(test)]
-use self::context::tool_error;
-#[cfg(test)]
-use self::job::mutation_args_from_payload;
-#[cfg(test)]
-use self::questions::{
-    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, MAX_QUESTION_CHARS,
-    prepare_ask_question,
-};
-#[cfg(test)]
-use self::skills::resolve_read_skill;
-#[cfg(test)]
-use sprocket_workspace::async_tools::DEFAULT_YIELD_MS;
-
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) ask_question: AskQuestionTool,

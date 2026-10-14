@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn keyring_credentials_are_scoped_to_deployment_and_data_directory() {
+    let first = KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/one"));
+    let same = KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/one"));
+    let other_deployment =
+        KeyringRefreshTokenStore::new("https://second.convex.cloud", Path::new("/one"));
+    let other_data_dir =
+        KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/two"));
+
+    assert_eq!(first.account, same.account);
+    assert_ne!(first.account, other_deployment.account);
+    assert_ne!(first.account, other_data_dir.account);
+}
+
+#[test]
 fn explicit_file_selection_survives_restart_and_rotation() {
     let dir = tempfile::tempdir().unwrap();
     let store = ProfileCredentials::new("https://test.convex.cloud", dir.path());

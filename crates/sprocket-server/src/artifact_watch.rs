@@ -139,16 +139,6 @@ impl ArtifactWatchers {
             latest,
         }
     }
-
-    #[cfg(test)]
-    pub fn active_count(&self) -> usize {
-        self.registry.active_count()
-    }
-
-    #[cfg(test)]
-    fn task_abort_handle(&self, key: &WatchKey) -> Option<tokio::task::AbortHandle> {
-        self.registry.task_abort_handle(key)
-    }
 }
 
 impl ArtifactWatchSession {

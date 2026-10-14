@@ -1,6 +1,10 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+fn markdown_url(url: Url) -> Option<Url> {
+    markdown_urls(url).into_iter().next()
+}
+
 async fn serve(responses: Vec<Vec<u8>>) -> (Url, tokio::task::JoinHandle<Vec<String>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = Url::parse(&format!(

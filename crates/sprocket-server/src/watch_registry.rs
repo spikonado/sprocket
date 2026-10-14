@@ -137,19 +137,6 @@ impl<K: Eq + Hash, E, S> WatchRegistry<K, E, S> {
             inner.slots.remove(key);
         }
     }
-
-    #[cfg(test)]
-    pub fn active_count(&self) -> usize {
-        lock(&self.inner).slots.len()
-    }
-
-    #[cfg(test)]
-    pub fn task_abort_handle(&self, key: &K) -> Option<tokio::task::AbortHandle> {
-        lock(&self.inner)
-            .slots
-            .get(key)
-            .map(|slot| slot.task.abort_handle())
-    }
 }
 
 impl<K: Eq + Hash, E, S> WatchSession<K, E, S> {
@@ -165,5 +152,7 @@ impl<K: Eq + Hash, E, S> Drop for WatchSession<K, E, S> {
     }
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;

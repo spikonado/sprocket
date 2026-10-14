@@ -376,11 +376,6 @@ impl LiveCompletionHub {
             .get(thread_id)
             .and_then(|slot| slot.snapshot.clone())
     }
-
-    #[cfg(test)]
-    fn slot_count(&self) -> usize {
-        self.lock().len()
-    }
 }
 
 pub(crate) fn join_assistant_text_parts(parts: &[LiveAssistantPart]) -> String {

@@ -3,6 +3,12 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::time::Duration;
 
+impl WorkspaceSearchIndex {
+    fn cached_count(&self) -> usize {
+        self.pickers.lock().expect("picker cache").len()
+    }
+}
+
 fn test_workspace() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp workspace");
     let root = dir.path();

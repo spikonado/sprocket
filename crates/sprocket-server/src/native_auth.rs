@@ -1,5 +1,7 @@
 mod credentials;
 mod device;
+#[cfg(test)]
+mod test_support;
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -21,8 +23,6 @@ use workos::resources::user_management::{
 };
 use workos::{AuthenticateResponse, Client as WorkOsClient};
 
-#[cfg(test)]
-use credentials::{EmptyRefreshTokenStore, KeyringRefreshTokenStore};
 use credentials::{ProfileCredentials, RefreshTokenStore};
 
 const CLIENT_CONFIG_QUERY: &str = "authBootstrap:getClientConfig";
@@ -176,59 +176,6 @@ impl NativeAuthManager {
             credential_operation: Mutex::new(()),
             session: Mutex::new(NativeSession::default()),
         })
-    }
-
-    #[cfg(test)]
-    fn with_client(
-        client: WorkOsClient,
-        callback_url: String,
-        refresh_tokens: Arc<dyn RefreshTokenStore>,
-    ) -> Arc<Self> {
-        let client_cell = OnceCell::new();
-        assert!(client_cell.set(client).is_ok());
-        Arc::new(Self {
-            changes: watch::channel(0).0,
-            local_sessions: None,
-            deployment_url: None,
-            client: client_cell,
-            callback_url,
-            refresh_tokens,
-            credential_operation: Mutex::new(()),
-            session: Mutex::new(NativeSession::default()),
-        })
-    }
-
-    #[cfg(test)]
-    fn with_store(
-        config: NativeAuthConfig,
-        callback_url: String,
-        refresh_tokens: Arc<dyn RefreshTokenStore>,
-    ) -> Arc<Self> {
-        let client = WorkOsClient::builder()
-            .client_id(config.workos_client_id)
-            .build();
-        Self::with_client(client, callback_url, refresh_tokens)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn configured_for_test(config: NativeAuthConfig, callback_url: String) -> Arc<Self> {
-        Self::with_store(config, callback_url, Arc::new(EmptyRefreshTokenStore))
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn authenticate_for_test(&self, user_id: &str) {
-        let mut session = self.session.lock().await;
-        session.access_token = Some(AccessToken {
-            value: "test-access-token".to_string(),
-            expires_at: unix_time_secs() + 3_600,
-        });
-        session.user = Some(NativeUser {
-            id: user_id.to_string(),
-            email: "test@example.com".to_string(),
-            first_name: None,
-            last_name: None,
-            profile_picture_url: None,
-        });
     }
 
     async fn client(&self) -> anyhow::Result<&WorkOsClient> {
@@ -415,17 +362,6 @@ impl NativeAuthManager {
         }
     }
 
-    #[cfg(test)]
-    pub async fn expire_login_for_test(&self, session_token: &str) {
-        let mut session = self.session.lock().await;
-        let Some(state) = session.pending.by_session.get(session_token).cloned() else {
-            return;
-        };
-        if let Some(pending) = session.pending.by_state.get_mut(&state) {
-            pending.created_at = Instant::now() - LOGIN_ATTEMPT_TTL - Duration::from_secs(1);
-        }
-    }
-
     pub async fn sign_out(self: &Arc<Self>) -> anyhow::Result<()> {
         let manager = Arc::clone(self);
         tokio::spawn(async move { manager.sign_out_inner().await })
@@ -514,14 +450,6 @@ impl NativeAuthManager {
             Err(error) if is_authoritative_unauthenticated(&error) => Ok(None),
             Err(error) => Err(error),
         }
-    }
-
-    #[cfg(test)]
-    async fn access_token(self: &Arc<Self>, force_refresh: bool) -> anyhow::Result<String> {
-        self.browser_session(force_refresh)
-            .await?
-            .map(|session| session.access_token)
-            .context(NATIVE_SESSION_SIGNED_OUT)
     }
 
     async fn access_token_for_user(

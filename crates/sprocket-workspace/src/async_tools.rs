@@ -53,11 +53,6 @@ impl ZeroPollCooldown {
     pub fn record_success(&mut self) {
         self.last_success = Some(Instant::now());
     }
-
-    #[cfg(test)]
-    pub(crate) fn last_success(&self) -> Option<Instant> {
-        self.last_success
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,5 +70,7 @@ impl ZeroPollCooldownError {
     }
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;

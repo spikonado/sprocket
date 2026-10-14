@@ -18,24 +18,6 @@ pub(super) trait RefreshTokenStore: Send + Sync {
     fn clear(&self) -> anyhow::Result<()>;
 }
 
-#[cfg(test)]
-pub(super) struct EmptyRefreshTokenStore;
-
-#[cfg(test)]
-impl RefreshTokenStore for EmptyRefreshTokenStore {
-    fn load(&self) -> anyhow::Result<Option<String>> {
-        Ok(None)
-    }
-
-    fn save(&self, _refresh_token: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn clear(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
 pub(super) struct KeyringRefreshTokenStore {
     account: String,
 }
@@ -54,11 +36,6 @@ impl KeyringRefreshTokenStore {
         Self {
             account: format!("{KEYRING_ACCOUNT_PREFIX}-{suffix}"),
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn account(&self) -> &str {
-        &self.account
     }
 
     fn entry(&self) -> anyhow::Result<keyring::Entry> {

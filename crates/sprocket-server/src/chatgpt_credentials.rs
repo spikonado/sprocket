@@ -348,11 +348,6 @@ impl ChatGptService {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_load(data_dir: &Path, issuer: &str) -> Arc<Self> {
-        Self::load_with_issuer(data_dir, issuer).unwrap()
-    }
-
     fn load_with_issuer(data_dir: &Path, issuer: &str) -> anyhow::Result<Arc<Self>> {
         let path = data_dir.join("chatgpt-siwc.json");
         let mut state: Store = match std::fs::read(&path) {

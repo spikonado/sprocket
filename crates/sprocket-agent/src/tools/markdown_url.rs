@@ -26,11 +26,6 @@ pub(super) async fn try_markdown_url(
     }
 }
 
-#[cfg(test)]
-fn markdown_url(url: Url) -> Option<Url> {
-    markdown_urls(url).into_iter().next()
-}
-
 fn markdown_urls(mut url: Url) -> Vec<Url> {
     let path = url.path().trim_end_matches('/').to_owned();
     let filename = percent_encoding::percent_decode_str(path.rsplit('/').next().unwrap_or(""))

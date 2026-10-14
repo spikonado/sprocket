@@ -1,6 +1,12 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+impl TranscriptWatchers {
+    fn active_count(&self) -> usize {
+        self.registry.active_count()
+    }
+}
+
 fn native_auth() -> Arc<NativeAuthManager> {
     NativeAuthManager::configured_for_test(
         crate::native_auth::NativeAuthConfig {

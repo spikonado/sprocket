@@ -4,16 +4,10 @@ use anyhow::Context;
 use bytes::Bytes;
 use futures::StreamExt;
 use rig::ProviderError;
-#[cfg(test)]
-use rig::completion::CompletionRequest;
 use rig::http_client::{self, HeaderValue, HttpClientExt, Request, Response};
 use rig::operation::Completion;
 use rig::providers::openai;
-#[cfg(test)]
-use rig::providers::openai::responses_api::ResponsesToolDefinition;
 use rig::wasm_compat::WasmCompatSend;
-#[cfg(test)]
-use rig::wire::{Mode, Wire};
 use rig::{DynModel, Model};
 
 use crate::live::now_ms;
@@ -590,12 +584,6 @@ impl ChatGptClient {
         )
         .erase()
     }
-}
-
-#[cfg(test)]
-fn wire_tool(definition: &rig::completion::ToolDefinition) -> serde_json::Value {
-    serde_json::to_value(ResponsesToolDefinition::from(definition.clone()))
-        .expect("tool definition serializes")
 }
 
 #[cfg(test)]

@@ -124,11 +124,6 @@ impl TranscriptWatchers {
         );
         TranscriptWatchSession { session }
     }
-
-    #[cfg(test)]
-    pub fn active_count(&self) -> usize {
-        self.registry.active_count()
-    }
 }
 
 impl TranscriptWatchSession {

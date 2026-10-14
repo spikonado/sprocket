@@ -2,6 +2,16 @@ use super::*;
 use sprocket_agent::artifact_bindings::ArtifactBinding;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+impl ArtifactWatchers {
+    fn active_count(&self) -> usize {
+        self.registry.active_count()
+    }
+
+    fn task_abort_handle(&self, key: &WatchKey) -> Option<tokio::task::AbortHandle> {
+        self.registry.task_abort_handle(key)
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn cloud_subscription_does_not_poll_or_reload_already_loaded_revisions() {
     let (updates, subscription) = futures::channel::mpsc::unbounded();

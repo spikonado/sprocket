@@ -6,6 +6,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;
 
+impl ChatGptService {
+    fn test_load(data_dir: &Path, issuer: &str) -> Arc<Self> {
+        Self::load_with_issuer(data_dir, issuer).unwrap()
+    }
+}
+
 const GRANTED: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const RSA_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCrZ9ZLr29AUzPN\nLs0LovbC5x+v4WOaQX9Eo4Bc709L0ShbuJx5ji/Da20c95Q1fvSMtsH7TGcKP+39\noYbghsbmZoCLp58DyyRbXlEU5/lfPefy0vuqZtIY3Ofe/89Ofe0TfxxWdRGyYn2y\n6rwWysR1jsigVFHoW7E0UKcXq24ZocAd0vWQfxABH1ydUfAMzk71PH3lMFsTbusy\nRSkrXdyHkcvPHpwEXJlsSQTr6E7RCLbtwXVuIsF6kD+NXlIjx50rCZX/gcpltAht\nRWsxrq3iKoUnnxWfCm4/Oh/20SgHoShbNEmNRcE2QIeDLdWC75tzq8IZE8p4/Yts\nUfHIC8htAgMBAAECggEAA7G6vCndT3kbmjYChFgwUlYR6EQG1gnIWO3fM+GSh3NM\nF+H8OWB3phIYKXIqlxaT5b6Aos5sQBvNoNRM6GTvP4MBDUGBG19S+scnHzi6trNK\nXwDuHKeXqqKEOtmvmaT8KZnpPfHK/lnCFMubXzBimJgJue7nTwc+4/5DA68Vseay\nCVsMLsamqTduCYPtUIDp0Qp95/qR9MQuzSluOVACgVOOBCahDP8QiSUvOI4tP/Mk\njhxv7a6FREbDPQUVZFgLxVRFwKWCz8POX8wKAr8qht85BmbhNri8ga/hdirjmEod\nowzv1wnva0agPo7EHFdvS8UYtd9DDU2B0yqzlqF1XwKBgQDXUi8qxwEeOh3z7hSu\n6wCo/bIzbmAxO43yFU4+KTZnE9dV9GRSfyeQFdSiPRLwqVzI660tArbpADu0q6fv\n/b7TYp1+mWFjtBwL0yKqqAQKveKzpHe6BwwrQjFPptT8q5c54eXDuOHIHDcRCH/w\nipz99LSIQKe/dZhmMxgnSI39PwKBgQDLybi34Sx9LJLOpDCwbOK0YjvqJBT0lrK+\nsRXXBy+8+wMqa/bgBDwZVt4po8vjV7gplvfpbclfzzxA+cJFQQzYZS+iJurDE1nL\n67V/9wMfdviLiBCAL4Sb5mZljdCIqku8Dy2On8gGSzw0vy+KVL8P0hVQr+uO8YhI\nWjTZ7wkTUwKBgDzOzNs70CkFKKhWuCid3VXcL5MuvKOque9/7NTJNr/tboaruhlC\nJ54dTCt1LAAjFDz5sbJgbd9nXXUsdQTlmBqCYw/5qPNLThBY1BV11Y5jCb7J17YF\nf35H9z0TVFr26oJCNW0MrVaiATsiN19rBeMCVGmWOMltIFjcXRna955pAoGAC6H3\nLl/nJzoNI0iSEvAUPNHCs8ndfFzB1UrMgVrCqdn2Q0yoaf8z4wpnYh8ce1y9gXpB\nqox+yz5MJTVclpFxB0U3Y90u13XaUV6iHKzf+8LRyz04G+kae7+6Jp/iwHpgGlsP\nca3DQEC5LhWfxBi0U1Xdq55vJti4u9CSZcJUVUsCgYBWOm2Ws0VruHWj4WGqylfV\nuURcTGoADEkkAohtILu9zzqh21Il0irSQVRLvxY36h4rR4w+RH9VjQi0Vg0lmmAT\nKKzQgjnyGdgHclULok7DUtZwjZ7TYOqFWp2O2al7As/uivowpvTlV2AAR7zNVcRV\n12gHMJ6qoYyS2u/dU5hR7Q==\n-----END PRIVATE KEY-----\n";

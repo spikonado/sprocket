@@ -3,8 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use rig::completion::Message;
+use rig::completion::{CompletionRequest, Message};
 use rig::message::{AssistantContent, AssistantMessage, Reasoning, ToolName};
+use rig::providers::openai::responses_api::ResponsesToolDefinition;
+use rig::wire::{Mode, Wire};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -13,6 +15,11 @@ use super::*;
 use crate::reasoning::{openai_reasoning_metadata, reasoning_summary_text};
 use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{ChatGptAccess, deserialize_agent_history};
+
+fn wire_tool(definition: &rig::completion::ToolDefinition) -> serde_json::Value {
+    serde_json::to_value(ResponsesToolDefinition::from(definition.clone()))
+        .expect("tool definition serializes")
+}
 
 struct StubCredentials {
     connection: tokio::sync::watch::Sender<Option<String>>,

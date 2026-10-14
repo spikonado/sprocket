@@ -6,6 +6,29 @@ use axum::routing::post;
 
 use super::*;
 
+impl NativeAuthManager {
+    async fn access_token(self: &Arc<Self>, force_refresh: bool) -> anyhow::Result<String> {
+        self.browser_session(force_refresh)
+            .await?
+            .map(|session| session.access_token)
+            .context(NATIVE_SESSION_SIGNED_OUT)
+    }
+
+    async fn remote_device_status(&self, session_token: &str) -> NativeLoginStatus {
+        let session = self.session.lock().await;
+        let Some(attempt) = session.remote_devices.get(session_token) else {
+            return NativeLoginStatus::SignedOut;
+        };
+        match &attempt.result {
+            None => NativeLoginStatus::Pending,
+            Some(Ok(user)) => NativeLoginStatus::Authenticated { user: user.clone() },
+            Some(Err(error)) => NativeLoginStatus::Failed {
+                error: error.clone(),
+            },
+        }
+    }
+}
+
 #[derive(Default)]
 struct MemoryRefreshTokenStore {
     token: std::sync::Mutex<Option<String>>,
@@ -479,20 +502,6 @@ async fn loads_and_normalizes_client_id() {
             .expect("valid configuration");
 
     assert_eq!(config.workos_client_id, "client_123");
-}
-
-#[test]
-fn keyring_credentials_are_scoped_to_deployment_and_data_directory() {
-    let first = KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/one"));
-    let same = KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/one"));
-    let other_deployment =
-        KeyringRefreshTokenStore::new("https://second.convex.cloud", Path::new("/one"));
-    let other_data_dir =
-        KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/two"));
-
-    assert_eq!(first.account(), same.account());
-    assert_ne!(first.account(), other_deployment.account());
-    assert_ne!(first.account(), other_data_dir.account());
 }
 
 #[tokio::test]

@@ -1,5 +1,11 @@
 use super::*;
 
+impl LiveCompletionHub {
+    fn slot_count(&self) -> usize {
+        self.lock().len()
+    }
+}
+
 fn overlay(thread_id: &str, text: &str) -> LiveCompletionOverlay {
     LiveCompletionOverlay {
         thread_id: thread_id.to_string(),
