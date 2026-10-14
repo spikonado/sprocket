@@ -908,8 +908,7 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
     assert_eq!(items[2]["text"], DONE_SUMMARY);
     assert_eq!(items[3]["callId"], TOOL_CALL_ID);
     assert_eq!(items[3]["name"], TOOL_NAME);
-    assert_eq!(items[3]["providerMetadata"]["openai"]["itemId"], "fc_1");
-    assert_eq!(items[3]["providerMetadata"]["rigNative"]["id"], "fc_1");
+    assert!(items[3]["providerMetadata"]["rigNative"].is_null());
     assert_eq!(items[5]["callId"], "call_2");
     assert_eq!(items[5]["providerMetadata"]["openai"]["itemId"], "fc_2");
     assert_eq!(
@@ -1000,6 +999,110 @@ async fn assert_repaired_tool_turn_tracking(incomplete: bool) {
 #[tokio::test]
 async fn repaired_multi_call_turn_tracks_dispatches_at_persisted_indices() {
     assert_repaired_tool_turn_tracking(false).await;
+}
+
+#[tokio::test]
+async fn captures_origins_through_streamed_tool_turns_and_restarted_runs() {
+    use rig::agent::MultiTurnStreamItem;
+
+    let tool_turn = output_items_sse(vec![json!({
+        "type": "function_call", "id": "fc_origin", "call_id": "call_origin",
+        "name": TOOL_NAME, "arguments": "{}", "status": "completed"
+    })]);
+    let final_turn = output_items_sse(vec![json!({
+        "type": "message", "id": "msg_origin", "role": "assistant", "status": "completed",
+        "content": [{"type": "output_text", "text": "done"}]
+    })]);
+    let (url, server) = spawn_responses_sse(vec![
+        tool_turn.clone(),
+        final_turn.clone(),
+        tool_turn,
+        final_turn,
+    ]);
+    let origin_hook = super::CompletionOrigin::default();
+    let agent = rig::AgentBuilder::new(stateless_responses_model(
+        openai::OpenAIConfig::new("test").with_base_url(url),
+        "gateway-model",
+    ))
+    .dynamic_tool(DynamicTool::new(
+        ToolName::new(TOOL_NAME).unwrap(),
+        "test",
+        json!({"type": "object"}),
+        |_| async { Ok(ToolOutput::text("ok")) },
+    ))
+    .build();
+    let expected = Origin::new("openai.responses", "openai", "gateway-model");
+    for _ in 0..2 {
+        let mut stream = agent
+            .prompt("test")
+            .add_hook(origin_hook.clone())
+            .max_turns(2)
+            .stream();
+        let mut parts = LiveAssistantParts::default();
+        let mut metadata = HashMap::new();
+        let mut pending = None;
+        let mut saved = Vec::new();
+        while let Some(item) = stream.next().await {
+            if let Some(origin) = pending.and_then(|turn| origin_hook.take_for(turn)) {
+                super::apply_completion_origin(&parts.parts, &mut metadata, &origin);
+                saved.push(durable_items_json(&parts.parts, &metadata));
+                parts.clear();
+                metadata.clear();
+                pending = None;
+            }
+            match item.unwrap() {
+                MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
+                    part,
+                    content,
+                })) => match content {
+                    AssistantContent::Text(text) => {
+                        apply_completed_text(
+                            &mut parts,
+                            &mut metadata,
+                            STREAM_ID,
+                            part.index(),
+                            &text,
+                        );
+                    }
+                    AssistantContent::ToolCall(call) => {
+                        apply_completed_tool_call(&mut parts, &mut metadata, STREAM_ID, None, call);
+                    }
+                    _ => {}
+                },
+                MultiTurnStreamItem::CompletionCall(call) => pending = Some(call.call_index + 1),
+                _ => {}
+            }
+        }
+        assert_eq!(saved.len(), 2);
+        let transcript: Vec<TranscriptPart> = saved
+            .into_iter()
+            .enumerate()
+            .map(|(number, items)| {
+                serde_json::from_value(json!({
+                    "number": number, "sourceKey": format!("completion:{number}"),
+                    "kind": "completion", "runId": "run", "completion": {"items": items}
+                }))
+                .unwrap()
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        store
+            .append_parts("user", "thread", &transcript)
+            .await
+            .unwrap();
+        let state = store.load_state("user", "thread").await.unwrap();
+        let reloaded = store.read_parts("user", "thread", &[0, 1]).await.unwrap();
+        let messages =
+            deserialize_agent_history(agent_history_from_parts(&state, &reloaded, None)).unwrap();
+        for message in messages {
+            let Message::Assistant(message) = message else {
+                continue;
+            };
+            assert_eq!(message.origin, Some(expected.clone()));
+        }
+    }
+    assert_eq!(server.join().unwrap().len(), 4);
 }
 
 #[tokio::test]

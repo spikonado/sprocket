@@ -407,7 +407,20 @@ impl AgentHistoryContent {
                     .as_ref()
                     .and_then(|metadata| metadata.get("rigNative"))
                 {
-                    return Ok(block.with_native(native.clone()));
+                    let mut item = native.clone();
+                    if let Some(content) = item
+                        .get_mut("content")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        for part in content {
+                            if part.get("type").and_then(serde_json::Value::as_str)
+                                == Some("output_text")
+                            {
+                                part["text"] = serde_json::json!(text);
+                            }
+                        }
+                    }
+                    return Ok(block.with_native(item));
                 }
                 let extras = metadata
                     .as_ref()
@@ -468,7 +481,9 @@ impl AgentHistoryContent {
                     let params: serde_json::Value =
                         from_json_string(&json, "tool call additional params")?;
                     if let Some(native) = params.get("rigNative") {
-                        return Ok(AssistantContent::ToolCall(call).with_native(native.clone()));
+                        let mut item = native.clone();
+                        item["arguments"] = serde_json::json!(arguments_json);
+                        return Ok(AssistantContent::ToolCall(call).with_native(item));
                     }
                     if let Some(params) = params.as_object() {
                         for (key, value) in params {

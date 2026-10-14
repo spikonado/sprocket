@@ -592,7 +592,7 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
             match item {
                 Ok(MultiTurnStreamItem::CompletionCall(_)) => completion_calls += 1,
                 Ok(MultiTurnStreamItem::ToolExecutionCommitted { .. })
-                | Ok(MultiTurnStreamItem::StreamUserItem(_))
+                | Ok(MultiTurnStreamItem::ToolResult { .. })
                 | Ok(MultiTurnStreamItem::FinalResponse(_)) => {
                     panic!(
                         "an accepted handoff must stop before committing or emitting its result"

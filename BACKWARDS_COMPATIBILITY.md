@@ -49,7 +49,9 @@ released assistant records to item-shaped turns. Tool-result correlators become
 Rig's single call ID; distinct provider item IDs move into native function-call
 items. Legacy `openai_responses` text extras, including `message_id`, phase and
 content annotations, become native message items. The reader also accepts
-`rigNative` items in text and tool-call metadata.
+compact `rigNative` items in text and tool-call metadata. Text and arguments
+are rebuilt from their existing transcript fields. Only fingerprint-matching
+native items are persisted, so edits cannot restore stale provider data.
 
 Reasoning still persists one encrypted payload in the existing OpenAI metadata.
 The reader accepts released block arrays and issuer-tagged blocks, projecting

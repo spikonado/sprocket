@@ -299,6 +299,16 @@ fn completion_parameters(
 #[derive(Clone, Default)]
 struct CompletionOrigin(Arc<Mutex<Option<(usize, rig::message::Origin)>>>);
 
+impl CompletionOrigin {
+    fn take_for(&self, turn: usize) -> Option<rig::message::Origin> {
+        let mut saved = self.0.lock().ok()?;
+        if saved.as_ref()?.0 != turn {
+            return None;
+        }
+        saved.take().map(|(_, origin)| origin)
+    }
+}
+
 impl AgentHook for CompletionOrigin {
     fn observes(&self, kind: StepEventKind) -> bool {
         kind == StepEventKind::CompletionDispatch
@@ -678,9 +688,7 @@ async fn run_with_completion_model(
                         tokio::time::sleep_until(ready_at).await;
                         stream.next().await
                     } => {
-                        let origin = completion_origin.0.lock().ok().and_then(|origin| origin.clone());
-                        if let Some((turn, origin)) = origin
-                            && pending_origin_turn == Some(turn)
+                        if let Some(origin) = pending_origin_turn.and_then(|turn| completion_origin.take_for(turn))
                         {
                             transcript.record_origin(&origin);
                             pending_origin_turn = None;
@@ -1128,20 +1136,7 @@ impl TranscriptSink {
     }
 
     fn record_origin(&mut self, origin: &rig::message::Origin) {
-        for part in &self.parts.parts {
-            let key = match part {
-                LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
-                LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
-                LiveAssistantPart::ToolCall {
-                    part_id, call_id, ..
-                } => part_id.clone().unwrap_or_else(|| call_id.clone()),
-            };
-            let metadata = self
-                .provider_metadata
-                .entry(key)
-                .or_insert_with(|| serde_json::json!({}));
-            metadata["origin"] = serde_json::to_value(origin).expect("origin always serializes");
-        }
+        apply_completion_origin(&self.parts.parts, &mut self.provider_metadata, origin);
     }
 
     fn publish_delay(&self) -> Duration {
@@ -1232,6 +1227,26 @@ fn durable_items_json(
         .collect()
 }
 
+fn apply_completion_origin(
+    parts: &[LiveAssistantPart],
+    provider_metadata: &mut HashMap<String, serde_json::Value>,
+    origin: &rig::message::Origin,
+) {
+    for part in parts {
+        let key = match part {
+            LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
+            LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
+            LiveAssistantPart::ToolCall {
+                part_id, call_id, ..
+            } => part_id.clone().unwrap_or_else(|| call_id.clone()),
+        };
+        let metadata = provider_metadata
+            .entry(key)
+            .or_insert_with(|| serde_json::json!({}));
+        metadata["origin"] = serde_json::to_value(origin).expect("origin always serializes");
+    }
+}
+
 fn apply_completed_text(
     parts: &mut LiveAssistantParts,
     provider_metadata: &mut HashMap<String, serde_json::Value>,
@@ -1246,12 +1261,24 @@ fn apply_completed_text(
         Some(stream_id.to_string()),
         now_ms(),
     );
-    if let Some(native) = &completed.native {
-        let mut metadata = serde_json::json!({ "rigNative": native.item });
-        if let Some(phase) = native.item.get("phase") {
+    let block = AssistantContent::Text(completed.clone());
+    if let Some(native) = block.native_item() {
+        let mut item = native.clone();
+        if let Some(content) = item
+            .get_mut("content")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for part in content {
+                if let Some(part) = part.as_object_mut() {
+                    part.remove("text");
+                }
+            }
+        }
+        let mut metadata = serde_json::json!({ "rigNative": item });
+        if let Some(phase) = native.get("phase") {
             metadata["openai_responses"]["phase"] = phase.clone();
         }
-        if let Some(message_id) = native.item.get("id") {
+        if let Some(message_id) = native.get("id") {
             metadata["openai_responses"]["message_id"] = message_id.clone();
         }
         provider_metadata.insert(format!("text:{id}"), metadata);
@@ -1269,23 +1296,25 @@ fn apply_completed_tool_call(
     let call_id = call.id.wire().into_owned();
     let key = part_id.clone().unwrap_or_else(|| call_id.clone());
     let mut metadata = serde_json::Map::new();
-    if let Some(native) = call.native {
-        if let Some(item_id) = native.item.get("id") {
+    let block = AssistantContent::ToolCall(call.clone());
+    if let Some(native) = block.native_item() {
+        if let Some(item_id) = native.get("id") {
             metadata.insert("openai".into(), serde_json::json!({ "itemId": item_id }));
         }
         if let Some(signature) = native
-            .item
             .get("signature")
-            .or_else(|| native.item.get("thought_signature"))
+            .or_else(|| native.get("thought_signature"))
         {
             metadata.insert("signature".into(), signature.clone());
         }
-        let mut additional_params = native.item.as_object().cloned().unwrap_or_default();
+        let mut additional_params = native.as_object().cloned().unwrap_or_default();
         for field in ["type", "id", "call_id", "name", "arguments"] {
             additional_params.remove(field);
         }
         metadata.insert("toolCallAdditionalParams".into(), additional_params.into());
-        metadata.insert("rigNative".into(), native.item);
+        let mut item = native.as_object().cloned().unwrap_or_default();
+        item.remove("arguments");
+        metadata.insert("rigNative".into(), item.into());
     }
     provider_metadata.insert(key, metadata.into());
     parts.apply_tool_call(
@@ -1386,6 +1415,11 @@ mod tests {
         let durable = durable_items_json(&parts.parts, &metadata);
         assert_eq!(durable.len(), 2);
         assert_eq!(durable[0]["text"], "Working");
+        assert!(
+            durable[0]["providerMetadata"]["rigNative"]["content"][0]
+                .get("text")
+                .is_none()
+        );
         assert_eq!(
             durable[0]["providerMetadata"]["openai_responses"]["phase"],
             "commentary"
@@ -1448,6 +1482,11 @@ mod tests {
         );
         let durable = durable_items_json(&parts.parts, &metadata);
         assert_eq!(durable[0]["callId"], "call_1");
+        assert!(
+            durable[0]["providerMetadata"]["rigNative"]
+                .get("arguments")
+                .is_none()
+        );
 
         let transcript = serde_json::from_value::<Vec<crate::transcript::TranscriptPart>>(json!([
             {
@@ -1480,6 +1519,49 @@ mod tests {
         };
         assert_eq!(result.call, call.id);
         assert_eq!(result.name, call.function.name);
+    }
+
+    #[test]
+    fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
+        use rig::message::{AssistantContent, ToolCall, ToolFunction};
+        use serde_json::json;
+        let AssistantContent::ToolCall(mut call) = AssistantContent::ToolCall(ToolCall::from_wire(
+            "call_edited",
+            ToolFunction::new("old_tool".try_into().unwrap(), json!({"old": true})),
+        ))
+        .with_native(json!({
+            "type": "function_call", "id": "fc_old", "call_id": "call_edited",
+            "name": "old_tool", "arguments": "{\"old\":true}", "secret": "stale"
+        })) else {
+            unreachable!()
+        };
+        call.function = ToolFunction::new("new_tool".try_into().unwrap(), json!({"new": true}));
+        let mut parts = super::LiveAssistantParts::default();
+        let mut metadata = HashMap::new();
+        super::apply_completed_tool_call(&mut parts, &mut metadata, "stream", None, call);
+        let items = durable_items_json(&parts.parts, &metadata);
+        assert!(items[0]["providerMetadata"]["rigNative"].is_null());
+        let part = serde_json::from_value(json!({
+            "number": 0, "sourceKey": "completion", "kind": "completion", "runId": "run",
+            "completion": {"items": items}
+        }))
+        .unwrap();
+        let messages =
+            crate::types::deserialize_agent_history(crate::transcript::agent_history_from_parts(
+                &crate::transcript::TranscriptState::new("user".into(), "thread".into()),
+                &[part],
+                None,
+            ))
+            .unwrap();
+        let rig::message::Message::Assistant(message) = &messages[0] else {
+            unreachable!()
+        };
+        let AssistantContent::ToolCall(call) = &message.content[0] else {
+            unreachable!()
+        };
+        assert_eq!(call.function.name, "new_tool");
+        assert_eq!(call.function.arguments_value(), json!({"new": true}));
+        assert!(call.native.as_ref().unwrap().item.get("secret").is_none());
     }
 
     #[test]
