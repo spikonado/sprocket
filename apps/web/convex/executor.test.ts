@@ -3,6 +3,7 @@ import type { Infer } from 'convex/values';
 import { vAskQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
+import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -233,110 +234,143 @@ describe('executor', () => {
 		}
 	);
 
-	it.each(['exec_cmd', 'control_cmd', 'poll_cmd'] as const)(
-		'persists %s jobs and flat command results without a sessionId',
-		async (kind) => {
-			const t = initConvexTest();
-			const { asUser, threadId } = await seedOwnedThread(t);
-			const executionSecret = `command-${kind}-secret`;
-			const claimId = `command-${kind}-claim`;
+	it.each([
+		'exec_cmd',
+		'control_cmd',
+		'poll_cmd',
+		'exec_command',
+		'control_command',
+		'poll_command',
+		'write_stdin'
+	] as const)('persists %s jobs and flat command results without a sessionId', async (kind) => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = `command-${kind}-secret`;
+		const claimId = `command-${kind}-claim`;
 
-			const { runId } = await createQueuedRun(
-				t,
-				asUser,
-				threadId,
-				`command-${kind}`,
-				executionSecret,
-				'Control the command'
-			);
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			`command-${kind}`,
+			executionSecret,
+			'Control the command'
+		);
 
-			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
 
-			const payload =
-				kind === 'exec_cmd'
-					? { cmd: 'echo ok', workdir: '/workspace', yieldTimeMs: 0 }
-					: kind === 'control_cmd'
-						? { sessionId: '1', action: 'write' as const, chars: 'x'.repeat(500_000) }
+		const payload =
+			kind === 'exec_cmd' || kind === 'exec_command'
+				? { cmd: 'echo ok', workdir: '/workspace', yieldTimeMs: 0 }
+				: kind === 'control_cmd' || kind === 'control_command'
+					? { sessionId: '1', action: 'write' as const, chars: 'x'.repeat(500_000) }
+					: kind === 'write_stdin'
+						? { sessionId: '1', chars: 'x'.repeat(500_000), terminate: false }
 						: { sessionId: '1', yieldTimeMs: 0 };
 
-			const displayInput =
-				kind === 'exec_cmd'
-					? { cmd: 'echo ok', workdir: '/workspace' }
-					: kind === 'control_cmd'
-						? { sessionId: '1', action: 'write' }
-						: { sessionId: '1' };
+		const displayInput =
+			kind === 'exec_cmd' || kind === 'exec_command'
+				? { cmd: 'echo ok', workdir: '/workspace' }
+				: kind === 'control_cmd' || kind === 'control_command'
+					? { sessionId: '1', action: 'write' }
+					: { sessionId: '1' };
 
-			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+		const assignment = toolTranscriptAssignment(runId, claimId);
+
+		const { jobId } =
+			kind === 'exec_cmd' || kind === 'control_cmd' || kind === 'poll_cmd'
+				? await asUser.mutation(api.agentRuntime.beginToolJob, {
+						runId,
+						claimId,
+						...assignment,
+						executionSecret,
+						kind,
+						callId: `call-${kind}`,
+						payload
+					})
+				: await t.run(async (ctx) => {
+						const run = await ctx.db.get('runs', runId);
+
+						if (!run) throw new Error('Missing historical run fixture.');
+
+						return await beginExecutorJob(ctx, {
+							run,
+							claimId,
+							...assignment,
+							kind,
+							callId: `call-${kind}`,
+							payload
+						});
+					});
+
+		const result = {
+			command: 'echo ok',
+			workdir: '/',
+			output: 'ok\n',
+			exitCode: 0,
+			success: true,
+			running: false,
+			timedOut: false,
+			completeLogPath: '/transcripts/command/output.log',
+			eventsPath: '/transcripts/command/events.jsonl'
+		};
+
+		await expect(
+			asUser.mutation(api.executor.complete, {
 				runId,
 				claimId,
-				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
-				kind,
-				callId: `call-${kind}`,
-				payload
-			});
+				jobId,
+				result
+			})
+		).resolves.toBe(true);
 
-			const result = {
-				command: 'echo ok',
-				workdir: '/',
-				output: 'ok\n',
-				exitCode: 0,
-				success: true,
-				running: false,
-				timedOut: false,
-				completeLogPath: '/transcripts/command/output.log',
-				eventsPath: '/transcripts/command/events.jsonl'
-			};
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job).toMatchObject({ kind, payload, status: 'completed', result });
+		expect(job?.result).not.toHaveProperty('sessionId');
 
-			await expect(
-				asUser.mutation(api.executor.complete, {
-					runId,
-					claimId,
-					executionSecret,
-					jobId,
-					result
-				})
-			).resolves.toBe(true);
-
-			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-			expect(job).toMatchObject({ kind, payload, status: 'completed', result });
-			expect(job?.result).not.toHaveProperty('sessionId');
-
-			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-			expect(
-				parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)
-			).toEqual([
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		expect(parts.parts.filter((part) => part.tool?.name === kind).map((part) => part.tool)).toEqual(
+			[
 				expect.objectContaining({ status: 'started', input: displayInput, callId: `call-${kind}` }),
 				expect.objectContaining({
 					status: 'completed',
 					input: displayInput,
 					callId: `call-${kind}`
 				})
-			]);
+			]
+		);
 
-			await t.run(async (ctx) => {
-				const finished = parts.parts.find((part) => part.tool?.status === 'completed');
+		await t.run(async (ctx) => {
+			const finished = parts.parts.find((part) => part.tool?.status === 'completed');
 
-				if (!finished?.tool) throw new Error('Missing terminal transcript part.');
-				const legacyTool = { ...finished.tool };
-				delete legacyTool.input;
-				await ctx.db.patch('threadTranscriptParts', finished._id, { tool: legacyTool });
-			});
-			await expect(
-				asUser.mutation(api.executor.complete, {
-					runId,
-					claimId,
-					executionSecret,
-					jobId,
-					result
-				})
-			).resolves.toBe(true);
-			const retried = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
-			expect(retried.parts[0].tool?.input).toEqual(displayInput);
-		}
-	);
+			if (!finished?.tool) throw new Error('Missing terminal transcript part.');
+			const legacyTool = { ...finished.tool };
+			delete legacyTool.input;
+			await ctx.db.patch('threadTranscriptParts', finished._id, { tool: legacyTool });
+		});
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				runId,
+				claimId,
+				executionSecret,
+				jobId,
+				result
+			})
+		).resolves.toBe(true);
+		const retried = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
+		expect(retried.parts[0].tool?.input).toEqual(displayInput);
+	});
 
-	it.each(['exec_cmd', 'control_cmd', 'poll_cmd'] as const)('fails %s jobs', async (kind) => {
+	it.each([
+		'exec_cmd',
+		'control_cmd',
+		'poll_cmd',
+		'exec_command',
+		'control_command',
+		'poll_command',
+		'write_stdin'
+	] as const)('fails %s jobs', async (kind) => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = `command-${kind}-fail-secret`;
@@ -354,20 +388,31 @@ describe('executor', () => {
 		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
 
 		const payload =
-			kind === 'exec_cmd'
+			kind === 'exec_cmd' || kind === 'exec_command'
 				? { cmd: 'missing-command' }
-				: kind === 'control_cmd'
+				: kind === 'control_cmd' || kind === 'control_command'
 					? { sessionId: '1', action: 'terminate' as const }
 					: { sessionId: '1' };
 
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			...toolTranscriptAssignment(runId, claimId),
-			executionSecret,
-			kind,
-			payload
-		});
+		const assignment = toolTranscriptAssignment(runId, claimId);
+
+		const { jobId } =
+			kind === 'exec_cmd' || kind === 'control_cmd' || kind === 'poll_cmd'
+				? await asUser.mutation(api.agentRuntime.beginToolJob, {
+						runId,
+						claimId,
+						...assignment,
+						executionSecret,
+						kind,
+						payload
+					})
+				: await t.run(async (ctx) => {
+						const run = await ctx.db.get('runs', runId);
+
+						if (!run) throw new Error('Missing historical run fixture.');
+
+						return await beginExecutorJob(ctx, { run, claimId, ...assignment, kind, payload });
+					});
 
 		await expect(
 			asUser.mutation(api.executor.fail, {
