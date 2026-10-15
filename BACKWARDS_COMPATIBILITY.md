@@ -293,6 +293,9 @@ deploying this schema; active runs gain the field when they
 finish. Remove the missing-field fallback only after the backfill has completed,
 pre-deployment active runs have finished, and released backends without this
 field are outside the rollback window.
+Reconciliation preserves existing settled-tool display output and historical
+section assignments when the executor job has no section metadata. Migrated job
+results must not rewrite conversation history.
 
 ### Project-owned artifacts
 
@@ -384,18 +387,9 @@ ChatGPT (SIWC). `getMyConfiguration` keeps its shape for supported clients and
 reports `chatgpt: false` and `chatgptModelIds: null`.
 Stored `completionProvider: 'chatgpt'` rows on threads and runs keep their
 validator and stay readable; `completionProviderIds` retains `chatgpt`.
-
-The hourly `retireChatGptCloudCredentials` action deletes every
-`sprocket-chatgpt-` credential object from WorkOS Vault with bounded
-best-effort refresh-token revocation, deletes each
-`providerCredentialStates` row only after its Vault object deletion is
-confirmed (Vault failures abort the run, which the next cron retries), and
-then enumerates Vault for prefix-named objects without metadata rows. The
-`providerCredentialStates` table stays in the schema until the cleanup has
-emptied it and a Vault scan confirms no prefix-named objects remain; then drop
-the table and the retirement cron and
-helpers. Keep `chatgpt` in `completionProviderIds` and the run and thread
-validators. Local SIWC runs use the same provider ID as historical Codex runs.
+Keep `chatgpt` in `completionProviderIds` and the run and thread validators
+permanently: local SIWC runs use the same provider ID as historical Codex runs.
+The `getMyConfiguration` ChatGPT fields can go once no supported client reads them.
 
 ### Calendar usage windows
 

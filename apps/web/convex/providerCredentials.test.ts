@@ -2,12 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api, internal } from './_generated/api';
-import {
-	initConvexTest,
-	insertQueuedRun,
-	seedOwnedThread,
-	type ConvexTestInstance
-} from './test.setup';
+import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 type VaultEntry = {
 	id: string;
@@ -16,105 +11,34 @@ type VaultEntry = {
 	metadata: { version_id: string };
 };
 
-function vaultEntry(name: string, value: string, id = 'secret_1'): VaultEntry {
-	return { id, name, value, metadata: { version_id: `version_${id}` } };
-}
+function stubVaultFetch(entries: Map<string, VaultEntry>) {
+	vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+		const url = new URL(String(input));
 
-async function providerCredentialName(prefix: string, userId = 'user_alice'): Promise<string> {
-	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
+		if (url.origin !== 'https://api.workos.com') return new Response('{}');
 
-	return `${prefix}${Array.from(new Uint8Array(digest), (byte) =>
-		byte.toString(16).padStart(2, '0')
-	).join('')}`;
-}
-
-function stubProviderFetch(
-	entries: Map<string, VaultEntry>,
-	providerResponse: (url: string, init?: RequestInit) => Response | Promise<Response>
-) {
-	let nextId = entries.size + 1;
-
-	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-		const url = String(input);
-
-		if (!url.startsWith('https://api.workos.com/')) return await providerResponse(url, init);
-
-		const parsedUrl = new URL(url);
 		const nameMarker = '/vault/v1/kv/name/';
 
-		if (parsedUrl.pathname.startsWith(nameMarker)) {
-			const entry = entries.get(decodeURIComponent(parsedUrl.pathname.slice(nameMarker.length)));
+		if (url.pathname.startsWith(nameMarker)) {
+			const entry = entries.get(decodeURIComponent(url.pathname.slice(nameMarker.length)));
 
 			return entry ? Response.json(entry) : new Response(null, { status: 404 });
 		}
 
-		if (init?.method === 'POST') {
+		if (init?.method === 'POST' && url.pathname === '/vault/v1/kv') {
 			const body = z
 				.object({ name: z.string(), value: z.string() })
 				.parse(JSON.parse(String(init.body)));
 
-			const entry = vaultEntry(body.name, body.value, `secret_${nextId++}`);
+			const id = `secret_${entries.size + 1}`;
+			const entry = { id, ...body, metadata: { version_id: `version_${id}` } };
 			entries.set(entry.name, entry);
 
 			return Response.json(entry);
 		}
 
-		if (parsedUrl.pathname === '/vault/v1/kv') {
-			const limit = Number(parsedUrl.searchParams.get('limit') ?? 10);
-			const after = parsedUrl.searchParams.get('after');
-			const all = [...entries.values()];
-			const start = after ? all.findIndex((entry) => entry.id === after) + 1 : 0;
-			const page = all.slice(Math.max(start, 0), Math.max(start, 0) + limit);
-			const last = page.at(-1);
-
-			return Response.json({
-				data: page.map((entry) => ({ id: entry.id, name: entry.name })),
-				list_metadata: last && start + page.length < all.length ? { after: last.id } : {}
-			});
-		}
-
-		const id = decodeURIComponent(parsedUrl.pathname.split('/').at(-1) ?? '');
-		const entry = [...entries.values()].find((candidate) => candidate.id === id);
-
-		if (!entry) return new Response(null, { status: 404 });
-
-		if (init?.method === 'DELETE') {
-			if (parsedUrl.searchParams.get('version_check') !== entry.metadata.version_id) {
-				return new Response(null, { status: 409 });
-			}
-
-			entries.delete(entry.name);
-
-			return new Response(null, { status: 204 });
-		}
-
-		if (init?.method === 'PUT') {
-			const body = z
-				.object({ value: z.string(), version_check: z.string() })
-				.parse(JSON.parse(String(init.body)));
-
-			if (body.version_check !== entry.metadata.version_id) {
-				return new Response(null, { status: 409 });
-			}
-
-			entry.value = body.value;
-			entry.metadata.version_id = `${entry.metadata.version_id}-next`;
-
-			return Response.json(entry);
-		}
-
-		if (!init?.method || init.method === 'GET') return Response.json(entry);
-
 		return new Response(null, { status: 405 });
 	});
-
-	vi.stubGlobal('fetch', fetchMock);
-
-	return fetchMock;
-}
-
-async function drainRetirement(t: ConvexTestInstance): Promise<void> {
-	await t.finishAllScheduledFunctions(vi.runAllTimers);
 }
 
 describe('provider credentials', () => {
@@ -125,7 +49,6 @@ describe('provider credentials', () => {
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
-		vi.useRealTimers();
 		vi.unstubAllEnvs();
 	});
 
@@ -265,245 +188,12 @@ describe('provider credentials', () => {
 			chatgptModelIds: null
 		});
 
-		stubProviderFetch(new Map(), () => new Response('{}'));
+		stubVaultFetch(new Map());
 		await asUser.action(api.providerCredentials.saveOpenAiKey, { apiKey: 'sk-user' });
 		await expect(asUser.action(api.providerCredentials.getMyConfiguration, {})).resolves.toEqual({
 			openai: true,
 			chatgpt: false,
 			chatgptModelIds: null
 		});
-	});
-
-	it('retires stored ChatGPT credentials, their metadata, and Vault-only leftovers', async () => {
-		vi.useFakeTimers();
-		const t = initConvexTest();
-		const revocations: string[] = [];
-		const aliceName = await providerCredentialName('sprocket-chatgpt-', 'user_alice');
-		const bobName = await providerCredentialName('sprocket-chatgpt-', 'user_bob');
-		const orphanName = 'sprocket-chatgpt-orphaned';
-		const openAiName = await providerCredentialName('sprocket-openai-', 'user_alice');
-
-		const credential = (refreshToken: string) =>
-			JSON.stringify({
-				version: 1,
-				connectionId: 'connection-1',
-				accessToken: 'access-current',
-				refreshToken,
-				accountId: 'account-1',
-				expiresAt: Date.now() + 60 * 60 * 1_000
-			});
-
-		const entries = new Map<string, VaultEntry>([
-			[aliceName, vaultEntry(aliceName, credential('refresh-alice'), 'secret_alice')],
-			[bobName, vaultEntry(bobName, 'not json at all', 'secret_bob')],
-			[orphanName, vaultEntry(orphanName, credential('refresh-orphan'), 'secret_orphan')],
-			[openAiName, vaultEntry(openAiName, 'sk-user', 'secret_openai')]
-		]);
-
-		// Bob has a Vault object without a metadata row (metadata gap).
-		await t.run(async (ctx) => {
-			await ctx.db.insert('providerCredentialStates', {
-				userId: 'user_alice',
-				connectionId: 'connection-1',
-				modelIds: ['gpt-5.4']
-			});
-		});
-		stubProviderFetch(entries, (url, init) => {
-			if (url.endsWith('/oauth/revoke')) {
-				revocations.push(new URLSearchParams(String(init?.body)).get('token') ?? '');
-
-				return new Response(null, { status: 400 });
-			}
-
-			throw new Error(`Unexpected provider request: ${url}`);
-		});
-
-		await t.action(internal.providerCredentials.retireChatGptCloudCredentials, {
-			cursor: null,
-			vaultAfter: null,
-			tableScanDone: false
-		});
-		await drainRetirement(t);
-
-		expect(entries.has(aliceName)).toBe(false);
-		expect(entries.has(bobName)).toBe(false);
-		expect(entries.has(orphanName)).toBe(false);
-		expect(entries.get(openAiName)?.value).toBe('sk-user');
-		expect(revocations.sort()).toEqual(['refresh-alice', 'refresh-orphan']);
-		expect(
-			await t.run((ctx) =>
-				ctx.db
-					.query('providerCredentialStates')
-					.withIndex('by_userId', (query) => query.eq('userId', 'user_alice'))
-					.unique()
-			)
-		).toBeNull();
-	});
-
-	it('retires multiple Vault pages without deleting a pagination cursor early', async () => {
-		vi.useFakeTimers();
-		const t = initConvexTest();
-		const entries = new Map<string, VaultEntry>();
-
-		for (let index = 0; index < 11; index += 1) {
-			const name = `sprocket-chatgpt-orphan-${index}`;
-			entries.set(name, vaultEntry(name, 'invalid legacy data', `secret_${index}`));
-		}
-
-		const fetch = stubProviderFetch(entries, (url) => {
-			throw new Error(`Unexpected provider request: ${url}`);
-		});
-
-		await t.action(internal.providerCredentials.retireChatGptCloudCredentials, {
-			cursor: null,
-			vaultAfter: null,
-			tableScanDone: true
-		});
-		await drainRetirement(t);
-		expect(entries.size).toBe(0);
-		expect(
-			fetch.mock.calls.filter(([input]) => new URL(String(input)).pathname === '/vault/v1/kv')
-		).toHaveLength(3);
-	});
-
-	it('keeps metadata and retries when Vault deletion fails', async () => {
-		vi.useFakeTimers();
-		const t = initConvexTest();
-		const name = await providerCredentialName('sprocket-chatgpt-');
-
-		const entries = new Map<string, VaultEntry>([
-			[
-				name,
-				vaultEntry(
-					name,
-					JSON.stringify({
-						version: 1,
-						connectionId: 'connection-1',
-						accessToken: 'access-current',
-						refreshToken: 'refresh-current',
-						accountId: 'account-1',
-						expiresAt: Date.now() + 60 * 60 * 1_000
-					})
-				)
-			]
-		]);
-
-		await t.run(async (ctx) => {
-			await ctx.db.insert('providerCredentialStates', {
-				userId: 'user_alice',
-				connectionId: 'connection-1'
-			});
-		});
-		let vaultDeletes = 0;
-		let failing = true;
-
-		const vaultFetch = stubProviderFetch(entries, (url) => {
-			if (url.endsWith('/oauth/revoke')) return new Response(null, { status: 401 });
-			throw new Error(`Unexpected provider request: ${url}`);
-		});
-
-		vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-			if (init?.method === 'DELETE' && failing) {
-				vaultDeletes += 1;
-
-				return new Response(null, { status: 500 });
-			}
-
-			return vaultFetch(input, init);
-		});
-
-		await expect(
-			t.action(internal.providerCredentials.retireChatGptCloudCredentials, {
-				cursor: null,
-				vaultAfter: null,
-				tableScanDone: false
-			})
-		).rejects.toThrow('Couldn’t remove the provider credential from WorkOS Vault.');
-		expect(vaultDeletes).toBe(1);
-		expect(
-			await t.run((ctx) =>
-				ctx.db
-					.query('providerCredentialStates')
-					.withIndex('by_userId', (query) => query.eq('userId', 'user_alice'))
-					.unique()
-			)
-		).not.toBeNull();
-		expect(entries.has(name)).toBe(true);
-
-		failing = false;
-		await t.action(internal.providerCredentials.retireChatGptCloudCredentials, {
-			cursor: null,
-			vaultAfter: null,
-			tableScanDone: false
-		});
-		await drainRetirement(t);
-		expect(entries.has(name)).toBe(false);
-		expect(
-			await t.run((ctx) =>
-				ctx.db
-					.query('providerCredentialStates')
-					.withIndex('by_userId', (query) => query.eq('userId', 'user_alice'))
-					.unique()
-			)
-		).toBeNull();
-	});
-
-	it('retries revocation only twice before deleting the Vault credential', async () => {
-		vi.useFakeTimers();
-		const t = initConvexTest();
-		const name = await providerCredentialName('sprocket-chatgpt-');
-
-		const entries = new Map<string, VaultEntry>([
-			[
-				name,
-				vaultEntry(
-					name,
-					JSON.stringify({
-						version: 1,
-						connectionId: 'connection-1',
-						accessToken: 'access-current',
-						refreshToken: 'refresh-flaky',
-						accountId: 'account-1',
-						expiresAt: Date.now() + 60 * 60 * 1_000
-					})
-				)
-			]
-		]);
-
-		await t.run(async (ctx) => {
-			await ctx.db.insert('providerCredentialStates', { userId: 'user_alice' });
-		});
-		let revocationAttempts = 0;
-		stubProviderFetch(entries, (url) => {
-			if (url.endsWith('/oauth/revoke')) {
-				revocationAttempts += 1;
-
-				return new Response(null, { status: 500 });
-			}
-
-			throw new Error(`Unexpected provider request: ${url}`);
-		});
-
-		const retirement = t.action(internal.providerCredentials.retireChatGptCloudCredentials, {
-			cursor: null,
-			vaultAfter: null,
-			tableScanDone: false
-		});
-
-		await vi.waitFor(() => expect(revocationAttempts).toBe(1));
-		await vi.advanceTimersByTimeAsync(250);
-		await retirement;
-		await drainRetirement(t);
-
-		expect(revocationAttempts).toBe(2);
-		expect(entries.has(name)).toBe(false);
-		expect(
-			await t.run((ctx) =>
-				ctx.db
-					.query('providerCredentialStates')
-					.withIndex('by_userId', (query) => query.eq('userId', 'user_alice'))
-					.unique()
-			)
-		).toBeNull();
 	});
 });

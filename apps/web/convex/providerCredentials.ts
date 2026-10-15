@@ -1,12 +1,4 @@
-import {
-	action,
-	env,
-	internalAction,
-	internalMutation,
-	internalQuery,
-	type ActionCtx,
-	type QueryCtx
-} from '@convex/_generated/server';
+import { action, env, internalQuery, type ActionCtx } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { z } from 'zod';
@@ -19,23 +11,11 @@ const WORKOS_VAULT_ORIGIN = 'https://api.workos.com';
 
 const OPENAI_API_ORIGIN = 'https://api.openai.com';
 
-const CHATGPT_AUTH_ORIGIN = 'https://auth.openai.com';
-
-const CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-
 const OPENAI_CREDENTIAL_NAME_PREFIX = 'sprocket-openai-';
-
-const CHATGPT_CREDENTIAL_NAME_PREFIX = 'sprocket-chatgpt-';
 
 const PROVIDER_FETCH_TIMEOUT_MS = 20_000;
 
 const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
-
-const CLEANUP_BATCH_SIZE = 4;
-
-const CLEANUP_REVOCATION_ATTEMPTS = 2;
-
-const CLEANUP_FETCH_TIMEOUT_MS = 5_000;
 
 const vaultObjectSchema = z.object({
 	id: z.string(),
@@ -45,32 +25,6 @@ const vaultObjectSchema = z.object({
 });
 
 type VaultObject = z.infer<typeof vaultObjectSchema>;
-
-const vaultObjectDigestSchema = z.object({
-	id: z.string(),
-	name: z.string()
-});
-
-const vaultObjectListSchema = z.object({
-	data: z.array(vaultObjectDigestSchema),
-	list_metadata: z.looseObject({ after: z.string().optional() })
-});
-
-const chatGptCredentialSchema = z.object({
-	version: z.literal(1),
-	connectionId: z.string().min(1),
-	accessToken: z
-		.string()
-		.min(1)
-		.max(128 * 1024),
-	refreshToken: z
-		.string()
-		.min(1)
-		.max(128 * 1024),
-	accountId: z.string().min(1).max(512),
-	residency: z.string().min(1).max(128).optional(),
-	expiresAt: z.number().int().positive()
-});
 
 function workosApiKey(): string {
 	const key = env.WORKOS_API_KEY?.trim();
@@ -228,21 +182,6 @@ async function deleteVaultObject(name: string): Promise<void> {
 	}
 }
 
-async function listVaultObjects(
-	after: string | null
-): Promise<{ objects: { id: string; name: string }[]; after: string | null }> {
-	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv`);
-	url.searchParams.set('limit', String(CLEANUP_BATCH_SIZE));
-
-	if (after) url.searchParams.set('after', after);
-	const response = await providerFetch(url, { headers: workosHeaders() });
-
-	if (!response.ok) throw new Error('Couldn’t list provider credentials in WorkOS Vault.');
-	const page = await responseJson(response, 'WorkOS Vault', vaultObjectListSchema);
-
-	return { objects: page.data, after: page.list_metadata.after ?? null };
-}
-
 async function validateOpenAiKey(apiKey: string): Promise<void> {
 	const response = await providerFetch(`${OPENAI_API_ORIGIN}/v1/models`, {
 		headers: { authorization: `Bearer ${apiKey}` }
@@ -364,179 +303,5 @@ export const issueOpenAiCredential = action({
 		await ctx.runQuery(internal.providerCredentials.authorizeOpenAiCredential, args);
 
 		return { apiKey: object.value };
-	}
-});
-
-function chatGptState(ctx: QueryCtx, userId: string) {
-	return ctx.db
-		.query('providerCredentialStates')
-		.withIndex('by_userId', (query) => query.eq('userId', userId))
-		.unique();
-}
-
-async function revokeChatGptRefreshToken(refreshToken: string): Promise<void> {
-	const response = await providerFetch(`${CHATGPT_AUTH_ORIGIN}/api/accounts/oauth/revoke`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/x-www-form-urlencoded' },
-		body: new URLSearchParams({
-			client_id: CHATGPT_CLIENT_ID,
-			token_type_hint: 'refresh_token',
-			token: refreshToken
-		}).toString(),
-		signal: AbortSignal.timeout(CLEANUP_FETCH_TIMEOUT_MS),
-		redirect: 'error'
-	});
-
-	if (response.status === 400 || response.status === 401 || response.status === 403) {
-		return;
-	}
-
-	if (!response.ok) throw new Error('ChatGPT could not revoke a retired credential.');
-}
-
-async function deleteRetiredChatGptCredential(object: VaultObject): Promise<void> {
-	// Invalid stored JSON never blocks deletion of the Vault object.
-	const parsed = chatGptCredentialSchema.safeParse(
-		(() => {
-			try {
-				return JSON.parse(object.value);
-			} catch {
-				return null;
-			}
-		})()
-	);
-
-	if (parsed.success) {
-		for (let attempt = 0; attempt < CLEANUP_REVOCATION_ATTEMPTS; attempt += 1) {
-			try {
-				await revokeChatGptRefreshToken(parsed.data.refreshToken);
-				break;
-			} catch {
-				if (attempt + 1 < CLEANUP_REVOCATION_ATTEMPTS) {
-					await new Promise((resolve) => setTimeout(resolve, 250));
-				}
-			}
-		}
-	}
-
-	const url = new URL(`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(object.id)}`);
-	url.searchParams.set('version_check', object.metadata.version_id);
-	const response = await providerFetch(url, { method: 'DELETE', headers: workosHeaders() });
-
-	if (!response.ok && response.status !== 404) {
-		throw new Error('Couldn’t remove the provider credential from WorkOS Vault.');
-	}
-}
-
-export const listChatGptCredentialStates = internalQuery({
-	args: { cursor: v.union(v.string(), v.null()), batchSize: v.number() },
-	returns: v.object({
-		userIds: v.array(v.string()),
-		continueCursor: v.union(v.string(), v.null()),
-		isDone: v.boolean()
-	}),
-	handler: async (ctx, args) => {
-		const page = await ctx.db
-			.query('providerCredentialStates')
-			.paginate({ numItems: args.batchSize, cursor: args.cursor });
-
-		return {
-			userIds: page.page.map((state) => state.userId),
-			continueCursor: page.continueCursor,
-			isDone: page.isDone
-		};
-	}
-});
-
-export const deleteChatGptCredentialState = internalMutation({
-	args: { userId: v.string() },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const state = await chatGptState(ctx, args.userId);
-
-		if (state) await ctx.db.delete('providerCredentialStates', state._id);
-
-		return null;
-	}
-});
-
-export const retireChatGptCloudCredentials = internalAction({
-	args: {
-		cursor: v.union(v.string(), v.null()),
-		vaultAfter: v.union(v.string(), v.null()),
-		tableScanDone: v.boolean()
-	},
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		if (!args.tableScanDone) {
-			const batch: { userIds: string[]; continueCursor: string | null; isDone: boolean } =
-				await ctx.runQuery(internal.providerCredentials.listChatGptCredentialStates, {
-					cursor: args.cursor,
-					batchSize: CLEANUP_BATCH_SIZE
-				});
-
-			const done = batch.isDone;
-
-			if (batch.userIds.length > 0) {
-				for (const userId of batch.userIds) {
-					const name = await credentialName(CHATGPT_CREDENTIAL_NAME_PREFIX, userId);
-					const object = await readVaultObject(name);
-
-					if (object) await deleteRetiredChatGptCredential(object);
-					await ctx.runMutation(internal.providerCredentials.deleteChatGptCredentialState, {
-						userId
-					});
-				}
-			}
-
-			await ctx.scheduler.runAfter(0, internal.providerCredentials.retireChatGptCloudCredentials, {
-				cursor: done ? null : batch.continueCursor,
-				vaultAfter: args.vaultAfter,
-				tableScanDone: done
-			});
-
-			return null;
-		}
-
-		const page = await listVaultObjects(args.vaultAfter);
-
-		if (args.vaultAfter) {
-			const response = await providerFetch(
-				`${WORKOS_VAULT_ORIGIN}/vault/v1/kv/${encodeURIComponent(args.vaultAfter)}`,
-				{ headers: workosHeaders() }
-			);
-
-			if (response.status !== 404) {
-				if (!response.ok) throw new Error('Could not read the retirement cursor in WorkOS Vault.');
-				const object = await responseJson(response, 'WorkOS Vault', vaultObjectSchema);
-
-				if (object.id !== args.vaultAfter)
-					throw new Error('WorkOS Vault returned an invalid cursor object.');
-
-				if (object.name.startsWith(CHATGPT_CREDENTIAL_NAME_PREFIX)) {
-					await deleteRetiredChatGptCredential(object);
-				}
-			}
-		}
-
-		for (const digest of page.objects) {
-			if (!digest.name.startsWith(CHATGPT_CREDENTIAL_NAME_PREFIX)) continue;
-
-			// Keep the next cursor object until its page has been fetched.
-			if (digest.id === page.after) continue;
-			const object = await readVaultObject(digest.name);
-
-			if (object) await deleteRetiredChatGptCredential(object);
-		}
-
-		if (page.after !== null) {
-			await ctx.scheduler.runAfter(0, internal.providerCredentials.retireChatGptCloudCredentials, {
-				cursor: args.cursor,
-				vaultAfter: page.after,
-				tableScanDone: true
-			});
-		}
-
-		return null;
 	}
 });

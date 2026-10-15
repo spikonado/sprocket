@@ -44,13 +44,6 @@ crons.interval(
 );
 
 crons.interval(
-	'retire cloud-held ChatGPT credentials',
-	{ hours: 1 },
-	internal.providerCredentials.retireChatGptCloudCredentials,
-	{ cursor: null, vaultAfter: null, tableScanDone: false }
-);
-
-crons.interval(
 	'expire completed usage windows',
 	{ hours: 24 },
 	internal.lib.rateLimits.cleanupUsageWindows,
