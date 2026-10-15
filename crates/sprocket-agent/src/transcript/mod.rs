@@ -16,7 +16,9 @@ pub(crate) mod types;
 
 pub use download::DownloadOrder;
 pub use history::{agent_history_from_parts, current_run_has_finished_turns};
-pub(crate) use history::{prompt_text_with_attachments, without_reasoning_traces};
+pub(crate) use history::{
+    pending_prompt_part, prompt_text_with_attachments, without_reasoning_traces,
+};
 pub use store::TranscriptStore;
 pub use sync::{RemoteTranscriptState, apply_remote_state, parse_remote_page, parse_remote_parts};
 pub use types::{

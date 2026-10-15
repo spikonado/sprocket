@@ -165,6 +165,23 @@ fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
 }
 
 #[test]
+fn continuation_of_a_run_without_output_answers_its_prompt() {
+    let state = TranscriptState::new("user".into(), "thread".into());
+    let parts = [
+        prompt(0, "earlier", "first task"),
+        prompt(1, "parent", "original task"),
+    ];
+    let pending = pending_prompt_part(&state, &parts, "continuation").unwrap();
+    assert_eq!(pending.number, 1);
+    let history = format!(
+        "{:?}",
+        agent_history_from_parts(&state, &parts, Some("continuation"))
+    );
+    assert!(history.contains("first task"));
+    assert!(!history.contains("original task"));
+}
+
+#[test]
 fn skips_tool_parts_without_a_matching_completion_call() {
     let state = TranscriptState::new("user".into(), "thread".into());
     let history = agent_history_from_parts(

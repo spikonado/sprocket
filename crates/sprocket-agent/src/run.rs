@@ -23,7 +23,8 @@ use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::transcript::{
     DownloadOrder, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
-    current_run_has_finished_turns, parse_remote_parts, prompt_text_with_attachments,
+    current_run_has_finished_turns, parse_remote_parts, pending_prompt_part,
+    prompt_text_with_attachments,
 };
 use crate::types::{
     CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
@@ -815,14 +816,13 @@ async fn load_prior_history(
         },
     )
     .await?;
+    let current_prompt = pending_prompt_part(&state, &parts, run_id)
+        .and_then(|part| part.prompt.as_ref())
+        .map(prompt_text_with_attachments);
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
-        current_prompt: parts
-            .iter()
-            .find(|part| part.run_id == run_id && part.prompt.is_some())
-            .and_then(|part| part.prompt.as_ref())
-            .map(prompt_text_with_attachments),
+        current_prompt,
         messages: deserialize_agent_history(history)?,
         continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
