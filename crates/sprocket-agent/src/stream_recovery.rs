@@ -37,14 +37,11 @@ fn is_gateway_stream_timeout(error: &PromptError) -> bool {
         PromptError::Report(report) => report.provider_response_json(),
         _ => return false,
     };
-    body.ok()
-        .flatten()
-        .and_then(|body| {
-            body.pointer("/response/error/code")
-                .and_then(serde_json::Value::as_str)
-                .map(|code| code == GATEWAY_STREAM_TIMEOUT_CODE)
-        })
-        .unwrap_or(false)
+    body.ok().flatten().is_some_and(|body| {
+        body.pointer("/response/error/code")
+            .and_then(serde_json::Value::as_str)
+            == Some(GATEWAY_STREAM_TIMEOUT_CODE)
+    })
 }
 
 impl StreamRecovery {
