@@ -35,7 +35,6 @@ describe('Dodo product mapping', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_team_monthly',
 				annualProductId: 'prod_team_annual'
@@ -56,14 +55,12 @@ describe('Dodo product mapping', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_shared'
 			});
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 1,
 				monthly: 1,
 				annualProductId: 'prod_shared'
 			});
@@ -86,7 +83,6 @@ describe('Dodo product mapping', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_team_monthly'
 			});
@@ -464,7 +460,7 @@ describe('Dodo subscription persistence', () => {
 		expect(checkoutSession).toMatchObject({ attemptId: 'attempt_1', outcome: 'paid' });
 
 		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', { tierId: 'team', label: 'Team', weekly: 1, monthly: 1 });
+			await ctx.db.insert('tiers', { tierId: 'team', label: 'Team', monthly: 1 });
 		});
 		await expect(
 			t.withIdentity({ subject: args.userId }).query(api.billing.getMySubscription, {})
@@ -480,7 +476,6 @@ describe('Dodo subscription persistence', () => {
 			ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_monthly'
 			})
@@ -556,7 +551,7 @@ describe('Dodo subscription persistence', () => {
 		expect(customer).toBeNull();
 
 		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', { tierId: 'max', label: 'Max', weekly: 1, monthly: 1 });
+			await ctx.db.insert('tiers', { tierId: 'max', label: 'Max', monthly: 1 });
 		});
 		await expect(
 			t.withIdentity({ subject: 'user_max' }).query(api.billing.getMySubscription, {})
@@ -585,7 +580,6 @@ describe('Dodo subscription persistence', () => {
 			ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_monthly'
 			})

@@ -16,11 +16,10 @@ const userId = 'user_reconciliation';
 
 async function seed(t: ConvexTestInstance): Promise<void> {
 	await t.run(async (ctx) => {
-		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', weekly: 5, monthly: 15 });
+		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 15 });
 		await ctx.db.insert('tiers', {
 			tierId: 'pro',
 			label: 'Pro',
-			weekly: 25,
 			monthly: 75,
 			monthlyProductId: 'prod_pro'
 		});

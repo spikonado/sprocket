@@ -78,12 +78,11 @@ async function seedProTier(t: ConvexTestInstance) {
 		await ctx.db.insert('tiers', {
 			tierId: 'pro',
 			label: 'Pro',
-			weekly: 1,
 			monthly: 1,
 			monthlyProductId: 'prod_monthly',
 			annualProductId: 'prod_annual'
 		});
-		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', weekly: 1, monthly: 1 });
+		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 1 });
 	});
 }
 

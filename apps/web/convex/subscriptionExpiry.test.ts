@@ -34,14 +34,13 @@ function paidSubscription(
 
 async function seedTiers(t: ConvexTestInstance): Promise<void> {
 	await t.run(async (ctx) => {
-		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', weekly: 5, monthly: 15 });
+		await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 15 });
 		// The product mapping is required: the projection resolves the initial
 		// product through the unique tier/interval mapping when no checkout
 		// reservation or unchanged-product tier applies.
 		await ctx.db.insert('tiers', {
 			tierId: 'pro',
 			label: 'Pro',
-			weekly: 25,
 			monthly: 75,
 			monthlyProductId: 'prod_pro'
 		});

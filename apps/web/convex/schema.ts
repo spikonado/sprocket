@@ -55,11 +55,12 @@ export default defineSchema({
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
 	// Operator-managed subscription tiers (edited directly in prod data).
-	// The rate limiter reads weekly/monthly quota units from these rows.
+	// The rate limiter reads monthly quota units from these rows.
 	tiers: defineTable({
 		tierId: v.string(),
 		label: v.string(),
-		weekly: v.number(),
+		// Retired weekly limit; removeTierWeeklyLimits clears it.
+		weekly: v.optional(v.number()),
 		monthly: v.number(),
 		description: v.optional(v.string()),
 		features: v.optional(v.array(v.string())),

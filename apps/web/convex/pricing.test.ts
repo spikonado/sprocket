@@ -51,7 +51,6 @@ describe('public pricing catalog', () => {
 				await ctx.db.insert('tiers', {
 					tierId: 'team',
 					label: 'Team',
-					weekly: 1,
 					monthly: 1,
 					monthlyProductId: 'prod_healthy',
 					annualProductId: failure === 'assignment' ? 'prod_broken' : undefined
@@ -59,7 +58,6 @@ describe('public pricing catalog', () => {
 				await ctx.db.insert('tiers', {
 					tierId: 'pro',
 					label: 'Pro',
-					weekly: 1,
 					monthly: 1,
 					monthlyProductId: 'prod_broken'
 				});
@@ -142,7 +140,6 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 30 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthly: 100 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				description: 'For teams shipping hardware.',
 				features: ['Shared projects'],
@@ -153,13 +150,11 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'free',
 				label: 'Free',
-				weekly: 5 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthly: 15 * MODEL_USAGE_UNITS_PER_DOLLAR
 			});
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 25 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR
 			});
 		});
@@ -169,7 +164,6 @@ describe('public pricing catalog', () => {
 				{
 					id: 'free',
 					label: 'Free',
-					weeklyUsageDollars: 5,
 					monthlyUsageDollars: 15,
 					description: null,
 					features: [],
@@ -180,7 +174,6 @@ describe('public pricing catalog', () => {
 				{
 					id: 'team',
 					label: 'Team',
-					weeklyUsageDollars: 30,
 					monthlyUsageDollars: 100,
 					description: 'For teams shipping hardware.',
 					features: ['Shared projects'],
@@ -191,7 +184,6 @@ describe('public pricing catalog', () => {
 				{
 					id: 'pro',
 					label: 'Pro',
-					weeklyUsageDollars: 25,
 					monthlyUsageDollars: 75,
 					description: null,
 					features: [],
@@ -213,7 +205,6 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 25 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthly: 75 * MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthlyProductId: 'prod_team_monthly',
 				annualProductId: 'prod_team_annual'
@@ -272,7 +263,6 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_held'
 			});
@@ -313,7 +303,6 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_onetime'
 			});
@@ -354,14 +343,12 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_ok'
 			});
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_down'
 			});
@@ -423,7 +410,6 @@ describe('public pricing catalog', () => {
 				await ctx.db.insert('tiers', {
 					tierId: `tier_${i}`,
 					label: `Tier ${i}`,
-					weekly: 1,
 					monthly: 1,
 					monthlyProductId: `prod_cold_${i}`
 				});
@@ -534,7 +520,6 @@ describe('public pricing catalog', () => {
 			await ctx.db.insert('tiers', {
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_blocked'
 			});

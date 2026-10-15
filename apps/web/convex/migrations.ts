@@ -109,3 +109,22 @@ export const runSubscriptionAccessBackfill = internalMutation({
 		return null;
 	}
 });
+
+/**
+ * Clear the retired weekly limit from operator-managed tier rows:
+ *
+ *   bunx convex run migrations:runTierWeeklyLimitRemoval '{"dryRun":true}'
+ *   bunx convex run migrations:runTierWeeklyLimitRemoval
+ */
+export const removeTierWeeklyLimits = migrations.define({
+	table: 'tiers',
+	migrateOne: async (_ctx, tier) => {
+		if (tier.weekly === undefined) return;
+
+		return { weekly: undefined };
+	}
+});
+
+export const runTierWeeklyLimitRemoval = migrations.runner(
+	internal.migrations.removeTierWeeklyLimits
+);
