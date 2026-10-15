@@ -476,10 +476,9 @@ components stay in place, stubbed against local state, for the local browser.
 #### Mandate setup email
 
 Mandate setup jobs written through v0.3.2 may contain `payload.userEmail`.
-`vMandateSetupPayload` accepts that field for stored jobs. Live calls carrying
-it fail argument validation. `removeMandateSetupUserEmail` drops the field from
-stored payloads. Remove the stored field after a full production scan confirms
-no mandate setup payload carries it.
+`vMandateSetupPayload` accepts that field for stored jobs. The completed
+backfill removed it from migrated payloads. Remove the stored field after a
+full production scan confirms no mandate setup payload carries it.
 
 Early `mandate_status` results may also omit `description`, so the stored result
 validator keeps that field optional. Current status calls always return it.
