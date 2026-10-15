@@ -98,7 +98,10 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 type FirecrawlRawDocumentResponse = {
 	success: boolean;
 	error?: string;
-	data?: { rawBase64: string; metadata: { sourceURL?: string; statusCode: number } };
+	data?: {
+		rawBase64: string;
+		metadata: { sourceURL?: string; contentType?: string; statusCode: number };
+	};
 };
 
 function mockRawDocumentFetch(body: FirecrawlRawDocumentResponse, status = 200) {
@@ -1224,7 +1227,11 @@ describe('queued raw document fetch', () => {
 			success: true,
 			data: {
 				rawBase64: Buffer.from('%PDF-1.4').toString('base64'),
-				metadata: { sourceURL: 'https://example.com/final.pdf', statusCode: 200 }
+				metadata: {
+					sourceURL: 'https://example.com/final.pdf',
+					contentType: 'application/pdf',
+					statusCode: 200
+				}
 			}
 		});
 
@@ -1233,7 +1240,8 @@ describe('queued raw document fetch', () => {
 
 			expect(result).toEqual({
 				url: 'https://example.com/final.pdf',
-				documentUrl: expect.any(String)
+				documentUrl: expect.any(String),
+				contentType: 'application/pdf'
 			});
 			expect(scrape).not.toHaveBeenCalled();
 			expect(fetch).toHaveBeenCalledTimes(1);

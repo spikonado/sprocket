@@ -33,11 +33,6 @@ async fn serve_split(head: String, get: String, body: Vec<u8>) -> reqwest::Url {
             } else {
                 let _ = stream.write_all(get.as_bytes()).await;
                 let _ = stream.write_all(&body).await;
-                // Keeps a body shorter than its declared length from ending in an error.
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    drop(stream);
-                });
             }
         }
     });
@@ -350,6 +345,22 @@ async fn oversized_documents_are_rejected_instead_of_scraped() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("64 MiB"), "{error}");
+}
+
+#[tokio::test]
+async fn truncated_documents_are_left_for_a_raw_fetch() {
+    let cache = tempfile::tempdir().unwrap();
+    let get = headers("application/pdf", DOCUMENT_SNIFF_BYTES);
+    let url = serve_split(HEAD_REJECTED.into(), get.clone(), pdf()).await;
+    assert!(matches!(
+        fetch_local_resource(url, true, cache.path()).await.unwrap(),
+        LocalResource::UnreadableDocument
+    ));
+    let url = serve_split(HEAD_REJECTED.into(), get, b"%P".to_vec()).await;
+    assert!(matches!(
+        fetch_local_resource(url, true, cache.path()).await.unwrap(),
+        LocalResource::UnreadableDocument
+    ));
 }
 
 #[tokio::test]

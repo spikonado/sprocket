@@ -15,17 +15,15 @@ const MAX_OCR_PAGES: usize = 20;
 const MAX_STREAM_DECOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PAGE_TREE_DEPTH: usize = 64;
 const INHERITED_PAGE_KEYS: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
-/// Entries that can reference dropped pages and keep them from being pruned.
-const CATALOG_PAGE_LINKS: [&[u8]; 7] = [
+/// Document navigation, which can reference dropped pages and never renders.
+const CATALOG_NAVIGATION: [&[u8]; 6] = [
     b"Outlines",
     b"Dests",
     b"Names",
     b"OpenAction",
     b"StructTreeRoot",
-    b"AcroForm",
     b"Threads",
 ];
-const PAGE_LINKS: [&[u8]; 2] = [b"Annots", b"B"];
 
 /// Converts text pages locally and sends only scanned pages to hosted OCR.
 /// Fails with [`LocalConversionFailed`] only before contacting the hosted
@@ -129,10 +127,14 @@ fn sub_pdf(bytes: &[u8], pages: &[u32]) -> anyhow::Result<Vec<u8>> {
         for (key, value) in inherited {
             page.set(key, value);
         }
-        for key in PAGE_LINKS {
-            page.remove(key);
-        }
         page.set("Parent", tree);
+    }
+    // Links and form fields can still reference dropped pages.
+    // Nulling those keeps the dropped pages' content out of the upload.
+    for (_, id) in numbered {
+        if !kept.contains(&id) {
+            document.objects.insert(id, Object::Null);
+        }
     }
     let root = document.get_dictionary_mut(tree)?;
     root.set(
@@ -142,10 +144,12 @@ fn sub_pdf(bytes: &[u8], pages: &[u32]) -> anyhow::Result<Vec<u8>> {
     root.set("Count", kept.len() as i64);
     root.remove(b"Parent");
     let catalog = document.catalog_mut()?;
-    for key in CATALOG_PAGE_LINKS {
+    for key in CATALOG_NAVIGATION {
         catalog.remove(key);
     }
+    document.trailer.remove(b"Info");
     document.prune_objects();
+    ensure_intact(&mut document)?;
     let mut output = Vec::new();
     document
         .save_to(&mut output)
@@ -157,6 +161,21 @@ fn sub_pdf(bytes: &[u8], pages: &[u32]) -> anyhow::Result<Vec<u8>> {
         pages.len()
     );
     Ok(output)
+}
+
+/// Lenient loading skips unreadable objects, so a kept page could reference
+/// content that never loaded and render incomplete.
+fn ensure_intact(document: &mut lopdf::Document) -> anyhow::Result<()> {
+    let missing = document
+        .traverse_objects(|_| {})
+        .into_iter()
+        .filter(|id| !document.objects.contains_key(id))
+        .count();
+    anyhow::ensure!(
+        missing == 0,
+        "the PDF is damaged: {missing} objects the scanned pages use could not be read"
+    );
+    Ok(())
 }
 
 /// Page attributes the page inherits from its tree, which a flat tree drops.

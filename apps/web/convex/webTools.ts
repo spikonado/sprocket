@@ -89,6 +89,7 @@ const firecrawlDocumentSchema = z.object({
 		.object({
 			url: z.string().optional(),
 			sourceURL: z.string().optional(),
+			contentType: z.string().nullish(),
 			statusCode: z.number().optional(),
 			error: z.string().optional()
 		})
@@ -120,6 +121,7 @@ export type ScrapedPage = {
 export type RawDocument = {
 	url: string;
 	documentUrl: string;
+	contentType?: string;
 };
 
 function convexErrorData(error: Error): ProviderError | undefined {
@@ -458,10 +460,14 @@ async function fetchRawDocument(ctx: ActionCtx, urlValue: string): Promise<RawDo
 		throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE);
 	}
 
-	return {
+	const raw: RawDocument = {
 		url: metadata?.sourceURL ?? metadata?.url ?? url.toString(),
 		documentUrl: await storeTemporaryBlob(ctx, new Blob([document]))
 	};
+
+	if (metadata?.contentType) raw.contentType = metadata.contentType;
+
+	return raw;
 }
 
 async function localScrapeTransport(

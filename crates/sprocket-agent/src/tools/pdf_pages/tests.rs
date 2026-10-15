@@ -30,12 +30,14 @@ fn media_box(size: i64) -> Object {
 }
 
 /// Pages sit in groups of ten and inherit MediaBox, Resources, and Rotate
-/// from the root, except page 57, which sets its own MediaBox.
-fn pdf(page_count: usize) -> Vec<u8> {
+/// from the root, except page 57, which sets its own MediaBox and links to
+/// page 56.
+fn pdf_document(page_count: usize) -> Document {
     let mut document = Document::with_version("1.4");
     let root = document.new_object_id();
     let resources = document.add_object(dictionary! { "ProcSet" => vec![Object::from("PDF")] });
     let mut groups = Vec::new();
+    let mut previous = None;
     for first in (0..page_count).step_by(10) {
         let group = document.new_object_id();
         let mut kids = Vec::new();
@@ -49,8 +51,17 @@ fn pdf(page_count: usize) -> Vec<u8> {
             };
             if index + 1 == 57 {
                 page.set("MediaBox", media_box(100));
+                let link = dictionary! {
+                    "Type" => "Annot",
+                    "Subtype" => "Link",
+                    "Rect" => media_box(10),
+                    "Dest" => vec![Object::from(previous.unwrap()), Object::from("Fit")],
+                };
+                page.set("Annots", vec![Object::from(link)]);
             }
-            kids.push(Object::from(document.add_object(page)));
+            let id = document.add_object(page);
+            previous = Some(id);
+            kids.push(Object::from(id));
         }
         let count = kids.len() as i64;
         let node =
@@ -69,9 +80,17 @@ fn pdf(page_count: usize) -> Vec<u8> {
     document.objects.insert(root, tree.into());
     let catalog = document.add_object(dictionary! { "Type" => "Catalog", "Pages" => root });
     document.trailer.set("Root", catalog);
+    document
+}
+
+fn save(mut document: Document) -> Vec<u8> {
     let mut bytes = Vec::new();
     document.save_to(&mut bytes).unwrap();
     bytes
+}
+
+fn pdf(page_count: usize) -> Vec<u8> {
+    save(pdf_document(page_count))
 }
 
 #[test]
@@ -163,7 +182,7 @@ fn sub_pdf_keeps_requested_pages_with_their_inherited_attributes() {
         .unwrap();
     let pages: Vec<ObjectId> = document.get_pages().into_values().collect();
     assert_eq!(pages.len(), 3);
-    for (id, (number, size)) in pages.into_iter().zip([(2, 200), (57, 100), (119, 200)]) {
+    for (&id, (number, size)) in pages.iter().zip([(2, 200), (57, 100), (119, 200)]) {
         let content = String::from_utf8(document.get_page_content(id)).unwrap();
         assert!(content.contains(&format!("(Page {number})")), "{content}");
         let page = document.get_dictionary(id).unwrap();
@@ -172,11 +191,32 @@ fn sub_pdf_keeps_requested_pages_with_their_inherited_attributes() {
         assert_eq!(page.get(b"Rotate").unwrap(), &Object::Integer(90));
         assert!(page.get(b"Resources").is_ok());
     }
-    // Catalog, tree, shared resources, and a page plus contents per kept page.
-    assert!(document.objects.len() <= 9, "{}", document.objects.len());
+    let annotations = document.get_dictionary(pages[1]).unwrap().get(b"Annots");
+    assert!(annotations.is_ok());
+    // Catalog, tree, shared resources, a page plus contents per kept page,
+    // and the nulled page 56 the link targets.
+    assert!(document.objects.len() <= 10, "{}", document.objects.len());
 }
 
 #[test]
 fn sub_pdf_rejects_pages_the_pdf_does_not_have() {
     assert!(sub_pdf(&pdf(3), &[4]).is_err());
+}
+
+#[test]
+fn sub_pdf_rejects_pages_whose_objects_did_not_load() {
+    let mut document = pdf_document(3);
+    let page = document.get_pages()[&2];
+    let contents = document
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Contents")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    document.objects.remove(&contents);
+    let bytes = save(document);
+    let error = sub_pdf(&bytes, &[2]).unwrap_err().to_string();
+    assert!(error.contains("damaged"), "{error}");
+    assert!(sub_pdf(&bytes, &[1, 3]).is_ok());
 }

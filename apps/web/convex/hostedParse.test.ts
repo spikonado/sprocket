@@ -167,7 +167,7 @@ describe('Firecrawl parse response contract', () => {
 		).toEqual({ error: 'Firecrawl parse response is too large.' });
 	});
 
-	it('returns per-page markdown when pages are requested', () => {
+	it('reads per-page markdown only when pages are requested', () => {
 		const pages = [
 			{ pageNumber: 1, markdown: '# One' },
 			{ pageNumber: 2, markdown: '' }
@@ -187,6 +187,12 @@ describe('Firecrawl parse response contract', () => {
 				true
 			)
 		).toEqual({ error: 'Firecrawl parse did not return pages.' });
+		expect(
+			parseFirecrawlParseResponse(
+				JSON.stringify({ success: true, data: { markdown: '# One', pages: null } }),
+				64
+			)
+		).toEqual({ markdown: '# One' });
 	});
 });
 

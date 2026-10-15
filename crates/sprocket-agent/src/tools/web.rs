@@ -83,6 +83,7 @@ struct ScreenshotTransport {
 struct RawDocumentTransport {
     url: String,
     document_url: String,
+    content_type: Option<String>,
 }
 
 #[derive(Debug)]
@@ -291,14 +292,17 @@ async fn fetch_raw_document(
             super::github_url::download_file(&scrape_client()?, document_url, MAX_SCRAPE_BYTES)
                 .await
                 .context("failed to download the document Firecrawl fetched")?;
-        Ok::<_, anyhow::Error>((url, bytes))
+        let csv = is_csv(
+            &normalize_media_type(transport.content_type.as_deref().unwrap_or_default()),
+            &url,
+        );
+        Ok::<_, anyhow::Error>((url, bytes, csv))
     };
-    let (url, bytes) = tokio::select! {
+    let (url, bytes, csv) = tokio::select! {
         biased;
         _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
         result = download => result.map_err(tool_error)?,
     };
-    let csv = has_csv_extension(&url);
     Ok(is_document(&bytes, csv).then(|| WebDocument {
         url,
         bytes,
@@ -430,7 +434,11 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
         "text/html" | "application/xhtml+xml" => Probe::Page,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp" => Probe::Image(url),
         "" | "application/octet-stream" if has_image_extension(&url) => Probe::Image(url),
-        other if is_document_media_type(other) || has_document_extension(&url) => {
+        other
+            if is_document_media_type(other)
+                || is_download_media_type(other)
+                || has_document_extension(&url) =>
+        {
             Probe::Document(url)
         }
         _ if has_html_extension(&url) => Probe::Page,
@@ -439,15 +447,15 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
 }
 
 /// Reads a document fully, but stops after the first bytes when they show it
-/// is not one. `expected` sends failed downloads to the raw fetch instead of
-/// the page scrape.
+/// is not one. Failed downloads of expected or identified documents go to the
+/// raw fetch instead of the page scrape.
 async fn download_document(
     client: &reqwest::Client,
     url: reqwest::Url,
     expected: bool,
 ) -> anyhow::Result<LocalResource> {
-    let failed = |identified: bool| {
-        if expected || identified {
+    let failed = |document: bool| {
+        if document {
             LocalResource::UnreadableDocument
         } else {
             LocalResource::Page
@@ -455,11 +463,12 @@ async fn download_document(
     };
     let mut response = match client.get(url).send().await {
         Ok(response) if response.status().is_success() => response,
-        _ => return Ok(failed(false)),
+        _ => return Ok(failed(expected)),
     };
     let url = response.url().clone();
     let media_type = media_type(response.headers());
-    let csv = media_type == "text/csv" || (media_type != "text/html" && has_csv_extension(&url));
+    let csv = is_csv(&media_type, &url);
+    let expected = expected || csv || is_document_media_type(&media_type);
     let declared_too_large = response
         .content_length()
         .is_some_and(|size| size > MAX_SCRAPE_BYTES);
@@ -468,16 +477,17 @@ async fn download_document(
     loop {
         let chunk = match response.chunk().await {
             Ok(chunk) => chunk,
-            Err(_) => return Ok(failed(identified)),
+            Err(_) => return Ok(failed(expected || identified)),
         };
         if let Some(chunk) = &chunk {
             bytes.extend_from_slice(chunk);
         }
-        if !identified && (chunk.is_none() || bytes.len() >= DOCUMENT_SNIFF_BYTES) {
-            if !is_document(&bytes, csv) {
-                return Ok(LocalResource::Page);
+        if !identified {
+            match sniff_document(&bytes, chunk.is_none(), csv) {
+                Some(true) => identified = true,
+                Some(false) => return Ok(LocalResource::Page),
+                None => {}
             }
-            identified = true;
         }
         if identified {
             anyhow::ensure!(
@@ -497,14 +507,22 @@ async fn download_document(
 }
 
 /// Cheap checks only: the conversion worker identifies the exact format.
-fn is_document(bytes: &[u8], csv: bool) -> bool {
+/// `None` means the bytes so far cannot tell yet.
+fn sniff_document(bytes: &[u8], complete: bool, csv: bool) -> Option<bool> {
     const OLE_SIGNATURE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
     let prefix = &bytes[..bytes.len().min(DOCUMENT_SNIFF_BYTES)];
-    prefix.starts_with(b"PK\x03\x04")
+    if prefix.starts_with(b"PK\x03\x04")
         || prefix.starts_with(&OLE_SIGNATURE)
         || prefix.starts_with(b"{\\rtf")
         || prefix.windows(5).any(|window| window == b"%PDF-")
-        || (csv && is_text(prefix))
+    {
+        return Some(true);
+    }
+    (complete || prefix.len() >= DOCUMENT_SNIFF_BYTES).then(|| csv && is_text(prefix))
+}
+
+fn is_document(bytes: &[u8], csv: bool) -> bool {
+    sniff_document(bytes, true, csv) == Some(true)
 }
 
 fn is_text(prefix: &[u8]) -> bool {
@@ -513,15 +531,25 @@ fn is_text(prefix: &[u8]) -> bool {
 }
 
 fn media_type(headers: &reqwest::header::HeaderMap) -> String {
-    headers
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
+    normalize_media_type(
+        headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default(),
+    )
+}
+
+fn normalize_media_type(value: &str) -> String {
+    value
         .split(';')
         .next()
-        .unwrap_or("")
+        .unwrap_or_default()
         .trim()
         .to_ascii_lowercase()
+}
+
+fn is_csv(media_type: &str, url: &reqwest::Url) -> bool {
+    media_type == "text/csv" || (media_type != "text/html" && has_csv_extension(url))
 }
 
 fn is_document_media_type(media_type: &str) -> bool {
@@ -536,12 +564,18 @@ fn is_document_media_type(media_type: &str) -> bool {
             | "text/rtf"
             | "text/csv"
             | "application/epub+zip"
-            | "application/octet-stream"
+    ) || media_type.starts_with("application/vnd.openxmlformats-officedocument.")
+        || media_type.starts_with("application/vnd.oasis.opendocument.")
+}
+
+fn is_download_media_type(media_type: &str) -> bool {
+    matches!(
+        media_type,
+        "application/octet-stream"
             | "binary/octet-stream"
             | "application/x-download"
             | "application/force-download"
-    ) || media_type.starts_with("application/vnd.openxmlformats-officedocument.")
-        || media_type.starts_with("application/vnd.oasis.opendocument.")
+    )
 }
 
 fn has_document_extension(url: &reqwest::Url) -> bool {

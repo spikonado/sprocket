@@ -89,7 +89,7 @@ const firecrawlResponseSchema = z.object({
 	data: z
 		.object({
 			markdown: z.string().optional(),
-			pages: z.array(firecrawlParsedPageSchema).optional(),
+			pages: z.array(firecrawlParsedPageSchema).nullish(),
 			metadata: z
 				.object({
 					numPages: z.number().int().nonnegative().optional(),
