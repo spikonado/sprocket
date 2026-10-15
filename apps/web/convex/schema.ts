@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { vTierPrice } from '@convex/lib/pricingValidators';
-import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
+import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
 import {
 	vMandateChargeStatus,
@@ -13,12 +13,10 @@ import {
 } from '@convex/lib/validators';
 import {
 	vAgentQuestionStatus,
-	vArtifactScope,
 	vArtifactType,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
 	vCompletionProvider,
-	vDescendantStatusCounts,
 	vStoredExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
@@ -376,13 +374,9 @@ export default defineSchema({
 		]),
 	threadHierarchyStates: defineTable({
 		threadId: v.id('threadRecords'),
-		// Released contribution flags are accepted only until the counter backfill finishes.
-		ownActive: v.optional(v.boolean()),
-		ownStatus: v.optional(vRunStatus),
-		workingDescendantCount: v.optional(v.number()),
+		workingDescendantCount: v.number(),
 		descendantCount: v.number(),
-		activeDescendantCount: v.number(),
-		descendantStatusCounts: v.optional(vDescendantStatusCounts)
+		activeDescendantCount: v.number()
 	}).index('by_threadId', ['threadId']),
 
 	threadUsage: defineTable({
@@ -448,8 +442,7 @@ export default defineSchema({
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		totalParts: v.number(),
-		workThrough: v.optional(workPosition)
+		totalParts: v.number()
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
@@ -471,9 +464,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		...workSectionFields,
 		sectionOrdinal: v.number(),
-		displayOrder: v.string(),
-		// Cleared by removeSectionLinkedParts; drop once that backfill finishes.
-		linkedParts: v.optional(v.number())
+		displayOrder: v.string()
 	})
 		.index('by_threadId_and_key', ['threadId', 'key'])
 		.index('by_threadId_and_sectionOrdinal', ['threadId', 'sectionOrdinal'])
@@ -606,15 +597,12 @@ export default defineSchema({
 	artifactRegistries: defineTable({
 		userId: v.string(),
 		repositoryKey: v.string(),
-		revision: v.number(),
-		rekeyTo: v.optional(v.string())
+		revision: v.number()
 	}).index('by_userId_and_repositoryKey', ['userId', 'repositoryKey']),
 	artifacts: defineTable({
 		userId: v.string(),
-		scope: vArtifactScope,
+		scope: v.literal('project'),
 		repositoryKey: v.string(),
-		// Legacy thread confinement; current writes omit this field and migrations remove it.
-		threadId: v.optional(v.id('threadRecords')),
 		registrationId: v.string(),
 		content: v.string(),
 		type: vArtifactType,

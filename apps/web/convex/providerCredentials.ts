@@ -4,14 +4,13 @@ import {
 	internalAction,
 	internalMutation,
 	internalQuery,
-	query,
 	type ActionCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
+import { getExecutionRun } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { getProviderHandoff } from '@convex/lib/contextHandoff';
@@ -37,9 +36,6 @@ const CLEANUP_BATCH_SIZE = 4;
 const CLEANUP_REVOCATION_ATTEMPTS = 2;
 
 const CLEANUP_FETCH_TIMEOUT_MS = 5_000;
-
-const CLOUD_CHATGPT_RETIRED_MESSAGE =
-	'Cloud-held ChatGPT sign-in is retired. Connect ChatGPT locally in the Sprocket app with sign in with ChatGPT (SIWC).';
 
 const vaultObjectSchema = z.object({
 	id: z.string(),
@@ -318,89 +314,6 @@ export const removeOpenAiKey = action({
 	}
 });
 
-function retiredCloudChatGpt(): never {
-	throw new Error(CLOUD_CHATGPT_RETIRED_MESSAGE);
-}
-
-// Retired cloud-held ChatGPT sign-in and credential issuance. Released
-// clients still call these; every one rejects with the local SIWC guidance
-// while keeping its original argument validator.
-export const beginChatGptBrowserLogin = action({
-	args: { state: v.string() },
-	returns: v.string(),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const completeChatGptBrowserLogin = action({
-	args: { state: v.string(), code: v.string() },
-	returns: v.union(v.array(v.string()), v.null()),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const cancelChatGptBrowserLogin = action({
-	args: { state: v.string() },
-	returns: v.null(),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const beginChatGptDeviceLogin = action({
-	args: {},
-	returns: v.object({
-		deviceAuthId: v.string(),
-		userCode: v.string(),
-		verificationUrl: v.string(),
-		intervalMs: v.number(),
-		expiresAt: v.number()
-	}),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const pollChatGptDeviceLogin = action({
-	args: { deviceAuthId: v.string(), userCode: v.string() },
-	returns: v.union(
-		v.object({ status: v.literal('pending') }),
-		v.object({
-			status: v.literal('connected'),
-			modelIds: v.union(v.array(v.string()), v.null())
-		})
-	),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const cancelChatGptDeviceLogin = action({
-	args: { deviceAuthId: v.string(), userCode: v.string() },
-	returns: v.null(),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const refreshChatGptModels = action({
-	args: {},
-	returns: v.array(v.string()),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const removeChatGptCredential = action({
-	args: {},
-	returns: v.null(),
-	handler: async () => retiredCloudChatGpt()
-});
-
-export const issueChatGptCredential = action({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string()
-	},
-	returns: v.object({
-		accessToken: v.string(),
-		connectionId: v.string(),
-		accountId: v.string(),
-		residency: v.optional(v.string()),
-		expiresAt: v.number()
-	}),
-	handler: async () => retiredCloudChatGpt()
-});
-
 export const authorizeOpenAiCredential = internalQuery({
 	args: {
 		runId: v.id('runs'),
@@ -451,22 +364,6 @@ export const issueOpenAiCredential = action({
 		await ctx.runQuery(internal.providerCredentials.authorizeOpenAiCredential, args);
 
 		return { apiKey: object.value };
-	}
-});
-
-export const chatGptConnection = query({
-	args: { runId: v.id('runs'), executionSecret: v.string() },
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
-
-		if (run.completionProvider !== 'chatgpt') {
-			throw new Error('Run is not configured to use ChatGPT.');
-		}
-
-		// Historical chatgpt runs keep their rows, but the cloud-held connection
-		// is retired, so there is never a live connection id to report.
-		return null;
 	}
 });
 

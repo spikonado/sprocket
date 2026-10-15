@@ -117,29 +117,6 @@ async function drainRetirement(t: ConvexTestInstance): Promise<void> {
 	await t.finishAllScheduledFunctions(vi.runAllTimers);
 }
 
-async function startedChatGptRun() {
-	const t = initConvexTest();
-	const { asUser, threadId } = await seedOwnedThread(t);
-	const executionSecret = 'executor-secret';
-	const claimId = 'claim-chatgpt';
-
-	const created = await insertQueuedRun(t, asUser, {
-		threadId,
-		submissionId: `chatgpt-run-${crypto.randomUUID()}`,
-		executionSecret,
-		prompt: 'Use my subscription',
-		completionProvider: 'chatgpt'
-	});
-
-	await asUser.mutation(api.agentRuntime.start, {
-		runId: created.runId,
-		claimId,
-		executionSecret
-	});
-
-	return { t, asUser, runId: created.runId, claimId, executionSecret };
-}
-
 describe('provider credentials', () => {
 	beforeEach(() => {
 		vi.stubEnv('WORKOS_API_KEY', 'sk_workos_test');
@@ -295,56 +272,6 @@ describe('provider credentials', () => {
 			chatgpt: false,
 			chatgptModelIds: null
 		});
-	});
-
-	it.each([
-		'beginChatGptBrowserLogin',
-		'completeChatGptBrowserLogin',
-		'cancelChatGptBrowserLogin',
-		'beginChatGptDeviceLogin',
-		'pollChatGptDeviceLogin',
-		'cancelChatGptDeviceLogin',
-		'refreshChatGptModels',
-		'removeChatGptCredential',
-		'issueChatGptCredential'
-	] as const)('rejects the retired %s cloud flow with local SIWC guidance', async (name) => {
-		const { t, runId, claimId, executionSecret } = await startedChatGptRun();
-		const asUser = t.withIdentity({ subject: 'user_alice' });
-
-		const callArgs =
-			name === 'issueChatGptCredential'
-				? { runId, claimId, executionSecret }
-				: name === 'beginChatGptDeviceLogin' ||
-					  name === 'refreshChatGptModels' ||
-					  name === 'removeChatGptCredential'
-					? {}
-					: name === 'beginChatGptBrowserLogin' || name === 'cancelChatGptBrowserLogin'
-						? { state: 'a'.repeat(64) }
-						: name === 'completeChatGptBrowserLogin'
-							? { state: 'a'.repeat(64), code: 'browser-code' }
-							: { deviceAuthId: 'device-1', userCode: 'ABCD-EFGH' };
-
-		// SAFETY: callArgs matches the original validator for each endpoint in this table.
-		await expect(asUser.action(api.providerCredentials[name], callArgs as never)).rejects.toThrow(
-			'Cloud-held ChatGPT sign-in is retired.'
-		);
-	});
-
-	it('reports no connection for historical chatgpt runs and guards the run secret', async () => {
-		const { t, runId, executionSecret } = await startedChatGptRun();
-
-		const connection = (secret: string) =>
-			t.query(api.providerCredentials.chatGptConnection, { runId, executionSecret: secret });
-
-		await expect(connection('wrong-secret')).rejects.toThrow('Run not found.');
-		await expect(connection(executionSecret)).resolves.toBeNull();
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { completionProvider: 'openai' });
-		});
-		await expect(connection(executionSecret)).rejects.toThrow(
-			'Run is not configured to use ChatGPT.'
-		);
 	});
 
 	it('retires stored ChatGPT credentials, their metadata, and Vault-only leftovers', async () => {

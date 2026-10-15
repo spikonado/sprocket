@@ -208,17 +208,3 @@ export const ancestorChain = query({
 		return await threadAncestryIds(ctx.db, thread);
 	}
 });
-
-export const rekeyRepository = mutation({
-	args: {
-		from: v.string(),
-		to: v.string()
-	},
-	returns: v.object({ userId: v.string(), from: v.string(), to: v.string(), count: v.number() }),
-	handler: async (ctx, args) => ({
-		userId: await getUserId(ctx),
-		from: args.from.trim(),
-		to: args.to.trim(),
-		count: 0
-	})
-});

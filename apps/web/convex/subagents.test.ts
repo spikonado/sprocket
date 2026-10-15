@@ -435,7 +435,7 @@ describe('subagents.createOrSend', () => {
 			executionSecret: childRun.executionSecret
 		});
 
-		await t.mutation(api.agentQuestions.create, {
+		await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId: child.runId,
 			claimId: childRun.claimId,
 			question: 'Need an answer?',
@@ -1436,7 +1436,7 @@ describe('subagents.control', () => {
 				payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] }
 			});
 
-			const descendantQuestion = await t.mutation(api.agentQuestions.create, {
+			const descendantQuestion = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId: grandchild.runId,
 				claimId: grandchildRun.claimId,
 				executionSecret: grandchildRun.executionSecret,
@@ -1629,7 +1629,7 @@ describe('subagents.control delegated answer retries', () => {
 			executionSecret: childRun.executionSecret
 		});
 
-		const question = await t.mutation(api.agentQuestions.create, {
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId: child.runId,
 			claimId: childRun.claimId,
 			question: 'Which region?',
@@ -1901,7 +1901,7 @@ describe('subagents.control delegated answer retries', () => {
 			runId: caller.runId,
 			claimId: caller.claimId,
 			...toolTranscriptAssignment(caller.runId, caller.claimId, 12),
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			payload: { cmd: 'echo hi' },
 			executionSecret: caller.executionSecret
 		});

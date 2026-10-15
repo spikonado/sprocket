@@ -426,7 +426,9 @@ describe('durable webhook ingestion and projection', () => {
 		const owner = t.withIdentity({ subject: userId });
 
 		const usage = async () =>
-			(await owner.query(api.usage.getMyUsage, {})).meters[0]!.windows.map((window) => window.used);
+			(await owner.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]!.windows.map(
+				(window) => window.used
+			);
 
 		const project = async (productId: string) => {
 			const eventId = await recordEvent(t, {

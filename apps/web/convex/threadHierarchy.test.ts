@@ -130,7 +130,7 @@ describe('thread hierarchy', () => {
 				threadId: root.threadId,
 				descendantCount: 1,
 				activeDescendantCount: 0,
-				ownActive: false
+				workingDescendantCount: 0
 			});
 		});
 		await child(t, branch.threadId, 'running-child', 'running');

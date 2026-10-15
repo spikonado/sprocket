@@ -112,12 +112,12 @@ describe('run execution state', () => {
 			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId),
-				kind: 'exec_command',
+				kind: 'exec_cmd',
 				payload: { cmd: 'true' }
 			});
 
 			expect(await t.run((ctx) => ctx.db.query('executorJobs').collect())).toEqual([
-				expect.objectContaining({ _id: jobId, kind: 'exec_command' })
+				expect.objectContaining({ _id: jobId, kind: 'exec_cmd' })
 			]);
 		}
 	);
@@ -144,14 +144,12 @@ describe('run execution state', () => {
 	});
 
 	it.each([
-		{ kind: 'exec_command' as const, running: false },
-		{ kind: 'exec_command' as const, running: true },
-		{ kind: 'write_stdin' as const, running: false },
-		{ kind: 'write_stdin' as const, running: true },
-		{ kind: 'control_command' as const, running: false },
-		{ kind: 'control_command' as const, running: true },
-		{ kind: 'poll_command' as const, running: false },
-		{ kind: 'poll_command' as const, running: true }
+		{ kind: 'exec_cmd' as const, running: false },
+		{ kind: 'exec_cmd' as const, running: true },
+		{ kind: 'control_cmd' as const, running: false },
+		{ kind: 'control_cmd' as const, running: true },
+		{ kind: 'poll_cmd' as const, running: false },
+		{ kind: 'poll_cmd' as const, running: true }
 	])('records $kind results with running=$running', async ({ kind, running }) => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		const callId = 'command-call';
@@ -162,9 +160,9 @@ describe('run execution state', () => {
 			kind,
 			callId,
 			payload:
-				kind === 'exec_command'
+				kind === 'exec_cmd'
 					? { cmd: 'echo ok' }
-					: kind === 'control_command'
+					: kind === 'control_cmd'
 						? { sessionId: '1', action: 'write' as const, chars: 'yes\n' }
 						: { sessionId: '1' }
 		});
@@ -180,10 +178,9 @@ describe('run execution state', () => {
 
 		if (!running) output.exitCode = 0;
 
-		if (kind === 'exec_command' && running) output.sessionId = '1';
+		if (kind === 'exec_cmd' && running) output.sessionId = '1';
 
-		const result =
-			kind === 'exec_command' ? output : { ...output, command: 'echo ok', workdir: '/' };
+		const result = kind === 'exec_cmd' ? output : { ...output, command: 'echo ok', workdir: '/' };
 
 		expect(await asUser.mutation(api.executor.complete, { ...auth, jobId, result })).toBe(true);
 		expect(
@@ -218,7 +215,7 @@ describe('run execution state', () => {
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			payload: { cmd: 'echo ok' }
 		});
 
@@ -258,14 +255,14 @@ describe('run execution state', () => {
 			const first = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, 1, 1),
-				kind: 'exec_command',
+				kind: 'exec_cmd',
 				payload: { cmd: 'true' }
 			});
 
 			const second = await callHandler(api.agentRuntime.beginToolJob, beginToolJob, ctx, {
 				...auth,
 				...toolTranscriptAssignment(auth.runId, auth.claimId, 2, 1),
-				kind: 'exec_command',
+				kind: 'exec_cmd',
 				payload: { cmd: 'false' }
 			});
 
@@ -327,7 +324,7 @@ describe('run execution state', () => {
 		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
 			...toolTranscriptAssignment(auth.runId, auth.claimId),
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			payload: { cmd: 'true' }
 		});
 

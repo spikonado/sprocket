@@ -49,7 +49,7 @@ async function planChangeFixture() {
 
 	const usage = async () =>
 		(
-			await t.withIdentity({ subject: 'owner' }).query(api.usage.getMyUsage, {})
+			await t.withIdentity({ subject: 'owner' }).query(api.usage.getMyUsage, { now: Date.now() })
 		).meters[0]?.windows.map((window) => window.used);
 
 	return { t, data, usage };

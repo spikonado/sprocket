@@ -6,10 +6,10 @@ import { getMeterWindow, usageMeters, usagePeriods } from '@convex/lib/rateLimit
 import { getSubscriptionDoc, resolveTier, subscriptionMaterializedTier } from '@convex/lib/tiers';
 
 export const getMyUsage = query({
-	args: { now: v.optional(v.number()) },
+	args: { now: v.number() },
 	returns: vMyUsage,
 	handler: async (ctx, args) => {
-		const now = args.now ?? Date.now();
+		const now = args.now;
 
 		if (!Number.isFinite(now)) throw new Error('Usage display time must be finite.');
 		const userId = await getUserId(ctx);

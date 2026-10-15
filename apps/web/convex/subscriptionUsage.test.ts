@@ -67,7 +67,9 @@ async function seedActiveSubscription(
 	return {
 		subscription,
 		windowUsage: async () =>
-			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows.map((window) => window.used)
+			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.windows.map(
+				(window) => window.used
+			)
 	};
 }
 
@@ -170,7 +172,7 @@ describe('subscription and usage backend', () => {
 
 			await setAllowance(0);
 			const asUser = t.withIdentity({ subject: userId });
-			const usage = await asUser.query(api.usage.getMyUsage, {});
+			const usage = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
 
 			expect(usage).toMatchObject({ exhausted: true });
 			expect(usage.meters[0]?.windows.find((window) => window.period === period)).toMatchObject({
@@ -189,7 +191,9 @@ describe('subscription and usage backend', () => {
 			expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
 				exhausted: false
 			});
-			expect(await asUser.query(api.usage.getMyUsage, {})).toMatchObject({ exhausted: false });
+			expect(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).toMatchObject({
+				exhausted: false
+			});
 		}
 	);
 
@@ -206,7 +210,10 @@ describe('subscription and usage backend', () => {
 			});
 		});
 
-		const usage = await t.withIdentity({ subject: userId }).query(api.usage.getMyUsage, {});
+		const usage = await t
+			.withIdentity({ subject: userId })
+			.query(api.usage.getMyUsage, { now: Date.now() });
+
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
 		expect(usage.meters[0]?.windows).toEqual([
@@ -225,7 +232,7 @@ describe('subscription and usage backend', () => {
 			count: 6 * UNITS_PER_DOLLAR
 		});
 
-		const usage = await asUser.query(api.usage.getMyUsage, {});
+		const usage = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
 		expect(usage.meters.map((meter) => meter.id)).toEqual(['modelUsage']);
 		const model = usage.meters.find((meter) => meter.id === 'modelUsage');
 		const weekly = model?.windows.find((window) => window.period === 'weekly');
@@ -264,7 +271,7 @@ describe('subscription and usage backend', () => {
 		const asUser = t.withIdentity({ subject: userId });
 
 		const used = async () =>
-			(await asUser.query(api.usage.getMyUsage, {})).meters[0]?.windows[0]?.used;
+			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]?.windows[0]?.used;
 
 		expect(await used()).toBe(2 * UNITS_PER_DOLLAR);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
@@ -309,7 +316,10 @@ describe('subscription and usage backend', () => {
 		await seedTiers(t);
 		const userId = 'user_billing';
 		const asUser = t.withIdentity({ subject: userId });
-		const currentTier = async () => (await asUser.query(api.usage.getMyUsage, {})).tier;
+
+		const currentTier = async () =>
+			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).tier;
+
 		expect(await currentTier()).toBe('free');
 
 		await t.run(async (ctx) => {
@@ -355,7 +365,7 @@ describe('subscription and usage backend', () => {
 			await ctx.db.insert('subscriptions', { ...shared, status: 'cancelled', eventAt: 2_000 });
 		});
 
-		expect((await asUser.query(api.usage.getMyUsage, {})).tier).toBe('free');
+		expect((await asUser.query(api.usage.getMyUsage, { now: Date.now() })).tier).toBe('free');
 
 		// Ensuring collapses the duplicates onto the newer cancellation.
 		await asUser.mutation(api.billing.ensureMySubscription, {});
@@ -415,7 +425,9 @@ describe('subscription and usage backend', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', { userId, tier: 'pro', status: 'active', eventAt: 1 });
 		});
-		expect(await asUser.query(api.usage.getMyUsage, {})).toMatchObject({ tier: 'pro' });
+		expect(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).toMatchObject({
+			tier: 'pro'
+		});
 	});
 
 	it('fails fast on duplicate tier rows instead of metering arbitrarily', async () => {
@@ -432,7 +444,7 @@ describe('subscription and usage backend', () => {
 				monthly: 2
 			});
 		});
-		await expect(asUser.query(api.usage.getMyUsage, {})).rejects.toThrow(
+		await expect(asUser.query(api.usage.getMyUsage, { now: Date.now() })).rejects.toThrow(
 			'Duplicate tiers rows for tier "pro".'
 		);
 	});
@@ -442,7 +454,10 @@ describe('subscription and usage backend', () => {
 		await seedTiers(t);
 		const userId = 'user_recency';
 		const asUser = t.withIdentity({ subject: userId });
-		const currentTier = async () => (await asUser.query(api.usage.getMyUsage, {})).tier;
+
+		const currentTier = async () =>
+			(await asUser.query(api.usage.getMyUsage, { now: Date.now() })).tier;
+
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', {
 				userId,
@@ -484,7 +499,7 @@ describe('subscription and usage backend', () => {
 		await t.mutation(internal.lib.rateLimits.checkUsageLimits, {
 			userId
 		});
-		const usage = await asUser.query(api.usage.getMyUsage, {});
+		const usage = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
 		expect(usage.tier).toBe('max');
 		expect(usage.tierLabel).toBe('Max');
 		expect(usage.exhausted).toBe(false);

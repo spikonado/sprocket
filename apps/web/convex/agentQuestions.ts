@@ -14,7 +14,6 @@ import {
 	headActionablePendingQuestion,
 	isPendingQuestionActionable,
 	formatQuestionContinuationPrompt,
-	MAX_QUESTION_TIMEOUT_MS,
 	normalizeQuestionAnswer,
 	QUESTION_TIMEOUT_CHECKPOINT_MS,
 	validateQuestionTimeoutMs,
@@ -30,10 +29,6 @@ import {
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange
 } from '@convex/lib/threadHierarchy';
-
-const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
-
-const MIN_QUESTION_TIMEOUT_MS = 1_000;
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
@@ -89,8 +84,7 @@ type CreatedQuestion = {
 
 async function createQuestion(
 	ctx: MutationCtx,
-	args: CreateQuestionArgs,
-	resolveTimeoutMs: (timeoutMs: number | null | undefined) => number | undefined
+	args: CreateQuestionArgs
 ): Promise<CreatedQuestion> {
 	const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 	assertRunAcceptsModelCompletion(run);
@@ -111,7 +105,7 @@ async function createQuestion(
 	const question = validateQuestionText(args.question);
 	const options = finalizeQuestionOptions(args.options);
 
-	const timeoutMs = resolveTimeoutMs(args.timeoutMs);
+	const timeoutMs = validateQuestionTimeoutMs(args.timeoutMs);
 	const createdAt = Date.now();
 	const timeoutAt = timeoutMs === undefined ? undefined : createdAt + timeoutMs;
 	const sequence = await nextThreadSequence(ctx, run.threadId);
@@ -176,28 +170,6 @@ const vCreateQuestionArgs = {
 	executionSecret: v.string()
 };
 
-// Legacy create kept for released clients: omitted timeout defaults to 30m and
-// numeric values are clamped to [1s, 24h].
-export const create = mutation({
-	args: {
-		...vCreateQuestionArgs,
-		timeoutMs: v.optional(v.number())
-	},
-	returns: vCreatedQuestion,
-	handler: async (ctx, args) => {
-		try {
-			return await createQuestion(ctx, args, (timeoutMs) =>
-				Math.min(
-					MAX_QUESTION_TIMEOUT_MS,
-					Math.max(MIN_QUESTION_TIMEOUT_MS, Math.floor(timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS))
-				)
-			);
-		} catch (error) {
-			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
-		}
-	}
-});
-
 export const createWithOptionalExpiry = mutation({
 	args: {
 		...vCreateQuestionArgs,
@@ -206,7 +178,7 @@ export const createWithOptionalExpiry = mutation({
 	returns: vCreatedQuestion,
 	handler: async (ctx, args) => {
 		try {
-			return await createQuestion(ctx, args, validateQuestionTimeoutMs);
+			return await createQuestion(ctx, args);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}

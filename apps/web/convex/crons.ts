@@ -11,30 +11,9 @@ crons.interval(
 );
 
 crons.interval(
-	'backfill legacy stored fields',
-	{ hours: 1 },
-	internal.migrations.runLegacyCompatBackfillAutomatically,
-	{}
-);
-
-crons.interval(
 	'backfill terminal transcript readiness',
 	{ hours: 1 },
 	internal.migrations.runTerminalJobBackfill,
-	{}
-);
-
-crons.interval(
-	'promote legacy thread artifacts to projects',
-	{ hours: 1 },
-	internal.migrations.runProjectArtifactBackfillAutomatically,
-	{}
-);
-
-crons.interval(
-	'backfill descendant thread status counts',
-	{ hours: 1 },
-	internal.migrations.runThreadHierarchyStatusBackfillAutomatically,
 	{}
 );
 
