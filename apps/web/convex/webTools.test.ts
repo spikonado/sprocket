@@ -1308,4 +1308,25 @@ describe('queued raw document fetch', () => {
 		expect(error.message).toContain('Firecrawl scrape failed (429).');
 		expect(isNonRetryableError(error)).toBe(false);
 	});
+
+	it('keeps interrupted response reads retryable', async () => {
+		const t = initConvexTest();
+
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode('{"success":'));
+				controller.error(new Error('connection reset'));
+			}
+		});
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn<typeof globalThis.fetch>(async () => new Response(body))
+		);
+
+		const error = await rejection(queuedRawDocument(t));
+
+		expect(error.message).toContain('connection reset');
+		expect(isNonRetryableError(error)).toBe(false);
+	});
 });

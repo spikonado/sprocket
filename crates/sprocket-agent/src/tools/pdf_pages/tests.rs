@@ -131,6 +131,7 @@ fn pages_missing_from_the_ocr_result_are_named() {
     let ocr = vec![
         parsed(0, "bogus"),
         parsed(1, "Scan 2"),
+        parsed(2, " \n"),
         parsed(3, "Scan 4"),
         parsed(9, "bogus"),
     ];
@@ -194,8 +195,14 @@ fn sub_pdf_keeps_requested_pages_with_their_inherited_attributes() {
     let annotations = document.get_dictionary(pages[1]).unwrap().get(b"Annots");
     assert!(annotations.is_ok());
     // Catalog, tree, shared resources, a page plus contents per kept page,
-    // and the nulled page 56 the link targets.
-    assert!(document.objects.len() <= 10, "{}", document.objects.len());
+    // and the nulled page 56 the link targets. The writer's cross-reference
+    // stream loads as an object too.
+    let written: Vec<&Object> = document
+        .objects
+        .values()
+        .filter(|object| object.type_name().ok() != Some(b"XRef".as_slice()))
+        .collect();
+    assert_eq!(written.len(), 10, "{written:?}");
 }
 
 #[test]

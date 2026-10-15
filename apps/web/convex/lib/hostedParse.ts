@@ -149,6 +149,12 @@ export function parseFirecrawlParseResponse(
 	}
 }
 
+export class ResponseTooLargeError extends Error {
+	constructor() {
+		super('Firecrawl parse response is too large.');
+	}
+}
+
 export async function readBoundedResponseBytes(
 	response: Response,
 	maxBytes: number
@@ -157,7 +163,7 @@ export async function readBoundedResponseBytes(
 
 	if (Number.isFinite(declared) && declared > maxBytes) {
 		await response.body?.cancel();
-		throw new Error('Firecrawl parse response is too large.');
+		throw new ResponseTooLargeError();
 	}
 
 	if (!response.body) {
@@ -176,7 +182,7 @@ export async function readBoundedResponseBytes(
 
 		if (total > maxBytes) {
 			await reader.cancel();
-			throw new Error('Firecrawl parse response is too large.');
+			throw new ResponseTooLargeError();
 		}
 
 		chunks.push(value);

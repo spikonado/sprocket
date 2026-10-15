@@ -447,8 +447,8 @@ async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
 }
 
 /// Reads a document fully, but stops after the first bytes when they show it
-/// is not one. Failed downloads of expected or identified documents go to the
-/// raw fetch instead of the page scrape.
+/// is not one. Expected documents that fail to download or arrive as another
+/// body, such as a bot challenge, go to the raw fetch instead of the page scrape.
 async fn download_document(
     client: &reqwest::Client,
     url: reqwest::Url,
@@ -485,7 +485,7 @@ async fn download_document(
         if !identified {
             match sniff_document(&bytes, chunk.is_none(), csv) {
                 Some(true) => identified = true,
-                Some(false) => return Ok(LocalResource::Page),
+                Some(false) => return Ok(failed(expected)),
                 None => {}
             }
         }

@@ -248,6 +248,9 @@ impl ScannedPdf {
         let batch = self.ocr_batch();
         let mut recognized = BTreeMap::new();
         for parsed in ocr.as_deref().unwrap_or_default() {
+            if parsed.markdown.trim().is_empty() {
+                continue;
+            }
             let original = (parsed.page_number as usize)
                 .checked_sub(1)
                 .and_then(|index| batch.get(index));

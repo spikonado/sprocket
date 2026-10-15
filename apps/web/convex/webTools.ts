@@ -13,7 +13,11 @@ import {
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
-import { HOSTED_PARSE_MAX_INPUT_BYTES, readBoundedResponseBytes } from '@convex/lib/hostedParse';
+import {
+	HOSTED_PARSE_MAX_INPUT_BYTES,
+	readBoundedResponseBytes,
+	ResponseTooLargeError
+} from '@convex/lib/hostedParse';
 import { NonRetryableError } from '@convex-dev/workpool';
 import type { Doc } from '@convex/_generated/dataModel';
 
@@ -416,9 +420,11 @@ async function fetchRawDocument(ctx: ActionCtx, urlValue: string): Promise<RawDo
 	try {
 		responseBytes = await readBoundedResponseBytes(response, RAW_DOCUMENT_MAX_RESPONSE_BYTES);
 	} catch (error) {
-		throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE, {
-			cause: error instanceof Error ? error : undefined
-		});
+		if (error instanceof ResponseTooLargeError) {
+			throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE, { cause: error });
+		}
+
+		throw error;
 	}
 
 	if (!response.ok) {
