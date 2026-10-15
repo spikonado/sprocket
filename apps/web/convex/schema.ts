@@ -506,6 +506,8 @@ export default defineSchema({
 		inputStorageId: v.optional(v.id('_storage')),
 		resultStorageId: v.optional(v.id('_storage')),
 		filename: v.optional(v.string()),
+		/** The result is `{"pages":[{pageNumber, markdown}]}` JSON instead of markdown. */
+		pages: v.optional(v.boolean()),
 		error: v.optional(v.string()),
 		expiresAt: v.number()
 	})
@@ -518,6 +520,7 @@ export default defineSchema({
 		claimId: v.string(),
 		jobId: v.optional(v.id('executorJobs')),
 		kind: v.union(v.literal('scrape'), v.literal('screenshot')),
+		rawDocument: v.optional(v.boolean()),
 		status: v.union(
 			v.literal('queued'),
 			v.literal('running'),

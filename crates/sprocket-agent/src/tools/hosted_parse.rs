@@ -35,16 +35,51 @@ enum ParseResult {
     Failed { error: String },
 }
 
+/// A physical page of the uploaded PDF, numbered from 1.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ParsedPage {
+    pub page_number: u32,
+    pub markdown: String,
+}
+
+#[derive(Deserialize)]
+struct ParsedPages {
+    pages: Vec<ParsedPage>,
+}
+
 pub(super) async fn parse(
     context: &HostedParseContext<'_>,
     path: &Path,
     name_hint: &Path,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<String> {
+    parse_with(context, path, name_hint, false, cancellation).await
+}
+
+pub(super) async fn parse_pages(
+    context: &HostedParseContext<'_>,
+    path: &Path,
+    name_hint: &Path,
+    cancellation: &WorkspaceCancellation,
+) -> anyhow::Result<Vec<ParsedPage>> {
+    let result = parse_with(context, path, name_hint, true, cancellation).await?;
+    let parsed: ParsedPages =
+        serde_json::from_str(&result).context("hosted parse returned invalid pages")?;
+    Ok(parsed.pages)
+}
+
+async fn parse_with(
+    context: &HostedParseContext<'_>,
+    path: &Path,
+    name_hint: &Path,
+    pages: bool,
+    cancellation: &WorkspaceCancellation,
+) -> anyhow::Result<String> {
     tokio::select! {
         biased;
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-        result = tokio::time::timeout(Duration::from_secs(600), parse_remote(context, path, name_hint)) => {
+        result = tokio::time::timeout(Duration::from_secs(600), parse_remote(context, path, name_hint, pages)) => {
             result.context("hosted parsing timed out")?
         }
     }
@@ -54,6 +89,7 @@ async fn parse_remote(
     context: &HostedParseContext<'_>,
     path: &Path,
     name_hint: &Path,
+    pages: bool,
 ) -> anyhow::Result<String> {
     let file = tokio::fs::File::open(path)
         .await
@@ -116,6 +152,9 @@ async fn parse_remote(
             .and_then(|name| name.to_str())
             .unwrap_or("document.pdf");
         args.insert("filename".into(), filename.into());
+        if pages {
+            args.insert("pages".into(), true.into());
+        }
         let _: serde_json::Value = context
             .runtime
             .mutation_json("hostedParse:start", args)

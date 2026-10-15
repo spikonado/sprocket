@@ -22,7 +22,7 @@ async function seedParseJob(
 	t: ConvexTestInstance,
 	options: {
 		executionSecret: string;
-		kind?: 'parse_file' | 'web_search';
+		kind?: 'parse_file' | 'scrape_url' | 'web_search';
 		claimId?: string;
 	}
 ) {
@@ -50,7 +50,12 @@ async function seedParseJob(
 			runId: created.runId,
 			kind: options.kind ?? 'parse_file',
 			toolInvocationId: `test-invocation-hosted-parse-${Math.random()}`,
-			payload: options.kind === 'web_search' ? { query: 'sprocket' } : { path: '/tmp/doc.pdf' },
+			payload:
+				options.kind === 'web_search'
+					? { query: 'sprocket' }
+					: options.kind === 'scrape_url'
+						? { url: 'https://example.com/doc.pdf' }
+						: { path: '/tmp/doc.pdf' },
 			hidden: false,
 			status: 'claimed',
 			enqueuedAt: Date.now(),
@@ -160,6 +165,34 @@ describe('Firecrawl parse response contract', () => {
 				HOSTED_PARSE_MAX_OUTPUT_BYTES + 1
 			)
 		).toEqual({ error: 'Firecrawl parse response is too large.' });
+	});
+
+	it('reads per-page markdown only when pages are requested', () => {
+		const pages = [
+			{ pageNumber: 1, markdown: '# One' },
+			{ pageNumber: 2, markdown: '' }
+		];
+
+		expect(
+			parseFirecrawlParseResponse(
+				JSON.stringify({ success: true, data: { markdown: '# One', pages } }),
+				128,
+				true
+			)
+		).toEqual({ pages });
+		expect(
+			parseFirecrawlParseResponse(
+				JSON.stringify({ success: true, data: { markdown: '# One' } }),
+				64,
+				true
+			)
+		).toEqual({ error: 'Firecrawl parse did not return pages.' });
+		expect(
+			parseFirecrawlParseResponse(
+				JSON.stringify({ success: true, data: { markdown: '# One', pages: null } }),
+				64
+			)
+		).toEqual({ markdown: '# One' });
 	});
 });
 
@@ -381,12 +414,112 @@ describe('hostedParse', () => {
 		).rejects.toThrow('Run not found.');
 	});
 
-	it('stores a result URL and never writes billing or usage rows', async () => {
-		const t = initConvexTest();
-		const run = await seedParseJob(t, { executionSecret: 'hosted-success-secret' });
+	it.each(['parse_file', 'scrape_url'] as const)(
+		'stores a %s result URL and never writes billing or usage rows',
+		async (kind) => {
+			const t = initConvexTest();
+			const run = await seedParseJob(t, { executionSecret: 'hosted-success-secret', kind });
 
-		const usageBefore = await t.run(async (ctx) => {
-			return await ctx.db.query('threadUsageEvents').take(32);
+			const usageBefore = await t.run(async (ctx) => {
+				return await ctx.db.query('threadUsageEvents').take(32);
+			});
+
+			const created = await run.asUser.mutation(api.hostedParse.createUpload, {
+				...auth(run),
+				jobId: run.jobId
+			});
+
+			const inputId = await storeBlob(t, { bytes: '%PDF-1.4', type: 'application/pdf' });
+			await run.asUser.mutation(api.hostedParse.start, {
+				...auth(run),
+				requestId: created.requestId,
+				storageId: inputId,
+				filename: 'report.pdf'
+			});
+
+			const providerFetch = vi.fn(async (url: string, options?: RequestInit) => {
+				if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
+				expect(options?.method).toBe('POST');
+				expect(options?.headers).toEqual({ Authorization: 'Bearer fc-test-key' });
+				const form = options?.body;
+
+				if (!(form instanceof FormData)) throw new Error('Expected multipart form');
+				const file = form.get('file');
+
+				if (!(file instanceof File)) throw new Error('Expected uploaded file');
+				expect(file.name).toBe('report.pdf');
+				expect(await file.text()).toBe('%PDF-1.4');
+				const parseOptions = form.get('options');
+
+				if (!(parseOptions instanceof Blob)) throw new Error('Expected JSON options');
+				expect(JSON.parse(await parseOptions.text())).toEqual({
+					formats: ['markdown'],
+					parsers: [{ type: 'pdf', mode: 'auto' }],
+					timeout: 300_000
+				});
+
+				return Response.json({ success: true, data: { markdown: '# Report' } });
+			});
+
+			vi.stubGlobal('fetch', providerFetch);
+
+			const result = await t.action(internal.hostedParseActions.executeHostedParse, {
+				requestId: created.requestId,
+				jobId: run.jobId,
+				runId: run.runId,
+				claimId: run.claimId
+			});
+
+			const resultId = result.resultStorageId!;
+			expect(resultId).toBeDefined();
+			expect(providerFetch.mock.calls.filter(([url]) => url === FIRECRAWL_PARSE_URL)).toHaveLength(
+				1
+			);
+			const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
+			await t.mutation(internal.hostedParse.completeHostedParse, {
+				workId: workId(stored),
+				context: {
+					requestId: created.requestId,
+					jobId: run.jobId,
+					runId: run.runId,
+					claimId: run.claimId
+				},
+				result: { kind: 'success', returnValue: { resultStorageId: resultId } }
+			});
+
+			const completed = await run.asUser.query(api.hostedParse.getResult, {
+				runId: run.runId,
+				executionSecret: run.executionSecret,
+				requestId: created.requestId
+			});
+
+			expect(completed.status).toBe('completed');
+			expect(completed.url).toEqual(expect.any(String));
+			await t.mutation(internal.hostedParse.completeHostedParse, {
+				workId: workId(stored),
+				context: {
+					requestId: created.requestId,
+					jobId: run.jobId,
+					runId: run.runId,
+					claimId: run.claimId
+				},
+				result: { kind: 'success', returnValue: { resultStorageId: resultId } }
+			});
+			expect(await t.run(async (ctx) => ctx.db.system.get('_storage', inputId))).toBeNull();
+			expect(await t.run(async (ctx) => ctx.db.system.get('_storage', resultId))).not.toBeNull();
+			const usageAfter = await t.run(async (ctx) => ctx.db.query('threadUsageEvents').take(32));
+			expect(usageAfter).toEqual(usageBefore);
+			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
+			expect(job?.status).toBe('claimed');
+		}
+	);
+
+	it('stores per-page OCR results as JSON when pages are requested', async () => {
+		const t = initConvexTest();
+
+		const run = await seedParseJob(t, {
+			executionSecret: 'hosted-pages-secret',
+			kind: 'scrape_url'
 		});
 
 		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
@@ -399,34 +532,31 @@ describe('hostedParse', () => {
 			...auth(run),
 			requestId: created.requestId,
 			storageId: inputId,
-			filename: 'report.pdf'
+			filename: 'scanned-pages.pdf',
+			pages: true
 		});
 
-		const providerFetch = vi.fn(async (url: string, options?: RequestInit) => {
-			if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
-			expect(options?.method).toBe('POST');
-			expect(options?.headers).toEqual({ Authorization: 'Bearer fc-test-key' });
-			const form = options?.body;
+		const pages = [
+			{ pageNumber: 2, markdown: '# Two' },
+			{ pageNumber: 1, markdown: '# One' }
+		];
 
-			if (!(form instanceof FormData)) throw new Error('Expected multipart form');
-			const file = form.get('file');
+		const parseOptions: unknown[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, options?: RequestInit) => {
+				if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
+				const form = options?.body;
 
-			if (!(file instanceof File)) throw new Error('Expected uploaded file');
-			expect(file.name).toBe('report.pdf');
-			expect(await file.text()).toBe('%PDF-1.4');
-			const parseOptions = form.get('options');
+				if (!(form instanceof FormData)) throw new Error('Expected multipart form');
+				const formOptions = form.get('options');
 
-			if (!(parseOptions instanceof Blob)) throw new Error('Expected JSON options');
-			expect(JSON.parse(await parseOptions.text())).toEqual({
-				formats: ['markdown'],
-				parsers: [{ type: 'pdf', mode: 'auto' }],
-				timeout: 300_000
-			});
+				if (!(formOptions instanceof Blob)) throw new Error('Expected JSON options');
+				parseOptions.push(JSON.parse(await formOptions.text()));
 
-			return Response.json({ success: true, data: { markdown: '# Report' } });
-		});
-
-		vi.stubGlobal('fetch', providerFetch);
+				return Response.json({ success: true, data: { markdown: '# Two\n\n# One', pages } });
+			})
+		);
 
 		const result = await t.action(internal.hostedParseActions.executeHostedParse, {
 			requestId: created.requestId,
@@ -435,45 +565,22 @@ describe('hostedParse', () => {
 			claimId: run.claimId
 		});
 
-		const resultId = result.resultStorageId!;
-		expect(resultId).toBeDefined();
-		expect(providerFetch.mock.calls.filter(([url]) => url === FIRECRAWL_PARSE_URL)).toHaveLength(1);
-		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
-		await t.mutation(internal.hostedParse.completeHostedParse, {
-			workId: workId(stored),
-			context: {
-				requestId: created.requestId,
-				jobId: run.jobId,
-				runId: run.runId,
-				claimId: run.claimId
-			},
-			result: { kind: 'success', returnValue: { resultStorageId: resultId } }
+		expect(parseOptions).toEqual([
+			{
+				formats: ['markdown'],
+				parsers: [{ type: 'pdf', mode: 'auto', pages: true }],
+				timeout: 300_000
+			}
+		]);
+
+		const stored = await t.run(async (ctx) => {
+			const blob = await ctx.storage.get(result.resultStorageId!);
+
+			return blob ? { type: blob.type, text: await blob.text() } : null;
 		});
 
-		const completed = await run.asUser.query(api.hostedParse.getResult, {
-			runId: run.runId,
-			executionSecret: run.executionSecret,
-			requestId: created.requestId
-		});
-
-		expect(completed.status).toBe('completed');
-		expect(completed.url).toEqual(expect.any(String));
-		await t.mutation(internal.hostedParse.completeHostedParse, {
-			workId: workId(stored),
-			context: {
-				requestId: created.requestId,
-				jobId: run.jobId,
-				runId: run.runId,
-				claimId: run.claimId
-			},
-			result: { kind: 'success', returnValue: { resultStorageId: resultId } }
-		});
-		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', inputId))).toBeNull();
-		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', resultId))).not.toBeNull();
-		const usageAfter = await t.run(async (ctx) => ctx.db.query('threadUsageEvents').take(32));
-		expect(usageAfter).toEqual(usageBefore);
-		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
-		expect(job?.status).toBe('claimed');
+		expect(stored?.type).toBe('application/json');
+		expect(JSON.parse(stored?.text ?? '')).toEqual({ pages });
 	});
 
 	it('rejects registered attachments and another parse input without deleting them', async () => {

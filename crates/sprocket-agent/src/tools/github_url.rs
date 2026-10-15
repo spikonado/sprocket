@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::Context;
 use reqwest::Url;
 use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
+use super::hosted_parse::HostedParseContext;
 use super::parse_file::{
-    IMAGE_SNIFF_BYTES, MAX_PARSE_FILE_IMAGE_BYTES, convert_file_bytes, sniff_supported_image_format,
+    IMAGE_SNIFF_BYTES, MAX_PARSE_FILE_IMAGE_BYTES, convert_document, sniff_supported_image_format,
 };
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
@@ -45,37 +45,45 @@ pub(super) async fn fetch_github_file(
     url: Url,
     supports_images: bool,
     cache_dir: &Path,
+    hosted: Option<&HostedParseContext<'_>>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<Value> {
-    tokio::select! {
+    let (url, bytes) = tokio::select! {
         biased;
-        _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
+        _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
         result = async {
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(30))
                 .redirect(reqwest::redirect::Policy::limited(5))
                 .build()?;
-            let (url, bytes) = download_file(&client, url, MAX_SCRAPE_BYTES).await?;
-            if sniff_supported_image_format(&bytes).is_some() {
-                anyhow::ensure!(supports_images, "The selected model cannot view images.");
-                return super::web::persist_web_image(&bytes, &url, cache_dir).await;
-            }
-            let filename = url.path_segments().and_then(Iterator::last).unwrap_or("");
-            let path = PathBuf::from(percent_encoding::percent_decode_str(filename).decode_utf8_lossy().as_ref());
-            let (markdown, _) = tokio::task::spawn_blocking(move || convert_file_bytes(bytes, &path))
-                .await.context("GitHub file parser failed")??;
-            Ok(json!({
-                "url": url.as_str(),
-                "markdown": markdown,
-                "summary": "Summary not generated; file was read directly from GitHub.",
-                "images": [],
-            }))
-        } => result,
+            download_file(&client, url, MAX_SCRAPE_BYTES).await
+        } => result?,
+    };
+    if sniff_supported_image_format(&bytes).is_some() {
+        anyhow::ensure!(supports_images, "The selected model cannot view images.");
+        return super::web::persist_web_image(&bytes, &url, cache_dir).await;
     }
+    let (markdown, _) =
+        convert_document(bytes, url_file_name(&url), None, hosted, cancellation).await?;
+    Ok(json!({
+        "url": url.as_str(),
+        "markdown": markdown,
+        "summary": "Summary not generated; file was read directly from GitHub.",
+        "images": [],
+    }))
 }
 
-async fn download_file(
+pub(super) fn url_file_name(url: &Url) -> PathBuf {
+    let filename = url.path_segments().and_then(Iterator::last).unwrap_or("");
+    PathBuf::from(
+        percent_encoding::percent_decode_str(filename)
+            .decode_utf8_lossy()
+            .as_ref(),
+    )
+}
+
+pub(super) async fn download_file(
     client: &reqwest::Client,
     url: Url,
     mut max_bytes: u64,
@@ -90,7 +98,7 @@ async fn download_file(
     let content_length = response.content_length();
     anyhow::ensure!(
         content_length.is_none_or(|size| size <= max_bytes),
-        "GitHub file exceeds the download limit"
+        "file exceeds the download limit"
     );
     let mut bytes = Vec::new();
     let mut prefix = Vec::with_capacity(IMAGE_SNIFF_BYTES);
@@ -102,11 +110,11 @@ async fn download_file(
         }
         anyhow::ensure!(
             content_length.is_none_or(|size| size <= max_bytes),
-            "GitHub file exceeds the download limit"
+            "file exceeds the download limit"
         );
         anyhow::ensure!(
             bytes.len().saturating_add(chunk.len()) as u64 <= max_bytes,
-            "GitHub file exceeds the download limit"
+            "file exceeds the download limit"
         );
         bytes.extend_from_slice(&chunk);
     }

@@ -37,6 +37,11 @@ function configuredFirecrawlApiKey(): string | undefined {
 	return env.FIRECRAWL_API_KEY?.trim() || undefined;
 }
 
+/** `scrape_url` sends a remote PDF's scanned pages for OCR. */
+function isHostedParseJob(job: Doc<'executorJobs'>): boolean {
+	return job.kind === 'parse_file' || job.kind === 'scrape_url';
+}
+
 const vHostedParseContext = v.object({
 	requestId: v.id('hostedParseRequests'),
 	jobId: v.id('executorJobs'),
@@ -106,7 +111,8 @@ export const start = mutation({
 		executionSecret: v.string(),
 		requestId: v.id('hostedParseRequests'),
 		storageId: v.id('_storage'),
-		filename: v.string()
+		filename: v.string(),
+		pages: v.optional(v.boolean())
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -179,6 +185,7 @@ export const start = mutation({
 				claimId: args.claimId,
 				inputStorageId: args.storageId,
 				filename,
+				pages: args.pages,
 				uploadUrl: undefined
 			});
 
@@ -278,7 +285,8 @@ export const getParseWork = internalQuery({
 		v.null(),
 		v.object({
 			inputStorageId: v.id('_storage'),
-			filename: v.string()
+			filename: v.string(),
+			pages: v.optional(v.boolean())
 		})
 	),
 	handler: async (ctx, args) => {
@@ -298,7 +306,7 @@ export const getParseWork = internalQuery({
 
 		const job = await ctx.db.get('executorJobs', args.jobId);
 
-		if (!job || job.runId !== args.runId || job.kind !== 'parse_file') {
+		if (!job || job.runId !== args.runId || !isHostedParseJob(job)) {
 			return null;
 		}
 
@@ -318,7 +326,11 @@ export const getParseWork = internalQuery({
 			return null;
 		}
 
-		return { inputStorageId: request.inputStorageId, filename: request.filename };
+		return {
+			inputStorageId: request.inputStorageId,
+			filename: request.filename,
+			pages: request.pages
+		};
 	}
 });
 
@@ -483,7 +495,7 @@ async function requireActiveParseJob(
 
 	const job = await ctx.db.get('executorJobs', args.jobId);
 
-	if (!job || job.runId !== run._id || job.kind !== 'parse_file') {
+	if (!job || job.runId !== run._id || !isHostedParseJob(job)) {
 		throw new ConvexError('Executor job not found.');
 	}
 

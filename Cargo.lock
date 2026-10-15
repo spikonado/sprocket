@@ -8603,6 +8603,8 @@ dependencies = [
  "hmac 0.13.0",
  "http",
  "image",
+ "lopdf",
+ "pdf-inspector",
  "percent-encoding",
  "reqwest 0.13.5",
  "rig",

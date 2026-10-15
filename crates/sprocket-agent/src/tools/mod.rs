@@ -11,6 +11,7 @@ mod mandates;
 mod markdown_url;
 mod parse_file;
 mod patch;
+mod pdf_pages;
 mod questions;
 mod scrape_files;
 mod skills;

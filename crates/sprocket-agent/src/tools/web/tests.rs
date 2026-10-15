@@ -1,13 +1,24 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const HEAD_REJECTED: &str =
+    "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+fn headers(content_type: &str, content_length: usize) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+    )
+}
+
 async fn serve(content_type: &str, bytes: Vec<u8>) -> reqwest::Url {
+    let headers = headers(content_type, bytes.len());
+    serve_split(headers.clone(), headers, bytes).await
+}
+
+/// Answers HEAD with `head`, and GET with `get` followed by `body`.
+async fn serve_split(head: String, get: String, body: Vec<u8>) -> reqwest::Url {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        bytes.len()
-    );
     tokio::spawn(async move {
         for _ in 0..2 {
             let Ok(Ok((mut stream, _))) =
@@ -17,9 +28,11 @@ async fn serve(content_type: &str, bytes: Vec<u8>) -> reqwest::Url {
             };
             let mut request = [0; 4096];
             stream.read(&mut request).await.unwrap();
-            stream.write_all(header.as_bytes()).await.unwrap();
-            if !request.starts_with(b"HEAD ") {
-                let _ = stream.write_all(&bytes).await;
+            if request.starts_with(b"HEAD ") {
+                stream.write_all(head.as_bytes()).await.unwrap();
+            } else {
+                let _ = stream.write_all(get.as_bytes()).await;
+                let _ = stream.write_all(&body).await;
             }
         }
     });
@@ -32,6 +45,40 @@ fn png() -> Vec<u8> {
         .write_to(&mut bytes, image::ImageFormat::Png)
         .unwrap();
     bytes.into_inner()
+}
+
+async fn fetch_image(url: reqwest::Url, cache: &Path) -> serde_json::Value {
+    let LocalResource::Image(metadata) = fetch_local_resource(url, true, cache).await.unwrap()
+    else {
+        panic!("expected an image");
+    };
+    metadata
+}
+
+async fn is_page(url: reqwest::Url, cache: &Path) -> bool {
+    matches!(
+        fetch_local_resource(url, true, cache).await.unwrap(),
+        LocalResource::Page
+    )
+}
+
+async fn is_unreadable_document(url: reqwest::Url, cache: &Path) -> bool {
+    matches!(
+        fetch_local_resource(url, true, cache).await.unwrap(),
+        LocalResource::UnreadableDocument
+    )
+}
+
+async fn fetch_document(url: reqwest::Url, cache: &Path) -> WebDocument {
+    let LocalResource::Document(document) = fetch_local_resource(url, true, cache).await.unwrap()
+    else {
+        panic!("expected a document");
+    };
+    document
+}
+
+fn pdf() -> Vec<u8> {
+    b"%PDF-1.4\n%placeholder\n".to_vec()
 }
 
 #[tokio::test]
@@ -99,10 +146,7 @@ async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
     let cache = tempfile::tempdir().unwrap();
     let directory = cache.path().join("scrape_url");
     let url = serve("image/jpeg", png()).await;
-    let metadata = fetch_web_image(url, true, &directory)
-        .await
-        .unwrap()
-        .unwrap();
+    let metadata = fetch_image(url, &directory).await;
     assert_eq!(metadata["mediaType"], "image/png");
     assert_image_history("scrape_url", metadata, &directory).await;
 }
@@ -184,7 +228,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
 async fn image_download_fails_when_local_persistence_fails() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let url = serve("image/png", png()).await;
-    assert!(fetch_web_image(url, true, file.path()).await.is_err());
+    assert!(fetch_local_resource(url, true, file.path()).await.is_err());
 }
 
 #[tokio::test]
@@ -201,12 +245,7 @@ async fn html_is_left_to_the_scraper() {
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\nConnection: close\r\n\r\n").await.unwrap();
         listener
     });
-    assert!(
-        fetch_web_image(url, true, cache.path())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(is_page(url, cache.path()).await);
     let listener = server.await.unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(50), listener.accept())
@@ -220,34 +259,133 @@ async fn image_extension_handles_generic_content_types() {
     let cache = tempfile::tempdir().unwrap();
     let mut url = serve("application/octet-stream", png()).await;
     url.set_path("/image.PNG");
-    assert!(
-        fetch_web_image(url, true, cache.path())
-            .await
-            .unwrap()
-            .is_some()
-    );
+    fetch_image(url, cache.path()).await;
 }
 
 #[tokio::test]
 async fn unrecognized_content_is_scraped_but_text_only_models_reject_images() {
     let cache = tempfile::tempdir().unwrap();
     let url = serve("image/svg+xml", b"<svg></svg>".to_vec()).await;
-    assert!(
-        fetch_web_image(url, true, cache.path())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(is_page(url, cache.path()).await);
     let url = serve("image/jpeg", b"<html>mislabelled</html>".to_vec()).await;
-    assert!(fetch_web_image(url, true, cache.path()).await.is_err());
+    assert!(fetch_local_resource(url, true, cache.path()).await.is_err());
     let url = serve("image/png", png()).await;
     assert!(
-        fetch_web_image(url, false, cache.path())
+        fetch_local_resource(url, false, cache.path())
             .await
             .unwrap_err()
             .to_string()
             .contains("cannot view")
     );
+}
+
+#[tokio::test]
+async fn documents_are_downloaded_for_local_parsing() {
+    let cache = tempfile::tempdir().unwrap();
+    for content_type in ["application/pdf", "application/octet-stream"] {
+        let url = serve(content_type, pdf()).await;
+        assert_eq!(fetch_document(url, cache.path()).await.bytes, pdf());
+    }
+}
+
+#[tokio::test]
+async fn expected_documents_served_as_other_content_are_left_for_a_raw_fetch() {
+    let cache = tempfile::tempdir().unwrap();
+    let challenge = b"<html>checking your browser</html>".to_vec();
+    for content_type in ["application/pdf", "application/octet-stream"] {
+        let url = serve_split(
+            headers(content_type, 0),
+            headers("text/html", challenge.len()),
+            challenge.clone(),
+        )
+        .await;
+        assert!(is_unreadable_document(url, cache.path()).await);
+    }
+    let get = headers("text/html", challenge.len());
+    let mut url = serve_split(HEAD_REJECTED.into(), get, challenge).await;
+    url.set_path("/datasheet.pdf");
+    assert!(is_unreadable_document(url, cache.path()).await);
+    let url = serve("text/csv", vec![0xFF, 0, 0xFE]).await;
+    assert!(is_unreadable_document(url, cache.path()).await);
+}
+
+#[tokio::test]
+async fn inconclusive_head_responses_leave_detection_to_the_get() {
+    let cache = tempfile::tempdir().unwrap();
+    let get = headers("application/pdf", pdf().len());
+    let url = serve_split(HEAD_REJECTED.into(), get.clone(), pdf()).await;
+    assert_eq!(fetch_document(url, cache.path()).await.bytes, pdf());
+
+    let mut url = serve_split(headers("text/plain", pdf().len()), get, pdf()).await;
+    url.set_path("/datasheet.pdf");
+    assert_eq!(fetch_document(url, cache.path()).await.bytes, pdf());
+
+    let html = b"<html>a page</html>".to_vec();
+    let url = serve_split(HEAD_REJECTED.into(), headers("text/html", html.len()), html).await;
+    assert!(is_page(url, cache.path()).await);
+}
+
+#[tokio::test]
+async fn csv_is_parsed_locally() {
+    let cache = tempfile::tempdir().unwrap();
+    let csv = b"part,stock\nresistor,12\n".to_vec();
+    let mut by_extension = serve("application/octet-stream", csv.clone()).await;
+    by_extension.set_path("/stock.csv");
+    for url in [
+        serve("text/csv; charset=utf-8", csv.clone()).await,
+        by_extension,
+    ] {
+        let document = fetch_document(url, cache.path()).await;
+        assert_eq!(document.hint, Some(anydoc::Format::Csv));
+        let (markdown, format) = convert_document(
+            document.bytes,
+            super::super::github_url::url_file_name(&document.url),
+            document.hint,
+            None,
+            &WorkspaceCancellation::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(format, "csv");
+        assert!(
+            markdown.contains("resistor") && markdown.contains('|'),
+            "{markdown}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn oversized_documents_are_rejected_instead_of_scraped() {
+    let cache = tempfile::tempdir().unwrap();
+    let mut body = pdf();
+    body.resize(DOCUMENT_SNIFF_BYTES * 2, b' ');
+    let get = headers("application/pdf", MAX_SCRAPE_BYTES as usize + 1);
+    let url = serve_split(HEAD_REJECTED.into(), get, body).await;
+    let error = fetch_local_resource(url, true, cache.path())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("64 MiB"), "{error}");
+}
+
+#[tokio::test]
+async fn truncated_documents_are_left_for_a_raw_fetch() {
+    let cache = tempfile::tempdir().unwrap();
+    let get = headers("application/pdf", DOCUMENT_SNIFF_BYTES);
+    let url = serve_split(HEAD_REJECTED.into(), get.clone(), pdf()).await;
+    assert!(is_unreadable_document(url, cache.path()).await);
+    let url = serve_split(HEAD_REJECTED.into(), get, b"%P".to_vec()).await;
+    assert!(is_unreadable_document(url, cache.path()).await);
+}
+
+#[tokio::test]
+async fn unreachable_document_urls_are_left_for_a_raw_fetch() {
+    let cache = tempfile::tempdir().unwrap();
+    for path in ["datasheet.pdf", "table.csv"] {
+        let url = reqwest::Url::parse(&format!("http://127.0.0.1:1/{path}")).unwrap();
+        assert!(is_unreadable_document(url, cache.path()).await);
+    }
+    let url = reqwest::Url::parse("http://127.0.0.1:1/page").unwrap();
+    assert!(is_page(url, cache.path()).await);
 }
 
 #[test]
