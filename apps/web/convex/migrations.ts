@@ -34,7 +34,7 @@ export const reconcileLegacyTerminalJobs = migrations.define({
 	table: 'runExecutionStates',
 	batchSize: 1,
 	migrateOne: async (ctx, state) => {
-		if (state.terminalJobsReconciled !== undefined) return;
+		if (state.terminalJobsReconciled === true) return;
 		const run = await ctx.db.get('runs', state.runId);
 
 		if (!run || !isRunFinalStatus(run.status)) return;
