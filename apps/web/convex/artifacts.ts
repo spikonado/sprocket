@@ -9,12 +9,7 @@ import {
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
-import {
-	MAX_FILE_NAME_LENGTH,
-	vArtifactScope,
-	vArtifactType,
-	vListArtifactsResult
-} from '@convex/lib/validators';
+import { MAX_FILE_NAME_LENGTH, vArtifactType, vListArtifactsResult } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import { registryState, bumpRegistry } from '@convex/lib/artifactRegistry';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
@@ -34,12 +29,7 @@ const vArtifactMutationResult = v.object({
 
 const vDeleteArtifactMutationResult = vArtifactMutationResult.pick('artifactId');
 
-const vProjectArtifact = schema
-	.doc('artifacts')
-	.omit('threadId')
-	.extend({
-		scope: v.literal('project')
-	});
+const vProjectArtifact = schema.doc('artifacts');
 
 function utf8ByteLength(value: string): number {
 	return new TextEncoder().encode(value).byteLength;
@@ -130,7 +120,7 @@ async function listVisibleArtifacts(
 		.paginate({ cursor, numItems: 8, maximumRowsRead: 8, maximumBytesRead: 1_000_000 });
 
 	return {
-		page: result.page.map(projectArtifact),
+		page: result.page,
 		isDone: result.isDone,
 		continueCursor: result.continueCursor,
 		revision: (await registryState(ctx, userId, repositoryKey))?.revision ?? 0
@@ -139,44 +129,12 @@ async function listVisibleArtifacts(
 
 const pageFields = { isDone: v.boolean(), continueCursor: v.string(), revision: v.number() };
 
-async function authorizeProject(
-	ctx: QueryCtx,
-	repositoryKey: string,
-	threadId?: Id<'threadRecords'>
-) {
-	const userId = await getUserId(ctx);
-
-	if (threadId !== undefined) {
-		const thread = await getOwnedThreadRecord(ctx.db, userId, threadId);
-
-		if (requireRepositoryKey(thread) !== repositoryKey) throw new Error('Thread not found.');
-	}
-
-	return userId;
-}
-
-function projectArtifact(artifact: Doc<'artifacts'>) {
-	const { threadId, ...project } = artifact;
-	void threadId;
-
-	return { ...project, scope: 'project' as const };
-}
-
 function canAccessArtifact(
 	artifact: Doc<'artifacts'>,
 	userId: string,
 	repositoryKey: string
 ): boolean {
 	return artifact.userId === userId && artifact.repositoryKey === repositoryKey;
-}
-
-async function promoteArtifact(ctx: MutationCtx, artifact: Doc<'artifacts'>) {
-	if (artifact.scope === 'project' && artifact.threadId === undefined) return artifact;
-
-	await ctx.db.patch('artifacts', artifact._id, { scope: 'project', threadId: undefined });
-	await bumpRegistry(ctx, artifact.userId, artifact.repositoryKey);
-
-	return projectArtifact(artifact);
 }
 
 async function findAccessibleArtifact(
@@ -237,13 +195,11 @@ async function writeArtifactFields(
 		artifact.title === fields.title &&
 		artifact.type === fields.contentType;
 
-	if (unchanged) return await promoteArtifact(ctx, artifact);
+	if (unchanged) return artifact;
 
 	const now = Date.now();
 	const revision = artifact.revision + 1;
 	await ctx.db.patch('artifacts', artifact._id, {
-		scope: 'project',
-		threadId: undefined,
 		content: fields.content,
 		title: fields.title,
 		type: fields.contentType,
@@ -253,7 +209,7 @@ async function writeArtifactFields(
 	await bumpRegistry(ctx, artifact.userId, artifact.repositoryKey);
 
 	return {
-		...projectArtifact(artifact),
+		...artifact,
 		content: fields.content,
 		title: fields.title,
 		type: fields.contentType,
@@ -273,8 +229,6 @@ export const addArtifact = mutation({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string(),
-		// Released agents may still request thread scope; all writes are project-wide.
-		scope: v.optional(vArtifactScope),
 		registrationId: v.string(),
 		content: v.string(),
 		title: v.string(),
@@ -303,7 +257,7 @@ export const addArtifact = mutation({
 					throw new Error('Artifact not found.');
 				}
 
-				return mutationResult(await promoteArtifact(ctx, existing));
+				return mutationResult(existing);
 			}
 
 			const now = Date.now();
@@ -383,7 +337,7 @@ export const deleteArtifact = mutation({
 	returns: vDeleteArtifactMutationResult,
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
-		const userId = await authorizeProject(ctx, repositoryKey);
+		const userId = await getUserId(ctx);
 
 		return await deleteAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);
 	}
@@ -457,25 +411,24 @@ export const listArtifactsForRun = query({
 
 export const listArtifacts = query({
 	args: {
-		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.string(),
 		cursor: v.optional(v.union(v.string(), v.null()))
 	},
 	returns: v.object({ ...pageFields, page: v.array(vProjectArtifact) }),
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
-		const userId = await authorizeProject(ctx, repositoryKey, args.threadId);
+		const userId = await getUserId(ctx);
 
 		return await listVisibleArtifacts(ctx, userId, repositoryKey, args.cursor ?? null);
 	}
 });
 
 export const getArtifactState = query({
-	args: { repositoryKey: v.string(), threadId: v.optional(v.id('threadRecords')) },
+	args: { repositoryKey: v.string() },
 	returns: v.number(),
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
-		const userId = await authorizeProject(ctx, repositoryKey, args.threadId);
+		const userId = await getUserId(ctx);
 
 		return (await registryState(ctx, userId, repositoryKey))?.revision ?? 0;
 	}
@@ -494,9 +447,7 @@ export const getArtifactForRun = query({
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
 			const repositoryKey = await loadThreadForRun(ctx, run);
 
-			return projectArtifact(
-				await requireAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey)
-			);
+			return await requireAccessibleArtifact(ctx, args.artifactId, run.userId, repositoryKey);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -506,17 +457,14 @@ export const getArtifactForRun = query({
 export const getArtifact = query({
 	args: {
 		artifactId: v.id('artifacts'),
-		repositoryKey: v.string(),
-		threadId: v.optional(v.id('threadRecords'))
+		repositoryKey: v.string()
 	},
 	returns: vProjectArtifact,
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
-		const userId = await authorizeProject(ctx, repositoryKey, args.threadId);
+		const userId = await getUserId(ctx);
 
-		return projectArtifact(
-			await requireAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey)
-		);
+		return await requireAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);
 	}
 });
 
@@ -524,14 +472,13 @@ export const syncArtifact = mutation({
 	args: {
 		artifactId: v.id('artifacts'),
 		repositoryKey: v.string(),
-		threadId: v.optional(v.id('threadRecords')),
 		expectedRevision: v.number(),
 		content: v.string()
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const repositoryKey = validateRepositoryKey(args.repositoryKey);
-		const userId = await authorizeProject(ctx, repositoryKey, args.threadId);
+		const userId = await getUserId(ctx);
 		validateArtifactContent(args.content);
 
 		const artifact = await findAccessibleArtifact(ctx, args.artifactId, userId, repositoryKey);

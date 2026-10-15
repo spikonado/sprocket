@@ -3,6 +3,7 @@ import { api } from '@convex/_generated/api';
 import type { QueryCtx } from '@convex/_generated/server';
 import { executionSecretHash } from '@convex/lib/auth';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { beginExecutorJob } from '@convex/lib/toolJobs';
 import {
 	createQueuedRun,
 	emptyCompletionAssignments,
@@ -362,7 +363,7 @@ describe('numbered transcript parts', () => {
 			claimId: 'claim-tool-order',
 			runId,
 			...toolTranscriptAssignment(runId, 'claim-tool-order', 1, 1, 'stream-tool'),
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			callId: 'c1',
 			payload: { cmd: 'echo hi' },
 			executionSecret
@@ -378,7 +379,7 @@ describe('numbered transcript parts', () => {
 			sourceKey: `tool:${invocationId}:started`,
 			tool: {
 				callId: 'c1',
-				name: 'exec_command',
+				name: 'exec_cmd',
 				status: 'started'
 			}
 		});
@@ -428,7 +429,7 @@ describe('numbered transcript parts', () => {
 					type: 'tool-call',
 					partId: 'stream-tool:tool:c1',
 					callId: 'c1',
-					name: 'exec_command',
+					name: 'exec_cmd',
 					input: { cmd: 'echo hi' },
 					turnId: 'stream-tool'
 				}
@@ -494,7 +495,7 @@ describe('numbered transcript parts', () => {
 			claimId: 'claim-tool-cancel',
 			runId,
 			...toolTranscriptAssignment(runId, 'claim-tool-cancel'),
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			callId: 'c-cancel',
 			payload: { cmd: 'sleep 10' },
 			executionSecret
@@ -546,7 +547,7 @@ describe('numbered transcript parts', () => {
 	});
 
 	it.each([undefined, true])(
-		'records artifact work and results with legacy hidden=%s',
+		'records artifact work and results with stored legacy hidden=%s',
 		async (hidden) => {
 			const t = initConvexTest();
 			const { asUser, threadId } = await seedOwnedThread(t);
@@ -575,9 +576,10 @@ describe('numbered transcript parts', () => {
 				kind: 'list_artifacts',
 				callId: 'artifacts',
 				payload: {},
-				hidden,
 				executionSecret
 			});
+
+			await t.run((ctx) => ctx.db.patch('executorJobs', jobId, { hidden }));
 
 			expect(
 				await t.run((ctx) => ctx.db.query('threadTranscriptWorkSections').unique())
@@ -640,7 +642,7 @@ describe('numbered transcript parts', () => {
 		}
 	);
 
-	it('accepts sectionless artifact calls from released agents and persists their results', async () => {
+	it('reconciles sectionless historical artifact jobs and persists their results', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'legacy-artifact-secret';
@@ -657,14 +659,20 @@ describe('numbered transcript parts', () => {
 		const auth = { runId, claimId: 'legacy-artifact', executionSecret };
 		await asUser.mutation(api.agentRuntime.start, auth);
 
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			...auth,
-			...toolTranscriptAssignment(runId, auth.claimId),
-			sectionKey: undefined,
-			kind: 'list_artifacts',
-			callId: 'legacy-artifacts',
-			payload: {},
-			hidden: true
+		const { jobId } = await t.run(async (ctx) => {
+			const run = await ctx.db.get('runs', runId);
+
+			if (!run) throw new Error('Missing run fixture.');
+
+			return await beginExecutorJob(ctx, {
+				run,
+				claimId: auth.claimId,
+				...toolTranscriptAssignment(runId, auth.claimId),
+				sectionKey: undefined,
+				kind: 'list_artifacts',
+				callId: 'legacy-artifacts',
+				payload: {}
+			});
 		});
 
 		await asUser.mutation(api.executor.complete, { ...auth, jobId, result: { artifacts: [] } });

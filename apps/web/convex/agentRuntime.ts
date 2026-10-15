@@ -514,30 +514,6 @@ export const omitReasoningReplay = mutation({
 	}
 });
 
-export const recordContextUsage = mutation({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string(),
-		contextTokens: v.number(),
-		processedTokens: v.number()
-	},
-	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
-		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
-		await recordThreadUsageEvent(ctx, thread, {
-			eventId: usageEventId('usage', run._id, args.claimId, run.completionAttemptSeq),
-			contextTokens: args.contextTokens,
-			processedTokens: args.processedTokens
-		});
-
-		return true;
-	}
-});
-
 export const registerCompletionAttempt = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -864,12 +840,11 @@ export const beginToolJob = mutation({
 		kind: vCurrentExecutorJobKind,
 		callId: v.optional(v.string()),
 		toolInvocationId: v.string(),
-		sectionKey: v.optional(v.string()),
+		sectionKey: v.string(),
 		sectionOrdinal: v.number(),
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		payload: vCurrentExecutorJobPayload,
-		hidden: v.optional(v.boolean()),
 		executionSecret: v.string()
 	},
 	returns: v.object({
@@ -897,12 +872,7 @@ export const beginToolJob = mutation({
 				}
 			}
 
-			if (!args.sectionKey && args.hidden !== true) {
-				throw new Error('Tool job requires a section key.');
-			}
-
 			if (
-				args.sectionKey !== undefined &&
 				!isExpectedSectionKey(
 					run._id,
 					args.claimId,

@@ -3,6 +3,7 @@ import type { Infer } from 'convex/values';
 import { vAskQuestionResult } from '@convex/lib/validators';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { commandToolDisplayInput } from '@convex/lib/transcriptWrites';
+import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -235,9 +236,9 @@ describe('executor', () => {
 
 	it.each([
 		'exec_cmd',
-		'exec_command',
 		'control_cmd',
 		'poll_cmd',
+		'exec_command',
 		'control_command',
 		'poll_command',
 		'write_stdin'
@@ -274,15 +275,33 @@ describe('executor', () => {
 					? { sessionId: '1', action: 'write' }
 					: { sessionId: '1' };
 
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			...toolTranscriptAssignment(runId, claimId),
-			executionSecret,
-			kind,
-			callId: `call-${kind}`,
-			payload
-		});
+		const assignment = toolTranscriptAssignment(runId, claimId);
+
+		const { jobId } =
+			kind === 'exec_cmd' || kind === 'control_cmd' || kind === 'poll_cmd'
+				? await asUser.mutation(api.agentRuntime.beginToolJob, {
+						runId,
+						claimId,
+						...assignment,
+						executionSecret,
+						kind,
+						callId: `call-${kind}`,
+						payload
+					})
+				: await t.run(async (ctx) => {
+						const run = await ctx.db.get('runs', runId);
+
+						if (!run) throw new Error('Missing historical run fixture.');
+
+						return await beginExecutorJob(ctx, {
+							run,
+							claimId,
+							...assignment,
+							kind,
+							callId: `call-${kind}`,
+							payload
+						});
+					});
 
 		const result = {
 			command: 'echo ok',
@@ -345,9 +364,9 @@ describe('executor', () => {
 
 	it.each([
 		'exec_cmd',
-		'exec_command',
 		'control_cmd',
 		'poll_cmd',
+		'exec_command',
 		'control_command',
 		'poll_command',
 		'write_stdin'
@@ -375,14 +394,25 @@ describe('executor', () => {
 					? { sessionId: '1', action: 'terminate' as const }
 					: { sessionId: '1' };
 
-		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-			runId,
-			claimId,
-			...toolTranscriptAssignment(runId, claimId),
-			executionSecret,
-			kind,
-			payload
-		});
+		const assignment = toolTranscriptAssignment(runId, claimId);
+
+		const { jobId } =
+			kind === 'exec_cmd' || kind === 'control_cmd' || kind === 'poll_cmd'
+				? await asUser.mutation(api.agentRuntime.beginToolJob, {
+						runId,
+						claimId,
+						...assignment,
+						executionSecret,
+						kind,
+						payload
+					})
+				: await t.run(async (ctx) => {
+						const run = await ctx.db.get('runs', runId);
+
+						if (!run) throw new Error('Missing historical run fixture.');
+
+						return await beginExecutorJob(ctx, { run, claimId, ...assignment, kind, payload });
+					});
 
 		await expect(
 			asUser.mutation(api.executor.fail, {

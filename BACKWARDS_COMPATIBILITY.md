@@ -1,6 +1,6 @@
 # Backwards Compatibility
 
-We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. We also ship breaking changes to Convex schemas with migrations. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
+Clients older than v0.4.0 are unsupported. We keep compatibility for supported clients and their stored data, including direct upgrades from older local data directories. This file lists each remaining compatibility layer and its removal gate. Remove an entry when its removal PR merges.
 
 ## Transcript download compatibility
 
@@ -225,30 +225,6 @@ permanently for readable transcripts, not for execution; no data migration is
 needed. The shared Convex submission endpoint handles creation and follow-ups
 without interpreting or translating legacy tool schemas.
 
-### Legacy agent question expiry
-
-Released agents call `agentQuestions:create`, which keeps its original
-contract: an omitted `timeoutMs` defaults to 30 minutes and numeric values are
-clamped to [1s, 24h]. Current agents call `agentQuestions:createWithOptionalExpiry`,
-where omitted or `null` `timeoutMs` means no expiry and any finite non-negative
-integer is honored without a floor or cap; zero commits an already timed-out
-question atomically. Both endpoints share one implementation.
-
-Positive deadlines retain the existing scheduled-mutation semantics: an overdue
-pending question remains answerable until its timeout mutation commits. Zero
-lifetimes are terminal at creation, without a scheduler race.
-
-`agentQuestions.timeoutAt` and its snapshot field are now optional; questions
-without an expiry omit the field. The widening is the entire migration:
-existing rows, deadlines, and answers are untouched and no backfill rewrites
-deadlines. Stored `ask_question` job payloads now also accept `timeoutMs: null`
-alongside historical numbers; that permissive payload validator stays
-permanently because transcript history records the original calls.
-
-Remove `agentQuestions:create` and its clamping resolver after agents that call
-it are outside the supported upgrade window. `timeoutAt` stays optional as long
-as no-expiry questions exist.
-
 ### Historical command wait values
 
 Stored `exec_command` and `write_stdin` payloads keep accepting historical
@@ -274,20 +250,6 @@ transcript history records the original calls. Released agents ignore the new
 optional `cwd` in run context responses, and threads without a saved `cwd`
 start at the workspace root, so no stored-data rewrite is needed.
 
-### Retired command control tool
-
-New Rust agents advertise and execute `control_cmd` and `poll_cmd`
-instead of `write_stdin`. Convex still accepts `write_stdin` jobs from released
-agents, and the UI still renders their stored input, command results, session
-labels, and log previews. New agents do not dispatch historical `write_stdin`
-calls, so that name cannot bypass the new poll cooldown. Command sessions are
-server resources scoped to the user and thread. New commands save thread-local
-session records beside their logs; no stored transcript rewrite is needed.
-
-Remove `write_stdin` from the current Convex job-kind validator after agents
-that advertise it are outside the supported upgrade window. Keep acceptance
-in stored-history validators and historical UI rendering permanently.
-
 ### Durable command sessions
 
 New `exec_cmd` results always include a string `sessionId`, even when the command
@@ -305,11 +267,10 @@ shim or migration is introduced for data that was never stored.
 
 ### Renamed command and question tools
 
-Current agents advertise `exec_cmd`, `control_cmd`, `poll_cmd`, and
-`poll_question`, replacing `exec_command`, `control_command`, `poll_command`,
-and `await_question`. Convex accepts the former names for released agents and
-the UI renders both names. Current agents do not dispatch the former names.
-No stored-history rewrite is needed.
+Supported agents advertise `exec_cmd`, `control_cmd`, `poll_cmd`, and
+`poll_question`. The retired `exec_command`, `control_command`, `poll_command`,
+`write_stdin`, and `await_question` names remain accepted only in stored-history
+validators and UI rendering. Keep those historical shapes permanently.
 
 All five command/question tools default to 10-second execution waits. Positive
 poll waits clamp to 10–270 seconds, and pending zero-wait polls have a 10-second
@@ -317,45 +278,14 @@ cooldown. Current question results omit question text/options; only
 `ask_question` returns `questionId`. Result validators also retain historical
 question text/options and poll IDs for released agents and transcript history.
 
-Remove former names from the current job-kind validator once agents advertising
-them age out of the supported upgrade window. Keep stored-history acceptance
-and UI rendering permanently.
+### Terminal transcript reconciliation
 
-### Terminal transcript readiness
-
-Existing `runExecutionStates` omit `terminalJobsReconciled`. Before accepting a
-follow-up, the backend reconciles that legacy run using bounded transactions;
-`agentRuntime.prepareSubmission` reports not-ready while results are still
-pending, and run creation rejects with the `SPROCKET_SUBMISSION_WAITING`
-sentinel instead of staging the message; native code waits for readiness and
-retries creation. A waiting prompt lives only in the local process and
-disappears if it dies, so no server-side queue exists to recover.
-`migrations:runTerminalJobBackfill` proactively reconciles existing terminal
-runs and runs automatically from an hourly cron. It can also be triggered after
-deploying this schema; active runs gain the field when they
-finish. Remove the missing-field fallback only after the backfill has completed,
-pre-deployment active runs have finished, and released backends without this
-field are outside the rollback window.
+Reconciliation preserves existing settled-tool display output and historical
+section assignments when the executor job has no section metadata. Migrated job
+results must not rewrite conversation history.
 
 ### Project-owned artifacts
 
-Released agents may send `scope: 'thread'` to `artifacts.addArtifact` or include
-artifact scope/thread metadata in executor payloads and results. The add mutation
-accepts that optional argument but always stores and returns project scope.
-Released web/server clients may send `threadId` to artifact reads and sync;
-Convex validates the supplied thread's ownership and repository but authorizes
-artifact access by user and repository only. All current read responses normalize
-legacy rows to `scope: 'project'` and omit `threadId`. Remove these API arguments
-after clients sending them have aged out.
-
-The hourly `runProjectArtifactBackfillAutomatically` runner records completion
-under `project-artifacts-2026-10`, separately from earlier compatibility backfills.
-`promoteThreadArtifacts` rewrites stored thread artifacts to project scope and
-removes `threadId`, preserving IDs, registration IDs, content revisions and
-timestamps while advancing each project's registry revision. Add retries and
-successful edits/syncs also normalize legacy rows in place. Remove the stored
-thread-scope/threadId schema fields, reader projection, migration and its cron
-only after the migration finishes and production scans find no legacy rows.
 Historical executor tool payloads/results retain optional scope/thread metadata
 permanently because conversation history describes the original calls.
 
@@ -371,8 +301,8 @@ legacy `billingPeriodEnded` flag, and missing watermarks as the row's
 phase/deadline and projection revision, and `backfillSubscriptionExpiry`
 reschedules boundary checks fenced by the new revision. Both are idempotent.
 
-Removal gate: after `runSubscriptionAccessBackfill` and
-`runSubscriptionExpiryBackfill` have run to completion in production, the
+Removal gate: after production scans confirm every applicable subscription has
+the projection fields and access phase, and expiry checks are rescheduled, the
 legacy fallbacks in `lib/tiers.ts` and `subscriptionExpiry.ts` can be removed
 and the fields made required.
 
@@ -392,16 +322,6 @@ Removal gate: after released readers that key directly on `quotaResetAt` age
 out, migrate outstanding usage into generation-keyed buckets before changing
 the key preference. A subscription backfill alone does not migrate consumed
 allowance. Keep the timestamp field until that migration completes.
-
-#### Usage display time
-
-New clients pass `now` to `usage.getMyUsage` and refresh it each minute. The
-optional argument preserves released clients calling with `{}`; that legacy
-display-only path retains its wall-clock fallback until those clients age out.
-Entitlement and charge mutations never trust the browser's display time.
-
-Removal gate: after all supported clients pass `now`, require the argument and
-remove the query clock fallback.
 
 #### Checkout attempt retention
 
@@ -450,31 +370,13 @@ details are never logged.
 ### Retired cloud-held ChatGPT sign-in
 
 Cloud-held ChatGPT/Codex OAuth is retired in favor of local sign in with
-ChatGPT (SIWC). Released clients still call
-`providerCredentials.beginChatGptBrowserLogin`,
-`completeChatGptBrowserLogin`, `cancelChatGptBrowserLogin`,
-`beginChatGptDeviceLogin`, `pollChatGptDeviceLogin`,
-`cancelChatGptDeviceLogin`, `refreshChatGptModels`,
-`removeChatGptCredential`, and `issueChatGptCredential`. Each keeps its
-original argument validator and always rejects with guidance to connect
-locally with SIWC; no cloud sign-in, exchange, refresh, or credential
-issuance remains. `getMyConfiguration` keeps its shape but always reports
-`chatgpt: false` and `chatgptModelIds: null`, and `chatGptConnection`
-returns `null` for historical chatgpt runs after validating the run secret.
+ChatGPT (SIWC). `getMyConfiguration` keeps its shape for supported clients and
+reports `chatgpt: false` and `chatgptModelIds: null`.
 Stored `completionProvider: 'chatgpt'` rows on threads and runs keep their
 validator and stay readable; `completionProviderIds` retains `chatgpt`.
-
-The hourly `retireChatGptCloudCredentials` action deletes every
-`sprocket-chatgpt-` credential object from WorkOS Vault with bounded
-best-effort refresh-token revocation, deletes each
-`providerCredentialStates` row only after its Vault object deletion is
-confirmed (Vault failures abort the run, which the next cron retries), and
-then enumerates Vault for prefix-named objects without metadata rows. The
-`providerCredentialStates` table stays in the schema until the cleanup has
-emptied it and released clients have aged out; then drop the table, the
-retired ChatGPT stubs, `chatGptConnection`, and the retirement cron and
-helpers. Keep `chatgpt` in `completionProviderIds` and the run and thread
-validators. Local SIWC runs use the same provider ID as historical Codex runs.
+Keep `chatgpt` in `completionProviderIds` and the run and thread validators
+permanently: local SIWC runs use the same provider ID as historical Codex runs.
+The `getMyConfiguration` ChatGPT fields can go once no supported client reads them.
 
 ### Calendar usage windows
 
@@ -486,12 +388,9 @@ Remove the old rate-limiter read path once every deployment has been running cal
 
 ### Retired repository rekey calls
 
-Released local servers may still call `threads.rekeyRepository`, and deployments
-may have queued `artifacts.continueRekey` jobs. Both functions are no-ops. They
-must not move threads or artifacts when a checkout's remote changes. Remove
-both functions and their no-op compatibility tests after clients containing
-automatic repository rekeying have aged out and no queued continuation jobs
-remain.
+Deployments may have queued `artifacts.continueRekey` jobs. The function is a
+no-op and must not move artifacts when a checkout's remote changes. Remove it
+after a scheduler scan confirms no queued continuation jobs remain.
 
 ### Completion provider defaults
 
@@ -501,30 +400,7 @@ rows do not contain it. Convex and the Rust agent treat a missing value as
 migration has written `spikonado` to every older row. Then require the field and
 remove the defaults.
 
-### Standalone thread usage writes
-
-Released agents call `agentRuntime.recordContextUsage` after every provider
-completion. Current agents send usage with `finalizeCompletionCall` and
-`saveContextHandoff` so Convex stores usage only with durable transcript data
-or a successful handoff. Keep the standalone mutation until released agents
-using it have aged out, then remove the mutation and its direct tests.
-
 ### Descendant thread working counts
-
-Released hierarchy states may contain `ownActive`, `ownStatus`, and
-`descendantStatusCounts`, or lack `workingDescendantCount`. Readers fall back to
-the legacy running bucket. Live mutations reconcile stored contributions before
-changing source activity, populate the scalar, and remove the old fields.
-`backfillThreadHierarchyCounters` performs the same conversion in resumable batches.
-Its new identity and `thread-hierarchy-counters-2026-10` schedule ensure it runs
-even if the status backfill finished. Keep `backfillThreadHierarchyStatuses` as
-an alias until no batches scheduled before this deploy remain.
-
-Remove the legacy schema fields, reader/writer fallbacks, counter migration,
-`runThreadHierarchyStatusBackfill` runner, hourly
-`runThreadHierarchyStatusBackfillAutomatically` cron, and both hierarchy schedule
-rows only after completion and production checks confirm all states have the
-three counters and no contribution flags or status buckets.
 
 `threads.subtreeSummaryForThread` retains its original fields and adds
 `workingDescendantCount`. The legacy `descendantStatusCounts` response derives
@@ -534,36 +410,15 @@ Completed; queued descendants now also appear there. Remove this response shim
 and validator only after those clients are outside the supported upgrade window.
 Keep the total counter for expansion and inactive subagent labels.
 
-### Current Migrations
+### Completed migration records
 
-`convex/migrations.ts` ships backfills for legacy stored fields that current code never writes.
-The hourly cron runs `runLegacyCompatBackfillAutomatically`, which records completion in `migrationSchedules` under `legacy-compat-backfill-2026-10-command-inputs` once the migrations component reports every migration finished.
-In serial order: `removeTranscriptStateWorkThrough`,
-`removeMandateSetupUserEmail`, `normalizeScrapeUrlResults`,
-`backfillExecutorJobToolInvocationId`, `migrateToolPartJobIds` (resolves each
-part's job, so it runs after the job backfill),
-`backfillCommandToolInputs` (resolves retained jobs after invocation IDs migrate),
-`normalizeTranscriptCompletionTiming`, `stripStoredAttachmentImageUploadIds`,
-`removeSectionLinkedParts`, and
-`removeArtifactRegistryRekeyTargets`.
+The legacy-field, project-artifact, and hierarchy backfills completed in
+production. Their runners and crons are removed. `migrationSchedules` retains
+their completion records. Remove that table after an operator deletes or
+archives those records on each deployment. Cleanup verification is read-only.
 
-The command-input backfill uses a new schedule name so completed
-`legacy-compat-backfill-2026-10` schedules do not block it. Already-finished
-migrations remain finished in the migrations component. The old schedule rows
-may be deleted after the command-input backfill completes.
-
-After the runner reports completion and production scans confirm no row carries
-the old fields, a later PR may: drop `workThrough`, `linkedParts`, mandate
-`userEmail`, scrape `truncated` from the schema and validators; require
-`summary`/`images` on scrape results; require `toolInvocationId` on executor
-jobs and transcript tool parts and drop `jobId` and its pairing fallback;
-normalize or require stored completion timing; drop stored `imageUploadId`.
-That PR may also drop `artifactRegistries.rekeyTo`. The optional field remains
-in the schema until the migration has completed and production scans find no
-rows that use it. At that point, also remove `removeArtifactRegistryRekeyTargets`,
-its test, and its entry in the migration sequence. After every migration in
-the sequence meets its removal gate, remove the backfill cron, runner, tests,
-and the `migrationSchedules` row and table.
+Stored transcript fallbacks below have separate data gates. A completed
+migration can leave orphaned tool parts or unavailable command inputs unchanged.
 
 ### Outdated Executor jobs
 
@@ -602,9 +457,9 @@ components stay in place, stubbed against local state, for the local browser.
 #### Mandate setup email
 
 Mandate setup jobs written through v0.3.2 may contain `payload.userEmail`.
-`vMandateSetupPayload` accepts that field for stored jobs. Live calls carrying
-it fail argument validation. `removeMandateSetupUserEmail` drops the field from
-stored payloads.
+`vMandateSetupPayload` accepts that field for stored jobs. The completed
+backfill removed it from migrated payloads. Remove the stored field after a
+full production scan confirms no mandate setup payload carries it.
 
 Early `mandate_status` results may also omit `description`, so the stored result
 validator keeps that field optional. Current status calls always return it.
@@ -616,8 +471,10 @@ stays permanently.
 Stored `scrape_url` results may contain `truncated`. Results written before the
 Firecrawl integration may omit `summary` and `images`. The validators accept
 both shapes so executor history and local JSONL transcripts remain readable.
-`normalizeScrapeUrlResults` drops `truncated` and backfills the Firecrawl
-default summary with an empty image list.
+The completed result backfill dropped `truncated` and supplied missing summary
+and image fields. Remove these Convex variants after a full production scan
+confirms every retained result uses the current shape. Local readers stay
+permissive for historical JSONL.
 
 #### Historical skill results
 
@@ -650,19 +507,16 @@ New executor jobs omit `hidden`. The stored validator still accepts that field
 on historical rows; no migration rewrites old jobs or repairs old transcripts.
 Remove the stored field once those rows age out.
 
-`beginToolJob` accepts the old `hidden` argument only to allow sectionless calls
-from released agents. It does not store the flag or suppress transcript events.
-Sectionless jobs persist started and terminal parts without work membership;
-agents need an update to display those calls in work sections. Remove this
-argument and the sectionless write fallback once those agents age out.
+Historical sectionless jobs still need terminal transcript writes during
+reconciliation. Keep that internal fallback until those jobs are reconciled;
+new jobs require a section key.
 
 #### Attachment metadata and cache layout
 
 Historical prompt attachments may contain `imageUploadId`; current writes use
 only `storageId`. Convex readers accept the old field and remove it from
 projected responses. The local user-level blob directory fallback was removed;
-new uploads use only the thread directory. `stripStoredAttachmentImageUploadIds`
-removes the field from stored rows.
+new uploads use only the thread directory. The attachment backfill completed.
 
 Remove the Convex reader after old Convex rows have aged out or been rewritten.
 
@@ -670,8 +524,8 @@ Remove the Convex reader after old Convex rows have aged out or been rewritten.
 
 Historical completion items and local JSONL records may omit `startedAt` and
 `completedAt`. Readers preserve those records without inventing timing. Current
-Convex writes normalize missing values to `null`, and
-`normalizeTranscriptCompletionTiming` backfills `null` onto stored items.
+Convex writes normalize missing values to `null`. The timing backfill completed,
+but live completion inputs still allow missing provider timestamps.
 
 Historical completion bodies may omit `streamId`, and older local transcript
 parts may omit `createdAt`. Readers leave stream identity and tool-event timing
@@ -684,9 +538,10 @@ optional when current model providers do not supply a timestamp.
 Historical tool parts use `jobId` and source keys of the form `tool:<jobId>`.
 Current parts use `toolInvocationId` and phase-specific source keys. Readers use
 `jobId` as the fallback pairing key, and `executorJobs.toolInvocationId` remains
-optional for old jobs. `backfillExecutorJobToolInvocationId` fills the job
-field from the job document id, and `migrateToolPartJobIds` resolves each
-part's `jobId` through its job and then drops it.
+optional for old jobs. The completed backfills filled job IDs and resolved
+tool-part IDs through retained jobs. Orphaned parts were skipped. Remove these
+Convex fallbacks only after a full scan confirms every job and tool part has an
+invocation ID and no tool part carries `jobId`. Local history readers stay.
 
 #### Command result snapshots
 
@@ -721,15 +576,11 @@ IDs (or legacy job IDs), run, and tool kind match. Missing legacy input produces
 `null`, leaving the command session unknown rather than guessing from a call ID
 or error message.
 
-`backfillCommandToolInputs` fills only absent command inputs from retained
-`executorJobs`, pairing by run and tool invocation ID. It verifies the job's
-thread and tool kind and preserves existing inputs. The legacy runner runs it
-after invocation-ID backfills, which also translate legacy `jobId` references.
-Remove this migration after it completes and production scans confirm all
-recoverable command inputs were backfilled; retire the shared `jobId` pairing
-shim under the Tool invocation IDs gate above.
+The completed command-input backfill filled absent inputs from retained jobs,
+pairing by run, invocation ID, thread, and tool kind. Retire the shared `jobId`
+pairing shim under the Tool invocation IDs gate above.
 
-Until the migration finishes, command transcript retries hydrate an existing
+Until a full data scan confirms no recoverable gaps, command transcript retries hydrate an existing
 part's absent input using the existing append lookup. The candidate part must
 pass strict retry comparison before a patch is written; other mismatches still
 fail. Normal appends and already-hydrated retries perform no additional database

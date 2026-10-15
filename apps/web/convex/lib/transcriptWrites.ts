@@ -172,6 +172,7 @@ export async function recordToolTranscript(
 		userId: string;
 		runId: Id<'runs'>;
 		job: TranscriptToolJob;
+		preserveExistingDisplay?: boolean;
 	}
 ): Promise<void> {
 	if (!isSettledExecutorJobStatus(args.job.status)) {
@@ -179,15 +180,35 @@ export async function recordToolTranscript(
 	}
 
 	const toolInvocationId = toolInvocationIdForJob(args.job);
+	const sourceKey = toolSourceKey(toolInvocationId, 'finished');
+	const tool = settledToolBody(args.job);
+
+	let work: PersistedWork = args.job.sectionKey
+		? { ranges: [], sectionKey: args.job.sectionKey }
+		: { ranges: [] };
+
+	if (args.preserveExistingDisplay) {
+		const existing = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_sourceKey', (query) =>
+				query.eq('threadId', args.threadId).eq('sourceKey', sourceKey)
+			)
+			.unique();
+
+		// Stored display output can predate migrations of executor job results.
+		if (existing?.tool) tool.output = existing.tool.output;
+
+		if (existing && args.job.sectionKey === undefined) work = existing.work;
+	}
 
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
-		sourceKey: toolSourceKey(toolInvocationId, 'finished'),
+		sourceKey,
 		kind: 'tool',
 		runId: args.runId,
-		tool: settledToolBody(args.job),
-		work: args.job.sectionKey ? { ranges: [], sectionKey: args.job.sectionKey } : { ranges: [] }
+		tool,
+		work
 	});
 
 	if (!args.job.sectionKey || args.job.sectionOrdinal === undefined) return;

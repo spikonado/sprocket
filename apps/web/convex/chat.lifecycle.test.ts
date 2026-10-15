@@ -44,7 +44,7 @@ async function runWithQuestion(
 		payload: { question: 'Which target?', options: [{ id: 'a', label: 'Target A' }] }
 	});
 
-	const { questionId } = await asUser.mutation(api.agentQuestions.create, {
+	const { questionId } = await asUser.mutation(api.agentQuestions.createWithOptionalExpiry, {
 		runId,
 		claimId,
 		executionSecret,
@@ -118,7 +118,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			})
 		).rejects.toThrow(/no longer awaiting/);
 		await expect(
-			asUser.mutation(api.agentQuestions.create, {
+			asUser.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,
 				claimId,
 				executionSecret,
@@ -274,7 +274,7 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 				claimId: 'claim-cancel',
 				runId: created.runId,
 				...toolTranscriptAssignment(created.runId, 'claim-cancel'),
-				kind: 'exec_command',
+				kind: 'exec_cmd',
 				payload: { cmd: 'true' },
 				executionSecret
 			})

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import {
+	getRunExecutionState,
+	getRunWithExecution,
+	patchRunExecution
+} from '@convex/lib/runExecution';
 import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
@@ -563,6 +567,8 @@ describe('agentRuntime.insertGatewayRun', () => {
 
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', first.runId, { status: 'completed', completedAt: Date.now() });
+			const state = await getRunExecutionState(ctx.db, first.runId);
+			await ctx.db.patch('runExecutionStates', state!._id, { terminalJobsReconciled: true });
 		});
 
 		const second = await insertQueuedRun(t, asUser, {

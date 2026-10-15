@@ -122,7 +122,7 @@ describe('gateway quota', () => {
 			executionSecret
 		});
 
-		const before = await asUser.query(api.usage.getMyUsage, {});
+		const before = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
 
 		const beforeWeekly = before.meters
 			.find((meter) => meter.id === 'modelUsage')
@@ -138,7 +138,7 @@ describe('gateway quota', () => {
 
 		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
 		expect(quota).toMatchObject({ userId: subject, exhausted: false });
-		const after = await asUser.query(api.usage.getMyUsage, {});
+		const after = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
 
 		const afterWeekly = after.meters
 			.find((meter) => meter.id === 'modelUsage')

@@ -81,8 +81,6 @@ export const MAX_OPTION_ID_CHARS = 20;
 
 export const MAX_OPTION_LABEL_CHARS = 200;
 
-export const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
-
 export const QUESTION_TIMEOUT_CHECKPOINT_MS = 365 * 24 * 60 * 60 * 1000;
 
 export function validateQuestionTimeoutMs(

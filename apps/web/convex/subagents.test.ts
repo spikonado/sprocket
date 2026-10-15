@@ -7,6 +7,7 @@ import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
+import { getRunExecutionState } from '@convex/lib/runExecution';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -435,7 +436,7 @@ describe('subagents.createOrSend', () => {
 			executionSecret: childRun.executionSecret
 		});
 
-		await t.mutation(api.agentQuestions.create, {
+		await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId: child.runId,
 			claimId: childRun.claimId,
 			question: 'Need an answer?',
@@ -1436,7 +1437,7 @@ describe('subagents.control', () => {
 				payload: { question: 'Continue?', options: [{ id: 'yes', label: 'Yes' }] }
 			});
 
-			const descendantQuestion = await t.mutation(api.agentQuestions.create, {
+			const descendantQuestion = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId: grandchild.runId,
 				claimId: grandchildRun.claimId,
 				executionSecret: grandchildRun.executionSecret,
@@ -1587,6 +1588,8 @@ describe('subagents.control', () => {
 
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', child.runId, { status: 'cancelled' });
+			const state = await getRunExecutionState(ctx.db, child.runId);
+			await ctx.db.patch('runExecutionStates', state!._id, { terminalJobsReconciled: true });
 			await ctx.db.patch('threadRecords', child.threadId, { status: 'cancelled' });
 		});
 		await t.mutation(
@@ -1629,7 +1632,7 @@ describe('subagents.control delegated answer retries', () => {
 			executionSecret: childRun.executionSecret
 		});
 
-		const question = await t.mutation(api.agentQuestions.create, {
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId: child.runId,
 			claimId: childRun.claimId,
 			question: 'Which region?',
@@ -1901,7 +1904,7 @@ describe('subagents.control delegated answer retries', () => {
 			runId: caller.runId,
 			claimId: caller.claimId,
 			...toolTranscriptAssignment(caller.runId, caller.claimId, 12),
-			kind: 'exec_command',
+			kind: 'exec_cmd',
 			payload: { cmd: 'echo hi' },
 			executionSecret: caller.executionSecret
 		});

@@ -11,34 +11,6 @@ crons.interval(
 );
 
 crons.interval(
-	'backfill legacy stored fields',
-	{ hours: 1 },
-	internal.migrations.runLegacyCompatBackfillAutomatically,
-	{}
-);
-
-crons.interval(
-	'backfill terminal transcript readiness',
-	{ hours: 1 },
-	internal.migrations.runTerminalJobBackfill,
-	{}
-);
-
-crons.interval(
-	'promote legacy thread artifacts to projects',
-	{ hours: 1 },
-	internal.migrations.runProjectArtifactBackfillAutomatically,
-	{}
-);
-
-crons.interval(
-	'backfill descendant thread status counts',
-	{ hours: 1 },
-	internal.migrations.runThreadHierarchyStatusBackfillAutomatically,
-	{}
-);
-
-crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans
@@ -62,13 +34,6 @@ crons.interval(
 	{ hours: 1 },
 	internal.storageCleanup.cleanupUnregistered,
 	{}
-);
-
-crons.interval(
-	'retire cloud-held ChatGPT credentials',
-	{ hours: 1 },
-	internal.providerCredentials.retireChatGptCloudCredentials,
-	{ cursor: null, vaultAfter: null, tableScanDone: false }
 );
 
 crons.interval(

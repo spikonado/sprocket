@@ -131,7 +131,11 @@ export async function seedThreadRecord(
 			completedAt: Date.now()
 		});
 
-		await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+		await ctx.db.insert('runExecutionStates', {
+			runId,
+			completionAttemptSeq: 0,
+			terminalJobsReconciled: true
+		});
 
 		return threadId;
 	});

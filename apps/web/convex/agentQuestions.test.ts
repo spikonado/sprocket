@@ -57,7 +57,7 @@ describe('agentQuestions', () => {
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
 		await expect(
-			t.mutation(api.agentQuestions.create, {
+			t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,
 				claimId,
 				question: 'x'.repeat(2001),
@@ -66,7 +66,7 @@ describe('agentQuestions', () => {
 			})
 		).rejects.toThrow(/2000/);
 
-		const first = await t.mutation(api.agentQuestions.create, {
+		const first = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'First question?',
@@ -86,7 +86,7 @@ describe('agentQuestions', () => {
 
 		expect(first.timeoutAt).toBeGreaterThan(Date.now());
 
-		const second = await t.mutation(api.agentQuestions.create, {
+		const second = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Second question?',
@@ -135,7 +135,7 @@ describe('agentQuestions', () => {
 			)?.questionId
 		).toBe(second.questionId);
 
-		const timed = await t.mutation(api.agentQuestions.create, {
+		const timed = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Will time out?',
@@ -449,33 +449,6 @@ describe('agentQuestions', () => {
 		});
 	});
 
-	it('keeps the legacy default deadline of 30 minutes on create', async () => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date('2026-08-01T10:00:00.000Z'));
-		const t = initConvexTest();
-		const { threadId } = await seedOwnedThread(t, 'user_alice');
-		const { executionSecret, claimId, runId } = await startRun(t, threadId);
-
-		const created = await t.mutation(api.agentQuestions.create, {
-			runId,
-			claimId,
-			question: 'Default expiry?',
-			options: [{ id: 'yes', label: 'Yes' }],
-			executionSecret
-		});
-
-		expect(created.timeoutAt).toBe(Date.now() + 30 * 60 * 1000);
-
-		vi.setSystemTime(Date.now() + 30 * 60 * 1000);
-		await t.mutation(internal.agentQuestions.timeout, { questionId: created.questionId });
-
-		expect((await t.run((ctx) => ctx.db.get('agentQuestions', created.questionId)))?.status).toBe(
-			'timedOut'
-		);
-
-		vi.useRealTimers();
-	});
-
 	it('serves repeated executor reads of an answered question durably', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-08-01T10:00:00.000Z'));
@@ -483,7 +456,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const created = await t.mutation(api.agentQuestions.create, {
+		const created = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Durable answer?',
@@ -561,7 +534,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const question = await t.mutation(api.agentQuestions.create, {
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Which database?',
@@ -597,7 +570,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const consumed = await t.mutation(api.agentQuestions.create, {
+		const consumed = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Which database?',
@@ -611,7 +584,7 @@ describe('agentQuestions', () => {
 			optionId: 'postgres'
 		});
 
-		const pending = await t.mutation(api.agentQuestions.create, {
+		const pending = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Where should I deploy it?',
@@ -645,7 +618,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const first = await t.mutation(api.agentQuestions.create, {
+		const first = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'First open question?',
@@ -653,7 +626,7 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		const second = await t.mutation(api.agentQuestions.create, {
+		const second = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Second open question?',
@@ -719,7 +692,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const overdue = await t.mutation(api.agentQuestions.create, {
+		const overdue = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Overdue?',
@@ -728,7 +701,7 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		const next = await t.mutation(api.agentQuestions.create, {
+		const next = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Still live?',
@@ -780,7 +753,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const question = await t.mutation(api.agentQuestions.create, {
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Choose?',
@@ -815,7 +788,7 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const question = await t.mutation(api.agentQuestions.create, {
+		const question = await t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 			runId,
 			claimId,
 			question: 'Still open?',
@@ -849,7 +822,7 @@ describe('agentQuestions', () => {
 		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
 
 		await expect(
-			t.mutation(api.agentQuestions.create, {
+			t.mutation(api.agentQuestions.createWithOptionalExpiry, {
 				runId,
 				claimId,
 				question: 'Too late?',

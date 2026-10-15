@@ -5,15 +5,6 @@ import type { Infer } from 'convex/values';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 
-function workingDescendantCount(
-	state: Pick<
-		Doc<'threadHierarchyStates'>,
-		'workingDescendantCount' | 'descendantStatusCounts'
-	> | null
-): number {
-	return state?.workingDescendantCount ?? state?.descendantStatusCounts?.running ?? 0;
-}
-
 export async function threadOwnActivity(
 	db: DatabaseReader,
 	threadId: Id<'threadRecords'>
@@ -148,7 +139,7 @@ async function applyAncestorCountChanges(
 		const state = await ensureHierarchyState(ctx, ancestor._id);
 		const descendantCount = state.descendantCount + changes.total;
 		const activeDescendantCount = state.activeDescendantCount + changes.active;
-		const workingCount = workingDescendantCount(state) + changes.working;
+		const workingCount = state.workingDescendantCount + changes.working;
 
 		if (descendantCount < 0 || activeDescendantCount < 0 || workingCount < 0) {
 			throw new Error('Invalid thread activity aggregate.');
@@ -157,8 +148,7 @@ async function applyAncestorCountChanges(
 		await ctx.db.patch('threadHierarchyStates', state._id, {
 			descendantCount,
 			activeDescendantCount,
-			workingDescendantCount: workingCount,
-			descendantStatusCounts: undefined
+			workingDescendantCount: workingCount
 		});
 	}
 
@@ -191,26 +181,6 @@ export async function captureThreadActivityBeforeChange(
 		return before;
 	}
 
-	// Convert released contribution markers before applying a live transition.
-	if (
-		state.ownActive !== undefined ||
-		state.ownStatus !== undefined ||
-		state.descendantStatusCounts !== undefined ||
-		state.workingDescendantCount === undefined
-	) {
-		await applyAncestorCountChanges(ctx, thread, {
-			total: 0,
-			active: Number(before.active) - Number(state.ownActive ?? false),
-			working: Number(thread.status === 'running') - Number(state.ownStatus === 'running')
-		});
-		await ctx.db.patch('threadHierarchyStates', state._id, {
-			workingDescendantCount: workingDescendantCount(state),
-			ownActive: undefined,
-			ownStatus: undefined,
-			descendantStatusCounts: undefined
-		});
-	}
-
 	return before;
 }
 
@@ -234,7 +204,7 @@ export async function updateThreadHierarchyAfterChange(
 export async function subtreeSummary(db: DatabaseReader, thread: Doc<'threadRecords'>) {
 	const state = await hierarchyState(db, thread._id);
 	const descendantsActive = (state?.activeDescendantCount ?? 0) > 0;
-	const workingCount = workingDescendantCount(state);
+	const workingCount = state?.workingDescendantCount ?? 0;
 
 	return {
 		descendantCount: state?.descendantCount ?? 0,
