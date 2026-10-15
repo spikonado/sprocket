@@ -31,21 +31,24 @@ fn only_truncation_consumes_the_saved_input() {
 
 #[test]
 fn retries_one_gateway_stream_timeout_per_run() {
-    let timeout = ProviderError::from_provider_body(
-        r#"{"type":"response.failed","response":{"status":"failed","error":{"code":"gateway_stream_timeout","message":"Stream exceeded maximum duration before function timeout"}}}"#,
-    );
-    let mut recovery = StreamRecovery::default();
-    *recovery.input.lock().unwrap() = Some((vec![], Message::user("continue")));
-    assert!(
-        recovery
-            .resume(&PromptError::Report(timeout.report()))
-            .is_some()
-    );
-    *recovery.input.lock().unwrap() = Some((vec![], Message::user("continue")));
-    assert!(recovery.resume(&PromptError::Provider(timeout)).is_none());
-    assert!(
-        recovery
-            .resume(&PromptError::Provider(ProviderError::Truncated))
-            .is_some()
-    );
+    let timeout = || {
+        ProviderError::from_provider_body(
+            r#"{"type":"response.failed","response":{"status":"failed","error":{"code":"gateway_stream_timeout","message":"Stream exceeded maximum duration before function timeout"}}}"#,
+        )
+    };
+    for error in [
+        PromptError::Provider(timeout()),
+        PromptError::Report(timeout().report()),
+    ] {
+        let mut recovery = StreamRecovery::default();
+        *recovery.input.lock().unwrap() = Some((vec![], Message::user("continue")));
+        assert!(recovery.resume(&error).is_some());
+        *recovery.input.lock().unwrap() = Some((vec![], Message::user("continue")));
+        assert!(recovery.resume(&error).is_none());
+        assert!(
+            recovery
+                .resume(&PromptError::Provider(ProviderError::Truncated))
+                .is_some()
+        );
+    }
 }
