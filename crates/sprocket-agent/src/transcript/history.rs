@@ -68,6 +68,29 @@ pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) ->
         .any(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Completion)
 }
 
+/// The prompt a run should answer, kept out of its history. A continuation
+/// whose earlier runs ended without output re-answers the last user prompt
+/// instead of being told to "continue" work that never started.
+pub(crate) fn pending_prompt_part<'a>(
+    state: &TranscriptState,
+    parts: &'a [TranscriptPart],
+    run_id: &str,
+) -> Option<&'a TranscriptPart> {
+    if current_run_has_finished_turns(parts, run_id) {
+        return None;
+    }
+    parts
+        .iter()
+        .find(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Prompt)
+        .or_else(|| {
+            parts
+                .iter()
+                .filter(|part| part.number >= state.history_from_number)
+                .max_by_key(|part| part.number)
+                .filter(|part| part.kind == TranscriptPartKind::Prompt)
+        })
+}
+
 fn completion_item_call_id(item: &serde_json::Value) -> Option<&str> {
     if item.get("type").and_then(|value| value.as_str()) != Some("tool-call") {
         return None;
@@ -160,8 +183,9 @@ pub fn agent_history_from_parts(
     parts: &[TranscriptPart],
     skip_run_id: Option<&str>,
 ) -> Vec<AgentHistoryMessage> {
-    let include_current_prompt =
-        skip_run_id.is_some_and(|run_id| current_run_has_finished_turns(parts, run_id));
+    let pending_prompt_number = skip_run_id
+        .and_then(|run_id| pending_prompt_part(state, parts, run_id))
+        .map(|part| part.number);
     let protocol_call_ids = completion_call_ids(parts);
     let mut history = Vec::new();
     if let Some(summary) = state
@@ -187,10 +211,7 @@ pub fn agent_history_from_parts(
         if part.number < state.history_from_number {
             continue;
         }
-        if skip_run_id.is_some_and(|run_id| part.run_id == run_id)
-            && part.kind == TranscriptPartKind::Prompt
-            && !include_current_prompt
-        {
+        if pending_prompt_number == Some(part.number) {
             continue;
         }
         match part.kind {
