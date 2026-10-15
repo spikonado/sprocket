@@ -43,7 +43,6 @@ import {
 	type vReasoningEffort
 } from '@convex/lib/validators';
 import { withRunExecution, getRunExecutionState } from '@convex/lib/runExecution';
-import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -107,16 +106,7 @@ export async function submissionReadiness(
 }
 
 async function terminalJobsReady(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
-	let execution = await getRunExecutionState(ctx.db, run._id);
-
-	if (execution?.terminalJobsReconciled === undefined) {
-		await reconcileTerminalRun(ctx, run, {
-			completedAt: run.completedAt ?? Date.now(),
-			jobCursor: -1,
-			questionCursor: -1
-		});
-		execution = await getRunExecutionState(ctx.db, run._id);
-	}
+	const execution = await getRunExecutionState(ctx.db, run._id);
 
 	return execution?.terminalJobsReconciled === true;
 }

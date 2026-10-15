@@ -32,7 +32,11 @@ async function historicalRun(
 			startedAt: Date.now()
 		});
 
-		await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
+		await ctx.db.insert('runExecutionStates', {
+			runId,
+			completionAttemptSeq: 0,
+			terminalJobsReconciled: true
+		});
 
 		if (completion !== 'none') {
 			await appendTranscriptPart(ctx, {

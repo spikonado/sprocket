@@ -7,6 +7,7 @@ import { appendTranscriptPart } from '@convex/lib/transcriptParts';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
+import { getRunExecutionState } from '@convex/lib/runExecution';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -1587,6 +1588,8 @@ describe('subagents.control', () => {
 
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', child.runId, { status: 'cancelled' });
+			const state = await getRunExecutionState(ctx.db, child.runId);
+			await ctx.db.patch('runExecutionStates', state!._id, { terminalJobsReconciled: true });
 			await ctx.db.patch('threadRecords', child.threadId, { status: 'cancelled' });
 		});
 		await t.mutation(

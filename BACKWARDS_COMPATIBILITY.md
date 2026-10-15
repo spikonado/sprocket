@@ -278,18 +278,8 @@ cooldown. Current question results omit question text/options; only
 `ask_question` returns `questionId`. Result validators also retain historical
 question text/options and poll IDs for released agents and transcript history.
 
-### Terminal transcript readiness
+### Terminal transcript reconciliation
 
-Existing `runExecutionStates` omit `terminalJobsReconciled`. Before accepting a
-follow-up, the backend reconciles that legacy run using bounded transactions;
-`agentRuntime.prepareSubmission` reports not-ready while results are still
-pending, and run creation rejects with the `SPROCKET_SUBMISSION_WAITING`
-sentinel instead of staging the message; native code waits for readiness and
-retries creation. A waiting prompt lives only in the local process and
-disappears if it dies, so no server-side queue exists to recover.
-The terminal backfill is complete; active runs gain the field when they finish.
-Remove the missing-field fallback only after pre-deployment active runs have
-finished and released backends without this field are outside the rollback window.
 Reconciliation preserves existing settled-tool display output and historical
 section assignments when the executor job has no section metadata. Migrated job
 results must not rewrite conversation history.
