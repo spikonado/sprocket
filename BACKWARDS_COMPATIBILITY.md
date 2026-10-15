@@ -22,6 +22,14 @@ once typescript-eslint and the other compiler API consumers support TypeScript
 
 ## Provider SDK backwards compatibility
 
+### Explicit gateway prompt caching
+
+Gateway requests now send `caching: "auto"`. Deploy the ai-gateway version that
+accepts this field before releasing this client. That gateway also enables
+automatic caching for released clients that omit the field. Direct OpenAI and
+ChatGPT requests keep provider-native implicit caching and do not send this
+gateway-only field. Stored data is unchanged.
+
 ### Provider and model-vendor context handoffs
 
 Run context responses optionally include `providerHandoff` with the previous

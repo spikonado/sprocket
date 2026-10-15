@@ -18,6 +18,30 @@ fn request() -> CompletionRequest {
         .messages([rig::completion::Message::user("hello")])
 }
 
+#[test]
+fn every_gateway_model_requests_automatic_caching_in_both_modes() {
+    for model in ["gpt-6.1-sol", "gpt-6-luna", "opus-5.5"] {
+        for mode in [Mode::Unary, Mode::Streaming] {
+            let wire = GatewayResponses(DeveloperResponses(
+                rig::providers::openai::responses_api::wire::Responses::new(
+                    OpenAIConfig::new("test"),
+                    model,
+                ),
+            ));
+            let mut request = request();
+            request.additional_params = Some(json!({ "service_tier": "fast" }));
+            let encoded = wire.encode(request, mode).unwrap();
+            let rig::wire::Body::Bytes(bytes) = encoded.request.into_body() else {
+                panic!("Responses uses JSON");
+            };
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["model"], model);
+            assert_eq!(body["caching"], "auto");
+            assert_eq!(body["service_tier"], "fast");
+        }
+    }
+}
+
 #[tokio::test]
 async fn completion_and_stream_use_the_refreshed_credential() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -44,6 +68,7 @@ async fn completion_and_stream_use_the_refreshed_credential() {
             let mut body = vec![0; content_length];
             socket.read_exact(&mut body).await.unwrap();
             let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(request["caching"], "auto");
             assert_eq!(request["instructions"], "Base instructions.");
             assert_eq!(request["input"][0]["role"], "user");
             assert_eq!(request["input"][1]["role"], "developer");

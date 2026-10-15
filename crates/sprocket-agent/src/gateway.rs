@@ -2,12 +2,15 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rig::completion::CompletionRequest;
+use rig::error::EncodeError;
 use rig::http_client::{
     self, DynHttpClient, HeaderMap, HttpMiddleware, Method, ReqwestClient, Uri, bearer_auth_header,
 };
 use rig::operation::Completion;
 use rig::providers::openai::OpenAIConfig;
 use rig::wasm_compat::WasmBoxedFuture;
+use rig::wire::{Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -117,7 +120,40 @@ impl GatewayClient {
             .with_instructions(instructions)
             .connect(self.http.clone())
             .responses(model);
-        Model::new(DeveloperResponses(model.wire), model.transport).erase()
+        Model::new(
+            GatewayResponses(DeveloperResponses(model.wire)),
+            model.transport,
+        )
+        .erase()
+    }
+}
+
+#[derive(Clone)]
+struct GatewayResponses(DeveloperResponses);
+
+impl Wire for GatewayResponses {
+    type Op = Completion;
+    type Payload = Encoded;
+    type Frame = WireFrame;
+    type Decoder<'id> = <DeveloperResponses as Wire>::Decoder<'id>;
+    type Reassembler = <DeveloperResponses as Wire>::Reassembler;
+
+    fn describe(&self) -> Descriptor<'_> {
+        self.0.describe()
+    }
+
+    fn encode(&self, mut request: CompletionRequest, mode: Mode) -> Result<Encoded, EncodeError> {
+        let params = request
+            .additional_params
+            .get_or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| EncodeError::request("Responses parameters must be a JSON object."))?;
+        params.insert("caching".to_string(), serde_json::json!("auto"));
+        self.0.encode(request, mode)
+    }
+
+    fn decoder<'id>(&self) -> Self::Decoder<'id> {
+        self.0.decoder()
     }
 }
 
