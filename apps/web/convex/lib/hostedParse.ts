@@ -48,7 +48,7 @@ export const vHostedParseClientStatus = v.union(
 
 export const FIRECRAWL_PARSE_OPTIONS = {
 	formats: ['markdown'],
-	parsers: [{ type: 'pdf', mode: 'auto' }],
+	parsers: [{ type: 'pdf', mode: 'auto', pageMarkers: true }],
 	timeout: FIRECRAWL_PARSE_TIMEOUT_MS
 } as const;
 

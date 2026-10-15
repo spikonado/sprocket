@@ -8,14 +8,19 @@ use rig::tool::{ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sprocket_workspace::WorkspaceCancellation;
 
 use super::context::{AgentToolContext, tool_error, tool_failure};
+use super::hosted_parse::HostedParseContext;
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::parse_file::{
-    MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, persist_image_bytes, replay_image_tool_output,
+    LocalConversionFailed, MAX_PARSE_FILE_IMAGE_BYTES, convert_document, decode_image_info,
+    persist_image_bytes, replay_image_tool_output,
 };
+use super::scrape_files::MAX_SCRAPE_BYTES;
 
 pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
+const DOCUMENT_SNIFF_BYTES: usize = 1024;
 
 #[derive(Clone)]
 pub(crate) struct ScrapeUrlTool(pub(super) AgentToolContext);
@@ -72,6 +77,31 @@ struct ScreenshotTransport {
     screenshot_url: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawDocumentTransport {
+    url: String,
+    document_url: String,
+}
+
+#[derive(Debug)]
+enum LocalResource {
+    Image(serde_json::Value),
+    Document {
+        url: reqwest::Url,
+        bytes: Vec<u8>,
+    },
+    /// Looks like a document, but the local download failed.
+    UnreadableDocument,
+    Page,
+}
+
+enum Probe {
+    Image(reqwest::Url),
+    Document(reqwest::Url),
+    Page,
+}
+
 impl rig::tool::Tool for WebSearchTool {
     const NAME: &'static str = "web_search";
     type Error = ToolExecutionError;
@@ -126,31 +156,44 @@ impl rig::tool::Tool for ScrapeUrlTool {
             Self::NAME,
             payload,
             |cancellation, job_id| async move {
+                let hosted = HostedParseContext {
+                    runtime: &self.0.runtime,
+                    run_id: &self.0.run_id,
+                    claim_id: &self.0.claim_id,
+                    job_id: &job_id,
+                };
                 if let Some(raw_url) = super::github_url::github_raw_url(&url) {
-                    let result = super::github_url::fetch_github_file(raw_url, self.0.supports_images, &cache_dir, &cancellation).await.map_err(tool_error)?;
+                    let result = super::github_url::fetch_github_file(raw_url, self.0.supports_images, &cache_dir, Some(&hosted), &cancellation).await.map_err(tool_error)?;
                     return if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
                         Ok(result)
                     } else {
                         super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
                     };
                 }
-                let image = tokio::select! {
+                let local = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
-                    result = fetch_web_image(url.clone(), self.0.supports_images, &cache_dir) => result.map_err(tool_error)?,
+                    result = fetch_local_resource(url.clone(), self.0.supports_images, &cache_dir) => result.map_err(tool_error)?,
                 };
-                if let Some(metadata) = image {
-                    return Ok(metadata);
+                let document = match local {
+                    LocalResource::Image(metadata) => return Ok(metadata),
+                    LocalResource::Document { url, bytes } => Some((url, bytes)),
+                    LocalResource::UnreadableDocument => fetch_raw_document(&self.0, &job_id, &cancellation).await?,
+                    LocalResource::Page => {
+                        if let Some(result) = super::markdown_url::try_markdown_url(url, &cancellation).await.map_err(tool_error)? {
+                            return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
+                        }
+                        None
+                    }
+                };
+                if let Some((document_url, bytes)) = document {
+                    match convert_web_document(document_url, bytes, &hosted, &cancellation).await {
+                        Ok(result) => return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error),
+                        Err(error) if error.is::<LocalConversionFailed>() => {}
+                        Err(error) => return Err(tool_error(error)),
+                    }
                 }
-                if let Some(result) = super::markdown_url::try_markdown_url(url, &cancellation).await.map_err(tool_error)? {
-                    return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
-                }
-                let action_args = BTreeMap::from([
-                    ("runId".to_string(), self.0.run_id.clone().into()),
-                    ("claimId".to_string(), self.0.claim_id.clone().into()),
-                    ("jobId".to_string(), job_id.into()),
-                ]);
-                let result = super::firecrawl::run(&self.0.runtime, cancellation.clone(), action_args, "scrape").await?;
+                let result = super::firecrawl::run(&self.0.runtime, cancellation.clone(), firecrawl_args(&self.0, &job_id), "scrape").await?;
                 super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
@@ -196,15 +239,10 @@ impl rig::tool::Tool for ScreenshotUrlTool {
             Self::NAME,
             payload,
             |cancellation, job_id| async move {
-                let action_args = BTreeMap::from([
-                    ("runId".to_string(), self.0.run_id.clone().into()),
-                    ("claimId".to_string(), self.0.claim_id.clone().into()),
-                    ("jobId".to_string(), job_id.into()),
-                ]);
                 let result = super::firecrawl::run(
                     &self.0.runtime,
                     cancellation.clone(),
-                    action_args,
+                    firecrawl_args(&self.0, &job_id),
                     "screenshot",
                 )
                 .await?;
@@ -218,6 +256,66 @@ impl rig::tool::Tool for ScreenshotUrlTool {
         .await?;
         replay_image_tool_output(&result).await.map_err(tool_error)
     }
+}
+
+fn firecrawl_args(context: &AgentToolContext, job_id: &str) -> BTreeMap<String, convex::Value> {
+    BTreeMap::from([
+        ("runId".to_string(), context.run_id.clone().into()),
+        ("claimId".to_string(), context.claim_id.clone().into()),
+        ("jobId".to_string(), job_id.into()),
+    ])
+}
+
+/// Fetches a document Firecrawl can reach but we cannot, for one flat
+/// credit instead of Firecrawl's per-page document parsing.
+async fn fetch_raw_document(
+    context: &AgentToolContext,
+    job_id: &str,
+    cancellation: &WorkspaceCancellation,
+) -> Result<Option<(reqwest::Url, Vec<u8>)>, ToolExecutionError> {
+    let mut args = firecrawl_args(context, job_id);
+    args.insert("rawDocument".into(), true.into());
+    let result =
+        super::firecrawl::run(&context.runtime, cancellation.clone(), args, "scrape").await;
+    if cancellation.is_cancelled() {
+        return Err(super::context::cancelled_error());
+    }
+    let Ok(result) = result else {
+        return Ok(None);
+    };
+    let download = async {
+        let transport: RawDocumentTransport = serde_json::from_value(result)?;
+        let page_url = validate_web_url(&transport.url)?;
+        let document_url = validate_web_url(&transport.document_url)?;
+        let (_, bytes) =
+            super::github_url::download_file(&scrape_client()?, document_url, MAX_SCRAPE_BYTES)
+                .await?;
+        Ok::<_, anyhow::Error>((page_url, bytes))
+    };
+    let downloaded = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
+        result = download => result,
+    };
+    Ok(downloaded
+        .ok()
+        .filter(|(_, bytes)| anydoc::Format::from_bytes(bytes).is_some()))
+}
+
+async fn convert_web_document(
+    url: reqwest::Url,
+    bytes: Vec<u8>,
+    hosted: &HostedParseContext<'_>,
+    cancellation: &WorkspaceCancellation,
+) -> anyhow::Result<serde_json::Value> {
+    let name = super::github_url::url_file_name(&url);
+    let (markdown, _) = convert_document(bytes, name, Some(hosted), cancellation).await?;
+    Ok(json!({
+        "url": url.as_str(),
+        "markdown": markdown,
+        "summary": "Summary not generated; document was parsed locally.",
+        "images": [],
+    }))
 }
 
 async fn fetch_screenshot(
@@ -242,25 +340,38 @@ fn validate_web_url(value: &str) -> anyhow::Result<reqwest::Url> {
     Ok(url)
 }
 
-async fn fetch_web_image(
+async fn fetch_local_resource(
     url: reqwest::Url,
     supports_images: bool,
     cache_dir: &Path,
-) -> anyhow::Result<Option<serde_json::Value>> {
-    let client = image_client()?;
-    let Some(image_url) = discover_image_url(&client, url).await else {
-        return Ok(None);
-    };
-    anyhow::ensure!(supports_images, "The selected model cannot view images.");
-    download_image(&client, image_url, cache_dir)
-        .await
-        .map(Some)
+) -> anyhow::Result<LocalResource> {
+    let client = scrape_client()?;
+    match probe(&client, url).await {
+        Probe::Image(image_url) => {
+            anyhow::ensure!(supports_images, "The selected model cannot view images.");
+            download_image(&client, image_url, cache_dir)
+                .await
+                .map(LocalResource::Image)
+        }
+        Probe::Document(document_url) => Ok(download_document(&client, document_url).await),
+        Probe::Page => Ok(LocalResource::Page),
+    }
 }
 
 fn image_client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+}
+
+fn scrape_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(300))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
 }
@@ -302,32 +413,114 @@ pub(super) async fn persist_web_image(
     }))
 }
 
-async fn discover_image_url(client: &reqwest::Client, url: reqwest::Url) -> Option<reqwest::Url> {
+async fn probe(client: &reqwest::Client, url: reqwest::Url) -> Probe {
     // HEAD avoids consuming a single-use page before the cloud scraper's GET.
     if let Ok(response) = client.head(url.clone()).send().await {
         if response.status().is_success() {
-            let media_type = response
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or("")
-                .split(';')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_ascii_lowercase();
-            return match media_type.as_str() {
-                "image/jpeg" | "image/png" | "image/gif" | "image/webp" => {
-                    Some(response.url().clone())
-                }
-                "" | "application/octet-stream" if has_image_extension(response.url()) => {
-                    Some(response.url().clone())
-                }
-                _ => None,
+            let url = response.url().clone();
+            return match media_type(response.headers()).as_str() {
+                "image/jpeg" | "image/png" | "image/gif" | "image/webp" => Probe::Image(url),
+                "" | "application/octet-stream" if has_image_extension(&url) => Probe::Image(url),
+                "" if has_document_extension(&url) => Probe::Document(url),
+                "application/octet-stream"
+                | "binary/octet-stream"
+                | "application/x-download"
+                | "application/force-download" => Probe::Document(url),
+                other if is_document_media_type(other) => Probe::Document(url),
+                _ => Probe::Page,
             };
         }
     }
-    has_image_extension(&url).then_some(url)
+    if has_image_extension(&url) {
+        Probe::Image(url)
+    } else if has_document_extension(&url) {
+        Probe::Document(url)
+    } else {
+        Probe::Page
+    }
+}
+
+/// Reads a document fully, but stops early when the first bytes show it is not one.
+async fn download_document(client: &reqwest::Client, url: reqwest::Url) -> LocalResource {
+    let Ok(mut response) = client.get(url).send().await else {
+        return LocalResource::UnreadableDocument;
+    };
+    if !response.status().is_success() {
+        return LocalResource::UnreadableDocument;
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_SCRAPE_BYTES)
+    {
+        return LocalResource::Page;
+    }
+    let url = response.url().clone();
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len().saturating_add(chunk.len()) as u64 > MAX_SCRAPE_BYTES {
+                    return LocalResource::Page;
+                }
+                let sniffed = bytes.len() >= DOCUMENT_SNIFF_BYTES;
+                bytes.extend_from_slice(&chunk);
+                if !sniffed
+                    && bytes.len() >= DOCUMENT_SNIFF_BYTES
+                    && !has_document_signature(&bytes)
+                {
+                    return LocalResource::Page;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => return LocalResource::UnreadableDocument,
+        }
+    }
+    if anydoc::Format::from_bytes(&bytes).is_some() {
+        LocalResource::Document { url, bytes }
+    } else {
+        LocalResource::Page
+    }
+}
+
+/// ZIP and OLE containers are only identifiable once fully downloaded.
+fn has_document_signature(prefix: &[u8]) -> bool {
+    const OLE_SIGNATURE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    prefix.starts_with(b"PK\x03\x04")
+        || prefix.starts_with(&OLE_SIGNATURE)
+        || anydoc::Format::from_bytes(prefix).is_some()
+}
+
+fn media_type(headers: &reqwest::header::HeaderMap) -> String {
+    headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn is_document_media_type(media_type: &str) -> bool {
+    matches!(
+        media_type,
+        "application/pdf"
+            | "application/x-pdf"
+            | "application/msword"
+            | "application/vnd.ms-excel"
+            | "application/vnd.ms-powerpoint"
+            | "application/rtf"
+            | "text/rtf"
+            | "application/epub+zip"
+    ) || media_type.starts_with("application/vnd.openxmlformats-officedocument.")
+        || media_type.starts_with("application/vnd.oasis.opendocument.")
+}
+
+/// CSV carries no signature, so only Firecrawl's page scrape handles it.
+fn has_document_extension(url: &reqwest::Url) -> bool {
+    anydoc::Format::from_path(&super::github_url::url_file_name(url))
+        .is_some_and(|format| format != anydoc::Format::Csv)
 }
 
 fn has_image_extension(url: &reqwest::Url) -> bool {

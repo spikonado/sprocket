@@ -209,15 +209,6 @@ async fn refuses_oversized_local_documents_without_removing_the_attachment() {
     assert!(!cache.exists());
 }
 
-#[test]
-fn needs_ocr_preserves_page_details_for_hosted_fallback() {
-    let message = ocr_unavailable_message("pages 2, 5-7, 12 of 20 need OCR");
-    assert!(message.contains("2, 5-7, 12"), "{message}");
-    assert!(message.contains("does not run OCR"), "{message}");
-    assert!(message.contains("hosted parsing is required"), "{message}");
-    assert!(!message.to_lowercase().contains("firecrawl"));
-}
-
 #[tokio::test]
 async fn failed_local_conversion_automatically_caches_hosted_markdown() {
     let dir = tempfile::tempdir().unwrap();

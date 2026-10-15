@@ -37,6 +37,11 @@ function configuredFirecrawlApiKey(): string | undefined {
 	return env.FIRECRAWL_API_KEY?.trim() || undefined;
 }
 
+/** `scrape_url` sends a remote PDF's scanned pages for OCR. */
+function isHostedParseJob(job: Doc<'executorJobs'>): boolean {
+	return job.kind === 'parse_file' || job.kind === 'scrape_url';
+}
+
 const vHostedParseContext = v.object({
 	requestId: v.id('hostedParseRequests'),
 	jobId: v.id('executorJobs'),
@@ -298,7 +303,7 @@ export const getParseWork = internalQuery({
 
 		const job = await ctx.db.get('executorJobs', args.jobId);
 
-		if (!job || job.runId !== args.runId || job.kind !== 'parse_file') {
+		if (!job || job.runId !== args.runId || !isHostedParseJob(job)) {
 			return null;
 		}
 
@@ -483,7 +488,7 @@ async function requireActiveParseJob(
 
 	const job = await ctx.db.get('executorJobs', args.jobId);
 
-	if (!job || job.runId !== run._id || job.kind !== 'parse_file') {
+	if (!job || job.runId !== run._id || !isHostedParseJob(job)) {
 		throw new ConvexError('Executor job not found.');
 	}
 

@@ -14,6 +14,7 @@ import {
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
 	SCRAPE_TIMEOUT_MS,
+	FIRECRAWL_SCRAPE_URL,
 	executeQueuedScrape,
 	type ScrapedPage
 } from '@convex/webTools';
@@ -55,8 +56,56 @@ async function queuedAction(
 			executionSecret: args.executionSecret
 		});
 
-		return await executeQueuedScrape(ctx, { ...args, kind });
+		const result = await executeQueuedScrape(ctx, { ...args, kind });
+
+		if ('documentUrl' in result) throw new Error('Expected a page transport.');
+
+		return result;
 	});
+}
+
+async function queuedRawDocument(t: ConvexTestInstance, url = 'https://example.com/report.pdf') {
+	const { asUser, executionSecret, ...job } = await seedStartedWebJob(t, {
+		executionSecret: 'raw-document-secret',
+		kind: 'scrape_url',
+		payload: { url }
+	});
+
+	return await asUser.action(async (ctx) => {
+		await ctx.runQuery(api.agentRuntime.completionActor, {
+			runId: job.runId,
+			executionSecret
+		});
+
+		const result = await executeQueuedScrape(ctx, { ...job, kind: 'scrape', rawDocument: true });
+
+		if (!('documentUrl' in result)) throw new Error('Expected a raw document.');
+
+		return result;
+	});
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+	try {
+		await promise;
+	} catch (error) {
+		if (error instanceof Error) return error;
+	}
+
+	throw new Error('Expected an Error rejection.');
+}
+
+type FirecrawlRawDocumentResponse = {
+	success: boolean;
+	error?: string;
+	data?: { rawBase64: string; metadata: { sourceURL?: string; statusCode: number } };
+};
+
+function mockRawDocumentFetch(body: FirecrawlRawDocumentResponse, status = 200) {
+	const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(body, { status }));
+	vi.stubGlobal('fetch', fetch);
+
+	return fetch;
 }
 
 function firecrawlApiError(status: number) {
@@ -1156,5 +1205,99 @@ describe('queued screenshot transport', () => {
 		expect(job?.result).toEqual(screenshotImageResult);
 		expect(job?.result).not.toHaveProperty('screenshotUrl');
 		expect(await storageBlobs(t)).toEqual([]);
+	});
+});
+
+describe('queued raw document fetch', () => {
+	beforeEach(() => vi.stubEnv('FIRECRAWL_API_KEY', 'fc-test-key'));
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.unstubAllGlobals();
+	});
+
+	it('fetches unparsed bytes and stores them for local parsing', async () => {
+		const t = initConvexTest();
+		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape');
+
+		const fetch = mockRawDocumentFetch({
+			success: true,
+			data: {
+				rawBase64: Buffer.from('%PDF-1.4').toString('base64'),
+				metadata: { sourceURL: 'https://example.com/final.pdf', statusCode: 200 }
+			}
+		});
+
+		try {
+			const result = await queuedRawDocument(t);
+
+			expect(result).toEqual({
+				url: 'https://example.com/final.pdf',
+				documentUrl: expect.any(String)
+			});
+			expect(scrape).not.toHaveBeenCalled();
+			expect(fetch).toHaveBeenCalledTimes(1);
+			const [url, init] = fetch.mock.calls[0]!;
+			expect(url).toBe(FIRECRAWL_SCRAPE_URL);
+			expect(init?.headers).toMatchObject({ Authorization: 'Bearer fc-test-key' });
+			expect(JSON.parse(String(init?.body))).toEqual({
+				url: 'https://example.com/report.pdf',
+				formats: ['rawBase64'],
+				parsers: [],
+				maxAge: 0,
+				storeInCache: false,
+				timeout: SCRAPE_TIMEOUT_MS
+			});
+
+			const blobs = await storageBlobs(t);
+			expect(blobs).toHaveLength(1);
+
+			const stored = await t.run(async (ctx) => {
+				const blob = await ctx.storage.get(blobs[0]!._id);
+
+				return {
+					url: await ctx.storage.getUrl(blobs[0]!._id),
+					text: blob ? await blob.text() : null
+				};
+			});
+
+			expect(stored).toEqual({
+				url: result.documentUrl,
+				text: '%PDF-1.4'
+			});
+
+			await t.finishAllScheduledFunctions(() => {
+				vi.advanceTimersByTime(SCRAPE_STORAGE_TTL_MS);
+			});
+			expect(await storageBlobs(t)).toEqual([]);
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('maps a page 404 to a non-retryable failure', async () => {
+		const t = initConvexTest();
+
+		mockRawDocumentFetch({
+			success: true,
+			data: { rawBase64: 'JVBERg==', metadata: { statusCode: 404 } }
+		});
+
+		const error = await rejection(queuedRawDocument(t));
+
+		expect(error.message).toContain('This webpage returned a 404 error.');
+		expect(isNonRetryableError(error)).toBe(true);
+		expect(await storageBlobs(t)).toEqual([]);
+	});
+
+	it('retries Firecrawl rate limits', async () => {
+		const t = initConvexTest();
+
+		mockRawDocumentFetch({ success: false, error: 'Rate limited' }, 429);
+
+		const error = await rejection(queuedRawDocument(t));
+
+		expect(error.message).toContain('Firecrawl scrape failed (429).');
+		expect(isNonRetryableError(error)).toBe(false);
 	});
 });

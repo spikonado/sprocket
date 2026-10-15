@@ -83,7 +83,7 @@ struct ParsedText {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-struct LocalConversionFailed(String);
+pub(super) struct LocalConversionFailed(pub(super) String);
 
 pub(crate) fn is_parse_file_tool(name: &str) -> bool {
     name == PARSE_FILE_TOOL_NAME
@@ -306,17 +306,6 @@ fn detect_anydoc_format(bytes: &[u8], path: &Path) -> Option<anydoc::Format> {
     anydoc::Format::from_bytes(bytes).or_else(|| anydoc::Format::from_path(path))
 }
 
-fn ocr_unavailable_message(detail: impl std::fmt::Display) -> String {
-    format!("{detail}. Local AnyDoc conversion does not run OCR; hosted parsing is required")
-}
-
-fn map_anydoc_error(error: anydoc::ConvertError) -> anyhow::Error {
-    match &error {
-        anydoc::ConvertError::NeedsOcr { .. } => anyhow!("{}", ocr_unavailable_message(&error)),
-        _ => error.into(),
-    }
-}
-
 fn preview_text(text: &str) -> (String, bool) {
     let total = text.chars().count();
     if total <= MAX_PARSE_FILE_PREVIEW_CHARS {
@@ -376,14 +365,9 @@ fn persist_parsed_text(
     })
 }
 
-fn convert_non_image_blocking(
-    path: PathBuf,
-    cache_dir: PathBuf,
-    cancellation: WorkspaceCancellation,
-) -> anyhow::Result<ParsedText> {
-    ensure_not_cancelled(&cancellation)?;
+fn read_document_blocking(path: &Path) -> anyhow::Result<Vec<u8>> {
     let file =
-        std::fs::File::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
+        std::fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let metadata = file.metadata()?;
     anyhow::ensure!(metadata.is_file(), "{} is not a file", path.display());
     ensure_document_size(metadata.len())?;
@@ -392,19 +376,28 @@ fn convert_non_image_blocking(
         .read_to_end(&mut bytes)
         .with_context(|| format!("failed to read {}", path.display()))?;
     ensure_document_size(bytes.len() as u64)?;
-    ensure_not_cancelled(&cancellation)?;
-    let (text, format) = convert_file_bytes(bytes, &path)?;
-    persist_parsed_text(&cache_dir, &text, format, &cancellation)
+    Ok(bytes)
 }
 
-pub(super) fn convert_file_bytes(
+/// `path` names the document for format detection; it is never read.
+pub(super) async fn convert_document(
     bytes: Vec<u8>,
-    path: &Path,
+    path: PathBuf,
+    hosted: Option<&HostedParseContext<'_>>,
+    cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<(String, &'static str)> {
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
+    if detect_anydoc_format(&bytes, &path) == Some(anydoc::Format::Pdf) {
+        let markdown = super::pdf_pages::pdf_markdown(bytes, hosted, cancellation).await?;
+        return Ok((markdown, anydoc_format_name(anydoc::Format::Pdf)));
+    }
+    run_cancellable_blocking(cancellation, move || convert_file_bytes(bytes, &path)).await
+}
+
+fn convert_file_bytes(bytes: Vec<u8>, path: &Path) -> anyhow::Result<(String, &'static str)> {
     if let Some(format) = detect_anydoc_format(&bytes, path) {
         let markdown = anydoc::to_markdown_bytes(&bytes, format)
-            .map_err(|error| LocalConversionFailed(map_anydoc_error(error).to_string()))?;
+            .map_err(|error| LocalConversionFailed(error.to_string()))?;
         return Ok((markdown, anydoc_format_name(format)));
     }
     let text = String::from_utf8(bytes)
@@ -497,7 +490,7 @@ fn ensure_document_size(size: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_cancellable_blocking<T: Send + 'static>(
+pub(super) async fn run_cancellable_blocking<T: Send + 'static>(
     cancellation: &WorkspaceCancellation,
     work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> anyhow::Result<T> {
@@ -539,13 +532,7 @@ async fn persist_non_image_file(
     cancellation: &WorkspaceCancellation,
     hosted: Option<&HostedParseContext<'_>>,
 ) -> anyhow::Result<ParseFilePersistedOutput> {
-    let worker_cancellation = cancellation.clone();
-    let worker_path = path.clone();
-    let worker_cache = cache_dir.clone();
-    let local = run_cancellable_blocking(cancellation, move || {
-        convert_non_image_blocking(worker_path, worker_cache, worker_cancellation)
-    })
-    .await;
+    let local = convert_local_file(path.clone(), cache_dir.clone(), cancellation, hosted).await;
     let parsed = if let Some(hosted) = hosted {
         local_or_hosted(local, cache_dir, cancellation, || {
             super::hosted_parse::parse(hosted, &path, &path, cancellation)
@@ -562,6 +549,24 @@ async fn persist_non_image_file(
         preview: parsed.preview,
         truncated: parsed.truncated,
     })
+}
+
+async fn convert_local_file(
+    path: PathBuf,
+    cache_dir: PathBuf,
+    cancellation: &WorkspaceCancellation,
+    hosted: Option<&HostedParseContext<'_>>,
+) -> anyhow::Result<ParsedText> {
+    let worker_path = path.clone();
+    let bytes =
+        run_cancellable_blocking(cancellation, move || read_document_blocking(&worker_path))
+            .await?;
+    let (text, format) = convert_document(bytes, path, hosted, cancellation).await?;
+    let worker_cancellation = cancellation.clone();
+    run_cancellable_blocking(cancellation, move || {
+        persist_parsed_text(&cache_dir, &text, format, &worker_cancellation)
+    })
+    .await
 }
 
 async fn local_or_hosted<F, Fut>(

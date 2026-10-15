@@ -518,6 +518,7 @@ export default defineSchema({
 		claimId: v.string(),
 		jobId: v.optional(v.id('executorJobs')),
 		kind: v.union(v.literal('scrape'), v.literal('screenshot')),
+		rawDocument: v.optional(v.boolean()),
 		status: v.union(
 			v.literal('queued'),
 			v.literal('running'),

@@ -16,7 +16,7 @@ export const REQUEST_TTL_MS = 8 * 60_000;
 
 export const vRequestArgs = schema
 	.doc('firecrawlRequests')
-	.pick('runId', 'claimId', 'jobId', 'kind');
+	.pick('runId', 'claimId', 'jobId', 'kind', 'rawDocument');
 
 export const scrapeJob = internalMutation({
 	args: { runId: v.id('runs'), claimId: v.string(), jobId: v.id('executorJobs') },

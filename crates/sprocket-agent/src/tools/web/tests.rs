@@ -34,6 +34,21 @@ fn png() -> Vec<u8> {
     bytes.into_inner()
 }
 
+async fn fetch_image(url: reqwest::Url, cache: &Path) -> serde_json::Value {
+    let LocalResource::Image(metadata) = fetch_local_resource(url, true, cache).await.unwrap()
+    else {
+        panic!("expected an image");
+    };
+    metadata
+}
+
+async fn is_page(url: reqwest::Url, cache: &Path) -> bool {
+    matches!(
+        fetch_local_resource(url, true, cache).await.unwrap(),
+        LocalResource::Page
+    )
+}
+
 #[tokio::test]
 async fn screenshot_saves_pixels_locally_for_history() {
     let cache = tempfile::tempdir().unwrap();
@@ -99,10 +114,7 @@ async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
     let cache = tempfile::tempdir().unwrap();
     let directory = cache.path().join("scrape_url");
     let url = serve("image/jpeg", png()).await;
-    let metadata = fetch_web_image(url, true, &directory)
-        .await
-        .unwrap()
-        .unwrap();
+    let metadata = fetch_image(url, &directory).await;
     assert_eq!(metadata["mediaType"], "image/png");
     assert_image_history("scrape_url", metadata, &directory).await;
 }
@@ -184,7 +196,7 @@ async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache
 async fn image_download_fails_when_local_persistence_fails() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let url = serve("image/png", png()).await;
-    assert!(fetch_web_image(url, true, file.path()).await.is_err());
+    assert!(fetch_local_resource(url, true, file.path()).await.is_err());
 }
 
 #[tokio::test]
@@ -201,12 +213,7 @@ async fn html_is_left_to_the_scraper() {
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\nConnection: close\r\n\r\n").await.unwrap();
         listener
     });
-    assert!(
-        fetch_web_image(url, true, cache.path())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(is_page(url, cache.path()).await);
     let listener = server.await.unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(50), listener.accept())
@@ -220,34 +227,57 @@ async fn image_extension_handles_generic_content_types() {
     let cache = tempfile::tempdir().unwrap();
     let mut url = serve("application/octet-stream", png()).await;
     url.set_path("/image.PNG");
-    assert!(
-        fetch_web_image(url, true, cache.path())
-            .await
-            .unwrap()
-            .is_some()
-    );
+    fetch_image(url, cache.path()).await;
 }
 
 #[tokio::test]
 async fn unrecognized_content_is_scraped_but_text_only_models_reject_images() {
     let cache = tempfile::tempdir().unwrap();
     let url = serve("image/svg+xml", b"<svg></svg>".to_vec()).await;
-    assert!(
-        fetch_web_image(url, true, cache.path())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(is_page(url, cache.path()).await);
     let url = serve("image/jpeg", b"<html>mislabelled</html>".to_vec()).await;
-    assert!(fetch_web_image(url, true, cache.path()).await.is_err());
+    assert!(fetch_local_resource(url, true, cache.path()).await.is_err());
     let url = serve("image/png", png()).await;
     assert!(
-        fetch_web_image(url, false, cache.path())
+        fetch_local_resource(url, false, cache.path())
             .await
             .unwrap_err()
             .to_string()
             .contains("cannot view")
     );
+}
+
+#[tokio::test]
+async fn documents_are_downloaded_for_local_parsing() {
+    let cache = tempfile::tempdir().unwrap();
+    let pdf = b"%PDF-1.4\n%placeholder\n".to_vec();
+    for content_type in ["application/pdf", "application/octet-stream"] {
+        let url = serve(content_type, pdf.clone()).await;
+        let LocalResource::Document { bytes, .. } =
+            fetch_local_resource(url, true, cache.path()).await.unwrap()
+        else {
+            panic!("expected a document for {content_type}");
+        };
+        assert_eq!(bytes, pdf);
+    }
+    let url = serve(
+        "application/octet-stream",
+        b"<html>not a document</html>".to_vec(),
+    )
+    .await;
+    assert!(is_page(url, cache.path()).await);
+}
+
+#[tokio::test]
+async fn unreachable_document_urls_are_left_for_a_raw_fetch() {
+    let cache = tempfile::tempdir().unwrap();
+    let url = reqwest::Url::parse("http://127.0.0.1:1/datasheet.pdf").unwrap();
+    assert!(matches!(
+        fetch_local_resource(url, true, cache.path()).await.unwrap(),
+        LocalResource::UnreadableDocument
+    ));
+    let url = reqwest::Url::parse("http://127.0.0.1:1/table.csv").unwrap();
+    assert!(is_page(url, cache.path()).await);
 }
 
 #[test]

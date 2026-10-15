@@ -115,6 +115,7 @@ async fn reads_source_verbatim_with_one_get_and_no_markdown_probe() {
             url.clone(),
             false,
             cache.path(),
+            None,
             &WorkspaceCancellation::new(),
         )
         .await
@@ -138,9 +139,15 @@ async fn converts_documents_locally_after_redirects() {
         b"HTTP/1.1 302 Found\r\nLocation: /table%2Ecsv\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
         response(200, "text/plain", b"name,value\nsprocket,42\n"),
     ]).await;
-    let result = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
-        .await
-        .unwrap();
+    let result = fetch_github_file(
+        url,
+        false,
+        cache.path(),
+        None,
+        &WorkspaceCancellation::new(),
+    )
+    .await
+    .unwrap();
     assert!(result["url"].as_str().unwrap().ends_with("/table%2Ecsv"));
     assert!(
         result["markdown"]
@@ -156,9 +163,15 @@ async fn http_errors_report_only_the_status() {
     let cache = tempfile::tempdir().unwrap();
     for status in [404, 401, 403, 429, 503, 206] {
         let (url, server) = serve(vec![response(status, "text/plain", b"error")]).await;
-        let error = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
-            .await
-            .unwrap_err();
+        let error = fetch_github_file(
+            url,
+            false,
+            cache.path(),
+            None,
+            &WorkspaceCancellation::new(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(
             format!("{error:#}"),
             format!("HTTP {}", reqwest::StatusCode::from_u16(status).unwrap())
@@ -175,9 +188,15 @@ async fn http_errors_report_only_the_status_after_redirects() {
         response(404, "text/plain", b"Not Found"),
     ])
     .await;
-    let error = fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
-        .await
-        .unwrap_err();
+    let error = fetch_github_file(
+        url,
+        false,
+        cache.path(),
+        None,
+        &WorkspaceCancellation::new(),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(format!("{error:#}"), "HTTP 404 Not Found");
     assert_eq!(server.await.unwrap().len(), 2);
 }
@@ -190,6 +209,7 @@ async fn request_errors_return_the_failure_without_the_url() {
         url.clone(),
         false,
         cache.path(),
+        None,
         &WorkspaceCancellation::new(),
     )
     .await
@@ -210,6 +230,7 @@ async fn truncated_bodies_return_the_failure_without_the_url() {
         url.clone(),
         false,
         cache.path(),
+        None,
         &WorkspaceCancellation::new(),
     )
     .await
@@ -234,9 +255,15 @@ async fn errors_are_returned_instead_of_allowing_hosted_fallback() {
     ] {
         let (url, server) = serve(vec![bytes]).await;
         assert!(
-            fetch_github_file(url, false, cache.path(), &WorkspaceCancellation::new())
-                .await
-                .is_err()
+            fetch_github_file(
+                url,
+                false,
+                cache.path(),
+                None,
+                &WorkspaceCancellation::new()
+            )
+            .await
+            .is_err()
         );
         assert_eq!(server.await.unwrap().len(), 1);
     }
@@ -260,6 +287,7 @@ async fn image_bytes_use_the_existing_model_and_cache_limits() {
             url,
             supports_images,
             cache.path(),
+            None,
             &WorkspaceCancellation::new(),
         )
         .await;
@@ -341,7 +369,7 @@ async fn cancellation_aborts_the_request() {
         let mut eof = [0];
         assert_eq!(stream.read(&mut eof).await.unwrap(), 0);
     });
-    let error = fetch_github_file(url, false, cache.path(), &cancellation)
+    let error = fetch_github_file(url, false, cache.path(), None, &cancellation)
         .await
         .unwrap_err();
     assert!(error.is::<WorkspaceOperationCancelled>());

@@ -4,7 +4,7 @@ import { ConvexError, v, type Infer } from 'convex/values';
 import { z } from 'zod';
 import { FirecrawlClient, type ScrapeOptions } from '@firecrawl/firecrawl-convex';
 import { ExaClient } from '@exalabs/convex-exa';
-import { internalAction, type ActionCtx } from '@convex/_generated/server';
+import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
 	vScrapeUrlTransport,
@@ -13,6 +13,7 @@ import {
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
+import { HOSTED_PARSE_MAX_INPUT_BYTES, readBoundedResponseBytes } from '@convex/lib/hostedParse';
 import { NonRetryableError } from '@convex-dev/workpool';
 import type { Doc } from '@convex/_generated/dataModel';
 
@@ -37,6 +38,14 @@ export const SCRAPE_FORMATS = ['markdown', 'summary', 'images'] as const;
 export const SCREENSHOT_FORMATS = ['screenshot'] as const;
 
 export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
+
+export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v2/scrape';
+
+/** Base64 of the largest document plus room for the JSON envelope. */
+const RAW_DOCUMENT_MAX_RESPONSE_BYTES =
+	Math.ceil(HOSTED_PARSE_MAX_INPUT_BYTES / 3) * 4 + 1024 * 1024;
+
+const RAW_DOCUMENT_TOO_LARGE = 'Document exceeds the 50 MB raw fetch limit.';
 
 const SCRAPE_JSON_BLOB_TYPE = 'application/json; charset=utf-8';
 
@@ -89,11 +98,28 @@ const firecrawlDocumentSchema = z.object({
 
 type FirecrawlDocument = z.infer<typeof firecrawlDocumentSchema>;
 
+const firecrawlRawDocumentResponseSchema = z.object({
+	success: z.boolean(),
+	error: z.string().optional(),
+	data: z
+		.object({
+			rawBase64: z.string().nullish(),
+			metadata: firecrawlDocumentSchema.shape.metadata
+		})
+		.optional()
+});
+
 export type ScrapedPage = {
 	url: string;
 	markdown: string;
 	summary: string;
 	images: string[];
+};
+
+/** `documentUrl` is a temporary storage URL for the unparsed document bytes. */
+export type RawDocument = {
+	url: string;
+	documentUrl: string;
 };
 
 function convexErrorData(error: Error): ProviderError | undefined {
@@ -355,6 +381,89 @@ async function fetchScreenshot(
 	};
 }
 
+/**
+ * Fetches unparsed bytes for local parsing. Firecrawl bills this one credit,
+ * while its document parsing bills per page. Calls the API directly because
+ * component actions cap return values at 16 MiB.
+ */
+async function fetchRawDocument(ctx: ActionCtx, urlValue: string): Promise<RawDocument> {
+	const url = requireHttpUrl(urlValue);
+	const apiKey = env.FIRECRAWL_API_KEY?.trim();
+
+	if (!apiKey) {
+		throw new NonRetryableError('FIRECRAWL_API_KEY is not configured.');
+	}
+
+	const response = await fetch(FIRECRAWL_SCRAPE_URL, {
+		method: 'POST',
+		redirect: 'error',
+		headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			url: url.toString(),
+			formats: ['rawBase64'],
+			parsers: [],
+			maxAge: 0,
+			storeInCache: false,
+			timeout: SCRAPE_TIMEOUT_MS
+		}),
+		signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS)
+	});
+
+	let responseBytes: Uint8Array;
+
+	try {
+		responseBytes = await readBoundedResponseBytes(response, RAW_DOCUMENT_MAX_RESPONSE_BYTES);
+	} catch (error) {
+		throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE, {
+			cause: error instanceof Error ? error : undefined
+		});
+	}
+
+	if (!response.ok) {
+		throwHttpFailure(`Firecrawl scrape failed (${response.status}).`, response.status);
+	}
+
+	let payload: unknown;
+
+	try {
+		payload = JSON.parse(new TextDecoder().decode(responseBytes));
+	} catch {
+		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
+	}
+
+	const parsed = firecrawlRawDocumentResponseSchema.safeParse(payload);
+
+	if (!parsed.success) {
+		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
+	}
+
+	if (!parsed.data.success) {
+		throw new NonRetryableError(parsed.data.error?.trim() || 'Firecrawl scrape failed.');
+	}
+
+	const metadata = parsed.data.data?.metadata;
+	const statusCode = metadata?.statusCode;
+
+	if (statusCode !== undefined && !isCleanPageStatus(statusCode)) {
+		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
+	}
+
+	const document = new Uint8Array(Buffer.from(parsed.data.data?.rawBase64 ?? '', 'base64'));
+
+	if (document.byteLength === 0) {
+		throw new NonRetryableError('Firecrawl returned an empty document.');
+	}
+
+	if (document.byteLength > HOSTED_PARSE_MAX_INPUT_BYTES) {
+		throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE);
+	}
+
+	return {
+		url: metadata?.sourceURL ?? metadata?.url ?? url.toString(),
+		documentUrl: await storeTemporaryBlob(ctx, new Blob([document]))
+	};
+}
+
 async function localScrapeTransport(
 	ctx: ActionCtx,
 	page: ScrapedPage
@@ -377,6 +486,10 @@ async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<
 		throw new NonRetryableError('Scrape exceeds the 64 MiB download limit.');
 	}
 
+	return await storeTemporaryBlob(ctx, blob);
+}
+
+async function storeTemporaryBlob(ctx: ActionCtx, blob: Blob): Promise<string> {
 	const storageId = await ctx.storage.store(blob);
 
 	try {
@@ -390,14 +503,14 @@ async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<
 		throw error;
 	}
 
-	const scrapeUrl = await ctx.storage.getUrl(storageId);
+	const url = await ctx.storage.getUrl(storageId);
 
-	if (!scrapeUrl) {
+	if (!url) {
 		await ctx.storage.delete(storageId);
 		throw new Error('Stored scrape is unavailable.');
 	}
 
-	return scrapeUrl;
+	return url;
 }
 
 async function runSearch(
@@ -486,7 +599,7 @@ export const executeWebSearch = internalAction({
 
 export async function executeQueuedScrape(
 	ctx: ActionCtx,
-	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind'>
+	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind' | 'rawDocument'>
 ) {
 	const job = request.jobId
 		? await ctx.runMutation(internal.firecrawlRequests.scrapeJob, {
@@ -499,7 +612,11 @@ export async function executeQueuedScrape(
 	if (!job || job.kind !== `${request.kind}_url`) throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 
 	if (request.kind === 'scrape') {
-		return await localScrapeTransport(ctx, await fetchScrape(ctx, urlFromPayload(job.payload)));
+		const url = urlFromPayload(job.payload);
+
+		if (request.rawDocument) return await fetchRawDocument(ctx, url);
+
+		return await localScrapeTransport(ctx, await fetchScrape(ctx, url));
 	}
 
 	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
