@@ -11,13 +11,6 @@ crons.interval(
 );
 
 crons.interval(
-	'backfill terminal transcript readiness',
-	{ hours: 1 },
-	internal.migrations.runTerminalJobBackfill,
-	{}
-);
-
-crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans

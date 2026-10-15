@@ -3,8 +3,6 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
-import { isRunFinalStatus } from '@convex/lib/validators';
-import { reconcileTerminalRun } from '@convex/lib/runTerminal';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
@@ -12,27 +10,6 @@ export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
 });
-
-export const reconcileLegacyTerminalJobs = migrations.define({
-	table: 'runExecutionStates',
-	batchSize: 1,
-	migrateOne: async (ctx, state) => {
-		if (state.terminalJobsReconciled === true) return;
-		const run = await ctx.db.get('runs', state.runId);
-
-		if (!run || !isRunFinalStatus(run.status)) return;
-
-		await reconcileTerminalRun(ctx, run, {
-			completedAt: run.completedAt ?? Date.now(),
-			jobCursor: -1,
-			questionCursor: -1
-		});
-	}
-});
-
-export const runTerminalJobBackfill = migrations.runner([
-	internal.migrations.reconcileLegacyTerminalJobs
-]);
 
 export const backfillSubscriptionExpiry = migrations.define({
 	table: 'subscriptions',

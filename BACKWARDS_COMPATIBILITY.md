@@ -287,12 +287,9 @@ pending, and run creation rejects with the `SPROCKET_SUBMISSION_WAITING`
 sentinel instead of staging the message; native code waits for readiness and
 retries creation. A waiting prompt lives only in the local process and
 disappears if it dies, so no server-side queue exists to recover.
-`migrations:runTerminalJobBackfill` proactively reconciles existing terminal
-runs and runs automatically from an hourly cron. It can also be triggered after
-deploying this schema; active runs gain the field when they
-finish. Remove the missing-field fallback only after the backfill has completed,
-pre-deployment active runs have finished, and released backends without this
-field are outside the rollback window.
+The terminal backfill is complete; active runs gain the field when they finish.
+Remove the missing-field fallback only after pre-deployment active runs have
+finished and released backends without this field are outside the rollback window.
 Reconciliation preserves existing settled-tool display output and historical
 section assignments when the executor job has no section metadata. Migrated job
 results must not rewrite conversation history.

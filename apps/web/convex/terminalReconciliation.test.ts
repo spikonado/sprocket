@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
-import { initConvexTest, seedOwnedThread } from './test.setup';
+import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test.setup';
 
-const oneBatch = { cursor: null, dryRun: false, oneBatchOnly: true } as const;
+async function reconcileTerminalJobs(t: ConvexTestInstance): Promise<void> {
+	const run = await t.run((ctx) => ctx.db.query('runs').first());
 
-describe('terminal job backfill migration', () => {
+	await t.mutation(internal.runCleanup.continueCleanup, {
+		runId: run!._id,
+		completedAt: run!.completedAt ?? Date.now(),
+		jobCursor: -1,
+		questionCursor: -1
+	});
+}
+
+describe('terminal job reconciliation', () => {
 	it.each([undefined, false])(
 		'preserves historical output with reconciliation marker %s',
 		async (marker) => {
@@ -47,7 +56,7 @@ describe('terminal job backfill migration', () => {
 				return { jobId, partId: (await ctx.db.query('threadTranscriptParts').first())!._id };
 			});
 
-			await t.mutation(internal.migrations.reconcileLegacyTerminalJobs, oneBatch);
+			await reconcileTerminalJobs(t);
 			expect(await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId))).toMatchObject({
 				tool: { status: 'completed', output: { markdown: 'Page', truncated: false } }
 			});
@@ -93,7 +102,7 @@ describe('terminal job backfill migration', () => {
 			return (await ctx.db.get('threadTranscriptParts', part._id))!;
 		});
 
-		await t.mutation(internal.migrations.reconcileLegacyTerminalJobs, oneBatch);
+		await reconcileTerminalJobs(t);
 		expect(await t.run((ctx) => ctx.db.get('threadTranscriptParts', part._id))).toEqual(part);
 		expect(await t.run((ctx) => ctx.db.query('runExecutionStates').first())).toMatchObject({
 			terminalJobsReconciled: true
@@ -123,7 +132,7 @@ describe('terminal job backfill migration', () => {
 			})
 		);
 
-		await t.mutation(internal.migrations.reconcileLegacyTerminalJobs, oneBatch);
+		await reconcileTerminalJobs(t);
 		expect(
 			await t.run((ctx) =>
 				ctx.db
