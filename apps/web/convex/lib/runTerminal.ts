@@ -82,7 +82,7 @@ export async function reconcileTerminalRun(
 			userId: run.userId,
 			runId: run._id,
 			job: finalizedJob,
-			preserveExistingOutput: finalizedJob === job
+			preserveExistingDisplay: finalizedJob === job
 		});
 		jobCursor = job.sequence;
 		processed++;

@@ -60,6 +60,46 @@ describe('terminal job backfill migration', () => {
 		}
 	);
 
+	it('preserves the historical section when a settled job lacks section metadata', async () => {
+		const t = initConvexTest();
+		const { threadId, subject } = await seedOwnedThread(t);
+
+		const part = await t.run(async (ctx) => {
+			const run = (await ctx.db.query('runs').first())!;
+
+			const jobId = await ctx.db.insert('executorJobs', {
+				threadId,
+				runId: run._id,
+				kind: 'read_skill',
+				payload: { name: 'example' },
+				status: 'completed',
+				result: 'Skill',
+				enqueuedAt: Date.now(),
+				completedAt: Date.now(),
+				sequence: 0
+			});
+
+			await recordToolTranscript(ctx, {
+				threadId,
+				userId: subject,
+				runId: run._id,
+				job: (await ctx.db.get('executorJobs', jobId))!
+			});
+			const part = (await ctx.db.query('threadTranscriptParts').first())!;
+			await ctx.db.patch('threadTranscriptParts', part._id, {
+				work: { ranges: [], sectionKey: 'work-3-0' }
+			});
+
+			return (await ctx.db.get('threadTranscriptParts', part._id))!;
+		});
+
+		await t.mutation(internal.migrations.reconcileLegacyTerminalJobs, oneBatch);
+		expect(await t.run((ctx) => ctx.db.get('threadTranscriptParts', part._id))).toEqual(part);
+		expect(await t.run((ctx) => ctx.db.query('runExecutionStates').first())).toMatchObject({
+			terminalJobsReconciled: true
+		});
+	});
+
 	it('reconciles historical terminal tool results before releasing follow-ups', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);

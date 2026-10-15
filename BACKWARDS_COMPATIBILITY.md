@@ -336,6 +336,9 @@ deploying this schema; active runs gain the field when they
 finish. Remove the missing-field fallback only after the backfill has completed,
 pre-deployment active runs have finished, and released backends without this
 field are outside the rollback window.
+Reconciliation preserves existing settled-tool display output and historical
+section assignments when the executor job has no section metadata. Migrated job
+results must not rewrite conversation history.
 
 ### Project-owned artifacts
 
