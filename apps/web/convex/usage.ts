@@ -2,7 +2,7 @@ import { query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vMyUsage } from '@convex/lib/docs';
-import { getMeterWindow, usageMeters, usagePeriods } from '@convex/lib/rateLimits';
+import { getMeterWindow, usageMeters } from '@convex/lib/rateLimits';
 import { getSubscriptionDoc, resolveTier, subscriptionMaterializedTier } from '@convex/lib/tiers';
 
 export const getMyUsage = query({
@@ -18,31 +18,30 @@ export const getMyUsage = query({
 		const { limits, label: tierLabel } = await resolveTier(ctx, tier);
 
 		const meters = await Promise.all(
-			usageMeters.map(async (meter) => ({
-				id: meter.id,
-				label: meter.label,
-				description: meter.description,
-				windows: await Promise.all(
-					usagePeriods.map(async (period) => ({
-						period,
-						...(await getMeterWindow(ctx, meter.id, period, userId, limits, subscription, now))
-					}))
-				)
-			}))
+			usageMeters.map(async (meter) => {
+				const window = await getMeterWindow(ctx, meter.id, userId, limits, subscription, now);
+
+				return {
+					id: meter.id,
+					label: meter.label,
+					description: meter.description,
+					...window,
+					windows: [{ period: 'monthly' as const, ...window }]
+				};
+			})
 		);
 
-		// Sending is blocked while any metered window is over its limit; report the
-		// window that unlocks last so clients can count down to full access.
-		const blockedWindow = meters
-			.flatMap((meter) => meter.windows.map((window) => ({ ...window, meterId: meter.id })))
-			.filter((window) => window.used >= window.limit)
+		// Sending is blocked while any meter is over its limit; report the meter
+		// that unlocks last so clients can count down to full access.
+		const blockedMeter = meters
+			.filter((meter) => meter.used >= meter.limit)
 			.sort((a, b) => (b.resetsAt ?? Infinity) - (a.resetsAt ?? Infinity))[0];
 
 		return {
 			tier,
 			tierLabel,
-			exhausted: blockedWindow !== undefined,
-			resetsAt: blockedWindow?.resetsAt ?? null,
+			exhausted: blockedMeter !== undefined,
+			resetsAt: blockedMeter?.resetsAt ?? null,
 			meters
 		};
 	}

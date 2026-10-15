@@ -31,7 +31,6 @@ async function seedTiers(t: ConvexTestInstance, tierIds: string[] = ['pro', 'tea
 			await ctx.db.insert('tiers', {
 				tierId,
 				label: tierId,
-				weekly: 10,
 				monthly: 20,
 				monthlyProductId: `prod_${tierId}`
 			});
@@ -48,9 +47,8 @@ async function planChangeFixture() {
 	await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId: 'owner', count: 5 });
 
 	const usage = async () =>
-		(
-			await t.withIdentity({ subject: 'owner' }).query(api.usage.getMyUsage, { now: Date.now() })
-		).meters[0]?.windows.map((window) => window.used);
+		(await t.withIdentity({ subject: 'owner' }).query(api.usage.getMyUsage, { now: Date.now() }))
+			.meters[0]?.used;
 
 	return { t, data, usage };
 }
@@ -219,7 +217,6 @@ describe('Dodo subscription webhooks', () => {
 					await ctx.db.insert('tiers', {
 						tierId: 'max',
 						label: 'Max',
-						weekly: 1,
 						monthly: 1,
 						monthlyProductId: 'prod_pro',
 						annualProductId: assignment === 'ambiguous' ? 'prod_pro' : undefined
@@ -253,14 +250,14 @@ describe('Dodo subscription webhooks', () => {
 		).toBe(200);
 		await drainWebhookJobs(t);
 		expect(await readSubscription(t)).toMatchObject({ tier: 'team', quotaResetAt: now + 1 });
-		expect(await usage()).toEqual([0, 0]);
+		expect(await usage()).toBe(0);
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId: 'owner', count: 3 });
 		expect(
 			(await sendSubscriptionWebhook(t, 'subscription.updated', changed, now + 2)).status
 		).toBe(200);
 		await drainWebhookJobs(t);
 		expect(await readSubscription(t)).toMatchObject({ tier: 'team', quotaResetAt: now + 1 });
-		expect(await usage()).toEqual([3, 3]);
+		expect(await usage()).toBe(3);
 	});
 
 	it('serializes same-timestamp plan and status deliveries against the current tier', async () => {
@@ -301,7 +298,7 @@ describe('Dodo subscription webhooks', () => {
 			tier: 'pro',
 			quotaResetAt: before?.quotaResetAt
 		});
-		expect(await usage()).toEqual([5, 5]);
+		expect(await usage()).toBe(5);
 		await vi.advanceTimersByTimeAsync(deadline - Date.now());
 		await drainWebhookJobs(t);
 
@@ -321,7 +318,7 @@ describe('Dodo subscription webhooks', () => {
 			quotaResetAt: deadline,
 			billingPeriodEnded: false
 		});
-		expect(await usage()).toEqual([0, 0]);
+		expect(await usage()).toBe(0);
 	});
 
 	it('resolves a metadata-free status update through the saved customer', async () => {
@@ -355,7 +352,6 @@ describe('Dodo subscription webhooks', () => {
 			ctx.db.insert('tiers', {
 				tierId: 'max',
 				label: 'Max',
-				weekly: 1,
 				monthly: 1,
 				monthlyProductId: 'prod_pro',
 				annualProductId: 'prod_pro'

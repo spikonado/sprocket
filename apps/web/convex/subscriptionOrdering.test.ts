@@ -18,21 +18,18 @@ async function seedTiersAndCustomer(t: ConvexTestInstance): Promise<void> {
 		await ctx.db.insert('tiers', {
 			tierId: 'free',
 			label: 'Free',
-			weekly: 5 * UNITS_PER_DOLLAR,
 			monthly: 15 * UNITS_PER_DOLLAR
 		});
 		await ctx.db.insert('tiers', {
 			tierId: 'pro',
 			label: 'Pro',
 			monthlyProductId: 'prod_pro',
-			weekly: 25 * UNITS_PER_DOLLAR,
 			monthly: 75 * UNITS_PER_DOLLAR
 		});
 		await ctx.db.insert('tiers', {
 			tierId: 'max',
 			label: 'Max',
 			monthlyProductId: 'prod_max',
-			weekly: 170 * UNITS_PER_DOLLAR,
 			monthly: 500 * UNITS_PER_DOLLAR
 		});
 		await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: 'cus_ordering' });

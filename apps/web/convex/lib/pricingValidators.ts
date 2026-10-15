@@ -11,7 +11,6 @@ export const vTierPrice = v.object({
 export const vPublicPricingPlan = v.object({
 	id: v.string(),
 	label: v.string(),
-	weeklyUsageDollars: v.number(),
 	monthlyUsageDollars: v.number(),
 	description: v.union(v.string(), v.null()),
 	features: v.array(v.string()),

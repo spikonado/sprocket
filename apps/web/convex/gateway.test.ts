@@ -16,19 +16,16 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 			{
 				tierId: 'free',
 				label: 'Free',
-				weekly: 5 * UNITS_PER_DOLLAR,
 				monthly: 15 * UNITS_PER_DOLLAR
 			},
 			{
 				tierId: 'pro',
 				label: 'Pro',
-				weekly: 25 * UNITS_PER_DOLLAR,
 				monthly: 75 * UNITS_PER_DOLLAR
 			},
 			{
 				tierId: 'max',
 				label: 'Max',
-				weekly: 170 * UNITS_PER_DOLLAR,
 				monthly: 500 * UNITS_PER_DOLLAR
 			}
 		];
@@ -123,12 +120,8 @@ describe('gateway quota', () => {
 		});
 
 		const before = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
-
-		const beforeWeekly = before.meters
-			.find((meter) => meter.id === 'modelUsage')
-			?.windows.find((window) => window.period === 'weekly')?.used;
-
-		expect(beforeWeekly).toBe(0);
+		const usedBefore = before.meters.find((meter) => meter.id === 'modelUsage')?.used;
+		expect(usedBefore).toBe(0);
 
 		for (const units of [Number.NaN, Number.POSITIVE_INFINITY, -5, 2_000_000_000_000]) {
 			await expect(
@@ -139,12 +132,7 @@ describe('gateway quota', () => {
 		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
 		expect(quota).toMatchObject({ userId: subject, exhausted: false });
 		const after = await asUser.query(api.usage.getMyUsage, { now: Date.now() });
-
-		const afterWeekly = after.meters
-			.find((meter) => meter.id === 'modelUsage')
-			?.windows.find((window) => window.period === 'weekly')?.used;
-
-		expect(afterWeekly).toBe(beforeWeekly);
+		expect(after.meters.find((meter) => meter.id === 'modelUsage')?.used).toBe(usedBefore);
 	}, 15_000);
 
 	it('snapshots the gateway protocol on new runs', async () => {

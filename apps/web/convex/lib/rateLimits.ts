@@ -4,7 +4,6 @@ import {
 	MINUTE,
 	RateLimiter,
 	SECOND,
-	WEEK,
 	calculateRateLimit,
 	type MutationCtx,
 	type QueryCtx,
@@ -21,15 +20,10 @@ import {
 	type SubscriptionTier,
 	type TierLimits
 } from '@convex/lib/tiers';
-import {
-	usageMeters,
-	usagePeriods,
-	type UsageMeterId,
-	type UsagePeriod
-} from '@convex/lib/usageMeters';
+import { usageMeters, type UsageMeterId } from '@convex/lib/usageMeters';
 import { billingWindow, type BillingWindowSubscription } from '@convex/lib/billingWindows';
 
-export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
+export { usageMeters, type UsageMeterId };
 
 export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
@@ -51,33 +45,25 @@ function quotaGenerationOf(subscription: MeterWindowSubscription | null): number
 	return subscription?.quotaResetAt ?? subscription?.quotaGeneration;
 }
 
-function meterLimitName(meterId: UsageMeterId, period: UsagePeriod): string {
-	return `${meterId}${period === 'weekly' ? 'Weekly' : 'Monthly'}`;
+// The stored limit names and window keys keep their "monthly" component so
+// existing buckets stay readable after weekly limits were removed.
+function meterLimitName(meterId: UsageMeterId): string {
+	return `${meterId}Monthly`;
 }
 
-function meterLimitConfig(
-	meterId: UsageMeterId,
-	period: UsagePeriod,
-	limits: TierLimits,
-	duration: number
-): RateLimitConfig {
-	return { kind: 'fixed window', period: duration, rate: limits[meterId][period] };
-}
-
-function windowKey(userId: string, period: UsagePeriod, start: number, resetAt?: number): string {
-	return `${userId}:${period}:${start}:${resetAt ?? 0}`;
+function windowKey(userId: string, start: number, resetAt?: number): string {
+	return `${userId}:monthly:${start}:${resetAt ?? 0}`;
 }
 
 function meterWindowConfig(
 	userId: string,
-	period: UsagePeriod,
 	subscription: MeterWindowSubscription | null,
 	now: number
 ) {
-	const { start, end } = billingWindow(period, subscription, now);
+	const { start, end } = billingWindow(subscription, now);
 
 	return {
-		key: windowKey(userId, period, start, quotaGenerationOf(subscription)),
+		key: windowKey(userId, start, quotaGenerationOf(subscription)),
 		config: { kind: 'fixed window' as const, period: STORAGE_PERIOD, rate: METER_CAPACITY, start },
 		start,
 		end
@@ -87,15 +73,14 @@ function meterWindowConfig(
 async function usedInWindow(
 	ctx: QueryCtx,
 	meterId: UsageMeterId,
-	period: UsagePeriod,
 	userId: string,
 	limits: TierLimits,
 	subscription: MeterWindowSubscription | null,
 	now: number
 ) {
-	const window = meterWindowConfig(userId, period, subscription, now);
+	const window = meterWindowConfig(userId, subscription, now);
 
-	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
+	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId), {
 		key: window.key,
 		config: window.config
 	});
@@ -106,14 +91,13 @@ async function usedInWindow(
 
 	if (quotaGenerationOf(subscription) !== undefined) return { used: 0, window, migrated: true };
 
-	const oldConfig = meterLimitConfig(
-		meterId,
-		period,
-		limits,
-		period === 'weekly' ? WEEK : 30 * DAY
-	);
+	const oldConfig: RateLimitConfig = {
+		kind: 'fixed window',
+		period: 30 * DAY,
+		rate: limits[meterId]
+	};
 
-	const old = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
+	const old = await rateLimiter.getValue(ctx, meterLimitName(meterId), {
 		key: userId,
 		config: oldConfig
 	});
@@ -132,12 +116,12 @@ async function usedInWindow(
 	};
 }
 
-function meterLimitLabel(meterId: UsageMeterId, period: UsagePeriod): string {
+function meterLimitLabel(meterId: UsageMeterId): string {
 	const meter = usageMeters.find((candidate) => candidate.id === meterId);
 
 	if (!meter) throw new Error(`Unknown usage meter: ${meterId}`);
 
-	return `${period === 'weekly' ? 'Weekly' : 'Monthly'} ${meter.noun} limit`;
+	return `${meter.label} limit`;
 }
 
 function formatRetryAfter(milliseconds: number): string {
@@ -169,32 +153,12 @@ async function blockedMeterLimit(
 	limits: TierLimits,
 	subscription: MeterWindowSubscription | null,
 	now: number
-): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
-	const statuses = await Promise.all(
-		usagePeriods.map(async (period) => {
-			const { window, used } = await usedInWindow(
-				ctx,
-				meterId,
-				period,
-				userId,
-				limits,
-				subscription,
-				now
-			);
+): Promise<{ retryAfter: number } | undefined> {
+	const { window, used } = await usedInWindow(ctx, meterId, userId, limits, subscription, now);
 
-			const limit = limits[meterId][period];
+	if (used < limits[meterId]) return undefined;
 
-			return { period, end: window.end, blocked: used >= limit };
-		})
-	);
-
-	const blocked = statuses.filter(({ blocked }) => blocked).sort((a, b) => b.end - a.end)[0];
-
-	if (blocked) {
-		return { period: blocked.period, retryAfter: Math.max(0, blocked.end - now) };
-	}
-
-	return undefined;
+	return { retryAfter: Math.max(0, window.end - now) };
 }
 
 async function checkMeterLimits(
@@ -211,7 +175,7 @@ async function checkMeterLimits(
 	// A ConvexError keeps its message through production error masking, and
 	// the executor only retries masked server failures.
 	throw new ConvexError(
-		`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
+		`${meterLimitLabel(meterId)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
 	);
 }
 
@@ -230,7 +194,7 @@ export async function gatewayQuotaStatus(
 	return {
 		tier,
 		exhausted: true,
-		message: `${meterLimitLabel('modelUsage', blocked.period)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
+		message: `${meterLimitLabel('modelUsage')} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
 	};
 }
 
@@ -243,48 +207,36 @@ async function chargeMeterLimits(
 	now: number,
 	count: number
 ): Promise<void> {
-	for (const period of usagePeriods) {
-		const { window, used, migrated } = await usedInWindow(
-			ctx,
-			meterId,
-			period,
-			userId,
-			limits,
-			subscription,
-			now
-		);
-
-		await rateLimiter.limit(ctx, meterLimitName(meterId, period), {
-			key: window.key,
-			config: window.config,
-			count: count + (migrated ? 0 : used),
-			reserve: true
-		});
-	}
-}
-
-export async function getMeterWindow(
-	ctx: QueryCtx,
-	meterId: UsageMeterId,
-	period: UsagePeriod,
-	userId: string,
-	limits: TierLimits,
-	subscription: MeterWindowSubscription | null,
-	now: number = Date.now()
-): Promise<{ used: number; limit: number; resetsAt: number | null }> {
-	const { used, window } = await usedInWindow(
+	const { window, used, migrated } = await usedInWindow(
 		ctx,
 		meterId,
-		period,
 		userId,
 		limits,
 		subscription,
 		now
 	);
 
+	await rateLimiter.limit(ctx, meterLimitName(meterId), {
+		key: window.key,
+		config: window.config,
+		count: count + (migrated ? 0 : used),
+		reserve: true
+	});
+}
+
+export async function getMeterWindow(
+	ctx: QueryCtx,
+	meterId: UsageMeterId,
+	userId: string,
+	limits: TierLimits,
+	subscription: MeterWindowSubscription | null,
+	now: number = Date.now()
+): Promise<{ used: number; limit: number; resetsAt: number | null }> {
+	const { used, window } = await usedInWindow(ctx, meterId, userId, limits, subscription, now);
+
 	return {
 		used,
-		limit: limits[meterId][period],
+		limit: limits[meterId],
 		resetsAt: window.end
 	};
 }

@@ -7,9 +7,8 @@ export type SubscriptionTier = string;
 /** Quota units per dollar. Tier limits in the `tiers` table use this scale. */
 export const MODEL_USAGE_UNITS_PER_DOLLAR = 1_000_000_000;
 
-export type TierLimits = {
-	modelUsage: { weekly: number; monthly: number };
-};
+/** Quota units each meter may use per monthly billing window. */
+export type TierLimits = { modelUsage: number };
 
 export type CachedTier = {
 	id: string;
@@ -21,7 +20,7 @@ function rowToCachedTier(row: Doc<'tiers'>): CachedTier {
 	return {
 		id: row.tierId,
 		label: row.label,
-		limits: { modelUsage: { weekly: row.weekly, monthly: row.monthly } }
+		limits: { modelUsage: row.monthly }
 	};
 }
 

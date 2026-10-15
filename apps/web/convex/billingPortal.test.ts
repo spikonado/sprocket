@@ -22,7 +22,7 @@ describe('billing portal recovery', () => {
 			});
 			const t = initConvexTest();
 			await t.run(async (ctx) => {
-				await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', weekly: 1, monthly: 1 });
+				await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 1 });
 				await ctx.db.insert('subscriptions', {
 					userId: 'owner',
 					tier: 'pro',
@@ -50,7 +50,7 @@ describe('billing portal recovery', () => {
 	it('keeps billing history reachable when no subscription row remains', async () => {
 		const t = initConvexTest();
 		await t.run(async (ctx) => {
-			await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', weekly: 1, monthly: 1 });
+			await ctx.db.insert('tiers', { tierId: 'free', label: 'Free', monthly: 1 });
 			await ctx.db.insert('billingCustomers', { userId: 'owner', dodoCustomerId: 'cus_owner' });
 		});
 		await expect(
