@@ -1,8 +1,5 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import { subscriptionAccessPhase } from '@convex/lib/tiers';
-import type { UsagePeriod } from '@convex/lib/usageMeters';
-
-const DAY = 86_400_000;
 
 type UsageWindow = { start: number; end: number };
 
@@ -34,19 +31,10 @@ function utcMonth(year: number, month: number, day: number, anchor: Date): numbe
 }
 
 export function billingWindow(
-	period: UsagePeriod,
 	subscription: BillingWindowSubscription | null,
 	now: number = Date.now()
 ): UsageWindow {
 	const date = new Date(now);
-
-	if (period === 'weekly') {
-		const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-		const monday = start - ((date.getUTCDay() + 6) % 7) * DAY;
-
-		return { start: monday, end: monday + 7 * DAY };
-	}
-
 	const access = subscriptionAccessPhase(subscription, now);
 	const paid = subscription !== null && access !== 'none' && !!subscription.dodoSubscriptionId;
 

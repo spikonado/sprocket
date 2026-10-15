@@ -323,6 +323,17 @@ out, migrate outstanding usage into generation-keyed buckets before changing
 the key preference. A subscription backfill alone does not migrate consumed
 allowance. Keep the timestamp field until that migration completes.
 
+#### Retired weekly usage limits
+
+Usage is metered only against the monthly limit. `usage.getMyUsage` reports
+each meter's `used`, `limit`, and `resetsAt` directly. It also keeps a
+`windows` array holding a single `monthly` entry, because released usage pages
+iterate that array. Weekly rate-limiter rows are no longer read, and the 62-day
+retention job removes them.
+
+Removal gate: drop `windows` from `vMyUsage` after released clients that read
+it age out.
+
 #### Checkout attempt retention
 
 `billingCheckoutSessions` keeps the current selection; superseded attempts

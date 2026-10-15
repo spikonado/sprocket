@@ -52,7 +52,6 @@ function publicPlanFromConfig(
 	return {
 		id: plan.id,
 		label: plan.label,
-		weeklyUsageDollars: plan.weeklyUsageDollars,
 		monthlyUsageDollars: plan.monthlyUsageDollars,
 		description: plan.description,
 		features: plan.features,

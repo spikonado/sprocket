@@ -318,7 +318,6 @@ export const getPublicPlans = internalQuery({
 			return {
 				id: tier.tierId,
 				label: tier.label,
-				weeklyUsageDollars: tier.weekly / MODEL_USAGE_UNITS_PER_DOLLAR,
 				monthlyUsageDollars: tier.monthly / MODEL_USAGE_UNITS_PER_DOLLAR,
 				description: tier.description ?? null,
 				features: tier.features ?? [],

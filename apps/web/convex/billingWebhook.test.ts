@@ -22,7 +22,6 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 		await ctx.db.insert('tiers', {
 			tierId: 'free',
 			label: 'Free',
-			weekly: 5 * UNITS_PER_DOLLAR,
 			monthly: 15 * UNITS_PER_DOLLAR
 		});
 		await ctx.db.insert('tiers', {
@@ -30,14 +29,12 @@ async function seedTiers(t: ConvexTestInstance): Promise<void> {
 			label: 'Pro',
 			monthlyProductId: 'prod_pro',
 			annualProductId: 'prod_pro_annual',
-			weekly: 25 * UNITS_PER_DOLLAR,
 			monthly: 75 * UNITS_PER_DOLLAR
 		});
 		await ctx.db.insert('tiers', {
 			tierId: 'max',
 			label: 'Max',
 			monthlyProductId: 'prod_max',
-			weekly: 170 * UNITS_PER_DOLLAR,
 			monthly: 500 * UNITS_PER_DOLLAR
 		});
 	});
@@ -411,14 +408,13 @@ describe('durable webhook ingestion and projection', () => {
 		expect(lateEvent?.outcome).toBe('stale');
 	});
 
-	it('resets both windows for distinct equal-time plan transitions without resetting on replay', async () => {
+	it('resets usage for distinct equal-time plan transitions without resetting on replay', async () => {
 		const t = initConvexTest();
 		await seedTiers(t);
 		await t.run((ctx) =>
 			ctx.db.insert('tiers', {
 				tierId: 'team',
 				label: 'Team',
-				weekly: 25 * UNITS_PER_DOLLAR,
 				monthly: 75 * UNITS_PER_DOLLAR,
 				monthlyProductId: 'prod_team'
 			})
@@ -426,9 +422,7 @@ describe('durable webhook ingestion and projection', () => {
 		const owner = t.withIdentity({ subject: userId });
 
 		const usage = async () =>
-			(await owner.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]!.windows.map(
-				(window) => window.used
-			);
+			(await owner.query(api.usage.getMyUsage, { now: Date.now() })).meters[0]!.used;
 
 		const project = async (productId: string) => {
 			const eventId = await recordEvent(t, {
@@ -450,14 +444,14 @@ describe('durable webhook ingestion and projection', () => {
 		for (const productId of ['prod_pro', 'prod_team']) {
 			const previousUsage = await usage();
 			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 5 });
-			expect(await usage()).toEqual(previousUsage.map((used) => used + 5));
+			expect(await usage()).toBe(previousUsage + 5);
 			const before = await readSubscription(t);
 			await project(productId);
-			expect(await usage()).toEqual([0, 0]);
+			expect(await usage()).toBe(0);
 			expect((await readSubscription(t))?.quotaGeneration).toBe(before!.quotaGeneration! + 1);
 			await t.mutation(internal.lib.rateLimits.chargeUsageUnits, { userId, count: 3 });
 			await project(productId);
-			expect(await usage()).toEqual([3, 3]);
+			expect(await usage()).toBe(3);
 		}
 	});
 
@@ -631,7 +625,6 @@ describe('durable webhook ingestion and projection', () => {
 				tierId: 'repaired',
 				label: 'Repaired',
 				monthlyProductId: 'prod_unknown',
-				weekly: 1,
 				monthly: 2
 			});
 		});
