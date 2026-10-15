@@ -111,7 +111,8 @@ export const start = mutation({
 		executionSecret: v.string(),
 		requestId: v.id('hostedParseRequests'),
 		storageId: v.id('_storage'),
-		filename: v.string()
+		filename: v.string(),
+		pages: v.optional(v.boolean())
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -184,6 +185,7 @@ export const start = mutation({
 				claimId: args.claimId,
 				inputStorageId: args.storageId,
 				filename,
+				pages: args.pages,
 				uploadUrl: undefined
 			});
 
@@ -283,7 +285,8 @@ export const getParseWork = internalQuery({
 		v.null(),
 		v.object({
 			inputStorageId: v.id('_storage'),
-			filename: v.string()
+			filename: v.string(),
+			pages: v.optional(v.boolean())
 		})
 	),
 	handler: async (ctx, args) => {
@@ -323,7 +326,11 @@ export const getParseWork = internalQuery({
 			return null;
 		}
 
-		return { inputStorageId: request.inputStorageId, filename: request.filename };
+		return {
+			inputStorageId: request.inputStorageId,
+			filename: request.filename,
+			pages: request.pages
+		};
 	}
 });
 

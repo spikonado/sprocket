@@ -379,23 +379,42 @@ fn read_document_blocking(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// `path` names the document for format detection; it is never read.
+enum DetectedDocument {
+    Converted((String, &'static str)),
+    Pdf(Vec<u8>),
+}
+
+/// `path` names the document and `hint` gives the format of signatureless
+/// content; the path is never read.
 pub(super) async fn convert_document(
     bytes: Vec<u8>,
     path: PathBuf,
+    hint: Option<anydoc::Format>,
     hosted: Option<&HostedParseContext<'_>>,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<(String, &'static str)> {
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
-    if detect_anydoc_format(&bytes, &path) == Some(anydoc::Format::Pdf) {
-        let markdown = super::pdf_pages::pdf_markdown(bytes, hosted, cancellation).await?;
-        return Ok((markdown, anydoc_format_name(anydoc::Format::Pdf)));
+    let detected = run_cancellable_blocking(cancellation, move || {
+        Ok(match detect_anydoc_format(&bytes, &path).or(hint) {
+            Some(anydoc::Format::Pdf) => DetectedDocument::Pdf(bytes),
+            format => DetectedDocument::Converted(convert_file_bytes(bytes, format)?),
+        })
+    })
+    .await?;
+    match detected {
+        DetectedDocument::Converted(converted) => Ok(converted),
+        DetectedDocument::Pdf(bytes) => {
+            let markdown = super::pdf_pages::pdf_markdown(bytes, hosted, cancellation).await?;
+            Ok((markdown, anydoc_format_name(anydoc::Format::Pdf)))
+        }
     }
-    run_cancellable_blocking(cancellation, move || convert_file_bytes(bytes, &path)).await
 }
 
-fn convert_file_bytes(bytes: Vec<u8>, path: &Path) -> anyhow::Result<(String, &'static str)> {
-    if let Some(format) = detect_anydoc_format(&bytes, path) {
+fn convert_file_bytes(
+    bytes: Vec<u8>,
+    format: Option<anydoc::Format>,
+) -> anyhow::Result<(String, &'static str)> {
+    if let Some(format) = format {
         let markdown = anydoc::to_markdown_bytes(&bytes, format)
             .map_err(|error| LocalConversionFailed(error.to_string()))?;
         return Ok((markdown, anydoc_format_name(format)));
@@ -561,7 +580,7 @@ async fn convert_local_file(
     let bytes =
         run_cancellable_blocking(cancellation, move || read_document_blocking(&worker_path))
             .await?;
-    let (text, format) = convert_document(bytes, path, hosted, cancellation).await?;
+    let (text, format) = convert_document(bytes, path, None, hosted, cancellation).await?;
     let worker_cancellation = cancellation.clone();
     run_cancellable_blocking(cancellation, move || {
         persist_parsed_text(&cache_dir, &text, format, &worker_cancellation)

@@ -1,13 +1,24 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const HEAD_REJECTED: &str =
+    "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+fn headers(content_type: &str, content_length: usize) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+    )
+}
+
 async fn serve(content_type: &str, bytes: Vec<u8>) -> reqwest::Url {
+    let headers = headers(content_type, bytes.len());
+    serve_split(headers.clone(), headers, bytes).await
+}
+
+/// Answers HEAD with `head`, and GET with `get` followed by `body`.
+async fn serve_split(head: String, get: String, body: Vec<u8>) -> reqwest::Url {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        bytes.len()
-    );
     tokio::spawn(async move {
         for _ in 0..2 {
             let Ok(Ok((mut stream, _))) =
@@ -17,9 +28,16 @@ async fn serve(content_type: &str, bytes: Vec<u8>) -> reqwest::Url {
             };
             let mut request = [0; 4096];
             stream.read(&mut request).await.unwrap();
-            stream.write_all(header.as_bytes()).await.unwrap();
-            if !request.starts_with(b"HEAD ") {
-                let _ = stream.write_all(&bytes).await;
+            if request.starts_with(b"HEAD ") {
+                stream.write_all(head.as_bytes()).await.unwrap();
+            } else {
+                let _ = stream.write_all(get.as_bytes()).await;
+                let _ = stream.write_all(&body).await;
+                // Keeps a body shorter than its declared length from ending in an error.
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    drop(stream);
+                });
             }
         }
     });
@@ -47,6 +65,18 @@ async fn is_page(url: reqwest::Url, cache: &Path) -> bool {
         fetch_local_resource(url, true, cache).await.unwrap(),
         LocalResource::Page
     )
+}
+
+async fn fetch_document(url: reqwest::Url, cache: &Path) -> WebDocument {
+    let LocalResource::Document(document) = fetch_local_resource(url, true, cache).await.unwrap()
+    else {
+        panic!("expected a document");
+    };
+    document
+}
+
+fn pdf() -> Vec<u8> {
+    b"%PDF-1.4\n%placeholder\n".to_vec()
 }
 
 #[tokio::test]
@@ -250,15 +280,9 @@ async fn unrecognized_content_is_scraped_but_text_only_models_reject_images() {
 #[tokio::test]
 async fn documents_are_downloaded_for_local_parsing() {
     let cache = tempfile::tempdir().unwrap();
-    let pdf = b"%PDF-1.4\n%placeholder\n".to_vec();
     for content_type in ["application/pdf", "application/octet-stream"] {
-        let url = serve(content_type, pdf.clone()).await;
-        let LocalResource::Document { bytes, .. } =
-            fetch_local_resource(url, true, cache.path()).await.unwrap()
-        else {
-            panic!("expected a document for {content_type}");
-        };
-        assert_eq!(bytes, pdf);
+        let url = serve(content_type, pdf()).await;
+        assert_eq!(fetch_document(url, cache.path()).await.bytes, pdf());
     }
     let url = serve(
         "application/octet-stream",
@@ -269,14 +293,76 @@ async fn documents_are_downloaded_for_local_parsing() {
 }
 
 #[tokio::test]
+async fn inconclusive_head_responses_leave_detection_to_the_get() {
+    let cache = tempfile::tempdir().unwrap();
+    let get = headers("application/pdf", pdf().len());
+    let url = serve_split(HEAD_REJECTED.into(), get.clone(), pdf()).await;
+    assert_eq!(fetch_document(url, cache.path()).await.bytes, pdf());
+
+    let mut url = serve_split(headers("text/plain", pdf().len()), get, pdf()).await;
+    url.set_path("/datasheet.pdf");
+    assert_eq!(fetch_document(url, cache.path()).await.bytes, pdf());
+
+    let html = b"<html>a page</html>".to_vec();
+    let url = serve_split(HEAD_REJECTED.into(), headers("text/html", html.len()), html).await;
+    assert!(is_page(url, cache.path()).await);
+}
+
+#[tokio::test]
+async fn csv_is_parsed_locally() {
+    let cache = tempfile::tempdir().unwrap();
+    let csv = b"part,stock\nresistor,12\n".to_vec();
+    let mut by_extension = serve("application/octet-stream", csv.clone()).await;
+    by_extension.set_path("/stock.csv");
+    for url in [
+        serve("text/csv; charset=utf-8", csv.clone()).await,
+        by_extension,
+    ] {
+        let document = fetch_document(url, cache.path()).await;
+        assert_eq!(document.hint, Some(anydoc::Format::Csv));
+        let (markdown, format) = convert_document(
+            document.bytes,
+            super::super::github_url::url_file_name(&document.url),
+            document.hint,
+            None,
+            &WorkspaceCancellation::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(format, "csv");
+        assert!(
+            markdown.contains("resistor") && markdown.contains('|'),
+            "{markdown}"
+        );
+    }
+    let url = serve("text/csv", vec![0xFF, 0, 0xFE]).await;
+    assert!(is_page(url, cache.path()).await);
+}
+
+#[tokio::test]
+async fn oversized_documents_are_rejected_instead_of_scraped() {
+    let cache = tempfile::tempdir().unwrap();
+    let mut body = pdf();
+    body.resize(DOCUMENT_SNIFF_BYTES * 2, b' ');
+    let get = headers("application/pdf", MAX_SCRAPE_BYTES as usize + 1);
+    let url = serve_split(HEAD_REJECTED.into(), get, body).await;
+    let error = fetch_local_resource(url, true, cache.path())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("64 MiB"), "{error}");
+}
+
+#[tokio::test]
 async fn unreachable_document_urls_are_left_for_a_raw_fetch() {
     let cache = tempfile::tempdir().unwrap();
-    let url = reqwest::Url::parse("http://127.0.0.1:1/datasheet.pdf").unwrap();
-    assert!(matches!(
-        fetch_local_resource(url, true, cache.path()).await.unwrap(),
-        LocalResource::UnreadableDocument
-    ));
-    let url = reqwest::Url::parse("http://127.0.0.1:1/table.csv").unwrap();
+    for path in ["datasheet.pdf", "table.csv"] {
+        let url = reqwest::Url::parse(&format!("http://127.0.0.1:1/{path}")).unwrap();
+        assert!(matches!(
+            fetch_local_resource(url, true, cache.path()).await.unwrap(),
+            LocalResource::UnreadableDocument
+        ));
+    }
+    let url = reqwest::Url::parse("http://127.0.0.1:1/page").unwrap();
     assert!(is_page(url, cache.path()).await);
 }
 

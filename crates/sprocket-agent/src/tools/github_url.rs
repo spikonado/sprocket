@@ -64,7 +64,8 @@ pub(super) async fn fetch_github_file(
         anyhow::ensure!(supports_images, "The selected model cannot view images.");
         return super::web::persist_web_image(&bytes, &url, cache_dir).await;
     }
-    let (markdown, _) = convert_document(bytes, url_file_name(&url), hosted, cancellation).await?;
+    let (markdown, _) =
+        convert_document(bytes, url_file_name(&url), None, hosted, cancellation).await?;
     Ok(json!({
         "url": url.as_str(),
         "markdown": markdown,

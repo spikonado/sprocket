@@ -1,3 +1,5 @@
+use lopdf::{Dictionary, Document, Stream, dictionary};
+
 use super::*;
 
 fn scanned(pages: &[&str], scanned: Vec<u32>) -> ScannedPdf {
@@ -16,57 +18,59 @@ fn page(index: u32, markdown: &str, needs_ocr: bool) -> pdf_inspector::PageMarkd
     }
 }
 
-fn with_markers(pages: &[String]) -> String {
-    let mut markdown = pages[0].clone();
-    for (index, page) in pages.iter().enumerate().skip(1) {
-        markdown.push_str(&format!("\n\n---\n\n<!-- page {} -->\n\n{page}", index + 1));
+fn parsed(page_number: u32, markdown: &str) -> ParsedPage {
+    ParsedPage {
+        page_number,
+        markdown: markdown.into(),
     }
-    markdown
 }
 
-fn pdf(pages: &[&str]) -> Vec<u8> {
-    let kids: Vec<String> = (0..pages.len())
-        .map(|index| format!("{} 0 R", 3 + 2 * index))
-        .collect();
-    let mut objects = vec![
-        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
-        format!(
-            "<< /Type /Pages /Kids [{}] /Count {} >>",
-            kids.join(" "),
-            pages.len()
-        ),
-    ];
-    for (index, text) in pages.iter().enumerate() {
-        objects.push(format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R >>",
-            4 + 2 * index
-        ));
-        let content = format!("BT ({text}) Tj ET");
-        objects.push(format!(
-            "<< /Length {} >>\nstream\n{content}\nendstream",
-            content.len()
-        ));
+fn media_box(size: i64) -> Object {
+    Object::Array([0, 0, size, size].map(Object::Integer).to_vec())
+}
+
+/// Pages sit in groups of ten and inherit MediaBox, Resources, and Rotate
+/// from the root, except page 57, which sets its own MediaBox.
+fn pdf(page_count: usize) -> Vec<u8> {
+    let mut document = Document::with_version("1.4");
+    let root = document.new_object_id();
+    let resources = document.add_object(dictionary! { "ProcSet" => vec![Object::from("PDF")] });
+    let mut groups = Vec::new();
+    for first in (0..page_count).step_by(10) {
+        let group = document.new_object_id();
+        let mut kids = Vec::new();
+        for index in first..(first + 10).min(page_count) {
+            let text = format!("BT (Page {}) Tj ET", index + 1);
+            let contents = document.add_object(Stream::new(Dictionary::new(), text.into_bytes()));
+            let mut page = dictionary! {
+                "Type" => "Page",
+                "Parent" => group,
+                "Contents" => contents,
+            };
+            if index + 1 == 57 {
+                page.set("MediaBox", media_box(100));
+            }
+            kids.push(Object::from(document.add_object(page)));
+        }
+        let count = kids.len() as i64;
+        let node =
+            dictionary! { "Type" => "Pages", "Parent" => root, "Kids" => kids, "Count" => count };
+        document.objects.insert(group, node.into());
+        groups.push(Object::from(group));
     }
-    let mut bytes = b"%PDF-1.4\n".to_vec();
-    let mut offsets = Vec::new();
-    for (index, object) in objects.iter().enumerate() {
-        offsets.push(bytes.len());
-        bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
-    }
-    let xref = bytes.len();
-    bytes.extend_from_slice(
-        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
-    );
-    for offset in offsets {
-        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-    }
-    bytes.extend_from_slice(
-        format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
-            objects.len() + 1
-        )
-        .as_bytes(),
-    );
+    let tree = dictionary! {
+        "Type" => "Pages",
+        "Kids" => groups,
+        "Count" => page_count as i64,
+        "MediaBox" => media_box(200),
+        "Resources" => resources,
+        "Rotate" => Object::Integer(90),
+    };
+    document.objects.insert(root, tree.into());
+    let catalog = document.add_object(dictionary! { "Type" => "Catalog", "Pages" => root });
+    document.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    document.save_to(&mut bytes).unwrap();
     bytes
 }
 
@@ -75,20 +79,6 @@ fn page_ranges_are_compact() {
     assert_eq!(page_ranges(&[2, 5, 6, 7, 12]), "2, 5-7, 12");
     assert_eq!(page_ranges(&(40..=90).collect::<Vec<u32>>()), "40-90");
     assert_eq!(pages_label(&[3]), "page 3");
-}
-
-#[test]
-fn page_markers_split_hosted_markdown_and_keep_merged_pages_on_the_earlier_page() {
-    let pages = ["one".to_string(), "two".into(), "three".into()];
-    assert_eq!(split_page_markers(&with_markers(&pages), 3), pages);
-    assert_eq!(
-        split_page_markers("one\n\n---\n\n<!-- page 3 -->\n\nthree", 3),
-        ["one", "", "three"]
-    );
-    assert_eq!(
-        split_page_markers("one <!-- page 9 --> <!-- page x --> still one", 2),
-        ["one <!-- page 9 --> <!-- page x --> still one", ""]
-    );
 }
 
 #[test]
@@ -109,10 +99,25 @@ fn scanned_pages_combine_detection_with_per_page_extraction() {
 #[test]
 fn recognized_pages_are_merged_in_page_order() {
     let pdf = scanned(&["Intro", "", "Middle", "", "Outro"], vec![2, 4]);
-    let ocr = with_markers(&["Scan A".into(), "Scan B".into()]);
+    let ocr = vec![parsed(2, "Scan B"), parsed(1, "Scan A")];
     assert_eq!(
         pdf.assemble(Ok(ocr)),
         "Intro\n\nScan A\n\nMiddle\n\nScan B\n\nOutro\n"
+    );
+}
+
+#[test]
+fn pages_missing_from_the_ocr_result_are_named() {
+    let pdf = scanned(&["Intro", "", "", ""], vec![2, 3, 4]);
+    let ocr = vec![
+        parsed(0, "bogus"),
+        parsed(1, "Scan 2"),
+        parsed(3, "Scan 4"),
+        parsed(9, "bogus"),
+    ];
+    assert_eq!(
+        pdf.assemble(Ok(ocr)),
+        "> Incomplete: page 3 of 4 is scanned and was not extracted (missing from the OCR result).\n\nIntro\n\nScan 2\n\n[page 3 not extracted: scanned]\n\nScan 4\n"
     );
 }
 
@@ -122,14 +127,12 @@ fn scanned_pages_beyond_the_cap_are_named_as_missing() {
     pages.resize(26, "");
     let pdf = scanned(&pages, (2..=26).collect());
     assert_eq!(pdf.ocr_batch(), (2..=21).collect::<Vec<u32>>());
-    let recognized: Vec<String> = (2..=21).map(|page| format!("Scan {page}")).collect();
-    let markdown = pdf.assemble(Ok(with_markers(&recognized)));
+    let ocr = (1..=20)
+        .map(|page| parsed(page, &format!("Scan {}", page + 1)))
+        .collect();
+    let markdown = pdf.assemble(Ok(ocr));
     assert!(
-        markdown.starts_with("> Incomplete: pages 22-26 of 26 are scanned and were not extracted"),
-        "{markdown}"
-    );
-    assert!(
-        markdown.contains("Intro\n\nScan 2\n\nScan 3\n"),
+        markdown.starts_with("> Incomplete: pages 22-26 of 26 are scanned and were not extracted (only the first 20 scanned pages are OCRed).\n\nIntro\n\nScan 2\n\nScan 3\n"),
         "{markdown}"
     );
     assert!(
@@ -148,15 +151,32 @@ fn failed_ocr_keeps_local_text_and_names_every_scanned_page() {
 }
 
 #[test]
-fn sub_pdf_keeps_only_requested_pages_in_order() {
-    let bytes = sub_pdf(&pdf(&["Page one", "Page two", "Page three"]), &[1, 3]).unwrap();
-    let document = lopdf::Document::load_mem(&bytes).unwrap();
-    let contents: Vec<String> = document
-        .get_pages()
-        .into_values()
-        .map(|page| String::from_utf8_lossy(&document.get_page_content(page)).into_owned())
-        .collect();
-    assert_eq!(contents.len(), 2);
-    assert!(contents[0].contains("Page one"), "{contents:?}");
-    assert!(contents[1].contains("Page three"), "{contents:?}");
+fn sub_pdf_keeps_requested_pages_with_their_inherited_attributes() {
+    let bytes = sub_pdf(&pdf(120), &[2, 57, 119]).unwrap();
+    let document = load_pdf(&bytes).unwrap();
+    let tree = document
+        .catalog()
+        .unwrap()
+        .get(b"Pages")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let pages: Vec<ObjectId> = document.get_pages().into_values().collect();
+    assert_eq!(pages.len(), 3);
+    for (id, (number, size)) in pages.into_iter().zip([(2, 200), (57, 100), (119, 200)]) {
+        let content = String::from_utf8(document.get_page_content(id)).unwrap();
+        assert!(content.contains(&format!("(Page {number})")), "{content}");
+        let page = document.get_dictionary(id).unwrap();
+        assert_eq!(page.get(b"Parent").unwrap().as_reference().unwrap(), tree);
+        assert_eq!(page.get(b"MediaBox").unwrap(), &media_box(size));
+        assert_eq!(page.get(b"Rotate").unwrap(), &Object::Integer(90));
+        assert!(page.get(b"Resources").is_ok());
+    }
+    // Catalog, tree, shared resources, and a page plus contents per kept page.
+    assert!(document.objects.len() <= 9, "{}", document.objects.len());
+}
+
+#[test]
+fn sub_pdf_rejects_pages_the_pdf_does_not_have() {
+    assert!(sub_pdf(&pdf(3), &[4]).is_err());
 }

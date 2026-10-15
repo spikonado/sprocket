@@ -166,6 +166,28 @@ describe('Firecrawl parse response contract', () => {
 			)
 		).toEqual({ error: 'Firecrawl parse response is too large.' });
 	});
+
+	it('returns per-page markdown when pages are requested', () => {
+		const pages = [
+			{ pageNumber: 1, markdown: '# One' },
+			{ pageNumber: 2, markdown: '' }
+		];
+
+		expect(
+			parseFirecrawlParseResponse(
+				JSON.stringify({ success: true, data: { markdown: '# One', pages } }),
+				128,
+				true
+			)
+		).toEqual({ pages });
+		expect(
+			parseFirecrawlParseResponse(
+				JSON.stringify({ success: true, data: { markdown: '# One' } }),
+				64,
+				true
+			)
+		).toEqual({ error: 'Firecrawl parse did not return pages.' });
+	});
 });
 
 describe('hostedParse', () => {
@@ -426,7 +448,7 @@ describe('hostedParse', () => {
 				if (!(parseOptions instanceof Blob)) throw new Error('Expected JSON options');
 				expect(JSON.parse(await parseOptions.text())).toEqual({
 					formats: ['markdown'],
-					parsers: [{ type: 'pdf', mode: 'auto', pageMarkers: true }],
+					parsers: [{ type: 'pdf', mode: 'auto' }],
 					timeout: 300_000
 				});
 
@@ -485,6 +507,75 @@ describe('hostedParse', () => {
 			expect(job?.status).toBe('claimed');
 		}
 	);
+
+	it('stores per-page OCR results as JSON when pages are requested', async () => {
+		const t = initConvexTest();
+
+		const run = await seedParseJob(t, {
+			executionSecret: 'hosted-pages-secret',
+			kind: 'scrape_url'
+		});
+
+		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
+			...auth(run),
+			jobId: run.jobId
+		});
+
+		const inputId = await storeBlob(t, { bytes: '%PDF-1.4', type: 'application/pdf' });
+		await run.asUser.mutation(api.hostedParse.start, {
+			...auth(run),
+			requestId: created.requestId,
+			storageId: inputId,
+			filename: 'scanned-pages.pdf',
+			pages: true
+		});
+
+		const pages = [
+			{ pageNumber: 2, markdown: '# Two' },
+			{ pageNumber: 1, markdown: '# One' }
+		];
+
+		const parseOptions: unknown[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, options?: RequestInit) => {
+				if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
+				const form = options?.body;
+
+				if (!(form instanceof FormData)) throw new Error('Expected multipart form');
+				const formOptions = form.get('options');
+
+				if (!(formOptions instanceof Blob)) throw new Error('Expected JSON options');
+				parseOptions.push(JSON.parse(await formOptions.text()));
+
+				return Response.json({ success: true, data: { markdown: '# Two\n\n# One', pages } });
+			})
+		);
+
+		const result = await t.action(internal.hostedParseActions.executeHostedParse, {
+			requestId: created.requestId,
+			jobId: run.jobId,
+			runId: run.runId,
+			claimId: run.claimId
+		});
+
+		expect(parseOptions).toEqual([
+			{
+				formats: ['markdown'],
+				parsers: [{ type: 'pdf', mode: 'auto', pages: true }],
+				timeout: 300_000
+			}
+		]);
+
+		const stored = await t.run(async (ctx) => {
+			const blob = await ctx.storage.get(result.resultStorageId!);
+
+			return blob ? { type: blob.type, text: await blob.text() } : null;
+		});
+
+		expect(stored?.type).toBe('application/json');
+		expect(JSON.parse(stored?.text ?? '')).toEqual({ pages });
+	});
 
 	it('rejects registered attachments and another parse input without deleting them', async () => {
 		const t = initConvexTest();

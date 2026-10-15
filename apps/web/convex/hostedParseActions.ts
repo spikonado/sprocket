@@ -6,11 +6,11 @@ import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
 import { env, internalAction } from '@convex/_generated/server';
 import {
-	FIRECRAWL_PARSE_OPTIONS,
 	FIRECRAWL_PARSE_TIMEOUT_MS,
 	FIRECRAWL_PARSE_URL,
 	HOSTED_PARSE_MAX_INPUT_BYTES,
 	HOSTED_PARSE_MAX_OUTPUT_BYTES,
+	firecrawlParseOptions,
 	parseFirecrawlParseResponse,
 	readBoundedResponseBytes,
 	shortHostedParseError
@@ -43,6 +43,7 @@ export const executeHostedParse = internalAction({
 		}
 
 		const apiKey = configuredFirecrawlApiKey();
+		const pages = work.pages === true;
 
 		if (!apiKey) {
 			throw new NonRetryableError('Hosted document parsing is not configured.');
@@ -71,7 +72,7 @@ export const executeHostedParse = internalAction({
 				method: 'POST',
 				redirect: 'error',
 				headers: { Authorization: `Bearer ${apiKey}` },
-				body: firecrawlParseForm(inputBytes, work.filename),
+				body: firecrawlParseForm(inputBytes, work.filename, pages),
 				signal: AbortSignal.timeout(FIRECRAWL_PARSE_TIMEOUT_MS)
 			});
 		} catch (error) {
@@ -99,7 +100,8 @@ export const executeHostedParse = internalAction({
 
 		const parsed = parseFirecrawlParseResponse(
 			new TextDecoder().decode(responseBytes),
-			responseBytes.byteLength
+			responseBytes.byteLength,
+			pages
 		);
 
 		if ('error' in parsed) {
@@ -107,20 +109,22 @@ export const executeHostedParse = internalAction({
 		}
 
 		const resultStorageId = await ctx.storage.store(
-			new Blob([parsed.markdown], { type: 'text/markdown; charset=utf-8' })
+			'pages' in parsed
+				? new Blob([JSON.stringify({ pages: parsed.pages })], { type: 'application/json' })
+				: new Blob([parsed.markdown], { type: 'text/markdown; charset=utf-8' })
 		);
 
 		return { resultStorageId };
 	}
 });
 
-function firecrawlParseForm(bytes: Uint8Array, filename: string): FormData {
+function firecrawlParseForm(bytes: Uint8Array, filename: string, pages: boolean): FormData {
 	const form = new FormData();
 	const copy = new Uint8Array(bytes);
 	form.append('file', new Blob([copy], { type: mediaTypeForFilename(filename) }), filename);
 	form.append(
 		'options',
-		new Blob([JSON.stringify(FIRECRAWL_PARSE_OPTIONS)], { type: 'application/json' })
+		new Blob([JSON.stringify(firecrawlParseOptions(pages))], { type: 'application/json' })
 	);
 
 	return form;

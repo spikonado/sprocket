@@ -3,15 +3,29 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::anyhow;
+use lopdf::{Object, ObjectId};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
-use super::hosted_parse::HostedParseContext;
+use super::hosted_parse::{HostedParseContext, ParsedPage};
 use super::parse_file::{LocalConversionFailed, run_cancellable_blocking};
 
 /// Hosted OCR bills per page, so scanned pages beyond this stay unextracted.
 const MAX_OCR_PAGES: usize = 20;
-const PAGE_MARKER_PREFIX: &str = "<!-- page ";
-const PAGE_MARKER_SUFFIX: &str = " -->";
+/// Mirrors pdf-inspector's per-stream bound against decompression bombs.
+const MAX_STREAM_DECOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PAGE_TREE_DEPTH: usize = 64;
+const INHERITED_PAGE_KEYS: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+/// Entries that can reference dropped pages and keep them from being pruned.
+const CATALOG_PAGE_LINKS: [&[u8]; 7] = [
+    b"Outlines",
+    b"Dests",
+    b"Names",
+    b"OpenAction",
+    b"StructTreeRoot",
+    b"AcroForm",
+    b"Threads",
+];
+const PAGE_LINKS: [&[u8]; 2] = [b"Annots", b"B"];
 
 /// Converts text pages locally and sends only scanned pages to hosted OCR.
 /// Fails with [`LocalConversionFailed`] only before contacting the hosted
@@ -60,7 +74,7 @@ fn local_pdf(bytes: &[u8], build_ocr_input: bool) -> anyhow::Result<LocalPdf> {
         .pages;
     let pdf = ScannedPdf::new(page_count, extracted, flagged);
     if pdf.scanned.is_empty() {
-        return Ok(LocalPdf::Complete(pdf.assemble(Ok(String::new()))));
+        return Ok(LocalPdf::Complete(pdf.assemble(Ok(Vec::new()))));
     }
     let ocr_input = build_ocr_input.then(|| sub_pdf(bytes, pdf.ocr_batch()));
     Ok(LocalPdf::Scanned { pdf, ocr_input })
@@ -70,7 +84,7 @@ async fn recognize(
     hosted: &HostedParseContext<'_>,
     input: Vec<u8>,
     cancellation: &WorkspaceCancellation,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Vec<ParsedPage>> {
     let file = run_cancellable_blocking(cancellation, move || {
         let mut file = tempfile::Builder::new()
             .prefix("sprocket-ocr-")
@@ -80,7 +94,7 @@ async fn recognize(
         Ok(file)
     })
     .await?;
-    super::hosted_parse::parse(
+    super::hosted_parse::parse_pages(
         hosted,
         file.path(),
         Path::new("scanned-pages.pdf"),
@@ -89,23 +103,92 @@ async fn recognize(
     .await
 }
 
-/// Keeps only `pages` (1-indexed), in document order.
+fn load_pdf(bytes: &[u8]) -> anyhow::Result<lopdf::Document> {
+    let options = lopdf::LoadOptions::with_max_decompressed_size(MAX_STREAM_DECOMPRESSED_BYTES);
+    lopdf::Document::load_mem_with_options(bytes, options)
+        .map_err(|error| anyhow!("failed to load the PDF for OCR: {error}"))
+}
+
+/// Keeps only `pages` (1-indexed, ascending) under a single flat page tree.
 fn sub_pdf(bytes: &[u8], pages: &[u32]) -> anyhow::Result<Vec<u8>> {
-    let mut document = lopdf::Document::load_mem(bytes)
-        .map_err(|error| anyhow!("failed to load the PDF for OCR: {error}"))?;
-    let keep: BTreeSet<u32> = pages.iter().copied().collect();
-    let removed: Vec<u32> = document
-        .get_pages()
-        .into_keys()
-        .filter(|page| !keep.contains(page))
-        .collect();
-    document.delete_pages(&removed);
+    let mut document = load_pdf(bytes)?;
+    let numbered = document.get_pages();
+    let kept = pages
+        .iter()
+        .map(|page| {
+            numbered
+                .get(page)
+                .copied()
+                .ok_or_else(|| anyhow!("page {page} is missing from the PDF"))
+        })
+        .collect::<anyhow::Result<Vec<ObjectId>>>()?;
+    let tree = document.catalog()?.get(b"Pages")?.as_reference()?;
+    for &id in &kept {
+        let inherited = inherited_attributes(&document, id)?;
+        let page = document.get_dictionary_mut(id)?;
+        for (key, value) in inherited {
+            page.set(key, value);
+        }
+        for key in PAGE_LINKS {
+            page.remove(key);
+        }
+        page.set("Parent", tree);
+    }
+    let root = document.get_dictionary_mut(tree)?;
+    root.set(
+        "Kids",
+        kept.iter().copied().map(Object::from).collect::<Vec<_>>(),
+    );
+    root.set("Count", kept.len() as i64);
+    root.remove(b"Parent");
+    let catalog = document.catalog_mut()?;
+    for key in CATALOG_PAGE_LINKS {
+        catalog.remove(key);
+    }
     document.prune_objects();
     let mut output = Vec::new();
     document
         .save_to(&mut output)
         .map_err(|error| anyhow!("failed to write the scanned pages for OCR: {error}"))?;
+    let written = load_pdf(&output)?.get_pages().len();
+    anyhow::ensure!(
+        written == pages.len(),
+        "the OCR PDF has {written} of {} scanned pages",
+        pages.len()
+    );
     Ok(output)
+}
+
+/// Page attributes the page inherits from its tree, which a flat tree drops.
+fn inherited_attributes(
+    document: &lopdf::Document,
+    page: ObjectId,
+) -> anyhow::Result<Vec<(&'static [u8], Object)>> {
+    let dictionary = document.get_dictionary(page)?;
+    let mut missing: Vec<&'static [u8]> = INHERITED_PAGE_KEYS
+        .into_iter()
+        .filter(|key| !dictionary.has(key))
+        .collect();
+    let mut inherited = Vec::new();
+    let mut parent = dictionary
+        .get(b"Parent")
+        .and_then(Object::as_reference)
+        .ok();
+    for _ in 0..MAX_PAGE_TREE_DEPTH {
+        let Some(id) = parent.filter(|_| !missing.is_empty()) else {
+            break;
+        };
+        let node = document.get_dictionary(id)?;
+        missing.retain(|key| match node.get(key) {
+            Ok(value) => {
+                inherited.push((*key, value.clone()));
+                false
+            }
+            Err(_) => true,
+        });
+        parent = node.get(b"Parent").and_then(Object::as_reference).ok();
+    }
+    Ok(inherited)
 }
 
 struct ScannedPdf {
@@ -141,41 +224,42 @@ impl ScannedPdf {
         &self.scanned[..self.scanned.len().min(MAX_OCR_PAGES)]
     }
 
-    /// `ocr` is the hosted markdown for [`Self::ocr_batch`], with page markers.
-    fn assemble(&self, ocr: Result<String, String>) -> String {
+    /// `ocr` holds the hosted pages of the [`Self::ocr_batch`] sub-PDF.
+    fn assemble(&self, ocr: Result<Vec<ParsedPage>, String>) -> String {
         let batch = self.ocr_batch();
-        let recognized: BTreeMap<u32, String> = match &ocr {
-            Ok(markdown) => batch
-                .iter()
-                .copied()
-                .zip(split_page_markers(markdown, batch.len()))
-                .collect(),
-            Err(_) => BTreeMap::new(),
-        };
-        let missing: Vec<u32> = self
-            .scanned
+        let mut recognized = BTreeMap::new();
+        for parsed in ocr.as_deref().unwrap_or_default() {
+            let original = (parsed.page_number as usize)
+                .checked_sub(1)
+                .and_then(|index| batch.get(index));
+            if let Some(&original) = original {
+                recognized
+                    .entry(original)
+                    .or_insert(parsed.markdown.as_str());
+            }
+        }
+        let unrecognized: Vec<u32> = batch
             .iter()
             .copied()
             .filter(|page| !recognized.contains_key(page))
             .collect();
+        let capped = &self.scanned[batch.len()..];
         let mut blocks = Vec::new();
-        if !missing.is_empty() {
+        if !unrecognized.is_empty() {
             let reason = match &ocr {
-                Ok(_) => format!("only the first {MAX_OCR_PAGES} scanned pages are OCRed"),
+                Ok(_) => "missing from the OCR result".to_string(),
                 Err(error) => format!("OCR failed: {error}"),
             };
-            let (verb, past) = if missing.len() == 1 {
-                ("is", "was")
-            } else {
-                ("are", "were")
-            };
-            blocks.push(format!(
-                "> Incomplete: {} of {} {verb} scanned and {past} not extracted ({reason}).",
-                pages_label(&missing),
-                self.pages.len(),
-            ));
+            blocks.push(self.incomplete_note(&unrecognized, &reason));
         }
-        let missing: BTreeSet<u32> = missing.into_iter().collect();
+        if !capped.is_empty() {
+            let reason = format!("only the first {MAX_OCR_PAGES} scanned pages are OCRed");
+            blocks.push(self.incomplete_note(capped, &reason));
+        }
+        let missing: BTreeSet<u32> = unrecognized
+            .into_iter()
+            .chain(capped.iter().copied())
+            .collect();
         let mut page = 1;
         while page as usize <= self.pages.len() {
             if missing.contains(&page) {
@@ -190,7 +274,8 @@ impl ScannedPdf {
             }
             let text = recognized
                 .get(&page)
-                .unwrap_or(&self.pages[page as usize - 1])
+                .copied()
+                .unwrap_or(self.pages[page as usize - 1].as_str())
                 .trim();
             if !text.is_empty() {
                 blocks.push(text.to_string());
@@ -201,60 +286,19 @@ impl ScannedPdf {
         markdown.push('\n');
         markdown
     }
-}
 
-/// Splits markdown that uses Firecrawl's `<!-- page N -->` markers into
-/// `page_count` pages. Firecrawl omits a marker when content flows across a
-/// page break, which leaves that content on the earlier page.
-fn split_page_markers(markdown: &str, page_count: usize) -> Vec<String> {
-    let mut pages = vec![String::new(); page_count];
-    if page_count == 0 {
-        return pages;
+    fn incomplete_note(&self, missing: &[u32], reason: &str) -> String {
+        let (verb, past) = if missing.len() == 1 {
+            ("is", "was")
+        } else {
+            ("are", "were")
+        };
+        format!(
+            "> Incomplete: {} of {} {verb} scanned and {past} not extracted ({reason}).",
+            pages_label(missing),
+            self.pages.len(),
+        )
     }
-    let mut current = 0;
-    let mut rest = markdown;
-    while let Some((start, end, next)) = next_page_marker(rest, current, page_count) {
-        pages[current] = page_text(&rest[..start]);
-        current = next;
-        rest = &rest[end..];
-    }
-    pages[current] = page_text(rest);
-    pages
-}
-
-/// Returns the marker's byte range and the 0-indexed page it starts.
-fn next_page_marker(
-    text: &str,
-    current: usize,
-    page_count: usize,
-) -> Option<(usize, usize, usize)> {
-    let mut offset = 0;
-    while let Some(found) = text[offset..].find(PAGE_MARKER_PREFIX) {
-        let start = offset + found;
-        let digits_start = start + PAGE_MARKER_PREFIX.len();
-        let digits_end = digits_start
-            + text[digits_start..]
-                .bytes()
-                .take_while(u8::is_ascii_digit)
-                .count();
-        let page = text[digits_start..digits_end].parse::<usize>().ok();
-        if let Some(page) = page.filter(|page| *page > current + 1 && *page <= page_count) {
-            if text[digits_end..].starts_with(PAGE_MARKER_SUFFIX) {
-                return Some((start, digits_end + PAGE_MARKER_SUFFIX.len(), page - 1));
-            }
-        }
-        offset = digits_start;
-    }
-    None
-}
-
-fn page_text(segment: &str) -> String {
-    let segment = segment.trim();
-    segment
-        .strip_suffix("---")
-        .unwrap_or(segment)
-        .trim()
-        .to_string()
 }
 
 fn pages_label(pages: &[u32]) -> String {
