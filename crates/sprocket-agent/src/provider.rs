@@ -877,7 +877,7 @@ async fn run_with_completion_model(
                                 }
                                 if let Some((next_history, next_prompt, delay)) = stream_recovery.resume(&error) {
                                     drop(stream);
-                                    eprintln!("sprocket-agent: provider stream was truncated; retrying the failed turn in {delay:?}");
+                                    eprintln!("sprocket-agent: provider stream was interrupted; retrying the failed turn in {delay:?}");
                                     history = next_history;
                                     prompt = next_prompt;
                                     recovery_delay = delay;
