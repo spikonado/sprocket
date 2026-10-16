@@ -47,7 +47,21 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
     let session_id = started.session_id.unwrap();
     let router = crate::build_router(state.clone(), None);
     let make_request = |path: &str, user: &str, thread: &str, authenticated: bool| {
-        let mut body = serde_json::json!({ "userId": user, "threadId": thread });
+        let mut body = if path.ends_with("/queue") {
+            serde_json::json!({
+                "submissionId": "submission-1",
+                "prompt": "Build it",
+                "storageIds": [],
+                "selectedModel": "gpt-5.6-sol",
+                "reasoningEffort": "medium",
+                "fastMode": false,
+                "workspacePath": "/workspace"
+            })
+        } else {
+            serde_json::json!({})
+        };
+        body["userId"] = user.into();
+        body["threadId"] = thread.into();
         if path.ends_with("terminate") {
             body["sessionId"] = session_id.clone().into();
         }
@@ -65,7 +79,11 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         }
         builder.body(Body::from(body.to_string())).unwrap()
     };
-    for path in ["/api/agent/commands", "/api/agent/commands/terminate"] {
+    for path in [
+        "/api/agent/commands",
+        "/api/agent/commands/terminate",
+        "/api/agent/queue",
+    ] {
         let response = router
             .clone()
             .oneshot(make_request(path, "user", "thread", false))

@@ -28,6 +28,7 @@ impl UserScoped for AgentLaunchRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/agent/run", post(run_agent_handler))
+        .route("/agent/queue", post(queue_message_handler))
         .route("/agent/live", post(live_handler))
         .route("/agent/commands", post(commands_handler))
         .route("/agent/commands/terminate", post(terminate_command_handler))
@@ -110,6 +111,36 @@ async fn run_agent_handler(
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+async fn queue_message_handler(
+    State(state): State<AppState>,
+    AuthorizedJson(payload): AuthorizedJson<AgentLaunchRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let host = state.host;
+    host.project_attachments
+        .require_available_workspace(&payload.workspace_path)
+        .await
+        .map_err(ApiError::bad_request)?;
+    host.machines
+        .register(&payload.user_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let client = host
+        .convex_client_for(&payload.user_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    let args = sprocket_host::message_queue::enqueue_args(
+        payload,
+        host.machine_identity.installation_id.clone(),
+        host.machine_identity.credential.clone(),
+    )
+    .map_err(ApiError::bad_request)?;
+    let _: serde_json::Value = client
+        .mutate("messageQueue:enqueue", args)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(serde_json::json!({ "queued": true })))
 }
 
 pub(crate) async fn launch_run(
