@@ -208,7 +208,8 @@ describe('Firecrawl request queue', () => {
 describe('screenshot_url', () => {
 	it('fails the job with an unsupported-tool error for released agents', async () => {
 		const t = initConvexTest();
-		const { jobId: _, ...auth } = await fixture(t);
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const auth = { runId, claimId, executionSecret };
 
 		const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
 			...auth,
