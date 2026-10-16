@@ -5,7 +5,11 @@ import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { getExecutionRun } from '@convex/lib/auth';
-import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import {
+	RUN_NO_LONGER_ACTIVE,
+	TOOL_NO_LONGER_SUPPORTED,
+	toAgentToolConvexError
+} from '@convex/lib/agentErrors';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
 import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
@@ -26,7 +30,7 @@ export const scrapeJob = internalMutation({
 		if (!active || active.job.status !== 'claimed' || active.job.cloudWorkId !== undefined)
 			return null;
 
-		if (active.job.kind !== 'scrape_url' && active.job.kind !== 'screenshot_url') return null;
+		if (active.job.kind !== 'scrape_url') return null;
 
 		return { kind: active.job.kind, payload: active.job.payload };
 	}
@@ -96,8 +100,12 @@ export const enqueue = internalMutation({
 export const start = mutation({
 	args: { ...vRequestArgs.fields, executionSecret: v.string() },
 	returns: v.id('firecrawlRequests'),
-	handler: async (ctx, args): Promise<Id<'firecrawlRequests'>> =>
-		await ctx.runMutation(internal.firecrawlRequests.enqueue, args)
+	handler: async (ctx, args): Promise<Id<'firecrawlRequests'>> => {
+		// Released agents still request screenshots.
+		if (args.kind === 'screenshot') throw new ConvexError(TOOL_NO_LONGER_SUPPORTED);
+
+		return await ctx.runMutation(internal.firecrawlRequests.enqueue, args);
+	}
 });
 
 export const getResult = query({

@@ -204,3 +204,28 @@ describe('Firecrawl request queue', () => {
 		}
 	);
 });
+
+describe('screenshot_url', () => {
+	it('is rejected for released agents that still offer it', async () => {
+		const t = initConvexTest();
+		const auth = await fixture(t);
+		await expect(
+			t.mutation(api.agentRuntime.beginToolJob, {
+				runId: auth.runId,
+				claimId: auth.claimId,
+				executionSecret: auth.executionSecret,
+				...toolTranscriptAssignment(auth.runId, auth.claimId),
+				kind: 'screenshot_url',
+				payload: { url: 'https://example.com' }
+			})
+		).rejects.toThrow('This tool is no longer supported.');
+	});
+
+	it('rejects screenshot requests from released agents', async () => {
+		const t = initConvexTest();
+		const auth = await fixture(t, true);
+		await expect(
+			t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'screenshot' })
+		).rejects.toThrow('This tool is no longer supported.');
+	});
+});

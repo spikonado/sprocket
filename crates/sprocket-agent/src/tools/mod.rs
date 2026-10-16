@@ -41,7 +41,7 @@ use self::subagents::{
     ControlSubagentTool, ListSubagentModelsTool, ListSubagentsTool, PollSubagentTool,
     SpawnSubagentTool,
 };
-use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
+use self::web::{ScrapeUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
@@ -58,7 +58,6 @@ pub(crate) struct AgentToolSet {
     pub(crate) poll_cmd: PollCmdTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
-    pub(crate) screenshot_url: ScreenshotUrlTool,
     pub(crate) spawn_subagent: SpawnSubagentTool,
     pub(crate) poll_subagent: PollSubagentTool,
     pub(crate) web_search: WebSearchTool,
@@ -183,7 +182,6 @@ pub(crate) fn agent_tools(
             skills,
         },
         scrape_url: ScrapeUrlTool(context.clone()),
-        screenshot_url: ScreenshotUrlTool(context.clone()),
         spawn_subagent: SpawnSubagentTool {
             context: context.clone(),
         },

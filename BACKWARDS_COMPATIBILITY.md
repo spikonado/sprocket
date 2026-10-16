@@ -465,6 +465,16 @@ and keeps its own state. Any remote Firecrawl session still live at deploy time
 expires on its own within the provider's hard TTL. The browser live-view UI
 components stay in place, stubbed against local state, for the local browser.
 
+#### Historical screenshot tool
+
+`screenshot_url` is gone from the agent. It stays in `vCurrentExecutorJobKind`
+so released agents that still offer it reach `beginToolJob`, which rejects it
+with "This tool is no longer supported.". Released agents that call
+`firecrawlRequests:start` with `kind: 'screenshot'` get the same error. Stored
+jobs and their cached images keep loading. Move the kind to the historical
+kinds once those agents age out. The stored validators stay permanently so
+history remains readable.
+
 #### Mandate setup email
 
 Mandate setup jobs written through v0.3.2 may contain `payload.userEmail`.

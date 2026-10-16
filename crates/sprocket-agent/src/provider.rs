@@ -463,12 +463,7 @@ async fn run_with_completion_model(
     } else {
         agent
     };
-    let mut agent = if request.supports_images {
-        agent.tool(tools.screenshot_url)
-    } else {
-        agent
-    }
-    .build();
+    let mut agent = agent.build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);

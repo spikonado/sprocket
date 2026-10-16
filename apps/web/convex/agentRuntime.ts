@@ -36,6 +36,7 @@ import {
 import {
 	COMPLETION_STREAM_SUPERSEDED,
 	RUN_NO_LONGER_ACTIVE,
+	TOOL_NO_LONGER_SUPPORTED,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
@@ -862,6 +863,11 @@ export const beginToolJob = mutation({
 
 			if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 				throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
+			}
+
+			// Released agents still offer screenshot_url.
+			if (args.kind === 'screenshot_url') {
+				throw new ConvexError(TOOL_NO_LONGER_SUPPORTED);
 			}
 
 			if (paymentToolJobKinds.has(args.kind)) {

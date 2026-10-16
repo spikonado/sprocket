@@ -8,7 +8,6 @@ import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
 	vScrapeUrlTransport,
-	vScreenshotUrlTransport,
 	vWebSearchResult,
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
@@ -38,8 +37,6 @@ export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
 export const SCRAPE_TIMEOUT_MS = 60_000;
 
 export const SCRAPE_FORMATS = ['markdown', 'summary', 'images'] as const;
-
-export const SCREENSHOT_FORMATS = ['screenshot'] as const;
 
 export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
 
@@ -88,7 +85,6 @@ const firecrawlDocumentSchema = z.object({
 	markdown: z.string().nullish(),
 	summary: z.string().nullish(),
 	images: z.array(z.string()).nullish(),
-	screenshot: z.string().nullish(),
 	metadata: z
 		.object({
 			url: z.string().optional(),
@@ -359,34 +355,6 @@ async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPag
 	return page;
 }
 
-async function fetchScreenshot(
-	ctx: ActionCtx,
-	urlValue: string
-): Promise<Infer<typeof vScreenshotUrlTransport>> {
-	const url = requireHttpUrl(urlValue);
-
-	const document = await requestFirecrawlScrape(ctx, url, {
-		formats: [...SCREENSHOT_FORMATS]
-	});
-
-	const screenshot = document.screenshot?.trim() ?? '';
-
-	if (!screenshot) {
-		throw new NonRetryableError('Firecrawl screenshot is unavailable.');
-	}
-
-	try {
-		requireHttpUrl(screenshot);
-	} catch {
-		throw new NonRetryableError('Firecrawl screenshot returned an invalid URL.');
-	}
-
-	return {
-		url: url.toString(),
-		screenshotUrl: screenshot
-	};
-}
-
 /**
  * Fetches unparsed bytes for local parsing. Firecrawl bills this one credit,
  * while its document parsing bills per page. Calls the API directly because
@@ -621,15 +589,11 @@ export async function executeQueuedScrape(
 			})
 		: null;
 
-	if (!job || job.kind !== `${request.kind}_url`) throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	if (!job || request.kind !== 'scrape') throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 
-	if (request.kind === 'scrape') {
-		const url = urlFromPayload(job.payload);
+	const url = urlFromPayload(job.payload);
 
-		if (request.rawDocument) return await fetchRawDocument(ctx, url);
+	if (request.rawDocument) return await fetchRawDocument(ctx, url);
 
-		return await localScrapeTransport(ctx, await fetchScrape(ctx, url));
-	}
-
-	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
+	return await localScrapeTransport(ctx, await fetchScrape(ctx, url));
 }
