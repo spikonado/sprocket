@@ -45,6 +45,10 @@ function allSwitches() {
 	return toggles.map(({ name }) => switchNamed(name));
 }
 
+function disabledStates() {
+	return allSwitches().map((toggle) => toggle.hasAttribute('disabled'));
+}
+
 it.each([null, preferences])(
 	'defaults to enabled for missing preferences or fields: %j',
 	async (data) => {
@@ -52,11 +56,11 @@ it.each([null, preferences])(
 		client.registerQuery(api.uiPreferences.getMine, data);
 		await mount(client);
 		expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
-
-		for (const toggle of allSwitches()) {
-			expect(toggle.getAttribute('aria-checked')).toBe('true');
-			expect(toggle).toHaveProperty('disabled', false);
-		}
+		expect(allSwitches().map((toggle) => toggle.getAttribute('aria-checked'))).toEqual([
+			'true',
+			'true'
+		]);
+		expect(disabledStates()).toEqual([false, false]);
 	}
 );
 
@@ -64,12 +68,12 @@ it('waits for preferences to load before allowing changes', async () => {
 	const client = new ConvexTestClient();
 	await mount(client);
 	expect(screen.getByRole('status').textContent).toBe('Loading preferences...');
-	for (const toggle of allSwitches()) expect(toggle).toHaveProperty('disabled', true);
+	expect(disabledStates()).toEqual([true, true]);
 	await act(async () => {
 		client.registerQuery(api.uiPreferences.getMine, preferences);
 	});
 	expect(screen.queryByRole('status')).toBeNull();
-	for (const toggle of allSwitches()) expect(toggle).toHaveProperty('disabled', false);
+	expect(disabledStates()).toEqual([false, false]);
 });
 
 it('shows a preference load error inline', async () => {
@@ -85,7 +89,7 @@ it('shows a preference load error inline', async () => {
 	await waitFor(() => {
 		expect(screen.getByRole('alert').textContent).toBe("Couldn't load your preferences right now.");
 	});
-	for (const toggle of allSwitches()) expect(toggle).toHaveProperty('disabled', true);
+	expect(disabledStates()).toEqual([true, true]);
 });
 
 describe.each(toggles)('$name', ({ name, field, mutation: preferenceMutation }) => {
