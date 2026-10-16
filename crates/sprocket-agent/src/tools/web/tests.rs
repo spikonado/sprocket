@@ -87,7 +87,7 @@ async fn historical_screenshots_replay_from_the_local_cache() {
     let store = crate::transcript::TranscriptStore::new(cache.path().join("transcripts"));
     let directory = store.thread_dir("user", "thread").join("screenshot_url");
     let url = reqwest::Url::parse("https://example.com/page").unwrap();
-    let metadata = persist_web_image(&png(), &url, &directory).await.unwrap();
+    let metadata = persist_web_image(png(), &url, &directory).await.unwrap();
     assert_image_history("screenshot_url", metadata, &directory).await;
 }
 

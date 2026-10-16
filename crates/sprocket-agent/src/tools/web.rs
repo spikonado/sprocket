@@ -14,8 +14,8 @@ use super::context::{AgentToolContext, tool_error};
 use super::hosted_parse::HostedParseContext;
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::parse_file::{
-    MAX_PARSE_FILE_IMAGE_BYTES, convert_document, decode_image_info, persist_image_bytes,
-    replay_image_tool_output,
+    MAX_PARSE_FILE_IMAGE_BYTES, convert_document, fit_image_for_model_blocking,
+    persist_image_bytes, replay_image_tool_output,
 };
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
@@ -321,20 +321,22 @@ async fn download_image(
         );
         bytes.extend_from_slice(&chunk);
     }
-    persist_web_image(&bytes, response.url(), cache_dir).await
+    let url = response.url().clone();
+    persist_web_image(bytes, &url, cache_dir).await
 }
 
 pub(super) async fn persist_web_image(
-    bytes: &[u8],
+    bytes: Vec<u8>,
     url: &reqwest::Url,
     cache_dir: &Path,
 ) -> anyhow::Result<serde_json::Value> {
-    let (media_type, width, height) = decode_image_info(bytes)?;
-    let path = persist_image_bytes(cache_dir, bytes, &media_type).await?;
+    let image = fit_image_for_model_blocking(bytes).await?;
+    let path = persist_image_bytes(cache_dir, &image.bytes, &image.media_type).await?;
     Ok(json!({
         "outputType": "image", "url": url.as_str(),
         "path": path,
-        "mediaType": media_type.to_mime_type(), "byteSize": bytes.len(), "width": width, "height": height,
+        "mediaType": image.media_type.to_mime_type(), "byteSize": image.bytes.len(),
+        "width": image.width, "height": image.height,
     }))
 }
 
