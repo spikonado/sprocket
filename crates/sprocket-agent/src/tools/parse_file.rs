@@ -348,13 +348,27 @@ fn encode_png(image: &image::DynamicImage) -> anyhow::Result<ModelImage> {
 fn encode_jpeg(image: &image::DynamicImage) -> anyhow::Result<ModelImage> {
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, MODEL_IMAGE_JPEG_QUALITY)
-        .encode_image(&image::DynamicImage::ImageRgb8(image.to_rgb8()))
+        .encode_image(&image::DynamicImage::ImageRgb8(flatten_onto_white(image)))
         .context("failed to encode jpeg")?;
     Ok(ModelImage {
         bytes,
         media_type: ImageMediaType::JPEG,
         width: image.width(),
         height: image.height(),
+    })
+}
+
+fn flatten_onto_white(image: &image::DynamicImage) -> image::RgbImage {
+    if !image.color().has_alpha() {
+        return image.to_rgb8();
+    }
+    let rgba = image.to_rgba8();
+    image::RgbImage::from_fn(rgba.width(), rgba.height(), |x, y| {
+        let [r, g, b, a] = rgba.get_pixel(x, y).0;
+        let over_white = |channel: u8| {
+            ((u16::from(channel) * u16::from(a) + 255 * (255 - u16::from(a)) + 127) / 255) as u8
+        };
+        image::Rgb([over_white(r), over_white(g), over_white(b)])
     })
 }
 

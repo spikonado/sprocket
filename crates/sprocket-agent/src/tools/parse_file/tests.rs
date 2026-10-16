@@ -647,6 +647,20 @@ fn images_too_heavy_as_png_are_re_encoded_as_jpeg() {
     assert!(fitted.bytes.len() <= MAX_MODEL_IMAGE_BYTES);
 }
 
+#[test]
+fn transparent_pixels_flatten_to_white_for_jpeg() {
+    let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(2, 1, |x, _| {
+        if x == 0 {
+            image::Rgba([0, 0, 0, 0])
+        } else {
+            image::Rgba([0, 0, 0, 255])
+        }
+    }));
+    let flat = flatten_onto_white(&image);
+    assert_eq!(flat.get_pixel(0, 0).0, [255, 255, 255]);
+    assert_eq!(flat.get_pixel(1, 0).0, [0, 0, 0]);
+}
+
 #[tokio::test]
 async fn local_and_replay_reads_are_bounded_without_trusting_size_metadata() {
     let workspace = temp_dir("oversize");
