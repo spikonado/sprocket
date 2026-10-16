@@ -24,6 +24,7 @@ export function toolItemLabel(toolKey: string): string | undefined {
 		case 'read_skill':
 		case 'scrape_url':
 		case 'web_search':
+		case 'developer_search':
 			return undefined;
 		case 'spawn_subagent':
 			return 'Delegated Tasks';
@@ -167,6 +168,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':
 			return jsonString(fields?.query) ?? 'Web search';
+		case 'developer_search':
+			return jsonString(fields?.query) ?? 'Developer search';
 		default:
 			return titleizeSnakeCase(name);
 	}
@@ -321,7 +324,11 @@ function patchSummary(toolLog: AssistantTimelineTool) {
 }
 
 function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
-	if (kind === 'web_search' && isJsonObject(result) && Array.isArray(result.results)) {
+	if (
+		(kind === 'web_search' || kind === 'developer_search') &&
+		isJsonObject(result) &&
+		Array.isArray(result.results)
+	) {
 		const count = result.results.length;
 
 		return ` (${count} result${count === 1 ? '' : 's'})`;

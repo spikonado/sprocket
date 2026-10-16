@@ -3,6 +3,7 @@ mod async_tools;
 mod commands;
 mod context;
 mod cwd;
+mod developer_search;
 mod github_url;
 mod hosted_parse;
 mod job;
@@ -30,6 +31,7 @@ use self::commands::{ControlCmdTool, ExecCmdTool, PollCmdTool};
 use self::context::{AgentToolContext, WorkingDirectory};
 use self::cwd::SetCwdTool;
 pub(crate) use self::cwd::working_directory_message;
+use self::developer_search::DeveloperSearchTool;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
@@ -50,6 +52,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) ask_question: AskQuestionTool,
     pub(crate) poll_question: PollQuestionTool,
     pub(crate) control_cmd: ControlCmdTool,
+    pub(crate) developer_search: DeveloperSearchTool,
     pub(crate) exec_cmd: ExecCmdTool,
     pub(crate) control_subagent: ControlSubagentTool,
     pub(crate) list_subagent_models: ListSubagentModelsTool,
@@ -167,6 +170,7 @@ pub(crate) fn agent_tools(
         ask_question: AskQuestionTool(context.clone()),
         poll_question: PollQuestionTool(context.clone()),
         control_cmd: ControlCmdTool(context.clone()),
+        developer_search: DeveloperSearchTool(context.clone()),
         exec_cmd: ExecCmdTool(context.clone()),
         control_subagent: ControlSubagentTool {
             context: context.clone(),

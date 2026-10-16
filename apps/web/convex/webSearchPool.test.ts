@@ -99,6 +99,26 @@ describe('local scrape_url dispatch', () => {
 	});
 });
 
+describe('local developer_search dispatch', () => {
+	it('dispatches developer_search locally so the agent can request it', async () => {
+		const t = initConvexTest();
+
+		const { jobId, runId, claimId } = await seedStartedWebJob(t, {
+			executionSecret: 'developer-search-dispatch-secret',
+			kind: 'developer_search',
+			payload: { query: 'workpool' }
+		});
+
+		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(stored?.cloudWorkId).toBeUndefined();
+		expect(stored?.status).toBe('claimed');
+		expect(await t.mutation(internal.webRequests.requestJob, { runId, claimId, jobId })).toEqual({
+			kind: 'developer_search',
+			payload: { query: 'workpool' }
+		});
+	});
+});
+
 describe('temporary scrape storage', () => {
 	it('deletes unregistered blobs and is a no-op after they are gone', async () => {
 		const t = initConvexTest();

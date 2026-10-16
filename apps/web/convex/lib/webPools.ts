@@ -11,6 +11,7 @@ export const contextDevPool = new Workpool(components.contextDevWorkpool, {
 	retryActionsByDefault: false
 });
 
+/** Shared by hosted OCR and developer_search. */
 export const firecrawlPool = new Workpool(components.firecrawlScrapeWorkpool, {
 	maxParallelism: FIRECRAWL_MAX_PARALLELISM,
 	retryActionsByDefault: false

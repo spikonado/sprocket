@@ -13,7 +13,7 @@ import {
 import { getExecutionRun } from '@convex/lib/auth';
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { contextDevPool } from '@convex/lib/webPools';
+import { contextDevPool, firecrawlPool } from '@convex/lib/webPools';
 import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
 import schema from '@convex/schema';
 import { isRunFinalStatus } from '@convex/lib/validators';
@@ -28,6 +28,23 @@ export const vRequestArgs = schema
 
 type WebRequest = Doc<'webRequests'>;
 
+type WebRequestKind = WebRequest['kind'];
+
+const JOB_KIND_BY_REQUEST_KIND = {
+	scrape: 'scrape_url',
+	developer_search: 'developer_search'
+} as const satisfies Record<WebRequestKind, Doc<'executorJobs'>['kind']>;
+
+function isRequestJobKind(
+	kind: Doc<'executorJobs'>['kind']
+): kind is 'scrape_url' | 'developer_search' {
+	return kind === 'scrape_url' || kind === 'developer_search';
+}
+
+function poolFor(kind: WebRequestKind) {
+	return kind === 'scrape' ? contextDevPool : firecrawlPool;
+}
+
 export const requestJob = internalMutation({
 	args: { runId: v.id('runs'), claimId: v.string(), jobId: v.id('executorJobs') },
 	handler: async (ctx, args) => {
@@ -36,7 +53,7 @@ export const requestJob = internalMutation({
 		if (!active || active.job.status !== 'claimed' || active.job.cloudWorkId !== undefined)
 			return null;
 
-		if (active.job.kind !== 'scrape_url') return null;
+		if (!isRequestJobKind(active.job.kind)) return null;
 
 		return { kind: active.job.kind, payload: active.job.payload };
 	}
@@ -61,7 +78,7 @@ async function findActiveRun(
 
 	if (
 		!active ||
-		active.job.kind !== 'scrape_url' ||
+		active.job.kind !== JOB_KIND_BY_REQUEST_KIND[request.kind] ||
 		active.job.status !== 'claimed' ||
 		active.job.cloudWorkId !== undefined
 	) {
@@ -95,7 +112,7 @@ export const enqueue = internalMutation({
 			expiresAt: Date.now() + REQUEST_TTL_MS
 		});
 
-		const workId = await contextDevPool.enqueueAction(
+		const workId = await poolFor(args.kind).enqueueAction(
 			ctx,
 			internal.webRequestActions.execute,
 			{ id },
@@ -269,7 +286,7 @@ export const complete = internalMutation({
 async function remove(ctx: MutationCtx, request: WebRequest) {
 	if (request.workId && (request.status === 'queued' || request.status === 'running')) {
 		// SAFETY: Stored directly from this pool's enqueueAction result.
-		await contextDevPool.cancel(ctx, request.workId as WorkId);
+		await poolFor(request.kind).cancel(ctx, request.workId as WorkId);
 	}
 
 	if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);
