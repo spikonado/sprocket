@@ -42,7 +42,7 @@ export default function SettingsGeneral() {
 					/>
 					<PreferenceToggle
 						title="Continue agents automatically after restarts"
-						description="Automatically resume interrupted agent after an update, crash, or machine restart."
+						description="Automatically resume interrupted agents after an update, crash, or machine restart."
 						descriptionId="automatic-agent-continuation-description"
 						savedEnabled={preferences?.automaticAgentContinuation ?? true}
 						disabled={disabled}
