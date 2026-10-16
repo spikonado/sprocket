@@ -307,7 +307,8 @@ export default defineSchema({
 	uiPreferences: defineTable({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark')),
-		automaticThreadTitles: v.optional(v.boolean())
+		automaticThreadTitles: v.optional(v.boolean()),
+		automaticAgentContinuation: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),

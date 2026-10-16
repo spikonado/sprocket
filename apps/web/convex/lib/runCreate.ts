@@ -22,9 +22,11 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import {
 	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
+	automaticAgentContinuationEnabled,
 	isAutomaticallyRecoverableRun
 } from '@convex/lib/runRecovery';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import {
 	captureThreadActivityBeforeChange,
@@ -247,6 +249,7 @@ export async function createQueuedRunRecord(
 		if (
 			args.submissionId.startsWith(AUTOMATIC_RECOVERY_SUBMISSION_PREFIX) &&
 			(!machineId ||
+				!(await automaticAgentContinuationEnabled(ctx.db, args.userId)) ||
 				!isAutomaticallyRecoverableRun(parent, machineId) ||
 				recordsPrompt ||
 				(await threadRoot(ctx.db, threadRecord)).archivedAt !== undefined)
@@ -342,14 +345,9 @@ export async function createQueuedRunRecord(
 			)
 			.first();
 
-		const preferences = await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
-			.unique();
-
 		if (
 			firstPrompt?._id === created.promptPart._id &&
-			preferences?.automaticThreadTitles !== false
+			(await getUiPreferences(ctx.db, args.userId))?.automaticThreadTitles !== false
 		) {
 			await ctx.scheduler.runAfter(0, internal.threadTitles.generate, {
 				runId,

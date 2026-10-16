@@ -1,32 +1,44 @@
-import { mutation, query } from '@convex/_generated/server';
+import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import type { WithoutSystemFields } from 'convex/server';
 import { v } from 'convex/values';
+import type { Doc } from '@convex/_generated/dataModel';
 import { getUserId } from '@convex/lib/auth';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
 import schema from '@convex/schema';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
+
+async function savePreferences(
+	ctx: MutationCtx,
+	changes: Partial<Omit<WithoutSystemFields<Doc<'uiPreferences'>>, 'userId'>>
+) {
+	const userId = await getUserId(ctx);
+	const existing = await getUiPreferences(ctx.db, userId);
+
+	if (existing) {
+		await ctx.db.patch('uiPreferences', existing._id, changes);
+
+		return existing._id;
+	}
+
+	return await ctx.db.insert('uiPreferences', { userId, theme: 'light', ...changes });
+}
+
+export const setAutomaticAgentContinuation = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await savePreferences(ctx, { automaticAgentContinuation: args.enabled });
+
+		return null;
+	}
+});
 
 export const setAutomaticThreadTitles = mutation({
 	args: { enabled: v.boolean() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-
-		const existing = await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
-
-		if (existing) {
-			await ctx.db.patch('uiPreferences', existing._id, {
-				automaticThreadTitles: args.enabled
-			});
-		} else {
-			await ctx.db.insert('uiPreferences', {
-				userId,
-				theme: 'light',
-				automaticThreadTitles: args.enabled
-			});
-		}
+		await savePreferences(ctx, { automaticThreadTitles: args.enabled });
 
 		return null;
 	}
@@ -36,12 +48,7 @@ export const getMine = query({
 	args: {},
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx) => {
-		const userId = await getUserId(ctx);
-
-		return await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
+		return await getUiPreferences(ctx.db, await getUserId(ctx));
 	}
 });
 
@@ -51,25 +58,7 @@ export const setTheme = mutation({
 	},
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-
-		const existing = await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
-
-		if (existing) {
-			await ctx.db.patch('uiPreferences', existing._id, {
-				theme: args.theme
-			});
-
-			return await ctx.db.get('uiPreferences', existing._id);
-		}
-
-		const id = await ctx.db.insert('uiPreferences', {
-			userId,
-			theme: args.theme
-		});
+		const id = await savePreferences(ctx, { theme: args.theme });
 
 		return await ctx.db.get('uiPreferences', id);
 	}

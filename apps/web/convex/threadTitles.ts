@@ -16,6 +16,7 @@ import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToke
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 const requestArgs = {
 	runId: v.id('runs'),
@@ -56,12 +57,7 @@ async function currentRequest(
 		return { threadId: run.threadId, userId: run.userId, throughNumber: args.throughNumber };
 	}
 
-	const preferences = await ctx.db
-		.query('uiPreferences')
-		.withIndex('by_userId', (query) => query.eq('userId', run.userId))
-		.unique();
-
-	if (preferences?.automaticThreadTitles === false) return null;
+	if ((await getUiPreferences(ctx.db, run.userId))?.automaticThreadTitles === false) return null;
 	const prompt = await getPromptPart(ctx, run.threadId, run._id);
 
 	const firstPrompt = await ctx.db

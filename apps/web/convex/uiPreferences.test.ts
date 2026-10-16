@@ -3,29 +3,31 @@ import { api } from '@convex/_generated/api';
 import { initConvexTest } from './test.setup';
 
 describe('theme preferences', () => {
-	it('syncs automatic naming per account and preserves the theme', async () => {
+	it.each([
+		['automaticThreadTitles', api.uiPreferences.setAutomaticThreadTitles],
+		['automaticAgentContinuation', api.uiPreferences.setAutomaticAgentContinuation]
+	] as const)('syncs %s per account and preserves the theme', async (field, setPreference) => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });
 		const otherSession = t.withIdentity({ subject: 'alice' });
 		const bob = t.withIdentity({ subject: 'bob' });
 		await alice.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
-		await alice.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: false });
+		await alice.mutation(setPreference, { enabled: false });
 		expect(await otherSession.query(api.uiPreferences.getMine, {})).toMatchObject({
 			theme: 'dark',
-			automaticThreadTitles: false
+			[field]: false
 		});
 		await otherSession.mutation(api.uiPreferences.setTheme, { theme: 'light' });
 		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({
 			theme: 'light',
-			automaticThreadTitles: false
+			[field]: false
 		});
-		await bob.mutation(api.uiPreferences.setAutomaticThreadTitles, { enabled: true });
-		expect(await bob.query(api.uiPreferences.getMine, {})).toMatchObject({
-			automaticThreadTitles: true
-		});
-		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({
-			automaticThreadTitles: false
-		});
+		await bob.mutation(setPreference, { enabled: true });
+		expect(await bob.query(api.uiPreferences.getMine, {})).toMatchObject({ [field]: true });
+		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({ [field]: false });
+		await expect(t.mutation(setPreference, { enabled: false })).rejects.toThrow(
+			'Authentication required'
+		);
 	});
 
 	it('syncs themes between sessions while isolating accounts', async () => {
