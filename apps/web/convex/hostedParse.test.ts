@@ -146,6 +146,11 @@ describe('Firecrawl parse document contract', () => {
 				true
 			)
 		).toEqual({ error: 'Firecrawl parse response is too large.' });
+		// JSON escaping doubles each quote, so only the stored file exceeds the limit.
+		const quotes = '"'.repeat(HOSTED_PARSE_MAX_OUTPUT_BYTES / 2 + 1);
+		expect(
+			parseFirecrawlParseDocument({ pages: [{ pageNumber: 1, markdown: quotes }] }, true)
+		).toEqual({ error: 'Firecrawl parse response is too large.' });
 	});
 
 	it('reads per-page markdown only when pages are requested', () => {

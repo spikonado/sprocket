@@ -120,10 +120,8 @@ export function parseFirecrawlParseDocument(
 
 		if (!parsedPages) return { error: 'Firecrawl parse did not return pages.' };
 
-		if (
-			parsedPages.reduce((total, page) => total + utf8Bytes(page.markdown), 0) >
-			HOSTED_PARSE_MAX_OUTPUT_BYTES
-		) {
+		// executeHostedParse stores, and the agent downloads, this exact serialization.
+		if (utf8Bytes(JSON.stringify({ pages: parsedPages })) > HOSTED_PARSE_MAX_OUTPUT_BYTES) {
 			return { error: 'Firecrawl parse response is too large.' };
 		}
 

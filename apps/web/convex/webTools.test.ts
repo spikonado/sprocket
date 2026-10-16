@@ -381,14 +381,15 @@ describe('context.dev scrape', () => {
 		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('bounds the outline of a page with many long headings', async () => {
+	it('bounds the outline of a page with long metadata and many long headings', async () => {
 		const t = initConvexTest();
-		const longText = 'h'.repeat(1_000);
+		const longText = 'h'.repeat(100_000);
 
 		scrape.mockResolvedValue(
 			scrapeResponse({
 				metadata: {
-					title: 'Huge',
+					title: longText,
+					description: longText,
 					headings: Array.from({ length: 5_000 }, () => ({ level: 2, text: longText }))
 				}
 			})
@@ -397,8 +398,7 @@ describe('context.dev scrape', () => {
 		const { outline } = await scrapePage(t, { url: PAGE_URL });
 
 		expect(outline.headings.length).toBeGreaterThan(0);
-		expect(outline.headings.every((heading) => heading.text.length < longText.length)).toBe(true);
-		expect(JSON.stringify(outline).length).toBeLessThan(SCRAPE_INLINE_MAX_CHARS);
+		expect(JSON.stringify(outline).length).toBeLessThan(SCRAPE_INLINE_MAX_CHARS / 2);
 	});
 
 	it('fails with the page error from a failed markdown output', async () => {

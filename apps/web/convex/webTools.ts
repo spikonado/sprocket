@@ -50,6 +50,8 @@ const OUTLINE_MAX_CHARS = 8_000;
 
 const OUTLINE_HEADING_MAX_CHARS = 200;
 
+const OUTLINE_DESCRIPTION_MAX_CHARS = 1_000;
+
 export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.';
 
 export const DEVELOPER_SEARCH_RESULTS = 10;
@@ -245,9 +247,13 @@ function requireOutput(output: ScrapeOutput): void {
 function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
 	const outline: PageOutline = { headings: [] };
 
-	if (metadata.title?.trim()) outline.title = metadata.title.trim();
+	const title = metadata.title?.trim().slice(0, OUTLINE_HEADING_MAX_CHARS);
+	const description = metadata.description?.trim().slice(0, OUTLINE_DESCRIPTION_MAX_CHARS);
 
-	if (metadata.description?.trim()) outline.description = metadata.description.trim();
+	if (title) outline.title = title;
+
+	if (description) outline.description = description;
+
 	let size = JSON.stringify(outline).length;
 
 	for (const heading of metadata.headings ?? []) {
