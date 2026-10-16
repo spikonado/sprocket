@@ -13,6 +13,7 @@ const ACTIVITIES: Record<SummarizedToolName | 'check_docs', Activity> = {
 	apply_patch: { verb: 'applied', noun: 'patch', plural: 'patches' },
 	control_cmd: { verb: 'controlled', noun: 'command' },
 	web_search: { verb: 'searched', noun: 'time' },
+	developer_search: { verb: 'ran', noun: 'developer search', plural: 'developer searches' },
 	scrape_url: { verb: 'fetched', noun: 'page' },
 	parse_file: { verb: 'parsed', noun: 'file' },
 	screenshot_url: { verb: 'captured', noun: 'screenshot' },

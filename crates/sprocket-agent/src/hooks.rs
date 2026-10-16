@@ -15,6 +15,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "control_cmd",
     "control_subagent",
     "delete_artifact",
+    "developer_search",
     "edit_artifact",
     "exec_cmd",
     "link_prs",
