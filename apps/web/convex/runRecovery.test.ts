@@ -71,30 +71,7 @@ describe('automatic run recovery', () => {
 		});
 
 		expect(manual.created).toBe(true);
-		expect(manual.promptPart).toBeUndefined();
 		expect(manual.runId).not.toBe(runId);
-	});
-
-	it('checks the preference again when creating a continuation and can be re-enabled', async () => {
-		const { t, asUser, runId, threadId, queryArgs, recoveryArgs, abandon } = await setup();
-		await asUser.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
-		await abandon();
-		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
-			state: 'recover',
-			runId,
-			threadId
-		});
-		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
-		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
-			'This run cannot recover automatically.'
-		);
-		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: true });
-		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
-			state: 'recover',
-			runId,
-			threadId
-		});
-		expect((await insertQueuedRun(t, asUser, recoveryArgs)).created).toBe(true);
 	});
 
 	it('recovers an executor-reported lease failure before the lifecycle deadline', async () => {

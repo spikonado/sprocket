@@ -26,6 +26,7 @@ import {
 	isAutomaticallyRecoverableRun
 } from '@convex/lib/runRecovery';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
 import { headActionablePendingQuestion } from '@convex/lib/agentQuestions';
 import {
 	captureThreadActivityBeforeChange,
@@ -344,14 +345,9 @@ export async function createQueuedRunRecord(
 			)
 			.first();
 
-		const preferences = await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
-			.unique();
-
 		if (
 			firstPrompt?._id === created.promptPart._id &&
-			preferences?.automaticThreadTitles !== false
+			(await getUiPreferences(ctx.db, args.userId))?.automaticThreadTitles !== false
 		) {
 			await ctx.scheduler.runAfter(0, internal.threadTitles.generate, {
 				runId,
