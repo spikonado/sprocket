@@ -5,16 +5,20 @@ import { z } from 'zod';
 import { APIConnectionTimeoutError, APIError, ContextDev } from 'context.dev';
 import type { WebScrapeParams, WebScrapeResponse } from 'context.dev/resources/web';
 import { ExaClient } from '@exalabs/convex-exa';
+import type { DeveloperSearchOptions } from 'firecrawl';
 import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
 	vWebSearchResult,
 	type ExecutorJobPayload,
+	type vDeveloperSearchPayload,
+	type vDeveloperSearchResults,
 	type vPageOutline,
 	type vScrapeUrlTransport
 } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { HOSTED_PARSE_MAX_INPUT_BYTES } from '@convex/lib/hostedParse';
+import { firecrawlClient, firecrawlFailure, firecrawlRetryAfterMs } from '@convex/lib/firecrawl';
 import { retryAfterHeaderMs, retryRateLimited } from '@convex/lib/providerRetry';
 import { NonRetryableError } from '@convex-dev/workpool';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -49,6 +53,12 @@ const OUTLINE_HEADING_MAX_CHARS = 200;
 const OUTLINE_DESCRIPTION_MAX_CHARS = 1_000;
 
 export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.';
+
+export const DEVELOPER_SEARCH_RESULTS = 10;
+
+export const DEVELOPER_SEARCH_PASSAGES = 5;
+
+const DEVELOPER_SEARCH_TIMEOUT_MS = 60_000;
 
 const RAW_DOCUMENT_TOO_LARGE = 'Document exceeds the 50 MB raw fetch limit.';
 
@@ -90,6 +100,8 @@ export type RawDocument = {
 	documentUrl: string;
 	contentType?: string;
 };
+
+type DeveloperSearchResults = Infer<typeof vDeveloperSearchResults>;
 
 function isRetryableHttpStatus(status: number): boolean {
 	return status === 408 || status === 425 || status === 429 || status >= 500;
@@ -199,11 +211,11 @@ function contextDevFailure(error: Error): Error {
 	);
 }
 
-type ScrapeLimits = { deadline: number; shouldContinue: () => Promise<boolean> };
+type RequestLimits = { deadline: number; shouldContinue: () => Promise<boolean> };
 
 async function requestContextDevScrape(
 	params: ScrapeParams,
-	{ deadline, shouldContinue }: ScrapeLimits
+	{ deadline, shouldContinue }: RequestLimits
 ): Promise<WebScrapeResponse> {
 	return await retryRateLimited({
 		deadline,
@@ -268,7 +280,7 @@ function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
 async function fetchScrape(
 	urlValue: string,
 	query: string | undefined,
-	limits: ScrapeLimits
+	limits: RequestLimits
 ): Promise<ScrapedPage> {
 	const url = requireHttpUrl(urlValue);
 	const highlightsQuery = query?.trim();
@@ -311,7 +323,7 @@ async function fetchScrape(
 async function fetchRawDocument(
 	ctx: ActionCtx,
 	urlValue: string,
-	limits: ScrapeLimits
+	limits: RequestLimits
 ): Promise<RawDocument> {
 	const url = requireHttpUrl(urlValue);
 
@@ -407,6 +419,62 @@ async function storeTemporaryBlob(ctx: ActionCtx, blob: Blob): Promise<string> {
 	}
 
 	return url;
+}
+
+type DeveloperSearchArgs = Infer<typeof vDeveloperSearchPayload>;
+
+async function runDeveloperSearch(
+	args: DeveloperSearchArgs,
+	{ deadline, shouldContinue }: RequestLimits
+): Promise<DeveloperSearchResults> {
+	const query = args.query.trim();
+
+	if (!query) throw new Error('Search query cannot be empty.');
+
+	const options: DeveloperSearchOptions = {
+		k: DEVELOPER_SEARCH_RESULTS,
+		passages: DEVELOPER_SEARCH_PASSAGES
+	};
+
+	if (args.types?.length) options.types = args.types;
+
+	if (args.repos?.length) options.repos = args.repos;
+
+	const response = await retryRateLimited({
+		deadline,
+		maxAttemptMs: DEVELOPER_SEARCH_TIMEOUT_MS,
+		attempt: async (timeoutMs) => await firecrawlClient(timeoutMs).developerSearch(query, options),
+		retryAfterMs: firecrawlRetryAfterMs,
+		failure: (error) => firecrawlFailure('Developer search', error),
+		shouldContinue
+	});
+
+	const results: DeveloperSearchResults = {
+		results: response.results.map((result) => {
+			const item: DeveloperSearchResults['results'][number] = {
+				url: result.url,
+				passages: result.passages.map((passage) =>
+					passage.citation_url
+						? { text: passage.text, citationUrl: passage.citation_url }
+						: { text: passage.text }
+				)
+			};
+
+			if (result.title) item.title = result.title;
+
+			return item;
+		})
+	};
+
+	if (response.repos) {
+		results.repos = response.repos.map(({ repo, indexed, types }) => ({
+			repo,
+			indexed,
+			types: { issue: types.issue, pullRequest: types.pullRequest, readme: types.readme }
+		}));
+	}
+
+	return results;
 }
 
 async function runSearch(
@@ -511,6 +579,17 @@ function scrapeFromPayload(payload: ExecutorJobPayload): ScrapeJobArgs {
 		: { url: payload.url };
 }
 
+function developerSearchFromPayload(payload: ExecutorJobPayload): DeveloperSearchArgs {
+	if (!('query' in payload) || payload.query === undefined) return { query: '' };
+	const args: DeveloperSearchArgs = { query: payload.query };
+
+	if ('types' in payload && payload.types) args.types = payload.types;
+
+	if ('repos' in payload && payload.repos) args.repos = payload.repos;
+
+	return args;
+}
+
 export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webRequests'>) {
 	const job = await ctx.runMutation(internal.webRequests.requestJob, {
 		jobId: request.jobId,
@@ -518,14 +597,20 @@ export async function executeQueuedWebRequest(ctx: ActionCtx, request: Doc<'webR
 		claimId: request.claimId
 	});
 
-	if (job?.kind !== 'scrape_url') throw new Error(RUN_NO_LONGER_ACTIVE);
-	const scrape = scrapeFromPayload(job.payload);
-
-	const limits: ScrapeLimits = {
+	const limits: RequestLimits = {
 		deadline: request.expiresAt - REQUEST_PUBLISH_MARGIN_MS,
 		shouldContinue: async () =>
 			await ctx.runMutation(internal.webRequests.isRunning, { id: request._id })
 	};
+
+	if (request.kind === 'developer_search') {
+		if (job?.kind !== 'developer_search') throw new Error(RUN_NO_LONGER_ACTIVE);
+
+		return await runDeveloperSearch(developerSearchFromPayload(job.payload), limits);
+	}
+
+	if (job?.kind !== 'scrape_url') throw new Error(RUN_NO_LONGER_ACTIVE);
+	const scrape = scrapeFromPayload(job.payload);
 
 	if (request.rawDocument) return await fetchRawDocument(ctx, scrape.url, limits);
 

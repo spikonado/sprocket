@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from 'context.dev';
 import { Web, type WebScrapeResponse } from 'context.dev/resources/web';
+import { Firecrawl } from 'firecrawl';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -13,7 +14,9 @@ import {
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
-type Job = { kind: 'scrape_url'; payload: { url: string } };
+type Job =
+	| { kind: 'scrape_url'; payload: { url: string } }
+	| { kind: 'developer_search'; payload: { query: string } };
 
 const scrapeJob: Job = { kind: 'scrape_url', payload: { url: 'https://example.com' } };
 
@@ -112,6 +115,36 @@ describe('web request queue', () => {
 		await t.mutation(api.webRequests.dispose, resultArgs(auth, id));
 		expect(await t.run((ctx) => ctx.db.get('webRequests', id))).toBeNull();
 		expect(await t.run((ctx) => ctx.storage.get(request!.resultStorageId!))).toBeNull();
+	});
+
+	it('runs developer searches for developer_search jobs', async () => {
+		const t = initConvexTest();
+		const auth = await fixture(t, { kind: 'developer_search', payload: { query: 'workpool' } });
+
+		const search = vi.spyOn(Firecrawl.prototype, 'developerSearch').mockResolvedValue({
+			success: true,
+			results: [{ id: 'a', url: 'https://docs.example.com', passages: [{ text: 'Pools' }] }]
+		});
+
+		const id = await t.mutation(api.webRequests.start, {
+			...auth,
+			jobId: auth.jobId!,
+			kind: 'developer_search'
+		});
+
+		expect(await settled(t, auth, id)).toMatchObject({ status: 'completed' });
+		expect(search).toHaveBeenCalledWith('workpool', expect.objectContaining({ k: 10 }));
+		expect(JSON.parse((await storedResult(t, id))!)).toEqual({
+			results: [{ url: 'https://docs.example.com', passages: [{ text: 'Pools' }] }]
+		});
+	});
+
+	it('rejects requests whose kind does not match the job', async () => {
+		const t = initConvexTest();
+		const auth = await fixture(t, scrapeJob);
+		await expect(
+			t.mutation(api.webRequests.start, { ...auth, jobId: auth.jobId!, kind: 'developer_search' })
+		).rejects.toThrow('Run is no longer active');
 	});
 
 	it("authenticates all public operations and does not expose another run's result", async () => {

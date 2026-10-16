@@ -121,6 +121,47 @@ async fn full_scrape_is_saved_while_outline_and_highlights_stay_in_the_output() 
 }
 
 #[tokio::test]
+async fn json_results_over_the_inline_limit_are_saved_to_a_file() {
+    let small = json!({"results": [{"url": "https://example.com", "passages": []}]});
+    let mut saved = None;
+    assert_eq!(
+        localize_json(
+            small.clone(),
+            "test-",
+            &WorkspaceCancellation::new(),
+            &mut saved
+        )
+        .await
+        .unwrap(),
+        small
+    );
+    assert!(saved.is_none());
+
+    let large = json!({"results": [{"url": "https://example.com", "passages": [{"text": "x".repeat(40_000)}]}]});
+    let result = localize_json(
+        large.clone(),
+        "test-",
+        &WorkspaceCancellation::new(),
+        &mut saved,
+    )
+    .await
+    .unwrap();
+    let file = saved.unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&tokio::fs::read_to_string(file.path()).await.unwrap())
+            .unwrap(),
+        large
+    );
+    assert_eq!(
+        result,
+        json!({"message": format!(
+            "The result was too large to directly output. Instead, it has been saved to {} for you to view.",
+            file.path().display()
+        )})
+    );
+}
+
+#[tokio::test]
 async fn successful_download_is_removed_unless_completion_is_accepted() {
     let url = serve("scrape", 6).await;
     let temp = tempfile::NamedTempFile::new().unwrap();
