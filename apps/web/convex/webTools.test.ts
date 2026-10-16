@@ -401,6 +401,17 @@ describe('context.dev scrape', () => {
 		expect(JSON.stringify(outline).length).toBeLessThan(SCRAPE_INLINE_MAX_CHARS / 2);
 	});
 
+	it('clips outline text at whole characters', async () => {
+		const t = initConvexTest();
+		const title = `${'a'.repeat(199)}😀`;
+
+		scrape.mockResolvedValue(scrapeResponse({ metadata: { title, headings: [] } }));
+
+		const { outline } = await scrapePage(t, { url: PAGE_URL });
+
+		expect(outline.title).toBe('a'.repeat(199));
+	});
+
 	it('fails with the page error from a failed markdown output', async () => {
 		const t = initConvexTest();
 

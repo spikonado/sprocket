@@ -244,11 +244,20 @@ function requireOutput(output: ScrapeOutput): void {
 	throw new Error(`This webpage returned an error: ${message} (${output.error_code ?? 'UNKNOWN'})`);
 }
 
+const TRAILING_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
+
+/** Never splits a surrogate pair; the agent's JSON parser rejects lone surrogates. */
+function clip(text: string, maxChars: number): string {
+	const clipped = text.slice(0, maxChars);
+
+	return TRAILING_HIGH_SURROGATE.test(clipped) ? clipped.slice(0, -1) : clipped;
+}
+
 function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
 	const outline: PageOutline = { headings: [] };
 
-	const title = metadata.title?.trim().slice(0, OUTLINE_HEADING_MAX_CHARS);
-	const description = metadata.description?.trim().slice(0, OUTLINE_DESCRIPTION_MAX_CHARS);
+	const title = clip(metadata.title?.trim() ?? '', OUTLINE_HEADING_MAX_CHARS);
+	const description = clip(metadata.description?.trim() ?? '', OUTLINE_DESCRIPTION_MAX_CHARS);
 
 	if (title) outline.title = title;
 
@@ -257,7 +266,7 @@ function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
 	let size = JSON.stringify(outline).length;
 
 	for (const heading of metadata.headings ?? []) {
-		const text = heading.text.trim().slice(0, OUTLINE_HEADING_MAX_CHARS);
+		const text = clip(heading.text.trim(), OUTLINE_HEADING_MAX_CHARS);
 
 		if (!text) continue;
 		const entry = { level: heading.level, text };
