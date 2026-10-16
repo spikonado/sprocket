@@ -206,26 +206,30 @@ describe('Firecrawl request queue', () => {
 });
 
 describe('screenshot_url', () => {
-	it('is rejected for released agents that still offer it', async () => {
+	it('fails the job with an unsupported-tool error for released agents', async () => {
 		const t = initConvexTest();
-		const auth = await fixture(t);
-		await expect(
-			t.mutation(api.agentRuntime.beginToolJob, {
-				runId: auth.runId,
-				claimId: auth.claimId,
-				executionSecret: auth.executionSecret,
-				...toolTranscriptAssignment(auth.runId, auth.claimId),
-				kind: 'screenshot_url',
-				payload: { url: 'https://example.com' }
-			})
-		).rejects.toThrow('This tool is no longer supported.');
-	});
+		const { jobId: _, ...auth } = await fixture(t);
 
-	it('rejects screenshot requests from released agents', async () => {
-		const t = initConvexTest();
-		const auth = await fixture(t, true);
+		const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
+			...auth,
+			...toolTranscriptAssignment(auth.runId, auth.claimId),
+			kind: 'screenshot_url',
+			payload: { url: 'https://example.com' }
+		});
+
 		await expect(
-			t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'screenshot' })
+			t.mutation(api.firecrawlRequests.start, { ...auth, jobId, kind: 'screenshot' })
 		).rejects.toThrow('This tool is no longer supported.');
+		expect(
+			await t.mutation(api.executor.fail, {
+				...auth,
+				jobId,
+				error: 'This tool is no longer supported.'
+			})
+		).toBe(true);
+		expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
+			status: 'failed',
+			error: 'This tool is no longer supported.'
+		});
 	});
 });
