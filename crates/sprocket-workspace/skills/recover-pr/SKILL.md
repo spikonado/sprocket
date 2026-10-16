@@ -1,6 +1,6 @@
 ---
 name: recover-pr
-description: Rebase a PR on the latest default branch, explain its implementation, and clean it up.
+description: Bring old/outdated pull requests up to date
 disable-model-invocation: true
 ---
 
