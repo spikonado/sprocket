@@ -34,6 +34,31 @@ fn temp_dir(label: &str) -> PathBuf {
     path
 }
 
+fn png_of_size(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        width,
+        height,
+        image::Rgb([0, 0, 255]),
+    ))
+    .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+    .expect("encode png");
+    bytes
+}
+
+fn decoded_image(output: &ToolOutput) -> (ImageMediaType, u32, u32) {
+    let [_, ToolResultContent::Image(image)] = output.as_content() else {
+        panic!("expected saved path and image block");
+    };
+    let DocumentSourceKind::Base64(data) = &image.data else {
+        panic!("expected base64 image");
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("base64");
+    decode_image_info(&bytes).expect("decode")
+}
+
 fn assert_png_image_output(output: &ToolOutput, png: &[u8]) {
     match output.as_content() {
         [ToolResultContent::Text(_), ToolResultContent::Image(image)] => {
@@ -556,6 +581,70 @@ async fn missing_replay_cache_reports_missing_files() {
         .expect_err("missing text cache");
     let text_message = format!("{text_error:#}");
     assert!(text_message.contains("cached text"), "{text_message}");
+}
+
+#[tokio::test]
+async fn oversized_images_are_downscaled_when_persisted_and_when_replayed_from_old_caches() {
+    let workspace = temp_dir("downscale");
+    let cache = temp_dir("downscale-cache");
+    let large = png_of_size(3000, 1500);
+    tokio::fs::write(workspace.join("large.png"), &large)
+        .await
+        .expect("write");
+
+    let persisted = persist(&workspace, &cache, "large.png")
+        .await
+        .expect("persist");
+    let ParseFilePersistedOutput::Image { width, height, .. } = &persisted else {
+        panic!("expected image output, got {persisted:?}");
+    };
+    assert_eq!((*width, *height), (2000, 1000));
+    let value = serde_json::to_value(&persisted).expect("value");
+    let output = replay_parse_file_tool_output(&value).await.expect("replay");
+    assert_eq!(decoded_image(&output), (ImageMediaType::PNG, 2000, 1000));
+
+    let legacy_path = cache.join("legacy.png");
+    tokio::fs::write(&legacy_path, &large)
+        .await
+        .expect("write legacy");
+    let legacy = serde_json::json!({
+        "outputType": "image",
+        "mediaType": "image/png",
+        "path": legacy_path,
+        "source": { "type": "path", "path": "large.png" },
+        "byteSize": large.len(),
+        "width": 3000,
+        "height": 1500
+    });
+    let output = replay_parse_file_tool_output(&legacy)
+        .await
+        .expect("replay legacy");
+    assert_eq!(decoded_image(&output), (ImageMediaType::PNG, 2000, 1000));
+
+    let _ = tokio::fs::remove_dir_all(workspace).await;
+    let _ = tokio::fs::remove_dir_all(cache).await;
+}
+
+#[test]
+fn images_too_heavy_as_png_are_re_encoded_as_jpeg() {
+    let mut state = 0x2545_f491_u32;
+    let noise = image::RgbImage::from_fn(1500, 1500, |_, _| {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        let [r, g, b, _] = state.to_le_bytes();
+        image::Rgb([r, g, b])
+    });
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgb8(noise)
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("encode png");
+    assert!(png.len() > MAX_MODEL_IMAGE_BYTES);
+
+    let fitted = fit_image_for_model(png).expect("fit");
+    assert_eq!(fitted.media_type, ImageMediaType::JPEG);
+    assert_eq!(fitted.width, fitted.height);
+    assert!(fitted.bytes.len() <= MAX_MODEL_IMAGE_BYTES);
 }
 
 #[tokio::test]

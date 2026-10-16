@@ -23,6 +23,11 @@ pub(crate) const PARSE_FILE_TOOL_NAME: &str = "parse_file";
 pub(crate) const MAX_PARSE_FILE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const MAX_PARSE_FILE_IMAGE_DIMENSION: u32 = 8192;
 pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
+/// Anthropic rejects images over 2000 px per side once a request holds more
+/// than 20 images, and Bedrock/Vertex cap each image at 5 MB of base64.
+pub(crate) const MAX_MODEL_IMAGE_EDGE: u32 = 2000;
+pub(crate) const MAX_MODEL_IMAGE_BYTES: usize = 3_750_000;
+const MODEL_IMAGE_JPEG_QUALITY: u8 = 85;
 pub(crate) const MAX_PARSE_FILE_PREVIEW_CHARS: usize = 20_000;
 const MAX_PARSE_FILE_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -271,6 +276,92 @@ pub(super) fn decode_image_info(bytes: &[u8]) -> anyhow::Result<(ImageMediaType,
         .context("failed to decode image header")?;
     ensure_image_within_model_bounds(width, height, bytes.len() as u64)?;
     Ok((media_type, width, height))
+}
+
+pub(super) struct ModelImage {
+    pub bytes: Vec<u8>,
+    pub media_type: ImageMediaType,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Downscales and re-encodes images the provider would reject; others pass through untouched.
+pub(super) fn fit_image_for_model(bytes: Vec<u8>) -> anyhow::Result<ModelImage> {
+    let (media_type, width, height) = decode_image_info(&bytes)?;
+    if width <= MAX_MODEL_IMAGE_EDGE
+        && height <= MAX_MODEL_IMAGE_EDGE
+        && bytes.len() <= MAX_MODEL_IMAGE_BYTES
+    {
+        return Ok(ModelImage {
+            bytes,
+            media_type,
+            width,
+            height,
+        });
+    }
+    let format = sniff_supported_image_format(&bytes)
+        .ok_or_else(|| anyhow!("unknown image format; use jpeg, png, gif, or webp"))?;
+    let mut reader = image::ImageReader::new(Cursor::new(&bytes));
+    reader.set_format(format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_PARSE_FILE_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_PARSE_FILE_IMAGE_DIMENSION);
+    limits.max_alloc = Some(u64::from(MAX_PARSE_FILE_IMAGE_PIXELS).saturating_mul(8));
+    reader.limits(limits);
+    let decoded = reader.decode().context("failed to decode image")?;
+    let mut fitted = if width > MAX_MODEL_IMAGE_EDGE || height > MAX_MODEL_IMAGE_EDGE {
+        decoded.thumbnail(MAX_MODEL_IMAGE_EDGE, MAX_MODEL_IMAGE_EDGE)
+    } else {
+        decoded
+    };
+    if format != image::ImageFormat::Jpeg {
+        let png = encode_png(&fitted)?;
+        if png.bytes.len() <= MAX_MODEL_IMAGE_BYTES {
+            return Ok(png);
+        }
+    }
+    loop {
+        let jpeg = encode_jpeg(&fitted)?;
+        if jpeg.bytes.len() <= MAX_MODEL_IMAGE_BYTES || fitted.width().max(fitted.height()) <= 1 {
+            return Ok(jpeg);
+        }
+        fitted = fitted.thumbnail(
+            (fitted.width() * 3 / 4).max(1),
+            (fitted.height() * 3 / 4).max(1),
+        );
+    }
+}
+
+fn encode_png(image: &image::DynamicImage) -> anyhow::Result<ModelImage> {
+    let mut bytes = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .context("failed to encode png")?;
+    Ok(ModelImage {
+        bytes,
+        media_type: ImageMediaType::PNG,
+        width: image.width(),
+        height: image.height(),
+    })
+}
+
+fn encode_jpeg(image: &image::DynamicImage) -> anyhow::Result<ModelImage> {
+    let mut bytes = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, MODEL_IMAGE_JPEG_QUALITY)
+        .encode_image(&image::DynamicImage::ImageRgb8(image.to_rgb8()))
+        .context("failed to encode jpeg")?;
+    Ok(ModelImage {
+        bytes,
+        media_type: ImageMediaType::JPEG,
+        width: image.width(),
+        height: image.height(),
+    })
+}
+
+pub(super) async fn fit_image_for_model_blocking(bytes: Vec<u8>) -> anyhow::Result<ModelImage> {
+    tokio::task::spawn_blocking(move || fit_image_for_model(bytes))
+        .await
+        .context("image downscaling worker failed")?
 }
 
 fn media_type_extension(media_type: &ImageMediaType) -> &'static str {
@@ -531,16 +622,16 @@ async fn persist_image_file(
 ) -> anyhow::Result<ParseFilePersistedOutput> {
     let bytes = read_image_bytes_bounded(path, cancellation).await?;
     ensure_not_cancelled(cancellation)?;
-    let (media_type, width, height) = decode_image_info(&bytes)?;
+    let image = run_cancellable_blocking(cancellation, move || fit_image_for_model(bytes)).await?;
     ensure_not_cancelled(cancellation)?;
-    let cached = persist_image_bytes(cache_dir, &bytes, &media_type).await?;
+    let cached = persist_image_bytes(cache_dir, &image.bytes, &image.media_type).await?;
     Ok(ParseFilePersistedOutput::Image {
-        media_type: media_type.to_mime_type().to_string(),
+        media_type: image.media_type.to_mime_type().to_string(),
         path: cached.to_string_lossy().into_owned(),
         source,
-        byte_size: bytes.len() as u64,
-        width,
-        height,
+        byte_size: image.bytes.len() as u64,
+        width: image.width,
+        height: image.height,
     })
 }
 
@@ -669,11 +760,13 @@ async fn replay_image_output(
             && bytes.len() as u64 == byte_size,
         "cached image {path} does not match persisted metadata"
     );
+    // Images cached before fitting existed still reach the model through replay.
+    let image = fit_image_for_model_blocking(bytes).await?;
     Ok(ToolOutput::content(vec![
         ToolResultContent::text(format!("Image saved to: {path}")),
         ToolResultContent::image_base64(
-            base64::engine::general_purpose::STANDARD.encode(bytes),
-            Some(media_type),
+            base64::engine::general_purpose::STANDARD.encode(image.bytes),
+            Some(image.media_type),
             None,
         ),
     ])?)
