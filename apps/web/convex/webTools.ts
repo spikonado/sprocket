@@ -436,7 +436,10 @@ async function fetchRawDocument(ctx: ActionCtx, urlValue: string): Promise<RawDo
 
 	const raw: RawDocument = {
 		url: metadata?.sourceURL ?? metadata?.url ?? url.toString(),
-		documentUrl: await storeTemporaryBlob(ctx, new Blob([document]))
+		documentUrl: await storeTemporaryBlob(
+			ctx,
+			new Blob([document], { type: 'application/octet-stream' })
+		)
 	};
 
 	if (metadata?.contentType) raw.contentType = metadata.contentType;
@@ -470,6 +473,7 @@ async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<
 }
 
 async function storeTemporaryBlob(ctx: ActionCtx, blob: Blob): Promise<string> {
+	// Node actions upload with `Content-Type: blob.type`, and Convex storage rejects an empty one.
 	const storageId = await ctx.storage.store(blob);
 
 	try {
