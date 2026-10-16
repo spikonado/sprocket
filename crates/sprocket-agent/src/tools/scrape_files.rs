@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncWriteExt;
 
@@ -32,26 +32,59 @@ pub(super) async fn localize_scrape(
             "scrape response is missing markdown"
         );
         let archive = serde_json::to_string(fields)?;
-        // Match JSON.stringify(...).length in the backend, including surrogate pairs.
-        if archive.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS {
-            let temp = tempfile::Builder::new()
-                .prefix("sprocket-scrape-")
-                .suffix(".json")
-                .tempfile()?;
-            let mut file = tokio::fs::File::from_std(temp.reopen()?);
-            tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
-                result = async {
-                    file.write_all(archive.as_bytes()).await?;
-                    file.flush().await
-                } => result?,
-            }
+        if exceeds_inline_limit(&archive) {
+            let temp = save_temp("sprocket-scrape-", &archive, cancellation).await?;
             record_saved_scrape(fields, temp, saved_file);
         }
     }
     fields.remove("truncated");
     Ok(result)
+}
+
+/// Applies the scrape inline limit to any JSON tool result.
+pub(super) async fn localize_json(
+    result: Value,
+    prefix: &str,
+    cancellation: &WorkspaceCancellation,
+    saved_file: &mut Option<tempfile::NamedTempFile>,
+) -> anyhow::Result<Value> {
+    let archive = serde_json::to_string(&result)?;
+    if !exceeds_inline_limit(&archive) {
+        return Ok(result);
+    }
+    let temp = save_temp(prefix, &archive, cancellation).await?;
+    let message = format!(
+        "The result was too large to directly output. Instead, it has been saved to {} for you to view.",
+        temp.path().display()
+    );
+    *saved_file = Some(temp);
+    Ok(json!({ "message": message }))
+}
+
+/// Matches JSON.stringify(...).length in the backend, including surrogate pairs.
+fn exceeds_inline_limit(archive: &str) -> bool {
+    archive.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
+}
+
+async fn save_temp(
+    prefix: &str,
+    contents: &str,
+    cancellation: &WorkspaceCancellation,
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    let temp = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".json")
+        .tempfile()?;
+    let mut file = tokio::fs::File::from_std(temp.reopen()?);
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
+        result = async {
+            file.write_all(contents.as_bytes()).await?;
+            file.flush().await
+        } => result?,
+    }
+    Ok(temp)
 }
 
 fn record_saved_scrape(

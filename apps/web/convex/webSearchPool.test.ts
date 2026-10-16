@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import type { WorkId } from '@convex-dev/workpool';
-import { api, internal } from '@convex/_generated/api';
+import { internal } from '@convex/_generated/api';
 import { initConvexTest, seedStartedWebJob } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
@@ -73,7 +73,7 @@ describe('local scrape_url dispatch', () => {
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
 
-		const local = await t.mutation(internal.firecrawlRequests.scrapeJob, {
+		const local = await t.mutation(internal.webRequests.requestJob, {
 			runId,
 			claimId,
 			jobId
@@ -99,76 +99,22 @@ describe('local scrape_url dispatch', () => {
 	});
 });
 
-describe('local screenshot_url dispatch', () => {
-	it('dispatches screenshot_url locally before the agent requests Firecrawl work', async () => {
+describe('local developer_search dispatch', () => {
+	it('dispatches developer_search locally so the agent can request it', async () => {
 		const t = initConvexTest();
 
-		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'screenshot-dispatch-secret',
-			kind: 'screenshot_url',
-			payload: { url: 'https://example.com/page' }
+		const { jobId, runId, claimId } = await seedStartedWebJob(t, {
+			executionSecret: 'developer-search-dispatch-secret',
+			kind: 'developer_search',
+			payload: { query: 'workpool' }
 		});
 
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
-		expect(stored?.kind).toBe('screenshot_url');
-
-		expect(
-			await t.mutation(internal.firecrawlRequests.scrapeJob, {
-				runId,
-				claimId,
-				jobId
-			})
-		).toEqual({
-			kind: 'screenshot_url',
-			payload: { url: 'https://example.com/page' }
-		});
-		await expect(
-			t.mutation(api.firecrawlRequests.start, {
-				runId,
-				claimId,
-				jobId,
-				executionSecret,
-				kind: 'scrape'
-			})
-		).rejects.toThrow('Run is no longer active');
-		expect(
-			await t.mutation(internal.webSearchPool.getWebSearchJob, {
-				runId,
-				claimId,
-				jobId
-			})
-		).toBeNull();
-	});
-
-	it('does not allow screenshot requests for scrape jobs', async () => {
-		const t = initConvexTest();
-
-		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'scrape-not-screenshot-secret',
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' }
-		});
-
-		await expect(
-			t.mutation(api.firecrawlRequests.start, {
-				runId,
-				claimId,
-				jobId,
-				executionSecret,
-				kind: 'screenshot'
-			})
-		).rejects.toThrow('Run is no longer active');
-		expect(
-			await t.mutation(internal.firecrawlRequests.scrapeJob, {
-				runId,
-				claimId,
-				jobId
-			})
-		).toEqual({
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' }
+		expect(await t.mutation(internal.webRequests.requestJob, { runId, claimId, jobId })).toEqual({
+			kind: 'developer_search',
+			payload: { query: 'workpool' }
 		});
 	});
 });

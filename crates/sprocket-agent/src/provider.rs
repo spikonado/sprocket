@@ -430,6 +430,7 @@ async fn run_with_completion_model(
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)
+        .tool(tools.developer_search)
         .tool(tools.poll_cmd)
         .tool(tools.add_artifact)
         .tool(tools.list_artifacts)
@@ -463,12 +464,7 @@ async fn run_with_completion_model(
     } else {
         agent
     };
-    let mut agent = if request.supports_images {
-        agent.tool(tools.screenshot_url)
-    } else {
-        agent
-    }
-    .build();
+    let mut agent = agent.build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);

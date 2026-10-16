@@ -515,6 +515,24 @@ export default defineSchema({
 		.index('by_inputStorageId', ['inputStorageId'])
 		.index('by_resultStorageId', ['resultStorageId'])
 		.index('by_expiresAt', ['expiresAt']),
+	webRequests: defineTable({
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.id('executorJobs'),
+		kind: v.union(v.literal('scrape'), v.literal('developer_search')),
+		rawDocument: v.optional(v.boolean()),
+		status: v.union(
+			v.literal('queued'),
+			v.literal('running'),
+			v.literal('completed'),
+			v.literal('failed')
+		),
+		workId: v.optional(v.string()),
+		resultStorageId: v.optional(v.id('_storage')),
+		error: v.optional(v.string()),
+		expiresAt: v.number()
+	}).index('by_runId', ['runId']),
+	// Replaced by webRequests. Keep until its last rows expire; see BACKWARDS_COMPATIBILITY.md.
 	firecrawlRequests: defineTable({
 		runId: v.id('runs'),
 		claimId: v.string(),

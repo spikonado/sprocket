@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::WorkspaceCancellation;
 
-use super::context::{AgentToolContext, tool_error, tool_failure};
+use super::context::{AgentToolContext, tool_error};
 use super::hosted_parse::HostedParseContext;
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::parse_file::{
@@ -25,9 +25,6 @@ const DOCUMENT_TOO_LARGE: &str = "document exceeds the 64 MiB scrape limit; down
 
 #[derive(Clone)]
 pub(crate) struct ScrapeUrlTool(pub(super) AgentToolContext);
-
-#[derive(Clone)]
-pub(crate) struct ScreenshotUrlTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
 pub(crate) struct WebSearchTool(pub(super) AgentToolContext);
@@ -64,18 +61,9 @@ pub(crate) struct WebSearchArgs {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ScreenshotUrlArgs {
-    pub(crate) url: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScreenshotTransport {
-    url: String,
-    screenshot_url: String,
+    /// Optional question about the page. Web pages then also return the passages most relevant to it as `highlights`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -194,12 +182,12 @@ impl rig::tool::Tool for ScrapeUrlTool {
                         None
                     }
                 };
-                // Firecrawl's page scrape bills documents per page, so documents never reach it.
+                // Documents are parsed locally; the cloud page scrape only sees web pages.
                 if let Some(document) = document {
                     let result = convert_web_document(document, &hosted, &cancellation).await.map_err(tool_error)?;
                     return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
                 }
-                let result = super::firecrawl::run(&self.0.runtime, cancellation.clone(), firecrawl_args(&self.0, &job_id), "scrape").await?;
+                let result = super::web_request::run(&self.0.runtime, cancellation.clone(), web_request_args(&self.0, &job_id), "scrape").await?;
                 super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
@@ -215,56 +203,10 @@ impl rig::tool::Tool for ScrapeUrlTool {
     }
 }
 
-impl rig::tool::Tool for ScreenshotUrlTool {
-    const NAME: &'static str = "screenshot_url";
-    type Error = ToolExecutionError;
-    type Args = ScreenshotUrlArgs;
-    type Output = ToolOutput;
-
-    fn description(&self) -> String {
-        "Use to take a viewport screenshot of ANY public HTTP(S) URL. Returns the saved local path and the image.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ScreenshotUrlArgs))
-    }
-
-    async fn call(
-        &self,
-        _context: &mut rig::tool::ToolContext,
-        args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
-        if !self.0.supports_images {
-            return Err(tool_failure("The selected model cannot view images."));
-        }
-        validate_web_url(&args.url).map_err(tool_error)?;
-        let cache_dir = self.0.transcript_dir.join(Self::NAME);
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        let result = execute_tool_job_with_id(
-            &self.0,
-            Self::NAME,
-            payload,
-            |cancellation, job_id| async move {
-                let result = super::firecrawl::run(
-                    &self.0.runtime,
-                    cancellation.clone(),
-                    firecrawl_args(&self.0, &job_id),
-                    "screenshot",
-                )
-                .await?;
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
-                    result = fetch_screenshot(result, &cache_dir) => result.map_err(tool_error),
-                }
-            },
-        )
-        .await?;
-        replay_image_tool_output(&result).await.map_err(tool_error)
-    }
-}
-
-fn firecrawl_args(context: &AgentToolContext, job_id: &str) -> BTreeMap<String, convex::Value> {
+pub(super) fn web_request_args(
+    context: &AgentToolContext,
+    job_id: &str,
+) -> BTreeMap<String, convex::Value> {
     BTreeMap::from([
         ("runId".to_string(), context.run_id.clone().into()),
         ("claimId".to_string(), context.claim_id.clone().into()),
@@ -272,18 +214,17 @@ fn firecrawl_args(context: &AgentToolContext, job_id: &str) -> BTreeMap<String, 
     ])
 }
 
-/// Fetches a document Firecrawl can reach but we cannot, for one flat
-/// credit instead of Firecrawl's per-page document parsing. `None` means the
-/// URL serves no document after all.
+/// Fetches the bytes of a document the cloud scraper can reach but we cannot,
+/// so it is still parsed locally. `None` means the URL serves no document after all.
 async fn fetch_raw_document(
     context: &AgentToolContext,
     job_id: &str,
     cancellation: &WorkspaceCancellation,
 ) -> Result<Option<WebDocument>, ToolExecutionError> {
-    let mut args = firecrawl_args(context, job_id);
+    let mut args = web_request_args(context, job_id);
     args.insert("rawDocument".into(), true.into());
     let result =
-        super::firecrawl::run(&context.runtime, cancellation.clone(), args, "scrape").await?;
+        super::web_request::run(&context.runtime, cancellation.clone(), args, "scrape").await?;
     let download = async {
         let transport: RawDocumentTransport = serde_json::from_value(result)?;
         let url = validate_web_url(&transport.url)?;
@@ -291,7 +232,7 @@ async fn fetch_raw_document(
         let (_, bytes) =
             super::github_url::download_file(&scrape_client()?, document_url, MAX_SCRAPE_BYTES)
                 .await
-                .context("failed to download the document Firecrawl fetched")?;
+                .context("failed to download the document the cloud scraper fetched")?;
         let csv = is_csv(
             &normalize_media_type(transport.content_type.as_deref().unwrap_or_default()),
             &url,
@@ -322,22 +263,8 @@ async fn convert_web_document(
     Ok(json!({
         "url": url.as_str(),
         "markdown": markdown,
-        "summary": "Summary not generated; document was parsed locally.",
         "images": [],
     }))
-}
-
-async fn fetch_screenshot(
-    result: serde_json::Value,
-    cache_dir: &Path,
-) -> anyhow::Result<serde_json::Value> {
-    let transport: ScreenshotTransport =
-        serde_json::from_value(result).context("invalid screenshot response")?;
-    let page_url = validate_web_url(&transport.url)?;
-    let screenshot_url = validate_web_url(&transport.screenshot_url)?;
-    let mut metadata = download_image(&image_client()?, screenshot_url, cache_dir).await?;
-    metadata["url"] = json!(page_url.as_str());
-    Ok(metadata)
 }
 
 fn validate_web_url(value: &str) -> anyhow::Result<reqwest::Url> {
@@ -366,14 +293,6 @@ async fn fetch_local_resource(
         Probe::Unknown(unknown_url) => download_document(&client, unknown_url, false).await,
         Probe::Page => Ok(LocalResource::Page),
     }
-}
-
-fn image_client() -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
 }
 
 fn scrape_client() -> reqwest::Result<reqwest::Client> {

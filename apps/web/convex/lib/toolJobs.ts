@@ -9,7 +9,7 @@ import {
 	isCloudWebSearchKind,
 	webSearchWorkpool
 } from '@convex/webSearchPool';
-import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
+import { firecrawlPool } from '@convex/lib/webPools';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 
 export async function cancelCloudToolJob(
@@ -20,7 +20,7 @@ export async function cancelCloudToolJob(
 
 	try {
 		// SAFETY: cloudWorkId is the WorkId returned by enqueueAction.
-		await (job.kind === 'web_search' ? webSearchWorkpool : firecrawlScrapePool).cancel(
+		await (job.kind === 'web_search' ? webSearchWorkpool : firecrawlPool).cancel(
 			ctx,
 			job.cloudWorkId as WorkId
 		);

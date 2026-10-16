@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { z } from 'zod';
+import type { Document } from 'firecrawl';
 import type { Id } from '@convex/_generated/dataModel';
 import type { QueryCtx, MutationCtx } from '@convex/_generated/server';
 import { MAX_FILE_NAME_LENGTH } from '@convex/lib/validators';
@@ -11,8 +12,6 @@ export const HOSTED_PARSE_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const HOSTED_PARSE_TTL_MS = 60 * 60 * 1_000;
 
 export const HOSTED_PARSE_ERROR_MAX_CHARS = 500;
-
-export const FIRECRAWL_PARSE_URL = 'https://api.firecrawl.dev/v2/parse';
 
 export const FIRECRAWL_PARSE_TIMEOUT_MS = 300_000;
 
@@ -51,7 +50,7 @@ const FIRECRAWL_PDF_PARSER = { type: 'pdf', mode: 'auto' } as const;
 /** `pages` adds per-page markdown to the response at no extra cost. */
 export function firecrawlParseOptions(pages: boolean) {
 	return {
-		formats: ['markdown'],
+		formats: ['markdown' as const],
 		parsers: [pages ? { ...FIRECRAWL_PDF_PARSER, pages: true } : FIRECRAWL_PDF_PARSER],
 		timeout: FIRECRAWL_PARSE_TIMEOUT_MS
 	};
@@ -83,70 +82,63 @@ export type FirecrawlParseSuccess = { markdown: string } | { pages: FirecrawlPar
 
 export type FirecrawlParseFailure = { error: string };
 
-const firecrawlResponseSchema = z.object({
-	success: z.boolean(),
-	error: z.string().optional(),
-	data: z
+const firecrawlParseDocumentSchema = z.object({
+	markdown: z.string().nullish(),
+	pages: z.array(firecrawlParsedPageSchema).nullish(),
+	metadata: z
 		.object({
-			markdown: z.string().optional(),
-			pages: z.array(firecrawlParsedPageSchema).nullish(),
-			metadata: z
-				.object({
-					numPages: z.number().int().nonnegative().optional(),
-					totalPages: z.number().int().nonnegative().optional()
-				})
-				.nullish()
+			numPages: z.number().int().nonnegative().optional(),
+			totalPages: z.number().int().nonnegative().optional()
 		})
-		.optional()
+		.nullish()
 });
 
-export function parseFirecrawlParseResponse(
-	responseText: string,
-	responseBytes: number,
+function utf8Bytes(text: string): number {
+	return new TextEncoder().encode(text).byteLength;
+}
+
+/** Validates the document returned by the Firecrawl SDK's `parse`. */
+export function parseFirecrawlParseDocument(
+	document: Document,
 	pages = false
 ): FirecrawlParseSuccess | FirecrawlParseFailure {
-	if (responseBytes > HOSTED_PARSE_MAX_OUTPUT_BYTES) {
-		return { error: 'Firecrawl parse response is too large.' };
+	const parsed = firecrawlParseDocumentSchema.safeParse(document);
+
+	if (!parsed.success) return { error: 'Firecrawl parse returned an invalid response.' };
+	const { metadata } = parsed.data;
+
+	if (
+		metadata?.numPages !== undefined &&
+		metadata.totalPages !== undefined &&
+		metadata.totalPages > metadata.numPages
+	) {
+		return { error: 'Parsed document was truncated.' };
 	}
 
-	try {
-		const parsed = firecrawlResponseSchema.safeParse(JSON.parse(responseText));
+	if (pages) {
+		const parsedPages = parsed.data.pages;
 
-		if (!parsed.success) return { error: 'Firecrawl parse returned an invalid response.' };
-		const payload = parsed.data;
-
-		if (!payload.success)
-			return { error: shortHostedParseError(payload.error?.trim() || 'Firecrawl parse failed.') };
-		const metadata = payload.data?.metadata;
+		if (!parsedPages) return { error: 'Firecrawl parse did not return pages.' };
 
 		if (
-			metadata?.numPages !== undefined &&
-			metadata.totalPages !== undefined &&
-			metadata.totalPages > metadata.numPages
+			parsedPages.reduce((total, page) => total + utf8Bytes(page.markdown), 0) >
+			HOSTED_PARSE_MAX_OUTPUT_BYTES
 		) {
-			return { error: 'Parsed document was truncated.' };
-		}
-
-		if (pages) {
-			const parsedPages = payload.data?.pages;
-
-			return parsedPages
-				? { pages: parsedPages }
-				: { error: 'Firecrawl parse did not return pages.' };
-		}
-
-		const markdown = payload.data?.markdown;
-
-		if (!markdown?.trim()) return { error: 'Firecrawl parse did not return markdown.' };
-
-		if (new TextEncoder().encode(markdown).byteLength > HOSTED_PARSE_MAX_OUTPUT_BYTES) {
 			return { error: 'Firecrawl parse response is too large.' };
 		}
 
-		return { markdown };
-	} catch {
-		return { error: 'Firecrawl parse returned an invalid response.' };
+		return { pages: parsedPages };
 	}
+
+	const markdown = parsed.data.markdown;
+
+	if (!markdown?.trim()) return { error: 'Firecrawl parse did not return markdown.' };
+
+	if (utf8Bytes(markdown) > HOSTED_PARSE_MAX_OUTPUT_BYTES) {
+		return { error: 'Firecrawl parse response is too large.' };
+	}
+
+	return { markdown };
 }
 
 export class ResponseTooLargeError extends Error {

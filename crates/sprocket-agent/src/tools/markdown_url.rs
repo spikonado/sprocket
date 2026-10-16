@@ -107,7 +107,6 @@ async fn fetch_markdown(url: Url, max_bytes: u64) -> anyhow::Result<Value> {
     Ok(json!({
         "url": response.url().as_str(),
         "markdown": markdown,
-        "summary": "Summary not generated; markdown was read directly from the site.",
         "images": [],
     }))
 }

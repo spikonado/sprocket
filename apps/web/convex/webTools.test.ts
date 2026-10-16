@@ -1,192 +1,186 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { patchRunExecution } from '@convex/lib/runExecution';
-import { ConvexError, type Infer } from 'convex/values';
-import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
+import { APIConnectionTimeoutError, APIError } from 'context.dev';
+import { Web, type WebScrapeParams, type WebScrapeResponse } from 'context.dev/resources/web';
+import { Firecrawl, SdkError, type DeveloperSearchResponse } from 'firecrawl';
 import { isNonRetryableError } from '@convex-dev/workpool';
-import { api, internal } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import { patchRunExecution } from '@convex/lib/runExecution';
+import { api } from '@convex/_generated/api';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
-import { vScrapeUrlTransport, vScreenshotUrlTransport } from '@convex/lib/validators';
+import { FIRECRAWL_CREDITS_EXHAUSTED } from '@convex/lib/firecrawl';
+import { REQUEST_TTL_MS } from '@convex/webRequests';
 import {
-	DEFAULT_SCRAPE_SUMMARY,
-	classifyExaSearchFailure,
-	scrapeHttpErrorStatus,
+	CONTEXT_DEV_CREDITS_EXHAUSTED,
+	DEVELOPER_SEARCH_PASSAGES,
+	DEVELOPER_SEARCH_RESULTS,
+	HIGHLIGHTS_MAX_CHARS,
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
 	SCRAPE_TIMEOUT_MS,
-	FIRECRAWL_SCRAPE_URL,
-	executeQueuedScrape,
+	classifyExaSearchFailure,
+	executeQueuedWebRequest,
 	type ScrapedPage
 } from '@convex/webTools';
-import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	toolTranscriptAssignment,
+	type ConvexTestInstance
+} from './test.setup';
+
+const scrape =
+	vi.fn<(body: WebScrapeParams, options?: { timeout?: number }) => Promise<WebScrapeResponse>>();
 
 const PAGE_URL = 'https://example.com/page';
 
-const SCREENSHOT_URL = 'https://storage.googleapis.com/firecrawl/shot.png?X-Goog-Signature=sig';
+type JobKind = 'scrape_url' | 'developer_search' | 'web_search';
 
-type QueuedActionArgs = {
-	runId: Id<'runs'>;
-	claimId: string;
-	jobId: Id<'executorJobs'>;
-	executionSecret: string;
+type DeveloperSearchPayload = {
+	query: string;
+	types?: ('doc' | 'issue' | 'pull_request' | 'readme')[];
+	repos?: string[];
 };
 
-type ScrapeTransport = Infer<typeof vScrapeUrlTransport>;
-
-type ScreenshotTransport = Infer<typeof vScreenshotUrlTransport>;
-
-function queuedAction(
-	t: Pick<ConvexTestInstance, 'action'>,
-	kind: 'scrape',
-	args: QueuedActionArgs
-): Promise<ScrapeTransport>;
-function queuedAction(
-	t: Pick<ConvexTestInstance, 'action'>,
-	kind: 'screenshot',
-	args: QueuedActionArgs
-): Promise<ScreenshotTransport>;
-async function queuedAction(
-	t: Pick<ConvexTestInstance, 'action'>,
-	kind: 'scrape' | 'screenshot',
-	args: QueuedActionArgs
-): Promise<ScrapeTransport | ScreenshotTransport> {
-	return await t.action(async (ctx) => {
-		await ctx.runQuery(api.agentRuntime.completionActor, {
-			runId: args.runId,
-			executionSecret: args.executionSecret
-		});
-
-		const result = await executeQueuedScrape(ctx, { ...args, kind });
-
-		if ('documentUrl' in result) throw new Error('Expected a page transport.');
-
-		return result;
-	});
-}
-
-async function queuedRawDocument(t: ConvexTestInstance, url = 'https://example.com/report.pdf') {
-	const { asUser, executionSecret, ...job } = await seedStartedWebJob(t, {
-		executionSecret: 'raw-document-secret',
-		kind: 'scrape_url',
-		payload: { url }
-	});
-
-	return await asUser.action(async (ctx) => {
-		await ctx.runQuery(api.agentRuntime.completionActor, {
-			runId: job.runId,
-			executionSecret
-		});
-
-		const result = await executeQueuedScrape(ctx, { ...job, kind: 'scrape', rawDocument: true });
-
-		if (!('documentUrl' in result)) throw new Error('Expected a raw document.');
-
-		return result;
-	});
-}
-
-async function rejection(promise: Promise<unknown>): Promise<Error> {
-	try {
-		await promise;
-	} catch (error) {
-		if (error instanceof Error) return error;
-	}
-
-	throw new Error('Expected an Error rejection.');
-}
-
-type FirecrawlRawDocumentResponse = {
-	success: boolean;
-	error?: string;
-	data?: {
-		rawBase64: string;
-		metadata: { sourceURL?: string; contentType?: string; statusCode: number };
-	};
-};
-
-function mockRawDocumentFetch(body: FirecrawlRawDocumentResponse, status = 200) {
-	const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json(body, { status }));
-	vi.stubGlobal('fetch', fetch);
-
-	return fetch;
-}
-
-function firecrawlApiError(status: number) {
-	return new ConvexError({
-		code: 'firecrawl_request_failed',
-		status,
-		path: '/v2/scrape',
-		message: `Firecrawl /v2/scrape failed (${status}): upstream`
-	});
-}
-
-function mockScrape(
-	document: {
-		markdown?: string;
-		summary?: string;
-		images?: string[];
-		screenshot?: string;
-		metadata?: { sourceURL?: string; url?: string; statusCode?: number };
-	},
-	url = PAGE_URL
+async function seedJob(
+	t: ConvexTestInstance,
+	kind: JobKind,
+	payload: { url: string; query?: string } | DeveloperSearchPayload
 ) {
-	return vi.spyOn(FirecrawlClient.prototype, 'scrape').mockResolvedValue({
-		markdown: document.markdown,
-		summary: document.summary,
-		images: document.images,
-		screenshot: document.screenshot,
-		metadata: document.metadata ?? { sourceURL: url, statusCode: 200 }
+	const executionSecret = crypto.randomUUID();
+	const claimId = 'claim-a';
+	const { asUser, threadId } = await seedOwnedThread(t);
+
+	const { runId } = await createQueuedRun(t, asUser, threadId, executionSecret, executionSecret);
+
+	await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+
+	const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+		runId,
+		claimId,
+		...toolTranscriptAssignment(runId, claimId),
+		kind,
+		payload,
+		executionSecret
 	});
+
+	return { asUser, runId, claimId, jobId, executionSecret };
 }
 
-function expectedScrapeArgs(url = PAGE_URL) {
-	return [
-		expect.anything(),
-		url,
-		{
-			formats: ['markdown', 'summary', 'images'],
-			onlyMainContent: true,
-			maxAge: 0,
-			storeInCache: false,
-			timeout: SCRAPE_TIMEOUT_MS
-		}
-	] as const;
+async function runRequest(
+	t: ConvexTestInstance,
+	job: { runId: Id<'runs'>; claimId: string; jobId: Id<'executorJobs'> },
+	options: { kind?: Doc<'webRequests'>['kind']; rawDocument?: boolean } = {}
+) {
+	const request: Parameters<typeof executeQueuedWebRequest>[1] = {
+		runId: job.runId,
+		claimId: job.claimId,
+		jobId: job.jobId,
+		kind: options.kind ?? 'scrape',
+		expiresAt: Date.now() + REQUEST_TTL_MS
+	};
+
+	if (options.rawDocument) request.rawDocument = true;
+
+	return await t.action(async (ctx) => await executeQueuedWebRequest(ctx, request));
 }
 
-function expectedScreenshotArgs(url = PAGE_URL) {
-	return [
-		expect.anything(),
-		url,
-		{
-			formats: ['screenshot'],
-			maxAge: 0,
-			storeInCache: false,
-			timeout: SCRAPE_TIMEOUT_MS
-		}
-	] as const;
+async function scrapePage(t: ConvexTestInstance, payload: { url: string; query?: string }) {
+	const job = await seedJob(t, 'scrape_url', payload);
+	const result = await runRequest(t, job);
+
+	if ('documentUrl' in result || 'results' in result) throw new Error('Expected a page transport.');
+
+	return result;
+}
+
+async function rawDocument(t: ConvexTestInstance, url = 'https://example.com/report.pdf') {
+	const job = await seedJob(t, 'scrape_url', { url });
+	const result = await runRequest(t, job, { rawDocument: true });
+
+	if (!('documentUrl' in result)) throw new Error('Expected a raw document.');
+
+	return result;
+}
+
+async function developerSearch(t: ConvexTestInstance, payload: DeveloperSearchPayload) {
+	const job = await seedJob(t, 'developer_search', payload);
+	const result = await runRequest(t, job, { kind: 'developer_search' });
+
+	if (!('results' in result)) throw new Error('Expected developer search results.');
+
+	return result;
+}
+
+const emptyOutput = { data: null, requested: false, success: null };
+
+function scrapeResponse(overrides: Partial<WebScrapeResponse> = {}): WebScrapeResponse {
+	return {
+		bytes: emptyOutput,
+		cache_metadata: { age_ms: 0, status: 'miss' },
+		highlights: emptyOutput,
+		html: emptyOutput,
+		images: { data: [], requested: true, success: true },
+		json: emptyOutput,
+		markdown: { data: '# Page', requested: true, success: true },
+		metadata: { title: 'Page', headings: [{ level: 1, text: 'Page' }] },
+		parsed: { ...emptyOutput, type: 'custom' },
+		product: emptyOutput,
+		profile: null,
+		request_id: 'request-1',
+		screenshot: emptyOutput,
+		url: PAGE_URL,
+		...overrides
+	};
+}
+
+type ContextDevErrorBody = { error_code?: string; message?: string };
+
+function contextDevError(
+	status: number,
+	body: ContextDevErrorBody,
+	headers: Record<string, string> = {}
+) {
+	return APIError.generate(status, body, undefined, new Headers(headers));
+}
+
+function lastScrapeCall() {
+	const call = scrape.mock.lastCall;
+
+	if (!call) throw new Error('Expected a context.dev scrape.');
+
+	return { body: call[0], options: call[1] };
 }
 
 async function storageBlobs(t: ConvexTestInstance) {
 	return await t.run(async (ctx) => ctx.db.system.query('_storage').collect());
 }
 
-beforeEach(() => vi.useFakeTimers());
+async function storedText(t: ConvexTestInstance, storageId: Id<'_storage'>) {
+	return await t.run(async (ctx) => {
+		const blob = await ctx.storage.get(storageId);
 
-afterEach(() => vi.useRealTimers());
-
-describe('scrape HTTP failures', () => {
-	it('reads nested Firecrawl API errors from the message JSON', () => {
-		const error = new Error(
-			`Uncaught ConvexError: Uncaught ConvexError: ${JSON.stringify({
-				code: 'firecrawl_request_failed',
-				status: 403,
-				path: '/v2/scrape',
-				message: 'Firecrawl /v2/scrape failed (403): forbidden'
-			})}\n    at scrape (lib.js:24:12)`
-		);
-
-		expect(scrapeHttpErrorStatus(error)).toBe(403);
+		return { url: await ctx.storage.getUrl(storageId), text: blob ? await blob.text() : null };
 	});
+}
+
+function mockDeveloperSearch() {
+	return vi.spyOn(Firecrawl.prototype, 'developerSearch');
+}
+
+beforeEach(() => {
+	vi.useFakeTimers();
+	vi.stubEnv('CONTEXT_DEV_API_KEY', 'context-dev-key');
+	vi.stubEnv('FIRECRAWL_API_KEY', 'firecrawl-key');
+	scrape.mockReset();
+	// SAFETY: webTools only awaits the scrape result, so a plain Promise stands in for APIPromise.
+	vi.spyOn(Web.prototype, 'scrape').mockImplementation(scrape as never);
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+	vi.useRealTimers();
 });
 
 describe('Exa search failures', () => {
@@ -220,1113 +214,590 @@ describe('Exa search failures', () => {
 	});
 });
 
-describe('queued scrape auth', () => {
-	it('scrapes the authorized URL with Firecrawl cache reads and writes disabled', async () => {
+describe('queued request job checks', () => {
+	it('rejects cloud-enqueued scrape jobs before calling context.dev', async () => {
 		const t = initConvexTest();
+		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'local-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', job.jobId, { cloudWorkId: 'cloud-work' });
 		});
 
-		const scrape = mockScrape({
-			markdown: '# Page',
-			summary: 'A page.',
+		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		expect(scrape).not.toHaveBeenCalled();
+	});
+
+	it('rejects an expired claim before calling context.dev', async () => {
+		const t = initConvexTest();
+		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });
+
+		await t.run(async (ctx) => {
+			await patchRunExecution(ctx, job.runId, { claimExpiresAt: Date.now() - 1 });
+		});
+
+		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		expect(scrape).not.toHaveBeenCalled();
+	});
+
+	it('rejects a settled scrape job before calling context.dev', async () => {
+		const t = initConvexTest();
+		const job = await seedJob(t, 'scrape_url', { url: PAGE_URL });
+
+		await job.asUser.mutation(api.executor.complete, {
+			runId: job.runId,
+			claimId: job.claimId,
+			executionSecret: job.executionSecret,
+			jobId: job.jobId,
+			result: { url: PAGE_URL, markdown: 'done', outline: { headings: [] }, images: [] }
+		});
+
+		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		expect(scrape).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ kind: 'web_search', payload: { query: 'sprocket' }, request: 'scrape' },
+		{ kind: 'developer_search', payload: { query: 'sprocket' }, request: 'scrape' },
+		{ kind: 'scrape_url', payload: { url: PAGE_URL }, request: 'developer_search' }
+	] as const)('rejects a $request request for a $kind job', async ({ kind, payload, request }) => {
+		const t = initConvexTest();
+		const job = await seedJob(t, kind, payload);
+		const search = mockDeveloperSearch();
+
+		await expect(runRequest(t, job, { kind: request })).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		expect(scrape).not.toHaveBeenCalled();
+		expect(search).not.toHaveBeenCalled();
+	});
+
+	it('rejects a non-http URL before calling context.dev', async () => {
+		const t = initConvexTest();
+
+		await expect(scrapePage(t, { url: 'ftp://example.com/file' })).rejects.toThrow(
+			'Only http(s) URLs can be scraped.'
+		);
+		expect(scrape).not.toHaveBeenCalled();
+	});
+});
+
+describe('context.dev scrape', () => {
+	it.each([{ url: PAGE_URL }, { url: PAGE_URL, query: '   ' }])(
+		'requests fresh main-content markdown and images without highlights for %j',
+		async (payload) => {
+			const t = initConvexTest();
+			scrape.mockResolvedValue(scrapeResponse());
+
+			const result = await scrapePage(t, payload);
+
+			const { body, options } = lastScrapeCall();
+			expect(body).toEqual({
+				url: PAGE_URL,
+				formats: { markdown: true, images: true },
+				sharedParams: { mainContentOnly: true },
+				maxAgeMs: 0,
+				timeoutOpts: { milliseconds: SCRAPE_TIMEOUT_MS, behavior: 'fail' }
+			});
+			expect(options?.timeout).toBeGreaterThan(SCRAPE_TIMEOUT_MS);
+			expect(result).not.toHaveProperty('highlights');
+		}
+	);
+
+	it('requests and returns highlights for a query', async () => {
+		const t = initConvexTest();
+
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				highlights: { data: ['Pricing starts at $5.'], requested: true, success: true }
+			})
+		);
+
+		const result = await scrapePage(t, { url: PAGE_URL, query: '  pricing  ' });
+
+		expect(lastScrapeCall().body).toMatchObject({
+			formats: { markdown: true, images: true, highlights: true },
+			highlightsParams: { query: 'pricing', maxCharacters: HIGHLIGHTS_MAX_CHARS }
+		});
+		expect(result).toMatchObject({ highlights: ['Pricing starts at $5.'] });
+	});
+
+	it('returns the page without highlights when only the highlights output failed', async () => {
+		const t = initConvexTest();
+
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				highlights: {
+					data: null,
+					requested: true,
+					success: false,
+					error_code: 'HIGHLIGHTS_FAILED'
+				}
+			})
+		);
+
+		const result = await scrapePage(t, { url: PAGE_URL, query: 'pricing' });
+
+		expect(result).toMatchObject({ url: PAGE_URL, markdown: '# Page' });
+		expect(result).not.toHaveProperty('highlights');
+	});
+
+	it('maps metadata to an outline and drops inline data: images', async () => {
+		const t = initConvexTest();
+
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				url: 'https://example.com/final',
+				markdown: { data: '# Docs', requested: true, success: true },
+				metadata: {
+					title: '  Docs  ',
+					description: '   ',
+					headings: [
+						{ level: 1, text: ' Docs ' },
+						{ level: 2, text: '   ' },
+						{ level: 2, text: 'Install' }
+					]
+				},
+				images: {
+					data: [
+						{ url: 'https://example.com/a.png', alt: null },
+						{ url: 'data:image/png;base64,AAAA', alt: null }
+					],
+					requested: true,
+					success: true
+				}
+			})
+		);
+
+		expect(await scrapePage(t, { url: PAGE_URL })).toEqual({
+			url: 'https://example.com/final',
+			markdown: '# Docs',
+			outline: {
+				title: 'Docs',
+				headings: [
+					{ level: 1, text: 'Docs' },
+					{ level: 2, text: 'Install' }
+				]
+			},
 			images: ['https://example.com/a.png']
 		});
-
-		try {
-			expect(
-				await queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).toEqual({
-				url: PAGE_URL,
-				markdown: '# Page',
-				summary: 'A page.',
-				images: ['https://example.com/a.png']
-			});
-			expect(scrape).toHaveBeenCalledWith(...expectedScrapeArgs());
-		} finally {
-			scrape.mockRestore();
-		}
+		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('rejects a wrong execution secret', async () => {
+	it('bounds the outline of a page with many long headings', async () => {
 		const t = initConvexTest();
+		const longText = 'h'.repeat(1_000);
 
-		const { asUser, runId, claimId, jobId } = await seedStartedWebJob(t, {
-			executionSecret: 'scrape-auth-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		await expect(
-			queuedAction(asUser, 'scrape', {
-				runId,
-				claimId,
-				jobId,
-				executionSecret: 'wrong-secret'
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				metadata: {
+					title: 'Huge',
+					headings: Array.from({ length: 5_000 }, () => ({ level: 2, text: longText }))
+				}
 			})
-		).rejects.toThrow('Run not found.');
+		);
+
+		const { outline } = await scrapePage(t, { url: PAGE_URL });
+
+		expect(outline.headings.length).toBeGreaterThan(0);
+		expect(outline.headings.every((heading) => heading.text.length < longText.length)).toBe(true);
+		expect(JSON.stringify(outline).length).toBeLessThan(SCRAPE_INLINE_MAX_CHARS);
 	});
 
-	it('rejects cloud-enqueued scrape jobs', async () => {
+	it('fails with the page error from a failed markdown output', async () => {
 		const t = initConvexTest();
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'cloud-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/cloud' }
-		});
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'cloud-work' });
-		});
-		await expect(
-			queuedAction(asUser, 'scrape', {
-				runId,
-				claimId,
-				jobId,
-				executionSecret
+		scrape.mockResolvedValue(
+			scrapeResponse({
+				markdown: {
+					data: null,
+					requested: true,
+					success: false,
+					error_code: 'NOT_FOUND',
+					message: 'Page returned 404'
+				}
 			})
-		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		);
+
+		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(
+			'This webpage returned an error: Page returned 404 (NOT_FOUND)'
+		);
+		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('rejects web_search jobs', async () => {
+	it('reports exhausted context.dev credits', async () => {
 		const t = initConvexTest();
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'search-scrape-secret',
-			kind: 'web_search',
-			payload: { query: 'sprocket' }
-		});
+		scrape.mockRejectedValue(
+			contextDevError(401, { error_code: 'USAGE_EXCEEDED', message: 'Monthly usage exceeded' })
+		);
 
-		await expect(
-			queuedAction(asUser, 'scrape', {
-				runId,
-				claimId,
-				jobId,
-				executionSecret
-			})
-		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(CONTEXT_DEV_CREDITS_EXHAUSTED);
 	});
 
-	it('rejects screenshot_url jobs before calling Firecrawl', async () => {
+	it.each([
+		{
+			error: contextDevError(401, { error_code: 'INVALID_API_KEY', message: 'Bad key' }),
+			message: 'context.dev scrape failed (401): INVALID_API_KEY: Bad key'
+		},
+		{
+			error: contextDevError(500, { message: 'Upstream exploded' }),
+			message: 'context.dev scrape failed (500): Upstream exploded'
+		},
+		{ error: contextDevError(408, {}), message: 'context.dev scrape timed out.' },
+		{ error: new APIConnectionTimeoutError(), message: 'context.dev scrape timed out.' }
+	])('maps "$message" without retrying', async ({ error, message }) => {
 		const t = initConvexTest();
+		scrape.mockRejectedValue(error);
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'screenshot-as-scrape-secret',
-			kind: 'screenshot_url',
-			payload: { url: PAGE_URL }
-		});
-
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
+		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(message);
+		expect(scrape).toHaveBeenCalledTimes(1);
 	});
 
-	it('rejects an expired claim', async () => {
+	it('waits out Retry-After on a rate limit, then retries', async () => {
 		const t = initConvexTest();
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'expired-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
+		scrape
+			.mockRejectedValueOnce(
+				contextDevError(429, { message: 'Slow down' }, { 'retry-after': '30' })
+			)
+			.mockResolvedValueOnce(scrapeResponse());
 
-		await t.run(async (ctx) => {
-			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
-		});
-		await expect(
-			queuedAction(asUser, 'scrape', {
-				runId,
-				claimId,
-				jobId,
-				executionSecret
-			})
-		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-		expect(
-			await t.mutation(internal.firecrawlRequests.scrapeJob, {
-				runId,
-				claimId,
-				jobId
-			})
-		).toBeNull();
+		const result = scrapePage(t, { url: PAGE_URL });
+
+		await vi.waitFor(() => expect(scrape).toHaveBeenCalledTimes(1));
+		await vi.advanceTimersByTimeAsync(29_000);
+		expect(scrape).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(2_000);
+		expect(await result).toMatchObject({ url: PAGE_URL, markdown: '# Page' });
+		expect(scrape).toHaveBeenCalledTimes(2);
 	});
 
-	it('rejects a settled local scrape job', async () => {
+	it('requires an API key', async () => {
 		const t = initConvexTest();
+		vi.stubEnv('CONTEXT_DEV_API_KEY', ' ');
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'settled-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		await asUser.mutation(api.executor.complete, {
-			runId,
-			claimId,
-			executionSecret,
-			jobId,
-			result: { url: PAGE_URL, markdown: 'done', summary: 'Done.', images: [] }
-		});
-		await expect(
-			queuedAction(asUser, 'scrape', {
-				runId,
-				claimId,
-				jobId,
-				executionSecret
-			})
-		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(
+			'CONTEXT_DEV_API_KEY is not configured.'
+		);
+		expect(scrape).not.toHaveBeenCalled();
 	});
 });
 
-describe('stored scrape_url results', () => {
-	it('stores scrape results with summary and images', async () => {
-		const t = initConvexTest();
-
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'saved-path-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		await asUser.mutation(api.executor.complete, {
-			runId,
-			claimId,
-			executionSecret,
-			jobId,
-			result: {
-				url: PAGE_URL,
-				markdown:
-					'The scrape was too large to directly output. Instead, it has been saved to /tmp/scrape.md for you to view.',
-				summary: 'Saved scrape.',
-				images: []
+describe('scrape transport size', () => {
+	function mockPage(page: Pick<ScrapedPage, 'markdown' | 'images' | 'highlights'>) {
+		const response = scrapeResponse({
+			markdown: { data: page.markdown, requested: true, success: true },
+			metadata: {},
+			images: {
+				data: page.images.map((url) => ({ url, alt: null })),
+				requested: true,
+				success: true
 			}
 		});
-		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(job?.result).toEqual({
-			url: PAGE_URL,
-			markdown:
-				'The scrape was too large to directly output. Instead, it has been saved to /tmp/scrape.md for you to view.',
-			summary: 'Saved scrape.',
-			images: []
-		});
-		expect(job?.result).not.toHaveProperty('truncated');
-	});
 
-	it('stores scrape results with summary and image lists', async () => {
-		const t = initConvexTest();
+		if (page.highlights) {
+			response.highlights = { data: page.highlights, requested: true, success: true };
+		}
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'stored-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		await asUser.mutation(api.executor.complete, {
-			runId,
-			claimId,
-			executionSecret,
-			jobId,
-			result: {
-				url: PAGE_URL,
-				markdown: 'partial',
-				summary: 'Partial page.',
-				images: []
-			}
-		});
-		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(job?.result).toEqual({
-			url: PAGE_URL,
-			markdown: 'partial',
-			summary: 'Partial page.',
-			images: []
-		});
-	});
-});
-
-async function scrapeLocalPage(
-	document: {
-		markdown?: string;
-		summary?: string;
-		images?: string[];
-	},
-	url = PAGE_URL
-) {
-	const t = initConvexTest();
-
-	const seeded = await seedStartedWebJob(t, {
-		executionSecret: `local-md-${Math.random()}`,
-		kind: 'scrape_url',
-		payload: { url }
-	});
-
-	const scrape = mockScrape(document, url);
-
-	try {
-		const result = await queuedAction(seeded.asUser, 'scrape', {
-			runId: seeded.runId,
-			claimId: seeded.claimId,
-			jobId: seeded.jobId,
-			executionSecret: seeded.executionSecret
-		});
-
-		return { t, result, scrapeCalls: scrape.mock.calls.map((call) => [...call]) };
-	} finally {
-		scrape.mockRestore();
+		scrape.mockResolvedValue(response);
 	}
-}
 
-describe('scrape size budget', () => {
-	it('rejects a summary that cannot fit the inline budget', async () => {
+	it('returns pages under the inline budget without storage', async () => {
+		const t = initConvexTest();
+		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000);
+		mockPage({ markdown, images: ['https://example.com/a.png'] });
+
+		expect(await scrapePage(t, { url: PAGE_URL })).toEqual({
+			url: PAGE_URL,
+			markdown,
+			outline: { headings: [] },
+			images: ['https://example.com/a.png']
+		});
+		expect(await storageBlobs(t)).toEqual([]);
+	});
+
+	it('stores the full page JSON and returns the outline, highlights, and scrapeUrl', async () => {
+		const t = initConvexTest();
+		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
+		const images = ['https://example.com/a.png'];
+		const highlights = ['x marks the spot'];
+		mockPage({ markdown, images, highlights });
+
+		const result = await scrapePage(t, { url: PAGE_URL, query: 'x' });
+
+		expect(result).toEqual({
+			url: PAGE_URL,
+			outline: { headings: [] },
+			highlights,
+			scrapeUrl: expect.any(String)
+		});
+
+		const blobs = await storageBlobs(t);
+		expect(blobs).toHaveLength(1);
+		const stored = await storedText(t, blobs[0]!._id);
+		expect(stored.url).toBe('scrapeUrl' in result ? result.scrapeUrl : undefined);
+		expect(JSON.parse(stored.text!)).toEqual({
+			url: PAGE_URL,
+			markdown,
+			outline: { headings: [] },
+			images,
+			highlights
+		});
+	});
+
+	it('deletes stored page JSON after its TTL', async () => {
+		const t = initConvexTest();
+		mockPage({ markdown: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS + 1), images: [] });
+
+		await scrapePage(t, { url: PAGE_URL });
+		expect(await storageBlobs(t)).toHaveLength(1);
+
+		await t.finishAllScheduledFunctions(() => {
+			vi.advanceTimersByTime(SCRAPE_STORAGE_TTL_MS);
+		});
+		expect(await storageBlobs(t)).toEqual([]);
+	});
+
+	it('rejects pages over the download limit without storing a blob', async () => {
+		const t = initConvexTest();
+		mockPage({ markdown: '\n'.repeat(32 * 1024 * 1024), images: [] });
+
+		await expect(scrapePage(t, { url: PAGE_URL })).rejects.toThrow(
+			'Scrape exceeds the 64 MiB download limit.'
+		);
+		expect(await storageBlobs(t)).toEqual([]);
+	}, 15_000);
+
+	it('accepts a page exactly at the download limit', async () => {
+		const t = initConvexTest();
+
 		const page: ScrapedPage = {
 			url: PAGE_URL,
-			markdown: 'hi',
-			summary: 's'.repeat(SCRAPE_INLINE_MAX_CHARS),
+			markdown: '',
+			outline: { headings: [] },
 			images: []
 		};
 
-		await expect(scrapeLocalPage(page)).rejects.toThrow('Scrape summary is too large.');
-	});
-});
-
-describe('queued scrape markdown transport', () => {
-	it('rejects oversized JSON archives without storing a blob', async () => {
-		const t = initConvexTest();
-
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'oversized-markdown-secret',
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' }
-		});
-
-		const scrape = mockScrape({ markdown: `${'é'.repeat(32 * 1024 * 1024)}x` });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
-			expect(await storageBlobs(t)).toEqual([]);
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('counts JSON escaping toward the receiver byte limit', async () => {
-		await expect(
-			scrapeLocalPage({ markdown: '\n'.repeat(32 * 1024 * 1024), summary: 'Summary' })
-		).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
-	}, 15_000);
-
-	it('accepts a JSON archive exactly at the receiver byte limit', async () => {
-		const page: ScrapedPage = { url: PAGE_URL, markdown: '', summary: 'Summary', images: [] };
 		page.markdown = 'x'.repeat(64 * 1024 * 1024 - JSON.stringify(page).length);
-		const { t, result } = await scrapeLocalPage(page);
-		expect(result).toHaveProperty('scrapeUrl');
+		mockPage(page);
+
+		expect(await scrapePage(t, { url: PAGE_URL })).toHaveProperty('scrapeUrl');
 		const blobs = await storageBlobs(t);
 		expect(blobs).toHaveLength(1);
 		expect(blobs[0]?.size).toBe(64 * 1024 * 1024);
 	}, 15_000);
-
-	it('returns short markdown, summary, and images inline without truncated or storage', async () => {
-		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000);
-
-		const { t, result, scrapeCalls } = await scrapeLocalPage({
-			markdown,
-			summary: 'A long but inline page.',
-			images: ['https://example.com/a.png']
-		});
-
-		expect(result).toEqual({
-			url: PAGE_URL,
-			markdown,
-			summary: 'A long but inline page.',
-			images: ['https://example.com/a.png']
-		});
-		expect(result).not.toHaveProperty('truncated');
-		expect(result).not.toHaveProperty('scrapeUrl');
-		expect(scrapeCalls[0]).toEqual([...expectedScrapeArgs()]);
-		expect(await storageBlobs(t)).toEqual([]);
-	});
-
-	it('uses an explicit default when Firecrawl omits summary', async () => {
-		const { result } = await scrapeLocalPage({ markdown: '# Page', images: [] });
-		expect(result).toEqual({
-			url: PAGE_URL,
-			markdown: '# Page',
-			summary: DEFAULT_SCRAPE_SUMMARY,
-			images: []
-		});
-	});
-
-	it('stores the full scrape JSON including images and returns scrapeUrl', async () => {
-		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
-		const images = ['https://example.com/a.png', 'https://example.com/b.png'];
-
-		const archive = {
-			url: PAGE_URL,
-			markdown,
-			summary: 'Huge page.',
-			images
-		};
-
-		const expectedBytes = new TextEncoder().encode(JSON.stringify(archive));
-
-		const { t, result, scrapeCalls } = await scrapeLocalPage({
-			markdown,
-			summary: 'Huge page.',
-			images
-		});
-
-		expect(result).toEqual({
-			url: PAGE_URL,
-			summary: 'Huge page.',
-			scrapeUrl: expect.any(String)
-		});
-		expect(result).not.toHaveProperty('truncated');
-		expect(result).not.toHaveProperty('markdown');
-		expect(scrapeCalls[0]).toEqual([...expectedScrapeArgs()]);
-
-		if (!('scrapeUrl' in result)) throw new Error('expected scrapeUrl');
-		const blobs = await storageBlobs(t);
-		expect(blobs).toHaveLength(1);
-		expect(blobs[0]?.size).toBe(expectedBytes.byteLength);
-
-		const stored = await t.run(async (ctx) => {
-			if (!blobs[0]) return null;
-			const blob = await ctx.storage.get(blobs[0]._id);
-
-			return {
-				url: await ctx.storage.getUrl(blobs[0]._id),
-				text: blob ? await new Response(blob).text() : null
-			};
-		});
-
-		expect(stored?.url).toBe(result.scrapeUrl);
-		expect(stored?.text ? JSON.parse(stored.text) : null).toEqual(archive);
-	});
-
-	it('stores full image lists when media, not markdown, overflows the budget', async () => {
-		const images = [`https://cdn.example.com/${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}.png`];
-
-		const archive = {
-			url: PAGE_URL,
-			markdown: 'short',
-			summary: 'Images overflow.',
-			images
-		};
-
-		const expectedBytes = new TextEncoder().encode(JSON.stringify(archive));
-
-		const { t, result } = await scrapeLocalPage({
-			markdown: 'short',
-			summary: 'Images overflow.',
-			images
-		});
-
-		expect(result).toEqual({
-			url: PAGE_URL,
-			summary: 'Images overflow.',
-			scrapeUrl: expect.any(String)
-		});
-		const blobs = await storageBlobs(t);
-		expect(blobs).toHaveLength(1);
-		expect(blobs[0]?.size).toBe(expectedBytes.byteLength);
-	});
-
-	it('deletes stored scrape JSON after one hour', async () => {
-		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}y`;
-		const { t } = await scrapeLocalPage({ markdown, summary: 'Expires.' });
-		const blobs = await storageBlobs(t);
-		expect(blobs).toHaveLength(1);
-		const storageId = blobs[0]?._id;
-		expect(storageId).toBeDefined();
-		await t.finishAllScheduledFunctions(() => {
-			vi.advanceTimersByTime(SCRAPE_STORAGE_TTL_MS);
-		});
-		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId!))).toBeNull();
-	});
 });
 
-describe('scrape errors', () => {
-	it('rejects a missing Firecrawl API key without retrying', async () => {
+describe('raw document fetch', () => {
+	function bytesResponse(bytes: WebScrapeResponse.Bytes) {
+		return scrapeResponse({ url: 'https://example.com/final.pdf', bytes });
+	}
+
+	it('requests only bytes and stores them for local parsing until the TTL', async () => {
 		const t = initConvexTest();
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'missing-key-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape').mockRejectedValue(
-			new ConvexError({
-				code: 'firecrawl_missing_api_key',
-				message: 'FIRECRAWL_API_KEY is not set for the Firecrawl component.'
+		scrape.mockResolvedValue(
+			bytesResponse({
+				data: {
+					base64: Buffer.from('%PDF-1.4').toString('base64'),
+					contentType: 'application/pdf'
+				},
+				requested: true,
+				success: true
 			})
 		);
 
-		try {
-			await expect(
-				queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('FIRECRAWL_API_KEY is not configured.');
-		} finally {
-			scrape.mockRestore();
-		}
+		const result = await rawDocument(t);
+
+		expect(lastScrapeCall().body).toEqual({
+			url: 'https://example.com/report.pdf',
+			formats: { bytes: true },
+			maxAgeMs: 0,
+			timeoutOpts: { milliseconds: SCRAPE_TIMEOUT_MS, behavior: 'fail' }
+		});
+		expect(result).toEqual({
+			url: 'https://example.com/final.pdf',
+			documentUrl: expect.any(String),
+			contentType: 'application/pdf'
+		});
+
+		const blobs = await storageBlobs(t);
+		expect(blobs).toHaveLength(1);
+		expect(await storedText(t, blobs[0]!._id)).toEqual({
+			url: result.documentUrl,
+			text: '%PDF-1.4'
+		});
+
+		await t.finishAllScheduledFunctions(() => {
+			vi.advanceTimersByTime(SCRAPE_STORAGE_TTL_MS);
+		});
+		expect(await storageBlobs(t)).toEqual([]);
 	});
 
-	it('maps Firecrawl API 404 to a non-retryable scrape failure', async () => {
+	it.each([
+		{
+			bytes: { data: null, requested: true, success: false, error_code: 'CONTENT_TOO_LARGE' },
+			message: 'Document exceeds the 50 MB raw fetch limit.'
+		},
+		{
+			bytes: {
+				data: null,
+				requested: true,
+				success: false,
+				error_code: 'FETCH_FAILED',
+				message: 'Origin refused'
+			},
+			message: 'This webpage returned an error: Origin refused (FETCH_FAILED)'
+		},
+		{
+			bytes: {
+				data: { base64: '', contentType: 'application/pdf' },
+				requested: true,
+				success: true
+			},
+			message: 'context.dev returned an empty document.'
+		}
+	])('fails with "$message" without storing bytes', async ({ bytes, message }) => {
 		const t = initConvexTest();
+		scrape.mockResolvedValue(bytesResponse(bytes));
 
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'api-404-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		const scrape = vi
-			.spyOn(FirecrawlClient.prototype, 'scrape')
-			.mockRejectedValue(firecrawlApiError(404));
-
-		try {
-			await expect(
-				queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('Firecrawl scrape failed (404).');
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('maps page metadata.statusCode 404 separately from Firecrawl API errors', async () => {
-		const t = initConvexTest();
-
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'page-404-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		const scrape = mockScrape({
-			markdown: 'missing',
-			summary: 'Not found.',
-			metadata: { sourceURL: PAGE_URL, statusCode: 404 }
-		});
-
-		try {
-			await expect(
-				queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('This webpage returned a 404 error.');
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects invalid Firecrawl documents', async () => {
-		const t = initConvexTest();
-
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'invalid-doc-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape').mockResolvedValue(
-			// SAFETY: Deliberately malformed provider data exercises runtime validation.
-			{ images: [1, 2, 3] } as never
-		);
-
-		try {
-			await expect(
-				queuedAction(asUser, 'scrape', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('Firecrawl scrape returned an invalid response.');
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-});
-
-const screenshotImageResult = {
-	outputType: 'image' as const,
-	url: PAGE_URL,
-	path: '/threads/thread/parse_file/screenshot.png',
-	mediaType: 'image/png',
-	byteSize: 80,
-	width: 1280,
-	height: 720
-};
-
-async function screenshotToolArgs(options: {
-	executionSecret: string;
-	kind?: 'screenshot_url' | 'scrape_url' | 'web_search';
-	payload?: { url: string } | { query: string };
-}) {
-	const t = initConvexTest();
-
-	const seeded = await seedStartedWebJob(t, {
-		executionSecret: options.executionSecret,
-		kind: options.kind ?? 'screenshot_url',
-		payload: options.payload ?? { url: PAGE_URL }
-	});
-
-	return { t, ...seeded };
-}
-
-describe('queued screenshot transport', () => {
-	it('requests a viewport screenshot and returns the page URL, not the signed image URL', async () => {
-		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'screenshot-format-secret'
-		});
-
-		const scrape = mockScrape({
-			screenshot: SCREENSHOT_URL,
-			metadata: { sourceURL: PAGE_URL, url: SCREENSHOT_URL, statusCode: 200 }
-		});
-
-		try {
-			expect(
-				await queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).toEqual({ url: PAGE_URL, screenshotUrl: SCREENSHOT_URL });
-			expect(scrape).toHaveBeenCalledWith(...expectedScreenshotArgs());
-			expect(scrape.mock.calls[0]?.[2]).not.toEqual(
-				expect.objectContaining({ formats: [{ type: 'screenshot', fullPage: true }] })
-			);
-			expect(await storageBlobs(t)).toEqual([]);
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('keeps the requested page URL when Firecrawl metadata only repeats the screenshot URL', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'screenshot-page-url-secret'
-		});
-
-		const scrape = mockScrape({
-			screenshot: SCREENSHOT_URL,
-			metadata: { url: SCREENSHOT_URL, statusCode: 200 }
-		});
-
-		try {
-			expect(
-				await queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).toEqual({ url: PAGE_URL, screenshotUrl: SCREENSHOT_URL });
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects a wrong execution secret before calling Firecrawl', async () => {
-		const { asUser, runId, claimId, jobId } = await screenshotToolArgs({
-			executionSecret: 'screenshot-auth-secret'
-		});
-
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret: 'wrong-secret'
-				})
-			).rejects.toThrow('Run not found.');
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects an expired claim before calling Firecrawl', async () => {
-		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'expired-screenshot-secret'
-		});
-
-		await t.run(async (ctx) => {
-			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
-		});
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-			expect(
-				await t.mutation(internal.firecrawlRequests.scrapeJob, {
-					runId,
-					claimId,
-					jobId
-				})
-			).toBeNull();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects a cancelled run before calling Firecrawl', async () => {
-		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'cancelled-screenshot-secret'
-		});
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() });
-		});
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects scrape_url jobs before calling Firecrawl', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'scrape-as-screenshot-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects web_search jobs before calling Firecrawl', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'search-as-screenshot-secret',
-			kind: 'web_search',
-			payload: { query: 'sprocket' }
-		});
-
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects a non-http target URL before calling Firecrawl', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'ftp-screenshot-secret',
-			payload: { url: 'ftp://example.com' }
-		});
-
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('Only http(s) URLs can be scraped.');
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects cloud-enqueued scrape jobs before calling Firecrawl', async () => {
-		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'cloud-scrape-as-screenshot-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'cloud-work' });
-		});
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects a screenshot job that has a cloud work id before calling Firecrawl', async () => {
-		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'cloud-id-screenshot-secret'
-		});
-
-		await t.run(async (ctx) => {
-			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'work-screenshot' });
-		});
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('rejects a settled screenshot job before calling Firecrawl', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'settled-screenshot-secret'
-		});
-
-		await asUser.mutation(api.executor.complete, {
-			runId,
-			claimId,
-			executionSecret,
-			jobId,
-			result: screenshotImageResult
-		});
-		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
-			expect(scrape).not.toHaveBeenCalled();
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it.each([undefined, '', '   '])(
-		'rejects a missing screenshot (%j) without storing bytes',
-		async (screenshot) => {
-			const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-				executionSecret: `missing-screenshot-${String(screenshot)}-secret`
-			});
-
-			const scrape = mockScrape(screenshot === undefined ? { markdown: '# Page' } : { screenshot });
-
-			try {
-				await expect(
-					queuedAction(asUser, 'screenshot', {
-						runId,
-						claimId,
-						jobId,
-						executionSecret
-					})
-				).rejects.toThrow('Firecrawl screenshot is unavailable.');
-				expect(scrape).toHaveBeenCalledWith(...expectedScreenshotArgs());
-				expect(await storageBlobs(t)).toEqual([]);
-			} finally {
-				scrape.mockRestore();
-			}
-		}
-	);
-
-	it('rejects a non-http screenshot URL', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'invalid-screenshot-url-secret'
-		});
-
-		const scrape = mockScrape({ screenshot: 'data:image/png;base64,abc' });
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('Firecrawl screenshot returned an invalid URL.');
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('maps page metadata.statusCode 404 separately from Firecrawl API errors', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'screenshot-page-404-secret'
-		});
-
-		const scrape = mockScrape({
-			screenshot: SCREENSHOT_URL,
-			metadata: { sourceURL: PAGE_URL, statusCode: 404 }
-		});
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('This webpage returned a 404 error.');
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('maps Firecrawl API 404 to a non-retryable failure', async () => {
-		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'screenshot-api-404-secret'
-		});
-
-		const scrape = vi
-			.spyOn(FirecrawlClient.prototype, 'scrape')
-			.mockRejectedValue(firecrawlApiError(404));
-
-		try {
-			await expect(
-				queuedAction(asUser, 'screenshot', {
-					runId,
-					claimId,
-					jobId,
-					executionSecret
-				})
-			).rejects.toThrow('Firecrawl scrape failed (404).');
-		} finally {
-			scrape.mockRestore();
-		}
-	});
-
-	it('stores a local screenshot reference with the page URL and without file bytes', async () => {
-		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
-			executionSecret: 'saved-screenshot-secret'
-		});
-
-		await asUser.mutation(api.executor.complete, {
-			runId,
-			claimId,
-			executionSecret,
-			jobId,
-			result: screenshotImageResult
-		});
-		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(job?.result).toEqual(screenshotImageResult);
-		expect(job?.result).not.toHaveProperty('screenshotUrl');
+		await expect(rawDocument(t)).rejects.toThrow(message);
 		expect(await storageBlobs(t)).toEqual([]);
 	});
 });
 
-describe('queued raw document fetch', () => {
-	beforeEach(() => vi.stubEnv('FIRECRAWL_API_KEY', 'fc-test-key'));
+describe('developer_search', () => {
+	function searchResponse(
+		response: Omit<DeveloperSearchResponse, 'success'>
+	): DeveloperSearchResponse {
+		return { success: true, ...response };
+	}
 
-	afterEach(() => {
-		vi.unstubAllEnvs();
-		vi.unstubAllGlobals();
-	});
-
-	it('fetches unparsed bytes and stores them for local parsing', async () => {
+	it('searches with filters and maps passages and repo status', async () => {
 		const t = initConvexTest();
-		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape');
 
-		const fetch = mockRawDocumentFetch({
-			success: true,
-			data: {
-				rawBase64: Buffer.from('%PDF-1.4').toString('base64'),
-				metadata: {
-					sourceURL: 'https://example.com/final.pdf',
-					contentType: 'application/pdf',
-					statusCode: 200
+		const search = mockDeveloperSearch().mockResolvedValue(
+			searchResponse({
+				results: [
+					{
+						id: 'r1',
+						url: 'https://github.com/acme/widget/issues/1',
+						title: 'Crash on start',
+						passages: [
+							{ text: 'Stack trace', citation_url: 'https://github.com/acme/widget/issues/1#c1' },
+							{ text: 'Workaround' }
+						],
+						license: 'MIT'
+					},
+					{ id: 'r2', url: 'https://docs.acme.dev/start', passages: [] }
+				],
+				repos: [
+					{
+						repo: 'acme/widget',
+						indexed: true,
+						types: { issue: true, pullRequest: false, readme: true }
+					}
+				]
+			})
+		);
+
+		const result = await developerSearch(t, {
+			query: '  widget crash  ',
+			types: ['issue', 'doc'],
+			repos: ['acme/widget']
+		});
+
+		expect(search).toHaveBeenCalledWith('widget crash', {
+			k: DEVELOPER_SEARCH_RESULTS,
+			passages: DEVELOPER_SEARCH_PASSAGES,
+			types: ['issue', 'doc'],
+			repos: ['acme/widget']
+		});
+		expect(result).toEqual({
+			results: [
+				{
+					url: 'https://github.com/acme/widget/issues/1',
+					title: 'Crash on start',
+					passages: [
+						{
+							text: 'Stack trace',
+							citationUrl: 'https://github.com/acme/widget/issues/1#c1'
+						},
+						{ text: 'Workaround' }
+					]
+				},
+				{ url: 'https://docs.acme.dev/start', passages: [] }
+			],
+			repos: [
+				{
+					repo: 'acme/widget',
+					indexed: true,
+					types: { issue: true, pullRequest: false, readme: true }
 				}
-			}
+			]
 		});
-
-		try {
-			const result = await queuedRawDocument(t);
-
-			expect(result).toEqual({
-				url: 'https://example.com/final.pdf',
-				documentUrl: expect.any(String),
-				contentType: 'application/pdf'
-			});
-			expect(scrape).not.toHaveBeenCalled();
-			expect(fetch).toHaveBeenCalledTimes(1);
-			const [url, init] = fetch.mock.calls[0]!;
-			expect(url).toBe(FIRECRAWL_SCRAPE_URL);
-			expect(init?.headers).toMatchObject({ Authorization: 'Bearer fc-test-key' });
-			expect(JSON.parse(String(init?.body))).toEqual({
-				url: 'https://example.com/report.pdf',
-				formats: ['rawBase64'],
-				parsers: [],
-				maxAge: 0,
-				storeInCache: false,
-				timeout: SCRAPE_TIMEOUT_MS
-			});
-
-			const blobs = await storageBlobs(t);
-			expect(blobs).toHaveLength(1);
-
-			const stored = await t.run(async (ctx) => {
-				const blob = await ctx.storage.get(blobs[0]!._id);
-
-				return {
-					url: await ctx.storage.getUrl(blobs[0]!._id),
-					text: blob ? await blob.text() : null
-				};
-			});
-
-			expect(stored).toEqual({
-				url: result.documentUrl,
-				text: '%PDF-1.4'
-			});
-
-			await t.finishAllScheduledFunctions(() => {
-				vi.advanceTimersByTime(SCRAPE_STORAGE_TTL_MS);
-			});
-			expect(await storageBlobs(t)).toEqual([]);
-		} finally {
-			scrape.mockRestore();
-		}
 	});
 
-	it('maps a page 404 to a non-retryable failure', async () => {
+	it('omits empty filters', async () => {
 		const t = initConvexTest();
+		const search = mockDeveloperSearch().mockResolvedValue(searchResponse({ results: [] }));
 
-		mockRawDocumentFetch({
-			success: true,
-			data: { rawBase64: 'JVBERg==', metadata: { statusCode: 404 } }
+		expect(await developerSearch(t, { query: 'widget', types: [], repos: [] })).toEqual({
+			results: []
 		});
-
-		const error = await rejection(queuedRawDocument(t));
-
-		expect(error.message).toContain('This webpage returned a 404 error.');
-		expect(isNonRetryableError(error)).toBe(true);
-		expect(await storageBlobs(t)).toEqual([]);
+		expect(search).toHaveBeenCalledWith('widget', {
+			k: DEVELOPER_SEARCH_RESULTS,
+			passages: DEVELOPER_SEARCH_PASSAGES
+		});
 	});
 
-	it('retries Firecrawl rate limits', async () => {
+	it('rejects an empty query without calling Firecrawl', async () => {
 		const t = initConvexTest();
+		const search = mockDeveloperSearch();
 
-		mockRawDocumentFetch({ success: false, error: 'Rate limited' }, 429);
-
-		const error = await rejection(queuedRawDocument(t));
-
-		expect(error.message).toContain('Firecrawl scrape failed (429).');
-		expect(isNonRetryableError(error)).toBe(false);
-	});
-
-	it('keeps interrupted response reads retryable', async () => {
-		const t = initConvexTest();
-
-		const body = new ReadableStream<Uint8Array>({
-			start(controller) {
-				controller.enqueue(new TextEncoder().encode('{"success":'));
-				controller.error(new Error('connection reset'));
-			}
-		});
-
-		vi.stubGlobal(
-			'fetch',
-			vi.fn<typeof globalThis.fetch>(async () => new Response(body))
+		await expect(developerSearch(t, { query: '   ' })).rejects.toThrow(
+			'Search query cannot be empty.'
 		);
+		expect(search).not.toHaveBeenCalled();
+	});
 
-		const error = await rejection(queuedRawDocument(t));
+	it.each([
+		{ error: new SdkError('Payment required', 402), message: FIRECRAWL_CREDITS_EXHAUSTED },
+		{ error: new SdkError('Too many repos', 400), message: 'Too many repos' },
+		{
+			error: new SdkError('Upstream exploded', 500),
+			message: 'Developer search failed (500): Upstream exploded'
+		}
+	])('maps Firecrawl failures to "$message" without retrying', async ({ error, message }) => {
+		const t = initConvexTest();
+		const search = mockDeveloperSearch().mockRejectedValue(error);
 
-		expect(error.message).toContain('connection reset');
-		expect(isNonRetryableError(error)).toBe(false);
+		await expect(developerSearch(t, { query: 'widget' })).rejects.toThrow(message);
+		expect(search).toHaveBeenCalledTimes(1);
+	});
+
+	it('retries a rate limit', async () => {
+		const t = initConvexTest();
+
+		const search = mockDeveloperSearch()
+			.mockRejectedValueOnce(new SdkError('Rate limited', 429))
+			.mockResolvedValueOnce(searchResponse({ results: [] }));
+
+		const result = developerSearch(t, { query: 'widget' });
+
+		await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(await result).toEqual({ results: [] });
+		expect(search).toHaveBeenCalledTimes(2);
+	});
+
+	it('requires an API key', async () => {
+		const t = initConvexTest();
+		vi.stubEnv('FIRECRAWL_API_KEY', '');
+		const search = mockDeveloperSearch();
+
+		await expect(developerSearch(t, { query: 'widget' })).rejects.toThrow(
+			'FIRECRAWL_API_KEY is not configured.'
+		);
+		expect(search).not.toHaveBeenCalled();
 	});
 });

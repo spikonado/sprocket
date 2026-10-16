@@ -66,7 +66,8 @@ export const vExecCommandPayload = v.object({
 });
 
 export const vScrapeUrlPayload = v.object({
-	url: v.string()
+	url: v.string(),
+	query: v.optional(v.string())
 });
 
 /** screenshot_url job payload. */
@@ -75,6 +76,14 @@ export const vScreenshotUrlPayload = vScrapeUrlPayload.pick('url');
 export const vWebSearchPayload = v.object({
 	query: v.string(),
 	numResults: v.optional(v.number())
+});
+
+export const developerSearchTypes = ['doc', 'issue', 'pull_request', 'readme'] as const;
+
+export const vDeveloperSearchPayload = v.object({
+	query: v.string(),
+	types: v.optional(v.array(v.union(...literals(developerSearchTypes)))),
+	repos: v.optional(v.array(v.string()))
 });
 
 export const vWriteStdinPayload = v.object({
@@ -277,6 +286,7 @@ export const vCurrentExecutorJobPayload = v.union(
 	vScrapeUrlPayload,
 	vScreenshotUrlPayload,
 	vWebSearchPayload,
+	vDeveloperSearchPayload,
 	vWriteStdinPayload,
 	vControlCommandPayload,
 	vPollCommandPayload,
@@ -345,35 +355,67 @@ export const vCommandStdinResult = vCommandOutput.extend({
 	workdir: v.string()
 });
 
-/** Stored scrape_url job result. Historical rows may include `truncated`. */
+export const vPageOutline = v.object({
+	title: v.optional(v.string()),
+	description: v.optional(v.string()),
+	headings: v.array(v.object({ level: v.number(), text: v.string() }))
+});
+
+/**
+ * Stored scrape_url job result. Historical rows may include `truncated` or
+ * `summary`; current rows carry `outline` instead.
+ */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
 	truncated: v.optional(v.boolean()),
 	summary: v.optional(v.string()),
+	outline: v.optional(vPageOutline),
+	highlights: v.optional(v.array(v.string())),
 	images: v.optional(v.array(v.string()))
 });
 
-/** Local scrapeForTool transport. Oversized pages return a temporary JSON download URL. */
+/** webRequests scrape transport. Oversized pages return a temporary JSON download URL. */
 export const vScrapeUrlTransport = v.union(
 	v.object({
 		url: v.string(),
 		markdown: v.string(),
-		summary: v.string(),
+		outline: vPageOutline,
+		highlights: v.optional(v.array(v.string())),
 		images: v.array(v.string())
 	}),
 	v.object({
 		url: v.string(),
-		summary: v.string(),
+		outline: vPageOutline,
+		highlights: v.optional(v.array(v.string())),
 		scrapeUrl: v.string()
 	})
 );
 
-/** Local screenshotForTool transport. `url` is the page; `screenshotUrl` is the provider image. */
-export const vScreenshotUrlTransport = v.object({
-	url: v.string(),
-	screenshotUrl: v.string()
+export const vDeveloperSearchResults = v.object({
+	results: v.array(
+		v.object({
+			url: v.string(),
+			title: v.optional(v.string()),
+			passages: v.array(v.object({ text: v.string(), citationUrl: v.optional(v.string()) }))
+		})
+	),
+	repos: v.optional(
+		v.array(
+			v.object({
+				repo: v.string(),
+				indexed: v.boolean(),
+				types: v.object({ issue: v.boolean(), pullRequest: v.boolean(), readme: v.boolean() })
+			})
+		)
+	)
 });
+
+/** Stored developer_search result. Results over the inline limit live in a local file. */
+export const vDeveloperSearchResult = v.union(
+	vDeveloperSearchResults,
+	v.object({ message: v.string() })
+);
 
 export const vWebImageResult = v.object({
 	outputType: v.literal('image'),
@@ -692,6 +734,7 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebImageResult,
 	vWebSearchResult,
+	vDeveloperSearchResult,
 	vArtifactResult,
 	vListArtifactsResult,
 	vBrowserTaskResult,
@@ -732,6 +775,7 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('scrape_url'),
 	v.literal('screenshot_url'),
 	v.literal('web_search'),
+	v.literal('developer_search'),
 	v.literal('control_cmd'),
 	v.literal('poll_cmd'),
 	v.literal('add_artifact'),

@@ -1,6 +1,5 @@
 import { defineApp } from 'convex/server';
 import { v } from 'convex/values';
-import firecrawl from '@firecrawl/firecrawl-convex/convex.config';
 import rateLimiter from '@convex-dev/rate-limiter/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
 import migrations from '@convex-dev/migrations/convex.config';
@@ -17,6 +16,7 @@ const app = defineApp({
 		SPROCKET_MARKETING_ORIGIN: v.optional(v.string()),
 		SPROCKET_BILLING_STAGING_ORIGIN: v.optional(v.string()),
 		EXA_API_KEY: v.string(),
+		CONTEXT_DEV_API_KEY: v.string(),
 		FIRECRAWL_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),
 		WORKOS_API_KEY: v.optional(v.string()),
@@ -30,8 +30,6 @@ const app = defineApp({
 	}
 });
 
-app.use(firecrawl, { env: { FIRECRAWL_API_KEY: app.env.FIRECRAWL_API_KEY } });
-
 app.use(exa, { env: { EXA_API_KEY: app.env.EXA_API_KEY } });
 
 app.use(rateLimiter);
@@ -44,6 +42,9 @@ app.use(actionRetrier);
 
 app.use(workpool, { name: 'webSearchWorkpool' });
 
+app.use(workpool, { name: 'contextDevWorkpool' });
+
+// Keeps its original name so hosted parses queued before a deploy still run.
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
 
 app.use(workpool, { name: 'billingWebhookWorkpool' });

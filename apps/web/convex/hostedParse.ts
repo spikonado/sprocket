@@ -29,7 +29,7 @@ import {
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isRunFinalStatus, registeredFileUploadError } from '@convex/lib/validators';
-import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
+import { firecrawlPool } from '@convex/lib/webPools';
 
 const CLEANUP_BATCH_SIZE = 100;
 
@@ -189,7 +189,7 @@ export const start = mutation({
 				uploadUrl: undefined
 			});
 
-			const workId = await firecrawlScrapePool.enqueueAction(
+			const workId = await firecrawlPool.enqueueAction(
 				ctx,
 				internal.hostedParseActions.executeHostedParse,
 				{

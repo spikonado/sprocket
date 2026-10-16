@@ -178,61 +178,58 @@ describe('executor', () => {
 		}
 	);
 
-	it.each(['scrape_url', 'screenshot_url'] as const)(
-		'persists %s local image references without file bytes',
-		async (kind) => {
-			const t = initConvexTest();
-			const { asUser, threadId } = await seedOwnedThread(t);
-			const executionSecret = 'web-image-secret';
-			const claimId = 'claim-image';
+	it('persists scrape_url local image references without file bytes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'web-image-secret';
+		const claimId = 'claim-image';
 
-			const result = {
-				outputType: 'image' as const,
-				url: 'https://example.com/image',
-				path: '/threads/thread/parse_file/image.png',
-				mediaType: 'image/png',
-				byteSize: 80,
-				width: 1280,
-				height: 720
-			};
+		const result = {
+			outputType: 'image' as const,
+			url: 'https://example.com/image',
+			path: '/threads/thread/parse_file/image.png',
+			mediaType: 'image/png',
+			byteSize: 80,
+			width: 1280,
+			height: 720
+		};
 
-			const { runId } = await createQueuedRun(
-				t,
-				asUser,
-				threadId,
-				'web-image',
-				executionSecret,
-				'Read this image'
-			);
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'web-image',
+			executionSecret,
+			'Read this image'
+		);
 
-			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
 
-			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			...toolTranscriptAssignment(runId, claimId),
+			executionSecret,
+			kind: 'scrape_url',
+			payload: { url: result.url }
+		});
+
+		await expect(
+			asUser.mutation(api.executor.complete, {
 				runId,
 				claimId,
-				...toolTranscriptAssignment(runId, claimId),
 				executionSecret,
-				kind,
-				payload: { url: result.url }
-			});
-
-			await expect(
-				asUser.mutation(api.executor.complete, {
-					runId,
-					claimId,
-					executionSecret,
-					jobId,
-					result
-				})
-			).resolves.toBe(true);
-			const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-			expect(job?.result).toEqual(result);
-			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-			expect(parts.parts.find((part) => part.tool?.status === 'completed')?.tool?.output).toEqual(
+				jobId,
 				result
-			);
-		}
-	);
+			})
+		).resolves.toBe(true);
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.result).toEqual(result);
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		expect(parts.parts.find((part) => part.tool?.status === 'completed')?.tool?.output).toEqual(
+			result
+		);
+	});
 
 	it.each([
 		'exec_cmd',

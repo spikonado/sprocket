@@ -1,27 +1,27 @@
 'use node';
 
-import { ConvexError, v, type Infer } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { z } from 'zod';
-import { FirecrawlClient, type ScrapeOptions } from '@firecrawl/firecrawl-convex';
+import { APIConnectionTimeoutError, APIError, ContextDev } from 'context.dev';
+import type { WebScrapeParams, WebScrapeResponse } from 'context.dev/resources/web';
 import { ExaClient } from '@exalabs/convex-exa';
+import type { DeveloperSearchOptions } from 'firecrawl';
 import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
-	vScrapeUrlTransport,
-	vScreenshotUrlTransport,
+	developerSearchTypes,
 	vWebSearchResult,
-	type ExecutorJobPayload
+	type ExecutorJobPayload,
+	type vDeveloperSearchResults,
+	type vPageOutline,
+	type vScrapeUrlTransport
 } from '@convex/lib/validators';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
-import {
-	HOSTED_PARSE_MAX_INPUT_BYTES,
-	readBoundedResponseBytes,
-	ResponseTooLargeError
-} from '@convex/lib/hostedParse';
+import { HOSTED_PARSE_MAX_INPUT_BYTES } from '@convex/lib/hostedParse';
+import { firecrawlClient, firecrawlFailure, firecrawlRetryAfterMs } from '@convex/lib/firecrawl';
+import { retryAfterHeaderMs, retryRateLimited } from '@convex/lib/providerRetry';
 import { NonRetryableError } from '@convex-dev/workpool';
 import type { Doc } from '@convex/_generated/dataModel';
-
-const firecrawl = new FirecrawlClient(components.firecrawl);
 
 const exa = new ExaClient(components.exa);
 
@@ -35,19 +35,28 @@ export const SCRAPE_INLINE_MAX_CHARS = 40_000;
 
 export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
 
+/** context.dev's own deadline for one scrape attempt. */
 export const SCRAPE_TIMEOUT_MS = 60_000;
 
-export const SCRAPE_FORMATS = ['markdown', 'summary', 'images'] as const;
+/** The SDK must outwait the API deadline so the API reports the timeout. */
+const SDK_TIMEOUT_MARGIN_MS = 10_000;
 
-export const SCREENSHOT_FORMATS = ['screenshot'] as const;
+/** Time a queued request keeps for storing and publishing its result. */
+const REQUEST_PUBLISH_MARGIN_MS = 30_000;
 
-export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
+export const HIGHLIGHTS_MAX_CHARS = 10_000;
 
-export const FIRECRAWL_SCRAPE_URL = 'https://api.firecrawl.dev/v2/scrape';
+const OUTLINE_MAX_CHARS = 8_000;
 
-/** Base64 of the largest document plus room for the JSON envelope. */
-const RAW_DOCUMENT_MAX_RESPONSE_BYTES =
-	Math.ceil(HOSTED_PARSE_MAX_INPUT_BYTES / 3) * 4 + 1024 * 1024;
+const OUTLINE_HEADING_MAX_CHARS = 200;
+
+export const CONTEXT_DEV_CREDITS_EXHAUSTED = 'context.dev credits are exhausted.';
+
+export const DEVELOPER_SEARCH_RESULTS = 10;
+
+export const DEVELOPER_SEARCH_PASSAGES = 5;
+
+const DEVELOPER_SEARCH_TIMEOUT_MS = 60_000;
 
 const RAW_DOCUMENT_TOO_LARGE = 'Document exceeds the 50 MB raw fetch limit.';
 
@@ -59,65 +68,27 @@ const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 
 const SEARCH_TIMEOUT_MS = 30_000;
 
-const SCRAPE_URL_SIZE_PLACEHOLDER = 'https://example.convex.cloud/api/storage/scrape.json';
-
 class WebProviderTimeout extends Error {}
 
-const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
-
-const firecrawlApiErrorSchema = z.object({
-	code: z.literal('firecrawl_request_failed'),
-	status: z.int().min(400).max(599)
+const contextDevErrorBodySchema = z.object({
+	error_code: z.string().optional(),
+	code: z.string().optional(),
+	message: z.string().optional()
 });
 
-const firecrawlMissingKeySchema = z.object({
-	code: z.literal('firecrawl_missing_api_key')
-});
+type PageOutline = Infer<typeof vPageOutline>;
 
-const scrapeHttpErrorSchema = z.object({ status: z.int().min(400).max(599) });
+type ScrapeParams = Omit<WebScrapeParams, 'maxAgeMs' | 'timeoutOpts'>;
 
-const providerErrorSchema = z.union([
-	firecrawlApiErrorSchema,
-	firecrawlMissingKeySchema,
-	scrapeHttpErrorSchema
-]);
+type WebSearchJobArgs = { query: string; numResults?: number };
 
-type ProviderError = z.infer<typeof providerErrorSchema>;
-
-const firecrawlDocumentSchema = z.object({
-	markdown: z.string().nullish(),
-	summary: z.string().nullish(),
-	images: z.array(z.string()).nullish(),
-	screenshot: z.string().nullish(),
-	metadata: z
-		.object({
-			url: z.string().optional(),
-			sourceURL: z.string().optional(),
-			contentType: z.string().nullish(),
-			statusCode: z.number().optional(),
-			error: z.string().optional()
-		})
-		.passthrough()
-		.optional()
-});
-
-type FirecrawlDocument = z.infer<typeof firecrawlDocumentSchema>;
-
-const firecrawlRawDocumentResponseSchema = z.object({
-	success: z.boolean(),
-	error: z.string().optional(),
-	data: z
-		.object({
-			rawBase64: z.string().nullish(),
-			metadata: firecrawlDocumentSchema.shape.metadata
-		})
-		.optional()
-});
+type ScrapeJobArgs = { url: string; query?: string };
 
 export type ScrapedPage = {
 	url: string;
 	markdown: string;
-	summary: string;
+	outline: PageOutline;
+	highlights?: string[];
 	images: string[];
 };
 
@@ -128,54 +99,15 @@ export type RawDocument = {
 	contentType?: string;
 };
 
-function convexErrorData(error: Error): ProviderError | undefined {
-	if (error instanceof ConvexError) {
-		return providerErrorSchema.safeParse(error.data).data;
-	}
+type DeveloperSearchResults = Infer<typeof vDeveloperSearchResults>;
 
-	let message = error.message.split('\n', 1)[0] ?? '';
-
-	while (message.startsWith(UNCAUGHT_CONVEX_ERROR_PREFIX)) {
-		message = message.slice(UNCAUGHT_CONVEX_ERROR_PREFIX.length);
-	}
-
-	try {
-		return providerErrorSchema.safeParse(JSON.parse(message)).data;
-	} catch {
-		return undefined;
-	}
-}
-
-/** Firecrawl API HTTP status, not the scraped page's `metadata.statusCode`. */
-export function scrapeHttpErrorStatus(error: Error): number | undefined {
-	const data = convexErrorData(error);
-	const firecrawlError = firecrawlApiErrorSchema.safeParse(data);
-
-	if (firecrawlError.success) {
-		return firecrawlError.data.status;
-	}
-
-	const result = scrapeHttpErrorSchema.safeParse(data);
-
-	return result.success ? result.data.status : undefined;
-}
-
-function isCleanPageStatus(status: number): boolean {
-	return status === 304 || (status >= 200 && status < 300);
-}
+type WebRequest = Pick<
+	Doc<'webRequests'>,
+	'runId' | 'claimId' | 'jobId' | 'kind' | 'rawDocument' | 'expiresAt'
+>;
 
 function isRetryableHttpStatus(status: number): boolean {
 	return status === 408 || status === 425 || status === 429 || status >= 500;
-}
-
-function providerHttpError(message: string, status: number, cause?: Error): Error {
-	return isRetryableHttpStatus(status)
-		? new ConvexError(message)
-		: new NonRetryableError(message, cause ? { cause } : undefined);
-}
-
-function throwHttpFailure(message: string, status: number, cause?: Error): never {
-	throw providerHttpError(message, status, cause);
 }
 
 const EXA_SEARCH_HTTP_ERROR = /Exa \/search failed \((\d{3})\):\s*([^\r\n]*)/;
@@ -208,35 +140,6 @@ export function classifyExaSearchFailure(error: Error): Error {
 	return error;
 }
 
-function summaryFitsTransport(page: ScrapedPage): boolean {
-	return (
-		JSON.stringify({
-			url: page.url,
-			summary: page.summary,
-			scrapeUrl: SCRAPE_URL_SIZE_PLACEHOLDER
-		}).length <= SCRAPE_INLINE_MAX_CHARS
-	);
-}
-
-function localInlineFits(page: ScrapedPage): boolean {
-	return (
-		page.images.length <= CONVEX_ARRAY_MAX_LENGTH &&
-		JSON.stringify(page).length <= SCRAPE_INLINE_MAX_CHARS
-	);
-}
-
-function rejectOversizedSummary(): never {
-	throw new NonRetryableError('Scrape summary is too large.');
-}
-
-function scrapeSummary(value: string | null | undefined): string {
-	if (value === undefined || value === null || value.trim() === '') {
-		return DEFAULT_SCRAPE_SUMMARY;
-	}
-
-	return value;
-}
-
 async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise<T>): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -254,248 +157,224 @@ async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise
 	}
 }
 
-type WebSearchJobArgs = {
-	query: string;
-	numResults?: number;
-};
-
-function urlFromPayload(payload: ExecutorJobPayload): string {
-	if (!('url' in payload)) return '';
-
-	return payload.url;
-}
-
-function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
-	if (!('query' in payload)) return { query: '' };
-	const query = payload.query;
-
-	if (!('numResults' in payload) || payload.numResults === undefined) {
-		return { query };
-	}
-
-	return { query, numResults: payload.numResults };
-}
-
 function requireHttpUrl(urlValue: string): URL {
 	let url: URL;
 
 	try {
 		url = new URL(urlValue.trim());
 	} catch {
-		throw new NonRetryableError(`Invalid URL: ${urlValue}`);
+		throw new Error(`Invalid URL: ${urlValue}`);
 	}
 
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new NonRetryableError('Only http(s) URLs can be scraped.');
+		throw new Error('Only http(s) URLs can be scraped.');
 	}
 
 	return url;
 }
 
-async function requestFirecrawlScrape(
-	ctx: ActionCtx,
-	url: URL,
-	options: ScrapeOptions
-): Promise<FirecrawlDocument> {
-	let document: unknown;
+function contextDevClient(): ContextDev {
+	const apiKey = env.CONTEXT_DEV_API_KEY?.trim();
 
-	try {
-		document = await withTimeout(
-			'Firecrawl scrape',
-			SCRAPE_TIMEOUT_MS,
-			firecrawl.scrape(ctx, url.toString(), {
-				...options,
-				maxAge: 0,
-				storeInCache: false,
-				timeout: SCRAPE_TIMEOUT_MS
-			})
-		);
-	} catch (error) {
-		if (error instanceof Error) {
-			if (firecrawlMissingKeySchema.safeParse(convexErrorData(error)).success) {
-				throw new NonRetryableError('FIRECRAWL_API_KEY is not configured.', { cause: error });
-			}
+	if (!apiKey) throw new Error('CONTEXT_DEV_API_KEY is not configured.');
 
-			const status = scrapeHttpErrorStatus(error);
-
-			if (status !== undefined) {
-				throwHttpFailure(`Firecrawl scrape failed (${status}).`, status, error);
-			}
-		}
-
-		throw error;
-	}
-
-	const parsed = firecrawlDocumentSchema.safeParse(document);
-
-	if (!parsed.success) {
-		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
-	}
-
-	const statusCode = parsed.data.metadata?.statusCode;
-
-	if (statusCode !== undefined && !isCleanPageStatus(statusCode)) {
-		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
-	}
-
-	return parsed.data;
+	return new ContextDev({ apiKey, maxRetries: 0 });
 }
 
-async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPage> {
-	const url = requireHttpUrl(urlValue);
+function contextDevRetryAfterMs(error: Error): number | undefined {
+	return error instanceof APIError && error.status === 429
+		? retryAfterHeaderMs(error.headers?.get('retry-after'))
+		: undefined;
+}
 
-	const document = await requestFirecrawlScrape(ctx, url, {
-		formats: [...SCRAPE_FORMATS],
-		onlyMainContent: true
+function contextDevFailure(error: Error): Error {
+	if (error instanceof APIConnectionTimeoutError) {
+		return new Error('context.dev scrape timed out.', { cause: error });
+	}
+
+	if (!(error instanceof APIError) || error.status === undefined) return error;
+
+	const body = contextDevErrorBodySchema.safeParse(error.error).data;
+	const code = body?.error_code ?? body?.code;
+
+	if (error.status === 401 && code === 'USAGE_EXCEEDED') {
+		return new Error(CONTEXT_DEV_CREDITS_EXHAUSTED, { cause: error });
+	}
+
+	if (error.status === 408) return new Error('context.dev scrape timed out.', { cause: error });
+
+	const detail = body?.message?.trim();
+	const suffix = [code, detail].filter(Boolean).join(': ');
+
+	return new Error(
+		suffix
+			? `context.dev scrape failed (${error.status}): ${suffix}`
+			: `context.dev scrape failed (${error.status}).`,
+		{ cause: error }
+	);
+}
+
+async function requestContextDevScrape(
+	params: ScrapeParams,
+	deadline: number
+): Promise<WebScrapeResponse> {
+	return await retryRateLimited({
+		deadline,
+		maxAttemptMs: SCRAPE_TIMEOUT_MS,
+		attempt: async (timeoutMs) =>
+			await contextDevClient().web.scrape(
+				{ ...params, maxAgeMs: 0, timeoutOpts: { milliseconds: timeoutMs, behavior: 'fail' } },
+				{ timeout: timeoutMs + SDK_TIMEOUT_MARGIN_MS }
+			),
+		retryAfterMs: contextDevRetryAfterMs,
+		failure: contextDevFailure
 	});
+}
+
+type ScrapeOutput = { success: boolean | null; error_code?: string; message?: string };
+
+/** Failed outputs arrive inside HTTP 200 responses. */
+function requireOutput(output: ScrapeOutput): void {
+	if (output.success !== false) return;
+
+	const message = output.message?.trim() || 'The page could not be scraped.';
+
+	throw new Error(`This webpage returned an error: ${message} (${output.error_code ?? 'UNKNOWN'})`);
+}
+
+function pageOutline(metadata: WebScrapeResponse.Metadata): PageOutline {
+	const outline: PageOutline = { headings: [] };
+
+	if (metadata.title?.trim()) outline.title = metadata.title.trim();
+
+	if (metadata.description?.trim()) outline.description = metadata.description.trim();
+	let size = JSON.stringify(outline).length;
+
+	for (const heading of metadata.headings ?? []) {
+		const text = heading.text.trim().slice(0, OUTLINE_HEADING_MAX_CHARS);
+
+		if (!text) continue;
+		const entry = { level: heading.level, text };
+		size += JSON.stringify(entry).length + 1;
+
+		if (size > OUTLINE_MAX_CHARS) break;
+		outline.headings.push(entry);
+	}
+
+	return outline;
+}
+
+async function fetchScrape(
+	urlValue: string,
+	query: string | undefined,
+	deadline: number
+): Promise<ScrapedPage> {
+	const url = requireHttpUrl(urlValue);
+	const highlightsQuery = query?.trim();
+
+	const params: ScrapeParams = {
+		url: url.toString(),
+		formats: { markdown: true, images: true },
+		sharedParams: { mainContentOnly: true }
+	};
+
+	if (highlightsQuery) {
+		params.formats = { ...params.formats, highlights: true };
+		params.highlightsParams = { query: highlightsQuery, maxCharacters: HIGHLIGHTS_MAX_CHARS };
+	}
+
+	const response = await requestContextDevScrape(params, deadline);
+
+	requireOutput(response.markdown);
 
 	const page: ScrapedPage = {
-		url: document.metadata?.sourceURL ?? document.metadata?.url ?? url.toString(),
-		markdown: document.markdown ?? '',
-		summary: scrapeSummary(document.summary),
-		images: document.images ?? []
+		url: response.url || url.toString(),
+		markdown: response.markdown.data ?? '',
+		outline: pageOutline(response.metadata),
+		images: (response.images.data ?? [])
+			.map((image) => image.url)
+			.filter((imageUrl) => !imageUrl.startsWith('data:'))
 	};
+
+	if (highlightsQuery && response.highlights.success && response.highlights.data) {
+		page.highlights = response.highlights.data;
+	}
 
 	return page;
 }
 
-async function fetchScreenshot(
-	ctx: ActionCtx,
-	urlValue: string
-): Promise<Infer<typeof vScreenshotUrlTransport>> {
-	const url = requireHttpUrl(urlValue);
-
-	const document = await requestFirecrawlScrape(ctx, url, {
-		formats: [...SCREENSHOT_FORMATS]
-	});
-
-	const screenshot = document.screenshot?.trim() ?? '';
-
-	if (!screenshot) {
-		throw new NonRetryableError('Firecrawl screenshot is unavailable.');
-	}
-
-	try {
-		requireHttpUrl(screenshot);
-	} catch {
-		throw new NonRetryableError('Firecrawl screenshot returned an invalid URL.');
-	}
-
-	return {
-		url: url.toString(),
-		screenshotUrl: screenshot
-	};
-}
-
 /**
- * Fetches unparsed bytes for local parsing. Firecrawl bills this one credit,
- * while its document parsing bills per page. Calls the API directly because
- * component actions cap return values at 16 MiB.
+ * Fetches unparsed bytes for local parsing when the agent cannot reach the
+ * document itself.
  */
-async function fetchRawDocument(ctx: ActionCtx, urlValue: string): Promise<RawDocument> {
+async function fetchRawDocument(
+	ctx: ActionCtx,
+	urlValue: string,
+	deadline: number
+): Promise<RawDocument> {
 	const url = requireHttpUrl(urlValue);
-	const apiKey = env.FIRECRAWL_API_KEY?.trim();
 
-	if (!apiKey) {
-		throw new NonRetryableError('FIRECRAWL_API_KEY is not configured.');
-	}
+	const response = await requestContextDevScrape(
+		{ url: url.toString(), formats: { bytes: true } },
+		deadline
+	);
 
-	const response = await fetch(FIRECRAWL_SCRAPE_URL, {
-		method: 'POST',
-		redirect: 'error',
-		headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			url: url.toString(),
-			formats: ['rawBase64'],
-			parsers: [],
-			maxAge: 0,
-			storeInCache: false,
-			timeout: SCRAPE_TIMEOUT_MS
-		}),
-		signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS)
-	});
+	if (response.bytes.error_code === 'CONTENT_TOO_LARGE') throw new Error(RAW_DOCUMENT_TOO_LARGE);
+	requireOutput(response.bytes);
 
-	let responseBytes: Uint8Array;
-
-	try {
-		responseBytes = await readBoundedResponseBytes(response, RAW_DOCUMENT_MAX_RESPONSE_BYTES);
-	} catch (error) {
-		if (error instanceof ResponseTooLargeError) {
-			throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE, { cause: error });
-		}
-
-		throw error;
-	}
-
-	if (!response.ok) {
-		throwHttpFailure(`Firecrawl scrape failed (${response.status}).`, response.status);
-	}
-
-	let payload: unknown;
-
-	try {
-		payload = JSON.parse(new TextDecoder().decode(responseBytes));
-	} catch {
-		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
-	}
-
-	const parsed = firecrawlRawDocumentResponseSchema.safeParse(payload);
-
-	if (!parsed.success) {
-		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
-	}
-
-	if (!parsed.data.success) {
-		throw new NonRetryableError(parsed.data.error?.trim() || 'Firecrawl scrape failed.');
-	}
-
-	const metadata = parsed.data.data?.metadata;
-	const statusCode = metadata?.statusCode;
-
-	if (statusCode !== undefined && !isCleanPageStatus(statusCode)) {
-		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
-	}
-
-	const document = new Uint8Array(Buffer.from(parsed.data.data?.rawBase64 ?? '', 'base64'));
+	const document = new Uint8Array(Buffer.from(response.bytes.data?.base64 ?? '', 'base64'));
 
 	if (document.byteLength === 0) {
-		throw new NonRetryableError('Firecrawl returned an empty document.');
+		throw new Error('context.dev returned an empty document.');
 	}
 
 	if (document.byteLength > HOSTED_PARSE_MAX_INPUT_BYTES) {
-		throw new NonRetryableError(RAW_DOCUMENT_TOO_LARGE);
+		throw new Error(RAW_DOCUMENT_TOO_LARGE);
 	}
 
 	const raw: RawDocument = {
-		url: metadata?.sourceURL ?? metadata?.url ?? url.toString(),
+		url: response.url || url.toString(),
 		documentUrl: await storeTemporaryBlob(ctx, new Blob([document]))
 	};
 
-	if (metadata?.contentType) raw.contentType = metadata.contentType;
+	const contentType = response.bytes.data?.contentType;
+
+	if (contentType) raw.contentType = contentType;
 
 	return raw;
+}
+
+function localInlineFits(page: ScrapedPage): boolean {
+	return (
+		page.images.length <= CONVEX_ARRAY_MAX_LENGTH &&
+		JSON.stringify(page).length <= SCRAPE_INLINE_MAX_CHARS
+	);
 }
 
 async function localScrapeTransport(
 	ctx: ActionCtx,
 	page: ScrapedPage
 ): Promise<Infer<typeof vScrapeUrlTransport>> {
-	if (!summaryFitsTransport(page)) {
-		rejectOversizedSummary();
-	}
-
 	if (localInlineFits(page)) {
 		return page;
 	}
 
-	return { url: page.url, summary: page.summary, scrapeUrl: await storeTemporaryScrape(ctx, page) };
+	const transport: Infer<typeof vScrapeUrlTransport> = {
+		url: page.url,
+		outline: page.outline,
+		scrapeUrl: await storeTemporaryScrape(ctx, page)
+	};
+
+	if (page.highlights) transport.highlights = page.highlights;
+
+	return transport;
 }
 
 async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<string> {
 	const blob = new Blob([JSON.stringify(page)], { type: SCRAPE_JSON_BLOB_TYPE });
 
 	if (blob.size > SCRAPE_MAX_BYTES) {
-		throw new NonRetryableError('Scrape exceeds the 64 MiB download limit.');
+		throw new Error('Scrape exceeds the 64 MiB download limit.');
 	}
 
 	return await storeTemporaryBlob(ctx, blob);
@@ -523,6 +402,65 @@ async function storeTemporaryBlob(ctx: ActionCtx, blob: Blob): Promise<string> {
 	}
 
 	return url;
+}
+
+type DeveloperSearchArgs = {
+	query: string;
+	types?: (typeof developerSearchTypes)[number][];
+	repos?: string[];
+};
+
+async function runDeveloperSearch(
+	args: DeveloperSearchArgs,
+	deadline: number
+): Promise<DeveloperSearchResults> {
+	const query = args.query.trim();
+
+	if (!query) throw new Error('Search query cannot be empty.');
+
+	const options: DeveloperSearchOptions = {
+		k: DEVELOPER_SEARCH_RESULTS,
+		passages: DEVELOPER_SEARCH_PASSAGES
+	};
+
+	if (args.types?.length) options.types = args.types;
+
+	if (args.repos?.length) options.repos = args.repos;
+
+	const response = await retryRateLimited({
+		deadline,
+		maxAttemptMs: DEVELOPER_SEARCH_TIMEOUT_MS,
+		attempt: async (timeoutMs) => await firecrawlClient(timeoutMs).developerSearch(query, options),
+		retryAfterMs: firecrawlRetryAfterMs,
+		failure: (error) => firecrawlFailure('Developer search', error)
+	});
+
+	const results: DeveloperSearchResults = {
+		results: response.results.map((result) => {
+			const item: DeveloperSearchResults['results'][number] = {
+				url: result.url,
+				passages: result.passages.map((passage) =>
+					passage.citation_url
+						? { text: passage.text, citationUrl: passage.citation_url }
+						: { text: passage.text }
+				)
+			};
+
+			if (result.title) item.title = result.title;
+
+			return item;
+		})
+	};
+
+	if (response.repos) {
+		results.repos = response.repos.map(({ repo, indexed, types }) => ({
+			repo,
+			indexed,
+			types: { issue: types.issue, pullRequest: types.pullRequest, readme: types.readme }
+		}));
+	}
+
+	return results;
 }
 
 async function runSearch(
@@ -593,6 +531,16 @@ const executeArgs = {
 	claimId: v.string()
 };
 
+function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
+	if (!('query' in payload) || payload.query === undefined) return { query: '' };
+
+	if (!('numResults' in payload) || payload.numResults === undefined) {
+		return { query: payload.query };
+	}
+
+	return { query: payload.query, numResults: payload.numResults };
+}
+
 export const executeWebSearch = internalAction({
 	args: executeArgs,
 	returns: vWebSearchResult,
@@ -609,27 +557,44 @@ export const executeWebSearch = internalAction({
 	}
 });
 
-export async function executeQueuedScrape(
-	ctx: ActionCtx,
-	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind' | 'rawDocument'>
-) {
-	const job = request.jobId
-		? await ctx.runMutation(internal.firecrawlRequests.scrapeJob, {
-				jobId: request.jobId,
-				runId: request.runId,
-				claimId: request.claimId
-			})
-		: null;
+function scrapeFromPayload(payload: ExecutorJobPayload): ScrapeJobArgs {
+	if (!('url' in payload)) return { url: '' };
 
-	if (!job || job.kind !== `${request.kind}_url`) throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	return 'query' in payload && payload.query !== undefined
+		? { url: payload.url, query: payload.query }
+		: { url: payload.url };
+}
 
-	if (request.kind === 'scrape') {
-		const url = urlFromPayload(job.payload);
+function developerSearchFromPayload(payload: ExecutorJobPayload): DeveloperSearchArgs {
+	if (!('query' in payload) || payload.query === undefined) return { query: '' };
+	const args: DeveloperSearchArgs = { query: payload.query };
 
-		if (request.rawDocument) return await fetchRawDocument(ctx, url);
+	if ('types' in payload && payload.types) args.types = payload.types;
 
-		return await localScrapeTransport(ctx, await fetchScrape(ctx, url));
+	if ('repos' in payload && payload.repos) args.repos = payload.repos;
+
+	return args;
+}
+
+export async function executeQueuedWebRequest(ctx: ActionCtx, request: WebRequest) {
+	const job = await ctx.runMutation(internal.webRequests.requestJob, {
+		jobId: request.jobId,
+		runId: request.runId,
+		claimId: request.claimId
+	});
+
+	const deadline = request.expiresAt - REQUEST_PUBLISH_MARGIN_MS;
+
+	if (request.kind === 'developer_search') {
+		if (job?.kind !== 'developer_search') throw new Error(RUN_NO_LONGER_ACTIVE);
+
+		return await runDeveloperSearch(developerSearchFromPayload(job.payload), deadline);
 	}
 
-	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
+	if (job?.kind !== 'scrape_url') throw new Error(RUN_NO_LONGER_ACTIVE);
+	const scrape = scrapeFromPayload(job.payload);
+
+	if (request.rawDocument) return await fetchRawDocument(ctx, scrape.url, deadline);
+
+	return await localScrapeTransport(ctx, await fetchScrape(scrape.url, scrape.query, deadline));
 }

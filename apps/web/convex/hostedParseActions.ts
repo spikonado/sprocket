@@ -2,19 +2,21 @@
 
 import { NonRetryableError } from '@convex-dev/workpool';
 import { v } from 'convex/values';
-import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
-import { env, internalAction } from '@convex/_generated/server';
+import { internalAction } from '@convex/_generated/server';
 import {
 	FIRECRAWL_PARSE_TIMEOUT_MS,
-	FIRECRAWL_PARSE_URL,
 	HOSTED_PARSE_MAX_INPUT_BYTES,
-	HOSTED_PARSE_MAX_OUTPUT_BYTES,
 	firecrawlParseOptions,
-	parseFirecrawlParseResponse,
+	parseFirecrawlParseDocument,
 	readBoundedResponseBytes,
 	shortHostedParseError
 } from '@convex/lib/hostedParse';
+import { firecrawlClient, firecrawlFailure, firecrawlRetryAfterMs } from '@convex/lib/firecrawl';
+import { retryRateLimited } from '@convex/lib/providerRetry';
+
+/** Leaves room under the 10-minute action limit and the agent's 10-minute wait. */
+const HOSTED_PARSE_RETRY_BUDGET_MS = 8 * 60_000;
 
 const executeArgs = {
 	requestId: v.id('hostedParseRequests'),
@@ -28,27 +30,18 @@ const executeReturns = v.object({
 	resultStorageId: v.optional(v.id('_storage'))
 });
 
-function configuredFirecrawlApiKey(): string | undefined {
-	return env.FIRECRAWL_API_KEY?.trim() || undefined;
-}
-
 export const executeHostedParse = internalAction({
 	args: executeArgs,
 	returns: executeReturns,
 	handler: async (ctx, args) => {
+		const deadline = Date.now() + HOSTED_PARSE_RETRY_BUDGET_MS;
 		const work = await ctx.runQuery(internal.hostedParse.getParseWork, args);
 
 		if (!work) {
 			return { skipped: true };
 		}
 
-		const apiKey = configuredFirecrawlApiKey();
 		const pages = work.pages === true;
-
-		if (!apiKey) {
-			throw new NonRetryableError('Hosted document parsing is not configured.');
-		}
-
 		const inputUrl = await ctx.storage.getUrl(work.inputStorageId);
 
 		if (!inputUrl) {
@@ -65,47 +58,29 @@ export const executeHostedParse = internalAction({
 			);
 		}
 
-		let providerResponse: Response;
+		const document = await retryRateLimited({
+			deadline,
+			maxAttemptMs: FIRECRAWL_PARSE_TIMEOUT_MS,
+			attempt: async (timeoutMs) =>
+				await firecrawlClient(timeoutMs).parse(
+					{
+						data: inputBytes,
+						filename: work.filename,
+						contentType: mediaTypeForFilename(work.filename)
+					},
+					{ ...firecrawlParseOptions(pages), timeout: timeoutMs }
+				),
+			retryAfterMs: firecrawlRetryAfterMs,
+			failure: (error) =>
+				new NonRetryableError(
+					shortHostedParseError(firecrawlFailure('Firecrawl parse', error).message)
+				)
+		});
 
-		try {
-			providerResponse = await fetch(FIRECRAWL_PARSE_URL, {
-				method: 'POST',
-				redirect: 'error',
-				headers: { Authorization: `Bearer ${apiKey}` },
-				body: firecrawlParseForm(inputBytes, work.filename, pages),
-				signal: AbortSignal.timeout(FIRECRAWL_PARSE_TIMEOUT_MS)
-			});
-		} catch (error) {
-			throw new NonRetryableError(
-				error instanceof Error ? shortHostedParseError(error.message) : 'Firecrawl parse failed.'
-			);
-		}
-
-		let responseBytes: Uint8Array;
-
-		try {
-			responseBytes = await readBoundedResponseBytes(
-				providerResponse,
-				HOSTED_PARSE_MAX_OUTPUT_BYTES
-			);
-		} catch (error) {
-			throw new NonRetryableError(
-				error instanceof Error ? error.message : 'Firecrawl parse response is too large.'
-			);
-		}
-
-		if (!providerResponse.ok) {
-			throw new NonRetryableError(httpProviderError(providerResponse.status, responseBytes));
-		}
-
-		const parsed = parseFirecrawlParseResponse(
-			new TextDecoder().decode(responseBytes),
-			responseBytes.byteLength,
-			pages
-		);
+		const parsed = parseFirecrawlParseDocument(document, pages);
 
 		if ('error' in parsed) {
-			throw new NonRetryableError(parsed.error);
+			throw new NonRetryableError(shortHostedParseError(parsed.error));
 		}
 
 		const resultStorageId = await ctx.storage.store(
@@ -117,18 +92,6 @@ export const executeHostedParse = internalAction({
 		return { resultStorageId };
 	}
 });
-
-function firecrawlParseForm(bytes: Uint8Array, filename: string, pages: boolean): FormData {
-	const form = new FormData();
-	const copy = new Uint8Array(bytes);
-	form.append('file', new Blob([copy], { type: mediaTypeForFilename(filename) }), filename);
-	form.append(
-		'options',
-		new Blob([JSON.stringify(firecrawlParseOptions(pages))], { type: 'application/json' })
-	);
-
-	return form;
-}
 
 function mediaTypeForFilename(filename: string): string {
 	return filename.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
@@ -142,20 +105,4 @@ async function fetchStorageBytes(url: string): Promise<Uint8Array> {
 	}
 
 	return await readBoundedResponseBytes(response, HOSTED_PARSE_MAX_INPUT_BYTES);
-}
-
-function httpProviderError(status: number, responseBytes: Uint8Array): string {
-	if (status === 402) return 'Firecrawl parse failed.';
-
-	try {
-		const payload = z
-			.object({ error: z.string().trim().min(1) })
-			.safeParse(JSON.parse(new TextDecoder().decode(responseBytes)));
-
-		if (payload.success) return shortHostedParseError(payload.data.error);
-	} catch {
-		// Fall through to the status message.
-	}
-
-	return `Firecrawl parse failed (${status}).`;
 }

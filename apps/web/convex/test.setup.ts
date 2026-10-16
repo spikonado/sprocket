@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 
-import firecrawlTest from '@firecrawl/firecrawl-convex/test';
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
@@ -60,12 +59,12 @@ export function initConvexTest(): ConvexTestInstance {
 	// TestConvex variance; the convex-test backend object is the same instance.
 	const backend = t as never;
 	rateLimiterTest.register(backend);
-	firecrawlTest.register(backend);
 	exaTest.register(backend);
 	migrationsTest.register(backend);
 	aggregateTest.register(backend);
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webSearchWorkpool');
+	workpoolTest.register(backend, 'contextDevWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
 	workpoolTest.register(backend, 'billingWebhookWorkpool');
 	workpoolTest.register(backend, 'billingReconciliationWorkpool');
@@ -200,7 +199,7 @@ export async function seedStartedWebJob(
 	t: ConvexTestInstance,
 	options: {
 		executionSecret: string;
-		kind: 'web_search' | 'scrape_url' | 'screenshot_url';
+		kind: 'web_search' | 'scrape_url' | 'developer_search';
 		payload: { query: string } | { url: string };
 		prompt?: string;
 		claimId?: string;
