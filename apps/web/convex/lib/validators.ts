@@ -369,12 +369,6 @@ export const vScrapeUrlTransport = v.union(
 	})
 );
 
-/** Local screenshotForTool transport. `url` is the page; `screenshotUrl` is the provider image. */
-export const vScreenshotUrlTransport = v.object({
-	url: v.string(),
-	screenshotUrl: v.string()
-});
-
 export const vWebImageResult = v.object({
 	outputType: v.literal('image'),
 	url: v.string(),

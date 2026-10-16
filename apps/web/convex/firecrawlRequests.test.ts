@@ -204,3 +204,33 @@ describe('Firecrawl request queue', () => {
 		}
 	);
 });
+
+describe('screenshot_url', () => {
+	it('fails the job with an unsupported-tool error for released agents', async () => {
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		const auth = { runId, claimId, executionSecret };
+
+		const { jobId } = await t.mutation(api.agentRuntime.beginToolJob, {
+			...auth,
+			...toolTranscriptAssignment(auth.runId, auth.claimId),
+			kind: 'screenshot_url',
+			payload: { url: 'https://example.com' }
+		});
+
+		await expect(
+			t.mutation(api.firecrawlRequests.start, { ...auth, jobId, kind: 'screenshot' })
+		).rejects.toThrow('This tool is no longer supported.');
+		expect(
+			await t.mutation(api.executor.fail, {
+				...auth,
+				jobId,
+				error: 'This tool is no longer supported.'
+			})
+		).toBe(true);
+		expect(await t.run((ctx) => ctx.db.get('executorJobs', jobId))).toMatchObject({
+			status: 'failed',
+			error: 'This tool is no longer supported.'
+		});
+	});
+});

@@ -82,63 +82,13 @@ fn pdf() -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn screenshot_saves_pixels_locally_for_history() {
+async fn historical_screenshots_replay_from_the_local_cache() {
     let cache = tempfile::tempdir().unwrap();
     let store = crate::transcript::TranscriptStore::new(cache.path().join("transcripts"));
     let directory = store.thread_dir("user", "thread").join("screenshot_url");
-    let mut download = serve("application/octet-stream", png()).await;
-    download.set_query(Some("signature=temporary-secret"));
-    let metadata = fetch_screenshot(
-        json!({
-            "url": "https://example.com/page", "screenshotUrl": download.as_str(),
-        }),
-        &directory,
-    )
-    .await
-    .unwrap();
-    assert_eq!(metadata["url"], "https://example.com/page");
-    assert_eq!(metadata["mediaType"], "image/png");
-    assert_eq!(metadata["width"], 1);
-    assert!(!metadata.to_string().contains("temporary-secret"));
+    let url = reqwest::Url::parse("https://example.com/page").unwrap();
+    let metadata = persist_web_image(&png(), &url, &directory).await.unwrap();
     assert_image_history("screenshot_url", metadata, &directory).await;
-    assert!(!directory.with_file_name("parse_file").exists());
-}
-
-#[tokio::test]
-async fn screenshot_rejects_missing_fields_and_non_http_downloads() {
-    let cache = tempfile::tempdir().unwrap();
-    for result in [
-        json!({"url": "https://example.com"}),
-        json!({"url": "https://example.com", "screenshotUrl": "file:///tmp/image.png"}),
-        json!({"url": "file:///tmp/page.html", "screenshotUrl": "https://example.com/image.png"}),
-    ] {
-        assert!(fetch_screenshot(result, cache.path()).await.is_err());
-    }
-}
-
-#[tokio::test]
-async fn screenshot_rejects_non_images_and_oversized_dimensions() {
-    let cache = tempfile::tempdir().unwrap();
-    let mut oversized = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::new_rgb8(8193, 1)
-        .write_to(&mut oversized, image::ImageFormat::Png)
-        .unwrap();
-    for bytes in [
-        b"<html>not a screenshot</html>".to_vec(),
-        oversized.into_inner(),
-    ] {
-        let download = serve("image/png", bytes).await;
-        assert!(
-            fetch_screenshot(
-                json!({
-                    "url": "https://example.com", "screenshotUrl": download.as_str(),
-                }),
-                cache.path()
-            )
-            .await
-            .is_err()
-        );
-    }
 }
 
 #[tokio::test]
@@ -397,35 +347,4 @@ fn urls_must_be_http() {
     ] {
         assert!(validate_web_url(url).is_err());
     }
-}
-
-#[tokio::test]
-async fn screenshot_download_reads_extensionless_images_without_head() {
-    let cache = tempfile::tempdir().unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url =
-        reqwest::Url::parse(&format!("http://{}/opaque", listener.local_addr().unwrap())).unwrap();
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 4096];
-        stream.read(&mut request).await.unwrap();
-        assert!(request.starts_with(b"GET "));
-        let bytes = png();
-        let headers = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            bytes.len()
-        );
-        stream.write_all(headers.as_bytes()).await.unwrap();
-        stream.write_all(&bytes).await.unwrap();
-    });
-    let metadata = fetch_screenshot(
-        json!({
-            "url": "https://example.com/page", "screenshotUrl": url.as_str(),
-        }),
-        cache.path(),
-    )
-    .await
-    .unwrap();
-    server.await.unwrap();
-    assert_eq!(metadata["mediaType"], "image/png");
 }
