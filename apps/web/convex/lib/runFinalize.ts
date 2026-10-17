@@ -81,7 +81,7 @@ export async function finalizeRunRecord(
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
 	await cancelRunLifecycleCheck(ctx, run._id);
-	await ctx.scheduler.runAfter(0, internal.firecrawlRequests.cancelRun, { runId: run._id });
+	await ctx.scheduler.runAfter(0, internal.webRequests.cancelRun, { runId: run._id });
 	await detachRunFromMachine(ctx, run);
 
 	if (alreadyFinal) {

@@ -9,6 +9,24 @@ Keep `transcript:getParts`, `transcript:getPartsForRun` and
 clients that request explicit part numbers age out. New clients use page
 endpoints. Stored transcript formats are unchanged.
 
+## Web request endpoint compatibility
+
+### Firecrawl request endpoints
+
+Released agents call `firecrawlRequests:start`, `getResult` and `dispose`.
+Those endpoints now forward to `webRequests`, so released scrapes run on
+context.dev and return `outline` in place of `summary`. `start` rejects
+`kind: 'screenshot'` with "This tool is no longer supported.". `getResult`
+and `dispose` accept any string ID, so IDs from the old table report the
+request as ended. Remove the module once clients that call
+`firecrawlRequests:*` age out.
+
+### `firecrawlRequests` table
+
+The table and the module's `cleanup` and `removeResult` functions stay so
+cleanups scheduled before the rename still run. Rows live at most 8 minutes,
+so drop the table and those functions in a follow-up once the table is empty.
+
 ## Development tooling compatibility
 
 ### TypeScript compiler API
@@ -496,6 +514,11 @@ The completed result backfill dropped `truncated` and supplied missing summary
 and image fields. Remove these Convex variants after a full production scan
 confirms every retained result uses the current shape. Local readers stay
 permissive for historical JSONL.
+
+Current scrapes return `outline` and optional `highlights` instead of
+`summary`. The result validators keep `summary` optional for stored results.
+A stored summary cannot be turned into an outline, so that field stays
+permanently.
 
 #### Historical skill results
 

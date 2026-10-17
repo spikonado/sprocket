@@ -61,6 +61,9 @@ pub(crate) struct WebSearchArgs {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
+    /// Optional question about the page. Web pages then also return the passages most relevant to it as `highlights`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) query: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -179,12 +182,12 @@ impl rig::tool::Tool for ScrapeUrlTool {
                         None
                     }
                 };
-                // Firecrawl's page scrape bills documents per page, so documents never reach it.
+                // Documents are parsed locally; the cloud page scrape only sees web pages.
                 if let Some(document) = document {
                     let result = convert_web_document(document, &hosted, &cancellation).await.map_err(tool_error)?;
                     return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
                 }
-                let result = super::firecrawl::run(&self.0.runtime, cancellation.clone(), firecrawl_args(&self.0, &job_id), "scrape").await?;
+                let result = super::web_request::run(&self.0.runtime, cancellation.clone(), web_request_args(&self.0, &job_id), "scrape").await?;
                 super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
@@ -200,7 +203,10 @@ impl rig::tool::Tool for ScrapeUrlTool {
     }
 }
 
-fn firecrawl_args(context: &AgentToolContext, job_id: &str) -> BTreeMap<String, convex::Value> {
+pub(super) fn web_request_args(
+    context: &AgentToolContext,
+    job_id: &str,
+) -> BTreeMap<String, convex::Value> {
     BTreeMap::from([
         ("runId".to_string(), context.run_id.clone().into()),
         ("claimId".to_string(), context.claim_id.clone().into()),
@@ -208,18 +214,17 @@ fn firecrawl_args(context: &AgentToolContext, job_id: &str) -> BTreeMap<String, 
     ])
 }
 
-/// Fetches a document Firecrawl can reach but we cannot, for one flat
-/// credit instead of Firecrawl's per-page document parsing. `None` means the
-/// URL serves no document after all.
+/// Fetches the bytes of a document the cloud scraper can reach but we cannot,
+/// so it is still parsed locally. `None` means the URL serves no document after all.
 async fn fetch_raw_document(
     context: &AgentToolContext,
     job_id: &str,
     cancellation: &WorkspaceCancellation,
 ) -> Result<Option<WebDocument>, ToolExecutionError> {
-    let mut args = firecrawl_args(context, job_id);
+    let mut args = web_request_args(context, job_id);
     args.insert("rawDocument".into(), true.into());
     let result =
-        super::firecrawl::run(&context.runtime, cancellation.clone(), args, "scrape").await?;
+        super::web_request::run(&context.runtime, cancellation.clone(), args, "scrape").await?;
     let download = async {
         let transport: RawDocumentTransport = serde_json::from_value(result)?;
         let url = validate_web_url(&transport.url)?;
@@ -227,7 +232,7 @@ async fn fetch_raw_document(
         let (_, bytes) =
             super::github_url::download_file(&scrape_client()?, document_url, MAX_SCRAPE_BYTES)
                 .await
-                .context("failed to download the document Firecrawl fetched")?;
+                .context("failed to download the document the cloud scraper fetched")?;
         let csv = is_csv(
             &normalize_media_type(transport.content_type.as_deref().unwrap_or_default()),
             &url,
@@ -258,7 +263,6 @@ async fn convert_web_document(
     Ok(json!({
         "url": url.as_str(),
         "markdown": markdown,
-        "summary": "Summary not generated; document was parsed locally.",
         "images": [],
     }))
 }

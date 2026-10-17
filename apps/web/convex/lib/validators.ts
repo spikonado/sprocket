@@ -66,7 +66,8 @@ export const vExecCommandPayload = v.object({
 });
 
 export const vScrapeUrlPayload = v.object({
-	url: v.string()
+	url: v.string(),
+	query: v.optional(v.string())
 });
 
 /** screenshot_url job payload. */
@@ -345,26 +346,39 @@ export const vCommandStdinResult = vCommandOutput.extend({
 	workdir: v.string()
 });
 
-/** Stored scrape_url job result. Historical rows may include `truncated`. */
+export const vPageOutline = v.object({
+	title: v.optional(v.string()),
+	description: v.optional(v.string()),
+	headings: v.array(v.object({ level: v.number(), text: v.string() }))
+});
+
+/**
+ * Stored scrape_url job result. Historical rows may include `truncated` or
+ * `summary`; current rows carry `outline` instead.
+ */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
 	truncated: v.optional(v.boolean()),
 	summary: v.optional(v.string()),
+	outline: v.optional(vPageOutline),
+	highlights: v.optional(v.array(v.string())),
 	images: v.optional(v.array(v.string()))
 });
 
-/** Local scrapeForTool transport. Oversized pages return a temporary JSON download URL. */
+/** webRequests scrape transport. Oversized pages return a temporary JSON download URL. */
 export const vScrapeUrlTransport = v.union(
 	v.object({
 		url: v.string(),
 		markdown: v.string(),
-		summary: v.string(),
+		outline: vPageOutline,
+		highlights: v.optional(v.array(v.string())),
 		images: v.array(v.string())
 	}),
 	v.object({
 		url: v.string(),
-		summary: v.string(),
+		outline: vPageOutline,
+		highlights: v.optional(v.array(v.string())),
 		scrapeUrl: v.string()
 	})
 );

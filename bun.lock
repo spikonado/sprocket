@@ -37,12 +37,12 @@
         "@convex-dev/workpool": "^0.4.10",
         "@dodopayments/convex": "^0.2.15",
         "@exalabs/convex-exa": "^0.1.1",
-        "@firecrawl/firecrawl-convex": "^0.1.1",
         "@fontsource-variable/ibm-plex-sans": "^5.2.8",
         "@fontsource/dm-sans": "^5.2.8",
         "@fontsource/ibm-plex-mono": "^5.3.0",
         "@workos-inc/authkit-js": "^0.20.0",
         "clsx": "^2.1.1",
+        "context.dev": "^3.6.0",
         "convex": "^1.45.0",
         "convex-helpers": "^0.1.123",
         "devicon": "^2.17.0",
@@ -276,8 +276,6 @@
     "@exalabs/convex-exa": ["@exalabs/convex-exa@0.1.1", "", { "dependencies": { "zod-to-json-schema": "^3.24.6" }, "peerDependencies": { "convex": "^1.39.1", "zod": "^3.24.0" } }, "sha512-jhw4TTGTYRijYleplYFfMMr9dKPtnGeHqMqjYVmpBvAVMZ9Rt1U3TCUczB7Znc6VgkqNCmfnuMVUYL7f98qa4Q=="],
 
     "@exodus/bytes": ["@exodus/bytes@1.16.0", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-IcpW84uEn3N7ETtNZMlxKhfl6Pec8rUNGOTBtWbK1FKhJxIFAptZyVrvVRVBimAJxJCgc3PxepxkdWWG4DVzfA=="],
-
-    "@firecrawl/firecrawl-convex": ["@firecrawl/firecrawl-convex@0.1.1", "", { "dependencies": { "convex-helpers": "^0.1.122" }, "peerDependencies": { "convex": "^1.43.0" } }, "sha512-fecepodOAcKLUKFD+4dyqRfU8ATn3y15nYtayyAmmQAV0FT/6sVwKNY0+rpq8/NKTLrEpuHr+cE0htNQ+ssU+g=="],
 
     "@fontsource-variable/ibm-plex-sans": ["@fontsource-variable/ibm-plex-sans@5.3.0", "", {}, "sha512-agG8tXFEo0hD9+J7npa4vbbWult52eMLVaQ6WQRlhs/iCAojrMAoejru85W9HTVXHfyUj96KM7gp/KGAS87XaQ=="],
 
@@ -786,6 +784,8 @@
     "concat-map": ["concat-map@0.0.1", "", {}, "sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg=="],
 
     "concurrently": ["concurrently@10.0.6", "", { "dependencies": { "chalk": "5.6.2", "rxjs": "7.8.2", "shell-quote": "1.12.0", "supports-color": "10.2.2", "tree-kill": "1.2.2", "yargs": "18.0.0" }, "bin": { "conc": "dist/bin/index.js", "concurrently": "dist/bin/index.js" } }, "sha512-qgICXXFp2/3nAebRLmxcINKEXM1mLK3ij/y31P02VTs/KIkddIeC05n73DxOXsXMB9LFSqNU1/na3lDlOhcbIw=="],
+
+    "context.dev": ["context.dev@3.6.0", "", {}, "sha512-uOJWsMNh8STv2LzQlchzTkKHE9SDrHTiG4Z2ezCvMwVbiQ5qVv4IP+PMdDqWwf5Ug5UAFbJv+ZD3QwxOaZUiAw=="],
 
     "convert-source-map": ["convert-source-map@2.0.0", "", {}, "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg=="],
 

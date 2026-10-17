@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { retryRateLimited } from '@convex/lib/providerRetry';
+import { retryAfterHeaderMs, retryRateLimited } from '@convex/lib/providerRetry';
 
 class RateLimited extends Error {}
 
@@ -75,5 +75,15 @@ describe('retryRateLimited', () => {
 			'mapped: bad request'
 		);
 		expect(attempt).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('retryAfterHeaderMs', () => {
+	it('reads delay seconds and HTTP dates', () => {
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+
+		expect(retryAfterHeaderMs('3')).toBe(3_000);
+		expect(retryAfterHeaderMs('Thu, 01 Jan 2026 00:00:10 GMT')).toBe(10_000);
+		expect(retryAfterHeaderMs(null)).toBe(0);
 	});
 });
