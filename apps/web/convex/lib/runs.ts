@@ -44,7 +44,9 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 			? 'Run was stopped before executor job completed.'
 			: args.runStatus === 'failed'
 				? 'Run failed before executor job completed.'
-				: 'Run completed before executor job completed.');
+				: args.runStatus === 'restarting'
+					? 'Sprocket restarted before executor job completed.'
+					: 'Run completed before executor job completed.');
 
 	return args.jobs.map((job) => {
 		if (isSettledExecutorJobStatus(job.status)) {

@@ -9,8 +9,8 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use sprocket_server::{
     INSTALLED_WEB_DIR, PairingProofRequest, PairingProofResponse, RunOptions, ServerConfig,
-    browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
-    verify_pairing_proof,
+    ServerExit, browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential,
+    run, verify_pairing_proof,
 };
 use sprocket_workspace::{SPROCKET_VERSION, resolve_workspace_root};
 use tracing_subscriber::EnvFilter;
@@ -18,6 +18,9 @@ use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
+// Must match npm/sprocket/lib/launcher.js.
+const RESTART_EXIT_CODE: u8 = 75;
+const RESTARTED_ENV: &str = "SPROCKET_RESTARTED";
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
@@ -86,8 +89,11 @@ fn main() -> std::process::ExitCode {
 }
 
 fn entry() -> anyhow::Result<u8> {
+    let restarted = std::env::var_os(RESTARTED_ENV).is_some();
     // SAFETY: this runs before the Tokio runtime is constructed.
     unsafe {
+        // Keep agent shells from inheriting the restart marker.
+        std::env::remove_var(RESTARTED_ENV);
         load_repo_env();
     }
 
@@ -140,22 +146,23 @@ fn entry() -> anyhow::Result<u8> {
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true, workspace_path, false)
+            serve_local(server, false, !restarted, workspace_path, false)
         }
         None => {
-            if launch_desktop(workspace_path.as_deref())? {
-                return Ok(0);
-            }
+            if !restarted {
+                if launch_desktop(workspace_path.as_deref())? {
+                    return Ok(0);
+                }
 
-            eprintln!(
-                "The desktop app is not installed on this system, running Sprocket in the browser instead.\n\
-                 Note: This has no impact on Sprocket's capabilities or performance."
-            );
+                eprintln!(
+                    "The desktop app is not installed on this system, running Sprocket in the browser instead.\n\
+                     Note: This has no impact on Sprocket's capabilities or performance."
+                );
+            }
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true, workspace_path, false)
+            serve_local(server, false, !restarted, workspace_path, false)
         }
-    }?;
-    Ok(0)
+    }
 }
 
 fn resolve_launch_workspace(path: &Path) -> anyhow::Result<String> {
@@ -174,15 +181,15 @@ fn serve_local(
     open_browser: bool,
     workspace_path: Option<String>,
     temporary: bool,
-) -> anyhow::Result<()> {
-    tokio::runtime::Builder::new_multi_thread()
+) -> anyhow::Result<u8> {
+    let exit = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async move {
             if open_browser
                 && open_running_web_app(&server, workspace_path.as_deref()).await?
             {
-                return Ok(());
+                return Ok(ServerExit::Stopped);
             }
 
             if !server.api_only && server.resolve_static_dir().is_none() {
@@ -202,7 +209,11 @@ fn serve_local(
                 },
             )
             .await
-        })
+        })?;
+    Ok(match exit {
+        ServerExit::Stopped => 0,
+        ServerExit::Restart => RESTART_EXIT_CODE,
+    })
 }
 
 async fn open_running_web_app(

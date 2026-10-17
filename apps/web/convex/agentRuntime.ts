@@ -64,8 +64,8 @@ import {
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vCompletionProvider,
+	vExecutorRunFinalStatus,
 	vReasoningEffort,
-	vRunFinalStatus,
 	vRunStatus,
 	vTranscriptCompletionItem
 } from '@convex/lib/validators';
@@ -755,7 +755,7 @@ export const finalizeExecutorRun = mutation({
 		expectedClaimId: v.optional(v.string()),
 		runId: v.id('runs'),
 		text: v.string(),
-		status: vRunFinalStatus,
+		status: vExecutorRunFinalStatus,
 		lastError: v.optional(v.string()),
 		executionSecret: v.string()
 	},

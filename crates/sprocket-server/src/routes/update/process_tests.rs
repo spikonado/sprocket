@@ -159,6 +159,58 @@ echo '{"status":"available","currentVersion":"1.0.0","version":"1.1.0","error":n
 }
 
 #[tokio::test]
+async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_runs() {
+    let helper_dir = TempDir::new();
+    let launcher = helper_dir.0.join("bin/sprocket.js");
+    let restart_file = helper_dir.0.join("restart");
+    let payload = serde_json::json!({
+        "status": "installed", "currentVersion": "1.0.0", "version": "1.1.0",
+        "error": null, "restartLauncher": launcher,
+    });
+    let script = helper_dir.0.join("update-api.sh");
+    fs::write(&script, format!("#!/bin/sh\necho '{payload}'\n")).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let manager = PackageUpdateManager::with_helper_and_restart_file(
+        PathBuf::from("/bin/sh"),
+        script,
+        restart_file.clone(),
+    );
+    manager.install().await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while manager.status().await.status
+            == sprocket_host::package_update::UpdateStatus::Installing
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (state, session_token, _dir) = test_state(manager).await;
+    let instance_id = state.auth.instance_id.clone();
+    let lifetime = Arc::clone(&state.host.lifetime);
+    let app = router(state);
+    for _ in 0..2 {
+        let mut request =
+            install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}");
+        *request.uri_mut() = "/api/update/restart".parse().unwrap();
+        let response = app
+            .clone()
+            .oneshot(with_peer(request, loopback_peer()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(read_json(response).await["instanceId"], instance_id);
+    }
+    assert!(lifetime.shutdown.is_cancelled());
+    assert!(lifetime.run_guard().is_err());
+    assert!(lifetime.restart_requested());
+    assert_eq!(
+        fs::read_to_string(restart_file).unwrap(),
+        launcher.to_str().unwrap()
+    );
+}
+
+#[tokio::test]
 async fn authenticated_remote_clients_install_package_updates() {
     for (peer, host, origin, bearer) in [
         (

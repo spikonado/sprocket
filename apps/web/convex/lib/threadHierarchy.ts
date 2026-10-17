@@ -15,7 +15,8 @@ export async function threadOwnActivity(
 		.order('desc')
 		.first();
 
-	if (latest && !isRunFinalStatus(latest.status)) return true;
+	// A restarting run continues once the local server returns.
+	if (latest && (!isRunFinalStatus(latest.status) || latest.status === 'restarting')) return true;
 
 	return (await headActionablePendingQuestion(db, threadId)) !== null;
 }

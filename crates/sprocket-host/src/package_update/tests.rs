@@ -77,6 +77,7 @@ fn helper_parse_error_keeps_previous_version() {
         error: None,
         method: UpdateMethod::Package,
         message: None,
+        restart_launcher: None,
     };
     let snapshot = parse_helper_output(b"not-json", b"boom", false, &previous);
     assert_eq!(snapshot.status, UpdateStatus::Error);
