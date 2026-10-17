@@ -156,6 +156,14 @@ async fn launch_agent_inner(
         .to_string();
     let project_attachments = Arc::clone(&host.project_attachments);
     let attachment_key = attachment.attachment_key.clone();
+    host.browsers.prepare_tools();
+    let browser_environment = match host.browsers.environment() {
+        Ok(environment) => environment,
+        Err(error) => {
+            tracing::warn!("agent-browser setup unavailable: {error:#}");
+            Vec::new()
+        }
+    };
     let records_message = !payload.prompt.trim().is_empty()
         || !payload.storage_ids.is_empty()
         || payload.continuation_of_run_id.is_some();
@@ -268,6 +276,7 @@ async fn launch_agent_inner(
                             .join("command-logs"),
                     )
                     .await
+                    .with_environment(browser_environment)
                     .with_history_scope(user_id.clone(), thread_id.clone(), command_machine_id)
                     .with_history_resolver({
                         let user_id = user_id.clone();
