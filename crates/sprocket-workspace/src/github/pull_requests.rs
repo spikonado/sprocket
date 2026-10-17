@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use super::{GitHubApi, GitHubError, is_github_host};
+use super::{GitHubApi, GitHubError, is_valid_host};
 
 /// t3code's batch size: one GraphQL request answers this many aliased lookups.
 const PULL_REQUESTS_PER_REQUEST: usize = 25;
@@ -38,7 +38,8 @@ pub struct FetchedStates {
     pub failures: Vec<(String, GitHubError)>,
 }
 
-/// A `host/owner/name` repository on a host that speaks GitHub's API.
+/// A `host/owner/name` repository. A host that doesn't speak GitHub's API
+/// fails at `GitHubApi::connect`, since no GitHub credential exists for it.
 #[derive(Debug, PartialEq, Eq)]
 struct Repository<'a> {
     host: &'a str,
@@ -46,8 +47,7 @@ struct Repository<'a> {
     name: &'a str,
 }
 
-/// Other forges share the shape, so only GitHub hosts count.
-fn parse_repository(repository: &str, is_github: impl Fn(&str) -> bool) -> Option<Repository<'_>> {
+fn parse_repository(repository: &str) -> Option<Repository<'_>> {
     let mut parts = repository.split('/');
     let (host, owner, name) = (parts.next()?, parts.next()?, parts.next()?);
     let segment = |segment: &str| {
@@ -56,7 +56,7 @@ fn parse_repository(repository: &str, is_github: impl Fn(&str) -> bool) -> Optio
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
-    (parts.next().is_none() && is_github(host) && segment(owner) && segment(name))
+    (parts.next().is_none() && is_valid_host(host) && segment(owner) && segment(name))
         .then_some(Repository { host, owner, name })
 }
 
@@ -64,7 +64,7 @@ fn parse_repository(repository: &str, is_github: impl Fn(&str) -> bool) -> Optio
 pub async fn fetch_states(pull_requests: &[PullRequestRef]) -> FetchedStates {
     let mut by_host: BTreeMap<&str, Vec<(&PullRequestRef, Repository)>> = BTreeMap::new();
     for pull_request in pull_requests {
-        if let Some(repository) = parse_repository(&pull_request.repository, is_github_host) {
+        if let Some(repository) = parse_repository(&pull_request.repository) {
             by_host
                 .entry(repository.host)
                 .or_default()
