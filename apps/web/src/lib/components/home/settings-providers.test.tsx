@@ -50,6 +50,7 @@ function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		listProjectAttachments: unused,
 		attachProject: unused,
 		runAgent: unused,
+		enqueueMessage: unused,
 		fetchTranscriptDisplay: unused,
 		fetchTranscriptDisplayDetails: unused,
 		watchTranscript: unused,

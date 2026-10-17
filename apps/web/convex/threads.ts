@@ -39,7 +39,13 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 		throw new Error('Only root threads can be settled.');
 	}
 
-	if ((await subtreeSummary(ctx.db, record)).anyActive) {
+	const hasQueuedMessages =
+		(await ctx.db
+			.query('queuedMessages')
+			.withIndex('by_threadId', (q) => q.eq('threadId', threadId))
+			.first()) !== null;
+
+	if (hasQueuedMessages || (await subtreeSummary(ctx.db, record)).anyActive) {
 		throw new Error('Cannot settle a thread with active work.');
 	}
 

@@ -9,6 +9,7 @@ pub mod command_sync;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
+pub mod message_queue;
 pub mod native_auth;
 pub mod package_update;
 pub mod profile;
@@ -190,6 +191,7 @@ impl Host {
                 self.machine_identity.installation_id.clone(),
             ),
             recovery: run_recovery::spawn(self.clone()),
+            message_queue: message_queue::spawn(self.clone()),
             host: self.clone(),
             attachment_cleanup,
             command_cleanup,
@@ -203,13 +205,19 @@ pub struct HostTasks {
     command_cleanup: JoinHandle<()>,
     command_sync: JoinHandle<()>,
     recovery: JoinHandle<()>,
+    message_queue: JoinHandle<()>,
 }
 
 impl HostTasks {
     /// Stops background work, ends running commands, and flushes their logs.
     pub async fn shutdown(self) {
         let host = self.host;
-        for task in [self.attachment_cleanup, self.recovery, self.command_cleanup] {
+        for task in [
+            self.attachment_cleanup,
+            self.recovery,
+            self.message_queue,
+            self.command_cleanup,
+        ] {
             task.abort();
             let _ = task.await;
         }

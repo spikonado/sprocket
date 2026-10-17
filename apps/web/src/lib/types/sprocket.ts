@@ -92,6 +92,7 @@ export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;
 export type AgentRunRequest = {
 	userId: string;
 	submissionId: string;
+	executionSecret?: string;
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
@@ -315,6 +316,7 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
+	enqueueMessage: (request: AgentRunRequest) => Promise<void>;
 	fetchTranscriptDisplay: (
 		request: TranscriptDisplayRequest,
 		signal?: AbortSignal

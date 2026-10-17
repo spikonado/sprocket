@@ -12,6 +12,7 @@ import { registeredFileUploadError } from '@convex/lib/validators';
 import { registeredParseStorage } from '@convex/lib/hostedParse';
 import { getOwnedImageUploadsByStorageIds, imageUploadByStorageId } from '@convex/lib/imageUploads';
 import { internal } from '@convex/_generated/api';
+import { isQueuedAttachment } from '@convex/lib/messageQueue';
 
 const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
 
@@ -69,25 +70,35 @@ export const ownedIdsForStorageIds = internalQuery({
 });
 
 export const cleanupOrphans = internalMutation({
-	args: {},
+	args: { cursor: v.optional(v.string()), cutoff: v.optional(v.number()) },
 	returns: v.number(),
-	handler: async (ctx) => {
-		const uploads = await ctx.db
+	handler: async (ctx, args): Promise<number> => {
+		const cutoff = args.cutoff ?? Date.now() - ORPHAN_RETENTION_MS;
+
+		const page = await ctx.db
 			.query('imageUploads')
 			.withIndex('by_attached_and_storageDeletedAt', (query) =>
-				query
-					.eq('attached', false)
-					.eq('storageDeletedAt', undefined)
-					.lt('_creationTime', Date.now() - ORPHAN_RETENTION_MS)
+				query.eq('attached', false).eq('storageDeletedAt', undefined).lt('_creationTime', cutoff)
 			)
-			.take(ORPHAN_CLEANUP_BATCH_SIZE);
+			.paginate({ numItems: ORPHAN_CLEANUP_BATCH_SIZE, cursor: args.cursor ?? null });
 
-		for (const upload of uploads) {
+		let deleted = 0;
+
+		for (const upload of page.page) {
+			if (await isQueuedAttachment(ctx, upload.storageId)) continue;
 			await ctx.storage.delete(upload.storageId);
 			await ctx.db.delete('imageUploads', upload._id);
+			deleted += 1;
 		}
 
-		return uploads.length;
+		if (!page.isDone) {
+			await ctx.scheduler.runAfter(0, internal.imageUploads.cleanupOrphans, {
+				cursor: page.continueCursor,
+				cutoff
+			});
+		}
+
+		return deleted;
 	}
 });
 
@@ -111,6 +122,8 @@ export const cleanupExpired = internalMutation({
 			});
 
 		for (const upload of page.page) {
+			if (await isQueuedAttachment(ctx, upload.storageId)) continue;
+
 			if (!upload.threadId) {
 				await ctx.storage.delete(upload.storageId);
 				await ctx.db.delete('imageUploads', upload._id);
@@ -215,7 +228,12 @@ async function discardOwnedDraft(
 	userId: string,
 	upload: Doc<'imageUploads'> | null
 ): Promise<boolean> {
-	if (!upload || upload.userId !== userId || upload.attached) {
+	if (
+		!upload ||
+		upload.userId !== userId ||
+		upload.attached ||
+		(await isQueuedAttachment(ctx, upload.storageId))
+	) {
 		return false;
 	}
 

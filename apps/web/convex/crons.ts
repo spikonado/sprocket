@@ -13,7 +13,8 @@ crons.interval(
 crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
-	internal.imageUploads.cleanupOrphans
+	internal.imageUploads.cleanupOrphans,
+	{}
 );
 
 crons.interval(
