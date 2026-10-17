@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -123,6 +124,103 @@ async fn exec_running_with_timeout(
 
 async fn exec_running(sessions: &CommandSessionManager, command: &str) -> (String, CommandOutput) {
     exec_running_with_timeout(sessions, command, Some(10_000)).await
+}
+
+#[tokio::test]
+async fn command_shell_environment_is_isolated_between_managers() {
+    let root = tempfile::tempdir().unwrap();
+    let variable = format!("SPROCKET_ENV_TEST_{}", uuid::Uuid::new_v4().simple());
+    let parent_value = std::env::var_os(&variable);
+    assert!(parent_value.is_none());
+    let first =
+        CommandSessionManager::new(root.path().to_path_buf(), root.path().join("first-logs"))
+            .with_environment(std::iter::once((
+                OsString::from(&variable),
+                OsString::from("first value"),
+            )))
+            .clone();
+    let second =
+        CommandSessionManager::new(root.path().to_path_buf(), root.path().join("second-logs"))
+            .with_environment([(OsString::from(&variable), OsString::from("second value"))]);
+    let inherited = CommandSessionManager::new(
+        root.path().to_path_buf(),
+        root.path().join("inherited-logs"),
+    );
+    #[cfg(unix)]
+    let command = format!("printf '%s' \"${{{variable}-unset}}\"");
+    #[cfg(windows)]
+    let command = format!(
+        "$value = [Environment]::GetEnvironmentVariable('{variable}'); if ($null -eq $value) {{ [Console]::Write('unset') }} else {{ [Console]::Write($value) }}"
+    );
+    let shell = default_command_shell();
+    async fn exec(sessions: &CommandSessionManager, command: &str, shell: &str) -> CommandOutput {
+        sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                command,
+                ".",
+                shell,
+                Some(30_000),
+                60_000,
+                20_000,
+            )
+            .await
+            .unwrap()
+            .result
+    }
+    let (first_output, second_output, inherited_output) = tokio::join!(
+        exec(&first, &command, &shell),
+        exec(&second, &command, &shell),
+        exec(&inherited, &command, &shell)
+    );
+    for (output, expected) in [
+        (first_output, "first value"),
+        (second_output, "second value"),
+        (inherited_output, "unset"),
+    ] {
+        assert!(output.success, "{output:?}");
+        assert_eq!(output.output, expected);
+    }
+    assert_eq!(std::env::var_os(&variable), parent_value);
+    first.stop_all().await;
+    second.stop_all().await;
+    inherited.stop_all().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_shell_environment_preserves_default_shell_resolution() {
+    let root = tempfile::tempdir().unwrap();
+    let shell = default_command_shell();
+    let parent_path = std::env::var_os("PATH");
+    let parent_shell = std::env::var_os("SHELL");
+    let missing = root.path().join("missing");
+    let sessions = CommandSessionManager::new(root.path().to_path_buf(), root.path().join("logs"))
+        .with_environment([
+            (OsString::from("PATH"), missing.clone().into_os_string()),
+            (OsString::from("SHELL"), missing.clone().into_os_string()),
+        ]);
+    let output = sessions
+        .exec_command(
+            WorkspaceCancellation::new(),
+            "printf '%s\\n%s' \"$PATH\" \"$SHELL\"",
+            ".",
+            &shell,
+            Some(5_000),
+            5_000,
+            20_000,
+        )
+        .await
+        .unwrap();
+    assert!(output.result.success, "{:?}", output.result);
+    assert_eq!(
+        output.result.output,
+        format!("{}\n{}", missing.display(), missing.display())
+    );
+    assert_eq!(default_command_shell(), shell);
+    assert_eq!(std::env::var_os("PATH"), parent_path);
+    assert_eq!(std::env::var_os("SHELL"), parent_shell);
+    sessions.stop_all().await;
 }
 
 async fn write(

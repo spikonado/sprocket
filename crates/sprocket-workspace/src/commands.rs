@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
@@ -116,6 +117,7 @@ type HistoryResolver = Arc<dyn Fn(String, PathBuf) -> HistoryFuture + Send + Syn
 pub struct CommandSessionManager {
     workspace_root: PathBuf,
     log_directory: PathBuf,
+    environment: Vec<(OsString, OsString)>,
     output_limits: CommandOutputLimits,
     sessions: Arc<Mutex<HashMap<String, Arc<CommandSession>>>>,
     stopped: Arc<AtomicBool>,
@@ -130,6 +132,7 @@ impl CommandSessionManager {
         Self {
             workspace_root,
             log_directory,
+            environment: Vec::new(),
             output_limits: CommandOutputLimits::default(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             stopped: Arc::new(AtomicBool::new(false)),
@@ -250,6 +253,14 @@ impl CommandSessionManager {
         self
     }
 
+    pub fn with_environment(
+        mut self,
+        environment: impl IntoIterator<Item = (OsString, OsString)>,
+    ) -> Self {
+        self.environment = environment.into_iter().collect();
+        self
+    }
+
     pub async fn exec_command(
         &self,
         cancellation: WorkspaceCancellation,
@@ -279,6 +290,7 @@ impl CommandSessionManager {
         let mut process = build_shell_command(command, &shell);
         process
             .current_dir(&cwd)
+            .envs(self.environment.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

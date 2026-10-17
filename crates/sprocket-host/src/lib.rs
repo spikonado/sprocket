@@ -3,6 +3,8 @@
 
 pub mod agent_launch;
 pub mod artifact_watch;
+pub mod browser;
+mod browser_install;
 pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
@@ -29,6 +31,7 @@ use sprocket_transcript::{LiveCompletionHub, TranscriptStore};
 use tokio::task::JoinHandle;
 
 use crate::artifact_watch::ArtifactWatchers;
+use crate::browser::BrowserManager;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
 use crate::lifetime::HostLifetime;
@@ -74,6 +77,7 @@ pub struct Host {
     pub machine_identity: Arc<MachineIdentity>,
     pub run_recovery: Arc<RunRecovery>,
     pub package_updates: Arc<PackageUpdateManager>,
+    pub browsers: Arc<BrowserManager>,
 }
 
 impl Host {
@@ -130,6 +134,7 @@ impl Host {
             machine_identity,
             run_recovery: RunRecovery::load(data_dir)?,
             package_updates,
+            browsers: BrowserManager::new(data_dir.to_path_buf())?,
         })
     }
 
@@ -160,6 +165,7 @@ impl Host {
 
     /// Starts the background work that keeps local state in sync with the cloud.
     pub fn start(&self) -> HostTasks {
+        self.browsers.prepare_tools();
         let transcript = Arc::clone(&self.transcript);
         let attachment_cleanup = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
@@ -214,6 +220,7 @@ impl HostTasks {
             let _ = task.await;
         }
         host.command_sessions.stop_all().await;
+        host.browsers.shutdown().await;
         self.command_sync.abort();
         let _ = self.command_sync.await;
         if let Err(error) = tokio::time::timeout(
