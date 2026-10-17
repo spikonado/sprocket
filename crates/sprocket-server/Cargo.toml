@@ -7,10 +7,6 @@ license.workspace = true
 [lints]
 workspace = true
 
-[[bin]]
-name = "sprocket-server"
-path = "src/bin/sprocket-server.rs"
-
 [dependencies]
 anyhow = "1.0.102"
 axum = { version = "0.8.8", features = ["macros"] }
@@ -38,7 +34,6 @@ fff-search = "0.11.0"
 futures = "0.3.32"
 tower-http = { version = "0.7.0", features = ["fs", "trace"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url = "2.5.8"
 uuid = { version = "1.21.0", features = ["v4"] }
 workos = "3.4.1"
