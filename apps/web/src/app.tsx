@@ -689,9 +689,11 @@ export default function App({
 		: undefined;
 
 	const enabledProviderOrder = enabledProviders(providerOrder);
+
 	const routeProviders = selectedCatalogModel
 		? providerChainForModel(enabledProviderOrder, selectedCatalogModel)
 		: enabledProviderOrder;
+
 	const spikonadoIndex = routeProviders.indexOf('spikonado');
 
 	// Spikonado is always usable, so unknown providers after it only drop out of the fallbacks.
