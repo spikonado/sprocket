@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ExternalLink, Eye, EyeOff, KeyRound, RefreshCw } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, KeyRound, Plus, RefreshCw } from 'lucide-react';
 import { z } from 'zod';
 import { cn } from '$lib/utils';
 import type {
@@ -159,6 +159,11 @@ export default function SettingsVersionControl({ desktopApi }: { desktopApi: Git
 											}
 										/>
 									))}
+									<AddHost
+										disabled={!enabled || busy}
+										saving={pendingKey === 'new-host'}
+										onSave={(host, token) => update('new-host', { host: { host, token } })}
+									/>
 								</ul>
 							)}
 
@@ -268,6 +273,93 @@ function HostState({ host }: { host: GitHubHostStatus }) {
 			/>
 			<span className={cn(tone === 'problem' && 'text-foreground')}>{text}</span>
 		</p>
+	);
+}
+
+function AddHost({
+	disabled,
+	saving,
+	onSave
+}: {
+	disabled: boolean;
+	saving: boolean;
+	onSave: (host: string, token: string) => Promise<boolean>;
+}) {
+	const [open, setOpen] = useState(false);
+	const [host, setHost] = useState('');
+	const [token, setToken] = useState('');
+	const ready = host.trim() !== '' && token.trim() !== '';
+
+	async function submit(event: FormEvent) {
+		event.preventDefault();
+
+		if (!ready || !(await onSave(host.trim(), token))) return;
+		setOpen(false);
+		setHost('');
+		setToken('');
+	}
+
+	if (!open) {
+		return (
+			<li className="px-5 py-3">
+				<button
+					type="button"
+					className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-[12px] transition disabled:opacity-50"
+					disabled={disabled}
+					onClick={() => setOpen(true)}
+				>
+					<Plus className="size-3.5" aria-hidden="true" />
+					Add a GitHub Enterprise host
+				</button>
+			</li>
+		);
+	}
+
+	const inputClass =
+		'border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full min-w-0 rounded-lg border px-3 font-mono text-[13px] outline-none disabled:opacity-50';
+
+	return (
+		<li className="px-5 py-4">
+			<form className="space-y-3" onSubmit={(event) => void submit(event)}>
+				<div className="flex gap-2">
+					<input
+						value={host}
+						onChange={(event) => setHost(event.currentTarget.value)}
+						autoComplete="off"
+						spellCheck={false}
+						aria-label="Enterprise host"
+						placeholder="github.example.com"
+						disabled={disabled}
+						className={cn(inputClass, 'flex-1')}
+					/>
+					<input
+						type="password"
+						value={token}
+						onChange={(event) => setToken(event.currentTarget.value)}
+						autoComplete="off"
+						spellCheck={false}
+						aria-label="Enterprise token"
+						placeholder="Token"
+						disabled={disabled}
+						className={cn(inputClass, 'flex-1')}
+					/>
+					<button
+						type="submit"
+						className="bg-primary text-primary-foreground h-9 shrink-0 rounded-lg px-3.5 text-[13px] font-medium transition hover:opacity-90 disabled:opacity-50"
+						disabled={disabled || !ready}
+					>
+						{saving ? 'Checking…' : 'Add'}
+					</button>
+				</div>
+				<button
+					type="button"
+					className="text-muted-foreground hover:text-foreground text-[12px] transition"
+					onClick={() => setOpen(false)}
+				>
+					Cancel
+				</button>
+			</form>
+		</li>
 	);
 }
 

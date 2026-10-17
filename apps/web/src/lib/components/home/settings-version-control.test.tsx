@@ -75,3 +75,21 @@ it('saves a token for one host and turns GitHub or a host off', async () => {
 	await waitFor(() => expect(updateGitHubSettings).toHaveBeenLastCalledWith({ enabled: false }));
 	expect(await screen.findByText(/GitHub is off/)).toBeTruthy();
 });
+
+it('adds an Enterprise host with its token', async () => {
+	const updateGitHubSettings = mount(signedIn);
+
+	fireEvent.click(await screen.findByRole('button', { name: 'Add a GitHub Enterprise host' }));
+	fireEvent.change(screen.getByLabelText('Enterprise host'), {
+		target: { value: ' github.acme.com ' }
+	});
+	fireEvent.change(screen.getByLabelText('Enterprise token'), { target: { value: 'ghp_acme' } });
+	fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+	await waitFor(() =>
+		expect(updateGitHubSettings).toHaveBeenCalledWith({
+			host: { host: 'github.acme.com', token: 'ghp_acme' }
+		})
+	);
+	await waitFor(() => expect(screen.queryByLabelText('Enterprise host')).toBeNull());
+});

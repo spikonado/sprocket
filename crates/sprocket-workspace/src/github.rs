@@ -182,18 +182,6 @@ impl GitHubApi {
     }
 }
 
-/// Whether a host speaks GitHub's API: github.com, GHE.com data residency, the
-/// Enterprise Server named by `GH_HOST`, or one the user saved a token for.
-pub fn is_github_host(host: &str) -> bool {
-    is_github_dot_com(host)
-        || std::env::var("GH_HOST")
-            .is_ok_and(|configured| configured.trim().eq_ignore_ascii_case(host))
-        || read_settings()
-            .hosts
-            .get(&host.to_ascii_lowercase())
-            .is_some_and(|saved| saved.token.is_some())
-}
-
 fn is_github_dot_com(host: &str) -> bool {
     host.eq_ignore_ascii_case(PUBLIC_HOST) || host.to_ascii_lowercase().ends_with(".ghe.com")
 }

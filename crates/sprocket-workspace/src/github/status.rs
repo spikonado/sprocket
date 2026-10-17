@@ -1,11 +1,16 @@
 use std::collections::{BTreeSet, HashMap};
+use std::time::Duration;
 
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use tokio::task::JoinSet;
 
 use super::{
     CredentialSource, GitHubApi, GitHubError, PUBLIC_HOST, gh_output, is_valid_host, read_settings,
 };
+
+/// Keeps an unreachable Enterprise host, e.g. off VPN, from stalling the page.
+const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,12 +58,16 @@ pub async fn status() -> GitHubStatus {
     }
     hosts.retain(|host| is_valid_host(host));
 
-    let mut statuses = Vec::with_capacity(hosts.len());
+    let mut checks = JoinSet::new();
     for host in hosts {
-        statuses.push(host_status(host, enabled).await);
+        checks.spawn(host_status(host, enabled));
     }
-    // github.com first, then the rest by name.
-    statuses.sort_by_key(|status| status.host != PUBLIC_HOST);
+    let mut statuses = Vec::with_capacity(checks.len());
+    while let Some(checked) = checks.join_next().await {
+        statuses.extend(checked.ok());
+    }
+    statuses
+        .sort_by(|a, b| (a.host != PUBLIC_HOST, &a.host).cmp(&(b.host != PUBLIC_HOST, &b.host)));
     GitHubStatus {
         enabled,
         cli_version: cli_version.as_deref().and_then(parse_cli_version),
@@ -84,12 +93,26 @@ async fn host_status(host: String, github_enabled: bool) -> HostStatus {
     if !github_enabled || !enabled {
         return status;
     }
+    if tokio::time::timeout(HOST_CHECK_TIMEOUT, check_credential(&mut status))
+        .await
+        .is_err()
+    {
+        status.problem = Some(format!(
+            "{} didn't answer within {} seconds.",
+            status.host,
+            HOST_CHECK_TIMEOUT.as_secs()
+        ));
+    }
+    status
+}
+
+async fn check_credential(status: &mut HostStatus) {
     let api = match GitHubApi::connect(&status.host).await {
         Ok(api) => api,
-        Err(GitHubError::NoCredential(_)) => return status,
+        Err(GitHubError::NoCredential(_)) => return,
         Err(error) => {
             status.problem = Some(error.to_string());
-            return status;
+            return;
         }
     };
     status.source = Some(api.source());
@@ -100,7 +123,6 @@ async fn host_status(host: String, github_enabled: bool) -> HostStatus {
         }
         Err(error) => status.problem = Some(error.to_string()),
     }
-    status
 }
 
 async fn viewer_login(api: &GitHubApi) -> Result<String, GitHubError> {
