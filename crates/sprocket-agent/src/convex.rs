@@ -12,8 +12,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse, RunAgentRequest,
-    RunContextResponse, StartRunResponse,
+    CompletionProvider, CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse,
+    RunAgentRequest, RunContextResponse, StartRunResponse,
 };
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
@@ -251,6 +251,18 @@ impl RuntimeClient {
             "completionProvider".to_string(),
             request.completion_provider.as_str().into(),
         );
+        if !request.fallback_providers.is_empty() {
+            args.insert(
+                "fallbackProviders".to_string(),
+                Value::Array(
+                    request
+                        .fallback_providers
+                        .iter()
+                        .map(|provider| provider.as_str().into())
+                        .collect(),
+                ),
+            );
+        }
         args.insert(
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
@@ -516,6 +528,32 @@ impl RuntimeClient {
             }
         }
         unreachable!("reasoning replay save attempts exhausted")
+    }
+
+    /// Returns false when the run no longer owns this claim.
+    pub(crate) async fn fall_back_to_provider(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        provider: CompletionProvider,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("completionProvider".to_string(), provider.as_str().into());
+        for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
+            match self
+                .mutation_checked("agentRuntime:fallBackToProvider", args.clone())
+                .await
+            {
+                Ok(active) => return Ok(active),
+                Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
+                    sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
+                }
+                Err(MutationFailure::Transport(error) | MutationFailure::Functional(error)) => {
+                    return Err(error);
+                }
+            }
+        }
+        unreachable!("provider fallback save attempts exhausted")
     }
 
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {

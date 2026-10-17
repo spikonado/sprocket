@@ -43,9 +43,12 @@ import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
+	runProviderChain,
 	submissionReadiness,
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
+import { enabledProviders } from '@convex/lib/providerOrder';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
 import { sectionOrder, workMembership } from '@convex/lib/workSections';
 import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
@@ -66,6 +69,7 @@ import {
 	vCompletionProvider,
 	vReasoningEffort,
 	vRunFinalStatus,
+	type CompletionProvider,
 	vRunStatus,
 	vTranscriptCompletionItem
 } from '@convex/lib/validators';
@@ -138,6 +142,7 @@ export const insertGatewayRun = internalMutation({
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
+		fallbackProviders: v.optional(v.array(vCompletionProvider)),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
@@ -161,6 +166,7 @@ export const createGatewayRun = action({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		completionProvider: v.optional(vCompletionProvider),
+		fallbackProviders: v.optional(v.array(vCompletionProvider)),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		executionSecret: v.string(),
@@ -188,6 +194,7 @@ export const createGatewayRun = action({
 			imageUploadIds,
 			selectedModel: args.selectedModel,
 			completionProvider: args.completionProvider,
+			fallbackProviders: args.fallbackProviders,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
 			executionSecret: args.executionSecret,
@@ -317,6 +324,7 @@ function getContextResult(args: {
 	prompt: string;
 	contextTokens: number | undefined;
 	providerHandoff: Infer<typeof vGetContextResult>['providerHandoff'];
+	providerPreferences: Infer<typeof vGetContextResult>['providerPreferences'];
 	cwd: string | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
@@ -332,12 +340,17 @@ function getContextResult(args: {
 			continuationOfRunId: args.run.continuationOfRunId,
 			parentThreadId: args.parentThreadId
 		},
+		providerPreferences: args.providerPreferences,
 		prompt: args.prompt
 	};
 
 	if (args.contextTokens !== undefined) {
 		result.contextTokens = args.contextTokens;
 	}
+
+	const fallbackProviders = remainingFallbackProviders(args.run);
+
+	if (fallbackProviders.length > 0) result.run.fallbackProviders = fallbackProviders;
 
 	if (args.providerHandoff !== undefined) result.providerHandoff = args.providerHandoff;
 
@@ -359,6 +372,7 @@ export const getContext = query({
 		const thread = await ctx.db.get('threadRecords', run.threadId);
 		const parentThreadId = thread?.parentThreadId;
 		const providerHandoff = await getProviderHandoff(ctx, run, thread);
+		const preferences = await getUiPreferences(ctx.db, run.userId);
 
 		if (!promptPart?.prompt && !run.continuationOfRunId) {
 			throw new Error('Run does not contain a user prompt.');
@@ -370,6 +384,10 @@ export const getContext = query({
 			prompt: promptPart?.prompt?.text ?? '',
 			contextTokens,
 			providerHandoff,
+			providerPreferences: {
+				enabledProviders: enabledProviders(preferences?.providerOrder),
+				restrictSubagentsToProvider: preferences?.restrictSubagentsToProvider ?? false
+			},
 			cwd: thread?.cwd
 		});
 	}
@@ -509,6 +527,57 @@ export const omitReasoningReplay = mutation({
 				reasoningStrippedThroughPartNumber: throughPartNumber
 			});
 		}
+
+		return true;
+	}
+});
+
+function remainingFallbackProviders(run: Doc<'runs'>): CompletionProvider[] {
+	const chain = runProviderChain(run);
+
+	return chain.slice(chain.indexOf(run.completionProvider ?? 'spikonado') + 1);
+}
+
+/** Moves the run to a later provider in its chain after the active one failed. */
+export const fallBackToProvider = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		completionProvider: vCompletionProvider
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+
+		if (
+			run.cancellationRequestedAt !== undefined ||
+			!ownsActiveRunClaim(run, args.claimId, Date.now())
+		) {
+			return false;
+		}
+
+		if (!remainingFallbackProviders(run).includes(args.completionProvider)) {
+			throw new Error('Provider is not a remaining fallback for this run.');
+		}
+
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+
+		// The next provider cannot replay the failed provider's reasoning.
+		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			beforePrompt: false
+		});
+
+		await ctx.db.patch('runs', run._id, { completionProvider: args.completionProvider });
+		await ctx.db.patch('threadRecords', thread._id, {
+			completionProvider: args.completionProvider,
+			reasoningStrippedThroughPartNumber: Math.max(
+				throughPartNumber,
+				thread.reasoningStrippedThroughPartNumber ?? -1
+			)
+		});
 
 		return true;
 	}

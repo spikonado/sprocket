@@ -4,6 +4,7 @@ import { vDodoPublicPrice } from '@convex/lib/dodoProducts';
 import { vTierPrice } from '@convex/lib/pricingValidators';
 import { workSectionFields, workMembership } from '@convex/lib/workSections';
 import { commandSnapshot } from '@convex/lib/commandSessions';
+import { vProviderOrderEntry } from '@convex/lib/providerOrder';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -308,7 +309,9 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark')),
 		automaticThreadTitles: v.optional(v.boolean()),
-		automaticAgentContinuation: v.optional(v.boolean())
+		automaticAgentContinuation: v.optional(v.boolean()),
+		providerOrder: v.optional(v.array(vProviderOrderEntry)),
+		restrictSubagentsToProvider: v.optional(v.boolean())
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),
@@ -388,7 +391,10 @@ export default defineSchema({
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
 		selectedModel: v.string(),
+		// Active provider. Fallbacks move it along `providerChain`.
 		completionProvider: v.optional(vCompletionProvider),
+		// Requested provider order, immutable. Missing means only `completionProvider`.
+		providerChain: v.optional(v.array(vCompletionProvider)),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.boolean(),
 		gatewayProtocolVersion: v.optional(v.number()),

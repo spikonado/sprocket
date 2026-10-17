@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -28,10 +28,11 @@ use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::now_ms;
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
-use crate::stream_recovery::StreamRecovery;
+use crate::stream_recovery::{StreamRecovery, is_provider_failure};
 use crate::tools::{agent_tools, working_directory_message};
 use crate::types::{
-    CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
+    ChatGptCredentials, CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse,
+    gateway_api_v1_url,
 };
 use sprocket_transcript::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
@@ -82,9 +83,11 @@ fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::
 
 pub(crate) struct AgentProvider {
     completion_provider: CompletionProvider,
+    fallback_providers: VecDeque<CompletionProvider>,
     gateway_url: String,
     model: String,
     chatgpt_client: Option<ChatGptClient>,
+    chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
     provider_handoff: Option<ProviderHandoff>,
 }
 
@@ -136,26 +139,21 @@ impl AgentProvider {
         context: &RunContextResponse,
         gateway_url: &str,
         chatgpt_client: Option<ChatGptClient>,
-    ) -> anyhow::Result<Self> {
-        let chatgpt_client = if context.run.completion_provider == CompletionProvider::Chatgpt
-            || context
-                .provider_handoff
-                .as_ref()
-                .is_some_and(|handoff| handoff.completion_provider == CompletionProvider::Chatgpt)
-        {
-            Some(chatgpt_client.ok_or_else(|| {
-                anyhow!("ChatGPT runs require the local ChatGPT credential service.")
-            })?)
-        } else {
-            None
-        };
-        Ok(Self {
+        chatgpt_credentials: Option<Arc<dyn ChatGptCredentials>>,
+    ) -> Self {
+        Self {
             completion_provider: context.run.completion_provider,
+            fallback_providers: context.run.fallback_providers.iter().copied().collect(),
             gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
             chatgpt_client,
+            chatgpt_credentials,
             provider_handoff: context.provider_handoff.clone(),
-        })
+        }
+    }
+
+    fn serves_fast_mode(&self) -> bool {
+        self.completion_provider == CompletionProvider::Spikonado
     }
 
     pub(crate) async fn run(
@@ -163,40 +161,45 @@ impl AgentProvider {
         runtime: RuntimeClient,
         mut request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        if self.completion_provider != CompletionProvider::Spikonado {
-            request.fast_mode = false;
-        }
         let handoff = self.provider_handoff.take();
         let source = handoff.as_ref().map(|handoff| Self {
             completion_provider: handoff.completion_provider,
+            fallback_providers: VecDeque::new(),
             gateway_url: self.gateway_url.clone(),
             model: handoff.selected_model.clone(),
             chatgpt_client: self.chatgpt_client.clone(),
+            chatgpt_credentials: self.chatgpt_credentials.clone(),
             provider_handoff: None,
         });
-        let model_result = source
-            .as_ref()
-            .unwrap_or(&self)
-            .completion_model(
-                &runtime,
-                &request.run_id,
-                &request.claim_id,
-                request
-                    .handoff_base_instructions
-                    .as_deref()
-                    .unwrap_or(&request.base_instructions),
-            )
-            .await;
-        drop(source);
-        let (model, provider_switch) = match model_result {
-            Ok(model) => (model, handoff.map(|handoff| (self, handoff))),
-            Err(error) if handoff.is_some() => {
-                eprintln!(
-                    "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
-                );
-                request.omit_prior_reasoning = true;
-                match self
+        let source_model = match &source {
+            Some(source) => Some(
+                source
                     .completion_model(
+                        &runtime,
+                        &request.run_id,
+                        &request.claim_id,
+                        request
+                            .handoff_base_instructions
+                            .as_deref()
+                            .unwrap_or(&request.base_instructions),
+                    )
+                    .await,
+            ),
+            None => None,
+        };
+        drop(source);
+        let (model, provider_switch) = match source_model {
+            Some(Ok(model)) => (model, handoff),
+            source_model => {
+                if let Some(Err(error)) = source_model {
+                    eprintln!(
+                        "sprocket-agent: provider switch context handoff failed ({error:#}); continuing on the selected provider without it"
+                    );
+                    request.omit_prior_reasoning = true;
+                }
+                let provider = self.completion_provider;
+                match self
+                    .start_model(
                         &runtime,
                         &request.run_id,
                         &request.claim_id,
@@ -204,29 +207,75 @@ impl AgentProvider {
                     )
                     .await
                 {
-                    Ok(model) => (model, None),
+                    Ok(model) => {
+                        // Fallback already stripped replay in Convex; drop it locally too.
+                        request.omit_prior_reasoning |= self.completion_provider != provider;
+                        (model, None)
+                    }
                     Err(error) => {
                         return AgentProviderResult::Failed {
                             text: String::new(),
-                            error,
+                            error: crate::chatgpt::user_facing_error(error),
                         };
                     }
                 }
             }
-            Err(error) => {
-                return AgentProviderResult::Failed {
-                    text: String::new(),
-                    error,
-                };
-            }
         };
-        match run_with_completion_model(model, runtime, request, provider_switch).await {
+        match run_with_completion_model(model, runtime, request, self, provider_switch).await {
             AgentProviderResult::Failed { text, error } => AgentProviderResult::Failed {
                 text,
                 error: crate::chatgpt::user_facing_error(error),
             },
             result => result,
         }
+    }
+
+    /// Builds the active provider's model, falling back past providers that cannot start.
+    async fn start_model(
+        &mut self,
+        runtime: &RuntimeClient,
+        run_id: &str,
+        claim_id: &str,
+        base_instructions: &str,
+    ) -> anyhow::Result<DynModel<Completion>> {
+        loop {
+            let error = match self
+                .completion_model(runtime, run_id, claim_id, base_instructions)
+                .await
+            {
+                Ok(model) => return Ok(model),
+                Err(error) => error,
+            };
+            if !self.fall_back(runtime, run_id, claim_id, &error).await? {
+                return Err(error);
+            }
+        }
+    }
+
+    /// Moves the run to its next fallback provider. False when none remain.
+    async fn fall_back(
+        &mut self,
+        runtime: &RuntimeClient,
+        run_id: &str,
+        claim_id: &str,
+        error: &(impl std::fmt::Display + ?Sized),
+    ) -> anyhow::Result<bool> {
+        let Some(next) = self.fallback_providers.pop_front() else {
+            return Ok(false);
+        };
+        eprintln!(
+            "sprocket-agent: {} failed for run {run_id} ({error:#}); falling back to {}",
+            self.completion_provider.as_str(),
+            next.as_str()
+        );
+        if !runtime
+            .fall_back_to_provider(run_id, claim_id, next)
+            .await?
+        {
+            anyhow::bail!(RUN_NO_LONGER_ACTIVE);
+        }
+        self.completion_provider = next;
+        Ok(true)
     }
 
     async fn completion_model(
@@ -264,10 +313,14 @@ impl AgentProvider {
                 Ok(model)
             }
             CompletionProvider::Chatgpt => {
-                let Some(completion_client) = &self.chatgpt_client else {
-                    return Err(anyhow!(
-                        "ChatGPT runs require the local ChatGPT credential service."
-                    ));
+                let completion_client = match (&self.chatgpt_client, &self.chatgpt_credentials) {
+                    (Some(client), _) => client.clone(),
+                    (None, Some(credentials)) => ChatGptClient::new(Arc::clone(credentials))?,
+                    (None, None) => {
+                        return Err(anyhow!(
+                            "ChatGPT runs require the local ChatGPT credential service."
+                        ));
+                    }
                 };
                 Ok(completion_client.completion_model(&self.model, base_instructions))
             }
@@ -370,21 +423,35 @@ async fn run_with_completion_model(
     model: DynModel<Completion>,
     runtime: RuntimeClient,
     request: AgentProviderRequest,
-    mut provider_switch: Option<(AgentProvider, ProviderHandoff)>,
+    mut target: AgentProvider,
+    mut provider_switch: Option<ProviderHandoff>,
 ) -> AgentProviderResult {
     let legacy_origin = model
         .id()
         .map(|id| rig::message::Origin::new("openai.responses", model.name(), id));
-    let target_params = match completion_parameters(&request.reasoning_effort, request.fast_mode) {
-        Ok(params) => params,
-        Err(error) => {
-            return AgentProviderResult::Failed {
-                text: String::new(),
-                error,
-            };
+    let (fast_params, standard_params) =
+        match completion_parameters(&request.reasoning_effort, request.fast_mode).and_then(|fast| {
+            Ok((
+                fast,
+                completion_parameters(&request.reasoning_effort, false)?,
+            ))
+        }) {
+            Ok(params) => params,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error,
+                };
+            }
+        };
+    let target_params = |target: &AgentProvider| {
+        if target.serves_fast_mode() {
+            fast_params.clone()
+        } else {
+            standard_params.clone()
         }
     };
-    let mut additional_params = if let Some((_, handoff)) = &provider_switch {
+    let mut additional_params = if let Some(handoff) = &provider_switch {
         match completion_parameters(
             &handoff.reasoning_effort,
             handoff.fast_mode && handoff.completion_provider == CompletionProvider::Spikonado,
@@ -398,7 +465,7 @@ async fn run_with_completion_model(
             }
         }
     } else {
-        target_params.clone()
+        target_params(&target)
     };
     let tool_call_tracker = ToolCallTracker::new(&request.run_id, &request.claim_id);
     let tools = agent_tools(
@@ -567,7 +634,7 @@ async fn run_with_completion_model(
     macro_rules! continue_without_handoff {
         ($stream:ident, $generations:lifetime, $agent_run:lifetime, $reason:expr) => {{
             drop($stream);
-            let (provider, _) = provider_switch.take().expect("provider-switch handoff");
+            provider_switch.take().expect("provider-switch handoff");
             let (resume_history, resume_prompt) = provider_switch_resume
                 .take()
                 .expect("provider-switch conversation");
@@ -584,7 +651,7 @@ async fn run_with_completion_model(
                     &request.claim_id,
                     request.defer_prompt_for_context_handoff,
                 ),
-                provider.completion_model(
+                target.start_model(
                     &runtime,
                     &request.run_id,
                     &request.claim_id,
@@ -598,7 +665,7 @@ async fn run_with_completion_model(
                     prompt = next_prompt;
                     deferred_prompt = None;
                     before_prompt = false;
-                    additional_params = target_params.clone();
+                    additional_params = target_params(&target);
                     context_handoff_hook.restart();
                     handoff_processed_tokens = 0;
                     final_text.clear();
@@ -789,7 +856,7 @@ async fn run_with_completion_model(
                                 let switching_provider = provider_switch.is_some();
                                 let next_model = async {
                                     match provider_switch.take() {
-                                        Some((provider, _)) => provider.completion_model(
+                                        Some(_) => target.start_model(
                                             &runtime, &request.run_id, &request.claim_id,
                                             &request.base_instructions,
                                         ).await.map(Some),
@@ -821,7 +888,7 @@ async fn run_with_completion_model(
                                     break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                 }
                                 if switching_provider {
-                                    additional_params = target_params.clone();
+                                    additional_params = target_params(&target);
                                 }
                                 context_handoff_hook.restart();
                                 handoff_processed_tokens = 0;
@@ -877,6 +944,39 @@ async fn run_with_completion_model(
                                     history = next_history;
                                     prompt = next_prompt;
                                     recovery_delay = delay;
+                                    if let Err(error) = transcript.advance_attempt().await {
+                                        break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                    }
+                                    transcript.live.clear(&request.thread_id);
+                                    if let Some(output) = &transcript.runtime.output {
+                                        output.notify_live_update();
+                                    }
+                                    final_text.clear();
+                                    final_response_received = false;
+                                    streamed_text.clear();
+                                    continue 'generations;
+                                }
+                                if !context_handoff_hook.is_writing()
+                                    && !target.fallback_providers.is_empty()
+                                    && is_provider_failure(&error)
+                                    && classify_provider_error(&error) == ProviderErrorDisposition::Failed
+                                    && let Some((next_history, next_prompt)) = stream_recovery.take_input()
+                                {
+                                    drop(stream);
+                                    let next_model = async {
+                                        target.fall_back(&runtime, &request.run_id, &request.claim_id, &error).await?;
+                                        target.start_model(
+                                            &runtime, &request.run_id, &request.claim_id,
+                                            &request.base_instructions,
+                                        ).await
+                                    };
+                                    match next_model.await {
+                                        Ok(model) => agent.set_model(model),
+                                        Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
+                                    }
+                                    history = without_reasoning_traces(next_history);
+                                    prompt = next_prompt;
+                                    additional_params = target_params(&target);
                                     if let Err(error) = transcript.advance_attempt().await {
                                         break 'agent_run transcript_error(error, &final_text, &streamed_text);
                                     }

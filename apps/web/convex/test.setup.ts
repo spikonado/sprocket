@@ -11,6 +11,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { FunctionArgs } from 'convex/server';
+import type { CompletionProvider } from '@convex/lib/validators';
 import schema from './schema';
 
 /**
@@ -151,7 +152,8 @@ export async function insertQueuedRun(
 		prompt: string;
 		imageUploadIds?: Id<'imageUploads'>[];
 		selectedModel?: string;
-		completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
+		completionProvider?: CompletionProvider;
+		fallbackProviders?: CompletionProvider[];
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		fastMode?: boolean;
 		machineId?: string;
@@ -168,6 +170,7 @@ export async function insertQueuedRun(
 		imageUploadIds: args.imageUploadIds ?? [],
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
 		completionProvider: args.completionProvider,
+		fallbackProviders: args.fallbackProviders,
 		reasoningEffort: args.reasoningEffort ?? 'medium',
 		fastMode: args.fastMode ?? false,
 		executionSecret: args.executionSecret,

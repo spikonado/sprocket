@@ -6,6 +6,7 @@ use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, StepEventKind,
 };
 use rig::completion::{Message, PromptError};
+use rig::error::ErrorKind;
 
 const MAX_STREAM_RECOVERIES: u32 = 3;
 /// Each timed-out attempt already streamed for the gateway's full duration cap.
@@ -44,7 +45,29 @@ fn is_gateway_stream_timeout(error: &PromptError) -> bool {
     })
 }
 
+/// Failures another provider may not have.
+pub(crate) fn is_provider_failure(error: &PromptError) -> bool {
+    match error {
+        PromptError::Provider(_) => true,
+        PromptError::Report(report) => matches!(
+            report.kind,
+            ErrorKind::Http
+                | ErrorKind::Request
+                | ErrorKind::Response
+                | ErrorKind::Provider
+                | ErrorKind::ProviderResponse
+                | ErrorKind::Timeout
+        ),
+        _ => false,
+    }
+}
+
 impl StreamRecovery {
+    /// The failed call's input, to replay it on another provider.
+    pub(crate) fn take_input(&self) -> Option<(Vec<Message>, Message)> {
+        self.input.lock().ok()?.take()
+    }
+
     pub(crate) fn resume(
         &mut self,
         error: &PromptError,

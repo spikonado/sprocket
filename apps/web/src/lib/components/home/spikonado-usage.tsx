@@ -1,5 +1,5 @@
-import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
+import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { usageMeters } from '@convex/lib/usageMeters';
 import { MODEL_USAGE_UNITS_PER_DOLLAR } from '@convex/lib/tiers';
@@ -21,7 +21,9 @@ function formatDollars(units: number) {
 
 function SectionLabel({ children }: { children: string }) {
 	return (
-		<p className="text-muted-foreground text-[11px] tracking-[0.18em] uppercase">{children}</p>
+		<p className="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
+			{children}
+		</p>
 	);
 }
 
@@ -94,7 +96,7 @@ function UsageSkeleton() {
 	);
 }
 
-export default function SettingsUsage() {
+export default function SpikonadoUsage() {
 	const convexAuth = useConvexAuth();
 	const now = useUsageTime();
 
@@ -103,33 +105,28 @@ export default function SettingsUsage() {
 		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now } : 'skip'
 	});
 
-	return (
-		<section className="flex h-full min-h-0 flex-col overflow-hidden">
-			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Usage</h1>
-			</header>
-
-			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-				<div className="max-w-xl space-y-10">
-					{usageQuery.status === 'error' ? (
-						<p className="text-muted-foreground text-sm leading-6">
-							Couldn’t load your usage right now. Try again in a moment.
-						</p>
-					) : usageQuery.status !== 'success' ? (
-						<UsageSkeleton />
-					) : (
-						<>
-							<div>
-								<SectionLabel>Subscription tier</SectionLabel>
-								<p className="text-foreground mt-3 text-[15px]">{usageQuery.data.tierLabel}</p>
-							</div>
-							{usageQuery.data.meters.map((meter) => (
-								<MeterUsage key={meter.id} meter={meter} now={now} />
-							))}
-						</>
-					)}
-				</div>
+	if (usageQuery.status === 'error') {
+		return (
+			<div>
+				<SectionLabel>Spikonado Subscription Tier</SectionLabel>
+				<p className="text-muted-foreground mt-3 text-sm">
+					Couldn’t load your usage right now. Try again in a moment.
+				</p>
 			</div>
-		</section>
+		);
+	}
+
+	if (usageQuery.status !== 'success') return <UsageSkeleton />;
+
+	return (
+		<>
+			<div>
+				<SectionLabel>Spikonado Subscription Tier</SectionLabel>
+				<p className="text-foreground mt-3 text-[15px]">{usageQuery.data.tierLabel}</p>
+			</div>
+			{usageQuery.data.meters.map((meter) => (
+				<MeterUsage key={meter.id} meter={meter} now={now} />
+			))}
+		</>
 	);
 }

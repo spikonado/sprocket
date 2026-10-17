@@ -1,5 +1,6 @@
 import type { CatalogModel, ModelCatalog } from '@convex/lib/uiModelCatalog';
 import type { CompletionProvider } from '@convex/lib/validators';
+import { providerChainForModel } from '$lib/chat/provider-chain';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	GATEWAY_API_PREFIX,
@@ -30,21 +31,22 @@ export function showsReasoningControl(model: CatalogModel): boolean {
 	return model.reasoningEfforts.length !== 1 || model.reasoningEfforts[0] !== 'none';
 }
 
-export function modelOptionsForCompletionProvider(
+/** Models served by at least one of `providers`. */
+export function modelOptionsForProviders(
 	catalog: ModelCatalog,
-	provider: CompletionProvider
+	providers: readonly CompletionProvider[]
 ): ModelSelectorOption[] {
 	return catalog.models
-		.filter((model) => provider === 'spikonado' || model.provider === 'openai')
+		.filter((model) => providerChainForModel(providers, model).length > 0)
 		.map((model) => ({ id: model.id, label: model.label, provider: model.provider }));
 }
 
-export function resolveModelForCompletionProvider(
+export function resolveModelForProviders(
 	catalog: ModelCatalog,
-	provider: CompletionProvider,
+	providers: readonly CompletionProvider[],
 	modelId: CatalogModelId
 ): CatalogModelId | undefined {
-	const options = modelOptionsForCompletionProvider(catalog, provider);
+	const options = modelOptionsForProviders(catalog, providers);
 
 	if (options.some((option) => option.id === modelId)) return modelId;
 

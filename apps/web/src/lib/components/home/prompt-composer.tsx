@@ -12,11 +12,12 @@ import { applyPathSelection, getActiveAtMention } from '$lib/chat/at-paths';
 import { applySkillSelection, filterSkills, getActiveSkillMention } from '$lib/chat/skill-mentions';
 import {
 	getCatalogModel,
-	modelOptionsForCompletionProvider,
-	resolveModelForCompletionProvider,
+	modelOptionsForProviders,
+	resolveModelForProviders,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
+import { providerChainForModel } from '$lib/chat/provider-chain';
 import { formatCountdownDuration } from '$lib/format';
 import { useUsageTime } from '$lib/usage-time';
 import AgentQuestion from '$lib/components/home/agent-question';
@@ -28,8 +29,6 @@ import ComposerPathMenu from '$lib/components/home/composer-path-menu';
 import ComposerNotice from '$lib/components/home/composer-notice';
 import { useComposerPaths, type ComposerPathSource } from '$lib/home/composer-paths';
 import type { CommandApi } from '$lib/home/running-commands';
-import OptionSelector from '$lib/components/option-selector';
-import ProviderLogo from '$lib/components/provider-logo';
 import ModelSelector from '$lib/components/model-selector';
 import type {
 	SkillSummary,
@@ -53,11 +52,10 @@ export type PromptComposerProps = {
 	modelCatalog?: ModelCatalog;
 	selectedModel?: CatalogModelId;
 	onSelectedModelChange?: (modelId: CatalogModelId) => void;
-	configuredProviders?: CompletionProvider[];
+	/** Enabled, set-up providers in the user's fallback order. */
+	availableProviders?: CompletionProvider[];
 	providersReady?: boolean;
-	selectedCompletionProvider?: CompletionProvider;
-	onSelectedCompletionProviderChange?: (provider: CompletionProvider) => void;
-	onCompletionProviderSelect?: (provider: CompletionProvider) => void;
+	onOpenProviderSettings?: () => void;
 	selectedReasoningEffort?: string;
 	onSelectedReasoningEffortChange?: (effort: string) => void;
 	fastMode?: boolean;
@@ -93,6 +91,8 @@ export type PromptComposerViewProps = PromptComposerProps & {
 	usageFailed: boolean;
 };
 
+const DEFAULT_AVAILABLE_PROVIDERS: CompletionProvider[] = ['spikonado'];
+
 const COMPOSER_MIN_HEIGHT_PX = 68;
 
 const COMPOSER_MAX_HEIGHT_PX = 160;
@@ -117,11 +117,9 @@ export function PromptComposerView({
 	modelCatalog,
 	selectedModel = defaultModelId,
 	onSelectedModelChange,
-	configuredProviders = ['spikonado'],
+	availableProviders = DEFAULT_AVAILABLE_PROVIDERS,
 	providersReady = true,
-	selectedCompletionProvider = 'spikonado',
-	onSelectedCompletionProviderChange,
-	onCompletionProviderSelect,
+	onOpenProviderSettings,
 	selectedReasoningEffort = defaultReasoningEffort,
 	onSelectedReasoningEffortChange,
 	fastMode = false,
@@ -157,31 +155,22 @@ export function PromptComposerView({
 		};
 	}, []);
 
-	const providerOptions = configuredProviders.map((provider) => ({
-		id: provider,
-		label:
-			provider === 'spikonado'
-				? 'Spikonado'
-				: provider === 'chatgpt'
-					? 'ChatGPT Subscription'
-					: 'OpenAI API'
-	}));
-
 	const modelOptions = modelCatalog
-		? modelOptionsForCompletionProvider(modelCatalog, selectedCompletionProvider)
+		? modelOptionsForProviders(modelCatalog, availableProviders)
 		: [];
 
 	const selectedCatalogModel = modelCatalog
 		? getCatalogModel(modelCatalog, selectedModel)
 		: undefined;
 
+	const providerChain = providerChainForModel(availableProviders, selectedCatalogModel);
+	const runsOnSpikonado = providerChain[0] === 'spikonado';
+	const noProviderAvailable = providersReady && availableProviders.length === 0;
+
 	const canSubmitWithModel =
-		(selectedCompletionProvider === 'spikonado' ||
-			(providersReady && configuredProviders.includes(selectedCompletionProvider))) &&
-		selectedCatalogModel !== undefined &&
-		(selectedCompletionProvider !== 'spikonado'
-			? selectedCatalogModel.provider === 'openai'
-			: usageFailed || usage !== undefined);
+		providersReady &&
+		providerChain.length > 0 &&
+		(!runsOnSpikonado || usageFailed || usage !== undefined);
 
 	const composerTextarea = useRef<HTMLTextAreaElement | null>(null);
 	const attachmentInput = useRef<HTMLInputElement | null>(null);
@@ -214,7 +203,8 @@ export function PromptComposerView({
 		usage?.exhausted === true &&
 		(usage.resetsAt === null || usage.resetsAt > now) &&
 		!selectedModelUnmetered &&
-		selectedCompletionProvider === 'spikonado';
+		availableProviders.includes('spikonado') &&
+		providerChain.every((provider) => provider === 'spikonado');
 
 	const unlimitedAlternativeLabel = (() => {
 		if (!modelCatalog) return null;
@@ -583,41 +573,10 @@ export function PromptComposerView({
 		if (model) onSelectedReasoningEffortChange?.(effort);
 	}
 
-	function handleProviderChange(provider: CompletionProvider) {
-		if (!modelCatalog) return;
-		onSelectedCompletionProviderChange?.(provider);
-		onCompletionProviderSelect?.(provider);
-
-		const modelId = resolveModelForCompletionProvider(modelCatalog, provider, selectedModel);
-
-		if (!modelId) return;
-		const model = getCatalogModel(modelCatalog, modelId);
-		onSelectedModelChange?.(modelId);
-		onSelectedReasoningEffortChange?.(
-			model?.reasoningEfforts.includes(selectedReasoningEffort)
-				? selectedReasoningEffort
-				: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
-		);
-		onFastModeChange?.(false);
-	}
-
 	useEffect(() => {
 		if (!modelCatalog) return;
 
-		const nextProvider =
-			providersReady && !configuredProviders.includes(selectedCompletionProvider)
-				? 'spikonado'
-				: selectedCompletionProvider;
-
-		if (nextProvider !== selectedCompletionProvider) {
-			onSelectedCompletionProviderChange?.(nextProvider);
-		}
-
-		const resolvedModel = resolveModelForCompletionProvider(
-			modelCatalog,
-			nextProvider,
-			selectedModel
-		);
+		const resolvedModel = resolveModelForProviders(modelCatalog, availableProviders, selectedModel);
 
 		if (resolvedModel && resolvedModel !== selectedModel) {
 			const model = getCatalogModel(modelCatalog, resolvedModel);
@@ -631,22 +590,19 @@ export function PromptComposerView({
 		}
 	}, [
 		modelCatalog,
-		providersReady,
-		configuredProviders,
-		selectedCompletionProvider,
+		availableProviders,
 		selectedModel,
 		selectedReasoningEffort,
-		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
 		onFastModeChange
 	]);
 
 	useEffect(() => {
-		if (selectedCompletionProvider !== 'spikonado' && fastMode) {
+		if (providersReady && !runsOnSpikonado && fastMode) {
 			onFastModeChange?.(false);
 		}
-	}, [selectedCompletionProvider, fastMode, onFastModeChange]);
+	}, [providersReady, runsOnSpikonado, fastMode, onFastModeChange]);
 
 	useEffect(() => {
 		if (!selectedCatalogModel) return;
@@ -802,6 +758,24 @@ export function PromptComposerView({
 									{composerNotice ? (
 										<ComposerNotice title="You're out of usage">{composerNotice}</ComposerNotice>
 									) : null}
+									{noProviderAvailable && !answeringQuestion ? (
+										<ComposerNotice
+											title="No provider is available"
+											action={
+												onOpenProviderSettings ? (
+													<button
+														type="button"
+														className="cursor-pointer text-[12.5px] font-medium underline underline-offset-2"
+														onClick={onOpenProviderSettings}
+													>
+														Open provider settings
+													</button>
+												) : null
+											}
+										>
+											Turn on a provider that is set up in Settings → Providers to send messages.
+										</ComposerNotice>
+									) : null}
 								</div>
 								{pendingQuestion ? (
 									<AgentQuestion
@@ -922,27 +896,10 @@ export function PromptComposerView({
 											}
 											reasoningEffort={selectedReasoningEffort}
 											fastMode={fastMode}
-											allowsFastMode={selectedCompletionProvider === 'spikonado'}
+											allowsFastMode={runsOnSpikonado}
 											disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
 											onSelect={handleModelChange}
 											onFastModeChange={onFastModeChange}
-										/>
-
-										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-
-										<OptionSelector
-											value={selectedCompletionProvider}
-											options={providerOptions}
-											ariaLabel="Select provider"
-											menuTitle="Provider"
-											compactOnMobile
-											disabled={composerLocked || answeringQuestion}
-											onValueChange={handleProviderChange}
-											className="z-20 shrink-0"
-											triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"
-											optionIcon={(option) => (
-												<ProviderLogo provider={option.id} className="size-4 shrink-0" />
-											)}
 										/>
 									</div>
 

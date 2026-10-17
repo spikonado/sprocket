@@ -616,14 +616,20 @@ where
 
 pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRun> {
     eprintln!("sprocket-agent: starting thread {}", request.thread_id);
+    // Pin the ChatGPT account active at submission. A run with fallbacks
+    // starts anyway and moves past ChatGPT at runtime when it is unavailable.
     let chatgpt_client = if request.completion_provider == crate::types::CompletionProvider::Chatgpt
     {
-        Some(crate::chatgpt::ChatGptClient::new(
-            request
-                .chatgpt_credentials
-                .clone()
-                .context("ChatGPT runs require the local ChatGPT credential service.")?,
-        )?)
+        let client = request
+            .chatgpt_credentials
+            .clone()
+            .context("ChatGPT runs require the local ChatGPT credential service.")
+            .and_then(crate::chatgpt::ChatGptClient::new);
+        match client {
+            Ok(client) => Some(client),
+            Err(_) if !request.fallback_providers.is_empty() => None,
+            Err(error) => return Err(error),
+        }
     } else {
         None
     };
@@ -937,10 +943,12 @@ pub async fn run_agent(
     } else {
         chatgpt_client
     };
-    let provider = match AgentProvider::default_for_run(&context, &gateway_url, chatgpt_client) {
-        Ok(provider) => provider,
-        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-    };
+    let provider = AgentProvider::default_for_run(
+        &context,
+        &gateway_url,
+        chatgpt_client,
+        request.chatgpt_credentials.clone(),
+    );
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let fast_mode = context.run.fast_mode;

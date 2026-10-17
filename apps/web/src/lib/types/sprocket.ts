@@ -7,6 +7,7 @@ import {
 	vExecutorJobStatus,
 	vRunStatus,
 	type ArtifactType,
+	type CompletionProvider,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
 	type WorkspaceInstruction
@@ -97,7 +98,8 @@ export type AgentRunRequest = {
 	prompt: string;
 	storageIds: Id<'_storage'>[];
 	selectedModel: string;
-	completionProvider?: 'spikonado' | 'openai' | 'chatgpt';
+	completionProvider?: CompletionProvider;
+	fallbackProviders?: CompletionProvider[];
 	reasoningEffort: string;
 	fastMode: boolean;
 	workspacePath: string;

@@ -5,9 +5,9 @@ fn catalog() -> ProviderCatalog {
         "defaultModelId": "default",
         "defaultFast": false,
         "models": [
-            {"id": "default", "label": "Default", "supportsImages": false, "reasoningEfforts": ["medium", "high"],
+            {"id": "default", "label": "Default", "vendor": "openai", "supportsImages": false, "reasoningEfforts": ["medium", "high"],
              "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
-            {"id": "pro", "label": "Pro", "supportsImages": false, "reasoningEfforts": ["max"],
+            {"id": "pro", "label": "Pro", "vendor": "openai", "supportsImages": false, "reasoningEfforts": ["max"],
              "defaultReasoningEffort": "max", "serviceTiers": ["standard"]}
         ]
     }))

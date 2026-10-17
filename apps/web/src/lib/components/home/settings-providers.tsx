@@ -1,615 +1,169 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
-import { useAction } from 'convex/react';
+import { useRef, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import {
+	useConvexAuth,
+	useMutation,
+	useQuery_experimental as useConvexQueryResult
+} from 'convex/react';
 import { api } from '@convex/_generated/api';
-import Button from '$lib/components/ui/button/button';
+import { resolveProviderOrder, type ProviderOrderEntry } from '@convex/lib/providerOrder';
+import type { CompletionProvider } from '@convex/lib/validators';
+import { completionProviderLabels } from '$lib/chat/provider-chain';
+import PreferenceToggle, { SwitchTrack } from '$lib/components/home/preference-toggle';
 import ProviderLogo from '$lib/components/provider-logo';
-import { convexClientErrorMessage } from '$lib/convex-error';
-import { z } from 'zod';
-import type { ChatGptBrowserLoginStart, ChatGptStatus, DesktopApi } from '$lib/types/sprocket';
 
-type ProviderConfigurationChange = {
-	provider: 'openai';
-	configured: boolean;
-};
-
-type PendingBrowserLogin = {
-	userId: string;
-	login: ChatGptBrowserLoginStart;
-};
+const iconButtonClass =
+	'text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill flex size-7 items-center justify-center rounded-md transition enabled:cursor-pointer disabled:opacity-30';
 
 export default function SettingsProviders({
-	userId,
-	desktopApi,
-	openAiConfigured,
-	chatGptStatus,
-	chatGptLoading,
-	chatGptStatusError,
-	loading,
-	loadError,
-	onChatGptStatusChange,
-	onConfigurationChange
+	configuredProviders,
+	onOpenCredentials
 }: {
-	userId: string;
-	desktopApi: DesktopApi | null;
-	openAiConfigured: boolean;
-	chatGptStatus: ChatGptStatus | null;
-	chatGptLoading: boolean;
-	chatGptStatusError: string | null;
-	loading: boolean;
-	loadError: string | null;
-	onChatGptStatusChange: (status: ChatGptStatus) => void;
-	onConfigurationChange: (change: ProviderConfigurationChange) => void;
+	configuredProviders: readonly CompletionProvider[];
+	onOpenCredentials: () => void;
 }) {
-	const saveOpenAiKey = useAction(api.providerCredentials.saveOpenAiKey);
-	const removeOpenAiKey = useAction(api.providerCredentials.removeOpenAiKey);
-	const [apiKey, setApiKey] = useState('');
-	const [showKey, setShowKey] = useState(false);
-	const [openAiPending, setOpenAiPending] = useState(false);
-	const [confirmOpenAiRemove, setConfirmOpenAiRemove] = useState(false);
-	const [openAiError, setOpenAiError] = useState<string | null>(null);
-	const [openAiSaved, setOpenAiSaved] = useState(false);
-	const [chatGptPending, setChatGptPending] = useState(false);
-	const [browserLoginActive, setBrowserLoginActive] = useState(false);
-	const [signOutWarning, setSignOutWarning] = useState<string | null>(null);
-	const [chatGptError, setChatGptError] = useState<string | null>(null);
-	const browserLoginRef = useRef<PendingBrowserLogin | null>(null);
-	const generationRef = useRef(0);
+	const convexAuth = useConvexAuth();
 
-	const activeAccount =
-		chatGptStatus?.accounts.find(
-			(account) => account.connectionId === chatGptStatus.activeConnectionId
-		) ?? null;
+	const preferencesQuery = useConvexQueryResult({
+		query: api.uiPreferences.getMine,
+		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	});
 
-	const setBrowserLogin = (userIdForLogin: string, next: ChatGptBrowserLoginStart | null) => {
-		browserLoginRef.current = next ? { userId: userIdForLogin, login: next } : null;
-		setBrowserLoginActive(Boolean(next));
-	};
+	const setProviderOrder = useMutation(api.uiPreferences.setProviderOrder);
 
-	function errorMessage(error: Error, fallback: string): string {
-		return convexClientErrorMessage(error) ?? fallback;
-	}
+	const setRestrictSubagentsToProvider = useMutation(
+		api.uiPreferences.setRestrictSubagentsToProvider
+	);
 
-	function cancelLoginOnServer(pending: PendingBrowserLogin) {
-		desktopApi
-			?.cancelChatGptBrowserLogin({ userId: pending.userId, state: pending.login.state })
-			.catch(() => {});
-	}
+	const [pendingOrder, setPendingOrder] = useState<ProviderOrderEntry[] | null>(null);
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const saveGeneration = useRef(0);
+	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
+	const disabled = preferencesQuery.status !== 'success';
+	const order = pendingOrder ?? resolveProviderOrder(preferences?.providerOrder);
+	const enabledCount = order.filter((entry) => entry.enabled).length;
 
-	function cancelLogin() {
-		generationRef.current += 1;
-		const pending = browserLoginRef.current;
-		browserLoginRef.current = null;
-		setBrowserLoginActive(false);
-		setChatGptPending(false);
-
-		return pending;
-	}
-
-	useEffect(() => {
-		setBrowserLoginActive(false);
-		setChatGptPending(false);
-		setChatGptError(null);
-		setSignOutWarning(null);
-
-		return () => {
-			generationRef.current += 1;
-			const pending = browserLoginRef.current;
-			browserLoginRef.current = null;
-
-			if (pending) {
-				desktopApi
-					?.cancelChatGptBrowserLogin({ userId: pending.userId, state: pending.login.state })
-					.catch(() => {});
-			}
-		};
-	}, [desktopApi, userId]);
-
-	async function waitForBrowserLogin(
-		pending: PendingBrowserLogin,
-		api: DesktopApi,
-		generation: number
-	) {
-		for (;;) {
-			await new Promise((resolve) => setTimeout(resolve, 1_500));
-
-			if (generation !== generationRef.current) return;
-
-			try {
-				const result = await api.fetchChatGptBrowserLoginResult({
-					userId: pending.userId,
-					state: pending.login.state
-				});
-
-				if (generation !== generationRef.current) return;
-
-				if (result.status === 'pending') continue;
-				setBrowserLogin(pending.userId, null);
-				setChatGptPending(false);
-
-				if (result.status === 'error') {
-					setChatGptError(result.error ?? 'ChatGPT sign-in failed.');
-
-					return;
-				}
-
-				const status = await api.fetchChatGptStatus({ userId: pending.userId });
-
-				if (generation !== generationRef.current || api !== desktopApi) return;
-				onChatGptStatusChange(status);
-
-				return;
-			} catch (error) {
-				if (generation !== generationRef.current) return;
-				setBrowserLogin(pending.userId, null);
-				setChatGptPending(false);
-				setChatGptError(
-					errorMessage(
-						z.instanceof(Error).catch(new Error()).parse(error),
-						'Couldn’t complete ChatGPT sign-in. Check your connection status.'
-					)
-				);
-
-				return;
-			}
-		}
-	}
-
-	async function startBrowserLogin(connectionId?: string) {
-		const api = desktopApi;
-
-		if (!api || chatGptPending) return;
-		setChatGptPending(true);
-		setBrowserLoginActive(true);
-		setChatGptError(null);
-		setSignOutWarning(null);
-		const userIdAtStart = userId;
-		const generation = ++generationRef.current;
-		const bridge = window.sprocketDesktopBridge;
-		const loginWindow = bridge ? null : window.open('about:blank', '_blank');
-		let pending: PendingBrowserLogin | null = null;
+	async function save(next: ProviderOrderEntry[]) {
+		const generation = ++saveGeneration.current;
+		setPendingOrder(next);
+		setSaveError(null);
 
 		try {
-			if (!bridge && !loginWindow)
-				throw new Error('Your browser blocked the sign-in window. Allow popups and try again.');
-
-			const login = await api.startChatGptBrowserLogin(
-				connectionId ? { userId: userIdAtStart, connectionId } : { userId: userIdAtStart }
-			);
-
-			pending = { userId: userIdAtStart, login };
-
-			if (generation !== generationRef.current) {
-				loginWindow?.close();
-				cancelLoginOnServer(pending);
-
-				return;
+			await setProviderOrder({ providerOrder: next });
+		} catch {
+			if (generation === saveGeneration.current) {
+				setSaveError("Couldn't save your providers. Try again.");
 			}
-
-			if (bridge) {
-				await bridge.openExternal(login.authorizeUrl);
-			} else {
-				loginWindow?.location.replace(login.authorizeUrl);
-			}
-
-			if (generation !== generationRef.current) {
-				cancelLoginOnServer(pending);
-
-				return;
-			}
-
-			setBrowserLogin(userIdAtStart, login);
-			void waitForBrowserLogin(pending, api, generation);
-		} catch (error) {
-			loginWindow?.close();
-
-			if (pending) cancelLoginOnServer(pending);
-
-			if (generation !== generationRef.current) return;
-			setBrowserLoginActive(false);
-			setChatGptError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t start ChatGPT sign-in.'
-				)
-			);
-			setChatGptPending(false);
-		}
-	}
-
-	function stopBrowserLogin() {
-		const pending = cancelLogin();
-
-		if (pending) cancelLoginOnServer(pending);
-	}
-
-	async function selectAccount(connectionId: string) {
-		const api = desktopApi;
-
-		if (!api || chatGptPending) return;
-		setChatGptPending(true);
-		setChatGptError(null);
-		setSignOutWarning(null);
-		const userIdAtStart = userId;
-		const generation = ++generationRef.current;
-
-		try {
-			await api.selectChatGptAccount({ userId: userIdAtStart, connectionId });
-			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
-
-			if (generation !== generationRef.current || api !== desktopApi) return;
-			onChatGptStatusChange(status);
-		} catch (error) {
-			if (generation !== generationRef.current) return;
-			setChatGptError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t switch ChatGPT account.'
-				)
-			);
 		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
+			if (generation === saveGeneration.current) setPendingOrder(null);
 		}
 	}
 
-	async function refreshChatGptStatus() {
-		const api = desktopApi;
-
-		if (!api || chatGptPending) return;
-		const generation = ++generationRef.current;
-		setChatGptPending(true);
-		setChatGptError(null);
-
-		try {
-			const status = await api.fetchChatGptStatus({ userId });
-
-			if (generation === generationRef.current) onChatGptStatusChange(status);
-		} catch (error) {
-			if (generation === generationRef.current)
-				setChatGptError(
-					errorMessage(
-						z.instanceof(Error).catch(new Error()).parse(error),
-						'Could not refresh ChatGPT status.'
-					)
-				);
-		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
-		}
+	function move(index: number, offset: -1 | 1) {
+		const next = [...order];
+		[next[index], next[index + offset]] = [next[index + offset], next[index]];
+		void save(next);
 	}
 
-	async function signOutAccount(connectionId: string) {
-		const api = desktopApi;
-
-		if (!api || chatGptPending) return;
-		const pendingLogin = cancelLogin();
-
-		if (pendingLogin) cancelLoginOnServer(pendingLogin);
-		setChatGptPending(true);
-		setChatGptError(null);
-		setSignOutWarning(null);
-		const userIdAtStart = userId;
-		const generation = ++generationRef.current;
-
-		try {
-			const warning = await api.disconnectChatGptAccount({
-				userId: userIdAtStart,
-				connectionId
-			});
-
-			if (generation !== generationRef.current || api !== desktopApi) return;
-			setSignOutWarning(warning);
-
-			if (chatGptStatus) {
-				const activeConnectionId =
-					chatGptStatus.activeConnectionId === connectionId
-						? null
-						: chatGptStatus.activeConnectionId;
-
-				onChatGptStatusChange({
-					accounts: chatGptStatus.accounts.filter(
-						(account) => account.connectionId !== connectionId
-					),
-					activeConnectionId,
-					loginAvailable: chatGptStatus.loginAvailable
-				});
-			}
-
-			const status = await api.fetchChatGptStatus({ userId: userIdAtStart });
-
-			if (generation !== generationRef.current || api !== desktopApi) return;
-			onChatGptStatusChange(status);
-		} catch (error) {
-			if (generation !== generationRef.current) return;
-			setChatGptError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t sign out of ChatGPT.'
-				)
-			);
-		} finally {
-			if (generation === generationRef.current) setChatGptPending(false);
-		}
+	function toggle(index: number) {
+		void save(
+			order.map((entry, entryIndex) =>
+				entryIndex === index ? { ...entry, enabled: !entry.enabled } : entry
+			)
+		);
 	}
-
-	async function saveKey(event: FormEvent) {
-		event.preventDefault();
-
-		if (!apiKey.trim() || openAiPending) return;
-		setOpenAiPending(true);
-		setOpenAiError(null);
-		setOpenAiSaved(false);
-
-		try {
-			await saveOpenAiKey({ apiKey });
-			setApiKey('');
-			setShowKey(false);
-			setOpenAiSaved(true);
-			onConfigurationChange({ provider: 'openai', configured: true });
-		} catch (error) {
-			setOpenAiError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t save the OpenAI key.'
-				)
-			);
-		} finally {
-			setOpenAiPending(false);
-		}
-	}
-
-	async function removeKey() {
-		if (openAiPending) return;
-		setOpenAiPending(true);
-		setOpenAiError(null);
-		setOpenAiSaved(false);
-
-		try {
-			await removeOpenAiKey({});
-			setConfirmOpenAiRemove(false);
-			onConfigurationChange({ provider: 'openai', configured: false });
-		} catch (error) {
-			setOpenAiError(
-				errorMessage(
-					z.instanceof(Error).catch(new Error()).parse(error),
-					'Couldn’t remove the OpenAI key.'
-				)
-			);
-		} finally {
-			setOpenAiPending(false);
-		}
-	}
-
-	const chatGptStatusLine = chatGptLoading
-		? 'Checking connection…'
-		: chatGptStatusError
-			? 'Connection status unavailable'
-			: activeAccount?.connected
-				? `Connected as ${activeAccount.label}`
-				: chatGptStatus && chatGptStatus.accounts.length > 0
-					? 'Signed out'
-					: 'Not connected';
 
 	return (
 		<section className="flex h-full min-h-0 flex-col overflow-hidden">
 			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">BYOK/BYOS</h1>
+				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Providers</h1>
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
-					<p className="text-muted-foreground mb-5 text-sm leading-6">
-						Use your own API keys or subscriptions. ChatGPT credentials stay in a protected file on
-						this computer. OpenAI API keys are encrypted in WorkOS Vault.
+					<p className="text-muted-foreground px-3 text-sm leading-6">
+						Runs use the first enabled provider that offers the model and fall back to the next one
+						if it fails.
 					</p>
 
-					<div className="border-border rounded-xl border p-5">
-						<div className="flex items-center gap-3">
-							<ProviderLogo provider="openai" className="size-5" />
-							<div className="min-w-0 flex-1">
-								<p className="text-foreground text-[15px] font-medium">ChatGPT Subscription</p>
-								<p className="text-muted-foreground mt-0.5 text-[12px]">{chatGptStatusLine}</p>
-							</div>
-							<button
-								type="button"
-								className="text-primary text-[13px] disabled:opacity-50"
-								disabled={!desktopApi || chatGptPending || chatGptLoading}
-								onClick={() => void refreshChatGptStatus()}
-							>
-								Refresh
-							</button>
-						</div>
+					<ol className="space-y-1" aria-label="Provider order">
+						{order.map((entry, index) => {
+							const label = completionProviderLabels[entry.provider];
+							const lastEnabled = entry.enabled && enabledCount === 1;
+							const needsSetup = entry.enabled && !configuredProviders.includes(entry.provider);
 
-						{browserLoginActive ? (
-							<div className="mt-5 flex items-center gap-3">
-								<span className="text-muted-foreground text-[12px]">Signing in…</span>
-								<button
-									type="button"
-									className="text-muted-foreground text-[13px]"
-									onClick={stopBrowserLogin}
+							return (
+								<li
+									key={entry.provider}
+									className="hover:bg-hover-fill flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm"
 								>
-									Cancel
-								</button>
-							</div>
-						) : (
-							<div className="mt-5 space-y-4">
-								{chatGptStatus && chatGptStatus.accounts.length > 0 && (
-									<ul className="space-y-2">
-										{chatGptStatus.accounts.map((account) => {
-											const isActive = account.connectionId === chatGptStatus.activeConnectionId;
-
-											return (
-												<li
-													key={account.connectionId}
-													className="border-border flex items-center gap-3 rounded-lg border px-3 py-2"
+									<ProviderLogo provider={entry.provider} className="size-5" />
+									<div className="min-w-0 flex-1">
+										<p className="text-foreground font-medium">{label}</p>
+										{needsSetup && (
+											<p className="text-muted-foreground mt-0.5 text-[13px]">
+												Not set up yet, so runs skip it.{' '}
+												<button
+													type="button"
+													className="text-foreground cursor-pointer underline underline-offset-2"
+													onClick={onOpenCredentials}
 												>
-													<div className="min-w-0 flex-1">
-														<p className="text-foreground truncate text-[13px] font-medium">
-															{account.label}
-														</p>
-														<p className="text-muted-foreground text-[12px]">
-															{isActive ? 'Active' : account.connected ? 'Signed in' : 'Signed out'}
-														</p>
-													</div>
-													{!isActive && account.connected && (
-														<button
-															type="button"
-															className="text-primary text-[13px] disabled:opacity-50"
-															disabled={chatGptPending}
-															onClick={() => void selectAccount(account.connectionId)}
-														>
-															Use
-														</button>
-													)}
-													{!account.connected && (
-														<button
-															type="button"
-															className="text-primary text-[13px] disabled:opacity-50"
-															disabled={chatGptPending || !chatGptStatus.loginAvailable}
-															onClick={() => void startBrowserLogin(account.connectionId)}
-														>
-															Reconnect
-														</button>
-													)}
-													<button
-														type="button"
-														className="text-muted-foreground hover:text-foreground text-[13px] disabled:opacity-50"
-														disabled={chatGptPending}
-														onClick={() => void signOutAccount(account.connectionId)}
-													>
-														Sign out
-													</button>
-												</li>
-											);
-										})}
-									</ul>
-								)}
-								{chatGptStatus?.loginAvailable === false ? (
-									<p className="text-muted-foreground text-[12px] leading-5">
-										ChatGPT sign-in runs through the local Sprocket server, which isn’t available
-										for this window. Open Sprocket on your desktop to sign in.
-									</p>
-								) : (
-									<Button
-										disabled={chatGptPending || chatGptLoading || !desktopApi}
-										onclick={() => void startBrowserLogin()}
-									>
-										{chatGptPending
-											? 'Starting…'
-											: chatGptStatus?.accounts.length
-												? 'Add account'
-												: 'Continue with ChatGPT'}
-									</Button>
-								)}
-							</div>
-						)}
-						{signOutWarning && (
-							<p className="text-muted-foreground mt-4 text-[12px]" role="status">
-								{signOutWarning}
-							</p>
-						)}
-						<p className="text-muted-foreground mt-4 text-[12px] leading-5">
-							Usage counts against your ChatGPT Codex allowance.
-						</p>
-						{chatGptError && (
-							<p className="text-destructive mt-4 text-sm" role="alert">
-								{chatGptError}
-							</p>
-						)}
-						{chatGptStatusError && (
-							<p className="text-destructive mt-4 text-sm" role="alert">
-								{chatGptStatusError}
-							</p>
-						)}
-					</div>
-
-					<div className="border-border rounded-xl border p-5">
-						<div className="flex items-center gap-3">
-							<ProviderLogo provider="openai" className="size-5" />
-							<div className="min-w-0 flex-1">
-								<p className="text-foreground text-[15px] font-medium">OpenAI API</p>
-								<p className="text-muted-foreground mt-0.5 text-[12px]">
-									{loading
-										? 'Checking configuration…'
-										: openAiConfigured
-											? 'Connected'
-											: 'Not configured'}
-								</p>
-							</div>
-						</div>
-
-						<form className="mt-5 space-y-3" onSubmit={(event) => void saveKey(event)}>
-							<label className="block space-y-1.5">
-								<span className="text-muted-foreground text-[12px]">API key</span>
-								<div className="relative">
-									<input
-										type={showKey ? 'text' : 'password'}
-										value={apiKey}
-										onChange={(event) => setApiKey(event.currentTarget.value)}
-										autoComplete="off"
-										spellCheck={false}
-										placeholder={openAiConfigured ? 'Enter a replacement key' : 'sk-…'}
-										disabled={openAiPending || loading}
-										className="border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-10 w-full rounded-lg border pr-10 pl-3 font-mono text-[13px] outline-none disabled:opacity-50"
-									/>
+													Set up in BYOK/BYOS
+												</button>
+											</p>
+										)}
+									</div>
 									<button
 										type="button"
-										className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center"
-										aria-label={showKey ? 'Hide API key' : 'Show API key'}
-										disabled={openAiPending || loading}
-										onClick={() => setShowKey((visible) => !visible)}
+										className={iconButtonClass}
+										aria-label={`Move ${label} up`}
+										disabled={disabled || index === 0}
+										onClick={() => move(index, -1)}
 									>
-										{showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+										<ChevronUp className="size-4" aria-hidden="true" />
 									</button>
-								</div>
-							</label>
-
-							<div className="flex flex-wrap items-center gap-3">
-								<Button type="submit" disabled={openAiPending || loading || !apiKey.trim()}>
-									{openAiPending ? 'Saving…' : openAiConfigured ? 'Replace key' : 'Connect API key'}
-								</Button>
-								{openAiConfigured && !confirmOpenAiRemove ? (
-									<Button
+									<button
 										type="button"
-										variant="outline"
-										disabled={openAiPending}
-										onclick={() => setConfirmOpenAiRemove(true)}
+										className={iconButtonClass}
+										aria-label={`Move ${label} down`}
+										disabled={disabled || index === order.length - 1}
+										onClick={() => move(index, 1)}
 									>
-										Remove
-									</Button>
-								) : confirmOpenAiRemove ? (
-									<>
-										<Button
-											type="button"
-											variant="outline"
-											disabled={openAiPending}
-											onclick={() => void removeKey()}
-										>
-											{openAiPending ? 'Removing…' : 'Confirm removal'}
-										</Button>
-										<button
-											type="button"
-											className="text-muted-foreground hover:text-foreground text-[13px]"
-											disabled={openAiPending}
-											onClick={() => setConfirmOpenAiRemove(false)}
-										>
-											Cancel
-										</button>
-									</>
-								) : null}
-								{openAiSaved && <span className="text-muted-foreground text-[12px]">Saved</span>}
-							</div>
-						</form>
+										<ChevronDown className="size-4" aria-hidden="true" />
+									</button>
+									<button
+										type="button"
+										role="switch"
+										aria-checked={entry.enabled}
+										aria-label={label}
+										title={lastEnabled ? 'Keep at least one provider on.' : undefined}
+										disabled={disabled || lastEnabled}
+										className="focus-visible:ring-ring/60 ml-1 rounded-full outline-none focus-visible:ring-2 enabled:cursor-pointer disabled:opacity-50"
+										onClick={() => toggle(index)}
+									>
+										<SwitchTrack enabled={entry.enabled} />
+									</button>
+								</li>
+							);
+						})}
+					</ol>
+					{saveError && (
+						<p role="alert" className="text-destructive px-3 text-sm">
+							{saveError}
+						</p>
+					)}
 
-						{openAiError && (
-							<p className="text-destructive mt-4 text-sm" role="alert">
-								{openAiError}
-							</p>
-						)}
-					</div>
-
-					{loadError && (
-						<p className="text-destructive text-sm" role="alert">
-							{loadError}
+					<PreferenceToggle
+						title="Restrict subagents to the parent's provider"
+						description="When off, agents can delegate to models from any enabled provider. When on, subagents only use models from the provider running the parent agent."
+						descriptionId="restrict-subagents-to-provider-description"
+						savedEnabled={preferences?.restrictSubagentsToProvider ?? false}
+						disabled={disabled}
+						save={setRestrictSubagentsToProvider}
+					/>
+					{preferencesQuery.status === 'error' && (
+						<p role="alert" className="text-destructive px-3 text-sm">
+							Couldn't load your preferences right now.
 						</p>
 					)}
 				</div>
