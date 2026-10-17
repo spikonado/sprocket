@@ -127,7 +127,7 @@ export const vSetCwdPayload = v.object({
 });
 
 export const vLinkPrsPayload = v.object({
-	numbers: v.array(v.number())
+	pull_requests: v.array(v.object({ repository: v.string(), number: v.number() }))
 });
 
 export const vPullRequestState = v.union(
@@ -508,7 +508,6 @@ export const vSetCwdResult = v.object({
 });
 
 export const vLinkPrsResult = v.object({
-	repository: v.string(),
 	pullRequests: v.array(vLinkedPullRequest)
 });
 
