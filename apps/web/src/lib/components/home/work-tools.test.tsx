@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { render, within } from '@testing-library/react';
+import { fireEvent, render, within } from '@testing-library/react';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 import WorkTools from './work-tools';
 
 describe('tool rows', () => {
+	it('expands a tool row on click to show its full text', () => {
+		const command = `bun run build --filter ${'very-long-package-name '.repeat(20)}\necho done`;
+		const tool: AssistantTimelineTool = {
+			type: 'tool',
+			callId: 'cmd',
+			name: 'exec_command',
+			input: { cmd: command },
+			output: {}
+		};
+
+		const view = render(<WorkTools tools={[tool]} inProgress={false} commands={new Map()} />);
+		const details = view.container.querySelector('details')!;
+		expect(details.open).toBe(false);
+
+		fireEvent.click(view.container.querySelector('[data-tool-row]')!);
+		expect(details.open).toBe(true);
+		expect(details.querySelector('p')?.textContent).toBe(command);
+	});
+
 	it('shows summaries without redundant labels and uses singular labels for single-item tools', () => {
 		const tools: AssistantTimelineTool[] = [
 			{
