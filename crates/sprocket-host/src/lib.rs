@@ -231,6 +231,8 @@ impl HostTasks {
         {
             tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
         }
-        host.machines.shutdown().await;
+        host.machines
+            .shutdown(host.lifetime.restart_requested())
+            .await;
     }
 }

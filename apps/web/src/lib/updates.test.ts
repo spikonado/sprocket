@@ -1,13 +1,71 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestPackageUpdate, type UpdateState } from './updates';
+import { requestPackageUpdate, restartPackageUpdate, type UpdateState } from './updates';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.useRealTimers();
+});
 
 function state(status: UpdateState['status'], version: string | null = '1.1.0'): UpdateState {
 	return { status, version, method: 'desktop', currentVersion: '1.0.0', error: null };
 }
 
 describe('package update requests', () => {
+	it('waits through the old boot and a connection outage before accepting the updated server', async () => {
+		vi.useFakeTimers();
+		const reload = vi.fn();
+		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234', reload } });
+
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(Response.json({ instanceId: 'old' }))
+			.mockResolvedValueOnce(Response.json({ instanceId: 'old', version: '1.1.0' }))
+			.mockRejectedValueOnce(new TypeError('Connection refused'))
+			.mockResolvedValueOnce(Response.json({ instanceId: 'new', version: '1.0.0' }))
+			.mockResolvedValueOnce(Response.json({ instanceId: 'new', version: '1.1.0' }));
+
+		vi.stubGlobal('fetch', fetcher);
+		const restart = restartPackageUpdate('1.1.0');
+		await vi.advanceTimersByTimeAsync(3_000);
+		await restart;
+		expect(fetcher).toHaveBeenNthCalledWith(
+			1,
+			'http://127.0.0.1:1234/api/update/restart',
+			expect.objectContaining({ method: 'POST', credentials: 'include' })
+		);
+		expect(fetcher).toHaveBeenCalledTimes(5);
+		expect(reload).toHaveBeenCalledTimes(1);
+	});
+
+	it('explains how to recover if the replacement server never starts', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValueOnce(Response.json({ instanceId: 'old' }))
+				.mockImplementation(async () => Response.json({ instanceId: 'old', version: '1.0.0' }))
+		);
+
+		const result = expect(restartPackageUpdate('1.1.0')).rejects.toThrow('Launch Sprocket again');
+
+		await vi.advanceTimersByTimeAsync(90_000);
+		await result;
+	});
+
+	it('reports restart rejection without polling health', async () => {
+		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
+
+		const fetcher = vi
+			.fn()
+			.mockResolvedValue(Response.json({ error: 'Install an update first.' }, { status: 409 }));
+
+		vi.stubGlobal('fetch', fetcher);
+		await expect(restartPackageUpdate('1.1.0')).rejects.toThrow('Install an update first.');
+		expect(fetcher).toHaveBeenCalledTimes(1);
+	});
+
 	it('shows the server explanation when an install is rejected', async () => {
 		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
 		vi.stubGlobal('fetch', async () =>

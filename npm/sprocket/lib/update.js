@@ -10,8 +10,7 @@ export const UPDATE_API_FILENAME = 'update-api.js';
 
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 
-export const RELAUNCH_MESSAGE =
-	'Wait for active agents to finish, then stop Sprocket and launch it again.';
+export const RELAUNCH_MESSAGE = 'Update installed. Restart Sprocket to use it.';
 
 export const UNSUPPORTED_MESSAGE =
 	'This copy of Sprocket was not installed globally with npm, bun, pnpm, or yarn, so it cannot be updated in place.';
@@ -621,6 +620,8 @@ export async function installUpdate(host) {
 				throw new Error('The installation location changed during the update check. Try again.');
 			}
 
+			const restartLauncher = path.resolve(globalPackageDir(install.globalRoot), 'bin/sprocket.js');
+
 			const result = await host.runCommand(
 				install.command,
 				[...install.argsPrefix, ...install.installArgs(checked.version)],
@@ -659,12 +660,15 @@ export async function installUpdate(host) {
 			}
 
 			return {
-				payload: makePayload({
-					status: 'installed',
-					currentVersion,
-					version: checked.version,
-					message: RELAUNCH_MESSAGE
-				})
+				payload: {
+					...makePayload({
+						status: 'installed',
+						currentVersion,
+						version: checked.version,
+						message: RELAUNCH_MESSAGE
+					}),
+					restartLauncher
+				}
 			};
 		});
 	} catch (error) {

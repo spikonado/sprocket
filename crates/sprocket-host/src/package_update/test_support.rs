@@ -29,4 +29,20 @@ impl PackageUpdateManager {
             install_timeout,
         ))
     }
+
+    pub fn with_helper_and_restart_file(
+        node: PathBuf,
+        script: PathBuf,
+        restart_file: PathBuf,
+    ) -> Arc<Self> {
+        let mut manager = Self::new(
+            Some(UpdateCommand { node, script }),
+            SUCCESS_CHECK_TTL,
+            FAILED_CHECK_TTL,
+            CHECK_TIMEOUT,
+            INSTALL_TIMEOUT,
+        );
+        manager.restart_file = Some(restart_file);
+        Arc::new(manager)
+    }
 }

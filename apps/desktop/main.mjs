@@ -53,7 +53,7 @@ const updates = new DesktopUpdater(
 
 let updateTimer = null;
 
-let updateConfirmationOpen = false;
+let updateInstallationPending = false;
 
 let shutdownPromise = null;
 
@@ -497,25 +497,14 @@ ipcMain.handle('sprocket:download-update', (event) => {
 ipcMain.handle('sprocket:install-update', async (event) => {
 	requireUpdateRenderer(event);
 
-	if (updateConfirmationOpen || updates.getState().status !== 'downloaded') {
+	if (updateInstallationPending || updates.getState().status !== 'downloaded') {
 		return updates.getState();
 	}
 
-	updateConfirmationOpen = true;
+	updateInstallationPending = true;
 
 	try {
-		const { response } = await dialog.showMessageBox(mainWindowRef, {
-			type: 'question',
-			buttons: ['Cancel', 'Restart and update'],
-			defaultId: 0,
-			cancelId: 0,
-			message: 'Restart Sprocket to install the update?',
-			detail: serverProcess
-				? 'This stops the local server and interrupts any agents it is running. Wait for active work to finish before restarting.'
-				: 'This restarts the desktop app. The local server was started separately and will keep running.'
-		});
-
-		if (response === 1 && !isQuitting) {
+		if (!isQuitting) {
 			if (process.platform === 'darwin') {
 				// Squirrel validates the staged update asynchronously and may reject it without quitting.
 				updates.install();
@@ -548,7 +537,7 @@ ipcMain.handle('sprocket:install-update', async (event) => {
 
 		return updates.getState();
 	} finally {
-		updateConfirmationOpen = false;
+		updateInstallationPending = false;
 	}
 });
 
