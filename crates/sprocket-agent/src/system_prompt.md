@@ -79,7 +79,8 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 
 - Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.
 - Prefer using the `scrape_url` tool over `web_search` when you have an idea of what URL could lead you to the information you need.
-- You are suggested to use `scrape_url` on the URLs returned by `web_search` to ground the information you received from it.
+- You are suggested to use `scrape_url` on the URLs returned by `web_search` or `developer_search` to ground the information you received from it.
+- Prefer `developer_search` over `web_search` for library, API, and SDK documentation and for GitHub issues and pull requests.
 - Poll async tools when you need their results, and avoid busy polling.
 
 ## Subagents

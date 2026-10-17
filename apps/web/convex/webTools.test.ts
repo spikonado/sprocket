@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionTimeoutError, APIError } from 'context.dev';
 import { Web, type WebScrapeParams, type WebScrapeResponse } from 'context.dev/resources/web';
+import { Firecrawl, SdkError, type DeveloperSearchResponse } from 'firecrawl';
 import { isNonRetryableError } from '@convex-dev/workpool';
 import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
+import { FIRECRAWL_CREDITS_EXHAUSTED } from '@convex/lib/firecrawl';
 import { REQUEST_TTL_MS } from '@convex/webRequests';
 import {
 	CONTEXT_DEV_CREDITS_EXHAUSTED,
+	DEVELOPER_SEARCH_PASSAGES,
+	DEVELOPER_SEARCH_RESULTS,
 	HIGHLIGHTS_MAX_CHARS,
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
@@ -30,12 +34,18 @@ const scrape =
 
 const PAGE_URL = 'https://example.com/page';
 
-type JobKind = 'scrape_url' | 'web_search';
+type JobKind = 'scrape_url' | 'developer_search' | 'web_search';
+
+type DeveloperSearchPayload = {
+	query: string;
+	types?: ('doc' | 'issue' | 'pull_request' | 'readme')[];
+	repos?: string[];
+};
 
 async function seedJob(
 	t: ConvexTestInstance,
 	kind: JobKind,
-	payload: { url: string; query?: string } | { query: string }
+	payload: { url: string; query?: string } | DeveloperSearchPayload
 ) {
 	const executionSecret = crypto.randomUUID();
 	const claimId = 'claim-a';
@@ -60,14 +70,14 @@ async function seedJob(
 async function runRequest(
 	t: ConvexTestInstance,
 	job: { runId: Id<'runs'>; claimId: string; jobId: Id<'executorJobs'> },
-	options: { rawDocument?: boolean } = {}
+	options: { kind?: Doc<'webRequests'>['kind']; rawDocument?: boolean } = {}
 ) {
 	const request = await t.run(async (ctx) => {
 		const id = await ctx.db.insert('webRequests', {
 			runId: job.runId,
 			claimId: job.claimId,
 			jobId: job.jobId,
-			kind: 'scrape',
+			kind: options.kind ?? 'scrape',
 			status: 'running',
 			expiresAt: Date.now() + REQUEST_TTL_MS
 		});
@@ -84,7 +94,7 @@ async function scrapePage(t: ConvexTestInstance, payload: { url: string; query?:
 	const job = await seedJob(t, 'scrape_url', payload);
 	const result = await runRequest(t, job);
 
-	if ('documentUrl' in result) throw new Error('Expected a page transport.');
+	if ('documentUrl' in result || 'results' in result) throw new Error('Expected a page transport.');
 
 	return result;
 }
@@ -94,6 +104,15 @@ async function rawDocument(t: ConvexTestInstance, url = 'https://example.com/rep
 	const result = await runRequest(t, job, { rawDocument: true });
 
 	if (!('documentUrl' in result)) throw new Error('Expected a raw document.');
+
+	return result;
+}
+
+async function developerSearch(t: ConvexTestInstance, payload: DeveloperSearchPayload) {
+	const job = await seedJob(t, 'developer_search', payload);
+	const result = await runRequest(t, job, { kind: 'developer_search' });
+
+	if (!('results' in result)) throw new Error('Expected developer search results.');
 
 	return result;
 }
@@ -148,6 +167,10 @@ async function storedText(t: ConvexTestInstance, storageId: Id<'_storage'>) {
 
 		return { url: await ctx.storage.getUrl(storageId), text: blob ? await blob.text() : null };
 	});
+}
+
+function mockDeveloperSearch() {
+	return vi.spyOn(Firecrawl.prototype, 'developerSearch');
 }
 
 beforeEach(() => {
@@ -237,12 +260,18 @@ describe('queued request job checks', () => {
 		expect(scrape).not.toHaveBeenCalled();
 	});
 
-	it('rejects a scrape request for a web_search job', async () => {
+	it.each([
+		{ kind: 'web_search', payload: { query: 'sprocket' }, request: 'scrape' },
+		{ kind: 'developer_search', payload: { query: 'sprocket' }, request: 'scrape' },
+		{ kind: 'scrape_url', payload: { url: PAGE_URL }, request: 'developer_search' }
+	] as const)('rejects a $request request for a $kind job', async ({ kind, payload, request }) => {
 		const t = initConvexTest();
-		const job = await seedJob(t, 'web_search', { query: 'sprocket' });
+		const job = await seedJob(t, kind, payload);
+		const search = mockDeveloperSearch();
 
-		await expect(runRequest(t, job)).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+		await expect(runRequest(t, job, { kind: request })).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
 		expect(scrape).not.toHaveBeenCalled();
+		expect(search).not.toHaveBeenCalled();
 	});
 
 	it('rejects a non-http URL before calling context.dev', async () => {
@@ -649,5 +678,142 @@ describe('raw document fetch', () => {
 
 		await expect(rawDocument(t)).rejects.toThrow(message);
 		expect(await storageBlobs(t)).toEqual([]);
+	});
+});
+
+describe('developer_search', () => {
+	function searchResponse(
+		response: Omit<DeveloperSearchResponse, 'success'>
+	): DeveloperSearchResponse {
+		return { success: true, ...response };
+	}
+
+	it('searches with filters and maps passages and repo status', async () => {
+		const t = initConvexTest();
+
+		const search = mockDeveloperSearch().mockResolvedValue(
+			searchResponse({
+				results: [
+					{
+						id: 'r1',
+						url: 'https://github.com/acme/widget/issues/1',
+						title: 'Crash on start',
+						passages: [
+							{ text: 'Stack trace', citation_url: 'https://github.com/acme/widget/issues/1#c1' },
+							{ text: 'Workaround' }
+						],
+						license: 'MIT'
+					},
+					{ id: 'r2', url: 'https://docs.acme.dev/start', passages: [] }
+				],
+				repos: [
+					{
+						repo: 'acme/widget',
+						indexed: true,
+						types: { issue: true, pullRequest: false, readme: true }
+					}
+				]
+			})
+		);
+
+		const result = await developerSearch(t, {
+			query: '  widget crash  ',
+			types: ['issue', 'doc'],
+			repos: ['acme/widget']
+		});
+
+		expect(search).toHaveBeenCalledWith('widget crash', {
+			k: DEVELOPER_SEARCH_RESULTS,
+			passages: DEVELOPER_SEARCH_PASSAGES,
+			types: ['issue', 'doc'],
+			repos: ['acme/widget']
+		});
+		expect(result).toEqual({
+			results: [
+				{
+					url: 'https://github.com/acme/widget/issues/1',
+					title: 'Crash on start',
+					passages: [
+						{
+							text: 'Stack trace',
+							citationUrl: 'https://github.com/acme/widget/issues/1#c1'
+						},
+						{ text: 'Workaround' }
+					]
+				},
+				{ url: 'https://docs.acme.dev/start', passages: [] }
+			],
+			repos: [
+				{
+					repo: 'acme/widget',
+					indexed: true,
+					types: { issue: true, pullRequest: false, readme: true }
+				}
+			]
+		});
+	});
+
+	it('omits empty filters', async () => {
+		const t = initConvexTest();
+		const search = mockDeveloperSearch().mockResolvedValue(searchResponse({ results: [] }));
+
+		expect(await developerSearch(t, { query: 'widget', types: [], repos: [] })).toEqual({
+			results: []
+		});
+		expect(search).toHaveBeenCalledWith('widget', {
+			k: DEVELOPER_SEARCH_RESULTS,
+			passages: DEVELOPER_SEARCH_PASSAGES
+		});
+	});
+
+	it('rejects an empty query without calling Firecrawl', async () => {
+		const t = initConvexTest();
+		const search = mockDeveloperSearch();
+
+		await expect(developerSearch(t, { query: '   ' })).rejects.toThrow(
+			'Search query cannot be empty.'
+		);
+		expect(search).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ error: new SdkError('Payment required', 402), message: FIRECRAWL_CREDITS_EXHAUSTED },
+		{ error: new SdkError('Too many repos', 400), message: 'Too many repos' },
+		{
+			error: new SdkError('Upstream exploded', 500),
+			message: 'Developer search failed (500): Upstream exploded'
+		}
+	])('maps Firecrawl failures to "$message" without retrying', async ({ error, message }) => {
+		const t = initConvexTest();
+		const search = mockDeveloperSearch().mockRejectedValue(error);
+
+		await expect(developerSearch(t, { query: 'widget' })).rejects.toThrow(message);
+		expect(search).toHaveBeenCalledTimes(1);
+	});
+
+	it('retries a rate limit', async () => {
+		const t = initConvexTest();
+
+		const search = mockDeveloperSearch()
+			.mockRejectedValueOnce(new SdkError('Rate limited', 429))
+			.mockResolvedValueOnce(searchResponse({ results: [] }));
+
+		const result = developerSearch(t, { query: 'widget' });
+
+		await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(await result).toEqual({ results: [] });
+		expect(search).toHaveBeenCalledTimes(2);
+	});
+
+	it('requires an API key', async () => {
+		const t = initConvexTest();
+		vi.stubEnv('FIRECRAWL_API_KEY', '');
+		const search = mockDeveloperSearch();
+
+		await expect(developerSearch(t, { query: 'widget' })).rejects.toThrow(
+			'FIRECRAWL_API_KEY is not configured.'
+		);
+		expect(search).not.toHaveBeenCalled();
 	});
 });

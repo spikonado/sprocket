@@ -199,7 +199,7 @@ export async function seedStartedWebJob(
 	t: ConvexTestInstance,
 	options: {
 		executionSecret: string;
-		kind: 'web_search' | 'scrape_url';
+		kind: 'web_search' | 'scrape_url' | 'developer_search';
 		payload: { query: string } | { url: string };
 		prompt?: string;
 		claimId?: string;
