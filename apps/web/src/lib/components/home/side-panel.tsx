@@ -1,6 +1,17 @@
 import ArtifactMenu from '$lib/components/artifact-menu';
-import { Expand, FileCode, FileText, Fullscreen, Globe, Shrink, X } from 'lucide-react';
-import { useEffect, type KeyboardEvent } from 'react';
+import {
+	FileCode,
+	Files,
+	FileText,
+	Fullscreen,
+	Globe,
+	Maximize2,
+	Minimize2,
+	PanelRight,
+	Plus,
+	type LucideIcon
+} from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import ArtifactDisplay from '$lib/components/home/artifact-display';
 import BrowserLiveView, { type BrowserApi } from '$lib/components/home/browser-live-view';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
@@ -33,10 +44,13 @@ const TYPE_ICONS = {
 	react: FileCode
 } as const satisfies Record<ArtifactType, typeof FileCode>;
 
-const TABS: { id: SidePanelTab; label: string }[] = [
-	{ id: 'artifacts', label: 'Artifacts' },
-	{ id: 'live', label: 'Live view' }
+const VIEWS: { tab: Exclude<SidePanelTab, 'home'>; label: string; icon: LucideIcon }[] = [
+	{ tab: 'artifacts', label: 'Artifacts', icon: Files },
+	{ tab: 'live', label: 'Browser', icon: Globe }
 ];
+
+const ICON_BUTTON =
+	'text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none';
 
 export default function SidePanel({
 	artifacts,
@@ -56,26 +70,19 @@ export default function SidePanel({
 	onClose
 }: Props) {
 	const selected = artifacts.find((artifact) => artifact.key === selectedKey) ?? null;
+	const current = VIEWS.find((view) => view.tab === tab) ?? null;
+	const viewRef = useRef<HTMLElement>(null);
+	const focusOpenedView = useRef(false);
 
-	// Roving tabindex for the WAI-ARIA tabs keyboard pattern.
-	function focusTab(tabId: SidePanelTab) {
-		document.getElementById(`side-panel-tab-${tabId}`)?.focus();
-	}
+	useEffect(() => {
+		if (!focusOpenedView.current) return;
+		focusOpenedView.current = false;
+		viewRef.current?.focus();
+	}, [tab]);
 
-	function onTabKeydown(event: KeyboardEvent) {
-		const current = TABS.findIndex((item) => item.id === tab);
-		let next = -1;
-
-		if (event.key === 'ArrowRight') next = (current + 1) % TABS.length;
-		else if (event.key === 'ArrowLeft') next = (current - 1 + TABS.length) % TABS.length;
-		else if (event.key === 'Home') next = 0;
-		else if (event.key === 'End') next = TABS.length - 1;
-
-		if (next === -1) return;
-		event.preventDefault();
-		onTabChange(TABS[next].id);
-		// Focus moves with selection (automatic activation).
-		focusTab(TABS[next].id);
+	function openView(next: Exclude<SidePanelTab, 'home'>) {
+		focusOpenedView.current = true;
+		onTabChange(next);
 	}
 
 	useEffect(() => {
@@ -105,62 +112,75 @@ export default function SidePanel({
 	return (
 		<aside
 			id="side-panel"
-			className={`bg-background flex h-full min-h-0 w-full flex-col ${expanded ? '' : 'border-l'}`}
+			className={`bg-background flex h-full min-h-0 w-full flex-col ${expanded ? '' : 'border-hairline border-l'}`}
 		>
-			<div className="flex items-center gap-1 border-b px-2 py-1.5">
-				<div role="tablist" aria-label="Side panel views" className="flex items-center gap-1">
-					{TABS.map((item) => (
-						<button
-							key={item.id}
-							type="button"
-							role="tab"
-							id={`side-panel-tab-${item.id}`}
-							aria-controls="side-panel-tabpanel"
-							aria-selected={tab === item.id}
-							tabIndex={tab === item.id ? 0 : -1}
-							className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-								tab === item.id
-									? 'bg-muted text-foreground'
-									: 'text-muted-foreground hover:text-foreground'
-							}`}
-							onClick={() => onTabChange(item.id)}
-							onKeyDown={onTabKeydown}
-						>
-							{item.label}
-						</button>
-					))}
-				</div>
+			<div
+				className={`flex h-10 shrink-0 items-center gap-1 px-2 ${current ? 'border-hairline border-b' : ''}`}
+			>
+				{current ? (
+					<span className="bg-muted text-foreground inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium">
+						<current.icon className="size-3.5" aria-hidden="true" />
+						{current.label}
+					</span>
+				) : null}
+				<button
+					type="button"
+					className={ICON_BUTTON}
+					onClick={() => onTabChange('home')}
+					aria-label="New tab"
+					title="New tab"
+				>
+					<Plus className="size-4" aria-hidden="true" />
+				</button>
 				<div className="flex-1"></div>
 				<button
 					type="button"
-					className="text-muted-foreground hover:text-foreground rounded-md p-1 transition"
+					className={ICON_BUTTON}
 					onClick={onToggleExpanded}
 					aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
 					title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
 					aria-pressed={expanded}
 				>
 					{expanded ? (
-						<Shrink className="size-4" aria-hidden="true" />
+						<Minimize2 className="size-4" aria-hidden="true" />
 					) : (
-						<Expand className="size-4" aria-hidden="true" />
+						<Maximize2 className="size-4" aria-hidden="true" />
 					)}
 				</button>
 				<button
 					type="button"
-					className="text-muted-foreground hover:text-foreground rounded-md p-1 transition"
+					className={ICON_BUTTON}
 					onClick={onClose}
 					aria-label="Close panel"
+					title="Close panel"
 				>
-					<X className="size-4" aria-hidden="true" />
+					<PanelRight className="size-4" aria-hidden="true" />
 				</button>
 			</div>
-			<div
-				role="tabpanel"
-				id="side-panel-tabpanel"
-				aria-labelledby={`side-panel-tab-${tab}`}
-				className="flex min-h-0 flex-1 flex-col"
+			<section
+				ref={viewRef}
+				tabIndex={-1}
+				aria-label={current?.label ?? 'Side panel'}
+				className="flex min-h-0 flex-1 flex-col focus:outline-none"
 			>
-				{tab === 'live' ? (
+				{tab === 'home' ? (
+					<div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+						<ul aria-label="Open a view" className="grid w-full max-w-84 grid-cols-2 gap-4">
+							{VIEWS.map((view) => (
+								<li key={view.tab}>
+									<button
+										type="button"
+										onClick={() => openView(view.tab)}
+										className="border-hairline text-muted-foreground hover:bg-hover-fill hover:text-foreground focus-visible:ring-ring flex h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
+									>
+										<view.icon className="size-5" strokeWidth={1.5} aria-hidden="true" />
+										<span className="text-sm">{view.label}</span>
+									</button>
+								</li>
+							))}
+						</ul>
+					</div>
+				) : tab === 'live' ? (
 					<BrowserLiveView browserApi={browserApi} />
 				) : (
 					<>
@@ -259,7 +279,7 @@ export default function SidePanel({
 						)}
 					</>
 				)}
-			</div>
+			</section>
 		</aside>
 	);
 }
