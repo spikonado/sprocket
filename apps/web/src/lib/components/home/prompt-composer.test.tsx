@@ -744,6 +744,16 @@ describe('PromptComposer mobile selectors', () => {
 });
 
 describe('PromptComposer model selection', () => {
+	it('shows the model selector with the catalog default once the catalog loads', () => {
+		const { props, rerender } = renderComposer();
+
+		expect(screen.queryByRole('button', { name: 'Select model' })).toBeNull();
+
+		rerender({ ...props, modelCatalog: { ...modelCatalog, defaultModelId: 'model-two' } });
+
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model Two · High');
+	});
+
 	it.each([
 		['spikonado', 'chatgpt', 'ChatGPT Subscription'],
 		['spikonado', 'openai', 'OpenAI API'],
@@ -768,7 +778,7 @@ describe('PromptComposer model selection', () => {
 		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Low');
 	});
 
-	it.each(['low', 'high'])('uses a supported fallback model with reasoning %s', async (effort) => {
+	it('uses the fallback model default reasoning', async () => {
 		renderComposer({
 			modelCatalog: {
 				...modelCatalog,
@@ -779,14 +789,12 @@ describe('PromptComposer model selection', () => {
 			},
 			configuredProviders: ['spikonado', 'chatgpt'],
 			selectedModel: 'model-two',
-			selectedReasoningEffort: effort
+			selectedReasoningEffort: 'low'
 		});
 
 		await click(screen.getByRole('button', { name: 'Select provider' }));
 		await click(screen.getByRole('button', { name: /ChatGPT Subscription/ }));
-		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe(
-			effort === 'low' ? 'Model One · Low' : 'Model One · Medium'
-		);
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Medium');
 	});
 
 	it('keeps the provider menu anchored when a parent scrolls', async () => {

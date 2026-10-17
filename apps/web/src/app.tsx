@@ -78,7 +78,6 @@ import {
 import { convexClientErrorMessage } from '$lib/convex-error';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { useComposerAttachments } from '$lib/home/composer-attachments';
-import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
@@ -518,16 +517,14 @@ export default function App({
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
 	const [currentThreadId, setCurrentThreadId] = useState<Id<'threadRecords'> | null>(null);
 	const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | null>(null);
-	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
-	const [selectedModel, setSelectedModel] = useState<CatalogModelId>(defaultModelId);
+	const [selectedModel, setSelectedModel] = useState<CatalogModelId>();
 
 	const [selectedCompletionProvider, setSelectedCompletionProvider] =
 		useState<CompletionProvider>('spikonado');
 
 	const preferredCompletionProvider = useRef<CompletionProvider>('spikonado');
 
-	const [selectedReasoningEffort, setSelectedReasoningEffort] =
-		useState<string>(defaultReasoningEffort);
+	const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string>();
 
 	const [fastMode, setFastMode] = useState(false);
 	const [prompt, setPrompt] = useState('');
@@ -1653,6 +1650,8 @@ export default function App({
 			return;
 		}
 
+		if (!selectedModel || !selectedReasoningEffort) return;
+
 		if (currentThreadId && !isLatestRunReady) {
 			setCurrentError('Loading thread state before sending.');
 
@@ -2027,6 +2026,8 @@ export default function App({
 			!runState ||
 			!currentThreadId ||
 			!currentProjectPath ||
+			!selectedModel ||
+			!selectedReasoningEffort ||
 			hasPendingAgentLaunch ||
 			isSubmittingPrompt
 		) {
@@ -2128,10 +2129,10 @@ export default function App({
 			threadId: previousThreadId
 		});
 		setCurrentError(null);
-		setSelectedModel(modelCatalog?.defaultModelId ?? defaultModelId);
+		setSelectedModel(modelCatalog?.defaultModelId);
 		preferredCompletionProvider.current = readCompletionProviderPreference(userId);
 		setSelectedCompletionProvider(preferredCompletionProvider.current);
-		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort);
+		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort);
 		setFastMode(false);
 		setProjectPickerOpen(false);
 		setProjectPickerReconnectWorkspacePath(null);

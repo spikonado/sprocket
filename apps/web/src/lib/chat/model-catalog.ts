@@ -42,7 +42,7 @@ export function modelOptionsForCompletionProvider(
 export function resolveModelForCompletionProvider(
 	catalog: ModelCatalog,
 	provider: CompletionProvider,
-	modelId: CatalogModelId
+	modelId: CatalogModelId | undefined
 ): CatalogModelId | undefined {
 	const options = modelOptionsForCompletionProvider(catalog, provider);
 
