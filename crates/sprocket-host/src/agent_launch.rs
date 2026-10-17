@@ -156,6 +156,7 @@ async fn launch_agent_inner(
         .to_string();
     let project_attachments = Arc::clone(&host.project_attachments);
     let attachment_key = attachment.attachment_key.clone();
+    host.browsers.prepare_tools();
     let browser_environment = match host.browsers.environment(&payload.user_id) {
         Ok(environment) => environment,
         Err(error) => {

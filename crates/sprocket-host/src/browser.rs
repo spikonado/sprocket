@@ -142,16 +142,16 @@ impl BrowserManager {
             state: DashboardState::Installing,
         });
         drop(active);
-        if let Some(ActiveDashboard {
-            state: DashboardState::Ready(dashboard),
-            ..
-        }) = previous
-        {
-            dashboard.stop().await;
-        }
         let manager = Arc::clone(self);
         let user_id = user_id.to_owned();
         tokio::spawn(async move {
+            if let Some(ActiveDashboard {
+                state: DashboardState::Ready(dashboard),
+                ..
+            }) = previous
+            {
+                dashboard.stop().await;
+            }
             let result = tokio::select! {
                 result = manager.launch_dashboard(&user_id) => result,
                 _ = manager.shutdown.cancelled() => return,
