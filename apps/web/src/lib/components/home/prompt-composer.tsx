@@ -4,7 +4,6 @@ import { useConvexAuth, useQuery_experimental } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { canSubmitQuestionAnswer, type AgentQuestionOption } from '@convex/lib/agentQuestions';
-import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import type { CompletionProvider } from '@convex/lib/validators';
 import type { ComposerAttachment } from '$lib/chat/attachments';
 import { containsDraggedFiles, shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
@@ -115,12 +114,12 @@ export function PromptComposerView({
 	onAttachFiles,
 	onRemoveAttachment,
 	modelCatalog,
-	selectedModel = defaultModelId,
+	selectedModel,
 	onSelectedModelChange,
 	availableProviders = DEFAULT_AVAILABLE_PROVIDERS,
 	providersReady = true,
 	onOpenProviderSettings,
-	selectedReasoningEffort = defaultReasoningEffort,
+	selectedReasoningEffort,
 	onSelectedReasoningEffortChange,
 	fastMode = false,
 	onFastModeChange,
@@ -159,9 +158,8 @@ export function PromptComposerView({
 		? modelOptionsForProviders(modelCatalog, availableProviders)
 		: [];
 
-	const selectedCatalogModel = modelCatalog
-		? getCatalogModel(modelCatalog, selectedModel)
-		: undefined;
+	const selectedCatalogModel =
+		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
 
 	const providerChain = providerChainForModel(availableProviders, selectedCatalogModel);
 	const runsOnSpikonado = providerChain[0] === 'spikonado';
@@ -566,11 +564,8 @@ export function PromptComposerView({
 	}
 
 	function handleModelChange(modelId: CatalogModelId, effort: string) {
-		if (!modelCatalog) return;
 		onSelectedModelChange?.(modelId);
-		const model = getCatalogModel(modelCatalog, modelId);
-
-		if (model) onSelectedReasoningEffortChange?.(effort);
+		onSelectedReasoningEffortChange?.(effort);
 	}
 
 	useEffect(() => {
@@ -582,9 +577,7 @@ export function PromptComposerView({
 			const model = getCatalogModel(modelCatalog, resolvedModel);
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
-				model?.reasoningEfforts.includes(selectedReasoningEffort)
-					? selectedReasoningEffort
-					: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
+				model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort
 			);
 			onFastModeChange?.(false);
 		}
@@ -592,7 +585,6 @@ export function PromptComposerView({
 		modelCatalog,
 		availableProviders,
 		selectedModel,
-		selectedReasoningEffort,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
 		onFastModeChange
@@ -607,7 +599,10 @@ export function PromptComposerView({
 	useEffect(() => {
 		if (!selectedCatalogModel) return;
 
-		if (!selectedCatalogModel.reasoningEfforts.includes(selectedReasoningEffort)) {
+		if (
+			!selectedReasoningEffort ||
+			!selectedCatalogModel.reasoningEfforts.includes(selectedReasoningEffort)
+		) {
 			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
 		}
 
@@ -885,22 +880,24 @@ export function PromptComposerView({
 											<Paperclip className="size-4" aria-hidden="true" />
 										</button>
 
-										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+										{modelCatalog && selectedModel && selectedReasoningEffort ? (
+											<>
+												<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
-										<ModelSelector
-											modelId={selectedModel}
-											models={
-												modelCatalog?.models.filter((model) =>
-													modelOptions.some((option) => option.id === model.id)
-												) ?? []
-											}
-											reasoningEffort={selectedReasoningEffort}
-											fastMode={fastMode}
-											allowsFastMode={runsOnSpikonado}
-											disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
-											onSelect={handleModelChange}
-											onFastModeChange={onFastModeChange}
-										/>
+												<ModelSelector
+													modelId={selectedModel}
+													models={modelCatalog.models.filter((model) =>
+														modelOptions.some((option) => option.id === model.id)
+													)}
+													reasoningEffort={selectedReasoningEffort}
+													fastMode={fastMode}
+													allowsFastMode={runsOnSpikonado}
+													disabled={composerLocked || answeringQuestion}
+													onSelect={handleModelChange}
+													onFastModeChange={onFastModeChange}
+												/>
+											</>
+										) : null}
 									</div>
 
 									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">

@@ -44,7 +44,7 @@ export function modelOptionsForProviders(
 export function resolveModelForProviders(
 	catalog: ModelCatalog,
 	providers: readonly CompletionProvider[],
-	modelId: CatalogModelId
+	modelId: CatalogModelId | undefined
 ): CatalogModelId | undefined {
 	const options = modelOptionsForProviders(catalog, providers);
 
