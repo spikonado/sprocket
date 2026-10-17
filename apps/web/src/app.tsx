@@ -827,13 +827,14 @@ export default function App({
 
 	const pullRequestStateSync = useMemo<PullRequestStateSync | null>(
 		() =>
-			desktopApi && authReady
+			desktopApi && authReady && signedInUserId
 				? {
-						fetchStates: (pullRequests) => desktopApi.fetchPullRequestStates({ pullRequests }),
+						fetchStates: (pullRequests) =>
+							desktopApi.fetchPullRequestStates({ userId: signedInUserId, pullRequests }),
 						updateStates: (updates) => updatePullRequestStates({ updates })
 					}
 				: null,
-		[desktopApi, authReady, updatePullRequestStates]
+		[desktopApi, authReady, signedInUserId, updatePullRequestStates]
 	);
 
 	const pullRequestRefresher = usePullRequestRefresher(pullRequestStateSync);

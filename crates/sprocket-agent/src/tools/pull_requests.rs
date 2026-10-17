@@ -81,7 +81,7 @@ async fn link(
             number: pr.number,
         })
         .collect();
-    let mut fetched = fetch_states(&refs).await;
+    let mut fetched = fetch_states(&context.user_id, &refs).await;
     if let Some((host, error)) = fetched.failures.into_iter().next() {
         anyhow::bail!("Reading pull requests from {host} failed: {error}");
     }
