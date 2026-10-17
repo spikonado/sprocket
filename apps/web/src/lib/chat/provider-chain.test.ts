@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { providerChainForModel, usableProviders } from './provider-chain';
+import { providerChainForModel, reorderShownProviders, usableProviders } from './provider-chain';
 
 it('orders usable providers by preference and skips disabled or unconfigured ones', () => {
 	const providers = usableProviders(
@@ -26,4 +26,18 @@ it('keeps only providers that serve the model vendor', () => {
 	expect(providerChainForModel(providers, { provider: 'anthropic' })).toEqual(['spikonado']);
 	expect(providerChainForModel(['openai'], { provider: 'anthropic' })).toEqual([]);
 	expect(providerChainForModel(providers, undefined)).toEqual([]);
+});
+
+it('reorders shown providers around hidden ones', () => {
+	const order = [
+		{ provider: 'spikonado', enabled: true },
+		{ provider: 'chatgpt', enabled: false },
+		{ provider: 'openai', enabled: true }
+	] as const;
+
+	expect(reorderShownProviders(order, ['openai', 'spikonado'])).toEqual([
+		{ provider: 'openai', enabled: true },
+		{ provider: 'chatgpt', enabled: false },
+		{ provider: 'spikonado', enabled: true }
+	]);
 });

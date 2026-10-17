@@ -352,6 +352,10 @@ retention job removes them.
 Removal gate: drop `windows` from `vMyUsage` after released clients that read
 it age out.
 
+Each meter's `description` is likewise only rendered by released clients; the
+Account page no longer shows it. Drop it from `vMyUsage` and `usageMeters`
+with `windows`.
+
 #### Checkout attempt retention
 
 `billingCheckoutSessions` keeps the current selection; superseded attempts

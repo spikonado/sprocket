@@ -29,3 +29,17 @@ export function providerChainForModel(
 		? providers.filter((provider) => providerServesVendor(provider, model.provider))
 		: [];
 }
+
+/** Applies a new order of the shown providers, keeping hidden ones in their slots. */
+export function reorderShownProviders(
+	order: readonly ProviderOrderEntry[],
+	shownOrder: readonly CompletionProvider[]
+): ProviderOrderEntry[] {
+	const shown = shownOrder.flatMap((provider) =>
+		order.filter((entry) => entry.provider === provider)
+	);
+
+	let next = 0;
+
+	return order.map((entry) => (shownOrder.includes(entry.provider) ? shown[next++] : entry));
+}

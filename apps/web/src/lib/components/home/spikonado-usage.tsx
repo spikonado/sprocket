@@ -50,8 +50,7 @@ function MeterUsage({ meter, now }: { meter: UsageMeter; now: number }) {
 	return (
 		<div>
 			<SectionLabel>{meter.label}</SectionLabel>
-			<p className="text-muted-foreground mt-1 text-[12px]">{meter.description}</p>
-			<div className="mt-4 flex items-baseline justify-between gap-3 text-[13px]">
+			<div className="mt-3 flex items-baseline justify-between gap-3 text-[13px]">
 				<p className="text-foreground">
 					{formatDollars(used)}{' '}
 					<span className="text-muted-foreground">of {formatDollars(meter.limit)}</span>
@@ -108,7 +107,7 @@ export default function SpikonadoUsage() {
 	if (usageQuery.status === 'error') {
 		return (
 			<div>
-				<SectionLabel>Spikonado Subscription Tier</SectionLabel>
+				<SectionLabel>Subscription Tier</SectionLabel>
 				<p className="text-muted-foreground mt-3 text-sm">
 					Couldn’t load your usage right now. Try again in a moment.
 				</p>
@@ -121,7 +120,7 @@ export default function SpikonadoUsage() {
 	return (
 		<>
 			<div>
-				<SectionLabel>Spikonado Subscription Tier</SectionLabel>
+				<SectionLabel>Subscription Tier</SectionLabel>
 				<p className="text-foreground mt-3 text-[15px]">{usageQuery.data.tierLabel}</p>
 			</div>
 			{usageQuery.data.meters.map((meter) => (

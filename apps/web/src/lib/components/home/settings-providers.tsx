@@ -1,5 +1,8 @@
 import { useRef, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { GripVertical } from 'lucide-react';
+import { DragDropProvider } from '@dnd-kit/react';
+import { useSortable } from '@dnd-kit/react/sortable';
+import { move } from '@dnd-kit/helpers';
 import {
 	useConvexAuth,
 	useMutation,
@@ -8,12 +11,59 @@ import {
 import { api } from '@convex/_generated/api';
 import { resolveProviderOrder, type ProviderOrderEntry } from '@convex/lib/providerOrder';
 import type { CompletionProvider } from '@convex/lib/validators';
-import { completionProviderLabels } from '$lib/chat/provider-chain';
+import { completionProviderLabels, reorderShownProviders } from '$lib/chat/provider-chain';
 import PreferenceToggle, { SwitchTrack } from '$lib/components/home/preference-toggle';
 import ProviderLogo from '$lib/components/provider-logo';
 
-const iconButtonClass =
-	'text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-hover-fill flex size-7 items-center justify-center rounded-md transition enabled:cursor-pointer disabled:opacity-30';
+function ProviderRow({
+	entry,
+	index,
+	disabled,
+	lastEnabled,
+	onToggle
+}: {
+	entry: ProviderOrderEntry;
+	index: number;
+	disabled: boolean;
+	lastEnabled: boolean;
+	onToggle: () => void;
+}) {
+	const { ref, handleRef, isDragging } = useSortable({ id: entry.provider, index, disabled });
+	const label = completionProviderLabels[entry.provider];
+
+	return (
+		<li
+			ref={ref}
+			className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${
+				isDragging ? 'bg-hover-fill shadow-lg' : 'hover:bg-hover-fill'
+			}`}
+		>
+			<button
+				ref={handleRef}
+				type="button"
+				aria-label={`Reorder ${label}`}
+				disabled={disabled}
+				className="text-muted-foreground enabled:hover:text-foreground -ml-1 flex size-6 touch-none items-center justify-center rounded-md enabled:cursor-grab enabled:active:cursor-grabbing"
+			>
+				<GripVertical className="size-4" aria-hidden="true" />
+			</button>
+			<ProviderLogo provider={entry.provider} className="size-5" />
+			<p className="text-foreground min-w-0 flex-1 font-medium">{label}</p>
+			<button
+				type="button"
+				role="switch"
+				aria-checked={entry.enabled}
+				aria-label={label}
+				title={lastEnabled ? 'Keep at least one provider on.' : undefined}
+				disabled={disabled || lastEnabled}
+				className="focus-visible:ring-ring/60 rounded-full outline-none focus-visible:ring-2 enabled:cursor-pointer disabled:opacity-50"
+				onClick={onToggle}
+			>
+				<SwitchTrack enabled={entry.enabled} />
+			</button>
+		</li>
+	);
+}
 
 export default function SettingsProviders({
 	configuredProviders,
@@ -41,7 +91,8 @@ export default function SettingsProviders({
 	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
 	const disabled = preferencesQuery.status !== 'success';
 	const order = pendingOrder ?? resolveProviderOrder(preferences?.providerOrder);
-	const enabledCount = order.filter((entry) => entry.enabled).length;
+	const shown = order.filter((entry) => configuredProviders.includes(entry.provider));
+	const shownEnabledCount = shown.filter((entry) => entry.enabled).length;
 
 	async function save(next: ProviderOrderEntry[]) {
 		const generation = ++saveGeneration.current;
@@ -59,16 +110,10 @@ export default function SettingsProviders({
 		}
 	}
 
-	function move(index: number, offset: -1 | 1) {
-		const next = [...order];
-		[next[index], next[index + offset]] = [next[index + offset], next[index]];
-		void save(next);
-	}
-
-	function toggle(index: number) {
+	function toggle(provider: CompletionProvider) {
 		void save(
-			order.map((entry, entryIndex) =>
-				entryIndex === index ? { ...entry, enabled: !entry.enabled } : entry
+			order.map((entry) =>
+				entry.provider === provider ? { ...entry, enabled: !entry.enabled } : entry
 			)
 		);
 	}
@@ -82,71 +127,50 @@ export default function SettingsProviders({
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
 					<p className="text-muted-foreground px-3 text-sm leading-6">
-						Runs use the first enabled provider that offers the model and fall back to the next one
-						if it fails.
+						Agents use the first enabled provider that offers the model and fall back to the next
+						one if it fails. Drag to reorder.
 					</p>
 
-					<ol className="space-y-1" aria-label="Provider order">
-						{order.map((entry, index) => {
-							const label = completionProviderLabels[entry.provider];
-							const lastEnabled = entry.enabled && enabledCount === 1;
-							const needsSetup = entry.enabled && !configuredProviders.includes(entry.provider);
+					<DragDropProvider
+						onDragEnd={(event) => {
+							if (event.canceled) return;
 
-							return (
-								<li
-									key={entry.provider}
-									className="hover:bg-hover-fill flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm"
-								>
-									<ProviderLogo provider={entry.provider} className="size-5" />
-									<div className="min-w-0 flex-1">
-										<p className="text-foreground font-medium">{label}</p>
-										{needsSetup && (
-											<p className="text-muted-foreground mt-0.5 text-[13px]">
-												Not set up yet, so runs skip it.{' '}
-												<button
-													type="button"
-													className="text-foreground cursor-pointer underline underline-offset-2"
-													onClick={onOpenCredentials}
-												>
-													Set up in BYOK/BYOS
-												</button>
-											</p>
-										)}
-									</div>
-									<button
-										type="button"
-										className={iconButtonClass}
-										aria-label={`Move ${label} up`}
-										disabled={disabled || index === 0}
-										onClick={() => move(index, -1)}
-									>
-										<ChevronUp className="size-4" aria-hidden="true" />
-									</button>
-									<button
-										type="button"
-										className={iconButtonClass}
-										aria-label={`Move ${label} down`}
-										disabled={disabled || index === order.length - 1}
-										onClick={() => move(index, 1)}
-									>
-										<ChevronDown className="size-4" aria-hidden="true" />
-									</button>
-									<button
-										type="button"
-										role="switch"
-										aria-checked={entry.enabled}
-										aria-label={label}
-										title={lastEnabled ? 'Keep at least one provider on.' : undefined}
-										disabled={disabled || lastEnabled}
-										className="focus-visible:ring-ring/60 ml-1 rounded-full outline-none focus-visible:ring-2 enabled:cursor-pointer disabled:opacity-50"
-										onClick={() => toggle(index)}
-									>
-										<SwitchTrack enabled={entry.enabled} />
-									</button>
-								</li>
+							const shownOrder = move(
+								shown.map((entry) => entry.provider),
+								event
 							);
-						})}
-					</ol>
+
+							if (shownOrder.every((provider, index) => provider === shown[index].provider)) {
+								return;
+							}
+
+							void save(reorderShownProviders(order, shownOrder));
+						}}
+					>
+						<ol className="space-y-1" aria-label="Provider order">
+							{shown.map((entry, index) => (
+								<ProviderRow
+									key={entry.provider}
+									entry={entry}
+									index={index}
+									disabled={disabled}
+									lastEnabled={entry.enabled && shownEnabledCount === 1}
+									onToggle={() => toggle(entry.provider)}
+								/>
+							))}
+						</ol>
+					</DragDropProvider>
+					{shown.length < order.length && (
+						<p className="text-muted-foreground px-3 text-[13px]">
+							<button
+								type="button"
+								className="text-foreground cursor-pointer underline underline-offset-2"
+								onClick={onOpenCredentials}
+							>
+								Set up more providers in BYOK/BYOS
+							</button>
+						</p>
+					)}
 					{saveError && (
 						<p role="alert" className="text-destructive px-3 text-sm">
 							{saveError}

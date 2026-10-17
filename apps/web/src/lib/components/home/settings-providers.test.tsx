@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { api } from '@convex/_generated/api';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
+import type { CompletionProvider } from '@convex/lib/validators';
 import SettingsProviders from './settings-providers';
 
 const preferences: Doc<'uiPreferences'> = {
@@ -13,7 +14,11 @@ const preferences: Doc<'uiPreferences'> = {
 	theme: 'light'
 };
 
-async function mount(data: Doc<'uiPreferences'> | null, onOpenCredentials = vi.fn()) {
+async function mount(
+	data: Doc<'uiPreferences'> | null,
+	onOpenCredentials = vi.fn(),
+	configuredProviders: CompletionProvider[] = ['spikonado', 'openai', 'chatgpt']
+) {
 	const client = new ConvexTestClient();
 	client.registerQuery(api.uiPreferences.getMine, data);
 	client.registerMutation(api.uiPreferences.setProviderOrder, new Promise<null>(() => {}));
@@ -22,7 +27,7 @@ async function mount(data: Doc<'uiPreferences'> | null, onOpenCredentials = vi.f
 		render(
 			<ConvexTestProvider client={client}>
 				<SettingsProviders
-					configuredProviders={['spikonado']}
+					configuredProviders={configuredProviders}
 					onOpenCredentials={onOpenCredentials}
 				/>
 			</ConvexTestProvider>
@@ -38,29 +43,28 @@ function providerNames() {
 		.map((toggle) => toggle.getAttribute('aria-label'));
 }
 
-it('reorders providers and saves the full order', async () => {
+it('lists configured providers in the saved order and saves toggles', async () => {
 	const mutation = await mount(null);
 	expect(providerNames()).toEqual(['Spikonado', 'OpenAI API', 'ChatGPT Subscription']);
 
 	await act(async () => {
-		fireEvent.click(screen.getByRole('button', { name: 'Move ChatGPT Subscription up' }));
+		fireEvent.click(screen.getByRole('switch', { name: 'OpenAI API' }));
 	});
 
-	expect(providerNames()).toEqual(['Spikonado', 'ChatGPT Subscription', 'OpenAI API']);
 	expect(mutation).toHaveBeenCalledWith(
 		expect.anything(),
 		{
 			providerOrder: [
 				{ provider: 'spikonado', enabled: true },
-				{ provider: 'chatgpt', enabled: true },
-				{ provider: 'openai', enabled: true }
+				{ provider: 'openai', enabled: false },
+				{ provider: 'chatgpt', enabled: true }
 			]
 		},
 		expect.anything()
 	);
 });
 
-it('keeps the last enabled provider on and links unset providers to BYOK/BYOS', async () => {
+it('hides unconfigured providers and keeps the last shown provider on', async () => {
 	const onOpenCredentials = vi.fn();
 	await mount(
 		{
@@ -68,15 +72,17 @@ it('keeps the last enabled provider on and links unset providers to BYOK/BYOS', 
 			providerOrder: [
 				{ provider: 'openai', enabled: true },
 				{ provider: 'spikonado', enabled: false },
-				{ provider: 'chatgpt', enabled: false }
+				{ provider: 'chatgpt', enabled: true }
 			]
 		},
-		onOpenCredentials
+		onOpenCredentials,
+		['spikonado', 'openai']
 	);
 
+	expect(providerNames()).toEqual(['OpenAI API', 'Spikonado']);
 	expect(screen.getByRole('switch', { name: 'OpenAI API' })).toHaveProperty('disabled', true);
 	expect(screen.getByRole('switch', { name: 'Spikonado' })).toHaveProperty('disabled', false);
-	fireEvent.click(screen.getByRole('button', { name: 'Set up in BYOK/BYOS' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Set up more providers in BYOK/BYOS' }));
 	expect(onOpenCredentials).toHaveBeenCalledOnce();
 	expect(
 		screen.getByRole('switch', { name: "Restrict subagents to the parent's provider" })
