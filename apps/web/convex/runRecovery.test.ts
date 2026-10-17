@@ -3,7 +3,10 @@ import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
-import { AUTOMATIC_RECOVERY_SUBMISSION_PREFIX } from '@convex/lib/runRecovery';
+import {
+	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
+	RESTARTING_RUN_TIMEOUT_MS
+} from '@convex/lib/runRecovery';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 afterEach(() => vi.useRealTimers());
@@ -52,10 +55,120 @@ async function setup() {
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
 
-	return { t, asUser, threadId, runId, queryArgs, recoveryArgs, abandon };
+	const restartMachine = () =>
+		asUser.mutation(api.machines.restarting, {
+			userId: 'user_alice',
+			machineId,
+			credential: 'machine-secret'
+		});
+
+	const registerNewProcess = async () =>
+		asUser.mutation(api.machines.tryRegister, {
+			machineId,
+			credentialHash: await executionSecretHash('new-process'),
+			friendlyName: 'Workstation',
+			platform: 'linux',
+			platformVersion: 'test',
+			architecture: 'x86_64',
+			hostname: 'workstation',
+			appVersion: 'test'
+		});
+
+	const statuses = () =>
+		t.run(async (ctx) => ({
+			run: await ctx.db.get('runs', runId),
+			thread: (await ctx.db.get('threadRecords', threadId))?.status
+		}));
+
+	return {
+		t,
+		asUser,
+		threadId,
+		runId,
+		queryArgs,
+		recoveryArgs,
+		abandon,
+		restartMachine,
+		registerNewProcess,
+		statuses
+	};
 }
 
 describe('automatic run recovery', () => {
+	it('continues runs on the restarted machine process', async () => {
+		const {
+			t,
+			asUser,
+			threadId,
+			runId,
+			queryArgs,
+			recoveryArgs,
+			restartMachine,
+			registerNewProcess,
+			statuses
+		} = await setup();
+
+		await restartMachine();
+		expect(await statuses()).toMatchObject({ run: { status: 'restarting' }, thread: 'restarting' });
+
+		expect(await registerNewProcess()).toMatchObject({ status: 'registered' });
+		expect((await statuses()).run?.status).toBe('restarting');
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+		expect((await insertQueuedRun(t, asUser, recoveryArgs)).created).toBe(true);
+	});
+
+	it('fails an unrecovered restarting run as abandoned', async () => {
+		vi.useFakeTimers();
+		const { t, asUser, runId, threadId, queryArgs, restartMachine, statuses } = await setup();
+		await restartMachine();
+		await vi.advanceTimersByTimeAsync(RESTARTING_RUN_TIMEOUT_MS);
+		await t.finishInProgressScheduledFunctions();
+		expect(await statuses()).toMatchObject({
+			run: { status: 'failed', lastError: RUN_ABANDONED_BY_AGENT },
+			thread: 'failed'
+		});
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+	});
+
+	it('ends runs on restart when automatic continuation is disabled', async () => {
+		const { asUser, restartMachine, statuses } = await setup();
+		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
+		await restartMachine();
+		expect(await statuses()).toMatchObject({
+			run: { status: 'failed', lastError: 'The machine stopped before this run finished.' }
+		});
+	});
+
+	it('stops a restarting run without continuing it', async () => {
+		const {
+			t,
+			asUser,
+			runId,
+			queryArgs,
+			recoveryArgs,
+			restartMachine,
+			registerNewProcess,
+			statuses
+		} = await setup();
+
+		await restartMachine();
+		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId })).toBe(true);
+		expect(await statuses()).toMatchObject({ run: { status: 'cancelled' }, thread: 'cancelled' });
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
+		await registerNewProcess();
+		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(
+			'This run cannot recover automatically.'
+		);
+	});
+
 	it('discards automatic recovery when disabled but allows manual continuation', async () => {
 		const { t, asUser, runId, queryArgs, recoveryArgs, abandon } = await setup();
 		await abandon();

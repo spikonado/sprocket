@@ -11,6 +11,11 @@ import {
 } from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import {
+	automaticAgentContinuationEnabled,
+	RESTARTING_RUN_TIMEOUT_MS
+} from '@convex/lib/runRecovery';
+import { internal } from '@convex/_generated/api';
 
 const MACHINE_ENDED = 'The machine stopped before this run finished.';
 
@@ -52,10 +57,12 @@ export const listMine = query({
 	}
 });
 
-async function failMachineRuns(
+type MachineRunStop = { status: 'failed'; lastError: string } | { status: 'restarting' };
+
+async function stopMachineRuns(
 	ctx: MutationCtx,
 	machine: Doc<'machines'>,
-	lastError = MACHINE_ENDED
+	stop: MachineRunStop
 ): Promise<void> {
 	if (machine.runIds.length > MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs to stop safely.');
@@ -64,12 +71,18 @@ async function failMachineRuns(
 	for (const runId of machine.runIds) {
 		const run = await getRunWithExecution(ctx.db, runId);
 
-		if (run) {
-			await finalizeRunRecord(ctx, run, {
-				text: lastError,
-				status: 'failed',
-				lastError
-			});
+		if (!run) continue;
+		await finalizeRunRecord(ctx, run, {
+			text: stop.status === 'failed' ? stop.lastError : '',
+			...stop
+		});
+
+		if (stop.status === 'restarting') {
+			await ctx.scheduler.runAfter(
+				RESTARTING_RUN_TIMEOUT_MS,
+				internal.runLifecycle.expireRestartingRun,
+				{ runId }
+			);
 		}
 	}
 
@@ -158,7 +171,10 @@ async function registerMachine(
 		}
 
 		if (!sameProcess) {
-			await failMachineRuns(ctx, existing, RUN_ABANDONED_BY_AGENT);
+			await stopMachineRuns(ctx, existing, {
+				status: 'failed',
+				lastError: RUN_ABANDONED_BY_AGENT
+			});
 		}
 
 		await ctx.db.patch('machines', existing._id, metadata);
@@ -197,7 +213,28 @@ export const end = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
-		await failMachineRuns(ctx, machine);
+		await stopMachineRuns(ctx, machine, { status: 'failed', lastError: MACHINE_ENDED });
+		await ctx.db.patch('machines', machine._id, {
+			lastSeenAt: undefined,
+			updatedAt: Date.now()
+		});
+
+		return null;
+	}
+});
+
+export const restarting = mutation({
+	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
+		await stopMachineRuns(
+			ctx,
+			machine,
+			(await automaticAgentContinuationEnabled(ctx.db, machine.userId))
+				? { status: 'restarting' }
+				: { status: 'failed', lastError: MACHINE_ENDED }
+		);
 		await ctx.db.patch('machines', machine._id, {
 			lastSeenAt: undefined,
 			updatedAt: Date.now()

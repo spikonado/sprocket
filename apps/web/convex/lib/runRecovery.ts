@@ -5,6 +5,8 @@ import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 export const AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
 
+export const RESTARTING_RUN_TIMEOUT_MS = 5 * 60_000;
+
 export async function automaticAgentContinuationEnabled(
 	db: DatabaseReader,
 	userId: string
@@ -17,8 +19,8 @@ export function isAutomaticallyRecoverableRun(
 	machineId: string
 ): boolean {
 	return (
-		run.status === 'failed' &&
-		run.lastError === RUN_ABANDONED_BY_AGENT &&
+		(run.status === 'restarting' ||
+			(run.status === 'failed' && run.lastError === RUN_ABANDONED_BY_AGENT)) &&
 		run.cancellationRequestedAt === undefined &&
 		run.machineId === machineId
 	);

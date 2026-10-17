@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,6 +13,8 @@ const FAILED_CHECK_TTL: Duration = Duration::from_secs(5 * 60);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_HELPER_STREAM_BYTES: usize = 64 * 1024;
+const UNSUPPORTED_RESTART: &str =
+    "This copy of Sprocket cannot restart itself. Stop Sprocket and launch it again.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +42,8 @@ pub struct PackageUpdateSnapshot {
     pub error: Option<String>,
     pub method: UpdateMethod,
     pub message: Option<String>,
+    #[serde(skip)]
+    pub(crate) restart_launcher: Option<PathBuf>,
 }
 
 impl PackageUpdateSnapshot {
@@ -51,6 +55,7 @@ impl PackageUpdateSnapshot {
             error: None,
             method: UpdateMethod::Package,
             message: None,
+            restart_launcher: None,
         }
     }
 
@@ -63,6 +68,7 @@ impl PackageUpdateSnapshot {
             error: Some(error.clone()),
             method: UpdateMethod::Package,
             message: Some(error),
+            restart_launcher: None,
         }
     }
 }
@@ -104,6 +110,7 @@ struct Inner {
 
 pub struct PackageUpdateManager {
     command: Option<UpdateCommand>,
+    restart_file: Option<PathBuf>,
     success_ttl: Duration,
     failure_ttl: Duration,
     check_timeout: Duration,
@@ -113,13 +120,17 @@ pub struct PackageUpdateManager {
 
 impl PackageUpdateManager {
     pub fn from_env() -> Arc<Self> {
-        Arc::new(Self::new(
+        let mut manager = Self::new(
             parse_update_command_from_env(),
             SUCCESS_CHECK_TTL,
             FAILED_CHECK_TTL,
             CHECK_TIMEOUT,
             INSTALL_TIMEOUT,
-        ))
+        );
+        manager.restart_file = std::env::var_os("SPROCKET_RESTART_FILE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute());
+        Arc::new(manager)
     }
 
     pub fn disabled() -> Arc<Self> {
@@ -147,12 +158,14 @@ impl PackageUpdateManager {
                 error: None,
                 method: UpdateMethod::Package,
                 message: None,
+                restart_launcher: None,
             }
         } else {
             PackageUpdateSnapshot::unavailable()
         };
         Self {
             command,
+            restart_file: None,
             success_ttl,
             failure_ttl,
             check_timeout,
@@ -210,6 +223,21 @@ impl PackageUpdateManager {
         }
         self.start_locked(&mut inner, HelperAction::Install);
         inner.snapshot.clone()
+    }
+
+    /// Tells the npm launcher which updated launcher to start once this process exits.
+    pub async fn prepare_restart(&self) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        anyhow::ensure!(
+            inner.installed,
+            "Install a package update before restarting Sprocket."
+        );
+        let (Some(launcher), Some(restart_file)) =
+            (&inner.snapshot.restart_launcher, &self.restart_file)
+        else {
+            anyhow::bail!(UNSUPPORTED_RESTART);
+        };
+        write_restart_target(restart_file, launcher).await
     }
 
     fn start_locked(
@@ -374,6 +402,16 @@ fn mark_installing(snapshot: &mut PackageUpdateSnapshot) {
     snapshot.message = None;
 }
 
+async fn write_restart_target(restart_file: &Path, launcher: &Path) -> anyhow::Result<()> {
+    let launcher = launcher
+        .to_str()
+        .filter(|_| launcher.is_absolute())
+        .ok_or_else(|| anyhow::anyhow!(UNSUPPORTED_RESTART))?;
+    tokio::fs::write(restart_file, launcher)
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to prepare the restart: {error}"))
+}
+
 enum HelperCollectError {
     TimedOut,
     Wait(std::io::Error),
@@ -504,6 +542,8 @@ struct HelperJson {
     error: Option<String>,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    restart_launcher: Option<PathBuf>,
 }
 
 fn parse_helper_output(
@@ -595,6 +635,9 @@ impl HelperJson {
             error,
             method: UpdateMethod::Package,
             message: self.message.filter(|value| !value.is_empty()),
+            restart_launcher: (status == UpdateStatus::Installed)
+                .then_some(self.restart_launcher)
+                .flatten(),
         }
     }
 }

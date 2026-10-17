@@ -70,10 +70,6 @@ export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
 	return thread.threadStatus !== 'archived';
 }
 
-export function hasActiveRun(thread: Pick<ThreadSummary, 'status'>) {
-	return thread.status === 'queued' || thread.status === 'running';
-}
-
 export function findThreadById(
 	threads: ThreadSummary[],
 	threadId: Id<'threadRecords'> | null

@@ -866,9 +866,16 @@ function inboxRunStatus(thread: Thread): { label: string; className: string } | 
 
 	if (thread.status === 'running') return { label: 'Working', className: 'inbox-working' };
 
+	if (thread.status === 'restarting') return { label: 'Restarting', className: 'inbox-working' };
+
 	return thread.status === 'failed' ? { label: 'Failed', className: 'inbox-attention' } : null;
 }
 
 function canSettleThread(thread: Thread, subtreeActive: boolean): boolean {
-	return !subtreeActive && thread.status !== 'running' && thread.status !== 'queued';
+	return (
+		!subtreeActive &&
+		thread.status !== 'running' &&
+		thread.status !== 'queued' &&
+		thread.status !== 'restarting'
+	);
 }

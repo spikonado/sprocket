@@ -41,7 +41,7 @@ export function updateLabel(state: UpdateState): string | null {
 		case 'installing':
 			return 'Installing update…';
 		case 'installed':
-			return 'Update installed';
+			return 'Restart Sprocket';
 		case 'error':
 			return state.version ? 'Retry update' : null;
 		default:
@@ -72,4 +72,62 @@ export async function requestPackageUpdate(install: boolean): Promise<UpdateStat
 	}
 
 	return updateStateSchema.parse(await response.json());
+}
+
+export async function restartPackageUpdate(version: string): Promise<void> {
+	const baseUrl = resolveLocalApiBaseUrl();
+
+	if (!baseUrl) throw new Error('The Sprocket server is unavailable.');
+
+	const response = await fetch(`${baseUrl}/api/update/restart`, {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'content-type': 'application/json' },
+		signal: AbortSignal.timeout(30_000)
+	});
+
+	if (!response.ok) {
+		const error = z
+			.object({ error: z.string() })
+			.safeParse(await response.json().catch(() => null));
+
+		throw new Error(
+			error.success ? error.data.error : `Restart request failed (${response.status}).`
+		);
+	}
+
+	const previous = z.object({ instanceId: z.string() }).parse(await response.json());
+	const deadline = Date.now() + 90_000;
+	const healthSchema = z.object({ instanceId: z.string(), version: z.string() });
+
+	while (Date.now() < deadline) {
+		try {
+			const health = await fetch(`${baseUrl}/api/health`, {
+				cache: 'no-store',
+				signal: AbortSignal.timeout(2_000)
+			});
+
+			if (health.ok) {
+				const next = healthSchema.safeParse(await health.json());
+
+				if (
+					next.success &&
+					next.data.instanceId !== previous.instanceId &&
+					next.data.version === version
+				) {
+					window.location.reload();
+
+					return;
+				}
+			}
+		} catch {
+			// Connection failures are expected while the server restarts.
+		}
+
+		await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+	}
+
+	throw new Error(
+		'Sprocket did not restart in time. Launch Sprocket again, then reload this page.'
+	);
 }

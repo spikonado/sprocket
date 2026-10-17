@@ -10,6 +10,7 @@ export const selectedThreadLifecyclePhases = [
 	'running',
 	'waiting_for_input',
 	'cancellation_requested',
+	'restarting',
 	'completed',
 	'failed',
 	'cancelled'
@@ -21,6 +22,7 @@ export const vSelectedThreadLifecyclePhase = v.union(
 	v.literal('running'),
 	v.literal('waiting_for_input'),
 	v.literal('cancellation_requested'),
+	v.literal('restarting'),
 	v.literal('completed'),
 	v.literal('failed'),
 	v.literal('cancelled')
@@ -48,7 +50,8 @@ const inProgressPhases: ReadonlySet<SelectedThreadLifecyclePhase> = new Set([
 	'queued',
 	'running',
 	'waiting_for_input',
-	'cancellation_requested'
+	'cancellation_requested',
+	'restarting'
 ]);
 
 export function isLifecycleInProgress(phase: SelectedThreadLifecyclePhase): boolean {
@@ -103,6 +106,10 @@ export function selectedThreadLifecyclePhase(args: {
 
 	if (run.status === 'queued') {
 		return 'queued';
+	}
+
+	if (run.status === 'restarting') {
+		return 'restarting';
 	}
 
 	if (args.waitingForInput && run.status !== 'cancelled') {
