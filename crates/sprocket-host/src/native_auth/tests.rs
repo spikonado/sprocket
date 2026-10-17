@@ -30,6 +30,62 @@ impl NativeAuthManager {
 }
 
 #[derive(Default)]
+struct FakeBrowserSessions {
+    users: std::sync::Mutex<HashMap<String, Option<String>>>,
+}
+
+impl FakeBrowserSessions {
+    fn with_session() -> (Arc<Self>, String) {
+        let sessions = Arc::new(Self::default());
+        let token = "browser-session".to_string();
+        sessions.users.lock().unwrap().insert(token.clone(), None);
+        (sessions, token)
+    }
+
+    fn user(&self, session_token: &str) -> Option<String> {
+        self.users
+            .lock()
+            .unwrap()
+            .get(session_token)
+            .cloned()
+            .flatten()
+    }
+}
+
+impl BrowserSessions for FakeBrowserSessions {
+    fn sync_with_owner<'a>(
+        &'a self,
+        user_id: Option<&'a str>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        for owner in self.users.lock().unwrap().values_mut() {
+            if owner.as_deref() != user_id {
+                *owner = None;
+            }
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn bind_user<'a>(
+        &'a self,
+        session_token: &'a str,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        let mut users = self.users.lock().unwrap();
+        let result = match users.get_mut(session_token) {
+            None => Err(anyhow!("authentication required")),
+            Some(Some(owner)) if owner != user_id => {
+                Err(anyhow!("local session belongs to a different user"))
+            }
+            Some(owner) => {
+                *owner = Some(user_id.to_string());
+                Ok(())
+            }
+        };
+        Box::pin(async move { result })
+    }
+}
+
+#[derive(Default)]
 struct MemoryRefreshTokenStore {
     token: std::sync::Mutex<Option<String>>,
     fail_save: AtomicBool,
@@ -207,7 +263,7 @@ async fn credential_selection_cannot_skip_a_persisted_login() {
     let manager =
         manager_with_response(store.clone(), StatusCode::OK, serde_json::Value::Null).await;
     let error = manager
-        .select_credential_store(crate::cli_protocol::CredentialStore::File)
+        .select_credential_store(CredentialStore::File)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("sign out"));
@@ -264,10 +320,9 @@ async fn device_login_uses_the_shared_session_and_never_discloses_the_device_sec
     ))
     .unwrap();
     let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
-    let directory = tempfile::tempdir().unwrap();
-    let local = crate::auth::AuthState::load(directory.path()).unwrap();
-    let (_, browser_session) = local.bootstrap_browser_session(true).await.unwrap();
-    Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+    let (local, browser_session) = FakeBrowserSessions::with_session();
+    Arc::get_mut(&mut manager).unwrap().browser_sessions =
+        Some(local.clone() as Arc<dyn BrowserSessions>);
     let mut changes = manager.subscribe_changes();
     let login = manager
         .start_device_login("cli-session".into())
@@ -284,7 +339,7 @@ async fn device_login_uses_the_shared_session_and_never_discloses_the_device_sec
         .unwrap();
     let session = manager.browser_session(false).await.unwrap().unwrap();
     local
-        .bind_session_user(&browser_session, &session.user.id)
+        .bind_user(&browser_session, &session.user.id)
         .await
         .unwrap();
     assert_eq!(
@@ -296,7 +351,7 @@ async fn device_login_uses_the_shared_session_and_never_discloses_the_device_sec
     );
     manager.sign_out().await.unwrap();
     assert!(manager.browser_session(false).await.unwrap().is_none());
-    assert!(!local.session_has_user(&browser_session).await);
+    assert_eq!(local.user(&browser_session), None);
 }
 
 #[tokio::test]
@@ -308,10 +363,9 @@ async fn remote_device_login_matches_the_host_owner_without_replacing_its_creden
     ))
     .unwrap();
     let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
-    let directory = tempfile::tempdir().unwrap();
-    let local = crate::auth::AuthState::load(directory.path()).unwrap();
-    let (_, browser_session) = local.bootstrap_browser_session(false).await.unwrap();
-    Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+    let (local, browser_session) = FakeBrowserSessions::with_session();
+    Arc::get_mut(&mut manager).unwrap().browser_sessions =
+        Some(local.clone() as Arc<dyn BrowserSessions>);
     manager.authenticate_for_test("user_123").await;
 
     let login = manager
@@ -330,10 +384,7 @@ async fn remote_device_login_matches_the_host_owner_without_replacing_its_creden
             .unwrap(),
         NativeLoginStatus::Authenticated { user } if user.id == "user_123"
     ));
-    local
-        .require_session_user(&browser_session, "user_123")
-        .await
-        .unwrap();
+    assert_eq!(local.user(&browser_session).as_deref(), Some("user_123"));
     assert!(matches!(
         manager.remote_device_status(&browser_session).await,
         NativeLoginStatus::SignedOut
@@ -671,14 +722,10 @@ async fn failed_login_persistence_does_not_change_local_sessions() {
         serde_json::Value::Null,
     )
     .await;
-    let directory = tempfile::tempdir().unwrap();
-    let local = crate::auth::AuthState::load(directory.path()).unwrap();
-    let (_, local_session) = local.bootstrap_browser_session(true).await.unwrap();
-    local
-        .bind_session_user(&local_session, "user_old")
-        .await
-        .unwrap();
-    Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+    let (local, local_session) = FakeBrowserSessions::with_session();
+    local.bind_user(&local_session, "user_old").await.unwrap();
+    Arc::get_mut(&mut manager).unwrap().browser_sessions =
+        Some(local.clone() as Arc<dyn BrowserSessions>);
     let changes = manager.subscribe_changes();
     let login_generation = manager.session.lock().await.login_generation;
     store.fail_save.store(true, Ordering::SeqCst);
@@ -699,10 +746,7 @@ async fn failed_login_persistence_does_not_change_local_sessions() {
         login_generation
     );
     assert!(!changes.has_changed().unwrap());
-    local
-        .require_session_user(&local_session, "user_old")
-        .await
-        .unwrap();
+    assert_eq!(local.user(&local_session).as_deref(), Some("user_old"));
 }
 
 #[tokio::test]

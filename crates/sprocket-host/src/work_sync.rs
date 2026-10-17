@@ -109,7 +109,7 @@ async fn wait_for_reset(
     }
 }
 
-pub(crate) async fn synchronize(
+pub async fn synchronize(
     client: UserConvexClient,
     store: Arc<TranscriptStore>,
     user: String,

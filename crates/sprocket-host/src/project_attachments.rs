@@ -463,7 +463,7 @@ fn mark_available(
     }
 }
 
-pub(crate) fn repository_key_matches(record: &ProjectAttachmentRecord, requested: &str) -> bool {
+pub fn repository_key_matches(record: &ProjectAttachmentRecord, requested: &str) -> bool {
     let requested = requested.trim();
     !requested.is_empty() && record.repository_key == requested
 }

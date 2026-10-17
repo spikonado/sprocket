@@ -4,6 +4,7 @@ members = [
     "crates/sprocket-transcript",
     "crates/sprocket-workspace",
     "crates/sprocket-agent",
+    "crates/sprocket-host",
     "crates/sprocket-server",
     "crates/sprocket-cli",
 ]

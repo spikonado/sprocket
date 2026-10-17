@@ -19,10 +19,11 @@ use crate::AppState;
 use crate::auth::bearer_token;
 use crate::cli_protocol::*;
 use crate::cli_sessions::CliSession;
-use crate::project_attachments::repository_key_matches;
-use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
+use crate::routes::agent::launch_run;
 use crate::routes::api_error::ApiError;
-use crate::transcript_client::UserConvexClient;
+use sprocket_host::agent_launch::{AgentLaunchRequest, WorkspaceAccess};
+use sprocket_host::project_attachments::repository_key_matches;
+use sprocket_host::transcript_client::UserConvexClient;
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
@@ -88,7 +89,7 @@ async fn bootstrap(
         ))
         .map_err(ApiError::internal)?;
     state
-        .lifetime
+        .cli_sessions
         .connect(&request.client.client_id, &request.session_token)
         .map_err(ApiError::bad_request)?;
     state.auth.create_cli_session(request.session_token).await;
@@ -121,7 +122,7 @@ async fn client_session(
 ) -> Result<Arc<CliSession>, ApiError> {
     let token = session(state, peer, headers).await?;
     state
-        .lifetime
+        .cli_sessions
         .client(client_id, &token)
         .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))
 }
@@ -135,7 +136,7 @@ async fn connect(
     let token = session(&state, peer, &headers).await?;
     require_compatible_client(&state, &request)?;
     state
-        .lifetime
+        .cli_sessions
         .connect(&request.client_id, &token)
         .map_err(ApiError::bad_request)?;
     Ok(Json(true))
@@ -156,7 +157,7 @@ fn require_compatible_client(
         ));
     }
     if request.deployment_url.trim_end_matches('/')
-        != state.convex_deployment_url.trim_end_matches('/')
+        != state.host.convex_deployment_url.trim_end_matches('/')
     {
         return Err(ApiError::with_status(
             StatusCode::CONFLICT,
@@ -186,10 +187,10 @@ async fn release(
 ) -> Result<Json<bool>, ApiError> {
     let token = session(&state, peer, &headers).await?;
     state
-        .lifetime
+        .cli_sessions
         .release(&request.client_id, &token)
         .map_err(ApiError::bad_request)?;
-    state.native_auth.cancel_device_login(&token).await;
+    state.host.native_auth.cancel_device_login(&token).await;
     state
         .auth
         .end_session(&token)
@@ -205,7 +206,11 @@ async fn auth_status(
     Json(request): Json<CliClientRequest>,
 ) -> Result<Json<LoginStatus>, ApiError> {
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
-    let status = state.native_auth.device_status(&client.session_token).await;
+    let status = state
+        .host
+        .native_auth
+        .device_status(&client.session_token)
+        .await;
     if let LoginStatus::Authenticated { user } = &status {
         state
             .auth
@@ -225,12 +230,14 @@ async fn login(
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
     if let Some(store) = request.credential_store {
         state
+            .host
             .native_auth
             .select_credential_store(store)
             .await
             .map_err(ApiError::bad_request)?;
     }
     let response = state
+        .host
         .native_auth
         .start_device_login(client.session_token.clone())
         .await
@@ -246,6 +253,7 @@ async fn logout(
 ) -> Result<Json<bool>, ApiError> {
     client_session(&state, peer, &headers, &request.client_id).await?;
     state
+        .host
         .native_auth
         .sign_out()
         .await
@@ -261,6 +269,7 @@ async fn list_models(
 ) -> Result<Json<CliModelsResponse>, ApiError> {
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
     let user = state
+        .host
         .native_auth
         .browser_session(false)
         .await
@@ -319,8 +328,8 @@ async fn start(
                 if client.cancellation.is_cancelled() {
                     Err(anyhow::anyhow!("CLI run was cancelled before submission"))
                 } else {
-                    launch_agent(
-                        state,
+                    launch_run(
+                        state.host,
                         payload,
                         WorkspaceAccess::RunDirectory,
                         false,
@@ -363,8 +372,8 @@ struct ThreadSettings {
 }
 
 async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserConvexClient> {
-    state.native_auth.require_user(user_id).await?;
-    state.convex_client_for(user_id).await
+    state.host.native_auth.require_user(user_id).await?;
+    state.host.convex_client_for(user_id).await
 }
 
 async fn run_context(
@@ -388,9 +397,10 @@ async fn prepare_run(
     state: &AppState,
     client: &CliSession,
     request: &CliRunRequest,
-) -> anyhow::Result<RunAgentApiRequest> {
+) -> anyhow::Result<AgentLaunchRequest> {
     anyhow::ensure!(!request.prompt.trim().is_empty(), "prompt is empty");
     let user = state
+        .host
         .native_auth
         .browser_session(false)
         .await?
@@ -407,6 +417,7 @@ async fn prepare_run(
     )
     .await??;
     let attachment = state
+        .host
         .project_attachments
         .resolve_run_workspace(request.directory.clone())
         .await?;
@@ -417,7 +428,7 @@ async fn prepare_run(
         );
     }
     let settings = models::resolve(&context, request).await?;
-    Ok(RunAgentApiRequest {
+    Ok(AgentLaunchRequest {
         user_id: user.id,
         submission_id: format!("cli:{}", request.client_id),
         thread_id: request.thread_id.clone(),
@@ -475,6 +486,7 @@ async fn output(
         .await
         .map_err(ApiError::bad_request)?;
     let live = state
+        .host
         .live_completions
         .snapshot(&started.thread_id)
         .filter(|live| live.run_id == started.run_id);
@@ -511,6 +523,7 @@ async fn cancel(
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
     client.cancellation.cancel();
     state
+        .host
         .native_auth
         .cancel_device_login(&client.session_token)
         .await;

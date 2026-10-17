@@ -609,7 +609,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 mod test_support;
 #[cfg(test)]
 mod tests;

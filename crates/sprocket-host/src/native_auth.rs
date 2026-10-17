@@ -1,6 +1,6 @@
 mod credentials;
 mod device;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 mod test_support;
 
 use std::collections::{BTreeMap, HashMap};
@@ -13,6 +13,7 @@ use anyhow::{Context, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use convex::{FunctionResult, Value};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use sprocket_convex::{AuthSignedOut, AuthTokenFetcher, Client as ConvexClient};
 use tokio::sync::{Mutex, OnceCell, watch};
@@ -34,8 +35,37 @@ const NATIVE_SESSION_EXPIRED: &str = "native WorkOS session expired";
 const NATIVE_SESSION_UNAVAILABLE: &str = "Native sign-in is temporarily unavailable. Try again.";
 
 #[derive(Clone, Debug)]
-pub(crate) struct NativeAuthConfig {
+pub struct NativeAuthConfig {
     pub workos_client_id: String,
+}
+
+/// Browser sessions that are bound to the host's signed-in account.
+pub trait BrowserSessions: Send + Sync {
+    /// Unbinds every session that belongs to someone other than `user_id`.
+    fn sync_with_owner<'a>(&'a self, user_id: Option<&'a str>)
+    -> BoxFuture<'a, anyhow::Result<()>>;
+
+    fn bind_user<'a>(
+        &'a self,
+        session_token: &'a str,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>>;
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialStore {
+    #[default]
+    Keyring,
+    File,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceLoginResponse {
+    pub verification_uri: String,
+    pub user_code: String,
+    pub expires_in: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -76,14 +106,14 @@ pub enum NativeLoginStatus {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct NativeLoginStart {
+pub struct NativeLoginStart {
     pub authorization_url: String,
     pub login_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum NativeLoginFlow {
+pub enum NativeLoginFlow {
     SignIn,
     SignUp,
 }
@@ -147,9 +177,9 @@ impl NativeSession {
     }
 }
 
-pub(crate) struct NativeAuthManager {
+pub struct NativeAuthManager {
     changes: watch::Sender<u64>,
-    local_sessions: Option<Arc<crate::auth::AuthState>>,
+    browser_sessions: Option<Arc<dyn BrowserSessions>>,
     deployment_url: Option<String>,
     client: OnceCell<WorkOsClient>,
     callback_url: String,
@@ -163,12 +193,12 @@ impl NativeAuthManager {
         deployment_url: String,
         callback_url: String,
         data_dir: &Path,
-        local_sessions: Arc<crate::auth::AuthState>,
+        browser_sessions: Option<Arc<dyn BrowserSessions>>,
     ) -> Arc<Self> {
         let refresh_tokens = Arc::new(ProfileCredentials::new(&deployment_url, data_dir));
         Arc::new(Self {
             changes: watch::channel(0).0,
-            local_sessions: Some(local_sessions),
+            browser_sessions,
             deployment_url: Some(deployment_url),
             client: OnceCell::new(),
             callback_url,
@@ -643,8 +673,8 @@ impl NativeAuthManager {
     }
 
     async fn publish_session_change(&self, user_id: Option<&str>) -> anyhow::Result<()> {
-        let result = match &self.local_sessions {
-            Some(sessions) => sessions.sync_sessions_with_owner(user_id).await,
+        let result = match &self.browser_sessions {
+            Some(sessions) => sessions.sync_with_owner(user_id).await,
             None => Ok(()),
         };
         self.changes

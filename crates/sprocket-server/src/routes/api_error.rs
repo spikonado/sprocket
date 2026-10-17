@@ -2,6 +2,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
+use sprocket_host::agent_launch::LaunchError;
 
 #[derive(Debug)]
 pub(crate) struct ApiError {
@@ -59,6 +60,20 @@ impl IntoResponse for ApiError {
             Json(serde_json::json!({ "error": self.message })),
         )
             .into_response()
+    }
+}
+
+impl From<LaunchError> for ApiError {
+    fn from(error: LaunchError) -> Self {
+        let status = match &error {
+            LaunchError::Rejected(_) => StatusCode::BAD_REQUEST,
+            LaunchError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            LaunchError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            message: error.to_string(),
+        }
     }
 }
 

@@ -1,5 +1,4 @@
 use super::*;
-use crate::cli_protocol::{CredentialStore, DeviceLoginResponse};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -338,13 +337,11 @@ impl NativeAuthManager {
                 user.clone()
             }
         };
-        let local_sessions = self
-            .local_sessions
+        let browser_sessions = self
+            .browser_sessions
             .as_ref()
             .context("local browser sessions are unavailable")?;
-        local_sessions
-            .bind_session_user(session_token, &user.id)
-            .await?;
+        browser_sessions.bind_user(session_token, &user.id).await?;
         if let Some(attempt) = session.remote_devices.remove(session_token) {
             attempt.cancel.cancel();
         }

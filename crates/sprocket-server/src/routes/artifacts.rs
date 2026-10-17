@@ -14,9 +14,9 @@ use tokio::sync::broadcast;
 use tokio::time::timeout;
 
 use crate::AppState;
-use crate::artifact_watch::is_native_account_revoked;
 use crate::routes::api_error::ApiError;
 use crate::routes::session::{AuthorizedJson, UserScoped};
+use sprocket_host::artifact_watch::is_native_account_revoked;
 
 const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -68,11 +68,12 @@ async fn delete_handler(
         )));
     }
     let attachment = state
+        .host
         .project_attachments
         .require_matching_workspace(workspace_path, repository_key)
         .await
         .map_err(ApiError::bad_request)?;
-    let store = state.artifact_watchers.bindings(
+    let store = state.host.artifact_watchers.bindings(
         &payload.user_id,
         std::path::Path::new(&attachment.workspace_path),
     );
@@ -91,7 +92,7 @@ async fn delete_handler(
     // Keep the store exclusive until Convex removes the artifact so a
     // concurrent save cannot recreate the file from the still-visible record.
     let result = timeout(AUTHORIZE_TIMEOUT, async {
-        let client = state.convex_client_for(&payload.user_id).await?;
+        let client = state.host.convex_client_for(&payload.user_id).await?;
         client
             .mutate::<serde_json::Value>("artifacts:deleteArtifact", args)
             .await
@@ -119,12 +120,14 @@ async fn watch_handler(
         )));
     }
     let attachment = state
+        .host
         .project_attachments
         .require_matching_workspace(workspace_path, repository_key)
         .await
         .map_err(ApiError::bad_request)?;
     authorize_watch_project(&state, &payload.user_id, repository_key).await?;
     let session = state
+        .host
         .artifact_watchers
         .open(&payload.user_id, repository_key, &attachment.workspace_path)
         .await;
@@ -171,7 +174,7 @@ async fn authorize_watch_project(
         Value::String(repository_key.to_string()),
     );
     let query = timeout(AUTHORIZE_TIMEOUT, async {
-        let client = state.convex_client_for(user_id).await?;
+        let client = state.host.convex_client_for(user_id).await?;
         client
             .query::<serde_json::Value>("artifacts:getArtifactState", args)
             .await
@@ -188,7 +191,7 @@ async fn authorize_watch_project(
 }
 
 fn encode_watch_event(
-    event: crate::artifact_watch::ArtifactWatchEvent,
+    event: sprocket_host::artifact_watch::ArtifactWatchEvent,
 ) -> Option<Result<Event, Infallible>> {
     Event::default().json_data(event).ok().map(Ok)
 }

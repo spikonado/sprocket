@@ -25,13 +25,13 @@ struct Inner<K, E, S> {
 /// A refcounted map of watch keys to a shared background task and broadcast
 /// channel. Always construct as an `Arc`; sessions hold one back so `close`
 /// works from `Drop` without a runtime.
-pub(crate) struct WatchRegistry<K: Eq + Hash, E, S = ()> {
+pub struct WatchRegistry<K: Eq + Hash, E, S = ()> {
     inner: Mutex<Inner<K, E, S>>,
 }
 
 /// Handle to one open watch. Dropping the last handle for a key aborts the
 /// background task.
-pub(crate) struct WatchSession<K: Eq + Hash, E, S = ()> {
+pub struct WatchSession<K: Eq + Hash, E, S = ()> {
     registry: Arc<WatchRegistry<K, E, S>>,
     key: K,
     generation: u64,

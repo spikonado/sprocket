@@ -1,31 +1,14 @@
-mod artifact_watch;
 mod auth;
-mod chatgpt_credentials;
 pub mod cli_protocol;
 mod cli_sessions;
-mod command_sessions;
-mod command_sync;
 mod config;
-mod machine_identity;
-mod machines;
-mod native_auth;
-mod package_update;
-mod profile;
-mod project_attachments;
 pub mod repo_env;
 mod routes;
-mod run_recovery;
 mod static_dir;
 mod static_files;
-mod subagent_launcher;
-mod transcript_client;
-mod transcript_watch;
-mod watch_registry;
-mod work_sync;
-mod workspace_search;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
-pub use profile::read_server_address;
+pub use sprocket_host::profile::read_server_address;
 use static_dir::is_valid_static_dir;
 pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
@@ -40,21 +23,10 @@ use axum::Router;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::CookieJar;
-use sprocket_transcript::{LiveCompletionHub, TranscriptStore};
+use sprocket_host::profile::ProfileLock;
+use sprocket_host::{Host, HostConfig};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
-
-use crate::artifact_watch::ArtifactWatchers;
-use crate::transcript_client::UserConvexClient;
-use crate::transcript_watch::TranscriptWatchers;
-
-pub(crate) fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
@@ -93,27 +65,14 @@ impl StartupInfo {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub(crate) lifetime: Arc<cli_sessions::ServerLifetime>,
+    pub host: Host,
+    pub(crate) cli_sessions: Arc<cli_sessions::CliSessions>,
     pub auth: Arc<auth::AuthState>,
-    pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
-    pub(crate) chatgpt_credentials: Arc<chatgpt_credentials::ChatGptService>,
     pub(crate) chatgpt_oauth: Arc<routes::chatgpt::PendingLogins>,
-    pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
-    pub transcript: Arc<TranscriptStore>,
-    pub transcript_watchers: Arc<TranscriptWatchers>,
-    pub artifact_watchers: Arc<ArtifactWatchers>,
-    pub(crate) workspace_search: Arc<workspace_search::WorkspaceSearchIndex>,
-    pub machines: Arc<machines::MachineManager>,
-    pub live_completions: Arc<LiveCompletionHub>,
-    pub(crate) command_sessions: Arc<command_sessions::ThreadCommandSessions>,
     pub http_base_url: String,
     pub loopback_desktop_login_supported: bool,
-    pub convex_deployment_url: String,
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
-    pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
-    pub(crate) run_recovery: Arc<run_recovery::RunRecovery>,
-    pub package_updates: Arc<package_update::PackageUpdateManager>,
 }
 
 impl AppState {
@@ -126,22 +85,11 @@ impl AppState {
         crate::auth::require_session_user(&self.auth, headers, jar, user_id)
             .await
             .map_err(routes::api_error::ApiError::unauthorized)?;
-        self.native_auth
+        self.host
+            .native_auth
             .require_user(user_id)
             .await
             .map_err(routes::api_error::ApiError::unauthorized)
-    }
-
-    pub(crate) async fn convex_client_for(
-        &self,
-        user_id: &str,
-    ) -> anyhow::Result<UserConvexClient> {
-        UserConvexClient::connect_with_fetcher(
-            &self.convex_deployment_url,
-            self.native_auth
-                .auth_token_fetcher_for_user(user_id.to_string()),
-        )
-        .await
     }
 }
 
@@ -170,34 +118,16 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
-    let profile = profile::ProfileLock::acquire(&data_dir)?;
+    let profile = ProfileLock::acquire(&data_dir)?;
     let auth = auth::AuthState::load(&data_dir)?;
-    let native_auth = native_auth::NativeAuthManager::new(
-        convex_deployment_url.clone(),
-        auth::desktop_login_callback_url(config.port),
-        &data_dir,
-        Arc::clone(&auth),
-    );
-    let lifetime = cli_sessions::ServerLifetime::new(options.temporary);
-    let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
-    let machines = machines::MachineManager::new(
-        convex_deployment_url.clone(),
-        Arc::clone(&native_auth),
-        Arc::clone(&machine_identity),
-    );
-    let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
-    let transcript = TranscriptStore::new(data_dir.join("transcripts"));
-    let transcript_watchers = TranscriptWatchers::new(
-        convex_deployment_url.clone(),
-        Arc::clone(&transcript),
-        Arc::clone(&native_auth),
-    );
-    let artifact_watchers = ArtifactWatchers::new(
-        convex_deployment_url.clone(),
-        Arc::clone(&native_auth),
-        data_dir.join("artifact-bindings"),
-    );
-    let workspace_search = workspace_search::WorkspaceSearchIndex::new();
+    let host = Host::load(HostConfig {
+        data_dir: data_dir.clone(),
+        convex_deployment_url,
+        native_login_callback_url: auth::desktop_login_callback_url(config.port),
+        browser_sessions: Some(
+            Arc::clone(&auth) as Arc<dyn sprocket_host::native_auth::BrowserSessions>
+        ),
+    })?;
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -210,32 +140,24 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
-    let chatgpt_credentials = chatgpt_credentials::ChatGptService::load_or_unavailable(&data_dir)?;
-    let pending_chatgpt_oauth =
-        routes::chatgpt::PendingLogins::new(Arc::clone(&chatgpt_credentials), Arc::clone(&auth));
+    let pending_chatgpt_oauth = routes::chatgpt::PendingLogins::new(
+        Arc::clone(&host.chatgpt_credentials),
+        Arc::clone(&auth),
+    );
+    let cli_sessions = Arc::new(cli_sessions::CliSessions::new(
+        Arc::clone(&host.lifetime),
+        options.temporary,
+    ));
 
     let state = AppState {
-        lifetime: Arc::clone(&lifetime),
+        host: host.clone(),
+        cli_sessions: Arc::clone(&cli_sessions),
         auth,
-        native_auth: Arc::clone(&native_auth),
-        chatgpt_credentials,
         chatgpt_oauth: Arc::clone(&pending_chatgpt_oauth),
-        project_attachments,
-        transcript,
-        transcript_watchers,
-        artifact_watchers,
-        workspace_search: Arc::new(workspace_search),
-        machines: Arc::clone(&machines),
-        live_completions: Arc::new(LiveCompletionHub::new()),
-        command_sessions: Arc::new(command_sessions::ThreadCommandSessions::default()),
         http_base_url: http_base_url.clone(),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
-        convex_deployment_url,
         web_ui_enabled,
         desktop_bootstrap_token,
-        machine_identity,
-        run_recovery: run_recovery::RunRecovery::load(&data_dir)?,
-        package_updates: package_update::PackageUpdateManager::from_env(),
     };
 
     let startup = StartupInfo {
@@ -283,66 +205,36 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     }
 
-    let cleanup_store = Arc::clone(&state.transcript);
-    let cleanup = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
-            if let Err(error) = cleanup_store.prune_pending_attachments(cutoff).await {
-                eprintln!("sprocket-server: failed to expire pending attachments: {error}");
-            }
-        }
-    });
-    let command_sessions = Arc::clone(&state.command_sessions);
-    let command_sync_store = Arc::clone(&state.transcript);
-    let command_sync_auth = Arc::clone(&state.native_auth);
-    let command_sync_deployment = state.convex_deployment_url.clone();
-    let command_sync_machine = state.machine_identity.installation_id.clone();
-    let command_sync = command_sync::spawn(
-        Arc::clone(&state.transcript),
-        Arc::clone(&state.command_sessions),
-        Arc::clone(&state.native_auth),
-        state.convex_deployment_url.clone(),
-        state.machine_identity.installation_id.clone(),
-    );
-    let command_cleanup_sessions = Arc::clone(&command_sessions);
-    let command_cleanup = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            command_cleanup_sessions.prune().await;
-        }
-    });
-    let recovery = run_recovery::spawn(state.clone());
+    let host_tasks = host.start();
     let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
-    let shutdown_machines = Arc::clone(&machines);
 
+    let lifetime = Arc::clone(&host.lifetime);
     let shutdown = lifetime.shutdown.clone();
     let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async move {
-        tokio::select! {
-            _ = shutdown_signal() => {},
-            _ = async {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    let (stop, expired) = lifetime.tick(std::time::Instant::now());
-                    for session in expired {
-                        native_auth.cancel_device_login(&session).await;
-                        let _ = lease_auth.end_session(&session).await;
+    .with_graceful_shutdown({
+        let host = host.clone();
+        async move {
+            tokio::select! {
+                _ = shutdown_signal() => {},
+                _ = async {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        let (stop, expired) = cli_sessions.tick(std::time::Instant::now());
+                        for session in expired {
+                            host.native_auth.cancel_device_login(&session).await;
+                            let _ = lease_auth.end_session(&session).await;
+                        }
+                        if stop { break; }
                     }
-                    if stop { break; }
-                }
-            } => {},
+                } => {},
+            }
+            lifetime.shutdown.cancel();
+            host.machines.stop_registration();
         }
-        lifetime.shutdown.cancel();
-        shutdown_machines.stop_registration();
     })
     .into_future();
     tokio::pin!(server);
@@ -352,32 +244,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
             tokio::time::timeout(Duration::from_secs(10), &mut server).await.unwrap_or(Ok(()))
         }
     };
-    cleanup.abort();
-    recovery.abort();
-    let _ = recovery.await;
-    let _ = cleanup.await;
-    command_cleanup.abort();
-    let _ = command_cleanup.await;
-    command_sessions.stop_all().await;
-    command_sync.abort();
-    let _ = command_sync.await;
-    if let Err(error) = tokio::time::timeout(
-        Duration::from_secs(10),
-        command_sync::flush(
-            &command_sync_store,
-            &command_sessions,
-            &command_sync_auth,
-            &command_sync_deployment,
-            &command_sync_machine,
-        ),
-    )
-    .await
-    .unwrap_or_else(|error| Err(error.into()))
-    {
-        tracing::warn!("command sync remains pending on disk after shutdown: {error:#}");
-    }
+    host_tasks.shutdown().await;
     routes::chatgpt::shutdown(&pending_chatgpt_oauth).await;
-    machines.shutdown().await;
     result?;
     Ok(())
 }

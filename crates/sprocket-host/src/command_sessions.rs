@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 /// Owns command processes independently of the run that launched them. Scopes
 /// come from authenticated run creation, never from a command tool argument.
 #[derive(Default)]
-pub(crate) struct ThreadCommandSessions {
+pub struct ThreadCommandSessions {
     threads: Mutex<HashMap<(String, String), CommandSessionManager>>,
     stopped: AtomicBool,
 }

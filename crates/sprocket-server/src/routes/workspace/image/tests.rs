@@ -11,8 +11,8 @@ async fn image_test_app(data_dir: &Path) -> (axum::Router, String) {
     let auth = crate::auth::AuthState::load(data_dir).unwrap();
     let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
     auth.bind_session_user(&token, "test-user").await.unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".to_string(),
         },
         crate::auth::desktop_login_callback_url(7731),
@@ -22,7 +22,7 @@ async fn image_test_app(data_dir: &Path) -> (axum::Router, String) {
         native_auth,
         data_dir.to_path_buf(),
         true,
-        crate::package_update::PackageUpdateManager::disabled(),
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
     (routes().with_state(state), token)
 }

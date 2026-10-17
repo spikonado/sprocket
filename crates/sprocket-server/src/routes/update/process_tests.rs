@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::*;
 use crate::auth;
-use crate::package_update::PackageUpdateManager;
+use sprocket_host::package_update::PackageUpdateManager;
 
 struct TempDir(PathBuf);
 
@@ -60,8 +60,8 @@ async fn test_state(package_updates: Arc<PackageUpdateManager>) -> (AppState, St
     auth.bind_session_user(&session_token, "test-user")
         .await
         .unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".to_string(),
         },
         auth::desktop_login_callback_url(7731),
@@ -293,7 +293,9 @@ exit 1"#,
 async fn finish_install(manager: &Arc<PackageUpdateManager>, directory: &Path) {
     fs::write(directory.join("finish"), "").unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
-        while manager.status().await.status == crate::package_update::UpdateStatus::Installing {
+        while manager.status().await.status
+            == sprocket_host::package_update::UpdateStatus::Installing
+        {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })

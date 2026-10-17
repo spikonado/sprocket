@@ -22,7 +22,7 @@ const DYNAMIC_CLIENT: &str = "dynamic_agent_client";
 const RESPONSE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Clone)]
-pub(crate) struct ChatGptService {
+pub struct ChatGptService {
     state: Arc<Mutex<Store>>,
     path: Arc<PathBuf>,
     issuer: String,
@@ -75,7 +75,7 @@ struct Tokens {
     refresh_in_flight: bool,
 }
 
-pub(crate) struct PendingGrant {
+pub struct PendingGrant {
     user: String,
     expected_connection: Option<String>,
     expected_session: Option<String>,
@@ -87,7 +87,7 @@ pub(crate) struct PendingGrant {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ServiceStatus {
+pub struct ServiceStatus {
     accounts: Vec<AccountStatus>,
     active_connection_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -318,11 +318,11 @@ async fn json<T: DeserializeOwned>(mut response: reqwest::Response) -> anyhow::R
 }
 
 impl ChatGptService {
-    pub(crate) fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
+    pub fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
         Self::load_with_issuer(data_dir, ISSUER)
     }
 
-    pub(crate) fn load_or_unavailable(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
+    pub fn load_or_unavailable(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
         Self::load(data_dir).or_else(|_| {
             Self::from_state(
                 data_dir.join("chatgpt-siwc.json"),
@@ -337,7 +337,7 @@ impl ChatGptService {
         })
     }
 
-    pub(crate) fn available(&self) -> bool {
+    pub fn available(&self) -> bool {
         self.storage_error.is_none()
     }
 
@@ -472,14 +472,14 @@ impl ChatGptService {
         sender.send_replace(session(accounts));
     }
 
-    pub(crate) fn for_user(self: &Arc<Self>, user: String) -> Arc<dyn ChatGptCredentials> {
+    pub fn for_user(self: &Arc<Self>, user: String) -> Arc<dyn ChatGptCredentials> {
         Arc::new(UserCredentials {
             service: Arc::clone(self),
             user,
         })
     }
 
-    pub(crate) async fn authorization(
+    pub async fn authorization(
         &self,
         user: &str,
         connection: Option<&str>,
@@ -549,7 +549,7 @@ impl ChatGptService {
         verify_identity(token, &keys.keys, client_id, nonce)
     }
 
-    pub(crate) async fn exchange(
+    pub async fn exchange(
         &self,
         user: &str,
         connection: Option<&str>,
@@ -630,12 +630,12 @@ impl ChatGptService {
         outcome
     }
 
-    pub(crate) async fn discard(&self, grant: PendingGrant) {
+    pub async fn discard(&self, grant: PendingGrant) {
         self.revoke(&grant.client_id, &grant.tokens.refresh_token)
             .await;
     }
 
-    pub(crate) async fn commit(&self, user: &str, grant: PendingGrant) -> anyhow::Result<()> {
+    pub async fn commit(&self, user: &str, grant: PendingGrant) -> anyhow::Result<()> {
         let mut state = self.state.lock().await;
         let outcome = async {
             ensure!(
@@ -733,7 +733,7 @@ impl ChatGptService {
         outcome
     }
 
-    pub(crate) async fn select(&self, user: &str, connection: &str) -> anyhow::Result<()> {
+    pub async fn select(&self, user: &str, connection: &str) -> anyhow::Result<()> {
         let service = self.clone();
         let user = user.to_owned();
         let connection = connection.to_owned();
@@ -822,11 +822,7 @@ impl ChatGptService {
         false
     }
 
-    pub(crate) async fn disconnect(
-        &self,
-        user: &str,
-        connection: &str,
-    ) -> anyhow::Result<Option<String>> {
+    pub async fn disconnect(&self, user: &str, connection: &str) -> anyhow::Result<Option<String>> {
         self.forget(user, connection, false).await
     }
 
@@ -1047,7 +1043,7 @@ impl ChatGptService {
         }
     }
 
-    pub(crate) async fn status(&self, user: &str) -> anyhow::Result<ServiceStatus> {
+    pub async fn status(&self, user: &str) -> anyhow::Result<ServiceStatus> {
         let service = self.clone();
         let user = user.to_owned();
         tokio::spawn(async move {

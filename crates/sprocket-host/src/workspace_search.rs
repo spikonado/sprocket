@@ -7,19 +7,19 @@ use fff_search::file_picker::{FFFMode, FilePicker, FilePickerOptions, FuzzySearc
 use fff_search::types::MixedItemRef;
 use fff_search::{MixedSearchConfig, PaginationArgs, QueryParser, SharedFilePicker};
 
-pub(crate) const SEARCH_RESULT_LIMIT: usize = 30;
-pub(crate) const MAX_QUERY_CHARS: usize = 128;
+pub const SEARCH_RESULT_LIMIT: usize = 30;
+pub const MAX_QUERY_CHARS: usize = 128;
 const MAX_CACHED_WORKSPACES: usize = 8;
 const PICKER_TTL: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkspaceSearchEntry {
+pub struct WorkspaceSearchEntry {
     pub path: String,
     pub is_dir: bool,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct SearchOutcome {
+pub struct SearchOutcome {
     pub entries: Vec<WorkspaceSearchEntry>,
     pub scanning: bool,
 }
@@ -41,9 +41,9 @@ struct CachedPicker {
 }
 
 // Call through spawn_blocking. fff uses blocking locks and background scan threads.
-pub(crate) struct WorkspaceSearchIndex {
+pub struct WorkspaceSearchIndex {
     pickers: Mutex<HashMap<PathBuf, CachedPicker>>,
-    pub(crate) search_slots: Arc<tokio::sync::Semaphore>,
+    pub search_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl WorkspaceSearchIndex {
@@ -54,11 +54,7 @@ impl WorkspaceSearchIndex {
         }
     }
 
-    pub(crate) fn search(
-        &self,
-        workspace_root: &Path,
-        query: &str,
-    ) -> anyhow::Result<SearchOutcome> {
+    pub fn search(&self, workspace_root: &Path, query: &str) -> anyhow::Result<SearchOutcome> {
         anyhow::ensure!(
             query.chars().count() <= MAX_QUERY_CHARS,
             "workspace search query is too long"

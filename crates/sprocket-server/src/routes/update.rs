@@ -6,9 +6,9 @@ use axum::routing::{get, post};
 
 use crate::AppState;
 use crate::auth::cookie_request_is_csrf_safe;
-use crate::package_update::PackageUpdateSnapshot;
 use crate::routes::api_error::{ApiError, no_store};
 use crate::routes::session::MachineSession;
+use sprocket_host::package_update::PackageUpdateSnapshot;
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
@@ -20,14 +20,14 @@ async fn status(
     State(state): State<AppState>,
     MachineSession: MachineSession,
 ) -> Result<Response, ApiError> {
-    Ok(update_response(state.package_updates.status().await))
+    Ok(update_response(state.host.package_updates.status().await))
 }
 
 async fn install(
     State(state): State<AppState>,
     UpdateSession: UpdateSession,
 ) -> Result<Response, ApiError> {
-    Ok(update_response(state.package_updates.install().await))
+    Ok(update_response(state.host.package_updates.install().await))
 }
 
 struct UpdateSession;
