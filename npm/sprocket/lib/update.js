@@ -659,6 +659,24 @@ export async function installUpdate(host) {
 				};
 			}
 
+			const launcherCheck = await host.runCommand(host.execPath, [restartLauncher, '--version'], {
+				cwd: host.homedir(),
+				env: host.env,
+				platform: host.platform,
+				timeout: QUERY_TIMEOUT_MS
+			});
+
+			if (launcherCheck.timedOut || (launcherCheck.status ?? 1) !== 0) {
+				return {
+					payload: makePayload({
+						status: 'error',
+						currentVersion,
+						version: checked.version,
+						error: `Sprocket ${checked.version} was installed but cannot start: ${sanitize(launcherCheck.stderr) || 'the launcher check failed'}`
+					})
+				};
+			}
+
 			return {
 				payload: {
 					...makePayload({

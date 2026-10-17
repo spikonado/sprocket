@@ -196,6 +196,10 @@ function testHost(options = {}) {
 				return options.install ?? { status: 0, stdout: '', stderr: '' };
 			}
 
+			if (args.at(-1) === '--version') {
+				return options.launcherCheck ?? { status: 0, stdout: '0.3.5', stderr: '' };
+			}
+
 			return { status: 1, stdout: '', stderr: 'unexpected command' };
 		},
 		open:
@@ -450,6 +454,25 @@ test('install returns installed with a relaunch message and keeps the running ve
 	assert.equal(payload.message, RELAUNCH_MESSAGE);
 	assert.equal(payload.error, null);
 	assert.equal(payload.restartLauncher, path.resolve(NPM_PACKAGE, 'bin/sprocket.js'));
+});
+
+test('install reports an error when the updated launcher cannot start', async () => {
+	const { host, commands } = testHost({
+		launcherCheck: { status: 1, stdout: '', stderr: 'sprocket: The native package is missing.' }
+	});
+
+	const payload = await installUpdate(host);
+	assert.equal(payload.status, 'error');
+	assert.match(
+		payload.error,
+		/0\.3\.5 was installed but cannot start: sprocket: The native package/
+	);
+	assert.equal(payload.restartLauncher, undefined);
+
+	assert.deepEqual(commands.at(-1).args, [
+		path.resolve(NPM_PACKAGE, 'bin/sprocket.js'),
+		'--version'
+	]);
 });
 
 test('install API retains the stable pnpm launcher across package symlink replacement', async (t) => {
