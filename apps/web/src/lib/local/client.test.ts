@@ -166,17 +166,18 @@ describe('display transcript pages', () => {
 		);
 	});
 
-	it('preserves display cursors, stream acknowledgements, and row changes', async () => {
+	it('preserves display cursors, activity counts, stream acknowledgements, and row changes', async () => {
 		const row = {
 			id: 'row-499',
 			threadId: 'thread-1',
 			runId: 'run-1',
 			sequence: 499,
-			kind: 'text',
-			text: 'Last completion',
+			kind: 'work',
 			attachments: [],
-			itemCount: 0,
+			itemCount: 3,
 			pendingTools: 0,
+			toolCounts: { read_skill: 1, exec_cmd: 1, poll_cmd: 1 },
+			unpersistedToolCallIds: ['command'],
 			closed: true,
 			revision: 500
 		};

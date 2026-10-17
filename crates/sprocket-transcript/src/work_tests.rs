@@ -67,6 +67,7 @@ fn newest_first_parts_converge_to_one_section() {
     assert_eq!(page["syncing"], true);
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     assert_eq!(page["rows"][0]["itemCount"], 1);
+    assert_eq!(page["rows"][0]["toolCounts"], json!({}));
     assert_eq!(
         page["persistedStreams"],
         json!([{"runId":"run","streamId":"1"}])
@@ -113,6 +114,10 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
     event.created_at = Some(10);
     replica.save_parts("thread", &[event]).unwrap();
     assert_eq!(
+        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["toolCounts"],
+        json!({"poll_cmd":1})
+    );
+    assert_eq!(
         replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["pendingTools"],
         1
     );
@@ -137,6 +142,10 @@ fn tool_event_before_completion_is_visible_and_then_pairs_with_the_call() {
         .unwrap();
     assert_eq!(details["parts"].as_array().unwrap().len(), 1);
     assert_eq!(details["parts"][0]["callId"], "call");
+    assert_eq!(
+        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["toolCounts"],
+        json!({"poll_cmd":1})
+    );
     assert_eq!(
         details["parts"][0]["input"],
         json!({"sessionId":"canonical-session"})
@@ -464,5 +473,261 @@ fn old_command_session_caches_migrate_without_losing_transcript_data() {
     assert_eq!(
         reopened.page(None, 10, None, &[], false).unwrap()["revision"],
         page["revision"]
+    );
+}
+
+#[test]
+fn tool_counts_follow_displayed_calls_in_both_download_orders() {
+    let completion = assigned_part(
+        0,
+        vec![
+            json!({"type":"reasoning","text":"checking files","name":"not-a-tool"}),
+            json!({"type":"tool-call","callId":"repeated","name":"read_file"}),
+            json!({"type":"tool-call","callId":"repeated","name":"read_file"}),
+            json!({"type":"tool-call","name":"list_artifacts"}),
+            json!({"type":"tool-result","callId":"repeated","name":"not-a-call"}),
+        ],
+        json!({"ranges":[{"start":0,"end":5,"sectionKey":"section"}],
+            "toolInvocations":[{"item":1,"toolInvocationId":"one"},
+                {"item":2,"toolInvocationId":"two"}]}),
+    );
+    let started = tool_part(1, "one", "started", json!(null));
+    let mut failed = tool_part(2, "one", "failed", json!({"error":"missing"}));
+    failed.tool.as_mut().unwrap().name = "result-name".into();
+    let mut poll = tool_part(3, "poll", "started", json!(null));
+    poll.tool.as_mut().unwrap().name = "poll_cmd".into();
+    let mut poll_finished = tool_part(4, "poll", "completed", json!({"running":false}));
+    poll_finished.tool.as_mut().unwrap().name = "poll_cmd".into();
+    let mut terminal_only = tool_part(5, "terminal-only", "failed", json!({"error":"failed"}));
+    terminal_only.tool.as_mut().unwrap().name = "control_cmd".into();
+    let parts = [
+        completion,
+        started,
+        failed,
+        poll,
+        poll_finished,
+        terminal_only,
+    ];
+    for newest_first in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+        let ordered: Vec<_> = if newest_first {
+            parts.iter().rev().cloned().collect()
+        } else {
+            parts.to_vec()
+        };
+        for part in ordered {
+            replica.save_parts("thread", &[part]).unwrap();
+        }
+        let page = replica.page(None, 10, None, &[], false).unwrap();
+        assert_eq!(page["rows"][0]["itemCount"], 6);
+        assert_eq!(page["rows"][0]["pendingTools"], 1);
+        assert_eq!(
+            page["rows"][0]["toolCounts"],
+            json!({"read_file":2,"list_artifacts":1,"poll_cmd":1,"control_cmd":1})
+        );
+    }
+}
+
+#[test]
+fn saved_tool_events_identify_live_count_overlap_until_completion_arrives() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let started = tool_part(0, "one", "started", json!(null));
+    replica.save_parts("thread", &[started]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"][0]["toolCounts"], json!({"read_file":1}));
+    assert_eq!(
+        page["rows"][0]["unpersistedToolCallIds"],
+        json!(["repeated"])
+    );
+
+    let terminal = tool_part(1, "one", "completed", json!({}));
+    replica.save_parts("thread", &[terminal]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(
+        page["rows"][0]["unpersistedToolCallIds"],
+        json!(["repeated"])
+    );
+
+    let completion = assigned_part(
+        2,
+        vec![json!({"type":"tool-call","callId":"repeated","name":"read_file"})],
+        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}],
+            "toolInvocations":[{"item":0,"toolInvocationId":"one"}]}),
+    );
+    replica.save_parts("thread", &[completion]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"][0]["toolCounts"], json!({"read_file":1}));
+    assert_eq!(page["rows"][0]["unpersistedToolCallIds"], json!([]));
+}
+
+#[test]
+fn tool_counts_cover_large_completions_across_sections() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let items = (0..2048)
+        .map(|n| json!({"type":"tool-call","callId":format!("call-{n}"),"name":"exec_cmd"}))
+        .collect();
+    let completion = assigned_part(
+        0,
+        items,
+        json!({"ranges":[{"start":0,"end":1024,"sectionKey":"first"},
+            {"start":1024,"end":2048,"sectionKey":"second"}]}),
+    );
+    replica.save_parts("thread", &[completion]).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 2);
+    for row in page["rows"].as_array().unwrap() {
+        assert_eq!(row["toolCounts"], json!({"exec_cmd":1024}));
+    }
+}
+
+#[test]
+fn old_tool_counts_migrate_in_batches_and_publish_row_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let items = (0..65)
+        .map(|n| json!({"type":"tool-call","callId":format!("call-{n}"),"name":"read_file"}))
+        .collect();
+    let ranges: Vec<_> = (0..65)
+        .map(|n| json!({"start":n,"end":n+1,"sectionKey":format!("section-{n}")}))
+        .collect();
+    let part = assigned_part(0, items, json!({"ranges":ranges}));
+    replica.save_parts("thread", &[part.clone()]).unwrap();
+    replica.set_remote_total(3).unwrap();
+    let before = replica.page(None, 100, None, &[], false).unwrap();
+    let identity: String = replica.state("replicaId").unwrap().unwrap();
+    replica
+        .db
+        .execute_batch(
+            "UPDATE sections SET body=json_remove(body,'$.toolCounts');
+        UPDATE rows SET body=json_remove(body,'$.toolCounts') WHERE kind='work';
+        DELETE FROM state WHERE key IN ('toolCountsMigrated','toolCountsMigrationCursor');",
+        )
+        .unwrap();
+    let legacy_body: String = replica
+        .db
+        .query_row("SELECT body FROM sections LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    let legacy: super::sections::WorkSection = serde_json::from_str(&legacy_body).unwrap();
+    assert_eq!(legacy.tool_counts, None);
+    drop(replica);
+
+    let replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let page = replica
+        .page(
+            None,
+            100,
+            Some((before["revision"].as_u64().unwrap(), -1)),
+            &[],
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        page["revision"].as_i64().unwrap(),
+        before["revision"].as_i64().unwrap() + 2
+    );
+    assert_eq!(page["rows"].as_array().unwrap().len(), 65);
+    assert_eq!(page["changes"].as_array().unwrap().len(), 64);
+    assert_eq!(page["moreChanges"], true);
+    for (old, new) in before["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(page["rows"].as_array().unwrap())
+    {
+        assert_eq!(new["toolCounts"], json!({"read_file":1}));
+        let mut expected = old.clone();
+        expected["revision"] = new["revision"].clone();
+        assert_eq!(new, &expected);
+    }
+    let cursor = &page["changesCursor"];
+    let rest = replica
+        .page(
+            None,
+            100,
+            Some((
+                cursor["revision"].as_u64().unwrap(),
+                cursor["sequence"].as_i64().unwrap(),
+            )),
+            &[],
+            false,
+        )
+        .unwrap();
+    assert_eq!(rest["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        rest["changes"][0]["row"]["toolCounts"],
+        json!({"read_file":1})
+    );
+    assert_eq!(replica.part(0).unwrap().unwrap(), part);
+    assert_eq!(
+        replica.state::<String>("replicaId").unwrap().unwrap(),
+        identity
+    );
+    assert_eq!(replica.state::<u32>("total").unwrap(), Some(3));
+    assert_eq!(replica.downloaded_prefix().unwrap(), 1);
+    let body: String = replica
+        .db
+        .query_row(
+            "SELECT body FROM sections WHERE key='section-0'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let section: super::sections::WorkSection = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        serde_json::to_value(section.tool_counts).unwrap(),
+        json!({"read_file":1})
+    );
+    drop(replica);
+
+    let reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        reopened.state::<bool>("toolCountsMigrated").unwrap(),
+        Some(true)
+    );
+    assert!(
+        reopened
+            .state::<String>("toolCountsMigrationCursor")
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        reopened.page(None, 100, None, &[], false).unwrap()["revision"],
+        page["revision"]
+    );
+}
+
+#[test]
+fn imported_summaries_keep_counts_unknown_until_sources_are_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let first = assigned_part(
+        0,
+        vec![json!({"type":"tool-call","callId":"one","name":"read_file"})],
+        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}]}),
+    );
+    replica.save_parts("thread", &[first]).unwrap();
+    replica.db.execute_batch(
+        "UPDATE sections SET body=json_set(json_remove(body,'$.toolCounts'),'$.itemCount',2);
+        UPDATE rows SET body=json_set(json_remove(body,'$.toolCounts'),'$.itemCount',2) WHERE kind='work';
+        DELETE FROM state WHERE key IN ('toolCountsMigrated','toolCountsMigrationCursor');"
+    ).unwrap();
+    let generation = replica.generation().unwrap();
+    drop(replica);
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let page = replica.page(None, 10, None, &[], false).unwrap();
+    assert_eq!(page["rows"][0].get("toolCounts"), None);
+    assert_eq!(replica.generation().unwrap(), generation);
+    let second = assigned_part(
+        1,
+        vec![json!({"type":"tool-call","callId":"two","name":"read_file"})],
+        json!({"ranges":[{"start":0,"end":1,"sectionKey":"section"}]}),
+    );
+    replica.save_parts("thread", &[second]).unwrap();
+    assert_eq!(
+        replica.page(None, 10, None, &[], false).unwrap()["rows"][0]["toolCounts"],
+        json!({"read_file":2})
     );
 }

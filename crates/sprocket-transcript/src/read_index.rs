@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TranscriptPart;
@@ -181,6 +183,43 @@ impl ReadIndex<'_> {
             [section],
             |row| row.get(0),
         )?)
+    }
+
+    pub fn tool_counts(&self, section: &str) -> anyhow::Result<BTreeMap<String, u32>> {
+        Ok(self
+            .0
+            .prepare(&format!(
+                "WITH displayed AS MATERIALIZED (
+                    SELECT s.number,s.offset,s.canonical FROM source_refs s
+                    WHERE s.section=? AND {DISPLAY_ITEM}
+                ), completions AS MATERIALIZED (
+                    SELECT p.number,CAST(j.key AS INTEGER) AS offset,json_extract(j.value,'$.name') AS name,
+                        json_extract(j.value,'$.type') AS kind
+                    FROM parts p JOIN (SELECT DISTINCT number FROM displayed WHERE canonical=1) d
+                        ON d.number=p.number, json_each(p.body,'$.completion.items') j
+                ), tools AS (
+                    SELECT c.name,c.kind FROM displayed d JOIN completions c
+                        ON c.number=d.number AND c.offset=d.offset WHERE d.canonical=1
+                    UNION ALL
+                    SELECT json_extract(p.body,'$.tool.name'),'tool-call'
+                    FROM displayed d JOIN parts p ON p.number=d.number WHERE d.canonical=0
+                )
+                SELECT name,COUNT(*) FROM tools
+                WHERE kind='tool-call' AND typeof(name)='text' GROUP BY name"
+            ))?
+            .query_map([section], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?)
+    }
+
+    pub fn unpersisted_tool_call_ids(&self, section: &str) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .0
+            .prepare(&format!(
+                "SELECT DISTINCT call_id FROM source_refs s
+                WHERE section=? AND canonical=0 AND call_id IS NOT NULL AND {DISPLAY_ITEM}"
+            ))?
+            .query_map([section], |row| row.get(0))?
+            .collect::<Result<_, _>>()?)
     }
 
     fn event(&self, item: &WorkItem, terminal: bool) -> anyhow::Result<Option<WorkItem>> {

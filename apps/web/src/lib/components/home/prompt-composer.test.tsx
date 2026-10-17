@@ -49,7 +49,6 @@ function composerProps(overrides: Partial<PromptComposerViewProps> = {}): Prompt
 		isSubmitting: false,
 		isStarting: false,
 		isRunning: false,
-		runStartedAt: null,
 		usage: undefined,
 		usageFailed: false,
 		onSubmit: vi.fn(),
@@ -216,7 +215,7 @@ describe('PromptComposer file drag and drop', () => {
 		dispatchDrag(composer, 'dragenter', transfer);
 		expect(document.querySelector('[role="status"]')).not.toBeNull();
 		rerender({ ...props, isRunning: true });
-		expect(document.querySelector('[role="status"]')).toBeNull();
+		expect(within(composer).queryByText('Drop files to attach')).toBeNull();
 
 		dispatchDrag(composer, 'dragover', transfer);
 		expect(transfer.dropEffect).toBe('none');

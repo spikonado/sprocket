@@ -470,7 +470,8 @@ export default defineSchema({
 		end: v.optional(v.number()),
 		toolInvocationId: v.optional(v.string()),
 		sectionOrdinal: v.optional(v.number()),
-		closed: v.optional(v.boolean())
+		closed: v.optional(v.boolean()),
+		countedThrough: v.optional(v.number())
 	})
 		.index('by_threadId_and_entryKey', ['threadId', 'entryKey'])
 		.index('by_threadId_sectionKey_partNumber_start', [

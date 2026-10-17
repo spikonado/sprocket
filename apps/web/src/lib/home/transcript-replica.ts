@@ -15,12 +15,6 @@ export type TranscriptReplicaApi = Pick<
 	'fetchTranscriptDisplay' | 'watchTranscript' | 'watchLiveCompletion'
 >;
 
-type RunTiming = {
-	runId: Id<'runs'>;
-	startedAt: number;
-	completedAt?: number;
-} | null;
-
 type WatchArgs = {
 	api: TranscriptReplicaApi;
 	userId: string;
@@ -147,26 +141,13 @@ export class TranscriptReplica implements Store<number> {
 	visibleMessages(args: {
 		threadId: Id<'threadRecords'> | null;
 		userId: string | null;
-		run: RunTiming;
 	}): TranscriptMessage[] {
 		if (!args.threadId || !args.userId || this.threadId !== args.threadId) return [];
 		const overlays = this.#history?.visibleOverlays(this.overlays) ?? [];
 
-		const liveMessages = mergeLiveOverlays(
-			overlays.filter((overlay) => overlay.threadId === args.threadId)
-		);
-
 		return [
 			...visibleDisplayMessages(this.messages, overlays),
-			...liveMessages.map((message) =>
-				message.runId === args.run?.runId
-					? {
-							...message,
-							runStartedAt: args.run.startedAt,
-							runCompletedAt: args.run.completedAt
-						}
-					: message
-			)
+			...mergeLiveOverlays(overlays.filter((overlay) => overlay.threadId === args.threadId))
 		];
 	}
 

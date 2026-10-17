@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
 
 export type PersistedWork = NonNullable<Doc<'threadTranscriptParts'>['work']>;
 
@@ -90,6 +91,7 @@ async function updateSummary(
 			provisional: false,
 			itemCount: Math.max(1, args.itemDelta),
 			pendingTools: Math.max(0, args.pendingDelta),
+			toolCounts: {},
 			startedAt: args.startedAt,
 			completedAt: args.pendingDelta > 0 ? undefined : args.completedAt
 		});
@@ -160,12 +162,15 @@ async function insertEntry(
 			throw new Error('Conflicting transcript section retry.');
 		}
 
-		return false;
+		return { entry: existing, inserted: false };
 	}
 
-	await ctx.db.insert('threadTranscriptMemberships', { ...args, entryKey: key });
+	const id = await ctx.db.insert('threadTranscriptMemberships', { ...args, entryKey: key });
+	const entry = await ctx.db.get('threadTranscriptMemberships', id);
 
-	return true;
+	if (!entry) throw new Error('Missing transcript membership.');
+
+	return { entry, inserted: true };
 }
 
 export async function writeCompletionSectionData(
@@ -198,18 +203,18 @@ export async function writeCompletionSectionData(
 
 		if (!section) throw new Error('Completion work range has no section metadata.');
 
-		if (
-			await insertEntry(ctx, {
-				threadId: args.part.threadId,
-				runId: args.part.runId,
-				partNumber: args.part.number,
-				sectionKey: range.sectionKey,
-				start: range.start,
-				end: range.end,
-				sectionOrdinal: section.sectionOrdinal,
-				closed: section.closed
-			})
-		) {
+		const membership = await insertEntry(ctx, {
+			threadId: args.part.threadId,
+			runId: args.part.runId,
+			partNumber: args.part.number,
+			sectionKey: range.sectionKey,
+			start: range.start,
+			end: range.end,
+			sectionOrdinal: section.sectionOrdinal,
+			closed: section.closed
+		});
+
+		if (membership.inserted) {
 			const representedTools =
 				args.part.completion?.items
 					.slice(range.start, range.end)
@@ -227,6 +232,8 @@ export async function writeCompletionSectionData(
 				pendingDelta: 0
 			});
 		}
+
+		await countMembershipTools(ctx, args.part, membership.entry, args.representedCallIds);
 	}
 }
 
@@ -241,36 +248,113 @@ export async function writeToolSectionData(
 		occurredAt?: number;
 	}
 ) {
-	if (
-		!(await insertEntry(ctx, {
-			threadId: args.part.threadId,
-			runId: args.part.runId,
-			partNumber: args.part.number,
-			sectionKey: args.sectionKey,
-			start: 0,
-			end: 1,
-			toolInvocationId: args.toolInvocationId,
-			sectionOrdinal: args.sectionOrdinal,
-			closed: false
-		}))
-	) {
-		return;
-	}
-
-	await updateSummary(ctx, {
+	const membership = await insertEntry(ctx, {
 		threadId: args.part.threadId,
 		runId: args.part.runId,
 		partNumber: args.part.number,
+		sectionKey: args.sectionKey,
 		start: 0,
 		end: 1,
-		metadata: {
-			sectionKey: args.sectionKey,
-			sectionOrdinal: args.sectionOrdinal,
-			closed: false
-		},
-		itemDelta: 0,
-		pendingDelta: args.started ? 1 : -1,
-		startedAt: args.started ? args.occurredAt : undefined,
-		completedAt: args.started ? undefined : args.occurredAt
+		toolInvocationId: args.toolInvocationId,
+		sectionOrdinal: args.sectionOrdinal,
+		closed: false
 	});
+
+	if (membership.inserted) {
+		await updateSummary(ctx, {
+			threadId: args.part.threadId,
+			runId: args.part.runId,
+			partNumber: args.part.number,
+			start: 0,
+			end: 1,
+			metadata: {
+				sectionKey: args.sectionKey,
+				sectionOrdinal: args.sectionOrdinal,
+				closed: false
+			},
+			itemDelta: 0,
+			pendingDelta: args.started ? 1 : -1,
+			startedAt: args.started ? args.occurredAt : undefined,
+			completedAt: args.started ? undefined : args.occurredAt
+		});
+	}
+
+	await countMembershipTools(ctx, args.part, membership.entry);
+}
+
+export async function countMembershipTools(
+	ctx: MutationCtx,
+	part: Doc<'threadTranscriptParts'>,
+	entry: Doc<'threadTranscriptMemberships'>,
+	representedCallIds?: Set<string>
+) {
+	const { start: rangeStart, end: rangeEnd, sectionKey } = entry;
+
+	if (rangeStart === undefined || rangeEnd === undefined || !sectionKey) return;
+
+	const start = entry.countedThrough ?? rangeStart;
+
+	if (start >= rangeEnd) return;
+
+	const end = Math.min(rangeEnd, start + 64);
+
+	const section = await ctx.db
+		.query('threadTranscriptWorkSections')
+		.withIndex('by_threadId_and_key', (q) => q.eq('threadId', part.threadId).eq('key', sectionKey))
+		.unique();
+
+	if (!section) return;
+
+	const counts = new Map(Object.entries(section.toolCounts ?? {}));
+	const add = (name: string) => counts.set(name, (counts.get(name) ?? 0) + 1);
+
+	if (part.kind === 'tool' && part.tool?.status === 'started') add(part.tool.name);
+
+	if (part.kind === 'completion') {
+		const invocations = new Map(
+			part.work.toolInvocations?.map((value) => [value.item, value.toolInvocationId])
+		);
+
+		for (let index = start; index < end; index++) {
+			const item = part.completion?.items[index];
+
+			if (item?.type !== 'tool-call' || representedCallIds?.has(item.callId)) continue;
+
+			let invocation = invocations.get(index);
+
+			if (!invocation) {
+				const job = await ctx.db
+					.query('executorJobs')
+					.withIndex('by_runId_and_callId', (q) =>
+						q.eq('runId', part.runId).eq('callId', item.callId)
+					)
+					.order('desc')
+					.first();
+
+				invocation = job?.toolInvocationId ?? job?._id;
+			}
+
+			const started =
+				invocation &&
+				(await ctx.db
+					.query('threadTranscriptParts')
+					.withIndex('by_threadId_and_sourceKey', (q) =>
+						q.eq('threadId', part.threadId).eq('sourceKey', `tool:${invocation}:started`)
+					)
+					.unique());
+
+			if (!started || started.work.sectionKey !== sectionKey) add(item.name);
+		}
+	}
+
+	await ctx.db.patch('threadTranscriptWorkSections', section._id, {
+		toolCounts: Object.fromEntries(counts)
+	});
+	await ctx.db.patch('threadTranscriptMemberships', entry._id, { countedThrough: end });
+
+	if (end < rangeEnd) {
+		await ctx.scheduler.runAfter(0, internal.migrations.continueSectionToolCounts, {
+			membershipId: entry._id
+		});
+	}
 }

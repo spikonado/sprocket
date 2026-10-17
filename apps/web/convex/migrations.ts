@@ -1,9 +1,11 @@
 import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation } from '@convex/_generated/server';
+import type { Doc } from '@convex/_generated/dataModel';
+import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { computeAccess } from '@convex/lib/subscriptionProjection';
+import { countMembershipTools } from '@convex/lib/transcriptSectionWrites';
 import { scheduleSubscriptionExpiry } from '@convex/subscriptionExpiry';
 
 export const migrations = new Migrations(components.migrations, {
@@ -109,3 +111,49 @@ export const runSubscriptionAccessBackfill = internalMutation({
 		return null;
 	}
 });
+
+export const initializeSectionToolCounts = migrations.define({
+	table: 'threadTranscriptWorkSections',
+	migrateOne: (_ctx, section) => (section.toolCounts === undefined ? { toolCounts: {} } : undefined)
+});
+
+export const backfillSectionToolCounts = migrations.define({
+	table: 'threadTranscriptMemberships',
+	batchSize: 1,
+	migrateOne: async (ctx, entry) => {
+		await countSectionMembership(ctx, entry);
+	}
+});
+
+async function countSectionMembership(ctx: MutationCtx, entry: Doc<'threadTranscriptMemberships'>) {
+	const { partNumber } = entry;
+
+	if (partNumber === undefined) return;
+
+	const part = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_number', (q) =>
+			q.eq('threadId', entry.threadId).eq('number', partNumber)
+		)
+		.unique();
+
+	if (part) await countMembershipTools(ctx, part, entry);
+}
+
+export const continueSectionToolCounts = internalMutation({
+	args: { membershipId: v.id('threadTranscriptMemberships') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const entry = await ctx.db.get('threadTranscriptMemberships', args.membershipId);
+
+		if (entry) await countSectionMembership(ctx, entry);
+
+		return null;
+	}
+});
+
+// Replays from the hourly cron no-op once both migrations are done.
+export const runSectionToolCountBackfill = migrations.runner([
+	internal.migrations.initializeSectionToolCounts,
+	internal.migrations.backfillSectionToolCounts
+]);

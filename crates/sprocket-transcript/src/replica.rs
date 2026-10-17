@@ -66,7 +66,66 @@ impl WorkReplica {
         )?;
         let mut replica = Self { db };
         replica.migrate_command_session_index()?;
+        replica.migrate_tool_counts()?;
         Ok(replica)
+    }
+
+    fn migrate_tool_counts(&mut self) -> anyhow::Result<()> {
+        if self.state::<bool>("toolCountsMigrated")? == Some(true) {
+            return Ok(());
+        }
+        loop {
+            let cursor = self
+                .state::<String>("toolCountsMigrationCursor")?
+                .unwrap_or_default();
+            let generation = self.generation()? + 1;
+            let tx = self.db.transaction()?;
+            let sections: Vec<(String, String, Option<String>)> = tx
+                .prepare(
+                    "SELECT c.key,c.body,r.body FROM sections c LEFT JOIN rows r ON r.id=c.key
+                    WHERE c.key>?1 ORDER BY c.key LIMIT 64",
+                )?
+                .query_map([cursor], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<_, _>>()?;
+            if sections.is_empty() {
+                Self::put_state(&tx, "toolCountsMigrated", &true)?;
+                tx.commit()?;
+                return Ok(());
+            }
+            let next_cursor = sections.last().map(|(key, _, _)| key.clone());
+            let mut changed = false;
+            for (key, body, row) in sections {
+                let mut section: Value = serde_json::from_str(&body)?;
+                let index = ReadIndex(&tx);
+                if !section["toolCounts"].is_null()
+                    || section["itemCount"].as_u64() != Some(u64::from(index.item_count(&key)?))
+                {
+                    continue;
+                }
+                let counts = serde_json::to_value(index.tool_counts(&key)?)?;
+                let unpersisted_tool_call_ids =
+                    serde_json::to_value(index.unpersisted_tool_call_ids(&key)?)?;
+                changed = true;
+                section["toolCounts"] = counts.clone();
+                section["unpersistedToolCallIds"] = unpersisted_tool_call_ids.clone();
+                tx.execute(
+                    "UPDATE sections SET body=? WHERE key=?",
+                    params![section.to_string(), key],
+                )?;
+                if let Some(row) = row {
+                    let mut row: Value = serde_json::from_str(&row)?;
+                    row["toolCounts"] = counts;
+                    row["unpersistedToolCallIds"] = unpersisted_tool_call_ids;
+                    let first = serde_json::from_value(section["first"].clone())?;
+                    Self::put_row(&tx, row, first, generation)?;
+                }
+            }
+            if changed {
+                Self::put_state(&tx, "generation", &generation)?;
+            }
+            Self::put_state(&tx, "toolCountsMigrationCursor", &next_cursor)?;
+            tx.commit()?;
+        }
     }
 
     fn migrate_command_session_index(&mut self) -> anyhow::Result<()> {
@@ -282,6 +341,8 @@ impl WorkReplica {
             provisional: false,
             item_count: u32::try_from(items.len())?,
             pending_tools,
+            tool_counts: Some(index.tool_counts(key)?),
+            unpersisted_tool_call_ids: Some(index.unpersisted_tool_call_ids(key)?),
             started_at,
             completed_at,
         };

@@ -554,6 +554,26 @@ unknown when those fields are absent. Stream identity cannot be reconstructed
 after the fact, so that variant stays permanently. Input validators may remain
 optional when current model providers do not supply a timestamp.
 
+#### Work section tool counts
+
+Persisted work sections and `TranscriptDisplayRow` accept optional
+`toolCounts`, which older rows and local runtimes omit. Membership
+`countedThrough` is persistent dedup state, not a shim.
+
+`migrations:runSectionToolCountBackfill` fills counts for existing Convex
+sections. An hourly cron replays it, which is safe while new writes continue.
+Historical counts can be partial until it finishes. Once it completes in every
+deployment, make stored `toolCounts` required and remove the cron and both
+migrations.
+
+Local display rows also emit optional `unpersistedToolCallIds`. Keep both
+transport fields optional until supported local runtimes all emit them.
+
+Local `WorkSection` accepts missing counts. Opening an existing replica fills
+them for cached sections whose transcript parts are fully downloaded. Remove
+that migration once supported data directories have passed through a
+counts-aware runtime.
+
 #### Tool invocation IDs
 
 Historical tool parts use `jobId` and source keys of the form `tool:<jobId>`.
