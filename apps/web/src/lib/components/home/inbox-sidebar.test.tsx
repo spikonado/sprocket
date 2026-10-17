@@ -290,6 +290,25 @@ it('opens a single linked PR in a new tab without opening the thread', async () 
 	expect(input.onSelect).not.toHaveBeenCalled();
 });
 
+it('keeps the PR button in place when a rename commits on blur', async () => {
+	const input = await render([{ ...thread(), pullRequests: [linkedPr(12, 'open')] }]);
+	const link = document.querySelector('.inbox-pr-button')!;
+
+	await userEvent.setup().dblClick(document.querySelector('.inbox-row-open')!);
+	await flush();
+	const renameInput = document.querySelector('[aria-label="Rename thread"]')!;
+
+	fireEvent.change(renameInput, { target: { value: 'Updated thread' } });
+	fireEvent.blur(renameInput);
+	await flush();
+
+	expect(input.onRename).toHaveBeenCalledWith(
+		expect.objectContaining({ _id: 'thread' }),
+		'Updated thread'
+	);
+	expect(document.querySelector('.inbox-pr-button')).toBe(link);
+});
+
 it('lists several linked PRs, newest first, in a dashboard beside one button', async () => {
 	const input = await render([
 		{
@@ -402,7 +421,8 @@ it.each([
 		await userEvent.setup().dblClick(document.querySelector('.inbox-row-open')!);
 		await flush();
 
-		expect(document.querySelector('form .inbox-row-meta .inbox-status')?.textContent).toBe(label);
+		expect(document.querySelector('[aria-label="Rename thread"]')).toBeTruthy();
+		expect(document.querySelector('.inbox-row-meta .inbox-status')?.textContent).toBe(label);
 	}
 );
 

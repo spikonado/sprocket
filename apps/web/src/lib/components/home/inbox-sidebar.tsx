@@ -724,49 +724,38 @@ function ThreadTreeRow({
 				role="group"
 				aria-label={thread.title ?? 'New thread'}
 			>
-				{renaming ? (
-					<form
-						className="inbox-row-main"
-						onSubmit={(event) => {
-							event.preventDefault();
-							void onCommitRename();
-						}}
-					>
-						<span className="inbox-row-meta">
-							<span className="truncate">{projectName}</span>
-							{status && (
-								<span className={cn('inbox-status shrink-0', status.className)}>
-									{status.label}
-								</span>
-							)}
-						</span>
-						<input
-							ref={renameInputRef}
-							value={renameTitle}
-							onChange={(event) => onRenameTitleChange(event.currentTarget.value)}
-							className="inbox-row-rename-input"
-							aria-label="Rename thread"
-							maxLength={300}
-							onKeyDown={(event) => {
-								if (event.key !== 'Escape') return;
+				<div className="inbox-row-main">
+					<span className="inbox-row-meta">
+						<span className="truncate">{projectName}</span>
+						{status && (
+							<span className={cn('inbox-status shrink-0', status.className)}>{status.label}</span>
+						)}
+					</span>
+					{/* The title button's overlay makes the whole row clickable while the PR button stays outside it. */}
+					{renaming ? (
+						<form
+							className="contents"
+							onSubmit={(event) => {
 								event.preventDefault();
-								onCancelRename();
+								void onCommitRename();
 							}}
-							onBlur={() => void onCommitRename()}
-						/>
-						<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
-					</form>
-				) : (
-					<div className="inbox-row-main">
-						<span className="inbox-row-meta">
-							<span className="truncate">{projectName}</span>
-							{status && (
-								<span className={cn('inbox-status shrink-0', status.className)}>
-									{status.label}
-								</span>
-							)}
-						</span>
-						{/* Its overlay makes the whole row clickable while the PR button stays outside it. */}
+						>
+							<input
+								ref={renameInputRef}
+								value={renameTitle}
+								onChange={(event) => onRenameTitleChange(event.currentTarget.value)}
+								className="inbox-row-rename-input"
+								aria-label="Rename thread"
+								maxLength={300}
+								onKeyDown={(event) => {
+									if (event.key !== 'Escape') return;
+									event.preventDefault();
+									onCancelRename();
+								}}
+								onBlur={() => void onCommitRename()}
+							/>
+						</form>
+					) : (
 						<button
 							className="inbox-row-open inbox-row-title truncate"
 							type="button"
@@ -780,9 +769,9 @@ function ThreadTreeRow({
 						>
 							{thread.title ?? 'New thread'}
 						</button>
-						<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
-					</div>
-				)}
+					)}
+					<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
+				</div>
 				{!renaming && isRoot && (
 					<div className="inbox-row-actions">
 						{sectionState === 'unsettled' ? (
