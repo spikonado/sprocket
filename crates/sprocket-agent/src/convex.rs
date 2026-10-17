@@ -254,13 +254,7 @@ impl RuntimeClient {
         if !request.fallback_providers.is_empty() {
             args.insert(
                 "fallbackProviders".to_string(),
-                Value::Array(
-                    request
-                        .fallback_providers
-                        .iter()
-                        .map(|provider| provider.as_str().into())
-                        .collect(),
-                ),
+                providers_value(&request.fallback_providers),
             );
         }
         args.insert(
@@ -513,21 +507,8 @@ impl RuntimeClient {
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
-        for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
-            match self
-                .mutation_checked("agentRuntime:omitReasoningReplay", args.clone())
-                .await
-            {
-                Ok(active) => return Ok(active),
-                Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
-                    sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
-                }
-                Err(MutationFailure::Transport(error) | MutationFailure::Functional(error)) => {
-                    return Err(error);
-                }
-            }
-        }
-        unreachable!("reasoning replay save attempts exhausted")
+        self.claim_mutation_with_retries("agentRuntime:omitReasoningReplay", args)
+            .await
     }
 
     /// Returns false when the run no longer owns this claim.
@@ -539,11 +520,18 @@ impl RuntimeClient {
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("completionProvider".to_string(), provider.as_str().into());
+        self.claim_mutation_with_retries("agentRuntime:fallBackToProvider", args)
+            .await
+    }
+
+    /// Retries transport failures of a mutation that reports whether the claim is still active.
+    async fn claim_mutation_with_retries(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<bool> {
         for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
-            match self
-                .mutation_checked("agentRuntime:fallBackToProvider", args.clone())
-                .await
-            {
+            match self.mutation_checked(function, args.clone()).await {
                 Ok(active) => return Ok(active),
                 Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
                     sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
@@ -553,7 +541,7 @@ impl RuntimeClient {
                 }
             }
         }
-        unreachable!("provider fallback save attempts exhausted")
+        unreachable!("{function} attempts exhausted")
     }
 
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {
@@ -689,6 +677,15 @@ impl RuntimeClient {
 
 fn string_array(ids: &[String]) -> Value {
     Value::Array(ids.iter().cloned().map(Value::from).collect())
+}
+
+pub(crate) fn providers_value(providers: &[CompletionProvider]) -> Value {
+    Value::Array(
+        providers
+            .iter()
+            .map(|provider| provider.as_str().into())
+            .collect(),
+    )
 }
 
 #[cfg(test)]

@@ -55,8 +55,9 @@ export function providerServesVendor(provider: CompletionProvider, vendor: strin
 	return provider === 'spikonado' || vendor === 'openai';
 }
 
-export function assertValidProviderChain(chain: readonly CompletionProvider[]) {
-	if (chain.length === 0 || new Set(chain).size !== chain.length) {
-		throw new Error('A run needs at least one provider, each listed once.');
-	}
+export function sameProviderChain(
+	left: readonly CompletionProvider[],
+	right: readonly CompletionProvider[]
+) {
+	return left.length === right.length && left.every((provider, index) => provider === right[index]);
 }

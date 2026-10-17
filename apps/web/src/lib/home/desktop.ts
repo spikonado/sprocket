@@ -10,6 +10,7 @@ import type {
 } from '$lib/types/sprocket';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { isRunFinalStatus, type CompletionProvider } from '@convex/lib/validators';
+import { sameProviderChain } from '@convex/lib/providerOrder';
 import type { SelectedThreadLifecyclePhase } from '@convex/lib/runCancellation';
 import { areStorageIdsEqual } from '$lib/chat/attachments';
 
@@ -79,18 +80,14 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
 		recoveredSubmission.fastMode === args.fastMode &&
-		areProviderChainsEqual(recoveredSubmission.providerChain, args.providerChain) &&
+		sameProviderChain(
+			recoveredSubmission.providerChain ?? ['spikonado'],
+			args.providerChain ?? ['spikonado']
+		) &&
 		recoveredSubmission.continuationOfRunId === args.continuationOfRunId &&
 		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
-}
-
-function areProviderChainsEqual(
-	left: CompletionProvider[] = ['spikonado'],
-	right: CompletionProvider[] = ['spikonado']
-) {
-	return left.length === right.length && left.every((provider, index) => provider === right[index]);
 }
 
 export type RunResumeKind = 'crash' | 'failed' | 'cancelled';

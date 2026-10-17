@@ -45,7 +45,7 @@ import {
 	type vReasoningEffort
 } from '@convex/lib/validators';
 import { withRunExecution, getRunExecutionState } from '@convex/lib/runExecution';
-import { assertValidProviderChain } from '@convex/lib/providerOrder';
+import { sameProviderChain } from '@convex/lib/providerOrder';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -120,10 +120,6 @@ export function runProviderChain(run: Doc<'runs'>): CompletionProvider[] {
 	return run.providerChain ?? [run.completionProvider ?? 'spikonado'];
 }
 
-function sameProviders(left: CompletionProvider[], right: CompletionProvider[]) {
-	return left.length === right.length && left.every((provider, index) => provider === right[index]);
-}
-
 async function terminalJobsReady(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
 	const execution = await getRunExecutionState(ctx.db, run._id);
 
@@ -148,7 +144,11 @@ export async function createQueuedRunRecord(
 
 	const secretHash = await executionSecretHash(args.executionSecret);
 	const providerChain = requestedProviderChain(args);
-	assertValidProviderChain(providerChain);
+
+	if (new Set(providerChain).size !== providerChain.length) {
+		throw new Error('A run can list each provider only once.');
+	}
+
 	const completionProvider = providerChain[0];
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
@@ -410,7 +410,7 @@ async function reconcileExistingQueuedRun(
 		(args.repositoryKey !== undefined &&
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
-		!sameProviders(runProviderChain(existingRun), requestedProviderChain(args)) ||
+		!sameProviderChain(runProviderChain(existingRun), requestedProviderChain(args)) ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches

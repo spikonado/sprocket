@@ -21,7 +21,7 @@ use super::async_tools::{default_yield_ms, is_default_yield_ms, yield_time_schem
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
 use super::job::execute_tool_job_with_id;
 use crate::catalog::ProviderCatalog;
-use crate::convex::MutationFailure;
+use crate::convex::{MutationFailure, providers_value};
 use crate::subagents::{
     CreateSubagentRunResponse, ResolvedSubagentSettings, SharedSubagentLauncher,
     SubagentControlResponse, SubagentLaunchRequest, SubagentListPage, SubagentMonitorInfo,
@@ -1069,15 +1069,6 @@ async fn resolve_child_settings(
         .filter(|provider| provider.serves_vendor(vendor))
         .collect();
     Ok((resolved, providers))
-}
-
-fn providers_value(providers: &[CompletionProvider]) -> Value {
-    Value::Array(
-        providers
-            .iter()
-            .map(|provider| provider.as_str().into())
-            .collect(),
-    )
 }
 
 fn subagent_args(
