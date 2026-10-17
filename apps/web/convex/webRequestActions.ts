@@ -3,25 +3,24 @@
 import { v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
 import { internalAction } from '@convex/_generated/server';
-import { executeQueuedScrape } from '@convex/webTools';
-import { REQUEST_TTL_MS } from '@convex/firecrawlRequests';
+import { executeQueuedWebRequest } from '@convex/webTools';
+import { REQUEST_TTL_MS } from '@convex/webRequests';
 
 export const execute = internalAction({
-	args: { id: v.id('firecrawlRequests') },
+	args: { id: v.id('webRequests') },
 	returns: v.null(),
 	handler: async (ctx, { id }) => {
-		const claimed = await ctx.runMutation(internal.firecrawlRequests.claim, { id });
+		const claimed = await ctx.runMutation(internal.webRequests.claim, { id });
 
 		if (!claimed) return null;
-		const { request } = claimed;
-		const result = await executeQueuedScrape(ctx, request);
+		const result = await executeQueuedWebRequest(ctx, claimed.request);
 
 		const storageId = await ctx.storage.store(
 			new Blob([JSON.stringify(result)], { type: 'application/json' })
 		);
 
 		try {
-			await ctx.scheduler.runAfter(REQUEST_TTL_MS, internal.firecrawlRequests.removeResult, {
+			await ctx.scheduler.runAfter(REQUEST_TTL_MS, internal.webRequests.removeResult, {
 				storageId
 			});
 		} catch (error) {
@@ -29,7 +28,7 @@ export const execute = internalAction({
 			throw error;
 		}
 
-		await ctx.runMutation(internal.firecrawlRequests.publish, { id, storageId });
+		await ctx.runMutation(internal.webRequests.publish, { id, storageId });
 
 		return null;
 	}

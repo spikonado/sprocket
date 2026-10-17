@@ -1,281 +1,73 @@
-import { vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
 import { ConvexError, v } from 'convex/values';
-import { getRunWithExecution } from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
-import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
-import { getExecutionRun } from '@convex/lib/auth';
+import type { Id } from '@convex/_generated/dataModel';
+import { internalMutation, mutation, query } from '@convex/_generated/server';
+import { RUN_NO_LONGER_ACTIVE, TOOL_NO_LONGER_SUPPORTED } from '@convex/lib/agentErrors';
 import {
-	RUN_NO_LONGER_ACTIVE,
-	TOOL_NO_LONGER_SUPPORTED,
-	toAgentToolConvexError
-} from '@convex/lib/agentErrors';
-import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
-import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
-import schema from '@convex/schema';
-import { isRunFinalStatus } from '@convex/lib/validators';
+	REQUEST_ENDED,
+	disposeRequest,
+	readRequestResult,
+	vRequestResult
+} from '@convex/webRequests';
 
-export const REQUEST_TTL_MS = 8 * 60_000;
-
-export const vRequestArgs = schema
-	.doc('firecrawlRequests')
-	.pick('runId', 'claimId', 'jobId', 'kind', 'rawDocument');
-
-export const scrapeJob = internalMutation({
-	args: { runId: v.id('runs'), claimId: v.string(), jobId: v.id('executorJobs') },
-	handler: async (ctx, args) => {
-		const active = await claimedJobForActiveRun(ctx, args);
-
-		if (!active || active.job.status !== 'claimed' || active.job.cloudWorkId !== undefined)
-			return null;
-
-		if (active.job.kind !== 'scrape_url') return null;
-
-		return { kind: active.job.kind, payload: active.job.payload };
-	}
-});
-
-async function activeRun(
-	ctx: MutationCtx,
-	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind'>
-) {
-	const run = await getRunWithExecution(ctx.db, request.runId);
-
-	if (
-		!run ||
-		run.cancellationRequestedAt !== undefined ||
-		run.claimId !== request.claimId ||
-		!isRunClaimLeaseActive(run, Date.now())
-	) {
-		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-	}
-
-	if (!request.jobId) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-	const active = await claimedJobForActiveRun(ctx, { ...request, jobId: request.jobId });
-
-	if (
-		!active ||
-		active.job.kind !== `${request.kind}_url` ||
-		active.job.status !== 'claimed' ||
-		active.job.cloudWorkId !== undefined
-	) {
-		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
-	}
-
-	return run;
-}
-
-export const enqueue = internalMutation({
-	args: { ...vRequestArgs.fields, executionSecret: v.string() },
-	returns: v.id('firecrawlRequests'),
-	handler: async (ctx, { executionSecret, ...args }) => {
-		await getExecutionRun(ctx, args.runId, executionSecret);
-		await activeRun(ctx, args);
-
-		const id = await ctx.db.insert('firecrawlRequests', {
-			...args,
-			status: 'queued',
-			expiresAt: Date.now() + REQUEST_TTL_MS
-		});
-
-		const workId = await firecrawlScrapePool.enqueueAction(
-			ctx,
-			internal.firecrawlRequestActions.execute,
-			{ id },
-			{
-				retry: false,
-				onComplete: internal.firecrawlRequests.complete,
-				context: { id }
-			}
-		);
-
-		await ctx.db.patch('firecrawlRequests', id, { workId });
-		await ctx.scheduler.runAfter(REQUEST_TTL_MS, internal.firecrawlRequests.cleanup, { id });
-
-		return id;
-	}
-});
+// Released agents still call these names; see "Firecrawl request endpoints" in BACKWARDS_COMPATIBILITY.md.
 
 export const start = mutation({
-	args: { ...vRequestArgs.fields, executionSecret: v.string() },
-	returns: v.id('firecrawlRequests'),
-	handler: async (ctx, args): Promise<Id<'firecrawlRequests'>> => {
-		// Released agents still request screenshots.
-		if (args.kind === 'screenshot') throw new ConvexError(TOOL_NO_LONGER_SUPPORTED);
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.optional(v.id('executorJobs')),
+		kind: v.union(v.literal('scrape'), v.literal('screenshot')),
+		rawDocument: v.optional(v.boolean()),
+		executionSecret: v.string()
+	},
+	returns: v.string(),
+	handler: async (ctx, { kind, jobId, ...args }): Promise<Id<'webRequests'>> => {
+		if (kind === 'screenshot') throw new ConvexError(TOOL_NO_LONGER_SUPPORTED);
 
-		return await ctx.runMutation(internal.firecrawlRequests.enqueue, args);
+		if (!jobId) throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+
+		return await ctx.runMutation(internal.webRequests.enqueue, { ...args, jobId, kind });
 	}
 });
 
+const vLegacyRequestArgs = { id: v.string(), runId: v.id('runs'), executionSecret: v.string() };
+
 export const getResult = query({
-	args: { id: v.id('firecrawlRequests'), runId: v.id('runs'), executionSecret: v.string() },
-	returns: v.union(
-		v.object({ status: v.literal('pending') }),
-		v.object({ status: v.literal('completed'), url: v.string() }),
-		v.object({ status: v.literal('failed'), error: v.string() })
-	),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const request = await ctx.db.get('firecrawlRequests', args.id);
+	args: vLegacyRequestArgs,
+	returns: vRequestResult,
+	handler: async (ctx, { id, ...args }) => {
+		const requestId = ctx.db.normalizeId('webRequests', id);
 
-		if (
-			!request ||
-			request.runId !== run._id ||
-			request.claimId !== run.claimId ||
-			run.cancellationRequestedAt !== undefined ||
-			isRunFinalStatus(run.status)
-		) {
-			return {
-				status: 'failed' as const,
-				error: 'Firecrawl request ended. Check its outcome before repeating the request.'
-			};
-		}
+		if (!requestId) return { status: 'failed' as const, error: REQUEST_ENDED };
 
-		if (request.status === 'failed')
-			return { status: 'failed' as const, error: request.error ?? 'Firecrawl request failed.' };
-
-		if (request.status === 'completed' && request.resultStorageId) {
-			const url = await ctx.storage.getUrl(request.resultStorageId);
-
-			if (url) return { status: 'completed' as const, url };
-
-			return { status: 'failed' as const, error: 'Firecrawl result is no longer available.' };
-		}
-
-		return { status: 'pending' as const };
+		return await readRequestResult(ctx, { ...args, id: requestId });
 	}
 });
 
 export const dispose = mutation({
-	args: { id: v.id('firecrawlRequests'), runId: v.id('runs'), executionSecret: v.string() },
+	args: vLegacyRequestArgs,
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const request = await ctx.db.get('firecrawlRequests', args.id);
+	handler: async (ctx, { id, ...args }) => {
+		const requestId = ctx.db.normalizeId('webRequests', id);
 
-		if (request?.runId === args.runId) await remove(ctx, request);
+		if (requestId) await disposeRequest(ctx, { ...args, id: requestId });
 
 		return null;
 	}
 });
 
-export const claim = internalMutation({
-	args: { id: v.id('firecrawlRequests') },
-	returns: v.union(
-		v.object({
-			request: schema.doc('firecrawlRequests'),
-			userId: v.string(),
-			threadId: v.id('threadRecords')
-		}),
-		v.null()
-	),
-	handler: async (ctx, { id }) => {
-		const request = await ctx.db.get('firecrawlRequests', id);
-
-		if (!request || request.status !== 'queued' || request.expiresAt <= Date.now()) return null;
-		const run = await activeRun(ctx, request);
-		await ctx.db.patch('firecrawlRequests', id, { status: 'running' });
-
-		return { request, userId: run.userId, threadId: run.threadId };
-	}
-});
-
-export const publish = internalMutation({
-	args: { id: v.id('firecrawlRequests'), storageId: v.id('_storage') },
-	returns: v.null(),
-	handler: async (ctx, { id, storageId }) => {
-		const request = await ctx.db.get('firecrawlRequests', id);
-
-		if (!request || request.status !== 'running' || request.expiresAt <= Date.now()) {
-			await ctx.storage.delete(storageId);
-
-			return null;
-		}
-
-		try {
-			await activeRun(ctx, request);
-		} catch {
-			await ctx.storage.delete(storageId);
-			await ctx.db.patch('firecrawlRequests', id, {
-				status: 'failed',
-				error: RUN_NO_LONGER_ACTIVE
-			});
-
-			return null;
-		}
-
-		await ctx.db.patch('firecrawlRequests', id, {
-			status: 'completed',
-			resultStorageId: storageId
-		});
-
-		return null;
-	}
-});
-
-export const complete = internalMutation({
-	args: vOnCompleteArgs(v.object({ id: v.id('firecrawlRequests') })),
-	returns: v.null(),
-	handler: async (ctx, { context, result }) => {
-		const request = await ctx.db.get('firecrawlRequests', context.id);
-
-		if (!request || request.status === 'completed' || request.status === 'failed') return null;
-
-		const error =
-			result.kind === 'failed'
-				? toAgentToolConvexError(new Error(result.error)).message
-				: 'Firecrawl request did not return a result.';
-
-		await ctx.db.patch('firecrawlRequests', request._id, {
-			status: 'failed',
-			error: error.slice(0, 16_000)
-		});
-
-		return null;
-	}
-});
-
-export const poll = internalMutation({
-	args: { id: v.id('firecrawlRequests') },
-	returns: v.object({
-		status: v.string(),
-		storageId: v.optional(v.id('_storage')),
-		error: v.optional(v.string())
-	}),
-	handler: async (ctx, { id }) => {
-		const request = await ctx.db.get('firecrawlRequests', id);
-
-		if (!request || request.expiresAt <= Date.now()) {
-			return {
-				status: 'failed',
-				error: 'Firecrawl request timed out. Check its outcome before repeating the request.'
-			};
-		}
-
-		await activeRun(ctx, request);
-
-		return { status: request.status, storageId: request.resultStorageId, error: request.error };
-	}
-});
-
-async function remove(ctx: MutationCtx, request: Doc<'firecrawlRequests'>) {
-	if (request.workId && (request.status === 'queued' || request.status === 'running')) {
-		// SAFETY: Stored directly from this pool's enqueueAction result.
-		await firecrawlScrapePool.cancel(ctx, request.workId as WorkId);
-	}
-
-	if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);
-	await ctx.db.delete('firecrawlRequests', request._id);
-}
-
+/** Runs cleanup jobs scheduled before the webRequests rename. */
 export const cleanup = internalMutation({
 	args: { id: v.id('firecrawlRequests') },
 	returns: v.null(),
 	handler: async (ctx, { id }) => {
 		const request = await ctx.db.get('firecrawlRequests', id);
 
-		if (request) await remove(ctx, request);
+		if (!request) return null;
+
+		if (request.resultStorageId) await ctx.storage.delete(request.resultStorageId);
+		await ctx.db.delete('firecrawlRequests', id);
 
 		return null;
 	}
@@ -286,28 +78,6 @@ export const removeResult = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, { storageId }) => {
 		await ctx.storage.delete(storageId);
-
-		return null;
-	}
-});
-
-export async function cancelFirecrawlRequests(ctx: MutationCtx, runId: Id<'runs'>) {
-	const requests = await ctx.db
-		.query('firecrawlRequests')
-		.withIndex('by_runId', (q) => q.eq('runId', runId))
-		.take(32);
-
-	for (const request of requests) await remove(ctx, request);
-
-	if (requests.length === 32)
-		await ctx.scheduler.runAfter(0, internal.firecrawlRequests.cancelRun, { runId });
-}
-
-export const cancelRun = internalMutation({
-	args: { runId: v.id('runs') },
-	returns: v.null(),
-	handler: async (ctx, { runId }) => {
-		await cancelFirecrawlRequests(ctx, runId);
 
 		return null;
 	}
