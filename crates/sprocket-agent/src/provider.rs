@@ -444,6 +444,7 @@ async fn run_with_completion_model(
         .tool(tools.list_subagents)
         .tool(tools.list_subagent_models)
         .tool(tools.set_cwd)
+        .tool(tools.link_prs)
         .tool(context_handoff_hook.tool());
     let agent = if request.allow_interaction || request.is_child {
         agent.tool(tools.ask_question).tool(tools.poll_question)

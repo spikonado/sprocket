@@ -91,6 +91,7 @@ import type * as payments from "../payments.js";
 import type * as pricing from "../pricing.js";
 import type * as pricingData from "../pricingData.js";
 import type * as providerCredentials from "../providerCredentials.js";
+import type * as pullRequests from "../pullRequests.js";
 import type * as runCleanup from "../runCleanup.js";
 import type * as runLifecycle from "../runLifecycle.js";
 import type * as runRecovery from "../runRecovery.js";
@@ -196,6 +197,7 @@ declare const fullApi: ApiFromModules<{
   pricing: typeof pricing;
   pricingData: typeof pricingData;
   providerCredentials: typeof providerCredentials;
+  pullRequests: typeof pullRequests;
   runCleanup: typeof runCleanup;
   runLifecycle: typeof runLifecycle;
   runRecovery: typeof runRecovery;

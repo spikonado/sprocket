@@ -267,6 +267,31 @@ it('shows project, title, provider, and model name without a model slug', async 
 	expect(row.querySelector('.inbox-row-main')?.getAttribute('title')).not.toContain('model');
 });
 
+it('shows the newest linked PR states in the model row', async () => {
+	await render([
+		{
+			...thread(),
+			pullRequests: (
+				[
+					[3, 'closed'],
+					[7, 'merged'],
+					[12, 'open'],
+					[15, 'closed']
+				] as const
+			).map(([number, state]) => ({ repositoryKey: 'github.com/acme/widgets', number, state }))
+		}
+	]);
+	const prs = [...document.querySelectorAll('.inbox-row-model .inbox-row-pr')];
+
+	expect(prs.map((pr) => [pr.className, pr.textContent])).toEqual([
+		['inbox-row-pr', '+1'],
+		['inbox-row-pr inbox-pr-merged', 'Merged PR#7'],
+		['inbox-row-pr inbox-pr-open', 'Open PR#12'],
+		['inbox-row-pr inbox-pr-closed', 'Closed PR#15']
+	]);
+	expect(prs[0]?.getAttribute('title')).toBe('github.com/acme/widgets#3 · Closed');
+});
+
 it('keeps thread rows styled when selection moves by click and keyboard', async () => {
 	const first = thread();
 
