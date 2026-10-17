@@ -133,6 +133,8 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		cancelChatGptBrowserLogin: async () => {},
 		selectChatGptAccount: unused,
 		disconnectChatGptAccount: unused,
+		fetchGitHubStatus: unused,
+		updateGitHubSettings: unused,
 		...overrides
 	};
 }

@@ -1,12 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::process::Stdio;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use reqwest::{StatusCode, Url};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+
+pub mod status;
 
 const PUBLIC_HOST: &str = "github.com";
 const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -23,12 +25,58 @@ const TOKEN_VARIABLES: [&str; 4] = [
 static TOKENS: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
     LazyLock::new(Default::default);
 
+static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::default);
+
+/// What the user chose in Settings → Version Control. The host persists it.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GitHubSettings {
+    pub disabled: bool,
+    pub hosts: BTreeMap<String, HostSettings>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HostSettings {
+    pub disabled: bool,
+    /// Used before the environment's token and the `gh` login.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+pub fn settings() -> GitHubSettings {
+    read_settings().clone()
+}
+
+pub fn apply_settings(settings: GitHubSettings) {
+    *SETTINGS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
+    lock_tokens().clear();
+}
+
+fn read_settings() -> std::sync::RwLockReadGuard<'static, GitHubSettings> {
+    SETTINGS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialSource {
+    Settings,
+    Environment,
+    GitHubCli,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitHubError {
     #[error(
-        "No GitHub credential for {0}: set GH_TOKEN, or install the GitHub CLI and run `gh auth login`."
+        "No GitHub credential for {0}: save a token in Settings → Version Control, set GH_TOKEN, or install the GitHub CLI and run `gh auth login`."
     )]
     NoCredential(String),
+    #[error("GitHub access to {0} is turned off in Settings → Version Control.")]
+    Disabled(String),
     #[error("GitHub rate limit reached")]
     RateLimited,
     #[error("GitHub returned {0}")]
@@ -63,15 +111,14 @@ pub struct GitHubApi {
     host: String,
     graphql_url: Url,
     token: String,
+    source: CredentialSource,
 }
 
 impl GitHubApi {
     pub async fn connect(host: &str) -> Result<Self, GitHubError> {
         let host = host.trim().to_ascii_lowercase();
         let graphql_url = graphql_url(&host)?;
-        let token = cached_token(&host)
-            .await
-            .ok_or_else(|| GitHubError::NoCredential(host.clone()))?;
+        let (token, source) = credential(&host).await?;
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .user_agent("Sprocket")
@@ -82,7 +129,12 @@ impl GitHubApi {
             host,
             graphql_url,
             token,
+            source,
         })
+    }
+
+    pub fn source(&self) -> CredentialSource {
+        self.source
     }
 
     pub async fn graphql<T: DeserializeOwned>(
@@ -130,12 +182,16 @@ impl GitHubApi {
     }
 }
 
-/// Whether a host speaks GitHub's API: github.com, GHE.com data residency, or
-/// the Enterprise Server named by `GH_HOST`.
+/// Whether a host speaks GitHub's API: github.com, GHE.com data residency, the
+/// Enterprise Server named by `GH_HOST`, or one the user saved a token for.
 pub fn is_github_host(host: &str) -> bool {
     is_github_dot_com(host)
         || std::env::var("GH_HOST")
             .is_ok_and(|configured| configured.trim().eq_ignore_ascii_case(host))
+        || read_settings()
+            .hosts
+            .get(&host.to_ascii_lowercase())
+            .is_some_and(|saved| saved.token.is_some())
 }
 
 fn is_github_dot_com(host: &str) -> bool {
@@ -170,13 +226,16 @@ fn is_rate_limited(
                 || body.to_ascii_lowercase().contains("rate limit")))
 }
 
-fn graphql_url(host: &str) -> anyhow::Result<Url> {
-    let valid = !host.is_empty()
+pub fn is_valid_host(host: &str) -> bool {
+    !host.is_empty()
         && !host.starts_with(['-', '.'])
         && host
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'));
-    anyhow::ensure!(valid, "invalid GitHub host {host:?}");
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+}
+
+fn graphql_url(host: &str) -> anyhow::Result<Url> {
+    anyhow::ensure!(is_valid_host(host), "invalid GitHub host {host:?}");
     let url = if host == PUBLIC_HOST {
         "https://api.github.com/graphql".to_string()
     } else if host.ends_with(".ghe.com") {
@@ -187,10 +246,29 @@ fn graphql_url(host: &str) -> anyhow::Result<Url> {
     Ok(Url::parse(&url)?)
 }
 
-async fn cached_token(host: &str) -> Option<String> {
-    if let Some(token) = env_token(host, |name| std::env::var(name).ok()) {
-        return Some(token);
+/// Saved token, then the environment's, then the `gh` login, like t3code.
+async fn credential(host: &str) -> Result<(String, CredentialSource), GitHubError> {
+    let saved = {
+        let settings = read_settings();
+        let saved = settings.hosts.get(host);
+        if settings.disabled || saved.is_some_and(|saved| saved.disabled) {
+            return Err(GitHubError::Disabled(host.to_string()));
+        }
+        saved.and_then(|saved| saved.token.clone())
+    };
+    if let Some(token) = saved {
+        return Ok((token, CredentialSource::Settings));
     }
+    if let Some(token) = env_token(host, |name| std::env::var(name).ok()) {
+        return Ok((token, CredentialSource::Environment));
+    }
+    cached_gh_token(host)
+        .await
+        .map(|token| (token, CredentialSource::GitHubCli))
+        .ok_or_else(|| GitHubError::NoCredential(host.to_string()))
+}
+
+async fn cached_gh_token(host: &str) -> Option<String> {
     if let Some((token, expires)) = lock_tokens().get(host)
         && *expires > Instant::now()
     {
@@ -230,21 +308,25 @@ fn env_token(host: &str, var: impl Fn(&str) -> Option<String>) -> Option<String>
 }
 
 async fn gh_auth_token(host: &str) -> Option<String> {
-    let output = tokio::time::timeout(GH_AUTH_TIMEOUT, gh_auth_command(host).output())
-        .await
-        .ok()?
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    let token = gh_output(&["auth", "token", "--hostname", host]).await?;
+    let token = token.trim().to_string();
     (!token.is_empty()).then_some(token)
 }
 
-fn gh_auth_command(host: &str) -> Command {
+/// Stdout of a `gh` run, or `None` when `gh` is missing or hangs. The exit
+/// status is ignored: `gh auth status` fails when any one host is signed out.
+async fn gh_output(args: &[&str]) -> Option<String> {
+    let output = tokio::time::timeout(GH_AUTH_TIMEOUT, gh_command(args).output())
+        .await
+        .ok()?
+        .ok()?;
+    String::from_utf8(output.stdout).ok()
+}
+
+fn gh_command(args: &[&str]) -> Command {
     let mut command = Command::new("gh");
     command
-        .args(["auth", "token", "--hostname", host])
+        .args(args)
         .env("GH_PROMPT_DISABLED", "1")
         .env_remove("GH_DEBUG")
         .stdin(Stdio::null())

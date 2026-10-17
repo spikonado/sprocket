@@ -96,7 +96,7 @@ fn rate_limits_are_read_from_status_headers_and_graphql_errors() {
 
 #[test]
 fn gh_runs_without_prompts_or_inherited_tokens() {
-    let command = gh_auth_command("ghe.example.com");
+    let command = gh_command(&["auth", "token", "--hostname", "ghe.example.com"]);
     let command = command.as_std();
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),

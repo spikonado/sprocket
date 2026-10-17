@@ -49,6 +49,7 @@ import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
 import SettingsProviders from '$lib/components/home/settings-providers';
+import SettingsVersionControl from '$lib/components/home/settings-version-control';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
 import SettingsUsage from '$lib/components/home/settings-usage';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
@@ -2701,6 +2702,8 @@ export default function App({
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments />
+						) : settingsPage === 'versionControl' ? (
+							<SettingsVersionControl desktopApi={desktopApi} />
 						) : (
 							<SettingsAccount
 								user={auth.user}

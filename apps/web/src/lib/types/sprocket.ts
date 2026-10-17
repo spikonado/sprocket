@@ -269,6 +269,27 @@ export type ChatGptBrowserLoginStart = {
 	authorizeUrl: string;
 };
 
+export type GitHubHostStatus = {
+	host: string;
+	enabled: boolean;
+	hasSavedToken: boolean;
+	source: 'settings' | 'environment' | 'gitHubCli' | null;
+	login: string | null;
+	problem: string | null;
+};
+
+export type GitHubStatus = {
+	enabled: boolean;
+	cliVersion: string | null;
+	hosts: GitHubHostStatus[];
+};
+
+/** One change at a time; an empty `token` removes the saved one. */
+export type GitHubSettingsUpdate = {
+	enabled?: boolean;
+	host?: { host: string; enabled?: boolean; token?: string };
+};
+
 export type ChatGptBrowserLoginResult = {
 	status: 'pending' | 'complete' | 'error';
 	error?: string;
@@ -366,6 +387,8 @@ export type DesktopApi = {
 	disconnectChatGptAccount: (
 		request: LocalUserRequest & { connectionId: string }
 	) => Promise<string | null>;
+	fetchGitHubStatus: () => Promise<GitHubStatus>;
+	updateGitHubSettings: (update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
 };
 
 export type WorkspacePathResolution = {
