@@ -67,8 +67,8 @@ async fn status(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Response, ApiError> {
-    let (user_id, _) = user(&state, &headers, &jar).await?;
-    Ok(no_store(Json(state.host.browsers.status(&user_id).await)))
+    user(&state, &headers, &jar).await?;
+    Ok(no_store(Json(state.host.browsers.status().await)))
 }
 
 async fn start(
@@ -76,9 +76,9 @@ async fn start(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Response, ApiError> {
-    let (user_id, _) = user(&state, &headers, &jar).await?;
+    user(&state, &headers, &jar).await?;
     require_same_origin(&headers)?;
-    Ok(no_store(Json(state.host.browsers.start(&user_id).await)))
+    Ok(no_store(Json(state.host.browsers.start().await)))
 }
 
 async fn proxy(
@@ -98,7 +98,7 @@ async fn proxy(
     let port = state
         .host
         .browsers
-        .port(&user_id)
+        .port()
         .await
         .map_err(|error| ApiError::with_status(StatusCode::SERVICE_UNAVAILABLE, error))?;
     let mut path = upstream_path(
