@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sprocket_agent::TranscriptStore;
+use sprocket_transcript::TranscriptStore;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 

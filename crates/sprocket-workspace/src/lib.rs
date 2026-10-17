@@ -1,5 +1,6 @@
 mod agents;
 mod apply_patch_format;
+pub mod artifact_bindings;
 mod artifacts;
 pub mod async_tools;
 mod browse;

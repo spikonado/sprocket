@@ -77,7 +77,7 @@ pub(crate) struct AgentToolSet {
 
 pub(crate) async fn hydrate_tool_history(
     history: &mut [crate::types::AgentHistoryMessage],
-    parts: &[crate::transcript::TranscriptPart],
+    parts: &[sprocket_transcript::TranscriptPart],
     supports_images: bool,
 ) {
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
@@ -136,8 +136,8 @@ pub(crate) fn agent_tools(
     cwd: PathBuf,
     transcript_dir: PathBuf,
     gateway_url: String,
-    transcript_store: Option<Arc<crate::TranscriptStore>>,
-    artifact_bindings: crate::artifact_bindings::ArtifactBindings,
+    transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
+    artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,

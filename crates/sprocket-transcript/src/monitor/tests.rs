@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
+use crate::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 
 fn prompt_part(number: u32, text: &str) -> TranscriptPart {
     serde_json::from_value(json!({
@@ -448,7 +448,7 @@ fn invocation_assignments_disambiguate_reused_call_ids_in_one_run() {
     first
         .work
         .tool_invocations
-        .push(crate::transcript::types::WorkInvocation {
+        .push(crate::types::WorkInvocation {
             item: 0,
             tool_invocation_id: "inv-a".into(),
         });
@@ -456,7 +456,7 @@ fn invocation_assignments_disambiguate_reused_call_ids_in_one_run() {
     second
         .work
         .tool_invocations
-        .push(crate::transcript::types::WorkInvocation {
+        .push(crate::types::WorkInvocation {
             item: 0,
             tool_invocation_id: "inv-b".into(),
         });

@@ -14,7 +14,7 @@ const MODEL_ID: &str = "gpt-5.6-sol";
 
 #[tokio::test]
 async fn context_readiness_uses_captured_cutoff_and_cached_handoff_part() {
-    use crate::transcript::{DownloadOrder, TranscriptPart, TranscriptState, TranscriptStore};
+    use sprocket_transcript::{DownloadOrder, TranscriptPart, TranscriptState, TranscriptStore};
     use std::sync::Mutex;
 
     fn prompt(number: u32) -> TranscriptPart {
@@ -161,7 +161,7 @@ fn identity_includes_the_current_thread_id_and_transcript_location() {
         ("/home/user/.sprocket", "first-thread-id"),
         ("/srv/custom sprocket data", "second-thread-id"),
     ] {
-        let store = crate::transcript::TranscriptStore::new(
+        let store = sprocket_transcript::TranscriptStore::new(
             std::path::Path::new(data_dir).join("transcripts"),
         );
         let transcript_dir = store.thread_dir("user-id", thread_id);

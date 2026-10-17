@@ -12,9 +12,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use super::*;
+use crate::history::agent_history_from_parts;
 use crate::reasoning::{openai_reasoning_metadata, reasoning_summary_text};
-use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{ChatGptAccess, deserialize_agent_history};
+use sprocket_transcript::{TranscriptPart, TranscriptStore};
 
 fn wire_tool(definition: &rig::completion::ToolDefinition) -> serde_json::Value {
     serde_json::to_value(ResponsesToolDefinition::from(definition.clone()))

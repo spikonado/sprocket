@@ -75,7 +75,7 @@ pub struct RunAgentRequest {
     /// it; without it the delegation tools fail closed.
     pub subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
     /// Transcript store backing local monitor reads for descendant threads.
-    pub transcript_store: Option<Arc<crate::TranscriptStore>>,
+    pub transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

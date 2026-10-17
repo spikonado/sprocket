@@ -301,7 +301,7 @@ pub fn normalize_destination(path: &str) -> anyhow::Result<String> {
 pub async fn save_new_file(workspace: &Path, path: &str, content: &str) -> anyhow::Result<String> {
     let normalized = normalize_destination(path)?;
     let path = normalized.as_str();
-    if content.len() > sprocket_workspace::MAX_ARTIFACT_BYTES {
+    if content.len() > crate::MAX_ARTIFACT_BYTES {
         bail!("Artifact content is too large.");
     }
     let destination = workspace.join(path);
@@ -323,16 +323,14 @@ pub async fn save_new_file(workspace: &Path, path: &str, content: &str) -> anyho
     match publication {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing = sprocket_workspace::read_artifact_file(workspace, path).await?;
+            let existing = crate::read_artifact_file(workspace, path).await?;
             if existing.content != content {
                 bail!("Destination already exists with different contents; choose another path.");
             }
         }
         Err(error) => return Err(error.into()),
     }
-    Ok(sprocket_workspace::read_artifact_file(workspace, path)
-        .await?
-        .local_path)
+    Ok(crate::read_artifact_file(workspace, path).await?.local_path)
 }
 
 #[cfg(test)]

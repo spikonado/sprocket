@@ -220,7 +220,7 @@ fn deserializes_create_run_response_gateway_fields_from_convex_numbers() {
     assert_eq!(created.gateway_url, "https://preview.gateway.example");
     assert_eq!(created.protocol_version, 1);
     let prompt_part = created.prompt_part.expect("prompt transcript part");
-    let parts = crate::transcript::parse_remote_parts(serde_json::json!({
+    let parts = sprocket_transcript::parse_remote_parts(serde_json::json!({
         "parts": [prompt_part]
     }))
     .expect("prompt transcript part");

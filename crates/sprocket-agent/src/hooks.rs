@@ -144,8 +144,8 @@ impl ToolCallTracker {
             .unwrap_or_default()
     }
 
-    pub(crate) fn record_parts(&self, parts: &[crate::live::LiveAssistantPart]) {
-        use crate::live::LiveAssistantPart;
+    pub(crate) fn record_parts(&self, parts: &[sprocket_transcript::LiveAssistantPart]) {
+        use sprocket_transcript::LiveAssistantPart;
 
         let content = parts
             .iter()

@@ -89,7 +89,7 @@ fn parse_cursor(encoded: &str) -> anyhow::Result<MonitorCursor> {
     serde_json::from_slice(&bytes).map_err(|_| MonitorReadError::MalformedCursor.into())
 }
 
-pub(crate) async fn download_monitor_page<F, Fut>(
+pub async fn download_monitor_page<F, Fut>(
     store: &TranscriptStore,
     user: &str,
     thread: &str,

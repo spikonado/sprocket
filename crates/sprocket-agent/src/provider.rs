@@ -23,18 +23,19 @@ use crate::context_handoff::{
 };
 use crate::convex::RuntimeClient;
 use crate::gateway::GatewayClient;
+use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
-use crate::live::{
-    LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
-    join_assistant_text_parts, now_ms,
-};
+use crate::now_ms;
 use crate::openai::{developer_message, stateless_responses_model};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::StreamRecovery;
 use crate::tools::{agent_tools, working_directory_message};
-use crate::transcript::without_reasoning_traces;
 use crate::types::{
     CompletionProvider, ContextBudget, ProviderHandoff, RunContextResponse, gateway_api_v1_url,
+};
+use sprocket_transcript::{
+    LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
+    join_assistant_text_parts,
 };
 
 const AGENT_MAX_TURNS: usize = 1_000;
@@ -113,14 +114,14 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
     pub(crate) transcript_dir: PathBuf,
-    pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
+    pub(crate) artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
     pub(crate) defer_prompt_for_context_handoff: bool,
     /// The previous provider could not write a handoff. Continue without reasoning replay.
     pub(crate) omit_prior_reasoning: bool,
     pub(crate) gateway_url: String,
     pub(crate) subagent_launcher: Option<crate::subagents::SharedSubagentLauncher>,
-    pub(crate) transcript_store: Option<Arc<crate::TranscriptStore>>,
+    pub(crate) transcript_store: Option<Arc<sprocket_transcript::TranscriptStore>>,
 }
 
 pub(crate) enum AgentProviderResult {

@@ -4,7 +4,7 @@ use super::{
     ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, apply_completed_text, classify_provider_error,
     durable_items_json, visible_live_parts,
 };
-use crate::live::LiveAssistantPart;
+use sprocket_transcript::LiveAssistantPart;
 
 #[test]
 fn generation_options_keep_gateway_fast_tier_separate() {
@@ -105,8 +105,8 @@ fn consecutive_text_parts_preserve_their_own_phase_and_authoritative_text() {
     }))
     .unwrap();
     let history =
-        crate::types::deserialize_agent_history(crate::transcript::agent_history_from_parts(
-            &crate::transcript::TranscriptState::new("user".into(), "thread".into()),
+        crate::types::deserialize_agent_history(crate::history::agent_history_from_parts(
+            &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
             &[part],
             None,
         ))
@@ -155,7 +155,7 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
             .is_none()
     );
 
-    let transcript = serde_json::from_value::<Vec<crate::transcript::TranscriptPart>>(json!([
+    let transcript = serde_json::from_value::<Vec<sprocket_transcript::TranscriptPart>>(json!([
         {
             "number": 0, "sourceKey": "completion", "kind": "completion", "runId": "run",
             "completion": {"streamId": "stream", "items": durable}
@@ -165,8 +165,8 @@ fn persisted_tool_turn_reloads_native_identity_and_replay_metadata() {
             "tool": {"callId": "call_1", "name": "exec_cmd", "status": "completed", "output": "/workspace"}
         }
     ])).unwrap();
-    let history = crate::transcript::agent_history_from_parts(
-        &crate::transcript::TranscriptState::new("user".into(), "thread".into()),
+    let history = crate::history::agent_history_from_parts(
+        &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
         &transcript,
         None,
     );
@@ -214,8 +214,8 @@ fn edited_calls_reload_the_edited_fields_without_stale_native_data() {
     }))
     .unwrap();
     let messages =
-        crate::types::deserialize_agent_history(crate::transcript::agent_history_from_parts(
-            &crate::transcript::TranscriptState::new("user".into(), "thread".into()),
+        crate::types::deserialize_agent_history(crate::history::agent_history_from_parts(
+            &sprocket_transcript::TranscriptState::new("user".into(), "thread".into()),
             &[part],
             None,
         ))

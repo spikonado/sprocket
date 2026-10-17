@@ -1,5 +1,5 @@
 use super::*;
-use crate::transcript::types::{TranscriptPartKind, TranscriptPromptBody};
+use crate::types::{TranscriptPartKind, TranscriptPromptBody};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::AsyncReadExt;
 
@@ -481,7 +481,7 @@ async fn moves_staged_files_into_their_thread_without_size_or_count_caps() {
                 .exists()
         );
     }
-    let text = crate::transcript::prompt_text_with_attachments(prompt);
+    let text = prompt.text_with_attachments();
     assert_eq!(text.matches("local transcript cache").count(), 1);
     assert_eq!(text.matches("file-.._notes.txt").count(), 6);
     store.clear_thread("user", "thread").await.unwrap();
@@ -613,7 +613,7 @@ async fn expired_remote_files_do_not_block_history_and_cached_files_remain_usabl
     let prompt = parts[0].prompt.as_ref().unwrap();
     assert!(prompt.image_uploads[0].local_path.is_some());
     assert!(prompt.image_uploads[1].local_path.is_none());
-    let text = crate::transcript::prompt_text_with_attachments(prompt);
+    let text = prompt.text_with_attachments();
     let (user_text, metadata) = text
         .split_once("\n\nAttached files in the local transcript cache:\n")
         .unwrap();

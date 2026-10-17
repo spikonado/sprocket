@@ -1,5 +1,5 @@
 use super::*;
-use crate::transcript::types::{TranscriptCompletionBody, TranscriptPartKind};
+use sprocket_transcript::{TranscriptCompletionBody, TranscriptPartKind};
 
 fn completion(number: u32, text: &str) -> TranscriptPart {
     TranscriptPart {

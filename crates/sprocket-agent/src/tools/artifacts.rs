@@ -2,13 +2,13 @@ use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sprocket_workspace::artifact_bindings::{
+    ArtifactBinding, content_hash, normalize_destination, save_new_file,
+};
 use sprocket_workspace::{MAX_ARTIFACT_BYTES, WorkspaceCancellation, read_artifact_file};
 
 use super::context::{AgentToolContext, cancelled_error, tool_error};
 use super::job::{execute_tool_job, mutation_args_from_payload, run_convex_tool_mutation};
-use crate::artifact_bindings::{
-    ArtifactBinding, content_hash, normalize_destination, save_new_file,
-};
 
 #[derive(Clone)]
 pub(crate) struct AddArtifactTool(pub(super) AgentToolContext);

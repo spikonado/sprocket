@@ -1,5 +1,5 @@
 use super::*;
-use crate::transcript::RemoteTranscriptState;
+use sprocket_transcript::RemoteTranscriptState;
 
 #[test]
 fn spawn_accepts_only_creation_payloads() {

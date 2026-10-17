@@ -155,8 +155,8 @@ pub struct CliRunSnapshot {
     pub thread_id: String,
     pub status: String,
     pub error: Option<String>,
-    pub parts: Vec<sprocket_agent::TranscriptPart>,
+    pub parts: Vec<sprocket_transcript::TranscriptPart>,
     pub has_more: bool,
     pub execution_finished: bool,
-    pub live: Option<sprocket_agent::LiveCompletionOverlay>,
+    pub live: Option<sprocket_transcript::LiveCompletionOverlay>,
 }

@@ -5,12 +5,12 @@ use rig::message::{AssistantContent, Origin};
 
 use crate::context_handoff::context_summary_text;
 use crate::reasoning::opaque_encrypted;
-use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
-
-use super::types::{TranscriptPromptBody, TranscriptState};
+use sprocket_transcript::{
+    TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptToolBody,
+};
 
 pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
     history
@@ -38,28 +38,6 @@ pub(crate) fn without_reasoning_traces(history: Vec<Message>) -> Vec<Message> {
             other => Some(other),
         })
         .collect()
-}
-
-pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
-    if prompt.image_uploads.is_empty() {
-        return prompt.text.clone();
-    }
-    let attachments = prompt
-        .image_uploads
-        .iter()
-        .map(|attachment| {
-            serde_json::json!({
-                "name": attachment.name,
-                "mediaType": attachment.media_type,
-                "path": attachment.local_path,
-            })
-        })
-        .collect::<Vec<_>>();
-    format!(
-        "{}\n\nAttached files in the local transcript cache:\n{}",
-        prompt.text,
-        serde_json::json!(attachments)
-    )
 }
 
 pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) -> bool {
@@ -218,7 +196,7 @@ pub fn agent_history_from_parts(
             TranscriptPartKind::Prompt => {
                 if let Some(prompt) = &part.prompt {
                     let mut contents = Vec::new();
-                    let text = prompt_text_with_attachments(prompt);
+                    let text = prompt.text_with_attachments();
                     if !text.trim().is_empty() {
                         contents.push(AgentHistoryContent::Text {
                             text,

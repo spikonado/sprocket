@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use futures::stream::unfold;
 use serde::Deserialize;
-use sprocket_agent::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
+use sprocket_transcript::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
 use tokio::sync::broadcast;
 use tokio_util::io::ReaderStream;
 
