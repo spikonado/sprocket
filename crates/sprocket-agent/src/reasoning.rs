@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use rig::message::{AssistantContent, Reasoning};
 use serde_json::Value as JsonValue;
+use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts};
 
-use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
+use crate::now_ms;
 
 /// Durable OpenAI-shaped metadata already stored on transcript reasoning items.
 /// `encrypted` is gateway envelope bytes: persist and replay as-is, never decode.

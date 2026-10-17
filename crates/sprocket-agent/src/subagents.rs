@@ -3,9 +3,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sprocket_transcript::RemoteTranscriptState;
 
 use crate::catalog::ProviderCatalog;
-use crate::transcript::RemoteTranscriptState;
 use crate::types::CompletionProvider;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

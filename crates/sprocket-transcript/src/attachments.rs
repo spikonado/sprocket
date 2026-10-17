@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use tokio::io::AsyncWriteExt;
 
-use crate::transcript::{TranscriptAttachmentMeta, TranscriptPart, TranscriptStore};
+use crate::{TranscriptAttachmentMeta, TranscriptPart, TranscriptStore};
 
 #[derive(Debug, thiserror::Error)]
 #[error("attachment is unavailable locally and its remote copy is missing or expired")]
@@ -105,7 +105,7 @@ where
             .await?;
         if let Err(error) = tokio::fs::remove_file(staged).await {
             if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("sprocket-agent: failed to remove staged attachment: {error}");
+                eprintln!("sprocket-transcript: failed to remove staged attachment: {error}");
             }
         }
     } else {
@@ -116,7 +116,7 @@ where
     Ok(tokio::fs::canonicalize(path).await?)
 }
 
-pub(crate) async fn cache_prompt_attachments<F, Fut>(
+pub async fn cache_prompt_attachments<F, Fut>(
     store: &TranscriptStore,
     user_id: &str,
     thread_id: &str,

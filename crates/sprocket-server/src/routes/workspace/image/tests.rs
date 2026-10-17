@@ -135,7 +135,7 @@ async fn local_image_serves_relative_and_absolute_images_without_an_attachment()
 async fn local_image_prefers_workspace_images_and_scopes_missing_paths_to_transcript_threads() {
     let data = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
-    let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+    let transcript = sprocket_transcript::TranscriptStore::new(data.path().join("transcripts"));
     let path = "parse_file/550e8400-e29b-41d4-a716-446655440000.png";
     let first = b"\x89PNG\r\n\x1a\nfirst";
     let second = b"\x89PNG\r\n\x1a\nsecond";
@@ -297,7 +297,7 @@ async fn local_image_prefers_workspace_images_and_scopes_missing_paths_to_transc
 async fn local_image_serves_workspace_images_when_the_thread_cache_file_is_missing() {
     let data = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
-    let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+    let transcript = sprocket_transcript::TranscriptStore::new(data.path().join("transcripts"));
     let thread_dir = transcript.thread_dir("test-user", "thread-1");
     let path = "parse_file/board.png";
     let contents = b"\x89PNG\r\n\x1a\nworkspace";
@@ -346,7 +346,7 @@ async fn local_image_serves_workspace_images_when_the_thread_cache_file_is_missi
 #[tokio::test]
 async fn local_image_serves_each_thread_image_tool_cache() {
     let data = tempfile::tempdir().unwrap();
-    let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+    let transcript = sprocket_transcript::TranscriptStore::new(data.path().join("transcripts"));
     let thread_dir = transcript.thread_dir("test-user", "thread-1");
     let (app, token) = image_test_app(data.path()).await;
     let contents = b"\x89PNG\r\n\x1a\n";
@@ -507,7 +507,7 @@ async fn local_image_rejects_unsafe_thread_ids_and_scoped_paths() {
 async fn local_image_rejects_thread_images_linked_outside_the_transcript_directory() {
     let data = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
-    let transcript = sprocket_agent::TranscriptStore::new(data.path().join("transcripts"));
+    let transcript = sprocket_transcript::TranscriptStore::new(data.path().join("transcripts"));
     let thread_dir = transcript.thread_dir("test-user", "thread-1");
     std::fs::create_dir_all(thread_dir.join("parse_file")).unwrap();
     let outside_image = workspace.path().join("outside.png");

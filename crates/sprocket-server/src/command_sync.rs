@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use convex::Value;
 use serde::Deserialize;
-use sprocket_agent::TranscriptStore;
+use sprocket_transcript::TranscriptStore;
 use sprocket_workspace::{CommandHistory, CommandOutput, history_path};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
 

@@ -1,16 +1,15 @@
 use super::*;
-use crate::live::LiveAssistantParts;
 use crate::reasoning::{
     apply_completed_reasoning, merge_provider_metadata, reasoning_summary_text,
-};
-use crate::transcript::types::{
-    TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPromptBody, TranscriptToolBody,
 };
 use crate::types::deserialize_agent_history;
 use rig::completion::Message;
 use rig::message::{
     AssistantContent, AssistantMessage, CallId, Opaque, Origin, Reasoning, ToolCall, ToolFunction,
     ToolName,
+};
+use sprocket_transcript::{
+    LiveAssistantParts, TranscriptAttachmentMeta, TranscriptCompletionBody, TranscriptPromptBody,
 };
 
 fn prompt(number: u32, run_id: &str, text: &str) -> TranscriptPart {

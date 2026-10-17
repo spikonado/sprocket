@@ -1,18 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 const CHANNEL_CAPACITY: usize = 64;
-
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type")]
@@ -69,14 +61,14 @@ pub enum LiveAssistantPart {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct LiveAssistantParts {
+pub struct LiveAssistantParts {
     pub parts: Vec<LiveAssistantPart>,
     text_index: HashMap<String, usize>,
     tool_index: HashMap<String, usize>,
 }
 
 impl LiveAssistantParts {
-    pub(crate) fn order_stream_parts(&mut self, stream_id: &str) {
+    pub fn order_stream_parts(&mut self, stream_id: &str) {
         self.parts.sort_by_key(|part| {
             let id = match part {
                 LiveAssistantPart::Text { id, .. } | LiveAssistantPart::Reasoning { id, .. } => {
@@ -378,7 +370,7 @@ impl LiveCompletionHub {
     }
 }
 
-pub(crate) fn join_assistant_text_parts(parts: &[LiveAssistantPart]) -> String {
+pub fn join_assistant_text_parts(parts: &[LiveAssistantPart]) -> String {
     let mut text = String::new();
     let mut previous_turn_id: Option<&str> = None;
     let mut saw_text = false;

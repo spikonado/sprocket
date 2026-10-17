@@ -1,12 +1,10 @@
-pub mod artifact_bindings;
-mod attachments;
 mod catalog;
 mod chatgpt;
 mod context_handoff;
 mod convex;
 mod gateway;
+mod history;
 mod hooks;
-mod live;
 mod openai;
 mod output;
 mod provider;
@@ -16,24 +14,19 @@ mod stream_recovery;
 pub mod subagents;
 mod submission;
 mod tools;
-mod transcript;
 mod types;
 
-pub use attachments::{AttachmentUnavailable, cache_attachment, download_attachment_to_file};
-pub use live::{
-    LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, LiveCompletionSubscription,
-    LiveCompletionWatchEvent,
-};
 pub use output::{RunOutcome, RunOutput};
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use sprocket_convex::AuthTokenFetcher;
-pub use transcript::WorkReplica;
-pub use transcript::sections;
-pub use transcript::{
-    DownloadOrder, RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE,
-    TranscriptAttachmentMeta, TranscriptPart, TranscriptPartKind, TranscriptState, TranscriptStore,
-    apply_remote_state, parse_remote_page, parse_remote_parts,
-};
 pub use types::CompletionProvider;
 pub use types::RunAgentRequest;
 pub use types::{ChatGptAccess, ChatGptCredentials};
+
+pub(crate) fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}

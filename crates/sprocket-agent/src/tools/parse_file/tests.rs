@@ -768,7 +768,7 @@ async fn cancellation_stops_a_local_read() {
 #[tokio::test]
 async fn parsed_images_and_text_share_the_parse_file_transcript_directory() {
     let root = tempfile::tempdir().unwrap();
-    let store = crate::transcript::TranscriptStore::new(root.path().join("transcripts"));
+    let store = sprocket_transcript::TranscriptStore::new(root.path().join("transcripts"));
     let thread = store.thread_dir("user", "thread");
     tokio::fs::write(root.path().join("shot.png"), tiny_png())
         .await

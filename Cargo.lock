@@ -8608,12 +8608,12 @@ dependencies = [
  "percent-encoding",
  "reqwest 0.13.5",
  "rig",
- "rusqlite",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sprocket-convex",
+ "sprocket-transcript",
  "sprocket-workspace",
  "tempfile",
  "thiserror 2.0.21",
@@ -8677,6 +8677,7 @@ dependencies = [
  "sha2 0.11.0",
  "sprocket-agent",
  "sprocket-convex",
+ "sprocket-transcript",
  "sprocket-workspace",
  "tempfile",
  "tokio",
@@ -8691,6 +8692,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprocket-transcript"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "futures",
+ "reqwest 0.13.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sprocket-convex",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "sprocket-workspace"
 version = "0.4.1"
 dependencies = [
@@ -8698,10 +8717,12 @@ dependencies = [
  "diffy",
  "fs4",
  "gix",
+ "hex",
  "libc",
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

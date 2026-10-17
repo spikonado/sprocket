@@ -12,9 +12,9 @@ use futures::StreamExt;
 use futures::stream::{self, unfold};
 use serde::Deserialize;
 use sprocket_agent::{
-    CompletionProvider, LiveCompletionHub, LiveCompletionWatchEvent, RunAgentRequest,
-    finalize_failed_start, run_agent, start_agent_run,
+    CompletionProvider, RunAgentRequest, finalize_failed_start, run_agent, start_agent_run,
 };
+use sprocket_transcript::{LiveCompletionHub, LiveCompletionWatchEvent};
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 use tokio::time::timeout;

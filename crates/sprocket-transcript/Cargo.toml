@@ -1,0 +1,25 @@
+[package]
+name = "sprocket-transcript"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.102"
+base64 = "0.23.0"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sprocket-convex = { path = "../sprocket-convex" }
+tempfile = "3.27.0"
+thiserror = "2.0.18"
+tokio = { version = "1.52.1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+uuid = { version = "1.21.0", features = ["v4"] }
+
+[dev-dependencies]
+futures = "0.3.32"
+tokio = { version = "1.52.1", features = ["net", "rt", "test-util"] }

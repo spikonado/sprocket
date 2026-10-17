@@ -84,7 +84,7 @@ fn pdf() -> Vec<u8> {
 #[tokio::test]
 async fn historical_screenshots_replay_from_the_local_cache() {
     let cache = tempfile::tempdir().unwrap();
-    let store = crate::transcript::TranscriptStore::new(cache.path().join("transcripts"));
+    let store = sprocket_transcript::TranscriptStore::new(cache.path().join("transcripts"));
     let directory = store.thread_dir("user", "thread").join("screenshot_url");
     let url = reqwest::Url::parse("https://example.com/page").unwrap();
     let metadata = persist_web_image(png(), &url, &directory).await.unwrap();

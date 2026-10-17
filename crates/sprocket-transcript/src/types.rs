@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 pub const TRANSCRIPT_CHUNK_SIZE: u32 = 100;
-pub const TRANSCRIPT_PAGE_SIZE: u32 = 40;
 pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -167,6 +166,30 @@ pub enum TranscriptPartKind {
 pub struct TranscriptPromptBody {
     pub text: String,
     pub image_uploads: Vec<TranscriptAttachmentMeta>,
+}
+
+impl TranscriptPromptBody {
+    pub fn text_with_attachments(&self) -> String {
+        if self.image_uploads.is_empty() {
+            return self.text.clone();
+        }
+        let attachments = self
+            .image_uploads
+            .iter()
+            .map(|attachment| {
+                serde_json::json!({
+                    "name": attachment.name,
+                    "mediaType": attachment.media_type,
+                    "path": attachment.local_path,
+                })
+            })
+            .collect::<Vec<_>>();
+        format!(
+            "{}\n\nAttached files in the local transcript cache:\n{}",
+            self.text,
+            serde_json::json!(attachments)
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

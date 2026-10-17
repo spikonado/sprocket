@@ -5,8 +5,10 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use sprocket_agent::artifact_bindings::{ArtifactBindings, conflicting_binding_ids, content_hash};
 use sprocket_convex::{decode_labeled_function_result, deserialize_convex_u64};
+use sprocket_workspace::artifact_bindings::{
+    ArtifactBindings, conflicting_binding_ids, content_hash,
+};
 use sprocket_workspace::{ArtifactContentType, read_artifact_file};
 use tokio::sync::broadcast;
 use tokio::time::{MissedTickBehavior, interval, timeout};

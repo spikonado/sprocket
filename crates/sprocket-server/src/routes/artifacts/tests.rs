@@ -31,11 +31,11 @@ async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails()
     {
         let mut guard = bindings.lock().await.unwrap();
         guard
-            .bind(sprocket_agent::artifact_bindings::ArtifactBinding {
+            .bind(sprocket_workspace::artifact_bindings::ArtifactBinding {
                 registration_id: "registration".into(),
                 artifact_id: Some("artifact".into()),
                 local_path: "notes.md".into(),
-                content_hash: sprocket_agent::artifact_bindings::content_hash("local source"),
+                content_hash: sprocket_workspace::artifact_bindings::content_hash("local source"),
             })
             .unwrap();
         guard.persist().await.unwrap();

@@ -49,7 +49,7 @@ impl TranscriptPart {
             .map_or(&[], |completion| completion.items.as_slice())
     }
 
-    pub(crate) fn without_work_assignment(mut self) -> Self {
+    pub fn without_work_assignment(mut self) -> Self {
         self.work = WorkAssignment::default();
         self
     }

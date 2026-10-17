@@ -19,7 +19,7 @@ fn completion_response_decodes_the_authoritative_persisted_part() {
     .unwrap();
     let part: Option<PersistedTranscriptPart> =
         decode_function_result(FunctionResult::Value(value), "finalizeCompletionCall").unwrap();
-    let part: crate::TranscriptPart = part.unwrap().into();
+    let part: sprocket_transcript::TranscriptPart = part.unwrap().into();
     assert_eq!(part.number, 8);
     assert_eq!(part.created_at, Some(1_700_000_000_000));
     let work = part.work_assignment();

@@ -40,7 +40,7 @@ use axum::Router;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::CookieJar;
-use sprocket_agent::{LiveCompletionHub, TranscriptStore};
+use sprocket_transcript::{LiveCompletionHub, TranscriptStore};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 

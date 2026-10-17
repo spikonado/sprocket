@@ -1,5 +1,5 @@
 use super::*;
-use sprocket_agent::artifact_bindings::ArtifactBinding;
+use sprocket_workspace::artifact_bindings::ArtifactBinding;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 impl ArtifactWatchers {

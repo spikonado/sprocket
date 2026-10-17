@@ -14,20 +14,20 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
-use crate::attachments::cache_prompt_attachments;
 use crate::catalog::catalog_models_for_run;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
-use crate::live::LiveCompletionHub;
+use crate::history::{
+    agent_history_from_parts, current_run_has_finished_turns, pending_prompt_part,
+};
 use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
-use crate::transcript::{
-    DownloadOrder, TranscriptState, TranscriptStore, agent_history_from_parts, apply_remote_state,
-    current_run_has_finished_turns, parse_remote_parts, pending_prompt_part,
-    prompt_text_with_attachments,
-};
 use crate::types::{
     CompletionProvider, RunAgentRequest, RunContextResponse, deserialize_agent_history,
+};
+use sprocket_transcript::{
+    DownloadOrder, LiveCompletionHub, TranscriptPart, TranscriptState, TranscriptStore,
+    apply_remote_state, cache_prompt_attachments, parse_remote_parts,
 };
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
@@ -65,7 +65,7 @@ pub struct AgentRun {
     runtime: RuntimeClient,
     run_id: String,
     user_id: String,
-    prompt_part: Option<crate::transcript::TranscriptPart>,
+    prompt_part: Option<TranscriptPart>,
     claim_id: String,
     workspace_root: std::path::PathBuf,
     gateway_url: String,
@@ -101,7 +101,7 @@ impl AgentRun {
         &self.request.thread_id
     }
 
-    pub fn prompt_part(&self) -> Option<&crate::transcript::TranscriptPart> {
+    pub fn prompt_part(&self) -> Option<&TranscriptPart> {
         self.prompt_part.as_ref()
     }
 }
@@ -818,7 +818,7 @@ async fn load_prior_history(
     .await?;
     let current_prompt = pending_prompt_part(&state, &parts, run_id)
         .and_then(|part| part.prompt.as_ref())
-        .map(prompt_text_with_attachments);
+        .map(|prompt| prompt.text_with_attachments());
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
     crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
@@ -836,10 +836,10 @@ async fn load_context_parts<F, Fut>(
     state: &TranscriptState,
     run_id: &str,
     fetch: F,
-) -> anyhow::Result<(Vec<crate::transcript::TranscriptPart>, bool)>
+) -> anyhow::Result<(Vec<TranscriptPart>, bool)>
 where
     F: FnMut(u32, u32, DownloadOrder) -> Fut,
-    Fut: Future<Output = anyhow::Result<Vec<crate::transcript::TranscriptPart>>>,
+    Fut: Future<Output = anyhow::Result<Vec<TranscriptPart>>>,
 {
     let check_handoff = state.context_summary.is_some() && state.history_from_number > 0;
     let start = state.history_from_number - u32::from(check_handoff);
@@ -1117,7 +1117,7 @@ pub async fn run_agent(
                     handoff_base_instructions,
                     initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
-                    artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
+                    artifact_bindings: sprocket_workspace::artifact_bindings::ArtifactBindings::new(
                         &store.root().with_file_name("artifact-bindings"),
                         &request.deployment_url,
                         &context.run.user_id,

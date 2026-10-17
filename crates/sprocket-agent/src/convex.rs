@@ -2,6 +2,11 @@ use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::{Deserialize, Deserializer};
 use sprocket_convex::{Client as ConvexRpcClient, decode_function_result};
+use sprocket_transcript::sections::WorkAssignment;
+use sprocket_transcript::{
+    DownloadOrder, RemoteTranscriptState, TranscriptCompletionBody, TranscriptPart,
+    TranscriptPartKind, TranscriptPromptBody, TranscriptToolBody, parse_remote_page,
+};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -20,21 +25,21 @@ struct PersistedTranscriptPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
     source_key: String,
-    kind: crate::TranscriptPartKind,
+    kind: TranscriptPartKind,
     run_id: String,
-    work: crate::sections::WorkAssignment,
+    work: WorkAssignment,
     #[serde(
         rename = "_creationTime",
         default,
         deserialize_with = "deserialize_creation_time"
     )]
     created_at: Option<u64>,
-    prompt: Option<crate::transcript::types::TranscriptPromptBody>,
-    completion: Option<crate::transcript::types::TranscriptCompletionBody>,
-    tool: Option<crate::transcript::types::TranscriptToolBody>,
+    prompt: Option<TranscriptPromptBody>,
+    completion: Option<TranscriptCompletionBody>,
+    tool: Option<TranscriptToolBody>,
 }
 
-impl From<PersistedTranscriptPart> for crate::TranscriptPart {
+impl From<PersistedTranscriptPart> for TranscriptPart {
     fn from(part: PersistedTranscriptPart) -> Self {
         Self {
             number: part.number,
@@ -182,7 +187,7 @@ impl RuntimeClient {
     pub(crate) async fn transcript_state_for_run(
         &self,
         run_id: &str,
-    ) -> anyhow::Result<crate::transcript::RemoteTranscriptState> {
+    ) -> anyhow::Result<RemoteTranscriptState> {
         self.query_json("transcript:getStateForRun", self.run_args(run_id))
             .await
     }
@@ -193,8 +198,8 @@ impl RuntimeClient {
         thread_id: &str,
         start: u32,
         end: u32,
-        order: crate::transcript::DownloadOrder,
-    ) -> anyhow::Result<Vec<crate::transcript::TranscriptPart>> {
+        order: DownloadOrder,
+    ) -> anyhow::Result<Vec<TranscriptPart>> {
         let mut args = self.run_args(run_id);
         args.insert("start".into(), Value::Float64(f64::from(start)));
         args.insert("end".into(), Value::Float64(f64::from(end)));
@@ -205,7 +210,7 @@ impl RuntimeClient {
         let value = self
             .query_json("transcript:getPartsPageForRun", args)
             .await?;
-        crate::transcript::parse_remote_page(value, thread_id)
+        parse_remote_page(value, thread_id)
     }
 
     pub(crate) async fn attachment_url_for_run(

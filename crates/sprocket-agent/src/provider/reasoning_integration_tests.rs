@@ -20,12 +20,13 @@ use rig::wire::{Body, Mode, Operation, Wire};
 use serde_json::{Value as JsonValue, json};
 
 use super::{apply_completed_text, apply_completed_tool_call, durable_items_json};
+use crate::history::agent_history_from_parts;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
-use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
+use crate::now_ms;
 use crate::openai::stateless_responses_model;
 use crate::reasoning::apply_completed_reasoning;
-use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{AgentHistoryMessage, deserialize_agent_history};
+use sprocket_transcript::{LiveAssistantPart, LiveAssistantParts, TranscriptPart, TranscriptStore};
 
 const STREAM_ID: &str = "stream";
 const ITEM_ID: &str = "rs_gateway";

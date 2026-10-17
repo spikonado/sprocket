@@ -1,5 +1,5 @@
 use super::*;
-use crate::transcript::types::{TranscriptPartKind, TranscriptPromptBody};
+use crate::types::{TranscriptPartKind, TranscriptPromptBody};
 
 fn prompt(number: u32, text: &str) -> TranscriptPart {
     TranscriptPart {

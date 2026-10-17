@@ -14,7 +14,7 @@ fn downloads_newest_pages_first_without_shifting_old_pages() {
 
 #[tokio::test]
 async fn downloads_partial_pages_around_cached_gaps_and_prioritizes_live_parts() {
-    use sprocket_agent::TranscriptPart;
+    use sprocket_transcript::TranscriptPart;
     use std::sync::Mutex;
 
     fn prompt(number: u32) -> TranscriptPart {

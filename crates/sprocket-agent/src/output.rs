@@ -5,7 +5,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::{TranscriptPart, TranscriptStore};
+use sprocket_transcript::{TranscriptPart, TranscriptStore};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunOutcome {

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use convex::{QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_agent::DownloadOrder;
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
+use sprocket_transcript::DownloadOrder;
 use tokio::time::sleep;
 
 #[derive(Clone)]
@@ -27,7 +27,7 @@ impl UserConvexClient {
         start: u32,
         end: u32,
         order: DownloadOrder,
-    ) -> anyhow::Result<Vec<sprocket_agent::TranscriptPart>> {
+    ) -> anyhow::Result<Vec<sprocket_transcript::TranscriptPart>> {
         let mut args = thread_id_args(thread_id);
         args.insert("start".into(), Value::Float64(f64::from(start)));
         args.insert("end".into(), Value::Float64(f64::from(end)));
@@ -35,7 +35,7 @@ impl UserConvexClient {
             "order".into(),
             Value::try_from(serde_json::to_value(order)?)?,
         );
-        sprocket_agent::parse_remote_page(
+        sprocket_transcript::parse_remote_page(
             self.query_json("transcript:getPartsPage", args).await?,
             thread_id,
         )

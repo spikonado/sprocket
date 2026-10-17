@@ -1251,10 +1251,10 @@ async fn read_transcript_snapshot(
     let transcript = &info.transcript;
     let user_id = &context.user_id;
     let thread_id = &transcript.thread_id;
-    crate::transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
+    sprocket_transcript::apply_remote_state(store, user_id, thread_id, transcript, false)
         .await
         .map_err(tool_error)?;
-    let page = crate::transcript::monitor::download_monitor_page(
+    let page = sprocket_transcript::monitor::download_monitor_page(
         store,
         user_id,
         thread_id,
@@ -1272,7 +1272,7 @@ async fn read_transcript_snapshot(
                 .runtime
                 .mutation_json(TRANSCRIPT_PARTS_PAGE, fields)
                 .await?;
-            crate::transcript::parse_remote_page(value, thread_id)
+            sprocket_transcript::parse_remote_page(value, thread_id)
         },
     )
     .await

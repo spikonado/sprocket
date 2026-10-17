@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use convex::Value;
 use futures::StreamExt;
-use sprocket_agent::{
+use sprocket_convex::decode_labeled_function_result;
+use sprocket_transcript::{
     DownloadOrder, RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TranscriptStore,
     apply_remote_state,
 };
-use sprocket_convex::decode_labeled_function_result;
 use tokio::sync::{broadcast, watch};
 
 use crate::transcript_client::UserConvexClient;
@@ -71,7 +71,7 @@ async fn download<F, Fut>(
 ) -> anyhow::Result<()>
 where
     F: FnMut(u32, u32, DownloadOrder) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<Vec<sprocket_agent::TranscriptPart>>>,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<sprocket_transcript::TranscriptPart>>>,
 {
     let mut seen_total = 0;
     let mut pending = Vec::new();

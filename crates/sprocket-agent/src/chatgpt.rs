@@ -10,7 +10,7 @@ use rig::providers::openai;
 use rig::wasm_compat::WasmCompatSend;
 use rig::{DynModel, Model};
 
-use crate::live::now_ms;
+use crate::now_ms;
 use crate::openai::StatelessResponses;
 use crate::types::ChatGptCredentials;
 
