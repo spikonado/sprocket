@@ -42,6 +42,12 @@ struct WorkspaceSkillsRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RemoveProjectRequest {
+    workspace_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkspaceSearchRequest {
     workspace_path: String,
     query: String,
@@ -78,7 +84,9 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route(
             "/workspace/projects",
-            get(list_projects).post(attach_project),
+            get(list_projects)
+                .post(attach_project)
+                .delete(remove_project),
         )
         .route("/workspace/resolve", post(resolve_path))
         .route("/workspace/browse", post(browse_path))
@@ -149,6 +157,20 @@ async fn attach_project(
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(project))
+}
+
+async fn remove_project(
+    State(state): State<AppState>,
+    MachineSession: MachineSession,
+    Json(payload): Json<RemoveProjectRequest>,
+) -> Result<Json<()>, ApiError> {
+    state
+        .host
+        .project_attachments
+        .remove(&payload.workspace_path)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(()))
 }
 
 async fn resolve_path(
