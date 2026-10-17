@@ -2,7 +2,7 @@ name: Update Convex AI Files
 
 on:
   schedule:
-    - cron: '17 9 * * 1'
+    - cron: '0 0 * * 1'
   workflow_dispatch:
 
 permissions:
