@@ -72,14 +72,16 @@ async fn link(
         "A thread can link at most {MAX_LINKED_PRS} PRs."
     );
 
+    // GitHub matches repositories case-insensitively, so one spelling keeps
+    // relinks from adding a duplicate.
     let refs: Vec<_> = pull_requests
         .into_iter()
         .map(|pr| PullRequestRef {
-            repository: pr.repository,
+            repository: pr.repository.trim().to_ascii_lowercase(),
             number: pr.number,
         })
         .collect();
-    let fetched = fetch_states(&refs).await;
+    let mut fetched = fetch_states(&refs).await;
     if let Some((host, error)) = fetched.failures.into_iter().next() {
         anyhow::bail!("Reading pull requests from {host} failed: {error}");
     }
@@ -95,6 +97,10 @@ async fn link(
             missing.number
         );
     }
+    fetched.states.sort_by_key(|status| {
+        refs.iter()
+            .position(|pr| pr.repository == status.repository && pr.number == status.number)
+    });
 
     let args = BTreeMap::from([
         ("runId".to_string(), Value::from(context.run_id.clone())),

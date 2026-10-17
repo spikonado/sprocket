@@ -268,11 +268,15 @@
 }
 
 .inbox-row-pr {
-	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 2px;
 	font-variant-numeric: tabular-nums;
+}
+
+/* Raised above the row's click overlay; the `+N` count stays under it. */
+a.inbox-row-pr {
+	position: relative;
 }
 
 a.inbox-row-pr:hover {
