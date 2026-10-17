@@ -956,7 +956,8 @@ async fn run_with_completion_model(
                                     streamed_text.clear();
                                     continue 'generations;
                                 }
-                                if !context_handoff_hook.is_writing()
+                                // A provider-switch handoff writes on the previous provider.
+                                if provider_switch.is_none()
                                     && !target.fallback_providers.is_empty()
                                     && is_provider_failure(&error)
                                     && classify_provider_error(&error) == ProviderErrorDisposition::Failed

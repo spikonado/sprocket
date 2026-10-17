@@ -684,21 +684,25 @@ export default function App({
 			desktopApiResolved && (!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)
 	};
 
+	const selectedCatalogModel = modelCatalog
+		? getCatalogModel(modelCatalog, selectedModel)
+		: undefined;
+
 	const enabledProviderOrder = enabledProviders(providerOrder);
-	const spikonadoIndex = enabledProviderOrder.indexOf('spikonado');
+	const routeProviders = selectedCatalogModel
+		? providerChainForModel(enabledProviderOrder, selectedCatalogModel)
+		: enabledProviderOrder;
+	const spikonadoIndex = routeProviders.indexOf('spikonado');
 
 	// Spikonado is always usable, so unknown providers after it only drop out of the fallbacks.
+	// A failed preferences read must not fall back to the default order and re-enable providers.
 	const providersReady =
-		(uiPreferencesQuery.data !== undefined || uiPreferencesQuery.error !== null) &&
-		(spikonadoIndex === -1
-			? enabledProviderOrder
-			: enabledProviderOrder.slice(0, spikonadoIndex)
-		).every((provider) => providerStatusKnown[provider]);
+		uiPreferencesQuery.data !== undefined &&
+		(spikonadoIndex === -1 ? routeProviders : routeProviders.slice(0, spikonadoIndex)).every(
+			(provider) => providerStatusKnown[provider]
+		);
 
-	const currentProviderChain = providerChainForModel(
-		availableProviders,
-		modelCatalog ? getCatalogModel(modelCatalog, selectedModel) : undefined
-	);
+	const currentProviderChain = providerChainForModel(availableProviders, selectedCatalogModel);
 
 	useEffect(() => {
 		if (!authReady || !signedInUserId || uiPreferencesQuery.data === undefined) return;
