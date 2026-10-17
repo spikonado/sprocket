@@ -62,7 +62,7 @@ fn parse_repository(repository: &str) -> Option<Repository<'_>> {
 }
 
 /// Reads the states of many PRs with one GraphQL request per host and batch.
-pub async fn fetch_states(pull_requests: &[PullRequestRef]) -> FetchedStates {
+pub async fn fetch_states(user_id: &str, pull_requests: &[PullRequestRef]) -> FetchedStates {
     let mut by_host: BTreeMap<&str, Vec<(&PullRequestRef, Repository)>> = BTreeMap::new();
     for pull_request in pull_requests {
         if let Some(repository) = parse_repository(&pull_request.repository) {
@@ -75,7 +75,7 @@ pub async fn fetch_states(pull_requests: &[PullRequestRef]) -> FetchedStates {
 
     let mut fetched = FetchedStates::default();
     for (host, lookups) in by_host {
-        let api = match GitHubApi::connect(host).await {
+        let api = match GitHubApi::connect(user_id, host).await {
             Ok(api) => api,
             Err(error) => {
                 fetched.failures.push((host.to_string(), error));
