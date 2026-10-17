@@ -160,6 +160,14 @@ impl UserConvexClient {
     ) -> anyhow::Result<T> {
         self.query_json(function, args).await
     }
+
+    pub async fn act<T: for<'de> serde::Deserialize<'de>>(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<T> {
+        decode_labeled_function_result(self.client.action(function, args).await?, function)
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]

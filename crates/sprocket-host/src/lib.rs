@@ -6,6 +6,7 @@ pub mod artifact_watch;
 pub mod chatgpt_credentials;
 pub mod command_sessions;
 pub mod command_sync;
+pub mod github_settings;
 pub mod lifetime;
 pub mod machine_identity;
 pub mod machines;
@@ -31,6 +32,7 @@ use tokio::task::JoinHandle;
 use crate::artifact_watch::ArtifactWatchers;
 use crate::chatgpt_credentials::ChatGptService;
 use crate::command_sessions::ThreadCommandSessions;
+use crate::github_settings::GitHubSettingsStore;
 use crate::lifetime::HostLifetime;
 use crate::machine_identity::MachineIdentity;
 use crate::machines::MachineManager;
@@ -62,6 +64,7 @@ pub struct Host {
     pub lifetime: Arc<HostLifetime>,
     pub native_auth: Arc<NativeAuthManager>,
     pub chatgpt_credentials: Arc<ChatGptService>,
+    pub github_settings: Arc<GitHubSettingsStore>,
     pub project_attachments: Arc<ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
@@ -101,10 +104,16 @@ impl Host {
         package_updates: Arc<PackageUpdateManager>,
     ) -> anyhow::Result<Self> {
         let machine_identity = Arc::new(MachineIdentity::load(data_dir)?);
+        github_settings::install_saved_tokens_loader(
+            convex_deployment_url.clone(),
+            Arc::clone(&native_auth),
+            Arc::clone(&machine_identity),
+        );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         Ok(Self {
             lifetime: HostLifetime::new(),
             chatgpt_credentials,
+            github_settings: GitHubSettingsStore::load(data_dir),
             project_attachments: ProjectAttachmentStore::new(data_dir.to_path_buf()),
             transcript_watchers: TranscriptWatchers::new(
                 convex_deployment_url.clone(),
