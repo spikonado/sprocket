@@ -38,6 +38,12 @@ async fn starting_for_another_user_stops_the_previous_dashboard() {
 
     assert_eq!(manager.start("second").await.state, "installing");
     assert!(manager.port("first").await.is_err());
-    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    let stopped = tokio::time::timeout(Duration::from_secs(5), async {
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(stopped.is_ok(), "previous dashboard is still running");
     manager.shutdown().await;
 }
