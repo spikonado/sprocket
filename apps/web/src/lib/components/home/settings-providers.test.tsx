@@ -61,6 +61,7 @@ function createChatGptApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		deleteArtifact: unused,
 		watchArtifacts: unused,
 		requestRunCancellation: unused,
+		fetchPullRequestStates: unused,
 		startAccountSession: unused,
 		endAccountSession: unused,
 		fetchChatGptStatus: async () => statusFixture(),

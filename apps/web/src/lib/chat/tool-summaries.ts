@@ -67,6 +67,8 @@ export function toolItemLabel(toolKey: string): string | undefined {
 			return 'Captured Screenshot';
 		case 'set_cwd':
 			return 'Changed Directory';
+		case 'link_prs':
+			return 'Linked PRs';
 		default:
 			return titleizeSnakeCase(toolKey);
 	}
@@ -163,6 +165,14 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return jsonString(fields?.path) ?? jsonString(fields?.url) ?? 'File';
 		case 'set_cwd':
 			return jsonString(fields?.path) ?? 'Directory';
+		case 'link_prs':
+			return Array.isArray(fields?.pull_requests)
+				? fields.pull_requests
+						.map((pr) =>
+							isJsonObject(pr) ? `${String(pr.repository)}#${String(pr.number)}` : 'PR'
+						)
+						.join(', ')
+				: 'Pull requests';
 		case 'update_artifact':
 			return jsonString(fields?.title) ?? 'Updated artifact';
 		case 'web_search':

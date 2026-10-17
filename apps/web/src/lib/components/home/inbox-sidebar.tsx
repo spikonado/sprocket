@@ -32,6 +32,7 @@ import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
 import AppUpdate from './app-update';
 import InboxLoadMore from './inbox-load-more';
+import LinkedPullRequests from './linked-pull-requests';
 import SidebarTopActions from './sidebar-top-actions';
 
 const SETTLED_INBOX_OPEN_KEY = 'sprocket.inbox.settled-open';
@@ -723,80 +724,54 @@ function ThreadTreeRow({
 				role="group"
 				aria-label={thread.title ?? 'New thread'}
 			>
-				{renaming ? (
-					<form
-						className="inbox-row-main"
-						onSubmit={(event) => {
-							event.preventDefault();
-							void onCommitRename();
-						}}
-					>
-						<span className="inbox-row-meta">
-							<span className="truncate">{projectName}</span>
-							{status && (
-								<span className={cn('inbox-status shrink-0', status.className)}>
-									{status.label}
-								</span>
-							)}
-						</span>
-						<input
-							ref={renameInputRef}
-							value={renameTitle}
-							onChange={(event) => onRenameTitleChange(event.currentTarget.value)}
-							className="inbox-row-rename-input"
-							aria-label="Rename thread"
-							maxLength={300}
-							onKeyDown={(event) => {
-								if (event.key !== 'Escape') return;
+				<div className="inbox-row-main">
+					<span className="inbox-row-meta">
+						<span className="truncate">{projectName}</span>
+						{status && (
+							<span className={cn('inbox-status shrink-0', status.className)}>{status.label}</span>
+						)}
+					</span>
+					{/* The title button's overlay makes the whole row clickable while the PR button stays outside it. */}
+					{renaming ? (
+						<form
+							className="contents"
+							onSubmit={(event) => {
 								event.preventDefault();
-								onCancelRename();
+								void onCommitRename();
 							}}
-							onBlur={() => void onCommitRename()}
-						/>
-						<span className="inbox-row-model">
-							{model ? (
-								<>
-									<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-									<span className="truncate">{model.label}</span>
-								</>
-							) : (
-								<span className="truncate">Unknown model</span>
-							)}
-						</span>
-					</form>
-				) : (
-					<button
-						className="inbox-row-main"
-						type="button"
-						title={`${thread.title ?? 'New thread'}\n${projectName}`}
-						onClick={() => onChoose(thread)}
-						onDoubleClick={() => {
-							if (!mutationsEnabled || busy) return;
-							onBeginRename(thread);
-						}}
-						aria-current={selected ? 'page' : undefined}
-					>
-						<span className="inbox-row-meta">
-							<span className="truncate">{projectName}</span>
-							{status && (
-								<span className={cn('inbox-status shrink-0', status.className)}>
-									{status.label}
-								</span>
-							)}
-						</span>
-						<span className="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
-						<span className="inbox-row-model">
-							{model ? (
-								<>
-									<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-									<span className="truncate">{model.label}</span>
-								</>
-							) : (
-								<span className="truncate">Unknown model</span>
-							)}
-						</span>
-					</button>
-				)}
+						>
+							<input
+								ref={renameInputRef}
+								value={renameTitle}
+								onChange={(event) => onRenameTitleChange(event.currentTarget.value)}
+								className="inbox-row-rename-input"
+								aria-label="Rename thread"
+								maxLength={300}
+								onKeyDown={(event) => {
+									if (event.key !== 'Escape') return;
+									event.preventDefault();
+									onCancelRename();
+								}}
+								onBlur={() => void onCommitRename()}
+							/>
+						</form>
+					) : (
+						<button
+							className="inbox-row-open inbox-row-title truncate"
+							type="button"
+							title={`${thread.title ?? 'New thread'}\n${projectName}`}
+							onClick={() => onChoose(thread)}
+							onDoubleClick={() => {
+								if (!mutationsEnabled || busy) return;
+								onBeginRename(thread);
+							}}
+							aria-current={selected ? 'page' : undefined}
+						>
+							{thread.title ?? 'New thread'}
+						</button>
+					)}
+					<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
+				</div>
 				{!renaming && isRoot && (
 					<div className="inbox-row-actions">
 						{sectionState === 'unsettled' ? (
@@ -858,6 +833,28 @@ function ThreadTreeRow({
 				</div>
 			)}
 		</div>
+	);
+}
+
+function ThreadModelRow({
+	model,
+	pullRequests = []
+}: {
+	model: ThreadTreeRowProps['model'];
+	pullRequests: Thread['pullRequests'];
+}) {
+	return (
+		<span className="inbox-row-model">
+			{model ? (
+				<>
+					<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+					<span className="truncate">{model.label}</span>
+				</>
+			) : (
+				<span className="truncate">Unknown model</span>
+			)}
+			<LinkedPullRequests pullRequests={pullRequests} />
+		</span>
 	);
 }
 

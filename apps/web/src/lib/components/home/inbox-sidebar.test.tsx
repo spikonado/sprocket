@@ -264,7 +264,111 @@ it('shows project, title, provider, and model name without a model slug', async 
 	expect(row.querySelector('.inbox-row-model svg')).toBeTruthy();
 	expect(row.textContent).not.toContain('model');
 	expect(row.textContent).not.toContain('submission');
-	expect(row.querySelector('.inbox-row-main')?.getAttribute('title')).not.toContain('model');
+	expect(row.querySelector('.inbox-row-open')?.getAttribute('title')).not.toContain('model');
+});
+
+type LinkedPullRequest = NonNullable<Thread['pullRequests']>[number];
+
+const linkedPr = (
+	number: number,
+	state: LinkedPullRequest['state'],
+	repository = 'github.com/acme/widgets'
+): LinkedPullRequest => ({ repository, number, state, title: `Change ${number}` });
+
+it('opens a single linked PR in a new tab without opening the thread', async () => {
+	const input = await render([{ ...thread(), pullRequests: [linkedPr(12, 'open')] }]);
+	const user = userEvent.setup();
+	const link = document.querySelector<HTMLAnchorElement>('.inbox-row-model a.inbox-pr-button')!;
+
+	expect(link.textContent).toBe('#12');
+	expect(link.getAttribute('aria-label')).toBe('Open PR #12: Change 12');
+	expect(link.getAttribute('href')).toBe('https://github.com/acme/widgets/pull/12');
+	expect(link.getAttribute('target')).toBe('_blank');
+	expect(link.closest('button')).toBeNull();
+	link.addEventListener('click', (event) => event.preventDefault());
+	await user.click(link);
+	expect(input.onSelect).not.toHaveBeenCalled();
+});
+
+it('keeps the PR button in place when a rename commits on blur', async () => {
+	const input = await render([{ ...thread(), pullRequests: [linkedPr(12, 'open')] }]);
+	const link = document.querySelector('.inbox-pr-button')!;
+
+	await userEvent.setup().dblClick(document.querySelector('.inbox-row-open')!);
+	await flush();
+	const renameInput = document.querySelector('[aria-label="Rename thread"]')!;
+
+	fireEvent.change(renameInput, { target: { value: 'Updated thread' } });
+	fireEvent.blur(renameInput);
+	await flush();
+
+	expect(input.onRename).toHaveBeenCalledWith(
+		expect.objectContaining({ _id: 'thread' }),
+		'Updated thread'
+	);
+	expect(document.querySelector('.inbox-pr-button')).toBe(link);
+});
+
+it('lists several linked PRs, newest first, in a dashboard beside one button', async () => {
+	const input = await render([
+		{
+			...thread(),
+			pullRequests: [
+				linkedPr(3, 'closed'),
+				linkedPr(7, 'merged'),
+				linkedPr(12, 'open', 'github.com/acme/site')
+			]
+		}
+	]);
+
+	const user = userEvent.setup();
+
+	const button = document.querySelector<HTMLButtonElement>(
+		'.inbox-row-model button.inbox-pr-button'
+	)!;
+
+	expect(document.querySelectorAll('.inbox-pr-button')).toHaveLength(1);
+	expect(button.textContent).toBe('3');
+	expect(button.getAttribute('aria-label')).toBe('3 linked PRs: 1 open, 1 merged, 1 closed');
+
+	await user.click(button);
+	const dashboard = document.querySelector<HTMLElement>('[role="dialog"]')!;
+
+	expect(input.onSelect).not.toHaveBeenCalled();
+	expect(button.getAttribute('aria-expanded')).toBe('true');
+	expect(document.activeElement).toBe(dashboard);
+	expect(
+		[...dashboard.querySelectorAll('a')].map((item) => [
+			item.getAttribute('href'),
+			item.getAttribute('target'),
+			item.textContent
+		])
+	).toEqual([
+		['https://github.com/acme/site/pull/12', '_blank', 'Change 12Openacme/site#12'],
+		['https://github.com/acme/widgets/pull/7', '_blank', 'Change 7Mergedacme/widgets#7'],
+		['https://github.com/acme/widgets/pull/3', '_blank', 'Change 3Closedacme/widgets#3']
+	]);
+
+	await user.keyboard('{ArrowDown}');
+	expect(document.activeElement?.textContent).toContain('Change 12');
+	await user.keyboard('{Escape}');
+	expect(document.querySelector('[role="dialog"]')).toBeNull();
+	expect(document.activeElement).toBe(button);
+
+	await user.click(button);
+	await user.click(document.querySelector('.inbox-row-meta')!);
+	expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it('names repositories in the PR dashboard only when they differ', async () => {
+	await render([{ ...thread(), pullRequests: [linkedPr(3, 'closed'), linkedPr(7, 'open')] }]);
+	await userEvent.setup().click(document.querySelector('button.inbox-pr-button')!);
+
+	expect(
+		[...document.querySelectorAll('[role="dialog"] .inbox-pr-item-meta')].map(
+			(meta) => meta.textContent
+		)
+	).toEqual(['Open', 'Closed']);
 });
 
 it('keeps thread rows styled when selection moves by click and keyboard', async () => {
@@ -281,7 +385,7 @@ it('keeps thread rows styled when selection moves by click and keyboard', async 
 	const user = userEvent.setup();
 
 	renderView(<NavigationHarness {...input} />);
-	const buttons = [...document.querySelectorAll<HTMLButtonElement>('.inbox-row-main')];
+	const buttons = [...document.querySelectorAll<HTMLButtonElement>('.inbox-row-open')];
 
 	function expectSelected(button: HTMLButtonElement) {
 		expect(button.getAttribute('aria-current')).toBe('page');
@@ -314,10 +418,11 @@ it.each([
 		expect(document.querySelector('.inbox-row-meta')?.textContent).toBe(`Repository${label}`);
 		expect(document.querySelector('.inbox-row-model .truncate')?.textContent).toBe('Model Name');
 
-		await userEvent.setup().dblClick(document.querySelector('.inbox-row-main')!);
+		await userEvent.setup().dblClick(document.querySelector('.inbox-row-open')!);
 		await flush();
 
-		expect(document.querySelector('form .inbox-row-meta .inbox-status')?.textContent).toBe(label);
+		expect(document.querySelector('[aria-label="Rename thread"]')).toBeTruthy();
+		expect(document.querySelector('.inbox-row-meta .inbox-status')?.textContent).toBe(label);
 	}
 );
 
@@ -445,7 +550,7 @@ it('reports a title regeneration failure in the sidebar', async () => {
 
 it('does not attach keyboard context-menu behavior to thread rows', async () => {
 	await render([thread()]);
-	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
 
 	act(() => {
 		rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
@@ -556,7 +661,7 @@ it('expands subagents from the status text without selecting the thread', async 
 
 	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
 
-	const main = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+	const main = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
 
 	const badge = expansion.querySelector<HTMLElement>('.inbox-row-subagents')!;
 
@@ -790,7 +895,7 @@ it('renders and selects nested children with increasing indentation', async () =
 	expect(Number(grandchildRow.style.marginLeft.replace('px', ''))).toBeGreaterThan(
 		Number(childRow.style.marginLeft.replace('px', ''))
 	);
-	const childMain = grandchildRow.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+	const childMain = grandchildRow.querySelector<HTMLButtonElement>('.inbox-row-open')!;
 
 	act(() => {
 		childMain.click();
