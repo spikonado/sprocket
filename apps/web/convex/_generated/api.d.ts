@@ -21,7 +21,6 @@ import type * as chat from "../chat.js";
 import type * as commands from "../commands.js";
 import type * as crons from "../crons.js";
 import type * as executor from "../executor.js";
-import type * as firecrawlRequestActions from "../firecrawlRequestActions.js";
 import type * as firecrawlRequests from "../firecrawlRequests.js";
 import type * as gateway from "../gateway.js";
 import type * as githubCredentials from "../githubCredentials.js";
@@ -47,7 +46,6 @@ import type * as lib_dodoProducts from "../lib/dodoProducts.js";
 import type * as lib_dodoSubscription from "../lib/dodoSubscription.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
 import type * as lib_firecrawl from "../lib/firecrawl.js";
-import type * as lib_firecrawlPools from "../lib/firecrawlPools.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
 import type * as lib_gatewayProtocol from "../lib/gatewayProtocol.js";
 import type * as lib_gatewayToken from "../lib/gatewayToken.js";
@@ -91,6 +89,7 @@ import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
 import type * as lib_uiPreferences from "../lib/uiPreferences.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
+import type * as lib_webPools from "../lib/webPools.js";
 import type * as lib_workSections from "../lib/workSections.js";
 import type * as lib_workosVault from "../lib/workosVault.js";
 import type * as machines from "../machines.js";
@@ -112,6 +111,8 @@ import type * as threads from "../threads.js";
 import type * as transcript from "../transcript.js";
 import type * as uiPreferences from "../uiPreferences.js";
 import type * as usage from "../usage.js";
+import type * as webRequestActions from "../webRequestActions.js";
+import type * as webRequests from "../webRequests.js";
 import type * as webSearchPool from "../webSearchPool.js";
 import type * as webTools from "../webTools.js";
 
@@ -135,7 +136,6 @@ declare const fullApi: ApiFromModules<{
   commands: typeof commands;
   crons: typeof crons;
   executor: typeof executor;
-  firecrawlRequestActions: typeof firecrawlRequestActions;
   firecrawlRequests: typeof firecrawlRequests;
   gateway: typeof gateway;
   githubCredentials: typeof githubCredentials;
@@ -161,7 +161,6 @@ declare const fullApi: ApiFromModules<{
   "lib/dodoSubscription": typeof lib_dodoSubscription;
   "lib/executorJobs": typeof lib_executorJobs;
   "lib/firecrawl": typeof lib_firecrawl;
-  "lib/firecrawlPools": typeof lib_firecrawlPools;
   "lib/gatewayFetch": typeof lib_gatewayFetch;
   "lib/gatewayProtocol": typeof lib_gatewayProtocol;
   "lib/gatewayToken": typeof lib_gatewayToken;
@@ -205,6 +204,7 @@ declare const fullApi: ApiFromModules<{
   "lib/uiPreferences": typeof lib_uiPreferences;
   "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
+  "lib/webPools": typeof lib_webPools;
   "lib/workSections": typeof lib_workSections;
   "lib/workosVault": typeof lib_workosVault;
   machines: typeof machines;
@@ -226,6 +226,8 @@ declare const fullApi: ApiFromModules<{
   transcript: typeof transcript;
   uiPreferences: typeof uiPreferences;
   usage: typeof usage;
+  webRequestActions: typeof webRequestActions;
+  webRequests: typeof webRequests;
   webSearchPool: typeof webSearchPool;
   webTools: typeof webTools;
 }>;
@@ -257,12 +259,12 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  firecrawl: import("@firecrawl/firecrawl-convex/_generated/component.js").ComponentApi<"firecrawl">;
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;
   webSearchWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webSearchWorkpool">;
+  contextDevWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"contextDevWorkpool">;
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;
   billingWebhookWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"billingWebhookWorkpool">;
   billingReconciliationWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"billingReconciliationWorkpool">;

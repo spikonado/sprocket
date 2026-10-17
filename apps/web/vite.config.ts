@@ -50,7 +50,6 @@ export default defineConfig({
 		server: {
 			deps: {
 				inline: [
-					'@firecrawl/firecrawl-convex',
 					'@convex-dev/rate-limiter',
 					'@exalabs/convex-exa',
 					'@convex-dev/migrations',

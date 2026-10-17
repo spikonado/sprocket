@@ -32,26 +32,39 @@ pub(super) async fn localize_scrape(
             "scrape response is missing markdown"
         );
         let archive = serde_json::to_string(fields)?;
-        // Match JSON.stringify(...).length in the backend, including surrogate pairs.
-        if archive.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS {
-            let temp = tempfile::Builder::new()
-                .prefix("sprocket-scrape-")
-                .suffix(".json")
-                .tempfile()?;
-            let mut file = tokio::fs::File::from_std(temp.reopen()?);
-            tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
-                result = async {
-                    file.write_all(archive.as_bytes()).await?;
-                    file.flush().await
-                } => result?,
-            }
+        if exceeds_inline_limit(&archive) {
+            let temp = save_temp("sprocket-scrape-", &archive, cancellation).await?;
             record_saved_scrape(fields, temp, saved_file);
         }
     }
     fields.remove("truncated");
     Ok(result)
+}
+
+/// Matches JSON.stringify(...).length in the backend, including surrogate pairs.
+fn exceeds_inline_limit(archive: &str) -> bool {
+    archive.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS
+}
+
+async fn save_temp(
+    prefix: &str,
+    contents: &str,
+    cancellation: &WorkspaceCancellation,
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    let temp = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".json")
+        .tempfile()?;
+    let mut file = tokio::fs::File::from_std(temp.reopen()?);
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
+        result = async {
+            file.write_all(contents.as_bytes()).await?;
+            file.flush().await
+        } => result?,
+    }
+    Ok(temp)
 }
 
 fn record_saved_scrape(

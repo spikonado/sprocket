@@ -38,8 +38,8 @@ pub(super) async fn run(
     let id: String = tokio::select! {
         biased;
         _ = cancellation.cancelled() => return Err(cancelled_error()),
-        result = tokio::time::timeout(Duration::from_secs(30), runtime.mutation_json("firecrawlRequests:start", args)) => {
-            result.map_err(|_| tool_failure("Firecrawl submission timed out. Its outcome is unknown; check before repeating the request."))?.map_err(tool_error)?
+        result = tokio::time::timeout(Duration::from_secs(30), runtime.mutation_json("webRequests:start", args)) => {
+            result.map_err(|_| tool_failure("Web request submission timed out. Its outcome is unknown; check before repeating the request."))?.map_err(tool_error)?
         }
     };
     let result_args = BTreeMap::from([("id".into(), id.into()), ("runId".into(), run_id)]);
@@ -47,12 +47,12 @@ pub(super) async fn run(
         biased;
         _ = cancellation.cancelled() => Err(cancelled_error()),
         result = tokio::time::timeout(Duration::from_secs(510), wait(runtime, result_args.clone())) => {
-            result.unwrap_or_else(|_| Err(tool_failure("Firecrawl request timed out. Check the outcome before repeating the request.")))
+            result.unwrap_or_else(|_| Err(tool_failure("Web request timed out. Check the outcome before repeating the request.")))
         }
     };
     let _ = tokio::time::timeout(
         Duration::from_secs(5),
-        runtime.mutation_json::<serde_json::Value>("firecrawlRequests:dispose", result_args),
+        runtime.mutation_json::<serde_json::Value>("webRequests:dispose", result_args),
     )
     .await;
     result
@@ -63,12 +63,12 @@ async fn wait(
     args: BTreeMap<String, Value>,
 ) -> Result<serde_json::Value, ToolExecutionError> {
     let mut updates = runtime
-        .subscribe("firecrawlRequests:getResult", args)
+        .subscribe("webRequests:getResult", args)
         .await
         .map_err(tool_error)?;
     while let Some(update) = updates.next().await {
         let result: ResultStatus =
-            RuntimeClient::decode_subscription_update(update, "firecrawlRequests:getResult")
+            RuntimeClient::decode_subscription_update(update, "webRequests:getResult")
                 .map_err(tool_error)?;
         match result {
             ResultStatus::Pending => {}
@@ -77,7 +77,7 @@ async fn wait(
         }
     }
     Err(tool_failure(
-        "Firecrawl result subscription closed. Check the outcome before repeating the request.",
+        "Web request subscription closed. Check the outcome before repeating the request.",
     ))
 }
 
@@ -97,7 +97,7 @@ async fn download(url: &str) -> anyhow::Result<serde_json::Value> {
         response
             .content_length()
             .is_none_or(|size| size <= MAX_BYTES as u64),
-        "Firecrawl result exceeds its size limit"
+        "web request result exceeds its size limit"
     );
     let mut bytes = Vec::new();
     while let Some(chunk) = response
@@ -107,11 +107,11 @@ async fn download(url: &str) -> anyhow::Result<serde_json::Value> {
     {
         anyhow::ensure!(
             chunk.len() <= MAX_BYTES.saturating_sub(bytes.len()),
-            "Firecrawl result exceeds its size limit"
+            "web request result exceeds its size limit"
         );
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).context("Firecrawl result was not valid JSON")
+    serde_json::from_slice(&bytes).context("web request result was not valid JSON")
 }
 
 #[cfg(test)]

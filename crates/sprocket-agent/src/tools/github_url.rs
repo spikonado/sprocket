@@ -69,7 +69,6 @@ pub(super) async fn fetch_github_file(
     Ok(json!({
         "url": url.as_str(),
         "markdown": markdown,
-        "summary": "Summary not generated; file was read directly from GitHub.",
         "images": [],
     }))
 }

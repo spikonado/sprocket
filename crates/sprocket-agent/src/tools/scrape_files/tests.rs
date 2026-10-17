@@ -19,9 +19,9 @@ async fn serve(body: &str, declared_size: usize) -> reqwest::Url {
 }
 
 #[tokio::test]
-async fn short_scrapes_preserve_summary_and_images_without_a_truncation_flag() {
+async fn short_scrapes_preserve_outline_and_images_without_a_truncation_flag() {
     let result = localize_scrape(
-        json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "truncated": false}),
+        json!({"url": "https://example.com", "markdown": "# Hello", "outline": {"title": "Hello", "headings": []}, "images": ["https://example.com/image.png"], "truncated": false}),
         &WorkspaceCancellation::new(),
         &mut None,
     )
@@ -29,13 +29,13 @@ async fn short_scrapes_preserve_summary_and_images_without_a_truncation_flag() {
     .unwrap();
     assert_eq!(
         result,
-        json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"]})
+        json!({"url": "https://example.com", "markdown": "# Hello", "outline": {"title": "Hello", "headings": []}, "images": ["https://example.com/image.png"]})
     );
 }
 
 #[tokio::test]
 async fn direct_scrapes_use_utf16_budget_and_keep_full_json_until_completion() {
-    let short = json!({"url": "https://example.com/page.md", "markdown": "# Short", "summary": "Not generated", "images": []});
+    let short = json!({"url": "https://example.com/page.md", "markdown": "# Short", "images": []});
     let mut saved = None;
     assert_eq!(
         localize_scrape(short.clone(), &WorkspaceCancellation::new(), &mut saved)
@@ -58,7 +58,7 @@ async fn direct_scrapes_use_utf16_budget_and_keep_full_json_until_completion() {
         serde_json::from_str::<Value>(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap(),
         full
     );
-    assert_eq!(result["summary"], full["summary"]);
+    assert_eq!(result["url"], full["url"]);
     assert_eq!(
         result["markdown"],
         format!(
@@ -87,13 +87,14 @@ async fn cancelled_direct_saves_do_not_return_a_file() {
 }
 
 #[tokio::test]
-async fn full_scrape_is_saved_while_summary_stays_in_the_output() {
-    let scrape = json!({"markdown": "é\n".repeat(40_001), "summary": "Full summary", "images": ["https://example.com/image.png"]});
+async fn full_scrape_is_saved_while_outline_and_highlights_stay_in_the_output() {
+    let outline = json!({"title": "Guide", "headings": [{"level": 2, "text": "Install"}]});
+    let scrape = json!({"markdown": "é\n".repeat(40_001), "outline": outline, "images": ["https://example.com/image.png"]});
     let text = scrape.to_string();
     let url = serve(&text, text.len()).await;
     let mut saved_file = None;
     let result = localize_scrape(
-        json!({"url": "https://example.com", "scrapeUrl": url.as_str(), "summary": "Full summary"}),
+        json!({"url": "https://example.com", "scrapeUrl": url.as_str(), "outline": outline, "highlights": ["Run the installer."]}),
         &WorkspaceCancellation::new(),
         &mut saved_file,
     )
@@ -107,7 +108,8 @@ async fn full_scrape_is_saved_while_summary_stays_in_the_output() {
         .strip_suffix(" for you to view.")
         .unwrap();
     assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), text);
-    assert_eq!(result["summary"], "Full summary");
+    assert_eq!(result["outline"], outline);
+    assert_eq!(result["highlights"], json!(["Run the installer."]));
     assert_eq!(std::path::Path::new(path).extension().unwrap(), "json");
     assert_eq!(
         std::path::Path::new(path).parent(),
