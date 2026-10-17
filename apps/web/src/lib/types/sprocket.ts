@@ -84,7 +84,6 @@ export type MessageAttachment = {
 export type LiveTranscriptMessage = Omit<LiveCompletionOverlay, 'streamId'> & {
 	kind: 'live';
 	id: string;
-	runCompletedAt?: number;
 };
 
 export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;

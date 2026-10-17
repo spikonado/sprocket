@@ -38,7 +38,6 @@ function composer(
 			isSubmitting={false}
 			isStarting={false}
 			isRunning={false}
-			runStartedAt={null}
 			onSubmit={vi.fn()}
 			onCancel={vi.fn()}
 			usage={{ tier: 'pro', exhausted, resetsAt: null }}

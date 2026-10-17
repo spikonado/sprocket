@@ -1,14 +1,3 @@
-export function formatElapsedDuration(totalSeconds: number) {
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-
-	if (minutes === 0) {
-		return `${seconds}s`;
-	}
-
-	return `${minutes}m ${seconds}s`;
-}
-
 /** Compact human duration for countdowns; rounds up so "0m" never shows. */
 export function formatRemainingDuration(remainingMs: number): string {
 	const milliseconds = Math.max(0, remainingMs);

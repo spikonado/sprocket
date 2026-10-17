@@ -4,6 +4,13 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
+	'backfill work section tool counts',
+	{ hours: 1 },
+	internal.migrations.runSectionToolCountBackfill,
+	{}
+);
+
+crons.interval(
 	'backfill subscription expiry checks',
 	{ hours: 1 },
 	internal.migrations.runSubscriptionExpiryBackfill,

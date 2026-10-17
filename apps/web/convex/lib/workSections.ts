@@ -11,6 +11,7 @@ export const workSectionFields = {
 	provisional: v.boolean(),
 	itemCount: v.number(),
 	pendingTools: v.number(),
+	toolCounts: v.optional(v.record(v.string(), v.number())),
 	startedAt: v.optional(v.number()),
 	completedAt: v.optional(v.number())
 };

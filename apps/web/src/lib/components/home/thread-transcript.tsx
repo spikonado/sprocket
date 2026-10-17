@@ -14,8 +14,7 @@ import {
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
 	isAssistantResponseStreaming,
-	partitionWorkSectionTools,
-	workSectionTimingAnchor
+	partitionWorkSectionTools
 } from '$lib/chat/assistant-timeline';
 import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 import ChatMarkdown from '$lib/components/chat-markdown';
@@ -34,7 +33,7 @@ import type {
 } from '$lib/types/sprocket';
 import { mandateApprovals } from '$lib/chat/mandate';
 import type { ArtifactEntry } from '$lib/chat/artifacts';
-import { formatElapsedDuration } from '$lib/format';
+import { mergeWorkToolCounts, workSummary, workToolCounts } from '$lib/chat/work-summary';
 import type {
 	ExecutorJob,
 	TranscriptMessage,
@@ -75,22 +74,6 @@ type ScrollAnchor = {
 	scrollTop: number;
 	scrollHeight: number;
 };
-
-function earlierTimestamp(left: number | undefined, right: number | undefined) {
-	if (left === undefined) return right;
-
-	if (right === undefined) return left;
-
-	return Math.min(left, right);
-}
-
-function laterTimestamp(left: number | undefined, right: number | undefined) {
-	if (left === undefined) return right;
-
-	if (right === undefined) return left;
-
-	return Math.max(left, right);
-}
 
 export default function ThreadTranscript({
 	userId,
@@ -211,17 +194,15 @@ export default function ThreadTranscript({
 	function liveWorkState(
 		state: LiveRenderState,
 		section: Extract<LiveSection, { type: 'work' }>,
-		sectionIndex: number
+		sectionIndex: number,
+		excludedCallIds?: ReadonlySet<string>
 	) {
 		const { settledBlocks, runningTools } = partitionWorkSectionTools(
 			section.blocks,
 			state.isStreaming
 		);
 
-		const workInProgress =
-			state.isStreaming && (sectionIndex === state.sections.length - 1 || runningTools.length > 0);
-
-		const nextSection = state.sections[sectionIndex + 1];
+		const workInProgress = state.isStreaming && sectionIndex === state.sections.length - 1;
 
 		return {
 			settledBlocks,
@@ -231,10 +212,7 @@ export default function ThreadTranscript({
 			approvals: settledBlocks.flatMap((block) =>
 				block.type === 'tool-group' ? mandateApprovals(block.tools) : []
 			),
-			timing: workSectionTimingAnchor(section, {
-				inProgress: workInProgress,
-				endedAt: nextSection?.type === 'text' ? (nextSection.startedAt ?? undefined) : undefined
-			})
+			toolCounts: workToolCounts(section.blocks, excludedCallIds)
 		};
 	}
 
@@ -570,24 +548,14 @@ export default function ThreadTranscript({
 
 			const continuation =
 				followingLive && firstLiveSection?.type === 'work'
-					? liveWorkState(followingLive, firstLiveSection, 0)
+					? liveWorkState(followingLive, firstLiveSection, 0, new Set(row.unpersistedToolCallIds))
 					: undefined;
 
 			const inProgress = continuation
 				? continuation.workInProgress
 				: firstLiveSection?.type === 'text'
 					? false
-					: row.runId === activeRunId && (!row.closed || row.pendingTools > 0);
-
-			const startedAt = earlierTimestamp(row.startedAt, continuation?.timing.startedAtMs);
-
-			const completedAt = laterTimestamp(
-				row.completedAt,
-				continuation?.timing.completedAtMs ??
-					(firstLiveSection?.type === 'text'
-						? (firstLiveSection.startedAt ?? undefined)
-						: undefined)
-			);
+					: row.runId === activeRunId && !row.closed;
 
 			return (
 				<div
@@ -598,15 +566,14 @@ export default function ThreadTranscript({
 				>
 					<WorkDisclosure
 						inProgress={inProgress}
-						startedAtMs={startedAt}
-						completedAtMs={completedAt}
+						summary={workSummary(mergeWorkToolCounts(row.toolCounts, continuation?.toolCounts))}
 					>
 						{loadWorkDetails ? (
 							<WorkSectionDetails
 								row={row}
 								load={loadWorkDetails}
 								commands={commands}
-								inProgress={inProgress}
+								inProgress={row.runId === activeRunId}
 								viewport={viewport}
 								beforeChange={beforeDetailChange}
 							/>
@@ -718,8 +685,7 @@ export default function ThreadTranscript({
 								{!(continuesPreviousWork && sectionIndex === 0) ? (
 									<WorkDisclosure
 										inProgress={work.workInProgress}
-										startedAtMs={work.timing.startedAtMs}
-										completedAtMs={work.timing.completedAtMs}
+										summary={workSummary(work.toolCounts)}
 									>
 										{renderWorkBlocks(work, live)}
 									</WorkDisclosure>
@@ -730,13 +696,6 @@ export default function ThreadTranscript({
 							</div>
 						);
 					})}
-					{!live.isStreaming && message.runStartedAt > 0 && message.runCompletedAt !== undefined ? (
-						<p className="text-muted-foreground text-sm">
-							{`Worked for ${formatElapsedDuration(
-								Math.max(0, Math.floor((message.runCompletedAt - message.runStartedAt) / 1000))
-							)}`}
-						</p>
-					) : null}
 				</div>
 			</div>
 		);

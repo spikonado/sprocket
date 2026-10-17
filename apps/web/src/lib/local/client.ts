@@ -115,6 +115,8 @@ const displayRowSchema = z
 		approvalUrl: z.string().optional(),
 		itemCount: z.int().nonnegative(),
 		pendingTools: z.int().nonnegative(),
+		toolCounts: z.record(z.string(), z.int().nonnegative()).optional(),
+		unpersistedToolCallIds: z.array(z.string()).optional(),
 		provisional: z.boolean().optional(),
 		startedAt: z.number().optional(),
 		completedAt: z.number().optional(),
