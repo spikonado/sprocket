@@ -1,12 +1,10 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use sprocket_workspace::WorkspaceCancellation;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
@@ -34,6 +32,7 @@ impl Dashboard {
 }
 
 enum DashboardState {
+    Stopped,
     Installing,
     Ready(Dashboard),
     Error(String),
@@ -47,7 +46,7 @@ impl DashboardState {
             *self = Self::Error("The browser dashboard stopped. Retry setup to restart it.".into());
         }
         match self {
-            Self::Installing => BrowserStatus {
+            Self::Stopped | Self::Installing => BrowserStatus {
                 state: "installing",
                 error: None,
             },
@@ -63,28 +62,9 @@ impl DashboardState {
     }
 }
 
-/// Only the signed-in user can reach the dashboard, so one slot suffices.
-struct ActiveDashboard {
-    user_id: String,
-    attempt: u64,
-    state: DashboardState,
-}
-
-fn owned_by<'a>(
-    active: &'a mut Option<ActiveDashboard>,
-    user_id: &str,
-) -> Option<&'a mut DashboardState> {
-    active
-        .as_mut()
-        .filter(|active| active.user_id == user_id)
-        .map(|active| &mut active.state)
-}
-
 pub struct BrowserManager {
     installer: BrowserInstaller,
-    data_dir: PathBuf,
-    active: Mutex<Option<ActiveDashboard>>,
-    attempts: AtomicU64,
+    dashboard: Mutex<DashboardState>,
     shutdown: WorkspaceCancellation,
 }
 
@@ -92,9 +72,7 @@ impl BrowserManager {
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(&data_dir)?,
-            data_dir,
-            active: Mutex::new(None),
-            attempts: AtomicU64::new(0),
+            dashboard: Mutex::new(DashboardState::Stopped),
             shutdown: WorkspaceCancellation::new(),
         }))
     }
@@ -113,69 +91,49 @@ impl BrowserManager {
         });
     }
 
-    pub async fn status(&self, user_id: &str) -> BrowserStatus {
-        let mut active = self.active.lock().await;
-        match owned_by(&mut active, user_id) {
-            Some(state) => state.status(),
-            None => DashboardState::Installing.status(),
-        }
+    pub async fn status(&self) -> BrowserStatus {
+        self.dashboard.lock().await.status()
     }
 
-    pub async fn start(self: &Arc<Self>, user_id: &str) -> BrowserStatus {
+    pub async fn start(self: &Arc<Self>) -> BrowserStatus {
         if self.shutdown.is_cancelled() {
             return BrowserStatus {
                 state: "error",
                 error: Some("Sprocket is shutting down".into()),
             };
         }
-        let mut active = self.active.lock().await;
-        if let Some(state) = owned_by(&mut active, user_id) {
-            let status = state.status();
-            if !matches!(state, DashboardState::Error(_)) {
-                return status;
-            }
+        let mut dashboard = self.dashboard.lock().await;
+        let status = dashboard.status();
+        if !matches!(
+            *dashboard,
+            DashboardState::Stopped | DashboardState::Error(_)
+        ) {
+            return status;
         }
-        let attempt = self.attempts.fetch_add(1, Ordering::Relaxed);
-        let previous = active.replace(ActiveDashboard {
-            user_id: user_id.to_owned(),
-            attempt,
-            state: DashboardState::Installing,
-        });
-        drop(active);
+        *dashboard = DashboardState::Installing;
+        drop(dashboard);
         let manager = Arc::clone(self);
-        let user_id = user_id.to_owned();
         tokio::spawn(async move {
-            if let Some(ActiveDashboard {
-                state: DashboardState::Ready(dashboard),
-                ..
-            }) = previous
-            {
-                dashboard.stop().await;
-            }
             let result = tokio::select! {
-                result = manager.launch_dashboard(&user_id) => result,
+                result = manager.launch_dashboard() => result,
                 _ = manager.shutdown.cancelled() => return,
             };
-            let mut active = manager.active.lock().await;
-            // A replaced attempt's dashboard is killed on drop.
-            if let Some(active) = active.as_mut().filter(|active| active.attempt == attempt) {
-                active.state = match result {
-                    Ok(dashboard) => DashboardState::Ready(dashboard),
-                    Err(error) => DashboardState::Error(format!("{error:#}")),
-                };
-            }
+            *manager.dashboard.lock().await = match result {
+                Ok(dashboard) => DashboardState::Ready(dashboard),
+                Err(error) => DashboardState::Error(format!("{error:#}")),
+            };
         });
         DashboardState::Installing.status()
     }
 
-    async fn launch_dashboard(&self, user_id: &str) -> anyhow::Result<Dashboard> {
+    async fn launch_dashboard(&self) -> anyhow::Result<Dashboard> {
         let cli = self.installer.ensure_ready().await?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
         drop(listener);
         let mut command = Command::new(cli);
         command
-            .envs(self.environment(user_id)?)
+            .envs(self.environment()?)
             .env("AGENT_BROWSER_DASHBOARD", "1")
             .env("AGENT_BROWSER_DASHBOARD_PORT", port.to_string())
             .env_remove("AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS")
@@ -228,18 +186,16 @@ impl BrowserManager {
         );
     }
 
-    pub async fn port(&self, user_id: &str) -> anyhow::Result<u16> {
-        let mut active = self.active.lock().await;
-        if let Some(state) = owned_by(&mut active, user_id) {
-            state.status();
-            if let DashboardState::Ready(dashboard) = state {
-                return Ok(dashboard.port);
-            }
+    pub async fn port(&self) -> anyhow::Result<u16> {
+        let mut dashboard = self.dashboard.lock().await;
+        dashboard.status();
+        if let DashboardState::Ready(dashboard) = &*dashboard {
+            return Ok(dashboard.port);
         }
         bail!("Browser dashboard is not ready. Retry setup.")
     }
 
-    pub fn environment(&self, user_id: &str) -> anyhow::Result<Vec<(OsString, OsString)>> {
+    pub fn environment(&self) -> anyhow::Result<Vec<(OsString, OsString)>> {
         let mut paths = vec![self.installer.cli_directory()?];
         if let Some(path) = std::env::var_os("PATH") {
             paths.extend(std::env::split_paths(&path));
@@ -250,46 +206,26 @@ impl BrowserManager {
                 "AGENT_BROWSER_SKILLS_DIR".into(),
                 self.installer.skills_directory().into_os_string(),
             ),
-            (
-                "AGENT_BROWSER_NAMESPACE".into(),
-                namespace(&self.data_dir, user_id).into(),
-            ),
         ])
     }
 
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let active = self.active.lock().await.take();
-        if let Some(ActiveDashboard {
-            state: DashboardState::Ready(dashboard),
-            ..
-        }) = active
-        {
+        let state = std::mem::replace(&mut *self.dashboard.lock().await, DashboardState::Stopped);
+        if let DashboardState::Ready(dashboard) = state {
             dashboard.stop().await;
         }
     }
 
     #[cfg(all(any(test, feature = "test-support"), unix))]
-    pub async fn use_test_dashboard(&self, user_id: &str, port: u16) {
+    pub async fn use_test_dashboard(&self, port: u16) {
         let child = Command::new("sh")
             .args(["-c", "sleep 60"])
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        *self.active.lock().await = Some(ActiveDashboard {
-            user_id: user_id.into(),
-            attempt: self.attempts.fetch_add(1, Ordering::Relaxed),
-            state: DashboardState::Ready(Dashboard { child, port }),
-        });
+        *self.dashboard.lock().await = DashboardState::Ready(Dashboard { child, port });
     }
-}
-
-fn namespace(data_dir: &std::path::Path, user_id: &str) -> String {
-    let mut hash = Sha256::new();
-    hash.update(data_dir.as_os_str().as_encoded_bytes());
-    hash.update([0]);
-    hash.update(user_id.as_bytes());
-    hex::encode(&hash.finalize()[..8])
 }
 
 #[cfg(all(test, unix))]

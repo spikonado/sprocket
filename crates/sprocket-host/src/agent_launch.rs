@@ -157,7 +157,7 @@ async fn launch_agent_inner(
     let project_attachments = Arc::clone(&host.project_attachments);
     let attachment_key = attachment.attachment_key.clone();
     host.browsers.prepare_tools();
-    let browser_environment = match host.browsers.environment(&payload.user_id) {
+    let browser_environment = match host.browsers.environment() {
         Ok(environment) => environment,
         Err(error) => {
             tracing::warn!("agent-browser setup unavailable: {error:#}");

@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: write
   pull-requests: write
 
@@ -88,7 +87,3 @@ jobs:
           else
             gh pr edit "$pr_number" --title "$title" --body "$body"
           fi
-
-          # Pushes made with github.token don't trigger pull_request workflows.
-          gh workflow run build-test.yml --ref "$BRANCH_NAME"
-          gh workflow run prek.yml --ref "$BRANCH_NAME"
