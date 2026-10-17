@@ -1,15 +1,10 @@
 use rig::completion::CompletionRequest;
 use rig::error::EncodeError;
-use rig::message::Message;
 use rig::operation::Completion;
 use rig::providers::openai::OpenAIConfig;
 use rig::providers::openai::responses_api::{SystemInstructionsPlacement, wire::Responses};
 use rig::wire::{Body, Descriptor, Encoded, Mode, Wire, WireFrame};
 use rig::{DynModel, Model};
-
-pub(crate) fn developer_message(text: impl Into<String>) -> Message {
-    Message::system(text)
-}
 
 pub(crate) fn stateless_responses_model(
     provider: OpenAIConfig,

@@ -20,9 +20,9 @@ use serde_json::{Value as JsonValue, json};
 
 use super::{
     ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HANDOFF_SUBMITTED, HandoffRequest,
-    HandoffTool, context_summary_text,
+    HandoffTool, context_summary_text, handoff_prompt,
 };
-use crate::openai::{developer_message, stateless_responses_model};
+use crate::openai::stateless_responses_model;
 use crate::provider::{resume_context_handoff, resume_without_provider_handoff};
 
 const MODEL: &str = "gateway-model";
@@ -434,7 +434,7 @@ fn assert_handoff_request(request: &JsonValue) {
         last["content"][0]["text"], HANDOFF_PROMPT,
         "handoff completion must send the hidden prompt verbatim"
     );
-    assert_eq!(last["role"], "developer");
+    assert_eq!(last["role"], "user");
     let tools = advertised_tools(request);
     assert!(
         tools.contains(&HandoffTool::NAME.to_string()) && tools.contains(&"exec_cmd".to_string()),
@@ -582,7 +582,7 @@ async fn accepted_handoff_ends_without_a_tool_result_or_followup_completion() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
     let mut stream = agent
-        .prompt(developer_message(HANDOFF_PROMPT))
+        .prompt(handoff_prompt())
         .add_hook(hook.clone())
         .stream();
     let mut completion_calls = 0;
@@ -677,7 +677,7 @@ async fn provider_switch_hands_off_with_the_old_model_before_resuming_on_the_new
     let pending_prompt = Message::user(DEFERRED_PROMPT);
 
     hook.start_handoff();
-    let summary = match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), history).await {
+    let summary = match drive(&agent, &hook, handoff_prompt(), history).await {
         DriveEnd::Submitted(document) => document,
         other => panic!("old provider should submit the handoff, got {other:?}"),
     };
@@ -815,14 +815,7 @@ async fn failed_provider_switch_continues_on_the_new_provider_without_reasoning(
     ];
     let pending_prompt = Message::user(DEFERRED_PROMPT);
     hook.start_handoff();
-    match drive(
-        &agent,
-        &hook,
-        developer_message(HANDOFF_PROMPT),
-        history.clone(),
-    )
-    .await
-    {
+    match drive(&agent, &hook, handoff_prompt(), history.clone()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("expected a handoff without a document, got {other:?}"),
     }
@@ -906,7 +899,10 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
     ]);
     let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
     let agent = test_agent(&base_url, &hook);
-    let history = vec![Message::user(OLD_CONTEXT)];
+    let history = vec![
+        Message::user(OLD_CONTEXT),
+        Message::assistant("The previous run's final answer."),
+    ];
     let prompt = Message::user(DEFERRED_PROMPT);
 
     match drive(&agent, &hook, prompt.clone(), history.clone()).await {
@@ -927,14 +923,7 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
     );
 
     hook.start_handoff();
-    match drive(
-        &agent,
-        &hook,
-        developer_message(HANDOFF_PROMPT),
-        request.history.clone(),
-    )
-    .await
-    {
+    match drive(&agent, &hook, handoff_prompt(), request.history.clone()).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("handoff tool should submit the document, got {other:?}"),
     }
@@ -1028,14 +1017,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
     );
 
     hook.start_handoff();
-    match drive(
-        &agent,
-        &hook,
-        developer_message(HANDOFF_PROMPT),
-        request.history.clone(),
-    )
-    .await
-    {
+    match drive(&agent, &hook, handoff_prompt(), request.history.clone()).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("handoff tool should submit the document, got {other:?}"),
     }
@@ -1097,14 +1079,7 @@ async fn context_handoff_repeats_after_restart() {
     }
     let first = take_handoff(&hook);
     hook.start_handoff();
-    match drive(
-        &agent,
-        &hook,
-        developer_message(HANDOFF_PROMPT),
-        first.history,
-    )
-    .await
-    {
+    match drive(&agent, &hook, handoff_prompt(), first.history).await {
         DriveEnd::Submitted(document) => assert_eq!(document, FIRST_SUMMARY),
         other => panic!("first handoff should submit, got {other:?}"),
     }
@@ -1140,14 +1115,7 @@ async fn context_handoff_repeats_after_restart() {
     );
 
     hook.start_handoff();
-    match drive(
-        &agent,
-        &hook,
-        developer_message(HANDOFF_PROMPT),
-        second.history,
-    )
-    .await
-    {
+    match drive(&agent, &hook, handoff_prompt(), second.history).await {
         DriveEnd::Submitted(document) => assert_eq!(document, SECOND_SUMMARY),
         other => panic!("second handoff should submit a new document, got {other:?}"),
     }
@@ -1177,7 +1145,7 @@ async fn empty_handoff_document_is_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
         DriveEnd::MissingDocument => {}
         other => panic!("whitespace-only document should not be accepted, got {other:?}"),
     }
@@ -1195,7 +1163,7 @@ async fn truncated_handoff_turn_is_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("truncated handoff should stop the turn, got {other:?}"),
     }
@@ -1210,7 +1178,7 @@ async fn text_only_handoff_turn_is_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("a text-only handoff turn should fail, got {other:?}"),
     }
@@ -1225,7 +1193,7 @@ async fn two_handoff_tool_calls_are_rejected() {
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("two handoff tool calls should fail, got {other:?}"),
     }
@@ -1240,7 +1208,7 @@ async fn handoff_turn_only_accepts_the_handoff_tool_even_with_other_tools_advert
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
-    match drive(&agent, &hook, developer_message(HANDOFF_PROMPT), Vec::new()).await {
+    match drive(&agent, &hook, handoff_prompt(), Vec::new()).await {
         DriveEnd::Stopped(reason) => assert_eq!(reason, HANDOFF_FAILED),
         other => panic!("handoff turn must reject an ordinary tool call, got {other:?}"),
     }

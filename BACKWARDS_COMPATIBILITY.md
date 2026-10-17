@@ -109,18 +109,20 @@ configuration and the BYOK and SIWC multi-turn replay regressions pass natively.
 
 ### Rig developer messages
 
-Rig 0.44's message type has no developer role. Sprocket represents application
-instructions such as the handoff and continuation prompts as Rig system
-messages. `DeveloperResponses` in `openai.rs` keeps them in `input` and
+Rig 0.44's message type has no developer role. Sprocket represents system
+history messages as Rig system messages. `DeveloperResponses` in `openai.rs`
+keeps them in `input` and
 rewrites their role to `developer` on gateway, BYOK, and SIWC routes. Base
 instructions stay in the top-level `instructions` field, and a late
 instruction stays at its position, so the request prefix before it is
 unchanged and the provider's prompt cache still matches. Stored transcripts are
 unaffected. Remove this mapping when a released Rig version supports developer
 messages natively and these tests pass without it:
-`siwc_body_keeps_late_application_instructions_as_developer_messages`,
-`completion_and_stream_use_the_refreshed_credential`, and the handoff request
-assertions in `context_handoff/integration_tests.rs`.
+`siwc_body_keeps_late_application_instructions_as_developer_messages` and
+`completion_and_stream_use_the_refreshed_credential`. The handoff and
+continuation prompts use the user role because Anthropic models reject
+requests that end on an assistant turn after developer messages move into the
+system prompt.
 
 ## Local data directory backwards compatibility
 

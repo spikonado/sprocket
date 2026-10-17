@@ -975,7 +975,7 @@ fn siwc_body_keeps_late_application_instructions_as_developer_messages() {
     let previous = shaped_body(test_request(vec![Message::user("hi")]));
     let body = shaped_body(test_request(vec![
         Message::user("hi"),
-        crate::openai::developer_message("Mid-run rule."),
+        Message::system("Mid-run rule."),
         Message::user("again"),
     ]));
 
