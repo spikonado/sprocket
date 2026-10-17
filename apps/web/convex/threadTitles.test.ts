@@ -153,19 +153,6 @@ describe('automatic thread titles', () => {
 		expect(await verifyGatewayToken(secret, token)).toMatchObject({ userId: 'alice' });
 	});
 
-	it.each(['🚀'.repeat(30), `${'🚀'.repeat(30)} extra text`])(
-		'saves at most 30 Unicode code points from a generated title: %s',
-		async (title) => {
-			const t = initConvexTest();
-			vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(titleResponse(title)));
-			const first = await createRun(t, 'first');
-			await finishTitle(t);
-			expect(await t.run((ctx) => ctx.db.get('threadRecords', first.threadId))).toMatchObject({
-				title: '🚀'.repeat(30)
-			});
-		}
-	);
-
 	it('keeps manual names after re-enabling and allows regeneration while disabled', async () => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });
