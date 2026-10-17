@@ -108,15 +108,23 @@ impl ProfileCredentials {
             Some(CredentialStore::Keyring) => keyring(self.keyring.as_ref()),
             None => match keyring(self.keyring.as_ref()) {
                 Err(error) if keyring_unavailable(&error) => {
-                    self.select(CredentialStore::File)?;
+                    let result = file()?;
+                    self.write_selection(CredentialStore::File)?;
                     tracing::warn!(
                         "Operating system credential store is unavailable; using an unencrypted private file for this Sprocket profile"
                     );
-                    file()
+                    Ok(result)
                 }
                 result => result,
             },
         }
+    }
+
+    fn write_selection(&self, store: CredentialStore) -> anyhow::Result<()> {
+        write_private_file(
+            &self.directory.join("store.json"),
+            &serde_json::to_vec(&store)?,
+        )
     }
 
     fn token_path(&self) -> PathBuf {
@@ -161,10 +169,7 @@ impl RefreshTokenStore for ProfileCredentials {
                 CredentialStore::File => self.clear_file()?,
             }
         }
-        write_private_file(
-            &self.directory.join("store.json"),
-            &serde_json::to_vec(&store)?,
-        )
+        self.write_selection(store)
     }
 
     fn load(&self) -> anyhow::Result<Option<String>> {

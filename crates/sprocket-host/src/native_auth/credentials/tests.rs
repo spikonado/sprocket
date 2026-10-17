@@ -230,15 +230,16 @@ fn credential_data_errors_are_preserved() {
 }
 
 #[test]
-fn fallback_reports_file_persistence_failure() {
+fn failed_fallback_write_keeps_automatic_selection() {
     let dir = tempfile::tempdir().unwrap();
     let store = with_keyring(
         dir.path(),
         TestKeyring::failing(|| keyring::Error::NoDefaultStore),
     );
-    std::fs::create_dir_all(store.directory.parent().unwrap()).unwrap();
-    std::fs::write(&store.directory, b"not a directory").unwrap();
+    std::fs::create_dir_all(store.token_path()).unwrap();
+    std::fs::write(store.token_path().join("occupied"), b"").unwrap();
     assert!(store.save("token").is_err());
+    assert_eq!(store.selected().unwrap(), None);
 }
 
 #[test]
