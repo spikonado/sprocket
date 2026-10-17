@@ -1,28 +1,21 @@
 use super::*;
 
-fn github_or(enterprise: &'static str) -> impl Fn(&str) -> bool {
-    move |host| host == "github.com" || host == enterprise
-}
-
 #[test]
-fn parses_github_keys_and_the_configured_enterprise_host() {
+fn parses_host_owner_and_name() {
     assert_eq!(
-        parse_repository("github.com/acme/.github", github_or("ghe.example.com")),
+        parse_repository("github.com/acme/.github"),
         Some(Repository {
             host: "github.com",
             owner: "acme",
             name: ".github"
         })
     );
-    assert!(
-        parse_repository("ghe.example.com/acme/widgets", github_or("ghe.example.com")).is_some()
-    );
+    assert!(parse_repository("ghe.example.com/acme/widgets").is_some());
 }
 
 #[test]
-fn ignores_other_forges_local_projects_and_unsafe_paths() {
+fn ignores_local_projects_and_unsafe_paths() {
     for key in [
-        "gitlab.com/acme/widgets",
         "widgets",
         "directory:/home/me/widgets",
         "github.com/acme",
@@ -30,10 +23,7 @@ fn ignores_other_forges_local_projects_and_unsafe_paths() {
         "github.com/acme/..",
         "github.com/acme/widgets?x=1",
     ] {
-        assert!(
-            parse_repository(key, github_or("ghe.example.com")).is_none(),
-            "{key}"
-        );
+        assert!(parse_repository(key).is_none(), "{key}");
     }
 }
 
@@ -51,7 +41,7 @@ fn batches_lookups_as_aliases_with_typed_variables() {
     ];
     let batch: Vec<_> = refs
         .iter()
-        .map(|pr| (pr, parse_repository(&pr.repository, github_or("")).unwrap()))
+        .map(|pr| (pr, parse_repository(&pr.repository).unwrap()))
         .collect();
 
     let (query, variables) = batch_query(&batch);
