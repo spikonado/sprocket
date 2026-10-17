@@ -1,7 +1,7 @@
 use super::*;
 
 impl PackageUpdateManager {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn with_helper(node: PathBuf, script: PathBuf) -> Arc<Self> {
         Self::with_helper_and_timeouts(
             node,
