@@ -567,11 +567,11 @@ body::after {
 	line-height: inherit;
 }
 
-.chat-markdown .shiki span {
+.shiki span {
 	color: var(--shiki-light);
 }
 
-[data-theme='dark'] .chat-markdown .shiki span {
+[data-theme='dark'] .shiki span {
 	color: var(--shiki-dark);
 }
 
