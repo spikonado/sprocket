@@ -594,7 +594,7 @@ export function PromptComposerView({
 		const model = getCatalogModel(modelCatalog, modelId);
 		onSelectedModelChange?.(modelId);
 		onSelectedReasoningEffortChange?.(
-			model?.reasoningEfforts.includes(selectedReasoningEffort)
+			modelId === selectedModel && model?.reasoningEfforts.includes(selectedReasoningEffort)
 				? selectedReasoningEffort
 				: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
 		);
@@ -623,9 +623,7 @@ export function PromptComposerView({
 			const model = getCatalogModel(modelCatalog, resolvedModel);
 			onSelectedModelChange?.(resolvedModel);
 			onSelectedReasoningEffortChange?.(
-				model?.reasoningEfforts.includes(selectedReasoningEffort)
-					? selectedReasoningEffort
-					: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
+				model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort
 			);
 			onFastModeChange?.(false);
 		}
@@ -635,7 +633,6 @@ export function PromptComposerView({
 		configuredProviders,
 		selectedCompletionProvider,
 		selectedModel,
-		selectedReasoningEffort,
 		onSelectedCompletionProviderChange,
 		onSelectedModelChange,
 		onSelectedReasoningEffortChange,
