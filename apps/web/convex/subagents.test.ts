@@ -142,6 +142,50 @@ afterEach(() => {
 });
 
 describe('subagents.createOrSend', () => {
+	it('routes a child through the enabled providers the runner offers', async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+
+		await caller.asUser.mutation(api.uiPreferences.setProviderOrder, {
+			providerOrder: [
+				{ provider: 'openai', enabled: true },
+				{ provider: 'chatgpt', enabled: false },
+				{ provider: 'spikonado', enabled: true }
+			]
+		});
+
+		const child = await t.mutation(
+			api.subagents.createOrSend,
+			createArgs(caller, { completionProviders: ['openai', 'chatgpt', 'spikonado'] })
+		);
+
+		expect(child.settings.completionProvider).toBe('openai');
+		expect(child.fallbackProviders).toEqual(['spikonado']);
+		await expect(
+			t.mutation(
+				api.subagents.createOrSend,
+				createArgs(caller, { completionProviders: ['chatgpt'] })
+			)
+		).rejects.toThrow('No enabled provider offers gpt-5.6-sol.');
+	});
+
+	it("keeps children on the parent's provider when the user restricts subagents", async () => {
+		const t = initConvexTest();
+		const caller = await startCallerRun(t);
+
+		await caller.asUser.mutation(api.uiPreferences.setRestrictSubagentsToProvider, {
+			enabled: true
+		});
+
+		const child = await t.mutation(
+			api.subagents.createOrSend,
+			createArgs(caller, { completionProviders: ['openai', 'spikonado'] })
+		);
+
+		expect(child.settings.completionProvider).toBe('spikonado');
+		expect(child.fallbackProviders).toEqual([]);
+	});
+
 	it('rejects delegated child follow-ups until prior results are committed', async () => {
 		vi.useFakeTimers();
 		const t = initConvexTest();

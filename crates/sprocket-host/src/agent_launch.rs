@@ -43,6 +43,8 @@ pub struct AgentLaunchRequest {
     pub selected_model: String,
     #[serde(default)]
     pub completion_provider: CompletionProvider,
+    #[serde(default)]
+    pub fallback_providers: Vec<CompletionProvider>,
     pub reasoning_effort: String,
     pub fast_mode: bool,
     pub workspace_path: String,
@@ -198,6 +200,7 @@ async fn launch_agent_inner(
         storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         completion_provider: payload.completion_provider,
+        fallback_providers: payload.fallback_providers,
         reasoning_effort: payload.reasoning_effort,
         fast_mode: payload.fast_mode,
         workspace_path,

@@ -1,21 +1,14 @@
-import {
-	ArrowLeft,
-	ChartNoAxesColumn,
-	CreditCard,
-	KeyRound,
-	Settings,
-	UserRound
-} from 'lucide-react';
+import { ArrowLeft, CreditCard, KeyRound, ListOrdered, Settings, UserRound } from 'lucide-react';
 import SidebarTopActions from '$lib/components/home/sidebar-top-actions';
 import type { SprocketTheme } from '$lib/theme';
 
-export type SettingsPage = 'general' | 'account' | 'usage' | 'providers' | 'payments';
+export type SettingsPage = 'general' | 'account' | 'providers' | 'credentials' | 'payments';
 
 const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
 	{ id: 'general', label: 'General', icon: Settings },
 	{ id: 'account', label: 'Account', icon: UserRound },
-	{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
-	{ id: 'providers', label: 'BYOK/BYOS', icon: KeyRound },
+	{ id: 'providers', label: 'Providers', icon: ListOrdered },
+	{ id: 'credentials', label: 'BYOK/BYOS', icon: KeyRound },
 	{ id: 'payments', label: 'Payments', icon: CreditCard }
 ];
 

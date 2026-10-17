@@ -55,6 +55,8 @@ pub struct CreateSubagentRunResponse {
     /// Previous child run for follow-up/continuation launches; none for a new child.
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
+    #[serde(default)]
+    pub fallback_providers: Vec<CompletionProvider>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -176,7 +178,7 @@ fn resolve_settings(
         .iter()
         .find(|model| model.id == model_id)
         .ok_or_else(|| {
-            anyhow::anyhow!("model {model_id} is unavailable for the current completion provider")
+            anyhow::anyhow!("model {model_id} is unavailable from the enabled providers")
         })?;
     let reasoning = reasoning.unwrap_or(&model.default_reasoning_effort);
     if !model
@@ -210,6 +212,7 @@ pub struct SubagentLaunchRequest {
     pub workspace_path: String,
     pub selected_model: String,
     pub completion_provider: CompletionProvider,
+    pub fallback_providers: Vec<CompletionProvider>,
     pub reasoning_effort: String,
     pub fast_mode: bool,
     /// Previous child run on follow-up/continuation; none for a new child.

@@ -45,6 +45,7 @@ import {
 	type vReasoningEffort
 } from '@convex/lib/validators';
 import { withRunExecution, getRunExecutionState } from '@convex/lib/runExecution';
+import { sameProviderChain } from '@convex/lib/providerOrder';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -57,6 +58,7 @@ export type QueuedRunRequest = {
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
 	completionProvider?: CompletionProvider;
+	fallbackProviders?: CompletionProvider[];
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	fastMode: boolean;
 	executionSecret: string;
@@ -107,6 +109,17 @@ export async function submissionReadiness(
 	return await terminalJobsReady(ctx, latestRun);
 }
 
+function requestedProviderChain(args: {
+	completionProvider?: CompletionProvider;
+	fallbackProviders?: CompletionProvider[];
+}): [CompletionProvider, ...CompletionProvider[]] {
+	return [args.completionProvider ?? 'spikonado', ...(args.fallbackProviders ?? [])];
+}
+
+export function runProviderChain(run: Doc<'runs'>): CompletionProvider[] {
+	return run.providerChain ?? [run.completionProvider ?? 'spikonado'];
+}
+
 async function terminalJobsReady(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
 	const execution = await getRunExecutionState(ctx.db, run._id);
 
@@ -130,7 +143,13 @@ export async function createQueuedRunRecord(
 	}
 
 	const secretHash = await executionSecretHash(args.executionSecret);
-	const completionProvider = args.completionProvider ?? 'spikonado';
+	const providerChain = requestedProviderChain(args);
+
+	if (new Set(providerChain).size !== providerChain.length) {
+		throw new Error('A run can list each provider only once.');
+	}
+
+	const completionProvider = providerChain[0];
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
 
@@ -292,6 +311,8 @@ export async function createQueuedRunRecord(
 		...gatewayFields
 	};
 
+	if (providerChain.length > 1) runRecord.providerChain = providerChain;
+
 	if (machineId) runRecord.machineId = machineId;
 
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
@@ -389,7 +410,7 @@ async function reconcileExistingQueuedRun(
 		(args.repositoryKey !== undefined &&
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
-		(existingRun.completionProvider ?? 'spikonado') !== (args.completionProvider ?? 'spikonado') ||
+		!sameProviderChain(runProviderChain(existingRun), requestedProviderChain(args)) ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches
@@ -488,7 +509,7 @@ export async function finalizeFailedQueuedStart(
 		run.status !== 'queued' ||
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
-		(run.completionProvider ?? 'spikonado') !== (args.completionProvider ?? 'spikonado') ||
+		runProviderChain(run)[0] !== (args.completionProvider ?? 'spikonado') ||
 		run.reasoningEffort !== args.reasoningEffort ||
 		run.fastMode !== args.fastMode
 	) {

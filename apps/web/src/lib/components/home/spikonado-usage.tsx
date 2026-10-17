@@ -21,7 +21,9 @@ function formatDollars(units: number) {
 
 function SectionLabel({ children }: { children: string }) {
 	return (
-		<p className="text-muted-foreground text-[11px] tracking-[0.18em] uppercase">{children}</p>
+		<p className="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
+			{children}
+		</p>
 	);
 }
 
@@ -48,8 +50,7 @@ function MeterUsage({ meter, now }: { meter: UsageMeter; now: number }) {
 	return (
 		<div>
 			<SectionLabel>{meter.label}</SectionLabel>
-			<p className="text-muted-foreground mt-1 text-[12px]">{meter.description}</p>
-			<div className="mt-4 flex items-baseline justify-between gap-3 text-[13px]">
+			<div className="mt-3 flex items-baseline justify-between gap-3 text-[13px]">
 				<p className="text-foreground">
 					{formatDollars(used)}{' '}
 					<span className="text-muted-foreground">of {formatDollars(meter.limit)}</span>
@@ -94,7 +95,7 @@ function UsageSkeleton() {
 	);
 }
 
-export default function SettingsUsage() {
+export default function SpikonadoUsage() {
 	const convexAuth = useConvexAuth();
 	const now = useUsageTime();
 
@@ -103,33 +104,28 @@ export default function SettingsUsage() {
 		args: convexAuth.isAuthenticated && !convexAuth.isLoading ? { now } : 'skip'
 	});
 
-	return (
-		<section className="flex h-full min-h-0 flex-col overflow-hidden">
-			<header className="flex h-12 shrink-0 items-center px-6">
-				<h1 className="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Usage</h1>
-			</header>
-
-			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-				<div className="max-w-xl space-y-10">
-					{usageQuery.status === 'error' ? (
-						<p className="text-muted-foreground text-sm leading-6">
-							Couldn’t load your usage right now. Try again in a moment.
-						</p>
-					) : usageQuery.status !== 'success' ? (
-						<UsageSkeleton />
-					) : (
-						<>
-							<div>
-								<SectionLabel>Subscription tier</SectionLabel>
-								<p className="text-foreground mt-3 text-[15px]">{usageQuery.data.tierLabel}</p>
-							</div>
-							{usageQuery.data.meters.map((meter) => (
-								<MeterUsage key={meter.id} meter={meter} now={now} />
-							))}
-						</>
-					)}
-				</div>
+	if (usageQuery.status === 'error') {
+		return (
+			<div>
+				<SectionLabel>Subscription Tier</SectionLabel>
+				<p className="text-muted-foreground mt-3 text-sm">
+					Couldn’t load your usage right now. Try again in a moment.
+				</p>
 			</div>
-		</section>
+		);
+	}
+
+	if (usageQuery.status !== 'success') return <UsageSkeleton />;
+
+	return (
+		<>
+			<div>
+				<SectionLabel>Subscription Tier</SectionLabel>
+				<p className="text-foreground mt-3 text-[15px]">{usageQuery.data.tierLabel}</p>
+			</div>
+			{usageQuery.data.meters.map((meter) => (
+				<MeterUsage key={meter.id} meter={meter} now={now} />
+			))}
+		</>
 	);
 }

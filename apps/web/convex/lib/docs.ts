@@ -76,8 +76,16 @@ export const vGetContextResult = v.object({
 		)
 		.extend({
 			fastMode: v.boolean(),
-			parentThreadId: v.optional(v.id('threadRecords'))
+			parentThreadId: v.optional(v.id('threadRecords')),
+			// Providers to fall back to, in order, after the active `completionProvider`.
+			fallbackProviders: v.optional(v.array(vCompletionProvider))
 		}),
+	providerPreferences: v.optional(
+		v.object({
+			enabledProviders: v.array(vCompletionProvider),
+			restrictSubagentsToProvider: v.boolean()
+		})
+	),
 	prompt: v.string(),
 	contextTokens: v.optional(v.number()),
 	providerHandoff: v.optional(vProviderHandoff),

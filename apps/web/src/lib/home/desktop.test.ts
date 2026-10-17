@@ -192,6 +192,21 @@ describe('launchAgentRun', () => {
 		});
 	});
 
+	it('sends the first provider with the rest as fallbacks', async () => {
+		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-1', threadId: 'thread-1' });
+
+		await launchAgentRun(
+			launchArgs({
+				desktopApi: createDesktopApi(runAgent),
+				providerChain: ['chatgpt', 'spikonado']
+			})
+		);
+
+		expect(runAgent).toHaveBeenCalledWith(
+			expect.objectContaining({ completionProvider: 'chatgpt', fallbackProviders: ['spikonado'] })
+		);
+	});
+
 	it('reports asynchronous launch failures through onError', async () => {
 		const launchError = new Error('desktop launch failed');
 		const onError = vi.fn();
@@ -210,6 +225,8 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ fastMode: true })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ continuationOfRunId: undefined })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ providerChain: ['spikonado'] })).toBe('recovered-id');
+		expect(resolveRecoveredSubmission({ providerChain: ['spikonado', 'chatgpt'] })).toBe('new-id');
 	});
 
 	it('reuses a submission only when its attachments are unchanged', () => {

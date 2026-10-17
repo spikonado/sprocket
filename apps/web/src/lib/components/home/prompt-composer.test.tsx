@@ -468,7 +468,7 @@ describe('PromptComposer submission', () => {
 		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 
-	it('allows retrying and switching providers after a run failure', async () => {
+	it('allows retrying after a run failure', async () => {
 		const { props, composer, textarea } = renderComposer({
 			modelCatalog,
 			selectedModel: 'model-one',
@@ -478,9 +478,6 @@ describe('PromptComposer submission', () => {
 		});
 
 		expect(composer.querySelector('[role="alert"]')?.textContent).toBe('A previous run failed.');
-		expect(
-			composer.querySelector<HTMLButtonElement>('[aria-label="Select provider"]')?.disabled
-		).toBe(false);
 		await pressKey(textarea, { key: 'Enter' });
 		expect(props.onSubmit).toHaveBeenCalledOnce();
 	});
@@ -723,24 +720,6 @@ describe('PromptComposer mobile selectors', () => {
 		await click(screen.getByRole('button', { name: 'Select model' }));
 		expect(screen.getByRole('button', { name: 'Model One', pressed: true })).toBeTruthy();
 	});
-
-	it('selects a provider from the sheet without an extra confirmation', async () => {
-		const { props } = renderComposer({
-			modelCatalog: {
-				...modelCatalog,
-				models: [{ ...modelCatalog.models[0], provider: 'openai' }]
-			},
-			selectedModel: 'model-one',
-			configuredProviders: ['spikonado', 'chatgpt'],
-			onSelectedCompletionProviderChange: vi.fn()
-		});
-
-		await click(screen.getByRole('button', { name: 'Select provider' }));
-		const sheet = screen.getByRole('dialog', { name: 'Provider' });
-		await click(within(sheet).getByRole('button', { name: 'ChatGPT Subscription' }));
-		expect(props.onSelectedCompletionProviderChange).toHaveBeenCalledWith('chatgpt');
-		expect(screen.queryByRole('dialog')).toBeNull();
-	});
 });
 
 describe('PromptComposer model selection', () => {
@@ -754,28 +733,57 @@ describe('PromptComposer model selection', () => {
 		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model Two · High');
 	});
 
-	it.each([
-		['spikonado', 'chatgpt', 'ChatGPT Subscription'],
-		['spikonado', 'openai', 'OpenAI API'],
-		['chatgpt', 'openai', 'OpenAI API'],
-		['openai', 'spikonado', 'Spikonado']
-	] as const)('preserves supported model and reasoning from %s to %s', async (from, to, label) => {
-		const { props } = renderComposer({
-			modelCatalog: {
-				...modelCatalog,
-				models: [modelCatalog.models[1], { ...modelCatalog.models[0], provider: 'openai' }]
-			},
-			configuredProviders: ['spikonado', 'openai', 'chatgpt'],
-			selectedCompletionProvider: from,
-			selectedModel: 'model-one',
-			selectedReasoningEffort: 'low',
-			onCompletionProviderSelect: vi.fn()
+	const mixedCatalog: ModelCatalog = {
+		...modelCatalog,
+		models: [
+			{ ...modelCatalog.models[0], provider: 'openai' },
+			{ ...modelCatalog.models[1], provider: 'anthropic' }
+		]
+	};
+
+	it('lists models served by any available provider', async () => {
+		renderComposer({
+			modelCatalog: mixedCatalog,
+			availableProviders: ['chatgpt'],
+			selectedModel: 'model-one'
 		});
 
-		await click(screen.getByRole('button', { name: 'Select provider' }));
-		await click(screen.getByRole('button', { name: new RegExp(label) }));
-		expect(props.onCompletionProviderSelect).toHaveBeenCalledWith(to);
-		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Low');
+		await click(screen.getByRole('button', { name: 'Select model' }));
+		const menu = screen.getByRole('dialog', { name: 'Model' });
+		expect(within(menu).getByRole('button', { name: /Model One/ })).toBeTruthy();
+		expect(within(menu).queryByRole('button', { name: /Model Two/ })).toBeNull();
+	});
+
+	it('turns Fast off unless Spikonado serves the model first', () => {
+		const onFastModeChange = vi.fn();
+		renderComposer({
+			modelCatalog: mixedCatalog,
+			availableProviders: ['chatgpt', 'spikonado'],
+			selectedModel: 'model-one',
+			fastMode: true,
+			onFastModeChange
+		});
+
+		expect(onFastModeChange).toHaveBeenCalledWith(false);
+	});
+
+	it('blocks sending and links to provider settings when no provider is available', async () => {
+		const onOpenProviderSettings = vi.fn();
+
+		const { props, textarea } = renderComposer({
+			modelCatalog,
+			availableProviders: [],
+			selectedModel: 'model-one',
+			prompt: 'Hello',
+			usage: { tier: 'pro', exhausted: false, resetsAt: null },
+			onOpenProviderSettings
+		});
+
+		expect(screen.getByText('No provider is available')).toBeTruthy();
+		await pressKey(textarea, { key: 'Enter' });
+		expect(props.onSubmit).not.toHaveBeenCalled();
+		await click(screen.getByRole('button', { name: 'Open provider settings' }));
+		expect(onOpenProviderSettings).toHaveBeenCalledOnce();
 	});
 
 	it('uses the fallback model default reasoning', async () => {
@@ -787,23 +795,21 @@ describe('PromptComposer model selection', () => {
 					{ ...modelCatalog.models[0], provider: 'openai' }
 				]
 			},
-			configuredProviders: ['spikonado', 'chatgpt'],
+			availableProviders: ['chatgpt'],
 			selectedModel: 'model-two',
 			selectedReasoningEffort: 'low'
 		});
 
-		await click(screen.getByRole('button', { name: 'Select provider' }));
-		await click(screen.getByRole('button', { name: /ChatGPT Subscription/ }));
 		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model One · Medium');
 	});
 
-	it('keeps the provider menu anchored when a parent scrolls', async () => {
+	it('keeps the model menu anchored when a parent scrolls', async () => {
 		const { composer } = renderComposer({ modelCatalog, selectedModel: 'model-one' });
-		const trigger = screen.getByRole('button', { name: 'Select provider' });
+		const trigger = screen.getByRole('button', { name: 'Select model' });
 		const rect = vi.spyOn(trigger, 'getBoundingClientRect');
 		rect.mockReturnValue(new DOMRect(100, 400, 44, 44));
 		await click(trigger);
-		const menu = screen.getByRole('dialog', { name: 'Provider' });
+		const menu = screen.getByRole('dialog', { name: 'Model' });
 		expect(menu.style.bottom).toBe(`${window.innerHeight - 400 + 12}px`);
 
 		rect.mockReturnValue(new DOMRect(100, 280, 44, 44));
@@ -976,8 +982,7 @@ describe('PromptComposer model selection', () => {
 					modelCatalog.models[0]
 				]
 			},
-			configuredProviders: ['spikonado', 'chatgpt'],
-			selectedCompletionProvider: 'chatgpt',
+			availableProviders: ['chatgpt'],
 			selectedModel: 'gpt-6.1-sol',
 			prompt: 'Hello',
 			onSelectedModelChange

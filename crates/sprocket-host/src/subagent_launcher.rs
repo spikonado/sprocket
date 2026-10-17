@@ -28,6 +28,7 @@ impl SubagentLauncher for NativeSubagentLauncher {
                 storage_ids: Vec::new(),
                 selected_model: request.selected_model,
                 completion_provider: request.completion_provider,
+                fallback_providers: request.fallback_providers,
                 reasoning_effort: request.reasoning_effort,
                 fast_mode: request.fast_mode,
                 workspace_path: request.workspace_path,

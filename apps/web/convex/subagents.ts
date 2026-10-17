@@ -22,7 +22,13 @@ import {
 	vTranscriptPartsResult,
 	vTranscriptStateResult
 } from '@convex/lib/docs';
-import { createQueuedRunRecord, submissionReadiness } from '@convex/lib/runCreate';
+import {
+	createQueuedRunRecord,
+	runProviderChain,
+	submissionReadiness
+} from '@convex/lib/runCreate';
+import { getUiPreferences } from '@convex/lib/uiPreferences';
+import { enabledProviders } from '@convex/lib/providerOrder';
 import { requestThreadTreeCancellation } from '@convex/runLifecycle';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
@@ -42,10 +48,12 @@ import {
 } from '@convex/lib/transcriptParts';
 import {
 	isRunFinalStatus,
+	vCompletionProvider,
 	vReasoningEffort,
 	vRunStatus,
 	vAskQuestionAnswer,
-	vSubagentSettings
+	vSubagentSettings,
+	type CompletionProvider
 } from '@convex/lib/validators';
 
 const vCreatedSubagentRun = v.object({
@@ -53,7 +61,9 @@ const vCreatedSubagentRun = v.object({
 	runId: v.id('runs'),
 	status: vRunStatus,
 	continuationOfRunId: v.optional(v.id('runs')),
-	settings: vSubagentSettings
+	settings: vSubagentSettings,
+	// Requested providers after `settings.completionProvider`, in order.
+	fallbackProviders: v.optional(v.array(vCompletionProvider))
 });
 
 const vCallerRun = v.object({
@@ -76,13 +86,47 @@ function subagentSettings(
 }
 
 function createdSubagentRun(run: Doc<'runs'>): Infer<typeof vCreatedSubagentRun> {
+	const [completionProvider, ...fallbackProviders] = runProviderChain(run);
+
 	return {
 		threadId: run.threadId,
 		runId: run._id,
 		status: run.status,
 		continuationOfRunId: run.continuationOfRunId,
-		settings: subagentSettings(run)
+		settings: { ...subagentSettings(run), completionProvider },
+		fallbackProviders
 	};
+}
+
+async function childProviderChain(
+	ctx: MutationCtx,
+	callerRun: Doc<'runs'>,
+	targetThread: Doc<'threadRecords'>,
+	creating: boolean,
+	model: string,
+	requested: CompletionProvider[] | undefined
+): Promise<CompletionProvider[]> {
+	const preferences = await getUiPreferences(ctx.db, callerRun.userId);
+
+	if (preferences?.restrictSubagentsToProvider) {
+		return [callerRun.completionProvider ?? 'spikonado'];
+	}
+
+	// Released runners do not send a chain. Keep their inherited provider.
+	if (requested === undefined) {
+		return [
+			(creating ? callerRun.completionProvider : targetThread.completionProvider) ?? 'spikonado'
+		];
+	}
+
+	const enabled = enabledProviders(preferences?.providerOrder);
+	const chain = requested.filter((provider) => enabled.includes(provider));
+
+	if (chain.length === 0) {
+		throw new Error(`No enabled provider offers ${model}. Enable one in Settings → Providers.`);
+	}
+
+	return chain;
 }
 
 export const recoverSubmission = mutation({
@@ -180,6 +224,8 @@ export const createOrSend = mutation({
 		model: v.string(),
 		reasoning: vReasoningEffort,
 		fast: v.boolean(),
+		// Providers that serve `model`, in the user's order. Released runners omit it.
+		completionProviders: v.optional(v.array(vCompletionProvider)),
 		timeoutMs: v.optional(v.number())
 	},
 	returns: vCreatedSubagentRun,
@@ -199,11 +245,14 @@ export const createOrSend = mutation({
 					? callerThread
 					: await assertDescendantThreadAccess(ctx.db, callerRun, args.threadId);
 
-			// Creation inherits the caller's effective provider; follow-ups keep
-			// the target child's saved provider.
-			const completionProvider = creating
-				? (callerRun.completionProvider ?? 'spikonado')
-				: (targetThread.completionProvider ?? 'spikonado');
+			const [completionProvider, ...fallbackProviders] = await childProviderChain(
+				ctx,
+				callerRun,
+				targetThread,
+				creating,
+				args.model,
+				args.completionProviders
+			);
 
 			const timeoutMs = normalizeTaskTimeoutMs(args.timeoutMs);
 
@@ -250,6 +299,7 @@ export const createOrSend = mutation({
 				imageUploadIds: [],
 				selectedModel: args.model,
 				completionProvider,
+				fallbackProviders,
 				reasoningEffort: args.reasoning,
 				fastMode: args.fast,
 				machineId: callerRun.machineId,

@@ -1,7 +1,7 @@
 export const usageMeters = [
 	{
 		id: 'modelUsage',
-		label: 'Model usage',
+		label: 'Usage',
 		description: 'More expensive models use up more usage.'
 	}
 ] as const;

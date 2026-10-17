@@ -168,7 +168,7 @@ describe('subscription and usage backend', () => {
 		expect(usage).toMatchObject({ exhausted: true });
 		expect(usage.meters[0]).toMatchObject({ limit: 0, used: 0 });
 		await expect(t.mutation(internal.lib.rateLimits.checkUsageLimits, { userId })).rejects.toThrow(
-			/Model usage limit reached/
+			/Usage limit reached/
 		);
 		expect(await t.run((ctx) => gatewayQuotaStatus(ctx, userId))).toMatchObject({
 			exhausted: true
@@ -228,7 +228,7 @@ describe('subscription and usage backend', () => {
 			t.mutation(internal.lib.rateLimits.checkUsageLimits, {
 				userId
 			})
-		).rejects.toThrow(/Model usage limit reached/);
+		).rejects.toThrow(/Usage limit reached/);
 	});
 
 	it('carries old first-use usage into the calendar window on the first new charge', async () => {

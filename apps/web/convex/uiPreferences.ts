@@ -4,6 +4,7 @@ import { v } from 'convex/values';
 import type { Doc } from '@convex/_generated/dataModel';
 import { getUserId } from '@convex/lib/auth';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
+import { assertValidProviderOrder, vProviderOrderEntry } from '@convex/lib/providerOrder';
 import schema from '@convex/schema';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
@@ -39,6 +40,27 @@ export const setAutomaticThreadTitles = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await savePreferences(ctx, { automaticThreadTitles: args.enabled });
+
+		return null;
+	}
+});
+
+export const setProviderOrder = mutation({
+	args: { providerOrder: v.array(vProviderOrderEntry) },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		assertValidProviderOrder(args.providerOrder);
+		await savePreferences(ctx, { providerOrder: args.providerOrder });
+
+		return null;
+	}
+});
+
+export const setRestrictSubagentsToProvider = mutation({
+	args: { enabled: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await savePreferences(ctx, { restrictSubagentsToProvider: args.enabled });
 
 		return null;
 	}

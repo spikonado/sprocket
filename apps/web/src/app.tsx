@@ -48,17 +48,13 @@ import InboxLoadMore from '$lib/components/home/inbox-load-more';
 import SettingsAccount from '$lib/components/home/settings-account';
 import SettingsGeneral from '$lib/components/home/settings-general';
 import SettingsPayments from '$lib/components/home/settings-payments';
+import SettingsCredentials from '$lib/components/home/settings-credentials';
 import SettingsProviders from '$lib/components/home/settings-providers';
 import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar';
-import SettingsUsage from '$lib/components/home/settings-usage';
 import ThreadTranscript from '$lib/components/home/thread-transcript';
 import SidePanel from '$lib/components/home/side-panel';
 import SidePanelResizeHandle from '$lib/components/home/side-panel-resize-handle';
 import { useSidePanelWidth } from '$lib/home/side-panel-width';
-import {
-	readCompletionProviderPreference,
-	storeCompletionProviderPreference
-} from '$lib/home/completion-provider-preference';
 import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen';
 import { createConvexArtifactClient, useArtifactPanel } from '$lib/home/artifact-panel';
 import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker';
@@ -82,9 +78,13 @@ import type { CompletionProvider } from '@convex/lib/validators';
 import {
 	CATALOG_UNAVAILABLE_MESSAGE,
 	fetchGatewayModelCatalog,
+	getCatalogModel,
 	type CatalogModelId,
 	type ModelCatalog
 } from '$lib/chat/model-catalog';
+import { providerChainForModel, usableProviders } from '$lib/chat/provider-chain';
+import { enabledProviders } from '@convex/lib/providerOrder';
+import { migrateLegacyProviderPreference } from '$lib/home/legacy-provider-preference';
 import { isLifecycleInProgress } from '@convex/lib/runCancellation';
 import {
 	beginPendingAgentLaunch,
@@ -140,6 +140,9 @@ function usePageQuery<Query extends ConvexQuery>(query: Query, args: FunctionArg
 }
 
 const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
+
+const noProviderMessage =
+	'No enabled provider offers this model. Check your providers in Settings → Providers.';
 
 const agentLaunchTimeoutMs = 30_000;
 
@@ -253,7 +256,7 @@ type ComposerRecovery = {
 	reasoningEffort?: string;
 	fastMode?: boolean;
 	selectedModel?: CatalogModelId;
-	completionProvider?: CompletionProvider;
+	providerChain?: CompletionProvider[];
 	submissionId?: string;
 	continuationOfRunId?: Id<'runs'>;
 	autoSubmit?: boolean;
@@ -334,6 +337,7 @@ export default function App({
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
+	const setProviderOrder = useMutation(api.uiPreferences.setProviderOrder);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 
 	const [modelCatalog, setModelCatalog] = useState<ModelCatalog | undefined>(undefined);
@@ -519,11 +523,6 @@ export default function App({
 	const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | null>(null);
 	const [selectedModel, setSelectedModel] = useState<CatalogModelId>();
 
-	const [selectedCompletionProvider, setSelectedCompletionProvider] =
-		useState<CompletionProvider>('spikonado');
-
-	const preferredCompletionProvider = useRef<CompletionProvider>('spikonado');
-
 	const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string>();
 
 	const [fastMode, setFastMode] = useState(false);
@@ -596,7 +595,7 @@ export default function App({
 				reasoningEffort: string;
 				fastMode: boolean;
 				selectedModel: CatalogModelId;
-				completionProvider: CompletionProvider;
+				providerChain: CompletionProvider[];
 				submissionId: string;
 				continuationOfRunId?: Id<'runs'>;
 			}
@@ -668,6 +667,45 @@ export default function App({
 		signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 
 	const uiPreferencesQuery = usePageQuery(api.uiPreferences.getMine, authenticatedQueryArgs);
+	const providerOrder = uiPreferencesQuery.data?.providerOrder;
+
+	const availableProviders = useMemo(
+		() => usableProviders(providerOrder, configuredProviders),
+		[providerOrder, configuredProviders]
+	);
+
+	const providerStatusKnown: Record<CompletionProvider, boolean> = {
+		spikonado: true,
+		openai: providerConfigurationReady || providerConfigurationError !== null,
+		chatgpt:
+			desktopApiResolved && (!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)
+	};
+
+	const selectedCatalogModel =
+		modelCatalog && selectedModel ? getCatalogModel(modelCatalog, selectedModel) : undefined;
+
+	const enabledProviderOrder = enabledProviders(providerOrder);
+
+	const routeProviders = selectedCatalogModel
+		? providerChainForModel(enabledProviderOrder, selectedCatalogModel)
+		: enabledProviderOrder;
+
+	const spikonadoIndex = routeProviders.indexOf('spikonado');
+
+	// Spikonado is always usable, so unknown providers after it only drop out of the fallbacks.
+	// A failed preferences read must not fall back to the default order and re-enable providers.
+	const providersReady =
+		uiPreferencesQuery.data !== undefined &&
+		(spikonadoIndex === -1 ? routeProviders : routeProviders.slice(0, spikonadoIndex)).every(
+			(provider) => providerStatusKnown[provider]
+		);
+
+	const currentProviderChain = providerChainForModel(availableProviders, selectedCatalogModel);
+
+	useEffect(() => {
+		if (!authReady || !signedInUserId || uiPreferencesQuery.data === undefined) return;
+		migrateLegacyProviderPreference(signedInUserId, uiPreferencesQuery.data, setProviderOrder);
+	}, [authReady, signedInUserId, uiPreferencesQuery.data, setProviderOrder]);
 
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';
@@ -1019,7 +1057,7 @@ export default function App({
 
 	const canSend = Boolean(
 		currentProjectPath &&
-		(pendingAgentQuestion || selectedCompletionProvider !== 'chatgpt' || chatGptConfigured) &&
+		(pendingAgentQuestion || providersReady) &&
 		currentProject?.localAttachmentAvailability === 'available' &&
 		!isSubmittingPrompt &&
 		!answeringAgentQuestion &&
@@ -1146,8 +1184,6 @@ export default function App({
 		setCurrentRepositoryKey(nextRepositoryKey);
 		setCurrentThreadId(threadId);
 		setDraftWorkspacePath(draft ? workspacePath : null);
-
-		if (draft) setSelectedCompletionProvider(preferredCompletionProvider.current);
 
 		if (threadId !== pendingCreatedThreadId) {
 			setPendingCreatedThreadId(null);
@@ -1365,10 +1401,6 @@ export default function App({
 		if (change.provider === 'openai') setOpenAiConfigured(change.configured);
 		setProviderConfigurationReady(true);
 		setProviderConfigurationError(null);
-
-		if (!change.configured && selectedCompletionProvider === change.provider) {
-			setSelectedCompletionProvider('spikonado');
-		}
 	}
 
 	function handleChatGptStatusChange(status: ChatGptStatus) {
@@ -1381,12 +1413,7 @@ export default function App({
 			(account) => account.connectionId === status.activeConnectionId
 		);
 
-		const configured = active?.connected === true;
-		setChatGptConfigured(configured);
-
-		if (!configured && selectedCompletionProvider === 'chatgpt') {
-			setSelectedCompletionProvider('spikonado');
-		}
+		setChatGptConfigured(active?.connected === true);
 	}
 
 	function startThreadDraftForProject(workspacePath: string) {
@@ -1531,7 +1558,7 @@ export default function App({
 		);
 
 		const submittedModel = selectedModel;
-		const submittedCompletionProvider = selectedCompletionProvider;
+		const submittedProviderChain = currentProviderChain;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
@@ -1578,7 +1605,7 @@ export default function App({
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
-				completionProvider: submittedCompletionProvider,
+				providerChain: submittedProviderChain,
 				continuationOfRunId,
 				autoSubmit: true
 			});
@@ -1670,6 +1697,12 @@ export default function App({
 			return;
 		}
 
+		if (currentProviderChain.length === 0) {
+			setCurrentError(noProviderMessage);
+
+			return;
+		}
+
 		const selectedThreadId = currentThreadId;
 		let submittedRepositoryKey = currentRepositoryKey;
 
@@ -1696,7 +1729,7 @@ export default function App({
 		);
 
 		const submittedModel = selectedModel;
-		const submittedCompletionProvider = selectedCompletionProvider;
+		const submittedProviderChain = currentProviderChain;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 
@@ -1734,7 +1767,7 @@ export default function App({
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
-			completionProvider: submittedCompletionProvider,
+			providerChain: submittedProviderChain,
 			continuationOfRunId: submittedContinuationOfRunId,
 			recoveredSubmission: recoveredSubmission
 				? { ...recoveredSubmission, selectedModel: recoveredSubmission.selectedModel }
@@ -1768,7 +1801,7 @@ export default function App({
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
-				completionProvider: submittedCompletionProvider,
+				providerChain: submittedProviderChain,
 				continuationOfRunId: submittedContinuationOfRunId,
 				autoSubmit: false,
 				submissionId:
@@ -1929,7 +1962,7 @@ export default function App({
 				prompt: submittedPrompt,
 				storageIds: submittedStorageIds,
 				selectedModel: submittedModel,
-				completionProvider: submittedCompletionProvider,
+				providerChain: submittedProviderChain,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
@@ -2040,6 +2073,12 @@ export default function App({
 			return;
 		}
 
+		if (currentProviderChain.length === 0) {
+			setCurrentError(noProviderMessage);
+
+			return;
+		}
+
 		const threadId = currentThreadId;
 		const workspacePath = currentProjectPath;
 		const userId = signedInUserIdRef.current;
@@ -2079,7 +2118,7 @@ export default function App({
 				prompt: '',
 				storageIds: [],
 				selectedModel,
-				completionProvider: selectedCompletionProvider,
+				providerChain: currentProviderChain,
 				reasoningEffort: selectedReasoningEffort,
 				fastMode,
 				submissionId: crypto.randomUUID(),
@@ -2130,8 +2169,6 @@ export default function App({
 		});
 		setCurrentError(null);
 		setSelectedModel(modelCatalog?.defaultModelId);
-		preferredCompletionProvider.current = readCompletionProviderPreference(userId);
-		setSelectedCompletionProvider(preferredCompletionProvider.current);
 		setSelectedReasoningEffort(modelCatalog?.defaultReasoningEffort);
 		setFastMode(false);
 		setProjectPickerOpen(false);
@@ -2216,7 +2253,6 @@ export default function App({
 
 		if (!thread) return;
 		setSelectedModel(thread.selectedModel);
-		setSelectedCompletionProvider(thread.completionProvider ?? 'spikonado');
 		setSelectedReasoningEffort(thread.reasoningEffort);
 		setFastMode(thread.fastMode ?? false);
 	}, [currentActiveThread]);
@@ -2257,7 +2293,7 @@ export default function App({
 				(recovery.prompt || recovery.storageIds?.length) &&
 				recovery.reasoningEffort &&
 				recovery.selectedModel &&
-				recovery.completionProvider
+				recovery.providerChain
 			) {
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
@@ -2265,7 +2301,7 @@ export default function App({
 					reasoningEffort: recovery.reasoningEffort,
 					fastMode: recovery.fastMode ?? false,
 					selectedModel: recovery.selectedModel,
-					completionProvider: recovery.completionProvider,
+					providerChain: recovery.providerChain,
 					submissionId: recovery.submissionId,
 					continuationOfRunId: recovery.continuationOfRunId
 				});
@@ -2507,8 +2543,8 @@ export default function App({
 		await focusSidebarControl(false);
 	}
 
-	function openSettings() {
-		setSettingsPage('general');
+	function openSettings(page: SettingsPage = 'general') {
+		setSettingsPage(page);
 		setSettingsOpen(true);
 	}
 
@@ -2639,7 +2675,7 @@ export default function App({
 							onSelect={selectInboxThread}
 							onNew={startThreadDraft}
 							onAddProject={() => openProjectPicker('add')}
-							onSettings={openSettings}
+							onSettings={() => openSettings()}
 							onChange={changeInboxState}
 							onRename={(thread, title) => renameThread(thread._id, title)}
 							onRegenerateTitle={(thread) => regenerateThreadTitle(thread._id)}
@@ -2684,10 +2720,13 @@ export default function App({
 					{settingsOpen ? (
 						settingsPage === 'general' ? (
 							<SettingsGeneral />
-						) : settingsPage === 'usage' ? (
-							<SettingsUsage />
-						) : settingsPage === 'providers' && signedInUserId ? (
+						) : settingsPage === 'providers' ? (
 							<SettingsProviders
+								configuredProviders={configuredProviders}
+								onOpenCredentials={() => setSettingsPage('credentials')}
+							/>
+						) : settingsPage === 'credentials' && signedInUserId ? (
+							<SettingsCredentials
 								userId={signedInUserId}
 								desktopApi={desktopApi}
 								openAiConfigured={openAiConfigured}
@@ -2806,21 +2845,9 @@ export default function App({
 										modelCatalog={modelCatalog}
 										selectedModel={selectedModel}
 										onSelectedModelChange={setSelectedModel}
-										configuredProviders={configuredProviders}
-										providersReady={
-											providerConfigurationReady &&
-											(selectedCompletionProvider !== 'chatgpt' ||
-												(desktopApiResolved &&
-													(!desktopApi || chatGptStatus !== null || chatGptStatusError !== null)))
-										}
-										selectedCompletionProvider={selectedCompletionProvider}
-										onSelectedCompletionProviderChange={setSelectedCompletionProvider}
-										onCompletionProviderSelect={(provider) => {
-											preferredCompletionProvider.current = provider;
-
-											if (signedInUserId)
-												storeCompletionProviderPreference(signedInUserId, provider);
-										}}
+										availableProviders={availableProviders}
+										providersReady={providersReady}
+										onOpenProviderSettings={() => openSettings('providers')}
 										selectedReasoningEffort={selectedReasoningEffort}
 										onSelectedReasoningEffortChange={setSelectedReasoningEffort}
 										fastMode={fastMode}

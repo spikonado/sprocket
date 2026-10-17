@@ -42,6 +42,24 @@ provider settings stay in their existing formats, so no migration is required.
 The cutoff is persistent replay state, not a compatibility shim. Keep it until
 a migration removes the covered reasoning from stored transcript parts.
 
+### Provider fallback order
+
+Runs may carry an ordered provider chain: `fallbackProviders` on run creation,
+`completionProviders` on `subagents:createOrSend`, and `runs.providerChain` in
+Convex. Released clients and runners omit them. A missing chain means only the
+run's `completionProvider`, and `createOrSend` without `completionProviders`
+keeps the parent's provider as before. `getContext` adds optional
+`run.fallbackProviders` and `providerPreferences`, which released runners
+ignore, and the Rust readers default them to no fallbacks and Spikonado only.
+Keep the optional fields until released clients and runners age out. Existing
+runs need no migration.
+
+Users without a saved `uiPreferences.providerOrder` get the default order.
+The web app migrates the removed composer provider choice from localStorage
+(`sprocket.composer.provider:<userId>`) into `providerOrder` once and deletes
+the key. Remove that migration once released clients from before the
+Providers settings page age out.
+
 ### Released completion item metadata
 
 New completion items store Rig 0.44's native provider item in
@@ -333,6 +351,10 @@ retention job removes them.
 
 Removal gate: drop `windows` from `vMyUsage` after released clients that read
 it age out.
+
+Each meter's `description` is likewise only rendered by released clients; the
+Account page no longer shows it. Drop it from `vMyUsage` and `usageMeters`
+with `windows`.
 
 #### Checkout attempt retention
 
