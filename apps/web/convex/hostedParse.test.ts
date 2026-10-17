@@ -6,10 +6,10 @@ import type { WorkId } from '@convex-dev/workpool';
 import type { GenericDatabaseWriter, GenericDataModel, SystemDataModel } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
+import { Firecrawl, SdkError } from 'firecrawl';
 import {
-	FIRECRAWL_PARSE_URL,
 	HOSTED_PARSE_MAX_OUTPUT_BYTES,
-	parseFirecrawlParseResponse
+	parseFirecrawlParseDocument
 } from '@convex/lib/hostedParse';
 import {
 	createQueuedRun,
@@ -117,53 +117,39 @@ function workId(job: Doc<'executorJobs'> | null): WorkId {
 	return job.cloudWorkId as WorkId;
 }
 
-describe('Firecrawl parse response contract', () => {
+describe('Firecrawl parse document contract', () => {
 	it('requires markdown and rejects truncated PDFs', () => {
 		expect(
-			parseFirecrawlParseResponse(
-				JSON.stringify({
-					success: true,
-					data: {
-						markdown: '# Report',
-						metadata: { numPages: 2, totalPages: 2 }
-					}
-				}),
-				64
-			)
+			parseFirecrawlParseDocument({
+				markdown: '# Report',
+				metadata: { numPages: 2, totalPages: 2 }
+			})
 		).toEqual({ markdown: '# Report' });
 		expect(
-			parseFirecrawlParseResponse(
-				JSON.stringify({
-					success: true,
-					data: {
-						markdown: '# Partial',
-						metadata: { numPages: 2, totalPages: 10 }
-					}
-				}),
-				64
-			)
+			parseFirecrawlParseDocument({
+				markdown: '# Partial',
+				metadata: { numPages: 2, totalPages: 10 }
+			})
 		).toEqual({ error: 'Parsed document was truncated.' });
-		expect(parseFirecrawlParseResponse(JSON.stringify({ success: true, data: {} }), 8)).toEqual({
+		expect(parseFirecrawlParseDocument({})).toEqual({
 			error: 'Firecrawl parse did not return markdown.'
-		});
-		expect(
-			parseFirecrawlParseResponse(JSON.stringify({ success: false, error: 'Payment required' }), 32)
-		).toEqual({
-			error: 'Payment required'
-		});
-		expect(
-			parseFirecrawlParseResponse(JSON.stringify({ success: true, data: { markdown: 'x' } }), 64)
-		).toEqual({
-			markdown: 'x'
 		});
 	});
 
 	it('rejects oversized provider payloads', () => {
 		expect(
-			parseFirecrawlParseResponse(
-				JSON.stringify({ success: true, data: { markdown: '# huge' } }),
-				HOSTED_PARSE_MAX_OUTPUT_BYTES + 1
+			parseFirecrawlParseDocument({ markdown: 'x'.repeat(HOSTED_PARSE_MAX_OUTPUT_BYTES + 1) })
+		).toEqual({ error: 'Firecrawl parse response is too large.' });
+		expect(
+			parseFirecrawlParseDocument(
+				{ pages: [{ pageNumber: 1, markdown: 'x'.repeat(HOSTED_PARSE_MAX_OUTPUT_BYTES + 1) }] },
+				true
 			)
+		).toEqual({ error: 'Firecrawl parse response is too large.' });
+		// JSON escaping doubles each quote, so only the stored file exceeds the limit.
+		const quotes = '"'.repeat(HOSTED_PARSE_MAX_OUTPUT_BYTES / 2 + 1);
+		expect(
+			parseFirecrawlParseDocument({ pages: [{ pageNumber: 1, markdown: quotes }] }, true)
 		).toEqual({ error: 'Firecrawl parse response is too large.' });
 	});
 
@@ -173,26 +159,13 @@ describe('Firecrawl parse response contract', () => {
 			{ pageNumber: 2, markdown: '' }
 		];
 
-		expect(
-			parseFirecrawlParseResponse(
-				JSON.stringify({ success: true, data: { markdown: '# One', pages } }),
-				128,
-				true
-			)
-		).toEqual({ pages });
-		expect(
-			parseFirecrawlParseResponse(
-				JSON.stringify({ success: true, data: { markdown: '# One' } }),
-				64,
-				true
-			)
-		).toEqual({ error: 'Firecrawl parse did not return pages.' });
-		expect(
-			parseFirecrawlParseResponse(
-				JSON.stringify({ success: true, data: { markdown: '# One', pages: null } }),
-				64
-			)
-		).toEqual({ markdown: '# One' });
+		expect(parseFirecrawlParseDocument({ markdown: '# One', pages }, true)).toEqual({ pages });
+		expect(parseFirecrawlParseDocument({ markdown: '# One' }, true)).toEqual({
+			error: 'Firecrawl parse did not return pages.'
+		});
+		// SAFETY: The API sends null for absent pages even though the SDK types say optional.
+		const withoutPages = { markdown: '# One', pages: null } as never;
+		expect(parseFirecrawlParseDocument(withoutPages)).toEqual({ markdown: '# One' });
 	});
 });
 
@@ -203,6 +176,7 @@ describe('hostedParse', () => {
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		vi.clearAllTimers();
 		vi.useRealTimers();
 		vi.unstubAllEnvs();
@@ -437,31 +411,14 @@ describe('hostedParse', () => {
 				filename: 'report.pdf'
 			});
 
-			const providerFetch = vi.fn(async (url: string, options?: RequestInit) => {
-				if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
-				expect(options?.method).toBe('POST');
-				expect(options?.headers).toEqual({ Authorization: 'Bearer fc-test-key' });
-				const form = options?.body;
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => new Response('%PDF-1.4'))
+			);
 
-				if (!(form instanceof FormData)) throw new Error('Expected multipart form');
-				const file = form.get('file');
-
-				if (!(file instanceof File)) throw new Error('Expected uploaded file');
-				expect(file.name).toBe('report.pdf');
-				expect(await file.text()).toBe('%PDF-1.4');
-				const parseOptions = form.get('options');
-
-				if (!(parseOptions instanceof Blob)) throw new Error('Expected JSON options');
-				expect(JSON.parse(await parseOptions.text())).toEqual({
-					formats: ['markdown'],
-					parsers: [{ type: 'pdf', mode: 'auto' }],
-					timeout: 300_000
-				});
-
-				return Response.json({ success: true, data: { markdown: '# Report' } });
-			});
-
-			vi.stubGlobal('fetch', providerFetch);
+			const parse = vi
+				.spyOn(Firecrawl.prototype, 'parse')
+				.mockResolvedValue({ markdown: '# Report' });
 
 			const result = await t.action(internal.hostedParseActions.executeHostedParse, {
 				requestId: created.requestId,
@@ -472,9 +429,17 @@ describe('hostedParse', () => {
 
 			const resultId = result.resultStorageId!;
 			expect(resultId).toBeDefined();
-			expect(providerFetch.mock.calls.filter(([url]) => url === FIRECRAWL_PARSE_URL)).toHaveLength(
-				1
-			);
+			expect(parse).toHaveBeenCalledTimes(1);
+
+			const [file, options] = parse.mock.calls[0]!;
+			expect(file).toMatchObject({ filename: 'report.pdf', contentType: 'application/pdf' });
+			// SAFETY: executeHostedParse uploads the stored bytes as a Uint8Array.
+			const uploaded = file.data as Uint8Array;
+			expect(new TextDecoder().decode(uploaded)).toBe('%PDF-1.4');
+			expect(options).toMatchObject({
+				formats: ['markdown'],
+				parsers: [{ type: 'pdf', mode: 'auto' }]
+			});
 			const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 			await t.mutation(internal.hostedParse.completeHostedParse, {
 				workId: workId(stored),
@@ -541,22 +506,14 @@ describe('hostedParse', () => {
 			{ pageNumber: 1, markdown: '# One' }
 		];
 
-		const parseOptions: unknown[] = [];
 		vi.stubGlobal(
 			'fetch',
-			vi.fn(async (url: string, options?: RequestInit) => {
-				if (url !== FIRECRAWL_PARSE_URL) return new Response('%PDF-1.4');
-				const form = options?.body;
-
-				if (!(form instanceof FormData)) throw new Error('Expected multipart form');
-				const formOptions = form.get('options');
-
-				if (!(formOptions instanceof Blob)) throw new Error('Expected JSON options');
-				parseOptions.push(JSON.parse(await formOptions.text()));
-
-				return Response.json({ success: true, data: { markdown: '# Two\n\n# One', pages } });
-			})
+			vi.fn(async () => new Response('%PDF-1.4'))
 		);
+
+		// SAFETY: The parse result is only read for `markdown` and the page fields set here.
+		const parsed = { markdown: '# Two\n\n# One', pages } as never;
+		const parse = vi.spyOn(Firecrawl.prototype, 'parse').mockResolvedValue(parsed);
 
 		const result = await t.action(internal.hostedParseActions.executeHostedParse, {
 			requestId: created.requestId,
@@ -565,13 +522,9 @@ describe('hostedParse', () => {
 			claimId: run.claimId
 		});
 
-		expect(parseOptions).toEqual([
-			{
-				formats: ['markdown'],
-				parsers: [{ type: 'pdf', mode: 'auto', pages: true }],
-				timeout: 300_000
-			}
-		]);
+		expect(parse.mock.calls[0]?.[1]).toMatchObject({
+			parsers: [{ type: 'pdf', mode: 'auto', pages: true }]
+		});
 
 		const stored = await t.run(async (ctx) => {
 			const blob = await ctx.storage.get(result.resultStorageId!);
@@ -581,6 +534,38 @@ describe('hostedParse', () => {
 
 		expect(stored?.type).toBe('application/json');
 		expect(JSON.parse(stored?.text ?? '')).toEqual({ pages });
+	});
+
+	it('reports exhausted Firecrawl credits', async () => {
+		const t = initConvexTest();
+		const run = await seedParseJob(t, { executionSecret: 'hosted-credits-secret' });
+
+		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
+			...auth(run),
+			jobId: run.jobId
+		});
+
+		const inputId = await storeBlob(t, { bytes: '%PDF-1.4', type: 'application/pdf' });
+		await run.asUser.mutation(api.hostedParse.start, {
+			...auth(run),
+			requestId: created.requestId,
+			storageId: inputId,
+			filename: 'report.pdf'
+		});
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response('%PDF-1.4'))
+		);
+		vi.spyOn(Firecrawl.prototype, 'parse').mockRejectedValue(new SdkError('Payment required', 402));
+
+		await expect(
+			t.action(internal.hostedParseActions.executeHostedParse, {
+				requestId: created.requestId,
+				jobId: run.jobId,
+				runId: run.runId,
+				claimId: run.claimId
+			})
+		).rejects.toThrow('Firecrawl credits are exhausted.');
 	});
 
 	it('rejects registered attachments and another parse input without deleting them', async () => {
