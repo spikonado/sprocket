@@ -10,6 +10,9 @@ import {
 } from '$lib/updates';
 import RestartConfirmation from './restart-confirmation';
 
+// An error belongs to the update status it was raised from and hides once that status moves on.
+type FailedRequest = { error: string; status: UpdateState['status'] };
+
 export default function AppUpdate() {
 	const auth = useConvexAuth();
 
@@ -21,11 +24,14 @@ export default function AppUpdate() {
 	const [updateState, setUpdateState] = useState<UpdateState | null>(null);
 	const [confirmRestart, setConfirmRestart] = useState(false);
 	const [restarting, setRestarting] = useState(false);
-	const [requestError, setRequestError] = useState<string | null>(null);
+	const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null);
 	const [busy, setBusyState] = useState(false);
 	const busyRef = useRef(false);
 	const revisionRef = useRef(0);
 	const label = updateState ? updateLabel(updateState) : null;
+
+	const requestError =
+		failedRequest && failedRequest.status === updateState?.status ? failedRequest.error : null;
 
 	const working =
 		busy || updateState?.status === 'downloading' || updateState?.status === 'installing';
@@ -95,7 +101,7 @@ export default function AppUpdate() {
 
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
-		setRequestError(null);
+		setFailedRequest(null);
 
 		try {
 			const updates = window.sprocketDesktopBridge?.updates;
@@ -115,7 +121,10 @@ export default function AppUpdate() {
 				}
 			}
 		} catch (error) {
-			setRequestError(error instanceof Error ? error.message : String(error));
+			setFailedRequest({
+				error: error instanceof Error ? error.message : String(error),
+				status: updateState.status
+			});
 		} finally {
 			setRestarting(false);
 			setBusy(false);

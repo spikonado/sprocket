@@ -7,6 +7,7 @@ import type { UpdateState } from '$lib/updates';
 import AppUpdate from './app-update';
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.clearAllMocks();
 	delete window.sprocketDesktopBridge;
@@ -107,6 +108,25 @@ it.each([undefined, true])(
 		expect(screen.getByRole('alert').textContent).toBe('Restart failed');
 	}
 );
+
+it('drops an install error once a later check shows the update installed', async () => {
+	vi.useFakeTimers({ shouldAdvanceTime: true });
+
+	const fetcher = vi
+		.fn()
+		.mockResolvedValueOnce(Response.json(available))
+		.mockRejectedValueOnce(new Error('Connection lost'))
+		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }));
+
+	vi.stubGlobal('fetch', fetcher);
+	mount();
+	fireEvent.click(await screen.findByRole('button', { name: 'Update available' }));
+	expect(await screen.findByText('Connection lost')).toBeTruthy();
+
+	await act(() => vi.advanceTimersByTimeAsync(5_000));
+	expect(screen.getByRole('button', { name: 'Restart Sprocket' })).toBeTruthy();
+	expect(screen.queryByText('Connection lost')).toBeNull();
+});
 
 it('confirms restart when automatic continuation is off and lets the user cancel', async () => {
 	const fetcher = vi
