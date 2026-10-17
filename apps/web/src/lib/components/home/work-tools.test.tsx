@@ -6,6 +6,7 @@ import WorkTools from './work-tools';
 describe('tool rows', () => {
 	it('expands a tool row on click to show its full text', () => {
 		const command = `bun run build --filter ${'very-long-package-name '.repeat(20)}\necho done`;
+
 		const tool: AssistantTimelineTool = {
 			type: 'tool',
 			callId: 'cmd',
