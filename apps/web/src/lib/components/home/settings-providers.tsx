@@ -3,6 +3,7 @@ import { GripVertical } from 'lucide-react';
 import { DragDropProvider } from '@dnd-kit/react';
 import { useSortable } from '@dnd-kit/react/sortable';
 import { move } from '@dnd-kit/helpers';
+import { RestrictToElement } from '@dnd-kit/dom/modifiers';
 import {
 	useConvexAuth,
 	useMutation,
@@ -88,6 +89,7 @@ export default function SettingsProviders({
 	const [pendingOrder, setPendingOrder] = useState<ProviderOrderEntry[] | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const saveGeneration = useRef(0);
+	const listRef = useRef<HTMLOListElement>(null);
 	const preferences = preferencesQuery.status === 'success' ? preferencesQuery.data : null;
 	const disabled = preferencesQuery.status !== 'success';
 	const order = pendingOrder ?? resolveProviderOrder(preferences?.providerOrder);
@@ -126,12 +128,13 @@ export default function SettingsProviders({
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
-					<p className="text-muted-foreground px-3 text-sm leading-6">
+					<p className="text-muted-foreground px-3 pb-3 text-sm leading-6">
 						Agents use the first enabled provider that offers the model and fall back to the next
 						one if it fails. Drag to reorder.
 					</p>
 
 					<DragDropProvider
+						modifiers={[RestrictToElement.configure({ element: () => listRef.current })]}
 						onDragEnd={(event) => {
 							if (event.canceled) return;
 
@@ -147,7 +150,7 @@ export default function SettingsProviders({
 							void save(reorderShownProviders(order, shownOrder));
 						}}
 					>
-						<ol className="space-y-1" aria-label="Provider order">
+						<ol ref={listRef} className="space-y-1" aria-label="Provider order">
 							{shown.map((entry, index) => (
 								<ProviderRow
 									key={entry.provider}
