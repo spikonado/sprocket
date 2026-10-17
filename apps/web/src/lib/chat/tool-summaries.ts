@@ -4,7 +4,11 @@ import {
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
 import { jsonString } from '$lib/chat/json-fields';
-import { isCommandToolKind, isSessionCommandToolKind } from '@convex/lib/commandToolKinds';
+import {
+	isCommandToolKind,
+	isExecCommandToolKind,
+	isSessionCommandToolKind
+} from '@convex/lib/commandToolKinds';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -374,4 +378,19 @@ export function toolItemSummary(
 	}
 
 	return summarizeTool(toolLog.name, toolLog.input);
+}
+
+export function toolShellCommand(
+	toolLog: AssistantTimelineTool,
+	sessionCommands: ReadonlyMap<string, string>
+) {
+	const kind = toolLog.job?.kind ?? toolLog.name;
+
+	if (isSessionCommandToolKind(kind)) return resolveCommandSessionLabel(toolLog, sessionCommands);
+
+	if (!isExecCommandToolKind(kind)) return undefined;
+
+	const input: JsonValue | undefined = toolLog.job?.payload ?? toolLog.input;
+
+	return isJsonObject(input) ? jsonString(input.cmd) : undefined;
 }
