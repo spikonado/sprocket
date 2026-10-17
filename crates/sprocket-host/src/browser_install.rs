@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
@@ -14,88 +14,99 @@ use tokio::sync::Mutex;
 const RELEASES: &str = include_str!("../../../tools/agent-browser/releases.json");
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const MAX_COMMAND_OUTPUT: u64 = 64 * 1024;
-const LEASE_FILE: &str = "in-use.lock";
+const INSTALL_LOCK: &str = "install.lock";
+const LEASE_LOCK: &str = "in-use.lock";
 const TOMBSTONE_SUFFIX: &str = ".removing";
-const LINUX_ARM64_REMEDY: &str = "This agent-browser release cannot download Chrome for Linux ARM64. Install Chromium with your system package manager, then set AGENT_BROWSER_EXECUTABLE_PATH to its absolute path (for example /usr/bin/chromium). Sprocket never installs system packages or runs sudo.";
-
-struct BrowserInstallation {
-    cli: PathBuf,
-    chromium: PathBuf,
-}
 
 pub(crate) struct BrowserInstaller {
-    tools_dir: PathBuf,
-    configured_chromium: Option<PathBuf>,
+    tool_dir: PathBuf,
     releases: Releases,
     client: reqwest::Client,
-    browser: Mutex<Option<BrowserInstallation>>,
-    lightpanda: Mutex<Option<PathBuf>>,
-    leases: Mutex<BTreeMap<&'static str, File>>,
+    ready_cli: Mutex<Option<PathBuf>>,
+    lease: Mutex<Option<File>>,
 }
 
 impl BrowserInstaller {
-    pub fn new(data_dir: PathBuf, configured_chromium: Option<PathBuf>) -> anyhow::Result<Self> {
-        let releases: Releases = serde_json::from_str(RELEASES)?;
+    pub fn new(data_dir: &Path) -> anyhow::Result<Self> {
         Ok(Self {
-            tools_dir: data_dir.join("tools"),
-            configured_chromium,
-            browser: Mutex::new(None),
-            lightpanda: Mutex::new(None),
-            leases: Mutex::new(BTreeMap::new()),
-            releases,
+            tool_dir: data_dir.join("tools/agent-browser"),
+            releases: serde_json::from_str(RELEASES)?,
             client: reqwest::Client::builder()
                 .user_agent(concat!("sprocket/", env!("CARGO_PKG_VERSION")))
                 .connect_timeout(Duration::from_secs(30))
                 .timeout(DOWNLOAD_TIMEOUT)
                 .build()?,
+            ready_cli: Mutex::new(None),
+            lease: Mutex::new(None),
         })
     }
 
     pub async fn ensure_ready(&self) -> anyhow::Result<PathBuf> {
-        let mut browser = self.browser.lock().await;
-        if let Some(installed) = browser.as_ref() {
-            if executable_file(&installed.cli).await && executable_file(&installed.chromium).await {
-                return Ok(installed.cli.clone());
-            }
+        let mut ready_cli = self.ready_cli.lock().await;
+        if let Some(cli) = ready_cli.as_ref()
+            && executable_file(cli).await
+        {
+            return Ok(cli.clone());
         }
-        let cli = self.install_tool(Tool::AgentBrowser).await?;
-        self.ensure_skills().await?;
-        let chromium = self.ensure_chromium(&cli).await?;
-        *browser = Some(BrowserInstallation {
-            cli: cli.clone(),
-            chromium,
-        });
+        let cli = self.install().await?;
+        self.ensure_chromium(&cli).await?;
+        *ready_cli = Some(cli.clone());
         Ok(cli)
     }
 
+    fn version_dir(&self) -> PathBuf {
+        self.tool_dir.join(&self.releases.agent_browser.version)
+    }
+
     pub fn cli_directory(&self) -> anyhow::Result<PathBuf> {
-        Ok(self
-            .tools_dir
-            .join("agent-browser")
-            .join(&self.releases.agent_browser.version)
-            .join(platform_key(
-                Tool::AgentBrowser,
-                std::env::consts::OS,
-                std::env::consts::ARCH,
-            )?))
+        Ok(self.version_dir().join(platform()?))
     }
 
     pub fn skills_directory(&self) -> PathBuf {
-        self.tools_dir
-            .join("agent-browser")
-            .join(&self.releases.agent_browser.version)
-            .join("skill-data")
+        self.version_dir().join("skill-data")
     }
 
+    async fn install(&self) -> anyhow::Result<PathBuf> {
+        let release = &self.releases.agent_browser;
+        let asset = release
+            .platforms
+            .get(platform()?)
+            .context("missing pinned release")?;
+        let directory = self.cli_directory()?;
+        tokio::fs::create_dir_all(&directory).await?;
+        let _lock = acquire_lock(self.version_dir().join(INSTALL_LOCK)).await?;
+        let cli = directory.join(if cfg!(windows) {
+            "agent-browser.exe"
+        } else {
+            "agent-browser"
+        });
+        if !verified_file(&cli, asset).await? {
+            let url = format!(
+                "https://github.com/{}/releases/download/{}/{}",
+                release.repository, release.tag, asset.asset
+            );
+            download_atomic(&self.client, &url, asset, &cli).await?;
+        }
+        self.ensure_skills().await?;
+        self.lease_version().await;
+        let tool_dir = self.tool_dir.clone();
+        let current = release.version.clone();
+        if let Err(error) =
+            tokio::task::spawn_blocking(move || prune_versions(&tool_dir, &current)).await
+        {
+            tracing::warn!("Old agent-browser cleanup failed: {error}");
+        }
+        Ok(cli)
+    }
+
+    /// The native CLI doesn't embed its skills, so `agent-browser skills get <name>` reads them
+    /// from the release's source tree.
     async fn ensure_skills(&self) -> anyhow::Result<()> {
         let destination = self.skills_directory();
-        let parent = destination.parent().context("skills directory")?;
-        let _lock = acquire_lock(parent.join("skills-install.lock")).await?;
         if destination.join("core/SKILL.md").is_file() {
             return Ok(());
         }
-        let archive = parent.join("source.tar.gz");
+        let archive = self.version_dir().join("source.tar.gz");
         let release = &self.releases.skill_data;
         download_atomic(&self.client, &release.url, &release.asset, &archive).await?;
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -138,186 +149,86 @@ impl BrowserInstaller {
         Ok(())
     }
 
-    pub async fn existing_chromium(&self) -> Option<PathBuf> {
-        if let Ok(browser) = self.browser.try_lock()
-            && let Some(installed) = browser.as_ref()
-            && executable_file(&installed.chromium).await
-        {
-            return Some(installed.chromium.clone());
-        }
-        if let Some(path) = &self.configured_chromium {
-            return (path.is_absolute() && executable_file(path).await).then(|| path.clone());
-        }
-        find_chromium().await
-    }
-
-    pub async fn ensure_lightpanda(&self) -> anyhow::Result<PathBuf> {
-        let mut lightpanda = self.lightpanda.lock().await;
-        if let Some(path) = lightpanda.as_ref() {
-            return Ok(path.clone());
-        }
-        let executable = self.install_tool(Tool::Lightpanda).await?;
-        run_command(
-            Command::new(&executable).arg("version"),
-            Duration::from_secs(30),
-        )
-        .await
-        .context("Lightpanda cannot run on this host; official Linux binaries require glibc")?;
-        *lightpanda = Some(executable.clone());
-        Ok(executable)
-    }
-
-    pub async fn installed_lightpanda(&self) -> Option<PathBuf> {
-        let mut installed = self.lightpanda.try_lock().ok()?;
-        if let Some(path) = installed.as_ref() {
-            return Some(path.clone());
-        }
-        let release = &self.releases.lightpanda;
-        let platform = platform_key(
-            Tool::Lightpanda,
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-        )
-        .ok()?;
-        let path = self
-            .tools_dir
-            .join("lightpanda")
-            .join(&release.version)
-            .join(platform)
-            .join("lightpanda");
-        let asset = release.platforms.get(platform)?;
-        if verified_file(&path, asset).await.ok()? {
-            let version_dir = self.tools_dir.join("lightpanda").join(&release.version);
-            self.lease_version(Tool::Lightpanda, version_dir).await;
-            *installed = Some(path.clone());
-            return Some(path);
-        }
-        None
-    }
-
-    async fn install_tool(&self, tool: Tool) -> anyhow::Result<PathBuf> {
-        let release = match tool {
-            Tool::AgentBrowser => &self.releases.agent_browser,
-            Tool::Lightpanda => &self.releases.lightpanda,
-        };
-        let platform = platform_key(tool, std::env::consts::OS, std::env::consts::ARCH)?;
-        let asset = release
-            .platforms
-            .get(platform)
-            .context("missing pinned release")?;
-        let directory = self
-            .tools_dir
-            .join(tool.name())
-            .join(&release.version)
-            .join(platform);
-        tokio::fs::create_dir_all(&directory).await?;
-        let _lock = acquire_lock(directory.join("install.lock")).await?;
-        let path = directory.join(if cfg!(windows) {
-            format!("{}.exe", tool.name())
-        } else {
-            tool.name().to_owned()
-        });
-        if !verified_file(&path, asset).await? {
-            let url = format!(
-                "https://github.com/{}/releases/download/{}/{}",
-                release.repository, release.tag, asset.asset
-            );
-            download_atomic(&self.client, &url, asset, &path).await?;
-        }
-        let tool_dir = self.tools_dir.join(tool.name());
-        self.lease_version(tool, tool_dir.join(&release.version))
-            .await;
-        let current = release.version.clone();
-        if let Err(error) =
-            tokio::task::spawn_blocking(move || prune_versions(&tool_dir, &current)).await
-        {
-            tracing::warn!("Old {} cleanup failed: {error}", tool.name());
-        }
-        Ok(path)
-    }
-
     /// Holds a shared lock on the pinned version for the server's lifetime so that other
     /// Sprocket versions sharing this data directory don't prune it.
-    async fn lease_version(&self, tool: Tool, version_dir: PathBuf) {
-        let mut leases = self.leases.lock().await;
-        if leases.contains_key(tool.name()) {
+    async fn lease_version(&self) {
+        let mut lease = self.lease.lock().await;
+        if lease.is_some() {
             return;
         }
-        let lease = tokio::task::spawn_blocking(move || -> std::io::Result<File> {
-            let file = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(version_dir.join(LEASE_FILE))?;
+        let path = self.version_dir().join(LEASE_LOCK);
+        let result = tokio::task::spawn_blocking(move || -> std::io::Result<File> {
+            let file = open_lock_file(&path)?;
             file.lock_shared()?;
             Ok(file)
         })
         .await
         .map_err(std::io::Error::other)
-        .and_then(|lease| lease);
-        match lease {
-            Ok(file) => {
-                leases.insert(tool.name(), file);
-            }
-            Err(error) => tracing::warn!("Couldn't lease {}: {error}", tool.name()),
+        .and_then(|result| result);
+        match result {
+            Ok(file) => *lease = Some(file),
+            Err(error) => tracing::warn!("Couldn't lease agent-browser: {error}"),
         }
     }
 
-    async fn ensure_chromium(&self, cli: &Path) -> anyhow::Result<PathBuf> {
-        if let Some(configured) = &self.configured_chromium {
-            ensure!(
-                configured.is_absolute(),
-                "Configured Chromium path must be absolute"
-            );
-            ensure!(
-                executable_file(configured).await,
-                "Configured Chromium executable {} is missing or not executable; fix the configured path",
-                configured.display()
-            );
-            return Ok(configured.clone());
+    /// Chromium discovery is left to agent-browser so Sprocket only installs Chromium when the
+    /// CLI itself can't find a browser to launch.
+    async fn ensure_chromium(&self, cli: &Path) -> anyhow::Result<()> {
+        if std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH").is_some_and(|path| !path.is_empty())
+            || chromium_installed(cli).await?
+        {
+            return Ok(());
         }
-        if let Some(path) = find_chromium().await {
-            return Ok(path);
+        let _lock = acquire_lock(self.tool_dir.join("chromium-install.lock")).await?;
+        if chromium_installed(cli).await? {
+            return Ok(());
         }
+        let output = run(Command::new(cli).arg("install")).await?;
         ensure!(
-            !(cfg!(target_os = "linux") && cfg!(target_arch = "aarch64")),
-            "{LINUX_ARM64_REMEDY}"
+            output.status.success(),
+            "agent-browser install failed. Set AGENT_BROWSER_EXECUTABLE_PATH to an existing Chromium executable instead; Sprocket never runs sudo.\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
         );
-        let home = home_dir().context("Cannot install Chromium without a home directory; configure an existing browser executable")?;
-        let browsers = home.join(".agent-browser/browsers");
-        tokio::fs::create_dir_all(&browsers).await?;
-        let _lock = acquire_lock(browsers.join("sprocket-install.lock")).await?;
-        if let Some(path) = find_chromium().await {
-            return Ok(path);
-        }
-        run_command(Command::new(cli).arg("install"), COMMAND_TIMEOUT)
-            .await
-            .context("Unprivileged Chromium installation failed. Configure an existing Chromium executable; install any missing system libraries yourself. Sprocket never runs sudo")?;
-        find_chromium().await.context("agent-browser install finished but no Chromium executable was found; configure its absolute executable path")
+        ensure!(
+            chromium_installed(cli).await?,
+            "agent-browser install finished but no Chromium executable was found"
+        );
+        Ok(())
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tool {
-    AgentBrowser,
-    Lightpanda,
+async fn chromium_installed(cli: &Path) -> anyhow::Result<bool> {
+    #[derive(Deserialize)]
+    struct Report {
+        checks: Vec<Check>,
+    }
+    #[derive(Deserialize)]
+    struct Check {
+        id: String,
+        status: String,
+    }
+    let output = run(Command::new(cli).args(["doctor", "--offline", "--quick", "--json"])).await?;
+    let report: Report =
+        serde_json::from_slice(&output.stdout).context("parse agent-browser doctor report")?;
+    Ok(report
+        .checks
+        .iter()
+        .any(|check| check.id == "chrome.installed" && check.status == "pass"))
 }
 
-impl Tool {
-    fn name(self) -> &'static str {
-        match self {
-            Self::AgentBrowser => "agent-browser",
-            Self::Lightpanda => "lightpanda",
-        }
-    }
+async fn run(command: &mut Command) -> anyhow::Result<Output> {
+    let output = command.stdin(Stdio::null()).kill_on_drop(true).output();
+    let output = tokio::time::timeout(COMMAND_TIMEOUT, output)
+        .await
+        .context("agent-browser timed out")??;
+    Ok(output)
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Releases {
     agent_browser: Release,
-    lightpanda: Release,
     skill_data: SkillRelease,
 }
 
@@ -343,29 +254,28 @@ struct ReleaseAsset {
     sha256: String,
 }
 
-fn platform_key(tool: Tool, os: &str, arch: &str) -> anyhow::Result<&'static str> {
-    match (tool, os, arch) {
-        (_, "macos", "aarch64") => Ok("darwin-arm64"),
-        (_, "macos", "x86_64") => Ok("darwin-x64"),
-        (Tool::AgentBrowser, "linux", "aarch64") => Ok("linux-musl-arm64"),
-        (Tool::AgentBrowser, "linux", "x86_64") => Ok("linux-musl-x64"),
-        (Tool::AgentBrowser, "windows", "x86_64" | "aarch64") => Ok("win32-x64"),
-        (Tool::Lightpanda, "linux", "aarch64") => Ok("linux-arm64"),
-        (Tool::Lightpanda, "linux", "x86_64") => Ok("linux-x64"),
-        _ => bail!("No pinned native {} release for {os}/{arch}", tool.name()),
+fn platform() -> anyhow::Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Ok("darwin-arm64"),
+        ("macos", "x86_64") => Ok("darwin-x64"),
+        ("linux", "aarch64") => Ok("linux-musl-arm64"),
+        ("linux", "x86_64") => Ok("linux-musl-x64"),
+        ("windows", "x86_64" | "aarch64") => Ok("win32-x64"),
+        (os, arch) => bail!("No pinned agent-browser release for {os}/{arch}"),
     }
 }
 
+fn open_lock_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+}
+
 async fn acquire_lock(path: PathBuf) -> anyhow::Result<File> {
-    let file = tokio::task::spawn_blocking(move || {
-        OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)
-    })
-    .await??;
+    let file = tokio::task::spawn_blocking(move || open_lock_file(&path)).await??;
     let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT + DOWNLOAD_TIMEOUT;
     loop {
         match file.try_lock() {
@@ -382,8 +292,8 @@ async fn acquire_lock(path: PathBuf) -> anyhow::Result<File> {
     }
 }
 
-/// Removes other versions of a tool along with tombstones left by earlier failed removals.
-/// A version is skipped while any of its lock files is held by an installer or a lease.
+/// Removes other versions along with tombstones left by earlier failed removals.
+/// A version is skipped while an installer or a lease holds one of its locks.
 fn prune_versions(tool_dir: &Path, current: &str) {
     let entries = match std::fs::read_dir(tool_dir) {
         Ok(entries) => entries,
@@ -415,8 +325,8 @@ fn prune_versions(tool_dir: &Path, current: &str) {
 
 fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::io::Result<()> {
     let mut locks = Vec::new();
-    for lock in lock_files(path)? {
-        let file = OpenOptions::new().read(true).write(true).open(&lock)?;
+    for lock in [INSTALL_LOCK, LEASE_LOCK] {
+        let file = open_lock_file(&path.join(lock))?;
         match file.try_lock() {
             Ok(()) => locks.push(file),
             Err(std::fs::TryLockError::WouldBlock) => {
@@ -438,38 +348,12 @@ fn remove_version(tool_dir: &Path, name: &str, path: &Path) -> std::io::Result<(
     std::fs::remove_dir_all(tombstone)
 }
 
-/// Lock files live in a version directory or one of its platform directories.
-fn lock_files(version_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut locks = Vec::new();
-    let mut directories = vec![(version_dir.to_path_buf(), true)];
-    while let Some((directory, descend)) = directories.pop() {
-        for entry in std::fs::read_dir(directory)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            let path = entry.path();
-            if file_type.is_file() && path.extension().is_some_and(|value| value == "lock") {
-                locks.push(path);
-            } else if file_type.is_dir() && descend {
-                directories.push((path, false));
-            }
-        }
-    }
-    Ok(locks)
-}
-
 fn is_version(name: &str) -> bool {
     name.starts_with(|character: char| character.is_ascii_digit())
         && name.contains('.')
         && name.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '+')
         })
-}
-
-pub(crate) fn hash_hex(hash: impl AsRef<[u8]>) -> String {
-    hash.as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 async fn verified_file(path: &Path, asset: &ReleaseAsset) -> anyhow::Result<bool> {
@@ -490,7 +374,7 @@ async fn verified_file(path: &Path, asset: &ReleaseAsset) -> anyhow::Result<bool
         }
         hash.update(&buffer[..read]);
     }
-    Ok(hash_hex(hash.finalize()) == asset.sha256)
+    Ok(hex::encode(hash.finalize()) == asset.sha256)
 }
 
 async fn download_atomic(
@@ -528,7 +412,7 @@ async fn download_atomic(
         "Incomplete pinned release download for {url}"
     );
     ensure!(
-        hash_hex(hash.finalize()) == asset.sha256,
+        hex::encode(hash.finalize()) == asset.sha256,
         "Pinned release SHA256 mismatch for {url}"
     );
     file.flush().await?;
@@ -569,175 +453,6 @@ async fn executable_file(path: &Path) -> bool {
         }
     }
     true
-}
-
-async fn run_command(command: &mut Command, limit: Duration) -> anyhow::Result<()> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
-    let stdout = child.stdout.take().context("missing command stdout")?;
-    let stderr = child.stderr.take().context("missing command stderr")?;
-    let output = tokio::time::timeout(limit, async {
-        let (status, stdout_bytes, stderr_bytes) =
-            tokio::try_join!(child.wait(), command_output(stdout), command_output(stderr))?;
-        ensure!(
-            status.success(),
-            "Browser helper exited with {status}: {} {}",
-            String::from_utf8_lossy(&stdout_bytes).trim(),
-            String::from_utf8_lossy(&stderr_bytes).trim()
-        );
-        Ok::<_, anyhow::Error>(())
-    })
-    .await;
-    if !matches!(output, Ok(Ok(()))) {
-        let _ = child.kill().await;
-    }
-    output.context("Browser helper timed out")?
-}
-
-async fn command_output(reader: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader
-        .take(MAX_COMMAND_OUTPUT + 1)
-        .read_to_end(&mut bytes)
-        .await?;
-    if bytes.len() as u64 > MAX_COMMAND_OUTPUT {
-        return Err(std::io::Error::other(
-            "Browser installer produced excessive output",
-        ));
-    }
-    Ok(bytes)
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-async fn find_chromium() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&path) {
-            for name in [
-                "google-chrome",
-                "google-chrome-stable",
-                "chromium",
-                "chromium-browser",
-                "brave-browser",
-                "brave-browser-stable",
-                "microsoft-edge",
-                "microsoft-edge-stable",
-            ] {
-                candidates.push(directory.join(if cfg!(windows) {
-                    format!("{name}.exe")
-                } else {
-                    name.to_owned()
-                }));
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    for base in [
-        Some(PathBuf::from("/Applications")),
-        home_dir().map(|home| home.join("Applications")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        for (app, binary) in [
-            ("Google Chrome", "Google Chrome"),
-            ("Google Chrome Canary", "Google Chrome Canary"),
-            ("Chromium", "Chromium"),
-            ("Brave Browser", "Brave Browser"),
-            ("Microsoft Edge", "Microsoft Edge"),
-        ] {
-            candidates.push(base.join(format!("{app}.app/Contents/MacOS/{binary}")));
-        }
-    }
-    #[cfg(windows)]
-    for base in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
-        .into_iter()
-        .filter_map(std::env::var_os)
-    {
-        for browser in [
-            "Google/Chrome/Application/chrome.exe",
-            "Chromium/Application/chrome.exe",
-            "BraveSoftware/Brave-Browser/Application/brave.exe",
-            "Microsoft/Edge/Application/msedge.exe",
-        ] {
-            candidates.push(PathBuf::from(&base).join(browser));
-        }
-    }
-    for candidate in candidates {
-        if candidate.is_absolute() && executable_file(&candidate).await {
-            return Some(candidate);
-        }
-    }
-    let home = home_dir()?;
-    let mut caches = vec![
-        home.join(".agent-browser/browsers"),
-        std::env::var_os("PUPPETEER_CACHE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".cache/puppeteer"))
-            .join("chrome"),
-    ];
-    if let Some(path) = std::env::var_os("PLAYWRIGHT_BROWSERS_PATH").filter(|path| path != "0") {
-        caches.push(PathBuf::from(path));
-    } else if cfg!(target_os = "macos") {
-        caches.push(home.join("Library/Caches/ms-playwright"));
-    } else if cfg!(windows) {
-        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-            caches.push(PathBuf::from(local).join("ms-playwright"));
-        }
-    } else {
-        caches.push(
-            std::env::var_os("XDG_CACHE_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".cache"))
-                .join("ms-playwright"),
-        );
-    }
-    for cache in caches {
-        if let Some(path) = find_cached_chromium(&cache).await {
-            return Some(path);
-        }
-    }
-    None
-}
-
-async fn find_cached_chromium(cache: &Path) -> Option<PathBuf> {
-    let mut entries = tokio::fs::read_dir(cache).await.ok()?;
-    let mut directories = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if entry.file_type().await.ok()?.is_dir() {
-            directories.push(entry.path());
-        }
-    }
-    directories.sort_by(|a, b| b.cmp(a));
-    for directory in directories {
-        for relative in [
-            "chrome",
-            "chrome.exe",
-            "chrome-linux64/chrome",
-            "chrome-linux/chrome",
-            "chrome-win64/chrome.exe",
-            "chrome-win/chrome.exe",
-            "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-            "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-            "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-            "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
-        ] {
-            let candidate = directory.join(relative);
-            if candidate.is_absolute() && executable_file(&candidate).await {
-                return Some(candidate);
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]

@@ -8677,6 +8677,7 @@ dependencies = [
  "flate2",
  "futures",
  "gix",
+ "hex",
  "jsonwebtoken 11.1.0",
  "keyring",
  "libc",

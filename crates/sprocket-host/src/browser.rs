@@ -12,7 +12,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use crate::browser_install::{BrowserInstaller, hash_hex};
+use crate::browser_install::BrowserInstaller;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,12 +91,7 @@ pub struct BrowserManager {
 impl BrowserManager {
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Arc<Self>> {
         Ok(Arc::new(Self {
-            installer: BrowserInstaller::new(
-                data_dir.clone(),
-                std::env::var_os("AGENT_BROWSER_EXECUTABLE_PATH")
-                    .filter(|value| !value.is_empty())
-                    .map(PathBuf::from),
-            )?,
+            installer: BrowserInstaller::new(&data_dir)?,
             data_dir,
             active: Mutex::new(None),
             attempts: AtomicU64::new(0),
@@ -116,10 +111,6 @@ impl BrowserManager {
                 _ = manager.shutdown.cancelled() => {}
             }
         });
-    }
-
-    pub async fn install_lightpanda(&self) -> anyhow::Result<PathBuf> {
-        self.installer.ensure_lightpanda().await
     }
 
     pub async fn status(&self, user_id: &str) -> BrowserStatus {
@@ -184,7 +175,7 @@ impl BrowserManager {
         drop(listener);
         let mut command = Command::new(cli);
         command
-            .envs(self.environment(user_id).await?)
+            .envs(self.environment(user_id)?)
             .env("AGENT_BROWSER_DASHBOARD", "1")
             .env("AGENT_BROWSER_DASHBOARD_PORT", port.to_string())
             .env_remove("AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS")
@@ -248,20 +239,12 @@ impl BrowserManager {
         bail!("Browser dashboard is not ready. Retry setup.")
     }
 
-    pub async fn environment(&self, user_id: &str) -> anyhow::Result<Vec<(OsString, OsString)>> {
-        let chromium = self.installer.existing_chromium().await;
+    pub fn environment(&self, user_id: &str) -> anyhow::Result<Vec<(OsString, OsString)>> {
         let mut paths = vec![self.installer.cli_directory()?];
-        if let Some(path) = self.installer.installed_lightpanda().await {
-            paths.push(
-                path.parent()
-                    .context("Lightpanda tool directory")?
-                    .to_path_buf(),
-            );
-        }
         if let Some(path) = std::env::var_os("PATH") {
             paths.extend(std::env::split_paths(&path));
         }
-        let mut environment = vec![
+        Ok(vec![
             ("PATH".into(), std::env::join_paths(paths)?),
             (
                 "AGENT_BROWSER_SKILLS_DIR".into(),
@@ -271,18 +254,7 @@ impl BrowserManager {
                 "AGENT_BROWSER_NAMESPACE".into(),
                 namespace(&self.data_dir, user_id).into(),
             ),
-            (
-                "AGENT_BROWSER_SOCKET_DIR".into(),
-                socket_directory(&self.data_dir)?.into_os_string(),
-            ),
-        ];
-        if let Some(chromium) = chromium {
-            environment.push((
-                "AGENT_BROWSER_EXECUTABLE_PATH".into(),
-                chromium.into_os_string(),
-            ));
-        }
-        Ok(environment)
+        ])
     }
 
     pub async fn shutdown(&self) {
@@ -317,32 +289,7 @@ fn namespace(data_dir: &std::path::Path, user_id: &str) -> String {
     hash.update(data_dir.as_os_str().as_encoded_bytes());
     hash.update([0]);
     hash.update(user_id.as_bytes());
-    hash_hex(&hash.finalize()[..8])
-}
-
-fn socket_directory(data_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-        let _ = data_dir;
-        let uid = unsafe { libc::geteuid() };
-        let path = PathBuf::from("/tmp").join(format!("sprocket-browser-{uid}"));
-        match std::fs::DirBuilder::new().mode(0o700).create(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
-        let metadata = std::fs::symlink_metadata(&path)?;
-        anyhow::ensure!(
-            metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o077 == 0,
-            "Browser socket directory must be a private directory owned by the current user"
-        );
-        Ok(path)
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(data_dir.join("browser-run"))
-    }
+    hex::encode(&hash.finalize()[..8])
 }
 
 #[cfg(all(test, unix))]

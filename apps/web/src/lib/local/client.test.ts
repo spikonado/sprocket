@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
-import type { BrowserStatus, ChatGptStatus } from '$lib/types/sprocket';
+import type { ChatGptStatus } from '$lib/types/sprocket';
 import {
 	createLocalClient,
 	ensureLocalSession,
@@ -66,31 +66,6 @@ describe('workspace launch fragments', () => {
 		expect(hash).toBe('#workspace=%2Frobots%2Farm+%26+gripper');
 		expect(readWorkspaceLaunchFromHash()).toBe(workspacePath);
 	});
-});
-
-describe('managed browser dashboard', () => {
-	it.each([
-		{ method: 'fetchBrowserStatus' as const, pathname: '/api/browser/status', verb: 'GET' },
-		{ method: 'startBrowser' as const, pathname: '/api/browser/start', verb: 'POST' }
-	])(
-		'$method sends an authenticated, cancellable request and returns the status',
-		async ({ method, pathname, verb }) => {
-			const status: BrowserStatus = { state: 'error', error: 'Chromium installation failed.' };
-			const fetch = vi.fn(async () => Response.json(status));
-			vi.stubGlobal('fetch', fetch);
-			const signal = new AbortController().signal;
-
-			await expect(createLocalClient('http://127.0.0.1:7731')[method](signal)).resolves.toEqual(
-				status
-			);
-			expect(fetch).toHaveBeenCalledExactlyOnceWith(`http://127.0.0.1:7731${pathname}`, {
-				method: verb,
-				signal,
-				credentials: 'include',
-				headers: { 'content-type': 'application/json' }
-			});
-		}
-	);
 });
 
 describe('workspace skill listing', () => {

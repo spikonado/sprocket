@@ -145,36 +145,20 @@ async fn proxy(
     let mut bytes = axum::body::to_bytes(body, MAX_REQUEST_BYTES)
         .await
         .map_err(|error| ApiError::bad_request(error.into()))?;
-    if method == Method::POST && matches!(pathname.as_str(), "/api/sessions" | "/api/exec") {
-        let mut payload: Value =
+    // The pinned dashboard's session endpoint launches its child with dashboard mode still set.
+    if method == Method::POST && pathname == "/api/sessions" {
+        let payload: Value =
             serde_json::from_slice(&bytes).map_err(|error| ApiError::bad_request(error.into()))?;
-        if pathname == "/api/sessions" {
-            let session = payload
-                .get("session")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ApiError::bad_request(anyhow!("Missing browser session name")))?;
-            payload = serde_json::json!({"args": ["open", "about:blank", "--session", session]});
-            path = "/api/exec".into();
-        }
-        if let Some(args) = payload.get_mut("args").and_then(Value::as_array_mut)
-            && args
-                .windows(2)
-                .any(|pair| pair[0] == "--engine" && pair[1] == "lightpanda")
-        {
-            let executable = state
-                .host
-                .browsers
-                .install_lightpanda()
-                .await
-                .map_err(ApiError::internal)?;
-            args.extend([
-                Value::String("--executable-path".into()),
-                Value::String(executable.to_string_lossy().into_owned()),
-            ]);
-        }
-        bytes = serde_json::to_vec(&payload)
-            .map_err(|error| ApiError::internal(error.into()))?
-            .into();
+        let session = payload
+            .get("session")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::bad_request(anyhow!("Missing browser session name")))?;
+        bytes = serde_json::to_vec(
+            &serde_json::json!({"args": ["open", "about:blank", "--session", session]}),
+        )
+        .map_err(|error| ApiError::internal(error.into()))?
+        .into();
+        path = "/api/exec".into();
     }
     let mut request = client
         .request(method, format!("http://127.0.0.1:{port}{path}"))
