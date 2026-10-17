@@ -19,8 +19,8 @@ async fn test_state(loopback_supported: bool) -> (AppState, String, String) {
         .bootstrap_browser_session(true)
         .await
         .expect("bootstrap");
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".to_string(),
         },
         auth::desktop_login_callback_url(7731),
@@ -30,7 +30,7 @@ async fn test_state(loopback_supported: bool) -> (AppState, String, String) {
         native_auth,
         temp_dir,
         loopback_supported,
-        crate::package_update::PackageUpdateManager::disabled(),
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
     (state, session_token, credential)
 }
@@ -288,7 +288,7 @@ async fn unbound_remote_session_cannot_open_the_auth_event_stream() {
 #[tokio::test]
 async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
     let (state, _, _) = test_state(true).await;
-    state.native_auth.authenticate_for_test("user-a").await;
+    state.host.native_auth.authenticate_for_test("user-a").await;
     let (_, remote_session) = state
         .auth
         .bootstrap_browser_session(false)
@@ -300,7 +300,7 @@ async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
         .await
         .unwrap();
     let auth = Arc::clone(&state.auth);
-    let native_auth = Arc::clone(&state.native_auth);
+    let native_auth = Arc::clone(&state.host.native_auth);
     let app = router(state);
 
     let host_sign_out = app
@@ -469,7 +469,7 @@ async fn native_token_rejects_cross_origin_and_plain_remote_http() {
 async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_account() {
     let (state, session_token, _) = test_state(true).await;
     let auth = Arc::clone(&state.auth);
-    let native_auth = Arc::clone(&state.native_auth);
+    let native_auth = Arc::clone(&state.host.native_auth);
     native_auth.authenticate_for_test("user-a").await;
     let app = router(state);
     let unbound = app
@@ -520,7 +520,7 @@ async fn native_token_requires_a_sign_in_on_the_session_and_rejects_another_acco
 #[tokio::test]
 async fn remote_native_token_is_empty_until_bound_to_the_matching_owner() {
     let (state, _, _) = test_state(true).await;
-    state.native_auth.authenticate_for_test("user-a").await;
+    state.host.native_auth.authenticate_for_test("user-a").await;
     let (_, remote_session) = state
         .auth
         .bootstrap_browser_session(false)
@@ -849,7 +849,7 @@ async fn start_rejects_incompatible_bind_host() {
 #[tokio::test]
 async fn expired_attempt_cannot_complete() {
     let (state, session_token, _) = test_state(true).await;
-    let native_auth = Arc::clone(&state.native_auth);
+    let native_auth = Arc::clone(&state.host.native_auth);
     let app = router(state);
     let (login_id, _) = start_login(&app, &session_token).await;
     native_auth.expire_login_for_test(&session_token).await;

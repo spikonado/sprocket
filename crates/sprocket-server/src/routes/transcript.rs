@@ -17,7 +17,7 @@ use tokio_util::io::ReaderStream;
 use crate::AppState;
 use crate::routes::api_error::ApiError;
 use crate::routes::session::{AuthorizedJson, UserScoped};
-use crate::transcript_watch::TranscriptWatchEvent;
+use sprocket_host::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -183,12 +183,14 @@ async fn display_handler(
         .map(|s| (s.run_id, s.stream_id))
         .collect::<Vec<_>>();
     let stale = state
+        .host
         .transcript
         .load_state(&payload.user_id, &payload.thread_id)
         .await
         .map_err(ApiError::internal)?
         .stale;
     state
+        .host
         .transcript
         .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
             replica.page(payload.before, limit, changes, &streams, stale)
@@ -216,12 +218,14 @@ async fn display_details_handler(
         )));
     }
     let stale = state
+        .host
         .transcript
         .load_state(&payload.user_id, &payload.thread_id)
         .await
         .map_err(ApiError::internal)?
         .stale;
     state
+        .host
         .transcript
         .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
             replica.details(
@@ -243,6 +247,7 @@ async fn watch_handler(
     AuthorizedJson(payload): AuthorizedJson<TranscriptScope>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let session = state
+        .host
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
         .await;
@@ -276,10 +281,12 @@ async fn clear_handler(
     AuthorizedJson(payload): AuthorizedJson<TranscriptScope>,
 ) -> Result<StatusCode, ApiError> {
     state
+        .host
         .transcript_watchers
         .abort_thread(&payload.user_id, &payload.thread_id)
         .await;
     state
+        .host
         .transcript
         .clear_thread(&payload.user_id, &payload.thread_id)
         .await
@@ -303,6 +310,7 @@ async fn attachment_handler(
     }
 
     let client = state
+        .host
         .convex_client_for(&payload.user_id)
         .await
         .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
@@ -325,7 +333,7 @@ async fn attachment_handler(
         local_path: None,
     };
     let path = match cache_attachment(
-        &state.transcript,
+        &state.host.transcript,
         &payload.user_id,
         &payload.thread_id,
         &attachment,
@@ -353,6 +361,7 @@ async fn serve_cached_attachment(
     storage_id: &str,
 ) -> Result<Option<Response>, ApiError> {
     let meta = state
+        .host
         .transcript
         .attachment_metadata(user_id, thread_id, storage_id)
         .await
@@ -365,7 +374,7 @@ async fn serve_cached_attachment(
     let Some(meta) = meta else {
         return Ok(None);
     };
-    match cache_attachment(&state.transcript, user_id, thread_id, &meta).await {
+    match cache_attachment(&state.host.transcript, user_id, thread_id, &meta).await {
         Ok(path) => attachment_response(&path, &meta.media_type).await.map(Some),
         Err(error) if error.is::<AttachmentUnavailable>() => Ok(None),
         Err(error) => Err(ApiError::internal_with(

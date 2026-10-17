@@ -6,9 +6,12 @@ use tower::ServiceExt;
 #[tokio::test]
 async fn output_waits_for_local_execution_and_never_needs_a_backend_connection() {
     let (_directory, state, token, request) = fixture().await;
-    let client = state.lifetime.client(&request.client_id, &token).unwrap();
+    let client = state
+        .cli_sessions
+        .client(&request.client_id, &token)
+        .unwrap();
     client.output.initialize(
-        Arc::clone(&state.transcript),
+        Arc::clone(&state.host.transcript),
         "user".into(),
         "thread".into(),
         "run".into(),
@@ -99,7 +102,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
         client: CliConnectRequest {
             client_id: uuid::Uuid::new_v4().to_string(),
             client_version: sprocket_workspace::SPROCKET_VERSION.to_string(),
-            deployment_url: state.convex_deployment_url.clone(),
+            deployment_url: state.host.convex_deployment_url.clone(),
         },
         session_token: uuid::Uuid::new_v4().to_string(),
         proof: Vec::new(),
@@ -171,7 +174,11 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
 async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
     let (_directory, state, token, _) = fixture().await;
     for (version, deployment, guidance) in [
-        ("999.0.0", state.convex_deployment_url.as_str(), "Restart"),
+        (
+            "999.0.0",
+            state.host.convex_deployment_url.as_str(),
+            "Restart",
+        ),
         (
             sprocket_workspace::SPROCKET_VERSION,
             "https://other.convex.cloud",
@@ -219,7 +226,7 @@ async fn authenticated_cli_compatibility_errors_explain_how_to_reconnect() {
         );
         assert!(
             state
-                .lifetime
+                .cli_sessions
                 .client(&request.client.client_id, &request.session_token)
                 .is_err()
         );
@@ -230,8 +237,8 @@ async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
     let directory = tempfile::tempdir().unwrap();
     let auth = crate::auth::AuthState::load(directory.path()).unwrap();
     let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".into(),
         },
         "http://127.0.0.1/callback".into(),
@@ -241,7 +248,7 @@ async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
         native_auth,
         directory.path().to_owned(),
         true,
-        crate::package_update::PackageUpdateManager::disabled(),
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
     let request = CliRunRequest {
         client_id: uuid::Uuid::new_v4().to_string(),
@@ -252,7 +259,10 @@ async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
         reasoning: None,
         fast: None,
     };
-    state.lifetime.connect(&request.client_id, &token).unwrap();
+    state
+        .cli_sessions
+        .connect(&request.client_id, &token)
+        .unwrap();
     (directory, state, token, request)
 }
 
@@ -286,7 +296,10 @@ async fn call(
 #[tokio::test]
 async fn concurrent_retries_recover_the_same_submission_and_reject_argument_changes() {
     let (_directory, state, token, request) = fixture().await;
-    let client = state.lifetime.client(&request.client_id, &token).unwrap();
+    let client = state
+        .cli_sessions
+        .client(&request.client_id, &token)
+        .unwrap();
     {
         let mut submission = client.submission.lock().await;
         submission.request = Some(request.clone());
@@ -393,7 +406,7 @@ async fn cli_control_requires_the_owning_local_session_and_matching_version() {
             &CliConnectRequest {
                 client_id: request.client_id,
                 client_version: "999.0.0".into(),
-                deployment_url: state.convex_deployment_url.clone(),
+                deployment_url: state.host.convex_deployment_url.clone(),
             },
             "127.0.0.1:1000"
         )

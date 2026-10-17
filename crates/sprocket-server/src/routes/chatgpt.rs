@@ -18,8 +18,8 @@ use crate::auth::{
     AuthState, BrowserConnection, browser_connection, cookie_request_is_csrf_safe,
     require_session_user,
 };
-use crate::chatgpt_credentials::{ChatGptService, ServiceStatus};
 use crate::routes::api_error::ApiError;
+use sprocket_host::chatgpt_credentials::{ChatGptService, ServiceStatus};
 
 const LOGIN_LIFETIME: Duration = Duration::from_secs(5 * 60);
 
@@ -268,6 +268,7 @@ async fn start(
     }
     let redirect_uri = logins.redirect_uri.clone();
     let authorize_url = state
+        .host
         .chatgpt_credentials
         .authorization(
             &request.user_id,
@@ -362,12 +363,13 @@ async fn status(
     Json(request): Json<UserRequest>,
 ) -> Result<Json<ProviderStatus>, ApiError> {
     let session = session_user(&state, &headers, &jar, &request.user_id).await?;
-    let login_available = state.chatgpt_credentials.available()
+    let login_available = state.host.chatgpt_credentials.available()
         && state.loopback_desktop_login_supported
         && browser_connection(&headers, peer) == Some(BrowserConnection::Loopback)
         && state.auth.session_is_local_browser(&session).await;
     Ok(Json(ProviderStatus {
         status: state
+            .host
             .chatgpt_credentials
             .status(&request.user_id)
             .await
@@ -390,6 +392,7 @@ async fn select(
     logins.stop_if_idle();
     drop(logins);
     state
+        .host
         .chatgpt_credentials
         .select(&request.user_id, &request.connection_id)
         .await
@@ -405,7 +408,7 @@ async fn disconnect(
 ) -> Result<Json<Disconnected>, ApiError> {
     session_user(&state, &headers, &jar, &request.user_id).await?;
     let pending = Arc::clone(&state.chatgpt_oauth);
-    let service = Arc::clone(&state.chatgpt_credentials);
+    let service = Arc::clone(&state.host.chatgpt_credentials);
     let warning = tokio::spawn(async move {
         let mut logins = pending.logins.lock().await;
         logins

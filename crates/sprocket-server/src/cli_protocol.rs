@@ -1,5 +1,7 @@
-pub use crate::native_auth::{NativeLoginStatus as LoginStatus, NativeUser};
 use serde::{Deserialize, Serialize};
+pub use sprocket_host::native_auth::{
+    CredentialStore, DeviceLoginResponse, NativeLoginStatus as LoginStatus, NativeUser,
+};
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,14 +58,6 @@ pub fn cli_bootstrap_message(
     .to_string()
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
-#[serde(rename_all = "camelCase")]
-pub enum CredentialStore {
-    #[default]
-    Keyring,
-    File,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CliConnectRequest {
@@ -83,14 +77,6 @@ pub struct CliClientRequest {
 pub struct CliLoginRequest {
     pub client_id: String,
     pub credential_store: Option<CredentialStore>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceLoginResponse {
-    pub verification_uri: String,
-    pub user_code: String,
-    pub expires_in: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

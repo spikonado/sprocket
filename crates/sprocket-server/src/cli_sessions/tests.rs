@@ -2,12 +2,13 @@ use super::*;
 
 #[test]
 fn temporary_server_waits_for_all_clients_and_runs() {
-    let lifetime = ServerLifetime::new(true);
+    let host = HostLifetime::new();
+    let lifetime = CliSessions::new(Arc::clone(&host), true);
     let first = uuid::Uuid::new_v4().to_string();
     let second = uuid::Uuid::new_v4().to_string();
     lifetime.connect(&first, "a").unwrap();
     lifetime.connect(&second, "b").unwrap();
-    let run = lifetime.run_guard().unwrap();
+    let run = host.run_guard().unwrap();
     lifetime.release(&first, "a").unwrap();
     assert!(!lifetime.tick(Instant::now()).0);
     lifetime.release(&second, "b").unwrap();
@@ -24,11 +25,12 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
     for terminate in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().to_path_buf();
-        let lifetime = ServerLifetime::new(true);
+        let host = HostLifetime::new();
+        let lifetime = CliSessions::new(Arc::clone(&host), true);
         let client_id = uuid::Uuid::new_v4().to_string();
         lifetime.connect(&client_id, "client").unwrap();
-        let run_guard = lifetime.run_guard().unwrap();
-        let command_lifetime = Arc::clone(&lifetime);
+        let run_guard = host.run_guard().unwrap();
+        let command_lifetime = Arc::clone(&host);
         let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
             .with_lifetime_guard_factory(move || command_lifetime.run_guard());
         let started = sessions
@@ -49,7 +51,7 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
         lifetime.release(&client_id, "client").unwrap();
         drop(run_guard);
         assert!(!lifetime.tick(Instant::now()).0);
-        assert!(!lifetime.shutdown.is_cancelled());
+        assert!(!host.shutdown.is_cancelled());
         if terminate {
             assert!(sessions.terminate_command(&session_id).await);
         } else {
@@ -62,16 +64,9 @@ async fn running_commands_keep_temporary_server_alive_until_exit_or_termination(
         assert!(!finished.result.running);
         assert_eq!(finished.result.success, !terminate);
         assert!(lifetime.tick(Instant::now()).0);
-        assert!(lifetime.shutdown.is_cancelled());
+        assert!(host.shutdown.is_cancelled());
         sessions.stop_all().await;
     }
-}
-
-#[test]
-fn shutdown_rejects_new_process_lifetime_guards() {
-    let lifetime = ServerLifetime::new(false);
-    lifetime.shutdown.cancel();
-    assert!(lifetime.run_guard().is_err());
 }
 
 #[tokio::test]
@@ -80,10 +75,11 @@ async fn failed_command_spawn_releases_temporary_server_guard() {
 
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().to_path_buf();
-    let lifetime = ServerLifetime::new(true);
+    let host = HostLifetime::new();
+    let lifetime = CliSessions::new(Arc::clone(&host), true);
     let client_id = uuid::Uuid::new_v4().to_string();
     lifetime.connect(&client_id, "client").unwrap();
-    let command_lifetime = Arc::clone(&lifetime);
+    let command_lifetime = Arc::clone(&host);
     let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
         .with_lifetime_guard_factory(move || command_lifetime.run_guard());
 
@@ -108,7 +104,8 @@ async fn failed_command_spawn_releases_temporary_server_guard() {
 
 #[test]
 fn lost_clients_cancel_their_run_but_not_the_shared_server() {
-    let lifetime = ServerLifetime::new(false);
+    let host = HostLifetime::new();
+    let lifetime = CliSessions::new(Arc::clone(&host), false);
     let id = uuid::Uuid::new_v4().to_string();
     lifetime.connect(&id, "a").unwrap();
     let client = lifetime.client(&id, "a").unwrap();

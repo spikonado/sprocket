@@ -7,7 +7,7 @@ use tower::ServiceExt;
 
 use super::*;
 use crate::auth;
-use crate::package_update::PackageUpdateManager;
+use sprocket_host::package_update::PackageUpdateManager;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,8 +35,8 @@ async fn test_state(native_user: Option<&str>) -> (tempfile::TempDir, AppState, 
     auth.bind_session_user(&session_token, "user-a")
         .await
         .unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".to_string(),
         },
         auth::desktop_login_callback_url(7731),

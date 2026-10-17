@@ -8,12 +8,12 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::project_attachments::{
-    AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
-};
 use crate::routes::api_error::ApiError;
 use crate::routes::session::MachineSession;
-use crate::workspace_search::{MAX_QUERY_CHARS, SearchOutcome};
+use sprocket_host::project_attachments::{
+    AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
+};
+use sprocket_host::workspace_search::{MAX_QUERY_CHARS, SearchOutcome};
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
     load_workspace_skills,
@@ -97,14 +97,14 @@ async fn search_workspace(
             "workspace search query is too long"
         )));
     }
-    let permit = std::sync::Arc::clone(&state.workspace_search.search_slots)
+    let permit = std::sync::Arc::clone(&state.host.workspace_search.search_slots)
         .acquire_owned()
         .await
         .map_err(|error| ApiError::internal(error.into()))?;
     let SearchOutcome { entries, scanning } = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let resolution = resolve_workspace_path(&payload.workspace_path, false)?;
-        state.workspace_search.search(
+        state.host.workspace_search.search(
             std::path::Path::new(&resolution.workspace_path),
             &payload.query,
         )
@@ -129,6 +129,7 @@ async fn list_projects(
     MachineSession: MachineSession,
 ) -> Result<Json<Vec<ProjectAttachmentRecord>>, ApiError> {
     let projects = state
+        .host
         .project_attachments
         .list()
         .await
@@ -142,6 +143,7 @@ async fn attach_project(
     Json(payload): Json<AttachProjectRequest>,
 ) -> Result<Json<ProjectAttachmentRecord>, ApiError> {
     let project = state
+        .host
         .project_attachments
         .attach(payload)
         .await

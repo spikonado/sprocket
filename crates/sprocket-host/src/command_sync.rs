@@ -138,7 +138,7 @@ async fn sync_session(
     })
 }
 
-pub(crate) fn spawn(
+pub fn spawn(
     store: Arc<TranscriptStore>,
     registry: Arc<ThreadCommandSessions>,
     auth: Arc<NativeAuthManager>,
@@ -165,7 +165,7 @@ pub(crate) fn spawn(
     })
 }
 
-pub(crate) async fn flush(
+pub async fn flush(
     store: &TranscriptStore,
     registry: &ThreadCommandSessions,
     auth: &Arc<NativeAuthManager>,
@@ -382,7 +382,7 @@ async fn download_log(
     Ok(())
 }
 
-pub(crate) async fn fetch(
+pub async fn fetch(
     deployment: &str,
     auth: &Arc<NativeAuthManager>,
     user_id: &str,

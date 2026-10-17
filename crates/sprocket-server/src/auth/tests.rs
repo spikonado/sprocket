@@ -126,7 +126,7 @@ async fn bootstrap_persists_authenticated_session() {
 async fn bootstrap_evicts_unbound_then_oldest_bound_sessions_at_capacity() {
     let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
     let auth = AuthState::load(&temp_dir).expect("auth state");
-    let now = crate::now_ms();
+    let now = sprocket_host::now_ms();
     {
         let mut sessions = auth.sessions.write().await;
         for index in 0..(MAX_PERSISTED_BROWSER_SESSIONS - 1) {
@@ -196,7 +196,7 @@ async fn rejects_persisted_sessions_without_an_account_binding_field() {
         serde_json::json!([{
             "token": "old-session",
             "role": "owner",
-            "createdAt": crate::now_ms()
+            "createdAt": sprocket_host::now_ms()
         }])
         .to_string(),
     )

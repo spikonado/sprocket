@@ -79,7 +79,7 @@ pub struct MachineManager {
 }
 
 impl MachineManager {
-    pub(crate) fn new(
+    pub fn new(
         deployment_url: String,
         native_auth: Arc<NativeAuthManager>,
         identity: Arc<MachineIdentity>,
@@ -141,7 +141,7 @@ impl MachineManager {
         self.end_remote(user_id).await
     }
 
-    pub(crate) fn stop_registration(&self) {
+    pub fn stop_registration(&self) {
         self.shutdown.cancel();
     }
 

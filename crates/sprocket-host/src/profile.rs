@@ -10,7 +10,7 @@ struct ServerAddress {
     url: String,
 }
 
-pub(crate) struct ProfileLock {
+pub struct ProfileLock {
     _file: File,
     directory: PathBuf,
 }
@@ -49,7 +49,7 @@ pub fn read_server_address(directory: &Path) -> anyhow::Result<Option<String>> {
     }
 }
 
-pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = path.parent().context("file has no parent directory")?;
     std::fs::create_dir_all(parent)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
@@ -71,7 +71,7 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()
 }
 
 #[cfg(windows)]
-pub(crate) fn restrict_windows_file(path: &Path) -> anyhow::Result<()> {
+pub fn restrict_windows_file(path: &Path) -> anyhow::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;

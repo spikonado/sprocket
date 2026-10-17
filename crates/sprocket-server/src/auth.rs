@@ -8,9 +8,11 @@ use std::sync::Arc;
 use axum::http::{HeaderMap, header};
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
+use futures::future::BoxFuture;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use sprocket_host::native_auth::BrowserSessions;
 use tokio::sync::{OwnedRwLockWriteGuard, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
@@ -90,6 +92,23 @@ where
     Option::deserialize(deserializer)
 }
 
+impl BrowserSessions for AuthState {
+    fn sync_with_owner<'a>(
+        &'a self,
+        user_id: Option<&'a str>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(self.sync_sessions_with_owner(user_id))
+    }
+
+    fn bind_user<'a>(
+        &'a self,
+        session_token: &'a str,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(self.bind_session_user(session_token, user_id))
+    }
+}
+
 impl AuthState {
     pub fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
         fs::create_dir_all(data_dir)?;
@@ -138,7 +157,7 @@ impl AuthState {
                 ephemeral: true,
                 local_browser: true,
                 role: "owner".into(),
-                created_at: crate::now_ms(),
+                created_at: sprocket_host::now_ms(),
                 user_id: None,
             },
         );
@@ -208,7 +227,7 @@ impl AuthState {
                 ephemeral: false,
                 local_browser,
                 role: "owner".to_string(),
-                created_at: crate::now_ms(),
+                created_at: sprocket_host::now_ms(),
                 user_id: None,
             },
         );
@@ -355,7 +374,7 @@ impl AuthState {
         let sessions_path = self.data_dir.join(SESSIONS_FILE);
         tokio::task::spawn_blocking(move || {
             let payload = serde_json::to_vec(&sessions_snapshot(&sessions))?;
-            let result = crate::profile::write_private_file(&sessions_path, &payload);
+            let result = sprocket_host::profile::write_private_file(&sessions_path, &payload);
             drop(sessions);
             result
         })
@@ -386,7 +405,7 @@ fn load_or_create_pairing_credential(data_dir: &Path) -> anyhow::Result<String> 
     }
     let mut file = options.open(&tmp_path)?;
     #[cfg(windows)]
-    crate::profile::restrict_windows_file(&tmp_path)?;
+    sprocket_host::profile::restrict_windows_file(&tmp_path)?;
     file.write_all(format!("{credential}\n").as_bytes())?;
     file.sync_all()?;
     drop(file);
@@ -640,7 +659,7 @@ fn sessions_snapshot(sessions: &HashMap<String, SessionRecord>) -> Vec<Persisted
 }
 
 fn session_is_expired(session: &SessionRecord) -> bool {
-    crate::now_ms().saturating_sub(session.created_at) > SESSION_MAX_AGE_MS
+    sprocket_host::now_ms().saturating_sub(session.created_at) > SESSION_MAX_AGE_MS
 }
 
 #[cfg(test)]

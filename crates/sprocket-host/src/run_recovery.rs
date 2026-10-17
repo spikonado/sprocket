@@ -10,8 +10,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use uuid::Uuid;
 
-use crate::AppState;
-use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_recovery};
+use crate::Host;
+use crate::agent_launch::{AgentLaunchRequest, WorkspaceAccess, launch_recovery};
 
 const MAX_RECOVERIES: u8 = 3;
 const MAX_RECORDS: usize = 256;
@@ -22,8 +22,8 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 const SUBMISSION_PREFIX: &str = "automatic-recovery:";
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct RecoveryRecord {
-    pub request: RunAgentApiRequest,
+pub struct RecoveryRecord {
+    pub request: AgentLaunchRequest,
     pub workspace_access: WorkspaceAccess,
     pub allow_interaction: bool,
     recoveries: u8,
@@ -31,8 +31,8 @@ pub(crate) struct RecoveryRecord {
 }
 
 impl RecoveryRecord {
-    pub(crate) fn new(
-        mut request: RunAgentApiRequest,
+    pub fn new(
+        mut request: AgentLaunchRequest,
         workspace_access: WorkspaceAccess,
         allow_interaction: bool,
     ) -> Self {
@@ -74,13 +74,13 @@ fn new_execution_secret() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
-pub(crate) struct RunRecovery {
+pub struct RunRecovery {
     path: std::path::PathBuf,
     records: AsyncMutex<BTreeMap<String, RecoveryRecord>>,
     active: Arc<Mutex<HashMap<String, usize>>>,
 }
 
-pub(crate) struct ActiveRun {
+pub struct ActiveRun {
     key: String,
     active: Arc<Mutex<HashMap<String, usize>>>,
 }
@@ -98,7 +98,7 @@ impl Drop for ActiveRun {
 }
 
 impl RunRecovery {
-    pub(crate) fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
+    pub fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
         let path = data_dir.join("run-recovery.json");
         let records: BTreeMap<String, RecoveryRecord> = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -117,7 +117,7 @@ impl RunRecovery {
 
     // The guard outlives the detached executor. Duplicate HTTP submissions may
     // reconcile the same run; Convex still allows only one executor claim.
-    pub(crate) async fn begin(
+    pub async fn begin(
         self: &Arc<Self>,
         mut record: RecoveryRecord,
         client_bound: bool,
@@ -227,16 +227,16 @@ enum RecoveryState {
     },
 }
 
-async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result<()> {
+async fn recover_one(host: &Host, record: RecoveryRecord) -> anyhow::Result<()> {
     let key = record.key();
-    let Some(reservation) = state.run_recovery.track(key.clone(), true) else {
+    let Some(reservation) = host.run_recovery.track(key.clone(), true) else {
         return Ok(());
     };
     if crate::now_ms().saturating_sub(record.created_at) >= MAX_AGE_MS {
-        return state.run_recovery.replace(&key, None).await;
+        return host.run_recovery.replace(&key, None).await;
     }
     let recovery: RecoveryState = timeout(RPC_TIMEOUT, async {
-        let client = state.convex_client_for(&record.request.user_id).await?;
+        let client = host.convex_client_for(&record.request.user_id).await?;
         let mut args = BTreeMap::from([
             (
                 "submissionId".into(),
@@ -244,7 +244,7 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
             ),
             (
                 "machineId".into(),
-                state.machine_identity.installation_id.clone().into(),
+                host.machine_identity.installation_id.clone().into(),
             ),
         ]);
         if let Some(parent) = &record.request.continuation_of_run_id {
@@ -255,34 +255,34 @@ async fn recover_one(state: &AppState, record: RecoveryRecord) -> anyhow::Result
     .await??;
     let next = match recovery {
         RecoveryState::Pending => return Ok(()),
-        RecoveryState::Discard => return state.run_recovery.replace(&key, None).await,
+        RecoveryState::Discard => return host.run_recovery.replace(&key, None).await,
         RecoveryState::Missing if record.recoveries > 0 => record,
-        RecoveryState::Missing => return state.run_recovery.replace(&key, None).await,
+        RecoveryState::Missing => return host.run_recovery.replace(&key, None).await,
         RecoveryState::Recover { run_id, thread_id } => {
             let Some(next) = record.continuation(run_id, thread_id) else {
-                return state.run_recovery.replace(&key, None).await;
+                return host.run_recovery.replace(&key, None).await;
             };
             // Persist the new id and capability before submitting it. Replaying
             // this record after a crash reconciles that exact submission.
-            state.run_recovery.replace(&key, Some(next.clone())).await?;
+            host.run_recovery.replace(&key, Some(next.clone())).await?;
             next
         }
     };
     drop(reservation);
-    timeout(RPC_TIMEOUT, launch_recovery(state.clone(), next)).await?
+    timeout(RPC_TIMEOUT, launch_recovery(host.clone(), next)).await?
 }
 
-pub(crate) fn spawn(state: AppState) -> JoinHandle<()> {
+pub fn spawn(host: Host) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticks = interval(Duration::from_millis(RETRY_DELAY_MS));
         ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 biased;
-                _ = state.lifetime.shutdown.cancelled() => return,
+                _ = host.lifetime.shutdown.cancelled() => return,
                 _ = ticks.tick() => {}
             }
-            let records = state
+            let records = host
                 .run_recovery
                 .records
                 .lock()
@@ -291,12 +291,12 @@ pub(crate) fn spawn(state: AppState) -> JoinHandle<()> {
                 .cloned()
                 .collect::<Vec<_>>();
             let mut recoveries = futures::stream::iter(records)
-                .map(|record| recover_one(&state, record))
+                .map(|record| recover_one(&host, record))
                 .buffer_unordered(4);
             loop {
                 tokio::select! {
                     biased;
-                    _ = state.lifetime.shutdown.cancelled() => return,
+                    _ = host.lifetime.shutdown.cancelled() => return,
                     result = recoveries.next() => {
                         match result {
                             Some(Err(error)) => tracing::warn!("automatic run recovery deferred: {error:#}"),

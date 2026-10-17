@@ -14,9 +14,9 @@ use crate::auth::{
     DesktopLoginStartResponse, browser_connection, extract_session_token,
     peer_may_complete_desktop_login_callback, require_bootstrap_session,
 };
-use crate::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
 use crate::routes::api_error::{ApiError, no_store};
 use crate::{AppState, PairingProofRequest, PairingProofResponse};
+use sprocket_host::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
 
@@ -90,9 +90,13 @@ async fn session_changes(
     {
         return Err(ApiError::authentication_required());
     }
-    let receiver = state.native_auth.subscribe_changes();
-    let shutdown = state.lifetime.shutdown.clone();
-    let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
+    let receiver = state.host.native_auth.subscribe_changes();
+    let shutdown = state.host.lifetime.shutdown.clone();
+    let guard = state
+        .host
+        .lifetime
+        .run_guard()
+        .map_err(ApiError::bad_request)?;
     let stream = futures::stream::unfold(
         (receiver, true, shutdown, guard),
         |(mut receiver, initial, shutdown, guard)| async move {
@@ -219,7 +223,7 @@ async fn desktop_login_start(
                     "browser sign-in requires the local server to accept 127.0.0.1 loopback connections; set SPROCKET_HOST to 127.0.0.1 or 0.0.0.0"
                 )));
             }
-            state
+            state.host
                 .native_auth
                 .start_login(
                     &session_token,
@@ -228,7 +232,7 @@ async fn desktop_login_start(
                 .await
         }
         BrowserConnection::Https => {
-            state
+            state.host
                 .native_auth
                 .start_remote_device_login(session_token)
                 .await
@@ -273,7 +277,12 @@ async fn desktop_login_callback(
         let message = format!("{error}: {description}");
 
         if let Some(callback_state) = callback_state {
-            if let Err(fail_error) = state.native_auth.fail_login(callback_state, &message).await {
+            if let Err(fail_error) = state
+                .host
+                .native_auth
+                .fail_login(callback_state, &message)
+                .await
+            {
                 return desktop_login_error_response(StatusCode::BAD_REQUEST, &fail_error);
             }
         }
@@ -301,7 +310,12 @@ async fn desktop_login_callback(
         );
     };
 
-    match state.native_auth.complete_login(code, callback_state).await {
+    match state
+        .host
+        .native_auth
+        .complete_login(code, callback_state)
+        .await
+    {
         Ok((user, session_token)) => {
             if let Err(error) = state.auth.bind_session_user(&session_token, &user.id).await {
                 return desktop_login_error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
@@ -324,8 +338,9 @@ async fn desktop_login_result(
 ) -> Result<Json<NativeLoginStatus>, ApiError> {
     let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
     let status = match connection {
-        BrowserConnection::Loopback => state.native_auth.status(&session_token).await,
+        BrowserConnection::Loopback => state.host.native_auth.status(&session_token).await,
         BrowserConnection::Https => state
+            .host
             .native_auth
             .complete_remote_device_login(&session_token)
             .await
@@ -351,6 +366,7 @@ async fn desktop_login_cancel(
     match connection {
         BrowserConnection::Loopback => {
             state
+                .host
                 .native_auth
                 .cancel_login(&session_token, payload.login_id.trim())
                 .await;
@@ -358,6 +374,7 @@ async fn desktop_login_cancel(
         BrowserConnection::Https => {
             let login_id = payload.login_id.trim();
             state
+                .host
                 .native_auth
                 .cancel_remote_device_login(
                     &session_token,
@@ -383,6 +400,7 @@ async fn native_sign_out(
         ));
     }
     state
+        .host
         .native_auth
         .sign_out()
         .await
@@ -397,8 +415,13 @@ async fn browser_session_sign_out(
     jar: CookieJar,
 ) -> Result<(CookieJar, Json<DesktopLoginStartResponse>), ApiError> {
     let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
-    state.native_auth.cancel_device_login(&session_token).await;
     state
+        .host
+        .native_auth
+        .cancel_device_login(&session_token)
+        .await;
+    state
+        .host
         .native_auth
         .cancel_remote_device_login(&session_token, None)
         .await;
@@ -420,7 +443,7 @@ async fn native_session_token(
     jar: CookieJar,
     Json(payload): Json<NativeSessionTokenRequest>,
 ) -> Response {
-    let _activity = match state.lifetime.run_guard() {
+    let _activity = match state.host.lifetime.run_guard() {
         Ok(guard) => guard,
         Err(error) => return ApiError::bad_request(error).into_response(),
     };
@@ -434,12 +457,13 @@ async fn native_session_token_response(
     headers: &HeaderMap,
     jar: &CookieJar,
     payload: NativeSessionTokenRequest,
-) -> Result<Json<Option<crate::native_auth::NativeBrowserSession>>, ApiError> {
+) -> Result<Json<Option<sprocket_host::native_auth::NativeBrowserSession>>, ApiError> {
     let (session_token, connection) = require_browser_session(state, headers, jar, peer).await?;
     if !state.auth.session_has_user(&session_token).await {
         return Ok(Json(None));
     }
     let session = state
+        .host
         .native_auth
         .browser_session(payload.force_refresh_token)
         .await

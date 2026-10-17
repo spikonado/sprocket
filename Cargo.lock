@@ -8652,25 +8652,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprocket-server"
+name = "sprocket-host"
 version = "0.4.1"
 dependencies = [
  "anyhow",
  "axum",
- "axum-extra",
  "base64 0.23.1",
  "clap",
  "convex",
- "cookie",
- "dotenvy",
  "fff-search",
  "futures",
  "gix",
- "hmac 0.13.0",
  "jsonwebtoken 11.1.0",
  "keyring",
  "libc",
- "open",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -8682,12 +8677,46 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+ "workos",
+]
+
+[[package]]
+name = "sprocket-server"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-extra",
+ "clap",
+ "convex",
+ "cookie",
+ "dotenvy",
+ "futures",
+ "hmac 0.13.0",
+ "keyring",
+ "libc",
+ "open",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sprocket-agent",
+ "sprocket-convex",
+ "sprocket-host",
+ "sprocket-transcript",
+ "sprocket-workspace",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
  "tracing",
  "url",
  "uuid",
- "windows-sys 0.61.2",
  "workos",
 ]
 

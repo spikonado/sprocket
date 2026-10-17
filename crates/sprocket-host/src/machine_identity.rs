@@ -21,19 +21,19 @@ struct StoredInstallationIdentity {
 }
 
 #[derive(Clone)]
-pub(crate) struct MachineIdentity {
-    pub(crate) installation_id: String,
-    pub(crate) credential: String,
-    pub(crate) credential_hash: String,
-    pub(crate) friendly_name: String,
-    pub(crate) platform: String,
-    pub(crate) platform_version: String,
-    pub(crate) architecture: String,
-    pub(crate) hostname: String,
+pub struct MachineIdentity {
+    pub installation_id: String,
+    pub credential: String,
+    pub credential_hash: String,
+    pub friendly_name: String,
+    pub platform: String,
+    pub platform_version: String,
+    pub architecture: String,
+    pub hostname: String,
 }
 
 impl MachineIdentity {
-    pub(crate) fn load(data_dir: &Path) -> anyhow::Result<Self> {
+    pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
         let stored = load_or_create_installation_identity(data_dir)?;
         let credential = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let hostname = hostname();

@@ -10,8 +10,8 @@ async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails()
     let auth = crate::auth::AuthState::load(data.path()).unwrap();
     let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
     auth.bind_session_user(&token, "alice").await.unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".into(),
         },
         crate::auth::desktop_login_callback_url(7731),
@@ -22,11 +22,14 @@ async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails()
         native_auth,
         data.path().to_path_buf(),
         true,
-        crate::package_update::PackageUpdateManager::disabled(),
+        sprocket_host::package_update::PackageUpdateManager::disabled(),
     );
     // Fail cloud initialization immediately without using the network.
-    state.convex_deployment_url.clear();
-    let bindings = state.artifact_watchers.bindings("alice", workspace.path());
+    state.host.convex_deployment_url.clear();
+    let bindings = state
+        .host
+        .artifact_watchers
+        .bindings("alice", workspace.path());
     std::fs::write(workspace.path().join("notes.md"), "local source").unwrap();
     {
         let mut guard = bindings.lock().await.unwrap();
@@ -62,8 +65,9 @@ async fn deletion_validates_scope_and_removes_local_file_even_when_cloud_fails()
     assert_eq!(bindings.snapshot().await.unwrap().len(), 1);
     assert!(workspace.path().join("notes.md").exists());
     let attachment = state
+        .host
         .project_attachments
-        .attach(crate::project_attachments::AttachProjectRequest {
+        .attach(sprocket_host::project_attachments::AttachProjectRequest {
             workspace_path: workspace.path().to_str().unwrap().into(),
             replace_workspace_path: None,
         })

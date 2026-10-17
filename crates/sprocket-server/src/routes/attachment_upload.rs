@@ -71,14 +71,19 @@ async fn upload(
     media_type: String,
     request: Request,
 ) -> anyhow::Result<UploadedAttachment> {
-    let client = state.convex_client_for(&query.user_id).await?;
+    let client = state.host.convex_client_for(&query.user_id).await?;
     let pending = state
+        .host
         .transcript
         .pending_attachment_path(&query.user_id, "upload");
     let dir = pending.parent().context("invalid staging directory")?;
     tokio::fs::create_dir_all(dir).await?;
     let temp = tempfile::NamedTempFile::new_in(dir)?;
-    let _upload_guard = state.transcript.protect_pending_upload(temp.path()).await;
+    let _upload_guard = state
+        .host
+        .transcript
+        .protect_pending_upload(temp.path())
+        .await;
     let size = stage_body(request.into_body(), temp.path()).await?;
     let upload_url: String = client
         .mutate("imageUploads:generateUploadUrl", BTreeMap::new())
@@ -123,6 +128,7 @@ async fn upload(
     temp.as_file().set_modified(std::time::SystemTime::now())?;
     temp.persist(
         state
+            .host
             .transcript
             .pending_attachment_path(&query.user_id, &uploaded.storage_id),
     )?;
@@ -177,7 +183,7 @@ async fn discard(
     thread_id: Option<&str>,
     storage_id: &str,
 ) -> anyhow::Result<bool> {
-    let client = state.convex_client_for(user_id).await?;
+    let client = state.host.convex_client_for(user_id).await?;
     let deleted: bool = client
         .mutate(
             "imageUploads:discardFile",
@@ -186,6 +192,7 @@ async fn discard(
         .await?;
     if deleted {
         state
+            .host
             .transcript
             .discard_attachment(user_id, thread_id, storage_id)
             .await?;

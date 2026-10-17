@@ -9,18 +9,18 @@ async fn fixture() -> (tempfile::TempDir, AppState, String) {
     let auth = AuthState::load(directory.path()).unwrap();
     let (_, session) = auth.bootstrap_browser_session(true).await.unwrap();
     auth.bind_session_user(&session, "user-a").await.unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::new(
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::new(
         "https://example.convex.cloud".into(),
         "http://127.0.0.1:7731/auth/callback".into(),
         directory.path(),
-        Arc::clone(&auth),
+        Some(Arc::clone(&auth) as Arc<dyn sprocket_host::native_auth::BrowserSessions>),
     );
     let state = AppState::for_test(
         auth,
         native_auth,
         directory.path().to_owned(),
         true,
-        crate::package_update::PackageUpdateManager::from_env(),
+        sprocket_host::package_update::PackageUpdateManager::from_env(),
     );
     (directory, state, session)
 }

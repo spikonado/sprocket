@@ -2,17 +2,15 @@ use std::sync::Arc;
 
 use sprocket_agent::subagents::{SharedSubagentLauncher, SubagentLaunchRequest, SubagentLauncher};
 
-use crate::AppState;
-use crate::routes::agent::{RunAgentApiRequest, WorkspaceAccess, launch_agent};
+use crate::Host;
+use crate::agent_launch::{AgentLaunchRequest, WorkspaceAccess, launch_agent};
 
 struct NativeSubagentLauncher {
-    state: AppState,
+    host: Host,
 }
 
-pub(crate) fn launcher(state: &AppState) -> SharedSubagentLauncher {
-    Arc::new(NativeSubagentLauncher {
-        state: state.clone(),
-    })
+pub fn launcher(host: &Host) -> SharedSubagentLauncher {
+    Arc::new(NativeSubagentLauncher { host: host.clone() })
 }
 
 impl SubagentLauncher for NativeSubagentLauncher {
@@ -21,7 +19,7 @@ impl SubagentLauncher for NativeSubagentLauncher {
         request: SubagentLaunchRequest,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
         Box::pin(async move {
-            let payload = RunAgentApiRequest {
+            let payload = AgentLaunchRequest {
                 user_id: request.user_id,
                 submission_id: request.submission_id,
                 thread_id: Some(request.thread_id),
@@ -37,7 +35,7 @@ impl SubagentLauncher for NativeSubagentLauncher {
                 execution_secret: Some(request.execution_secret),
             };
             launch_agent(
-                self.state.clone(),
+                self.host.clone(),
                 payload,
                 WorkspaceAccess::RunDirectory,
                 true,

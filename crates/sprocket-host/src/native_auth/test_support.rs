@@ -26,7 +26,7 @@ impl NativeAuthManager {
         assert!(client_cell.set(client).is_ok());
         Arc::new(Self {
             changes: watch::channel(0).0,
-            local_sessions: None,
+            browser_sessions: None,
             deployment_url: None,
             client: client_cell,
             callback_url,
@@ -47,11 +47,11 @@ impl NativeAuthManager {
         Self::with_client(client, callback_url, refresh_tokens)
     }
 
-    pub(crate) fn configured_for_test(config: NativeAuthConfig, callback_url: String) -> Arc<Self> {
+    pub fn configured_for_test(config: NativeAuthConfig, callback_url: String) -> Arc<Self> {
         Self::with_store(config, callback_url, Arc::new(EmptyRefreshTokenStore))
     }
 
-    pub(crate) async fn authenticate_for_test(&self, user_id: &str) {
+    pub async fn authenticate_for_test(&self, user_id: &str) {
         let mut session = self.session.lock().await;
         session.access_token = Some(AccessToken {
             value: "test-access-token".to_string(),
@@ -66,7 +66,7 @@ impl NativeAuthManager {
         });
     }
 
-    pub(crate) async fn expire_login_for_test(&self, session_token: &str) {
+    pub async fn expire_login_for_test(&self, session_token: &str) {
         let mut session = self.session.lock().await;
         let Some(state) = session.pending.by_session.get(session_token).cloned() else {
             return;

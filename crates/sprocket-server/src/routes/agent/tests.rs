@@ -13,8 +13,8 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
     let auth = crate::auth::AuthState::load(&root).unwrap();
     let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
     auth.bind_session_user(&token, "user").await.unwrap();
-    let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
-        crate::native_auth::NativeAuthConfig {
+    let native_auth = sprocket_host::native_auth::NativeAuthManager::configured_for_test(
+        sprocket_host::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".into(),
         },
         crate::auth::desktop_login_callback_url(7731),
@@ -25,9 +25,10 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         native_auth,
         root.clone(),
         true,
-        crate::package_update::PackageUpdateManager::from_env(),
+        sprocket_host::package_update::PackageUpdateManager::from_env(),
     );
     let sessions = state
+        .host
         .command_sessions
         .for_run("user", "thread", root.clone(), root.join("logs"))
         .await;
@@ -125,66 +126,6 @@ async fn command_endpoints_authenticate_and_keep_other_scopes_isolated() {
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
         serde_json::json!({ "terminated": true })
     );
-    state.command_sessions.stop_all().await;
+    state.host.command_sessions.stop_all().await;
     std::fs::remove_dir_all(root).unwrap();
-}
-
-fn request(json: serde_json::Value) -> RunAgentApiRequest {
-    serde_json::from_value(json).expect("valid agent request")
-}
-
-fn base_request() -> serde_json::Value {
-    serde_json::json!({
-        "userId": "user-1",
-        "submissionId": "submission-1",
-        "prompt": "Build it",
-        "storageIds": [],
-        "selectedModel": "gpt-5.6-sol",
-        "reasoningEffort": "medium",
-        "fastMode": false,
-        "workspacePath": "/workspace"
-    })
-}
-
-#[test]
-fn accepts_fast_mode_requests() {
-    let mut json = base_request();
-    json["fastMode"] = true.into();
-    assert!(request(json).fast_mode);
-}
-
-#[test]
-fn defaults_older_requests_to_spikonado() {
-    assert_eq!(
-        request(base_request()).completion_provider,
-        CompletionProvider::Spikonado
-    );
-}
-
-#[test]
-fn accepts_direct_openai_requests() {
-    let mut json = base_request();
-    json["completionProvider"] = "openai".into();
-    assert_eq!(
-        request(json).completion_provider,
-        CompletionProvider::Openai
-    );
-}
-
-#[test]
-fn accepts_chatgpt_subscription_requests() {
-    let mut json = base_request();
-    json["completionProvider"] = "chatgpt".into();
-    assert_eq!(
-        request(json).completion_provider,
-        CompletionProvider::Chatgpt
-    );
-}
-
-#[test]
-fn requires_fast_mode() {
-    let mut json = base_request();
-    json.as_object_mut().unwrap().remove("fastMode");
-    json["serviceTier"] = "fast".into();
-    assert!(serde_json::from_value::<RunAgentApiRequest>(json).is_err());
 }

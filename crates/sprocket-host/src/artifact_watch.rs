@@ -21,7 +21,7 @@ const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RemoteArtifact {
+pub struct RemoteArtifact {
     #[serde(rename = "_id")]
     pub id: String,
     pub user_id: String,
@@ -86,7 +86,7 @@ type ArtifactRegistry = WatchRegistry<WatchKey, ArtifactWatchEvent, LatestEvent>
 type ArtifactSession = WatchSession<WatchKey, ArtifactWatchEvent, LatestEvent>;
 
 impl ArtifactWatchers {
-    pub(crate) fn new(
+    pub fn new(
         deployment_url: String,
         native_auth: Arc<NativeAuthManager>,
         bindings_root: PathBuf,
@@ -99,7 +99,7 @@ impl ArtifactWatchers {
         })
     }
 
-    pub(crate) fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
+    pub fn bindings(&self, user_id: &str, workspace: &Path) -> ArtifactBindings {
         ArtifactBindings::new(
             &self.bindings_root,
             &self.deployment_url,
@@ -423,7 +423,7 @@ fn publish(
     }
 }
 
-pub(crate) fn is_native_account_revoked(error: &anyhow::Error) -> bool {
+pub fn is_native_account_revoked(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause.is::<sprocket_convex::AuthSignedOut>()
             || matches!(

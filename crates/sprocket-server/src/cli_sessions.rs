@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use sprocket_host::lifetime::HostLifetime;
 use sprocket_workspace::WorkspaceCancellation;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -29,33 +30,30 @@ struct ClientLease {
     expires_at: Instant,
 }
 
-struct LifetimeState {
+struct ClientState {
     clients: HashMap<String, ClientLease>,
-    active_runs: usize,
-    accepting: bool,
     used: bool,
 }
 
-pub(crate) struct ServerLifetime {
-    pub shutdown: WorkspaceCancellation,
-    state: Mutex<LifetimeState>,
+/// CLI client leases, which also end a temporary server once every client leaves.
+pub(crate) struct CliSessions {
+    host: Arc<HostLifetime>,
+    state: Mutex<ClientState>,
     temporary: bool,
     started_at: Instant,
 }
 
-impl ServerLifetime {
-    pub fn new(temporary: bool) -> Arc<Self> {
-        Arc::new(Self {
-            shutdown: WorkspaceCancellation::new(),
-            state: Mutex::new(LifetimeState {
+impl CliSessions {
+    pub fn new(host: Arc<HostLifetime>, temporary: bool) -> Self {
+        Self {
+            host,
+            state: Mutex::new(ClientState {
                 clients: HashMap::new(),
-                active_runs: 0,
-                accepting: true,
                 used: false,
             }),
             temporary,
             started_at: Instant::now(),
-        })
+        }
     }
 
     pub fn connect(&self, client_id: &str, session_token: &str) -> anyhow::Result<()> {
@@ -65,7 +63,7 @@ impl ServerLifetime {
         );
         let mut state = self.state.lock().unwrap();
         anyhow::ensure!(
-            state.accepting,
+            !self.host.is_stopping(),
             "server is shutting down; retry the command"
         );
         if let Some(lease) = state.clients.get_mut(client_id) {
@@ -128,17 +126,8 @@ impl ServerLifetime {
         Ok(())
     }
 
-    pub fn run_guard(self: &Arc<Self>) -> anyhow::Result<RunGuard> {
-        let mut state = self.state.lock().unwrap();
-        anyhow::ensure!(
-            state.accepting && !self.shutdown.is_cancelled(),
-            "server is shutting down"
-        );
-        state.active_runs += 1;
-        Ok(RunGuard(Arc::clone(self)))
-    }
-
     pub fn tick(&self, now: Instant) -> (bool, Vec<String>) {
+        // Holding the client lock keeps a new CLI connection from racing the idle check.
         let mut state = self.state.lock().unwrap();
         let mut expired = Vec::new();
         state.clients.retain(|_, lease| {
@@ -151,21 +140,11 @@ impl ServerLifetime {
         });
         if self.temporary
             && state.clients.is_empty()
-            && state.active_runs == 0
             && (state.used || now.duration_since(self.started_at) >= STARTUP_GRACE)
         {
-            state.accepting = false;
-            self.shutdown.cancel();
+            self.host.stop_if_idle();
         }
-        (!state.accepting, expired)
-    }
-}
-
-pub(crate) struct RunGuard(Arc<ServerLifetime>);
-
-impl Drop for RunGuard {
-    fn drop(&mut self) {
-        self.0.state.lock().unwrap().active_runs -= 1;
+        (self.host.is_stopping(), expired)
     }
 }
 

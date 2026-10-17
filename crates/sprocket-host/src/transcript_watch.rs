@@ -47,7 +47,7 @@ pub struct TranscriptWatchSession {
 }
 
 impl TranscriptWatchers {
-    pub(crate) fn new(
+    pub fn new(
         deployment_url: String,
         store: Arc<TranscriptStore>,
         native_auth: Arc<NativeAuthManager>,

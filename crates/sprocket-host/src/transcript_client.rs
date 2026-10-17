@@ -72,10 +72,7 @@ impl UserConvexClient {
             .await
     }
 
-    pub(crate) async fn list_artifacts(
-        &self,
-        repository_key: &str,
-    ) -> anyhow::Result<ArtifactSnapshot> {
+    pub async fn list_artifacts(&self, repository_key: &str) -> anyhow::Result<ArtifactSnapshot> {
         let mut args = artifacts_list_args(repository_key);
         let mut artifacts = Vec::new();
         let mut revision = None;
@@ -182,7 +179,7 @@ fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
     args
 }
 
-pub(crate) struct ArtifactSnapshot {
+pub struct ArtifactSnapshot {
     pub artifacts: Vec<crate::artifact_watch::RemoteArtifact>,
     pub revision: u64,
 }

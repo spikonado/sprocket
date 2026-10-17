@@ -47,7 +47,7 @@ pub(super) async fn local_image(
                 .map_err(ApiError::unauthorized)?;
             validate_thread_image_path(thread_id, &payload.path).map_err(ApiError::bad_request)?;
             LocalImageRoot::Thread(
-                state.transcript.thread_dir(user_id, thread_id),
+                state.host.transcript.thread_dir(user_id, thread_id),
                 payload.workspace_path,
             )
         }

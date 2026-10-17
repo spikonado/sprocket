@@ -71,6 +71,7 @@ async fn lifecycle_handler(
     AuthorizedJson(payload): AuthorizedJson<LifecycleRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let result = state
+        .host
         .convex_client_for(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?
@@ -88,6 +89,7 @@ async fn cancel_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
     let result = state
+        .host
         .convex_client_for(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?
@@ -102,6 +104,7 @@ async fn start_account_session_handler(
     AuthorizedJson(payload): AuthorizedJson<UserRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     state
+        .host
         .machines
         .register(&payload.user_id)
         .await
@@ -114,6 +117,7 @@ async fn end_account_session_handler(
     AuthorizedJson(payload): AuthorizedJson<UserRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     state
+        .host
         .machines
         .end(&payload.user_id)
         .await

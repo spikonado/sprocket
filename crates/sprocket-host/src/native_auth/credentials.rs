@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use sha2::{Digest, Sha256};
 
-use crate::cli_protocol::CredentialStore;
+use super::CredentialStore;
 use crate::profile::write_private_file;
 
 const KEYRING_SERVICE: &str = "dev.sprocket.native-auth";
