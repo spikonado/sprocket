@@ -192,6 +192,7 @@
 }
 
 .inbox-row-main {
+	position: relative;
 	display: flex;
 	flex: 1;
 	min-width: 0;
@@ -199,6 +200,26 @@
 	gap: 4px;
 	padding: 8px 10px;
 	text-align: left;
+}
+
+.inbox-row-open {
+	text-align: left;
+}
+
+.inbox-row-open::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: 9px;
+}
+
+.inbox-sidebar .inbox-row-open:focus-visible {
+	outline: none;
+}
+
+.inbox-sidebar .inbox-row-open:focus-visible::after {
+	outline: 2px solid var(--foreground);
+	outline-offset: 2px;
 }
 
 .inbox-row-title {
@@ -247,10 +268,15 @@
 }
 
 .inbox-row-pr {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 2px;
 	font-variant-numeric: tabular-nums;
+}
+
+a.inbox-row-pr:hover {
+	text-decoration: underline;
 }
 
 /* GitHub Primer state colors. */

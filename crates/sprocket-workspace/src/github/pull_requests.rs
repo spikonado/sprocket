@@ -18,14 +18,14 @@ pub enum PullRequestState {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestRef {
-    pub repository_key: String,
+    pub repository: String,
     pub number: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestStatus {
-    pub repository_key: String,
+    pub repository: String,
     pub number: u32,
     pub state: PullRequestState,
 }
@@ -38,7 +38,7 @@ pub struct FetchedStates {
     pub failures: Vec<(String, GitHubError)>,
 }
 
-/// A `host/owner/name` repository key on a host that speaks GitHub's API.
+/// A `host/owner/name` repository on a host that speaks GitHub's API.
 #[derive(Debug, PartialEq, Eq)]
 struct Repository<'a> {
     host: &'a str,
@@ -46,16 +46,9 @@ struct Repository<'a> {
     name: &'a str,
 }
 
-pub fn is_github_repository(repository_key: &str) -> bool {
-    parse_repository_key(repository_key, is_github_host).is_some()
-}
-
-/// Other forges share the key shape, so only GitHub hosts count.
-fn parse_repository_key(
-    repository_key: &str,
-    is_github: impl Fn(&str) -> bool,
-) -> Option<Repository<'_>> {
-    let mut parts = repository_key.split('/');
+/// Other forges share the shape, so only GitHub hosts count.
+fn parse_repository(repository: &str, is_github: impl Fn(&str) -> bool) -> Option<Repository<'_>> {
+    let mut parts = repository.split('/');
     let (host, owner, name) = (parts.next()?, parts.next()?, parts.next()?);
     let segment = |segment: &str| {
         !matches!(segment, "" | "." | "..")
@@ -71,8 +64,7 @@ fn parse_repository_key(
 pub async fn fetch_states(pull_requests: &[PullRequestRef]) -> FetchedStates {
     let mut by_host: BTreeMap<&str, Vec<(&PullRequestRef, Repository)>> = BTreeMap::new();
     for pull_request in pull_requests {
-        if let Some(repository) = parse_repository_key(&pull_request.repository_key, is_github_host)
-        {
+        if let Some(repository) = parse_repository(&pull_request.repository, is_github_host) {
             by_host
                 .entry(repository.host)
                 .or_default()
@@ -148,7 +140,7 @@ async fn fetch_batch(
                 .pull_request
                 .as_ref()?;
             Some(PullRequestStatus {
-                repository_key: pull_request.repository_key.clone(),
+                repository: pull_request.repository.clone(),
                 number: pull_request.number,
                 state: match node.state {
                     GraphQlState::Open => PullRequestState::Open,

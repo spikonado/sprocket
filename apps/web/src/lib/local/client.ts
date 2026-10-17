@@ -22,7 +22,7 @@ const browserStatusSchema = z.object({
 
 const pullRequestStatesSchema = z.array(
 	z.object({
-		repositoryKey: z.string(),
+		repository: z.string(),
 		number: z.number(),
 		state: z.enum(['open', 'closed', 'merged'])
 	})

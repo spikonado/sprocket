@@ -13,8 +13,8 @@ const MAX_LINKED_PRS = 20;
 
 const MAX_STATE_UPDATES = 500;
 
-const pullRequestKey = (pr: { repositoryKey: string; number: number }) =>
-	`${pr.repositoryKey}#${pr.number}`;
+const pullRequestKey = (pr: { repository: string; number: number }) =>
+	`${pr.repository}#${pr.number}`;
 
 /** Adds PRs the agent linked, with the states it read from GitHub on the user's machine. */
 export const link = mutation({
@@ -42,9 +42,7 @@ export const link = mutation({
 				byKey.set(pullRequestKey(pr), pr);
 			}
 
-			const pullRequests = [...byKey.values()].sort(
-				(a, b) => a.number - b.number || a.repositoryKey.localeCompare(b.repositoryKey)
-			);
+			const pullRequests = [...byKey.values()];
 
 			if (pullRequests.length > MAX_LINKED_PRS) {
 				throw new Error(`A thread can link at most ${MAX_LINKED_PRS} PRs.`);
@@ -65,7 +63,7 @@ export const updateStates = mutation({
 		updates: v.array(
 			v.object({
 				threadId: v.id('threadRecords'),
-				repositoryKey: v.string(),
+				repository: v.string(),
 				number: v.number(),
 				state: vPullRequestState
 			})

@@ -383,8 +383,8 @@ export type DesktopApi = {
 	) => Promise<void>;
 	requestRunCancellation: (request: LocalUserRequest & { runId: Id<'runs'> }) => Promise<void>;
 	fetchPullRequestStates: (request: {
-		pullRequests: { repositoryKey: string; number: number }[];
-	}) => Promise<{ repositoryKey: string; number: number; state: 'open' | 'closed' | 'merged' }[]>;
+		pullRequests: { repository: string; number: number }[];
+	}) => Promise<{ repository: string; number: number; state: 'open' | 'closed' | 'merged' }[]>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;
 	endAccountSession: (request: LocalUserRequest) => Promise<void>;
 	fetchChatGptStatus: (request: LocalUserRequest) => Promise<ChatGptStatus>;

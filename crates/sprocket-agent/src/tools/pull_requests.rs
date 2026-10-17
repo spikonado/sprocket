@@ -1,16 +1,12 @@
 use std::collections::BTreeMap;
 
-use anyhow::Context;
 use convex::Value;
 use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::WorkspaceOperationCancelled;
-use sprocket_workspace::github::pull_requests::{
-    PullRequestRef, fetch_states, is_github_repository,
-};
-use sprocket_workspace::resolve_git_repository_identity;
+use sprocket_workspace::github::pull_requests::{PullRequestRef, fetch_states};
 
 use super::context::{AgentToolContext, tool_error};
 use super::job::execute_tool_job;
@@ -23,8 +19,15 @@ pub(crate) struct LinkPrsTool(pub(super) AgentToolContext);
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LinkPrsArgs {
-    /// PR numbers in this thread's GitHub repository.
-    pub(crate) numbers: Vec<u32>,
+    pub(crate) pull_requests: Vec<LinkedPr>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LinkedPr {
+    /// Repository the PR was opened against, as `github.com/owner/name`. For GitHub Enterprise, use its host instead of `github.com`.
+    repository: String,
+    number: u32,
 }
 
 impl rig::tool::Tool for LinkPrsTool {
@@ -34,7 +37,7 @@ impl rig::tool::Tool for LinkPrsTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Link GitHub pull requests to this thread so the user sees them and their status in the sidebar. Link a PR right after you create it. The repository comes from the thread's project."
+        "Link GitHub pull requests to this thread so the user sees them and their status in the sidebar. Link a PR right after you create it."
             .to_string()
     }
 
@@ -52,7 +55,7 @@ impl rig::tool::Tool for LinkPrsTool {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(tool_error(WorkspaceOperationCancelled.into())),
-                result = link(&self.0, args.numbers) => result.map_err(tool_error),
+                result = link(&self.0, args.pull_requests) => result.map_err(tool_error),
             }
         })
         .await
@@ -61,47 +64,36 @@ impl rig::tool::Tool for LinkPrsTool {
 
 async fn link(
     context: &AgentToolContext,
-    mut numbers: Vec<u32>,
+    pull_requests: Vec<LinkedPr>,
 ) -> anyhow::Result<serde_json::Value> {
-    numbers.sort_unstable();
-    numbers.dedup();
-    anyhow::ensure!(!numbers.is_empty(), "Pass at least one PR number.");
+    anyhow::ensure!(!pull_requests.is_empty(), "Pass at least one PR.");
     anyhow::ensure!(
-        numbers.len() <= MAX_LINKED_PRS,
+        pull_requests.len() <= MAX_LINKED_PRS,
         "A thread can link at most {MAX_LINKED_PRS} PRs."
     );
-    anyhow::ensure!(numbers[0] > 0, "PR numbers must be positive integers.");
 
-    let repository_key = resolve_git_repository_identity(&context.workspace_root).repository_key;
-    anyhow::ensure!(
-        is_github_repository(&repository_key),
-        "This thread's project ({repository_key}) does not have a GitHub origin remote."
-    );
-    let refs: Vec<_> = numbers
-        .iter()
-        .map(|&number| PullRequestRef {
-            repository_key: repository_key.clone(),
-            number,
+    let refs: Vec<_> = pull_requests
+        .into_iter()
+        .map(|pr| PullRequestRef {
+            repository: pr.repository,
+            number: pr.number,
         })
         .collect();
     let fetched = fetch_states(&refs).await;
     if let Some((host, error)) = fetched.failures.into_iter().next() {
         anyhow::bail!("Reading pull requests from {host} failed: {error}");
     }
-    let mut pull_requests = Vec::with_capacity(numbers.len());
-    for number in numbers {
-        let status = fetched
+    if let Some(missing) = refs.iter().find(|pr| {
+        !fetched
             .states
             .iter()
-            .find(|status| status.number == number)
-            .with_context(|| {
-                format!("Pull request #{number} was not found in {repository_key}.")
-            })?;
-        pull_requests.push(json!({
-            "repositoryKey": repository_key,
-            "number": number,
-            "state": status.state,
-        }));
+            .any(|status| status.repository == pr.repository && status.number == pr.number)
+    }) {
+        anyhow::bail!(
+            "{}#{} was not found on GitHub. Repositories look like `github.com/owner/name`.",
+            missing.repository,
+            missing.number
+        );
     }
 
     let args = BTreeMap::from([
@@ -109,12 +101,12 @@ async fn link(
         ("claimId".to_string(), Value::from(context.claim_id.clone())),
         (
             "pullRequests".to_string(),
-            Value::try_from(serde_json::Value::Array(pull_requests))?,
+            Value::try_from(serde_json::to_value(&fetched.states)?)?,
         ),
     ]);
     let linked: serde_json::Value = context
         .runtime
         .mutation_json("pullRequests:link", args)
         .await?;
-    Ok(json!({ "repository": repository_key, "pullRequests": linked }))
+    Ok(json!({ "pullRequests": linked }))
 }

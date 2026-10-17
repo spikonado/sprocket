@@ -7,8 +7,8 @@ type PullRequests = NonNullable<Doc<'threadRecords'>['pullRequests']>;
 const pr = (
 	number: number,
 	state: PullRequests[number]['state'],
-	repositoryKey = 'github.com/acme/widgets'
-) => ({ repositoryKey, number, state });
+	repository = 'github.com/acme/widgets'
+) => ({ repository, number, state });
 
 function thread(id: string, pullRequests: PullRequests): Doc<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -41,7 +41,7 @@ function fakeSync() {
 const requested = (sync: ReturnType<typeof fakeSync>) =>
 	sync.fetchStates.mock.calls.map(([pullRequests]) => pullRequests.map((pr) => pr.number));
 
-it('reads non-merged PRs from their own repositories as threads appear and records changed states', async () => {
+it('reads non-merged PRs of threads as they appear and records changed states', async () => {
 	const sync = fakeSync();
 	const refresher = new PullRequestRefresher(sync);
 
@@ -54,8 +54,8 @@ it('reads non-merged PRs from their own repositories as threads appear and recor
 	expect(sync.fetchStates.mock.calls).toEqual([
 		[
 			[
-				{ repositoryKey: 'github.com/acme/widgets', number: 1 },
-				{ repositoryKey: 'github.com/acme/site', number: 3 }
+				{ repository: 'github.com/acme/widgets', number: 1 },
+				{ repository: 'github.com/acme/site', number: 3 }
 			]
 		]
 	]);
