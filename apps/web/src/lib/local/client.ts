@@ -217,6 +217,7 @@ const chatGptBrowserLoginStartSchema = z.object({ state: z.string(), authorizeUr
 const gitHubStatusSchema = z.object({
 	enabled: z.boolean(),
 	cliVersion: z.string().nullable(),
+	savedTokensProblem: z.string().nullable(),
 	hosts: z.array(
 		z.object({
 			host: z.string(),
@@ -624,11 +625,15 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 
 			return warning;
 		},
-		fetchGitHubStatus: async () => await request('/api/github/status', gitHubStatusSchema),
-		updateGitHubSettings: async (update) =>
+		fetchGitHubStatus: async (userId) =>
+			await request(
+				`/api/github/status?${new URLSearchParams({ userId }).toString()}`,
+				gitHubStatusSchema
+			),
+		updateGitHubSettings: async (userId, update) =>
 			await request('/api/github/settings', gitHubStatusSchema, {
 				method: 'POST',
-				body: JSON.stringify(update)
+				body: JSON.stringify({ userId, ...update })
 			})
 	};
 }

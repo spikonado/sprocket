@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+pub mod saved_tokens;
 pub mod status;
 
 const PUBLIC_HOST: &str = "github.com";
@@ -27,7 +28,8 @@ static TOKENS: LazyLock<Mutex<HashMap<String, (Option<String>, Instant)>>> =
 
 static SETTINGS: LazyLock<RwLock<GitHubSettings>> = LazyLock::new(Default::default);
 
-/// What the user chose in Settings → Version Control. The host persists it.
+/// Which hosts the user turned off on this machine in Settings → Version
+/// Control. The host persists it; tokens are saved per user in `saved_tokens`.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GitHubSettings {
@@ -39,9 +41,6 @@ pub struct GitHubSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct HostSettings {
     pub disabled: bool,
-    /// Used before the environment's token and the `gh` login.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
 }
 
 pub fn settings() -> GitHubSettings {
@@ -115,10 +114,12 @@ pub struct GitHubApi {
 }
 
 impl GitHubApi {
-    pub async fn connect(host: &str) -> Result<Self, GitHubError> {
+    /// Connects with `user_id`'s saved token for `host`, or this machine's own
+    /// credentials when they saved none.
+    pub async fn connect(user_id: &str, host: &str) -> Result<Self, GitHubError> {
         let host = host.trim().to_ascii_lowercase();
         let graphql_url = graphql_url(&host)?;
-        let (token, source) = credential(&host).await?;
+        let (token, source) = credential(user_id, &host).await?;
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .user_agent("Sprocket")
@@ -235,16 +236,14 @@ fn graphql_url(host: &str) -> anyhow::Result<Url> {
 }
 
 /// Saved token, then the environment's, then the `gh` login, like t3code.
-async fn credential(host: &str) -> Result<(String, CredentialSource), GitHubError> {
-    let saved = {
+async fn credential(user_id: &str, host: &str) -> Result<(String, CredentialSource), GitHubError> {
+    {
         let settings = read_settings();
-        let saved = settings.hosts.get(host);
-        if settings.disabled || saved.is_some_and(|saved| saved.disabled) {
+        if settings.disabled || settings.hosts.get(host).is_some_and(|saved| saved.disabled) {
             return Err(GitHubError::Disabled(host.to_string()));
         }
-        saved.and_then(|saved| saved.token.clone())
-    };
-    if let Some(token) = saved {
+    }
+    if let Some(token) = saved_tokens::load(user_id, false).await.tokens.remove(host) {
         return Ok((token, CredentialSource::Settings));
     }
     if let Some(token) = env_token(host, |name| std::env::var(name).ok()) {

@@ -2702,8 +2702,8 @@ export default function App({
 							/>
 						) : settingsPage === 'payments' ? (
 							<SettingsPayments />
-						) : settingsPage === 'versionControl' ? (
-							<SettingsVersionControl desktopApi={desktopApi} />
+						) : settingsPage === 'versionControl' && signedInUserId ? (
+							<SettingsVersionControl userId={signedInUserId} desktopApi={desktopApi} />
 						) : (
 							<SettingsAccount
 								user={auth.user}

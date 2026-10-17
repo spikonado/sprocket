@@ -104,6 +104,11 @@ impl Host {
         package_updates: Arc<PackageUpdateManager>,
     ) -> anyhow::Result<Self> {
         let machine_identity = Arc::new(MachineIdentity::load(data_dir)?);
+        github_settings::install_saved_tokens_loader(
+            convex_deployment_url.clone(),
+            Arc::clone(&native_auth),
+            Arc::clone(&machine_identity),
+        );
         let transcript = TranscriptStore::new(data_dir.join("transcripts"));
         Ok(Self {
             lifetime: HostLifetime::new(),

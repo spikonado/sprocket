@@ -1,11 +1,16 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { api } from '@convex/_generated/api';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { DesktopApi, GitHubStatus } from '$lib/types/sprocket';
 import SettingsVersionControl from './settings-version-control';
+
+afterEach(cleanup);
 
 const signedIn: GitHubStatus = {
 	enabled: true,
 	cliVersion: '2.81.0',
+	savedTokensProblem: null,
 	hosts: [
 		{
 			host: 'github.com',
@@ -27,16 +32,27 @@ const signedIn: GitHubStatus = {
 };
 
 function mount(status: GitHubStatus) {
-	const fetchGitHubStatus = vi.fn(async () => status);
+	const client = new ConvexTestClient();
+	const saveToken = vi.fn(async () => null);
+	const removeToken = vi.fn(async () => null);
+	client.handleAction(api.githubCredentials.saveToken, saveToken);
+	client.handleAction(api.githubCredentials.removeToken, removeToken);
+	const fetchGitHubStatus = vi.fn<DesktopApi['fetchGitHubStatus']>(async () => status);
 
-	const updateGitHubSettings = vi.fn<DesktopApi['updateGitHubSettings']>(async (update) => ({
-		...status,
-		enabled: update.enabled ?? status.enabled
-	}));
+	const updateGitHubSettings = vi.fn<DesktopApi['updateGitHubSettings']>(
+		async (_userId, update) => ({ ...status, enabled: update.enabled ?? status.enabled })
+	);
 
-	render(<SettingsVersionControl desktopApi={{ fetchGitHubStatus, updateGitHubSettings }} />);
+	render(
+		<ConvexTestProvider client={client}>
+			<SettingsVersionControl
+				userId="user-a"
+				desktopApi={{ fetchGitHubStatus, updateGitHubSettings }}
+			/>
+		</ConvexTestProvider>
+	);
 
-	return updateGitHubSettings;
+	return { saveToken, fetchGitHubStatus, updateGitHubSettings };
 }
 
 it('shows the account and credential source of each GitHub host', async () => {
@@ -49,35 +65,42 @@ it('shows the account and credential source of each GitHub host', async () => {
 	).toBeTruthy();
 });
 
-it('saves a token for one host and turns GitHub or a host off', async () => {
-	const updateGitHubSettings = mount(signedIn);
+it('saves a token to the account, then checks it on this machine', async () => {
+	const { saveToken, fetchGitHubStatus } = mount(signedIn);
 
 	fireEvent.click((await screen.findAllByRole('button', { name: 'Add token' }))[1]!);
 	fireEvent.change(screen.getByLabelText('Token for ghe.example.com'), {
 		target: { value: 'ghp_secret' }
 	});
 	fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-	await waitFor(() =>
-		expect(updateGitHubSettings).toHaveBeenCalledWith({
-			host: { host: 'ghe.example.com', token: 'ghp_secret' }
-		})
-	);
-	await waitFor(() => expect(screen.queryByLabelText('Token for ghe.example.com')).toBeNull());
 
-	fireEvent.click(screen.getByRole('switch', { name: 'Use github.com' }));
 	await waitFor(() =>
-		expect(updateGitHubSettings).toHaveBeenLastCalledWith({
+		expect(saveToken).toHaveBeenCalledWith({ host: 'ghe.example.com', token: 'ghp_secret' })
+	);
+	await waitFor(() => expect(fetchGitHubStatus).toHaveBeenCalledTimes(2));
+	expect(fetchGitHubStatus).toHaveBeenLastCalledWith('user-a');
+	await waitFor(() => expect(screen.queryByLabelText('Token for ghe.example.com')).toBeNull());
+});
+
+it('turns GitHub or one host off on this machine', async () => {
+	const { updateGitHubSettings } = mount(signedIn);
+
+	fireEvent.click(await screen.findByRole('switch', { name: 'Use github.com' }));
+	await waitFor(() =>
+		expect(updateGitHubSettings).toHaveBeenLastCalledWith('user-a', {
 			host: { host: 'github.com', enabled: false }
 		})
 	);
 
 	fireEvent.click(screen.getByRole('switch', { name: 'Use GitHub' }));
-	await waitFor(() => expect(updateGitHubSettings).toHaveBeenLastCalledWith({ enabled: false }));
+	await waitFor(() =>
+		expect(updateGitHubSettings).toHaveBeenLastCalledWith('user-a', { enabled: false })
+	);
 	expect(await screen.findByText(/GitHub is off/)).toBeTruthy();
 });
 
 it('adds an Enterprise host with its token', async () => {
-	const updateGitHubSettings = mount(signedIn);
+	const { saveToken } = mount(signedIn);
 
 	fireEvent.click(await screen.findByRole('button', { name: 'Add a GitHub Enterprise host' }));
 	fireEvent.change(screen.getByLabelText('Enterprise host'), {
@@ -87,9 +110,7 @@ it('adds an Enterprise host with its token', async () => {
 	fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
 	await waitFor(() =>
-		expect(updateGitHubSettings).toHaveBeenCalledWith({
-			host: { host: 'github.acme.com', token: 'ghp_acme' }
-		})
+		expect(saveToken).toHaveBeenCalledWith({ host: 'github.acme.com', token: 'ghp_acme' })
 	);
 	await waitFor(() => expect(screen.queryByLabelText('Enterprise host')).toBeNull());
 });

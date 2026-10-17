@@ -2,27 +2,46 @@ use axum::Json;
 use axum::extract::State;
 use axum::routing::{get, post};
 use serde::Deserialize;
+use sprocket_workspace::github::is_valid_host;
 use sprocket_workspace::github::status::{GitHubStatus, status};
-use sprocket_workspace::github::{GitHubSettings, is_valid_host};
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::routes::session::MachineSession;
+use crate::routes::session::{AuthorizedJson, AuthorizedQuery, UserScoped};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StatusQuery {
+    user_id: String,
+}
+
+impl UserScoped for StatusQuery {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
+}
+
+/// One switch from Settings → Version Control. Tokens are saved through
+/// Convex instead, so every machine of the user can use them.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SettingsUpdate {
+    user_id: String,
     enabled: Option<bool>,
     host: Option<HostUpdate>,
+}
+
+impl UserScoped for SettingsUpdate {
+    fn user_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct HostUpdate {
     host: String,
-    enabled: Option<bool>,
-    /// An empty token removes the saved one.
-    token: Option<String>,
+    enabled: bool,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -31,16 +50,17 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/github/settings", post(update_handler))
 }
 
-async fn status_handler(MachineSession: MachineSession) -> Json<GitHubStatus> {
-    Json(status().await)
+/// Reloads the user's saved tokens, so a token just saved on any machine is
+/// checked right away.
+async fn status_handler(
+    AuthorizedQuery(query): AuthorizedQuery<StatusQuery>,
+) -> Json<GitHubStatus> {
+    Json(status(&query.user_id).await)
 }
 
-/// Applies one change from Settings → Version Control and answers with the
-/// resulting status, so a saved token is checked right away.
 async fn update_handler(
-    MachineSession: MachineSession,
     State(state): State<AppState>,
-    Json(update): Json<SettingsUpdate>,
+    AuthorizedJson(update): AuthorizedJson<SettingsUpdate>,
 ) -> Result<Json<GitHubStatus>, ApiError> {
     let host = update.host.map(|host| HostUpdate {
         host: host.host.trim().to_ascii_lowercase(),
@@ -57,28 +77,15 @@ async fn update_handler(
     state
         .host
         .github_settings
-        .update(|settings| apply(settings, update.enabled, host))
+        .update(|settings| {
+            if let Some(enabled) = update.enabled {
+                settings.disabled = !enabled;
+            }
+            if let Some(host) = host {
+                settings.hosts.entry(host.host).or_default().disabled = !host.enabled;
+            }
+        })
         .await
         .map_err(|error| ApiError::internal_with("failed to save GitHub settings", error))?;
-    Ok(Json(status().await))
+    Ok(Json(status(&update.user_id).await))
 }
-
-fn apply(settings: &mut GitHubSettings, enabled: Option<bool>, host: Option<HostUpdate>) {
-    if let Some(enabled) = enabled {
-        settings.disabled = !enabled;
-    }
-    let Some(update) = host else {
-        return;
-    };
-    let saved = settings.hosts.entry(update.host).or_default();
-    if let Some(enabled) = update.enabled {
-        saved.disabled = !enabled;
-    }
-    if let Some(token) = update.token {
-        let token = token.trim();
-        saved.token = (!token.is_empty()).then(|| token.to_string());
-    }
-}
-
-#[cfg(test)]
-mod tests;

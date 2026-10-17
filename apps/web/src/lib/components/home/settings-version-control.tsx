@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ExternalLink, Eye, EyeOff, KeyRound, Plus, RefreshCw } from 'lucide-react';
+import { useAction } from 'convex/react';
 import { z } from 'zod';
+import { api } from '@convex/_generated/api';
+import { convexClientErrorMessage } from '$lib/convex-error';
 import { cn } from '$lib/utils';
-import type {
-	DesktopApi,
-	GitHubHostStatus,
-	GitHubSettingsUpdate,
-	GitHubStatus
-} from '$lib/types/sprocket';
+import type { DesktopApi, GitHubHostStatus, GitHubStatus } from '$lib/types/sprocket';
 
 const sourceLabels: Record<NonNullable<GitHubHostStatus['source']>, string> = {
 	settings: 'saved token',
@@ -19,11 +17,15 @@ type GitHubApi = Pick<DesktopApi, 'fetchGitHubStatus' | 'updateGitHubSettings'>;
 
 const caughtError = z.instanceof(Error).catch(new Error());
 
-function errorText(error: Error, fallback: string): string {
-	return error.message || fallback;
-}
-
-export default function SettingsVersionControl({ desktopApi }: { desktopApi: GitHubApi | null }) {
+export default function SettingsVersionControl({
+	userId,
+	desktopApi
+}: {
+	userId: string;
+	desktopApi: GitHubApi | null;
+}) {
+	const saveToken = useAction(api.githubCredentials.saveToken);
+	const removeToken = useAction(api.githubCredentials.removeToken);
 	const [status, setStatus] = useState<GitHubStatus | null>(null);
 	const [checking, setChecking] = useState(false);
 	const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -35,35 +37,51 @@ export default function SettingsVersionControl({ desktopApi }: { desktopApi: Git
 		setError(null);
 
 		try {
-			setStatus(await desktopApi.fetchGitHubStatus());
+			setStatus(await desktopApi.fetchGitHubStatus(userId));
 		} catch (caught) {
-			setError(errorText(caughtError.parse(caught), 'Couldn’t check GitHub on this computer.'));
+			setError(
+				convexClientErrorMessage(caughtError.parse(caught)) ??
+					'Couldn’t check GitHub on this computer.'
+			);
 		} finally {
 			setChecking(false);
 		}
-	}, [desktopApi]);
+	}, [desktopApi, userId]);
 
 	useEffect(() => {
 		void check();
 	}, [check]);
 
-	async function update(key: string, change: GitHubSettingsUpdate): Promise<boolean> {
+	/** Runs one change, then shows the status that results from it. */
+	async function change(key: string, run: (api: GitHubApi) => Promise<GitHubStatus>) {
 		if (!desktopApi || pendingKey) return false;
 		setPendingKey(key);
 		setError(null);
 
 		try {
-			setStatus(await desktopApi.updateGitHubSettings(change));
+			setStatus(await run(desktopApi));
 
 			return true;
 		} catch (caught) {
-			setError(errorText(caughtError.parse(caught), 'Couldn’t save your GitHub settings.'));
+			setError(
+				convexClientErrorMessage(caughtError.parse(caught)) ?? 'Couldn’t save your GitHub settings.'
+			);
 
 			return false;
 		} finally {
 			setPendingKey(null);
 		}
 	}
+
+	const setEnabled = (key: string, update: Parameters<GitHubApi['updateGitHubSettings']>[1]) =>
+		change(key, (desktop) => desktop.updateGitHubSettings(userId, update));
+
+	const setToken = (host: string, token: string, key = host) =>
+		change(key, async (desktop) => {
+			await (token ? saveToken({ host, token }) : removeToken({ host }));
+
+			return await desktop.fetchGitHubStatus(userId);
+		});
 
 	const enabled = status?.enabled ?? true;
 	const busy = checking || pendingKey !== null;
@@ -78,12 +96,6 @@ export default function SettingsVersionControl({ desktopApi }: { desktopApi: Git
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 				<div className="max-w-xl space-y-4">
-					<p className="text-muted-foreground mb-5 text-sm leading-6">
-						Agents link the pull requests they open to their threads, and Sprocket keeps their
-						status fresh. GitHub is read from this computer with your own credentials, which never
-						leave it.
-					</p>
-
 					{!desktopApi ? (
 						<p className="text-muted-foreground text-sm leading-6">
 							Version control settings belong to the computer running Sprocket. Open Sprocket there
@@ -137,7 +149,7 @@ export default function SettingsVersionControl({ desktopApi }: { desktopApi: Git
 									label="Use GitHub"
 									checked={enabled}
 									disabled={status === null || busy}
-									onChange={(next) => void update('github', { enabled: next })}
+									onChange={(next) => void setEnabled('github', { enabled: next })}
 								/>
 							</div>
 
@@ -154,15 +166,16 @@ export default function SettingsVersionControl({ desktopApi }: { desktopApi: Git
 											host={host}
 											disabled={!enabled || busy}
 											saving={pendingKey === host.host}
-											onUpdate={(change) =>
-												update(host.host, { host: { host: host.host, ...change } })
+											onEnabledChange={(next) =>
+												void setEnabled(host.host, { host: { host: host.host, enabled: next } })
 											}
+											onSaveToken={(token) => setToken(host.host, token)}
 										/>
 									))}
 									<AddHost
 										disabled={!enabled || busy}
 										saving={pendingKey === 'new-host'}
-										onSave={(host, token) => update('new-host', { host: { host, token } })}
+										onSave={(host, token) => setToken(host, token, 'new-host')}
 									/>
 								</ul>
 							)}
@@ -170,6 +183,13 @@ export default function SettingsVersionControl({ desktopApi }: { desktopApi: Git
 							{status && !enabled && (
 								<p className="text-muted-foreground border-border border-t px-5 py-3 text-[12px]">
 									GitHub is off. Agents can’t link pull requests and their status won’t refresh.
+								</p>
+							)}
+
+							{status?.savedTokensProblem && (
+								<p className="text-foreground border-border border-t px-5 py-3 text-[12px]">
+									Couldn’t load your saved tokens, so this computer uses its own credentials:{' '}
+									{status.savedTokensProblem}
 								</p>
 							)}
 						</div>
@@ -190,12 +210,14 @@ function HostRow({
 	host,
 	disabled,
 	saving,
-	onUpdate
+	onEnabledChange,
+	onSaveToken
 }: {
 	host: GitHubHostStatus;
 	disabled: boolean;
 	saving: boolean;
-	onUpdate: (change: { enabled?: boolean; token?: string }) => Promise<boolean>;
+	onEnabledChange: (enabled: boolean) => void;
+	onSaveToken: (token: string) => Promise<boolean>;
 }) {
 	const [editing, setEditing] = useState(false);
 	const tokenEditorId = `github-token-${host.host}`;
@@ -229,7 +251,7 @@ function HostRow({
 					disabled={disabled}
 					onChange={(enabled) => {
 						if (!enabled) setEditing(false);
-						void onUpdate({ enabled });
+						onEnabledChange(enabled);
 					}}
 				/>
 			</div>
@@ -240,7 +262,7 @@ function HostRow({
 					disabled={disabled}
 					saving={saving}
 					onSave={async (token) => {
-						if (await onUpdate({ token })) setEditing(false);
+						if (await onSaveToken(token)) setEditing(false);
 					}}
 				/>
 			)}
@@ -318,9 +340,24 @@ function AddHost({
 	const inputClass =
 		'border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full min-w-0 rounded-lg border px-3 font-mono text-[13px] outline-none disabled:opacity-50';
 
+	const trimmedHost = host.trim().toLowerCase();
+
 	return (
 		<li className="px-5 py-4">
-			<form className="space-y-3" onSubmit={(event) => void submit(event)}>
+			<form
+				className="bg-hover-fill/60 space-y-3 rounded-lg p-3"
+				onSubmit={(event) => void submit(event)}
+			>
+				<div className="flex items-center justify-between">
+					<p className="text-foreground text-[13px] font-medium">GitHub Enterprise host</p>
+					<button
+						type="button"
+						className="text-muted-foreground hover:text-foreground text-[12px] transition"
+						onClick={() => setOpen(false)}
+					>
+						Cancel
+					</button>
+				</div>
 				<div className="flex gap-2">
 					<input
 						value={host}
@@ -330,7 +367,7 @@ function AddHost({
 						aria-label="Enterprise host"
 						placeholder="github.example.com"
 						disabled={disabled}
-						className={cn(inputClass, 'flex-1')}
+						className={cn(inputClass, 'basis-2/5')}
 					/>
 					<input
 						type="password"
@@ -339,7 +376,7 @@ function AddHost({
 						autoComplete="off"
 						spellCheck={false}
 						aria-label="Enterprise token"
-						placeholder="Token"
+						placeholder="ghp_… or github_pat_…"
 						disabled={disabled}
 						className={cn(inputClass, 'flex-1')}
 					/>
@@ -351,13 +388,24 @@ function AddHost({
 						{saving ? 'Checking…' : 'Add'}
 					</button>
 				</div>
-				<button
-					type="button"
-					className="text-muted-foreground hover:text-foreground text-[12px] transition"
-					onClick={() => setOpen(false)}
-				>
-					Cancel
-				</button>
+				<p className="text-muted-foreground text-[12px] leading-5">
+					Encrypted in WorkOS Vault and used on all your machines. It needs read access to pull
+					requests.
+					{trimmedHost.includes('.') && (
+						<>
+							{' '}
+							<a
+								href={`https://${trimmedHost}/settings/tokens/new?description=Sprocket&scopes=repo`}
+								target="_blank"
+								rel="noreferrer"
+								className="text-foreground inline-flex items-center gap-0.5 hover:underline"
+							>
+								Create a token on {trimmedHost}
+								<ExternalLink className="size-3" aria-hidden="true" />
+							</a>
+						</>
+					)}
+				</p>
 			</form>
 		</li>
 	);
@@ -418,8 +466,8 @@ function TokenEditor({
 				</button>
 			</div>
 			<p className="text-muted-foreground text-[12px] leading-5">
-				Used before environment tokens and the gh login, and kept in a private file on this
-				computer. It needs read access to pull requests.{' '}
+				Encrypted in WorkOS Vault and used on all your machines, before environment tokens and the
+				gh login. It needs read access to pull requests.{' '}
 				<a
 					href={`https://${host.host}/settings/tokens/new?description=Sprocket&scopes=repo`}
 					target="_blank"

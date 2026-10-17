@@ -281,13 +281,14 @@ export type GitHubHostStatus = {
 export type GitHubStatus = {
 	enabled: boolean;
 	cliVersion: string | null;
+	savedTokensProblem: string | null;
 	hosts: GitHubHostStatus[];
 };
 
-/** One change at a time; an empty `token` removes the saved one. */
+/** One switch on this machine at a time. Tokens are saved through Convex. */
 export type GitHubSettingsUpdate = {
 	enabled?: boolean;
-	host?: { host: string; enabled?: boolean; token?: string };
+	host?: { host: string; enabled: boolean };
 };
 
 export type ChatGptBrowserLoginResult = {
@@ -387,8 +388,8 @@ export type DesktopApi = {
 	disconnectChatGptAccount: (
 		request: LocalUserRequest & { connectionId: string }
 	) => Promise<string | null>;
-	fetchGitHubStatus: () => Promise<GitHubStatus>;
-	updateGitHubSettings: (update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
+	fetchGitHubStatus: (userId: string) => Promise<GitHubStatus>;
+	updateGitHubSettings: (userId: string, update: GitHubSettingsUpdate) => Promise<GitHubStatus>;
 };
 
 export type WorkspacePathResolution = {
