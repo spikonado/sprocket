@@ -59,7 +59,7 @@ pub(crate) struct RunArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct LoginArgs {
-    /// Credential storage for this local profile. File storage is not encrypted.
+    /// Override automatic keyring/file storage for this local profile. File storage is not encrypted.
     #[arg(long, value_enum)]
     credential_store: Option<CredentialStore>,
 }
@@ -363,7 +363,7 @@ async fn require_login(connection: &Connection) -> anyhow::Result<()> {
     {
         LoginStatus::Authenticated { .. } => Ok(()),
         LoginStatus::Unavailable { error } | LoginStatus::Failed { error } => anyhow::bail!(
-            "{error}. Run sprocket login, or use --credential-store file on a headless machine."
+            "{error}. Run sprocket login. If you chose --credential-store keyring, unlock your operating system keyring or use --credential-store file."
         ),
         _ => anyhow::bail!("not signed in; run sprocket login"),
     }

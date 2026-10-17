@@ -118,7 +118,7 @@ impl NativeAuthManager {
                 Ok(Ok(response)) => manager
                     .accept_login(response)
                     .await
-                    .map_err(|error| error.to_string()),
+                    .map_err(|error| format!("{error:#}")),
                 Ok(Err(_)) => {
                     Err("Device login failed or was denied. Run sprocket login again.".to_string())
                 }
