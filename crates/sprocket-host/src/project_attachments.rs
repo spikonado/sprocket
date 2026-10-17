@@ -26,8 +26,14 @@ pub struct ProjectAttachmentRecord {
     pub last_used_at: u64,
     #[serde(default)]
     pub last_message_sent_at: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,9 +83,34 @@ impl ProjectAttachmentStore {
         self.ensure_loaded().await?;
         self.refresh_all().await?;
         let sessions = self.attachments.read().await;
-        let mut listed: Vec<ProjectAttachmentRecord> = sessions.values().cloned().collect();
+        let mut listed: Vec<ProjectAttachmentRecord> = sessions
+            .values()
+            .filter(|attachment| !attachment.hidden)
+            .cloned()
+            .collect();
         listed.sort_by(compare_project_recency);
         Ok(listed)
+    }
+
+    pub async fn remove(&self, workspace_path: &str) -> Result<()> {
+        self.ensure_loaded().await?;
+        let _update_guard = self.update_lock.lock().await;
+        let mut attachments = self.attachments.write().await;
+        let Some(existing) = attachments.get(workspace_path) else {
+            return Ok(());
+        };
+        if existing.hidden {
+            return Ok(());
+        }
+
+        let mut hidden = existing.clone();
+        hidden.hidden = true;
+        let mut updated = attachments.clone();
+        updated.insert(workspace_path.to_owned(), hidden);
+        let payload = serde_json::to_vec_pretty(&updated.values().collect::<Vec<_>>())?;
+        self.persist_payload(payload).await?;
+        *attachments = updated;
+        Ok(())
     }
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
@@ -101,7 +132,8 @@ impl ProjectAttachmentStore {
                 anyhow::bail!("Replacement workspace is not attached");
             }
             if let Some(existing) = sessions.values().find(|attachment| {
-                same_attachment_identity(attachment, &validated)
+                !attachment.hidden
+                    && same_attachment_identity(attachment, &validated)
                     && match replace_workspace_path.as_deref() {
                         Some(previous_path) => attachment.workspace_path != previous_path,
                         None => attachment.workspace_path != validated.workspace_path,
@@ -148,13 +180,27 @@ impl ProjectAttachmentStore {
                 .get(&resolved.workspace_path)
                 .map(|attachment| attachment.last_message_sent_at)
                 .unwrap_or_default();
+            resolved.hidden = attachments
+                .get(&resolved.workspace_path)
+                .is_some_and(|attachment| attachment.hidden);
             let existing = attachments
-                .values()
-                .find(|attachment| same_attachment_identity(attachment, &resolved))
+                .get(&resolved.workspace_path)
+                .filter(|attachment| same_attachment_identity(attachment, &resolved))
+                .or_else(|| {
+                    attachments.values().find(|attachment| {
+                        !attachment.hidden && same_attachment_identity(attachment, &resolved)
+                    })
+                })
+                .or_else(|| {
+                    attachments
+                        .values()
+                        .find(|attachment| same_attachment_identity(attachment, &resolved))
+                })
                 .cloned();
 
             match existing {
                 Some(existing) => {
+                    resolved.hidden |= existing.hidden;
                     resolved.last_message_sent_at = resolved
                         .last_message_sent_at
                         .max(existing.last_message_sent_at);
@@ -180,16 +226,19 @@ impl ProjectAttachmentStore {
         self.ensure_loaded().await?;
         let _update_guard = self.update_lock.lock().await;
         let mut attachments = self.attachments.write().await;
-        let Some(attachment) = attachments
+        let mut changed = false;
+        for attachment in attachments
             .values_mut()
-            .find(|attachment| attachment.attachment_key == attachment_key)
-        else {
-            return Ok(());
-        };
-        if sent_at <= attachment.last_message_sent_at {
+            .filter(|attachment| attachment.attachment_key == attachment_key)
+        {
+            if sent_at > attachment.last_message_sent_at {
+                attachment.last_message_sent_at = sent_at;
+                changed = true;
+            }
+        }
+        if !changed {
             return Ok(());
         }
-        attachment.last_message_sent_at = sent_at;
         drop(attachments);
         self.save_to_disk().await
     }
@@ -329,11 +378,15 @@ impl ProjectAttachmentStore {
 
     async fn save_to_disk(&self) -> Result<()> {
         self.prune().await;
-        let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
         let payload = {
             let sessions = self.attachments.read().await;
             serde_json::to_vec_pretty(&sessions.values().collect::<Vec<_>>())?
         };
+        self.persist_payload(payload).await
+    }
+
+    async fn persist_payload(&self, payload: Vec<u8>) -> Result<()> {
+        let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
         tokio::task::spawn_blocking(move || {
             crate::profile::write_private_file(&store_path, &payload)
         })
@@ -347,9 +400,10 @@ impl ProjectAttachmentStore {
         let mut sessions: Vec<ProjectAttachmentRecord> = store
             .values()
             .filter(|session| {
-                session.availability == WorkspaceAvailability::Available
-                    || now.saturating_sub(session.last_validated_at)
-                        < STALE_UNAVAILABLE_WORKSPACE_MS
+                !session.hidden
+                    && (session.availability == WorkspaceAvailability::Available
+                        || now.saturating_sub(session.last_validated_at)
+                            < STALE_UNAVAILABLE_WORKSPACE_MS)
             })
             .cloned()
             .collect();
@@ -357,7 +411,8 @@ impl ProjectAttachmentStore {
         sessions.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
         sessions.truncate(MAX_PERSISTED_PROJECT_ATTACHMENTS);
 
-        store.clear();
+        // Hidden records are removal tombstones: eviction would let run recovery revive them.
+        store.retain(|_, session| session.hidden);
         for session in sessions {
             store.insert(session.workspace_path.clone(), session);
         }
@@ -386,6 +441,9 @@ fn deduplicate_repository_attachments(
     let mut winners = HashMap::<String, String>::new();
 
     for (workspace_path, attachment) in attachments.iter() {
+        if attachment.hidden {
+            continue;
+        }
         let Some(current_path) = winners.get(&attachment.attachment_key) else {
             winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
             continue;
@@ -399,7 +457,7 @@ fn deduplicate_repository_attachments(
 
     let previous_len = attachments.len();
     attachments.retain(|workspace_path, attachment| {
-        winners.get(&attachment.attachment_key) == Some(workspace_path)
+        attachment.hidden || winners.get(&attachment.attachment_key) == Some(workspace_path)
     });
     attachments.len() != previous_len
 }
@@ -460,6 +518,7 @@ fn mark_available(
         unavailable_reason: None,
         last_used_at: session.last_used_at,
         last_message_sent_at: session.last_message_sent_at,
+        hidden: session.hidden,
     }
 }
 
@@ -535,6 +594,7 @@ async fn resolve_attachment(workspace_path: String) -> Result<ProjectAttachmentR
         last_validated_at: now,
         last_used_at: now,
         last_message_sent_at: 0,
+        hidden: false,
         unavailable_reason: None,
     })
     .await?;

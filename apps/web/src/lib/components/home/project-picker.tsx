@@ -6,7 +6,7 @@ import {
 	useState,
 	type KeyboardEvent as ReactKeyboardEvent
 } from 'react';
-import { ArrowLeft, Folder, LoaderCircle } from 'lucide-react';
+import { ArrowLeft, Folder, LoaderCircle, X } from 'lucide-react';
 import type { DesktopApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
 import {
 	getBrowseLeafPathSegment,
@@ -37,6 +37,7 @@ export default function ProjectPicker({
 	mode = 'add',
 	expectedDisplayName,
 	recentProjectPaths = [],
+	onRemoveProject,
 	onClose,
 	onSelect
 }: {
@@ -45,6 +46,7 @@ export default function ProjectPicker({
 	mode?: 'add' | 'reconnect';
 	expectedDisplayName?: string;
 	recentProjectPaths?: RecentProjectPath[];
+	onRemoveProject?: (project: RecentProjectPath) => void;
 	onClose: () => void;
 	onSelect: (selection: ProjectSelection) => void | Promise<void>;
 }) {
@@ -117,7 +119,10 @@ export default function ProjectPicker({
 	);
 
 	const browseFilterQuery = getBrowseLeafPathSegment(query).toLowerCase();
-	const browseStateIsCurrent = query === browseQuery;
+
+	const browseStateIsCurrent =
+		query === browseQuery || (volumeList && isWindowsVolumeListQuery(query));
+
 	const currentBrowseParentPath = browseStateIsCurrent ? browseParentPath : '';
 	const currentBrowseEntries = browseStateIsCurrent ? browseEntries : [];
 
@@ -379,6 +384,10 @@ export default function ProjectPicker({
 			return;
 		}
 
+		if (event.target instanceof Element && event.target.closest('button:not([role="option"])')) {
+			return;
+		}
+
 		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSubmit && !isSubmitting) {
 			event.preventDefault();
 			void confirmSelection();
@@ -402,10 +411,6 @@ export default function ProjectPicker({
 		}
 
 		if (event.key === 'Enter' && highlightedEntry) {
-			if (event.target instanceof Element && event.target.closest('[data-project-submit]')) {
-				return;
-			}
-
 			event.preventDefault();
 			selectEntry(highlightedEntry);
 
@@ -499,16 +504,29 @@ export default function ProjectPicker({
 				{recentProjectPaths.length > 0 && (
 					<div className="border-hairline flex flex-wrap gap-1.5 border-b px-5 py-2">
 						{recentProjectPaths.map((recent) => (
-							<button
-								key={recent.workspacePath}
-								type="button"
-								className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md px-2 py-0.5 text-[11px] transition"
-								onClick={() => {
-									selectRecentProjectPath(recent);
-								}}
-							>
-								{recent.displayName}
-							</button>
+							<div key={recent.workspacePath} className="flex items-center rounded-md">
+								<button
+									type="button"
+									className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md px-2 py-0.5 text-[11px] transition"
+									onClick={() => {
+										selectRecentProjectPath(recent);
+									}}
+								>
+									{recent.displayName}
+								</button>
+								{onRemoveProject && (
+									<button
+										type="button"
+										className="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md p-1 transition"
+										aria-label={`Remove ${recent.displayName} from project list`}
+										title={`Remove ${recent.workspacePath} from project list`}
+										disabled={isSubmitting}
+										onClick={() => onRemoveProject(recent)}
+									>
+										<X className="size-3" />
+									</button>
+								)}
+							</div>
 						))}
 					</div>
 				)}
