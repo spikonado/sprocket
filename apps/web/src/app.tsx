@@ -517,7 +517,6 @@ export default function App({
 	const [currentRepositoryKey, setCurrentRepositoryKey] = useState<string | null>(null);
 	const [currentThreadId, setCurrentThreadId] = useState<Id<'threadRecords'> | null>(null);
 	const [draftWorkspacePath, setDraftWorkspacePath] = useState<string | null>(null);
-	// Unset until the live catalog loads; the composer then selects the catalog default.
 	const [selectedModel, setSelectedModel] = useState<CatalogModelId>();
 
 	const [selectedCompletionProvider, setSelectedCompletionProvider] =
@@ -1651,11 +1650,7 @@ export default function App({
 			return;
 		}
 
-		if (!selectedModel || !selectedReasoningEffort) {
-			setCurrentError('Loading models before sending.');
-
-			return;
-		}
+		if (!selectedModel || !selectedReasoningEffort) return;
 
 		if (currentThreadId && !isLatestRunReady) {
 			setCurrentError('Loading thread state before sending.');

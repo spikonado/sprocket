@@ -574,31 +574,13 @@ export function PromptComposerView({
 	}
 
 	function handleModelChange(modelId: CatalogModelId, effort: string) {
-		if (!modelCatalog) return;
 		onSelectedModelChange?.(modelId);
-		const model = getCatalogModel(modelCatalog, modelId);
-
-		if (model) onSelectedReasoningEffortChange?.(effort);
+		onSelectedReasoningEffortChange?.(effort);
 	}
 
 	function handleProviderChange(provider: CompletionProvider) {
-		if (!modelCatalog) return;
 		onSelectedCompletionProviderChange?.(provider);
 		onCompletionProviderSelect?.(provider);
-
-		const modelId = resolveModelForCompletionProvider(modelCatalog, provider, selectedModel);
-
-		if (!modelId) return;
-		const model = getCatalogModel(modelCatalog, modelId);
-		onSelectedModelChange?.(modelId);
-		onSelectedReasoningEffortChange?.(
-			modelId === selectedModel &&
-				selectedReasoningEffort !== undefined &&
-				model?.reasoningEfforts.includes(selectedReasoningEffort)
-				? selectedReasoningEffort
-				: (model?.defaultReasoningEffort ?? modelCatalog.defaultReasoningEffort)
-		);
-		onFastModeChange?.(false);
 	}
 
 	useEffect(() => {
@@ -649,7 +631,7 @@ export function PromptComposerView({
 		if (!selectedCatalogModel) return;
 
 		if (
-			selectedReasoningEffort === undefined ||
+			!selectedReasoningEffort ||
 			!selectedCatalogModel.reasoningEfforts.includes(selectedReasoningEffort)
 		) {
 			onSelectedReasoningEffortChange?.(selectedCatalogModel.defaultReasoningEffort);
@@ -911,45 +893,41 @@ export function PromptComposerView({
 											<Paperclip className="size-4" aria-hidden="true" />
 										</button>
 
-										{modelCatalog ? (
+										{modelCatalog && selectedModel && selectedReasoningEffort ? (
 											<>
-												{selectedModel && selectedReasoningEffort ? (
-													<>
-														<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
-
-														<ModelSelector
-															modelId={selectedModel}
-															models={modelCatalog.models.filter((model) =>
-																modelOptions.some((option) => option.id === model.id)
-															)}
-															reasoningEffort={selectedReasoningEffort}
-															fastMode={fastMode}
-															allowsFastMode={selectedCompletionProvider === 'spikonado'}
-															disabled={composerLocked || answeringQuestion}
-															onSelect={handleModelChange}
-															onFastModeChange={onFastModeChange}
-														/>
-													</>
-												) : null}
-
 												<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
-												<OptionSelector
-													value={selectedCompletionProvider}
-													options={providerOptions}
-													ariaLabel="Select provider"
-													menuTitle="Provider"
-													compactOnMobile
-													disabled={composerLocked || answeringQuestion}
-													onValueChange={handleProviderChange}
-													className="z-20 shrink-0"
-													triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"
-													optionIcon={(option) => (
-														<ProviderLogo provider={option.id} className="size-4 shrink-0" />
+												<ModelSelector
+													modelId={selectedModel}
+													models={modelCatalog.models.filter((model) =>
+														modelOptions.some((option) => option.id === model.id)
 													)}
+													reasoningEffort={selectedReasoningEffort}
+													fastMode={fastMode}
+													allowsFastMode={selectedCompletionProvider === 'spikonado'}
+													disabled={composerLocked || answeringQuestion}
+													onSelect={handleModelChange}
+													onFastModeChange={onFastModeChange}
 												/>
 											</>
 										) : null}
+
+										<div className="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
+
+										<OptionSelector
+											value={selectedCompletionProvider}
+											options={providerOptions}
+											ariaLabel="Select provider"
+											menuTitle="Provider"
+											compactOnMobile
+											disabled={composerLocked || answeringQuestion}
+											onValueChange={handleProviderChange}
+											className="z-20 shrink-0"
+											triggerClassName="h-11 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent sm:h-9"
+											optionIcon={(option) => (
+												<ProviderLogo provider={option.id} className="size-4 shrink-0" />
+											)}
+										/>
 									</div>
 
 									<div className="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">

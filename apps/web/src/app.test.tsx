@@ -22,23 +22,19 @@ import type {
 } from '$lib/types/sprocket';
 import App, { type AppRuntime } from './app';
 
-const defaultModelId = 'model-one';
-
-const defaultReasoningEffort = 'medium';
-
 const modelCatalog: ModelCatalog = {
-	defaultModelId,
-	defaultReasoningEffort,
+	defaultModelId: 'model-one',
+	defaultReasoningEffort: 'medium',
 	models: [
 		{
-			id: defaultModelId,
+			id: 'model-one',
 			label: 'Model One',
 			provider: 'spikonado',
 			supportsImages: false,
 			contextWindowTokens: 100_000,
 			autoHandoffTokenLimit: 80_000,
 			reasoningEfforts: ['low', 'medium'],
-			defaultReasoningEffort,
+			defaultReasoningEffort: 'medium',
 			supportsFastMode: true
 		}
 	]
@@ -78,8 +74,8 @@ function threadRecord(id: string, repositoryKey: string, title: string): Doc<'th
 		status: 'completed',
 		repositoryKey,
 		title,
-		selectedModel: defaultModelId,
-		reasoningEffort: defaultReasoningEffort,
+		selectedModel: modelCatalog.defaultModelId,
+		reasoningEffort: 'medium',
 		fastMode: false,
 		lastMessageAt: 1
 	};
