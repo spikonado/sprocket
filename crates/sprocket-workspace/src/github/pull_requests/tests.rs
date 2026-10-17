@@ -49,8 +49,8 @@ fn batches_lookups_as_aliases_with_typed_variables() {
     assert_eq!(
         query,
         "query PullRequestStates($o0: String!, $n0: String!, $p0: Int!, $o1: String!, $n1: String!, $p1: Int!) { \
-         pr0: repository(owner: $o0, name: $n0) { pullRequest(number: $p0) { state } } \
-         pr1: repository(owner: $o1, name: $n1) { pullRequest(number: $p1) { state } } }"
+         pr0: repository(owner: $o0, name: $n0) { pullRequest(number: $p0) { state title } } \
+         pr1: repository(owner: $o1, name: $n1) { pullRequest(number: $p1) { state title } } }"
     );
     assert_eq!(
         variables,

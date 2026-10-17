@@ -24,7 +24,8 @@ const pullRequestStatesSchema = z.array(
 	z.object({
 		repository: z.string(),
 		number: z.number(),
-		state: z.enum(['open', 'closed', 'merged'])
+		state: z.enum(['open', 'closed', 'merged']),
+		title: z.string()
 	})
 );
 

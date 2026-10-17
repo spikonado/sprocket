@@ -28,6 +28,7 @@ pub struct PullRequestStatus {
     pub repository: String,
     pub number: u32,
     pub state: PullRequestState,
+    pub title: String,
 }
 
 /// What GitHub answered. PRs it could not find are left out; hosts that could
@@ -107,6 +108,7 @@ async fn fetch_batch(
     #[derive(Deserialize)]
     struct PullRequestNode {
         state: GraphQlState,
+        title: String,
     }
 
     #[derive(Deserialize)]
@@ -123,7 +125,7 @@ async fn fetch_batch(
         .await?;
     // A PR or repository GitHub can't find fails only its own alias, which
     // comes back null next to an error.
-    let Some(data) = response.data else {
+    let Some(mut data) = response.data else {
         let message = response
             .errors
             .first()
@@ -135,10 +137,10 @@ async fn fetch_batch(
         .enumerate()
         .filter_map(|(index, (pull_request, _))| {
             let node = data
-                .get(&format!("pr{index}"))?
-                .as_ref()?
+                .get_mut(&format!("pr{index}"))?
+                .as_mut()?
                 .pull_request
-                .as_ref()?;
+                .take()?;
             Some(PullRequestStatus {
                 repository: pull_request.repository.clone(),
                 number: pull_request.number,
@@ -147,6 +149,7 @@ async fn fetch_batch(
                     GraphQlState::Closed => PullRequestState::Closed,
                     GraphQlState::Merged => PullRequestState::Merged,
                 },
+                title: node.title,
             })
         })
         .collect())
@@ -163,7 +166,7 @@ fn batch_query(batch: &[(&PullRequestRef, Repository<'_>)]) -> (String, serde_js
             "$o{index}: String!, $n{index}: String!, $p{index}: Int!"
         ));
         fields.push(format!(
-            "pr{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequest(number: $p{index}) {{ state }} }}"
+            "pr{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequest(number: $p{index}) {{ state title }} }}"
         ));
         variables.insert(format!("o{index}"), repository.owner.into());
         variables.insert(format!("n{index}"), repository.name.into());

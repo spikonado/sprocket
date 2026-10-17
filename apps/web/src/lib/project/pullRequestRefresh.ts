@@ -3,21 +3,14 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 
 type Thread = Doc<'threadRecords'>;
 
-type PullRequestState = NonNullable<Thread['pullRequests']>[number]['state'];
+type LinkedPullRequest = NonNullable<Thread['pullRequests']>[number];
 
 export type PullRequestRef = { repository: string; number: number };
 
-export type PullRequestStateUpdate = {
-	threadId: Id<'threadRecords'>;
-	repository: string;
-	number: number;
-	state: PullRequestState;
-};
+export type PullRequestStateUpdate = LinkedPullRequest & { threadId: Id<'threadRecords'> };
 
 export type PullRequestStateSync = {
-	fetchStates: (
-		pullRequests: PullRequestRef[]
-	) => Promise<(PullRequestRef & { state: PullRequestState })[]>;
+	fetchStates: (pullRequests: PullRequestRef[]) => Promise<LinkedPullRequest[]>;
 	updateStates: (updates: PullRequestStateUpdate[]) => Promise<null>;
 };
 
@@ -28,9 +21,9 @@ const MAX_PULL_REQUESTS_PER_REFRESH = 500;
 const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
 
 /**
- * Keeps linked PR states of the threads on screen fresh. Each list of shown rows
+ * Keeps linked PR states and titles of the threads on screen fresh. Each list of shown rows
  * registers itself; a thread is read when it first appears, and every shown
- * thread is read on `refreshShown`. Merged PRs never change, so they are skipped.
+ * thread is read on `refreshShown`. Merged PRs rarely change, so they are skipped.
  */
 export class PullRequestRefresher {
 	readonly #sync: PullRequestStateSync;
@@ -84,14 +77,22 @@ export class PullRequestRefresher {
 
 			try {
 				const fetched = new Map(
-					(await this.#sync.fetchStates([...refs.values()])).map((pr) => [refKey(pr), pr.state])
+					(await this.#sync.fetchStates([...refs.values()])).map((pr) => [refKey(pr), pr])
 				);
 
 				const updates = batch.flatMap(({ thread, pr }) => {
-					const state = fetched.get(refKey(pr));
+					const latest = fetched.get(refKey(pr));
 
-					return state && state !== pr.state
-						? [{ threadId: thread._id, repository: pr.repository, number: pr.number, state }]
+					return latest && (latest.state !== pr.state || latest.title !== pr.title)
+						? [
+								{
+									threadId: thread._id,
+									repository: pr.repository,
+									number: pr.number,
+									state: latest.state,
+									title: latest.title
+								}
+							]
 						: [];
 				});
 
