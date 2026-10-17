@@ -1,5 +1,5 @@
-/** The right sidebar shows the agent's browser live view alongside project artifacts. */
-export type SidePanelTab = 'live' | 'artifacts';
+/** `home` is the launcher shown until a view is picked. */
+export type SidePanelTab = 'home' | 'artifacts' | 'live';
 
 /** Stored panel state, restored when revisiting a project workspace. */
 export type SidePanelSnapshot = {
@@ -14,6 +14,6 @@ export type SidePanelSnapshot = {
 export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 	open: false,
 	expanded: false,
-	tab: 'artifacts',
+	tab: 'home',
 	selectedKey: null
 };
