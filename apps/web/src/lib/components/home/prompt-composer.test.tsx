@@ -744,7 +744,19 @@ describe('PromptComposer mobile selectors', () => {
 });
 
 describe('PromptComposer model selection', () => {
-	it('uses the replacement model default when the live catalog retires the startup model', () => {
+	it('shows model controls with the catalog default once the catalog loads', () => {
+		const { props, rerender } = renderComposer();
+
+		expect(screen.queryByRole('button', { name: 'Select model' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Select provider' })).toBeNull();
+
+		rerender({ ...props, modelCatalog: { ...modelCatalog, defaultModelId: 'model-two' } });
+
+		expect(screen.getByRole('button', { name: 'Select model' }).title).toBe('Model Two · High');
+		expect(screen.getByRole('button', { name: 'Select provider' })).toBeTruthy();
+	});
+
+	it('uses the replacement model default when the catalog no longer has the selected model', () => {
 		const { props, rerender } = renderComposer({
 			selectedModel: 'gpt-5.6-sol',
 			selectedReasoningEffort: 'high'

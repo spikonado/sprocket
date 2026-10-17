@@ -5,7 +5,6 @@ import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { AgentQuestionSnapshot } from '@convex/agentQuestions';
-import { defaultModelId, defaultReasoningEffort } from '@convex/lib/models';
 import { authState, resetAuthRuntime } from '$lib/auth';
 import type { ModelCatalog } from '$lib/chat/model-catalog';
 import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
@@ -22,6 +21,10 @@ import type {
 	TranscriptDisplayRow
 } from '$lib/types/sprocket';
 import App, { type AppRuntime } from './app';
+
+const defaultModelId = 'model-one';
+
+const defaultReasoningEffort = 'medium';
 
 const modelCatalog: ModelCatalog = {
 	defaultModelId,
