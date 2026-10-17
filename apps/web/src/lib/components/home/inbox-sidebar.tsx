@@ -5,15 +5,11 @@ import {
 	ChevronRight,
 	Copy,
 	FolderPlus,
-	GitMerge,
-	GitPullRequest,
-	GitPullRequestClosed,
 	RotateCcw,
 	Search,
 	Settings,
 	SquarePen,
-	X,
-	type LucideIcon
+	X
 } from 'lucide-react';
 import type {
 	DragEvent as ReactDragEvent,
@@ -36,6 +32,7 @@ import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
 import AppUpdate from './app-update';
 import InboxLoadMore from './inbox-load-more';
+import LinkedPullRequests from './linked-pull-requests';
 import SidebarTopActions from './sidebar-top-actions';
 
 const SETTLED_INBOX_OPEN_KEY = 'sprocket.inbox.settled-open';
@@ -769,7 +766,7 @@ function ThreadTreeRow({
 								</span>
 							)}
 						</span>
-						{/* Its overlay makes the whole row clickable while PR links stay outside the button. */}
+						{/* Its overlay makes the whole row clickable while the PR button stays outside it. */}
 						<button
 							className="inbox-row-open inbox-row-title truncate"
 							type="button"
@@ -850,16 +847,6 @@ function ThreadTreeRow({
 	);
 }
 
-type PullRequest = NonNullable<Thread['pullRequests']>[number];
-
-const pullRequestDisplay: Record<PullRequest['state'], { Icon: LucideIcon; label: string }> = {
-	open: { Icon: GitPullRequest, label: 'Open' },
-	closed: { Icon: GitPullRequestClosed, label: 'Closed' },
-	merged: { Icon: GitMerge, label: 'Merged' }
-};
-
-const VISIBLE_PULL_REQUESTS = 3;
-
 function ThreadModelRow({
 	model,
 	pullRequests = []
@@ -867,8 +854,6 @@ function ThreadModelRow({
 	model: ThreadTreeRowProps['model'];
 	pullRequests: Thread['pullRequests'];
 }) {
-	const hidden = pullRequests.slice(0, -VISIBLE_PULL_REQUESTS);
-
 	return (
 		<span className="inbox-row-model">
 			{model ? (
@@ -879,28 +864,7 @@ function ThreadModelRow({
 			) : (
 				<span className="truncate">Unknown model</span>
 			)}
-			{pullRequests.length > 0 && (
-				<span className="inbox-row-prs">
-					{hidden.length > 0 && <span className="inbox-row-pr">+{hidden.length}</span>}
-					{pullRequests.slice(-VISIBLE_PULL_REQUESTS).map((pr) => {
-						const { Icon, label } = pullRequestDisplay[pr.state];
-
-						return (
-							<a
-								key={`${pr.repository}#${pr.number}`}
-								className={`inbox-row-pr inbox-pr-${pr.state}`}
-								href={`https://${pr.repository}/pull/${pr.number}`}
-								target="_blank"
-								rel="noreferrer"
-								draggable={false}
-							>
-								<Icon size={12} aria-hidden />
-								<span className="sr-only">{label} PR</span>#{pr.number}
-							</a>
-						);
-					})}
-				</span>
-			)}
+			<LinkedPullRequests pullRequests={pullRequests} />
 		</span>
 	);
 }

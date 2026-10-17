@@ -5,7 +5,7 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { vLinkedPullRequest, vPullRequestState } from '@convex/lib/validators';
+import { vLinkedPullRequest } from '@convex/lib/validators';
 
 type LinkedPullRequest = Infer<typeof vLinkedPullRequest>;
 
@@ -57,15 +57,13 @@ export const link = mutation({
 	}
 });
 
-/** Records states the user's machine read from GitHub for PRs already linked to their threads. */
+/** Records what the user's machine read from GitHub for PRs already linked to their threads. */
 export const updateStates = mutation({
 	args: {
 		updates: v.array(
 			v.object({
 				threadId: v.id('threadRecords'),
-				repository: v.string(),
-				number: v.number(),
-				state: vPullRequestState
+				...vLinkedPullRequest.fields
 			})
 		)
 	},
@@ -76,27 +74,27 @@ export const updateStates = mutation({
 		}
 
 		const userId = await getUserId(ctx);
-		const byThread = new Map<Id<'threadRecords'>, Map<string, LinkedPullRequest['state']>>();
+		const byThread = new Map<Id<'threadRecords'>, Map<string, LinkedPullRequest>>();
 
-		for (const { threadId, state, ...pr } of args.updates) {
-			const states = byThread.get(threadId) ?? new Map();
+		for (const { threadId, ...pr } of args.updates) {
+			const fetched = byThread.get(threadId) ?? new Map();
 
-			states.set(pullRequestKey(pr), state);
-			byThread.set(threadId, states);
+			fetched.set(pullRequestKey(pr), pr);
+			byThread.set(threadId, fetched);
 		}
 
-		for (const [threadId, states] of byThread) {
+		for (const [threadId, fetched] of byThread) {
 			const thread = await getOwnedThreadRecord(ctx.db, userId, threadId);
 			let changed = false;
 
 			const pullRequests = (thread.pullRequests ?? []).map((pr) => {
-				const state = states.get(pullRequestKey(pr));
+				const update = fetched.get(pullRequestKey(pr));
 
-				if (!state || state === pr.state) return pr;
+				if (!update || (update.state === pr.state && update.title === pr.title)) return pr;
 
 				changed = true;
 
-				return { ...pr, state };
+				return { ...pr, state: update.state, title: update.title };
 			});
 
 			if (changed) await ctx.db.patch('threadRecords', thread._id, { pullRequests });

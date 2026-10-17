@@ -1,6 +1,6 @@
-/** Close an open menu on outside pointerdown or Escape. */
+/** Close an open menu on pointerdown outside its root(s) or Escape. */
 export function listenOpenMenuDismiss(options: {
-	getRoot: () => HTMLElement | null;
+	getRoot: () => HTMLElement | null | readonly (HTMLElement | null)[];
 	onOutside: () => void;
 	onEscape: () => void;
 }): () => void {
@@ -11,7 +11,9 @@ export function listenOpenMenuDismiss(options: {
 			return;
 		}
 
-		if (!options.getRoot()?.contains(target)) {
+		const roots = [options.getRoot()].flat();
+
+		if (!roots.some((root) => root?.contains(target))) {
 			options.onOutside();
 		}
 	}

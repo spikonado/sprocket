@@ -7,8 +7,9 @@ type PullRequests = NonNullable<Doc<'threadRecords'>['pullRequests']>;
 const pr = (
 	number: number,
 	state: PullRequests[number]['state'],
-	repository = 'github.com/acme/widgets'
-) => ({ repository, number, state });
+	repository = 'github.com/acme/widgets',
+	title = `PR ${number}`
+) => ({ repository, number, state, title });
 
 function thread(id: string, pullRequests: PullRequests): Doc<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -30,7 +31,7 @@ function thread(id: string, pullRequests: PullRequests): Doc<'threadRecords'> {
 
 function fakeSync() {
 	const fetchStates = vi.fn<PullRequestStateSync['fetchStates']>(async (pullRequests) =>
-		pullRequests.map((pr) => ({ ...pr, state: 'merged' as const }))
+		pullRequests.map((pr) => ({ ...pr, state: 'merged' as const, title: `PR ${pr.number}` }))
 	);
 
 	const updateStates = vi.fn<PullRequestStateSync['updateStates']>(async () => null);
@@ -41,11 +42,22 @@ function fakeSync() {
 const requested = (sync: ReturnType<typeof fakeSync>) =>
 	sync.fetchStates.mock.calls.map(([pullRequests]) => pullRequests.map((pr) => pr.number));
 
-it('reads non-merged PRs of threads as they appear and records changed states', async () => {
+it('reads non-merged PRs of threads as they appear and records changed states and titles', async () => {
 	const sync = fakeSync();
+
+	sync.fetchStates.mockImplementationOnce(async () => [
+		pr(1, 'merged'),
+		pr(3, 'closed', 'github.com/acme/site', 'Renamed'),
+		pr(4, 'open')
+	]);
 	const refresher = new PullRequestRefresher(sync);
 
-	const a = thread('a', [pr(1, 'open'), pr(2, 'merged'), pr(3, 'closed', 'github.com/acme/site')]);
+	const a = thread('a', [
+		pr(1, 'open'),
+		pr(2, 'merged'),
+		pr(3, 'closed', 'github.com/acme/site'),
+		pr(4, 'open')
+	]);
 
 	refresher.show('sidebar', [a]);
 	refresher.show('sidebar', [a]);
@@ -55,13 +67,14 @@ it('reads non-merged PRs of threads as they appear and records changed states', 
 		[
 			[
 				{ repository: 'github.com/acme/widgets', number: 1 },
-				{ repository: 'github.com/acme/site', number: 3 }
+				{ repository: 'github.com/acme/site', number: 3 },
+				{ repository: 'github.com/acme/widgets', number: 4 }
 			]
 		]
 	]);
 	expect(sync.updateStates).toHaveBeenCalledWith([
 		{ threadId: 'a', ...pr(1, 'merged') },
-		{ threadId: 'a', ...pr(3, 'merged', 'github.com/acme/site') }
+		{ threadId: 'a', ...pr(3, 'closed', 'github.com/acme/site', 'Renamed') }
 	]);
 });
 

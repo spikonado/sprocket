@@ -139,7 +139,8 @@ export const vPullRequestState = v.union(
 export const vLinkedPullRequest = v.object({
 	repository: v.string(),
 	number: v.number(),
-	state: vPullRequestState
+	state: vPullRequestState,
+	title: v.string()
 });
 
 const vHistoricalBrowserActPayload = v.object({
