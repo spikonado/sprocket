@@ -323,6 +323,8 @@ fn spawn_server(config: &ServerConfig) -> anyhow::Result<()> {
             "--data-dir",
         ])
         .arg(&data_dir)
+        // Nothing relaunches a temporary server, so it must not offer restarts.
+        .env_remove("SPROCKET_RESTART_FILE")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(log);
