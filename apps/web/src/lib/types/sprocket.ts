@@ -291,7 +291,15 @@ export type RunningCommand = {
 	startedAt: number;
 };
 
+export type BrowserStatus = {
+	state: 'installing' | 'ready' | 'error';
+	error: string | null;
+};
+
 export type DesktopApi = {
+	fetchBrowserStatus: (signal?: AbortSignal) => Promise<BrowserStatus>;
+	startBrowser: (signal?: AbortSignal) => Promise<BrowserStatus>;
+	browserDashboardUrl: string;
 	listRunningCommands: (
 		request: TranscriptScopeRequest,
 		signal?: AbortSignal

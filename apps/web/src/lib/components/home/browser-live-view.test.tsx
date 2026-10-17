@@ -1,69 +1,114 @@
-import { expect, it } from 'vitest';
-import { act } from 'react';
-import { render } from '@testing-library/react';
-import type { BrowserLiveViewState } from '$lib/chat/side-panel';
-import BrowserLiveView from './browser-live-view';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import BrowserLiveView, { type BrowserApi } from './browser-live-view';
+import type { BrowserStatus } from '$lib/types/sprocket';
 
-function session(expiresAt: number, ended = false, id = 'session'): BrowserLiveViewState {
+function createBrowserApi() {
 	return {
-		id,
-		providerSessionId: `provider-${id}`,
-		url: 'https://example.com/passive',
-		interactiveUrl: 'https://example.com/interactive',
-		saving: true,
-		humanControl: true,
-		expiresAt,
-		ended,
-		threadId: 'thread',
-		lastUsedRunId: null,
-		startedAt: expiresAt - 3_600_000
+		browserDashboardUrl: 'http://localhost:7731/api/browser/dashboard/',
+		startBrowser: vi.fn<BrowserApi['startBrowser']>(async () => ({
+			state: 'installing',
+			error: null
+		})),
+		fetchBrowserStatus: vi.fn<BrowserApi['fetchBrowserStatus']>(async () => ({
+			state: 'ready',
+			error: null
+		}))
 	};
 }
 
-function renderLiveView(props: {
-	liveView: BrowserLiveViewState | null | undefined;
-	active: boolean;
-}) {
-	return render(<BrowserLiveView {...props} />);
-}
+beforeEach(() => vi.useFakeTimers());
 
-it('renders the iframe for an active session', () => {
-	renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
-	expect(document.querySelector('iframe')).not.toBeNull();
+afterEach(() => {
+	cleanup();
+	vi.useRealTimers();
 });
 
-it('reports that browser actions are unavailable until a backend exists', async () => {
-	renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
-	await act(async () => {
-		document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
-	});
-	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-		'Browser sessions are not available yet.'
+it('starts setup on mount, polls installing status, and embeds the ready dashboard', async () => {
+	const api = createBrowserApi();
+	api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'installing', error: null });
+	render(<BrowserLiveView browserApi={api} />);
+	await act(async () => {});
+	expect(api.startBrowser).toHaveBeenCalledOnce();
+	expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
+
+	await act(() => vi.advanceTimersByTimeAsync(1000));
+	expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
+	await act(() => vi.advanceTimersByTimeAsync(1000));
+	expect(api.fetchBrowserStatus).toHaveBeenCalledTimes(2);
+	expect(screen.getByRole('status').textContent).toBe('Browser ready');
+	expect(screen.getByTitle('Agent browser dashboard').getAttribute('src')).toBe(
+		api.browserDashboardUrl
 	);
+	const external = screen.getByRole('link', { name: 'Open browser dashboard in a new tab' });
+	expect(external.getAttribute('href')).toBe(api.browserDashboardUrl);
+	expect(external.getAttribute('target')).toBe('_blank');
+
+	await act(() => vi.advanceTimersByTimeAsync(10_000));
+	expect(api.fetchBrowserStatus).toHaveBeenCalledTimes(4);
 });
 
-it('shows the ended state and hides controls for an ended session', () => {
-	renderLiveView({ active: false, liveView: session(Date.now() + 60_000, true) });
-	expect(document.querySelector('iframe, button, a')).toBeNull();
-	expect(document.body.textContent).toContain('Browser session ended.');
+it.each<BrowserStatus['state']>(['error', 'installing', 'ready'])(
+	'reports a dashboard error after starting in %s and retries through setup',
+	async (state) => {
+		const api = createBrowserApi();
+		const error = 'Browser setup failed.';
+
+		api.startBrowser.mockResolvedValueOnce({ state, error: state === 'error' ? error : null });
+
+		if (state !== 'error') {
+			api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'error', error });
+		}
+
+		render(<BrowserLiveView browserApi={api} />);
+		await act(async () => {});
+
+		if (state !== 'error') {
+			await act(() => vi.advanceTimersByTimeAsync(state === 'installing' ? 1000 : 5000));
+		}
+
+		expect(screen.getByRole('alert').textContent).toBe(error);
+		fireEvent.click(screen.getByRole('button', { name: 'Retry setup' }));
+		await act(async () => {});
+		expect(api.startBrowser).toHaveBeenCalledTimes(2);
+		expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
+		await act(() => vi.advanceTimersByTimeAsync(1000));
+		expect(screen.getByTitle('Agent browser dashboard')).toBeTruthy();
+	}
+);
+
+it.each(['startBrowser', 'fetchBrowserStatus'] as const)(
+	'exposes %s request failures with a retry action',
+	async (method) => {
+		const api = createBrowserApi();
+		api[method].mockRejectedValueOnce(new Error('The Sprocket server disconnected.'));
+		render(<BrowserLiveView browserApi={api} />);
+		await act(async () => {});
+		await act(() => vi.advanceTimersByTimeAsync(1000));
+		expect(screen.getByRole('alert').textContent).toBe('The Sprocket server disconnected.');
+		expect(screen.getByRole('button', { name: 'Retry setup' })).toBeTruthy();
+	}
+);
+
+it('waits for each poll to finish and cancels in-flight work on unmount', async () => {
+	const api = createBrowserApi();
+	const pending = Promise.withResolvers<BrowserStatus>();
+	api.fetchBrowserStatus.mockReturnValueOnce(pending.promise);
+	const view = render(<BrowserLiveView browserApi={api} />);
+	await act(async () => {});
+	await act(() => vi.advanceTimersByTimeAsync(5000));
+	expect(api.fetchBrowserStatus).toHaveBeenCalledOnce();
+	const signal = api.fetchBrowserStatus.mock.calls[0][0];
+	expect(signal?.aborted).toBe(false);
+	view.unmount();
+	expect(signal?.aborted).toBe(true);
+	await act(async () => pending.resolve({ state: 'installing', error: null }));
+	expect(vi.getTimerCount()).toBe(0);
 });
 
-it('shows the empty state when there is no session', () => {
-	renderLiveView({ active: false, liveView: null });
-	expect(document.body.textContent).toContain('No active browser session.');
-});
-
-it('does not surface an action failure after the session rotates', async () => {
-	const { rerender } = renderLiveView({ active: true, liveView: session(Date.now() + 60_000) });
-	await act(async () => {
-		document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
-		rerender(
-			<BrowserLiveView active liveView={session(Date.now() + 60_000, false, 'rotated-session')} />
-		);
-	});
-	// The stop request rejects only after the rotation has already rendered.
-	await act(async () => {
-		await Promise.resolve();
-	});
-	expect(document.querySelector('[role="alert"]')).toBeNull();
+it('explains the local server requirement without a connected API', () => {
+	render(<BrowserLiveView browserApi={null} />);
+	expect(screen.getByRole('status').textContent).toBe(
+		'Connect to the local Sprocket server to use the browser.'
+	);
 });
