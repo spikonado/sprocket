@@ -20,6 +20,14 @@ const browserStatusSchema = z.object({
 	error: z.string().nullable()
 });
 
+const pullRequestStatesSchema = z.array(
+	z.object({
+		repositoryKey: z.string(),
+		number: z.number(),
+		state: z.enum(['open', 'closed', 'merged'])
+	})
+);
+
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
 	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
@@ -588,6 +596,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody)
 			});
 		},
+		fetchPullRequestStates: async (requestBody) =>
+			await request('/api/pull-requests/states', pullRequestStatesSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
 		startAccountSession: async (requestBody) => {
 			await request('/api/threads/account-session/start', z.null(), {
 				method: 'POST',

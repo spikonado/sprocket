@@ -9,6 +9,7 @@ pub(crate) mod cli;
 pub mod config;
 pub(crate) mod github;
 pub mod health;
+pub mod pull_requests;
 pub(crate) mod session;
 pub mod threads;
 pub mod transcript;

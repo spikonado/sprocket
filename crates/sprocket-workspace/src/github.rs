@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+pub mod pull_requests;
 pub mod saved_tokens;
 pub mod status;
 

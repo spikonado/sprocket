@@ -238,6 +238,46 @@
 	font-size: 11px;
 }
 
+.inbox-row-prs {
+	display: flex;
+	flex-shrink: 0;
+	gap: 6px;
+	margin-left: auto;
+	padding-left: 4px;
+}
+
+.inbox-row-pr {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* GitHub Primer state colors. */
+.inbox-pr-open {
+	color: #1a7f37;
+}
+
+.inbox-pr-closed {
+	color: #d1242f;
+}
+
+.inbox-pr-merged {
+	color: #8250df;
+}
+
+[data-theme='dark'] .inbox-pr-open {
+	color: #3fb950;
+}
+
+[data-theme='dark'] .inbox-pr-closed {
+	color: #f85149;
+}
+
+[data-theme='dark'] .inbox-pr-merged {
+	color: #a371f7;
+}
+
 .inbox-row-actions {
 	position: absolute;
 	top: 4px;

@@ -5,11 +5,15 @@ import {
 	ChevronRight,
 	Copy,
 	FolderPlus,
+	GitMerge,
+	GitPullRequest,
+	GitPullRequestClosed,
 	RotateCcw,
 	Search,
 	Settings,
 	SquarePen,
-	X
+	X,
+	type LucideIcon
 } from 'lucide-react';
 import type {
 	DragEvent as ReactDragEvent,
@@ -753,16 +757,7 @@ function ThreadTreeRow({
 							}}
 							onBlur={() => void onCommitRename()}
 						/>
-						<span className="inbox-row-model">
-							{model ? (
-								<>
-									<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-									<span className="truncate">{model.label}</span>
-								</>
-							) : (
-								<span className="truncate">Unknown model</span>
-							)}
-						</span>
+						<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
 					</form>
 				) : (
 					<button
@@ -785,16 +780,7 @@ function ThreadTreeRow({
 							)}
 						</span>
 						<span className="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
-						<span className="inbox-row-model">
-							{model ? (
-								<>
-									<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-									<span className="truncate">{model.label}</span>
-								</>
-							) : (
-								<span className="truncate">Unknown model</span>
-							)}
-						</span>
+						<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
 					</button>
 				)}
 				{!renaming && isRoot && (
@@ -858,6 +844,65 @@ function ThreadTreeRow({
 				</div>
 			)}
 		</div>
+	);
+}
+
+type PullRequest = NonNullable<Thread['pullRequests']>[number];
+
+const pullRequestDisplay: Record<PullRequest['state'], { Icon: LucideIcon; label: string }> = {
+	open: { Icon: GitPullRequest, label: 'Open' },
+	closed: { Icon: GitPullRequestClosed, label: 'Closed' },
+	merged: { Icon: GitMerge, label: 'Merged' }
+};
+
+const VISIBLE_PULL_REQUESTS = 3;
+
+const pullRequestTitle = ({ repositoryKey, number, state }: PullRequest) =>
+	`${repositoryKey}#${number} · ${pullRequestDisplay[state].label}`;
+
+function ThreadModelRow({
+	model,
+	pullRequests = []
+}: {
+	model: ThreadTreeRowProps['model'];
+	pullRequests: Thread['pullRequests'];
+}) {
+	const hidden = pullRequests.slice(0, -VISIBLE_PULL_REQUESTS);
+
+	return (
+		<span className="inbox-row-model">
+			{model ? (
+				<>
+					<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+					<span className="truncate">{model.label}</span>
+				</>
+			) : (
+				<span className="truncate">Unknown model</span>
+			)}
+			{pullRequests.length > 0 && (
+				<span className="inbox-row-prs">
+					{hidden.length > 0 && (
+						<span className="inbox-row-pr" title={hidden.map(pullRequestTitle).join('\n')}>
+							+{hidden.length}
+						</span>
+					)}
+					{pullRequests.slice(-VISIBLE_PULL_REQUESTS).map((pr) => {
+						const { Icon, label } = pullRequestDisplay[pr.state];
+
+						return (
+							<span
+								key={`${pr.repositoryKey}#${pr.number}`}
+								className={`inbox-row-pr inbox-pr-${pr.state}`}
+								title={pullRequestTitle(pr)}
+							>
+								<Icon size={12} aria-hidden />
+								<span className="sr-only">{label} PR</span>#{pr.number}
+							</span>
+						);
+					})}
+				</span>
+			)}
+		</span>
 	);
 }
 

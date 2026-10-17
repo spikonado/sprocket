@@ -64,6 +64,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		deleteArtifact: unusedDesktopCall,
 		watchArtifacts: unusedDesktopCall,
 		requestRunCancellation: unusedDesktopCall,
+		fetchPullRequestStates: unusedDesktopCall,
 		startAccountSession: unusedDesktopCall,
 		endAccountSession: unusedDesktopCall,
 		fetchChatGptStatus: unusedDesktopCall,

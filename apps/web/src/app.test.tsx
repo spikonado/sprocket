@@ -123,6 +123,7 @@ function createDesktopApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
 		deleteArtifact: async () => {},
 		watchArtifacts: () => new Promise<void>(() => {}),
 		requestRunCancellation: async () => {},
+		fetchPullRequestStates: async () => [],
 		startAccountSession: async () => {},
 		endAccountSession: async () => {},
 		fetchChatGptStatus: async () => ({
