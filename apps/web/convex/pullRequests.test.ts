@@ -11,8 +11,8 @@ import {
 const pr = (
 	number: number,
 	state: 'open' | 'closed' | 'merged',
-	repositoryKey = 'github.com/acme/widgets'
-) => ({ repositoryKey, number, state });
+	repository = 'github.com/acme/widgets'
+) => ({ repository, number, state });
 
 async function startRun(t: ConvexTestInstance) {
 	const { asUser, threadId } = await seedOwnedThread(t);
@@ -26,7 +26,7 @@ async function startRun(t: ConvexTestInstance) {
 }
 
 describe('linked pull requests', () => {
-	it('merges new links into the thread, keeping same-numbered PRs of other repositories', async () => {
+	it('adds new links after earlier ones and updates relinked PRs in place', async () => {
 		const t = initConvexTest();
 		const { threadId, caller } = await startRun(t);
 
@@ -38,9 +38,9 @@ describe('linked pull requests', () => {
 		});
 
 		expect(linked).toEqual([
+			pr(12, 'closed'),
 			pr(7, 'merged'),
-			pr(12, 'open', 'github.com/acme/site'),
-			pr(12, 'closed')
+			pr(12, 'open', 'github.com/acme/site')
 		]);
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.pullRequests).toEqual(linked);
@@ -66,8 +66,8 @@ describe('linked pull requests', () => {
 		const thread = await t.run((ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.pullRequests).toEqual([
 			pr(3, 'closed'),
-			pr(12, 'open', 'github.com/acme/site'),
-			pr(12, 'merged')
+			pr(12, 'merged'),
+			pr(12, 'open', 'github.com/acme/site')
 		]);
 		await expect(
 			t.withIdentity({ subject: 'user_bob' }).mutation(api.pullRequests.updateStates, {

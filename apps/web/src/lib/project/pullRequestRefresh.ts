@@ -5,11 +5,11 @@ type Thread = Doc<'threadRecords'>;
 
 type PullRequestState = NonNullable<Thread['pullRequests']>[number]['state'];
 
-export type PullRequestRef = { repositoryKey: string; number: number };
+export type PullRequestRef = { repository: string; number: number };
 
 export type PullRequestStateUpdate = {
 	threadId: Id<'threadRecords'>;
-	repositoryKey: string;
+	repository: string;
 	number: number;
 	state: PullRequestState;
 };
@@ -25,7 +25,7 @@ const REFRESH_INTERVAL_MS = 60_000;
 
 const MAX_PULL_REQUESTS_PER_REFRESH = 500;
 
-const refKey = ({ repositoryKey, number }: PullRequestRef) => `${repositoryKey}#${number}`;
+const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
 
 /**
  * Keeps linked PR states of the threads on screen fresh. Each list of shown rows
@@ -76,9 +76,9 @@ export class PullRequestRefresher {
 			const batch = linked.slice(start, start + MAX_PULL_REQUESTS_PER_REFRESH);
 
 			const refs = new Map(
-				batch.map(({ pr: { repositoryKey, number } }) => [
-					refKey({ repositoryKey, number }),
-					{ repositoryKey, number }
+				batch.map(({ pr: { repository, number } }) => [
+					refKey({ repository, number }),
+					{ repository, number }
 				])
 			);
 
@@ -91,7 +91,7 @@ export class PullRequestRefresher {
 					const state = fetched.get(refKey(pr));
 
 					return state && state !== pr.state
-						? [{ threadId: thread._id, repositoryKey: pr.repositoryKey, number: pr.number, state }]
+						? [{ threadId: thread._id, repository: pr.repository, number: pr.number, state }]
 						: [];
 				});
 

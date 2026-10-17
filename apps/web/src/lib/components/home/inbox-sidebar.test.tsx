@@ -264,10 +264,10 @@ it('shows project, title, provider, and model name without a model slug', async 
 	expect(row.querySelector('.inbox-row-model svg')).toBeTruthy();
 	expect(row.textContent).not.toContain('model');
 	expect(row.textContent).not.toContain('submission');
-	expect(row.querySelector('.inbox-row-main')?.getAttribute('title')).not.toContain('model');
+	expect(row.querySelector('.inbox-row-open')?.getAttribute('title')).not.toContain('model');
 });
 
-it('shows the newest linked PR states in the model row', async () => {
+it('links the newest PRs in the model row to their GitHub pages', async () => {
 	await render([
 		{
 			...thread(),
@@ -278,7 +278,7 @@ it('shows the newest linked PR states in the model row', async () => {
 					[12, 'open'],
 					[15, 'closed']
 				] as const
-			).map(([number, state]) => ({ repositoryKey: 'github.com/acme/widgets', number, state }))
+			).map(([number, state]) => ({ repository: 'github.com/acme/widgets', number, state }))
 		}
 	]);
 	const prs = [...document.querySelectorAll('.inbox-row-model .inbox-row-pr')];
@@ -289,7 +289,10 @@ it('shows the newest linked PR states in the model row', async () => {
 		['inbox-row-pr inbox-pr-open', 'Open PR#12'],
 		['inbox-row-pr inbox-pr-closed', 'Closed PR#15']
 	]);
-	expect(prs[0]?.getAttribute('title')).toBe('github.com/acme/widgets#3 · Closed');
+	expect(prs.slice(1).map((pr) => [pr.getAttribute('href'), pr.getAttribute('target')])).toEqual(
+		[7, 12, 15].map((number) => [`https://github.com/acme/widgets/pull/${number}`, '_blank'])
+	);
+	expect(prs.some((pr) => pr.closest('button'))).toBe(false);
 });
 
 it('keeps thread rows styled when selection moves by click and keyboard', async () => {
@@ -306,7 +309,7 @@ it('keeps thread rows styled when selection moves by click and keyboard', async 
 	const user = userEvent.setup();
 
 	renderView(<NavigationHarness {...input} />);
-	const buttons = [...document.querySelectorAll<HTMLButtonElement>('.inbox-row-main')];
+	const buttons = [...document.querySelectorAll<HTMLButtonElement>('.inbox-row-open')];
 
 	function expectSelected(button: HTMLButtonElement) {
 		expect(button.getAttribute('aria-current')).toBe('page');
@@ -339,7 +342,7 @@ it.each([
 		expect(document.querySelector('.inbox-row-meta')?.textContent).toBe(`Repository${label}`);
 		expect(document.querySelector('.inbox-row-model .truncate')?.textContent).toBe('Model Name');
 
-		await userEvent.setup().dblClick(document.querySelector('.inbox-row-main')!);
+		await userEvent.setup().dblClick(document.querySelector('.inbox-row-open')!);
 		await flush();
 
 		expect(document.querySelector('form .inbox-row-meta .inbox-status')?.textContent).toBe(label);
@@ -470,7 +473,7 @@ it('reports a title regeneration failure in the sidebar', async () => {
 
 it('does not attach keyboard context-menu behavior to thread rows', async () => {
 	await render([thread()]);
-	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
 
 	act(() => {
 		rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
@@ -581,7 +584,7 @@ it('expands subagents from the status text without selecting the thread', async 
 
 	const expansion = document.querySelector<HTMLButtonElement>('.inbox-subagents')!;
 
-	const main = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+	const main = document.querySelector<HTMLButtonElement>('.inbox-row-open')!;
 
 	const badge = expansion.querySelector<HTMLElement>('.inbox-row-subagents')!;
 
@@ -815,7 +818,7 @@ it('renders and selects nested children with increasing indentation', async () =
 	expect(Number(grandchildRow.style.marginLeft.replace('px', ''))).toBeGreaterThan(
 		Number(childRow.style.marginLeft.replace('px', ''))
 	);
-	const childMain = grandchildRow.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+	const childMain = grandchildRow.querySelector<HTMLButtonElement>('.inbox-row-open')!;
 
 	act(() => {
 		childMain.click();

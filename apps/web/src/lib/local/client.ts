@@ -17,7 +17,7 @@ const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 
 const pullRequestStatesSchema = z.array(
 	z.object({
-		repositoryKey: z.string(),
+		repository: z.string(),
 		number: z.number(),
 		state: z.enum(['open', 'closed', 'merged'])
 	})

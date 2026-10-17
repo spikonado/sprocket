@@ -760,17 +760,7 @@ function ThreadTreeRow({
 						<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
 					</form>
 				) : (
-					<button
-						className="inbox-row-main"
-						type="button"
-						title={`${thread.title ?? 'New thread'}\n${projectName}`}
-						onClick={() => onChoose(thread)}
-						onDoubleClick={() => {
-							if (!mutationsEnabled || busy) return;
-							onBeginRename(thread);
-						}}
-						aria-current={selected ? 'page' : undefined}
-					>
+					<div className="inbox-row-main">
 						<span className="inbox-row-meta">
 							<span className="truncate">{projectName}</span>
 							{status && (
@@ -779,9 +769,22 @@ function ThreadTreeRow({
 								</span>
 							)}
 						</span>
-						<span className="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
+						{/* Its overlay makes the whole row clickable while PR links stay outside the button. */}
+						<button
+							className="inbox-row-open inbox-row-title truncate"
+							type="button"
+							title={`${thread.title ?? 'New thread'}\n${projectName}`}
+							onClick={() => onChoose(thread)}
+							onDoubleClick={() => {
+								if (!mutationsEnabled || busy) return;
+								onBeginRename(thread);
+							}}
+							aria-current={selected ? 'page' : undefined}
+						>
+							{thread.title ?? 'New thread'}
+						</button>
 						<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
-					</button>
+					</div>
 				)}
 				{!renaming && isRoot && (
 					<div className="inbox-row-actions">
@@ -857,9 +860,6 @@ const pullRequestDisplay: Record<PullRequest['state'], { Icon: LucideIcon; label
 
 const VISIBLE_PULL_REQUESTS = 3;
 
-const pullRequestTitle = ({ repositoryKey, number, state }: PullRequest) =>
-	`${repositoryKey}#${number} · ${pullRequestDisplay[state].label}`;
-
 function ThreadModelRow({
 	model,
 	pullRequests = []
@@ -881,23 +881,22 @@ function ThreadModelRow({
 			)}
 			{pullRequests.length > 0 && (
 				<span className="inbox-row-prs">
-					{hidden.length > 0 && (
-						<span className="inbox-row-pr" title={hidden.map(pullRequestTitle).join('\n')}>
-							+{hidden.length}
-						</span>
-					)}
+					{hidden.length > 0 && <span className="inbox-row-pr">+{hidden.length}</span>}
 					{pullRequests.slice(-VISIBLE_PULL_REQUESTS).map((pr) => {
 						const { Icon, label } = pullRequestDisplay[pr.state];
 
 						return (
-							<span
-								key={`${pr.repositoryKey}#${pr.number}`}
+							<a
+								key={`${pr.repository}#${pr.number}`}
 								className={`inbox-row-pr inbox-pr-${pr.state}`}
-								title={pullRequestTitle(pr)}
+								href={`https://${pr.repository}/pull/${pr.number}`}
+								target="_blank"
+								rel="noreferrer"
+								draggable={false}
 							>
 								<Icon size={12} aria-hidden />
 								<span className="sr-only">{label} PR</span>#{pr.number}
-							</span>
+							</a>
 						);
 					})}
 				</span>

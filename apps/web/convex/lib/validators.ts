@@ -137,7 +137,7 @@ export const vPullRequestState = v.union(
 );
 
 export const vLinkedPullRequest = v.object({
-	repositoryKey: v.string(),
+	repository: v.string(),
 	number: v.number(),
 	state: vPullRequestState
 });

@@ -166,8 +166,12 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'set_cwd':
 			return jsonString(fields?.path) ?? 'Directory';
 		case 'link_prs':
-			return Array.isArray(fields?.numbers)
-				? fields.numbers.map((number) => `#${String(number)}`).join(', ')
+			return Array.isArray(fields?.pull_requests)
+				? fields.pull_requests
+						.map((pr) =>
+							isJsonObject(pr) ? `${String(pr.repository)}#${String(pr.number)}` : 'PR'
+						)
+						.join(', ')
 				: 'Pull requests';
 		case 'update_artifact':
 			return jsonString(fields?.title) ?? 'Updated artifact';
