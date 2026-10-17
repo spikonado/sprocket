@@ -192,7 +192,7 @@ export function buildDesktopProjectAttachmentsByPath(
 
 export function findCanonicalProjectAttachment(
 	attachmentsByPath: Record<string, ProjectAttachment>,
-	workspace: { workspacePath: string; repositoryKey: string }
+	workspace: { workspacePath: string; repositoryKey: string; attachmentKey?: string }
 ): ProjectAttachment | undefined {
 	const attachmentAtPath = attachmentsByPath[workspace.workspacePath];
 
@@ -206,7 +206,10 @@ export function findCanonicalProjectAttachment(
 	return Object.values(attachmentsByPath).find(
 		(attachment) =>
 			attachment.availability === 'available' &&
-			attachment.repositoryKey === workspace.repositoryKey
+			attachment.repositoryKey === workspace.repositoryKey &&
+			(workspace.attachmentKey !== undefined
+				? attachment.attachmentKey === workspace.attachmentKey
+				: attachment.attachmentKey.startsWith('remote:'))
 	);
 }
 

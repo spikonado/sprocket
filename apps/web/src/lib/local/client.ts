@@ -81,7 +81,8 @@ const workspaceEntrySchema = z.object({ kind: z.enum(['file', 'directory']) });
 const workspacePathResolutionSchema = z.object({
 	workspacePath: z.string(),
 	displayName: z.string(),
-	repositoryKey: z.string()
+	repositoryKey: z.string(),
+	attachmentKey: z.string().optional()
 });
 
 const projectAttachmentSchema = z.object({
@@ -519,6 +520,12 @@ export function createLocalClient(baseUrl: string): LocalApi {
 					body: JSON.stringify(attachment)
 				})
 			),
+		removeProject: async (input) => {
+			await request('/api/workspace/projects', z.null(), {
+				method: 'DELETE',
+				body: JSON.stringify(input)
+			});
+		},
 		listRunningCommands: (input, signal) =>
 			request('/api/agent/commands', runningCommandsSchema, {
 				method: 'POST',

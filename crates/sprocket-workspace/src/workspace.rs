@@ -19,3 +19,6 @@ pub fn resolve_workspace_root(path: &str) -> Result<PathBuf> {
 
     Ok(crate::paths::simplified_path(canonical))
 }
+
+#[cfg(all(test, windows))]
+mod tests;
