@@ -85,7 +85,6 @@ import {
 } from '$lib/chat/model-catalog';
 import { providersForModel, usableProviders } from '$lib/chat/providers';
 import { enabledProviders } from '@convex/lib/providerOrder';
-import { migrateLegacyProviderPreference } from '$lib/home/legacy-provider-preference';
 import { isLifecycleInProgress } from '@convex/lib/runCancellation';
 import {
 	beginPendingAgentLaunch,
@@ -338,7 +337,6 @@ export default function App({
 	const unsettleThreadRecord = useMutation(api.threads.unsettle);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
-	const setProviderOrder = useMutation(api.uiPreferences.setProviderOrder);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 
 	const [modelCatalog, setModelCatalog] = useState<ModelCatalog | undefined>(undefined);
@@ -702,11 +700,6 @@ export default function App({
 		);
 
 	const currentProvider = providersForModel(availableProviders, selectedCatalogModel).at(0);
-
-	useEffect(() => {
-		if (!authReady || !signedInUserId || uiPreferencesQuery.data === undefined) return;
-		migrateLegacyProviderPreference(signedInUserId, uiPreferencesQuery.data, setProviderOrder);
-	}, [authReady, signedInUserId, uiPreferencesQuery.data, setProviderOrder]);
 
 	const authenticatedThreadQueryArgs =
 		currentThreadId && authenticatedQueryArgs !== 'skip' ? { threadId: currentThreadId } : 'skip';

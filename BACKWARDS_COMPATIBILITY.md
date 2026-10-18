@@ -44,12 +44,6 @@ Released agents can still start `screenshot_url` jobs. Their `firecrawlRequests:
 
 `artifacts.continueRekey` is a no-op for already-queued jobs. Remove it after a scheduler scan finds no queued continuation jobs.
 
-## Browser storage shims
-
-### Composer provider choice
-
-The web app moves the removed composer provider choice from localStorage (`sprocket.composer.provider:<userId>`) into `uiPreferences.providerOrder` once and deletes the key. Remove that migration once clients from before the Providers settings page age out.
-
 ## Convex data shims
 
 ### Billing subscription projection
