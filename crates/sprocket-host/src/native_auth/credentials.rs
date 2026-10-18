@@ -100,13 +100,13 @@ impl ProfileCredentials {
 
     fn write_with_store<T>(
         &self,
-        keyring: impl FnOnce(&dyn RefreshTokenStore) -> anyhow::Result<T>,
+        keyring: impl FnOnce() -> anyhow::Result<T>,
         file: impl FnOnce() -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         match self.selected()? {
             Some(CredentialStore::File) => file(),
-            Some(CredentialStore::Keyring) => keyring(self.keyring.as_ref()),
-            None => match keyring(self.keyring.as_ref()) {
+            Some(CredentialStore::Keyring) => keyring(),
+            None => match keyring() {
                 Err(error) if keyring_unavailable(&error) => {
                     let result = file()?;
                     self.write_selection(CredentialStore::File)?;
@@ -163,7 +163,7 @@ impl ProfileCredentials {
 
 impl RefreshTokenStore for ProfileCredentials {
     fn select(&self, store: CredentialStore) -> anyhow::Result<()> {
-        if self.selected()?.unwrap_or_default() != store {
+        if self.selected()?.unwrap_or(CredentialStore::Keyring) != store {
             match store {
                 CredentialStore::Keyring => self.keyring.clear()?,
                 CredentialStore::File => self.clear_file()?,
@@ -190,13 +190,13 @@ impl RefreshTokenStore for ProfileCredentials {
             "refusing to store an empty refresh token"
         );
         self.write_with_store(
-            |store| store.save(token),
+            || self.keyring.save(token),
             || write_private_file(&self.token_path(), token.as_bytes()),
         )
     }
 
     fn clear(&self) -> anyhow::Result<()> {
-        self.write_with_store(|store| store.clear(), || self.clear_file())
+        self.write_with_store(|| self.keyring.clear(), || self.clear_file())
     }
 }
 

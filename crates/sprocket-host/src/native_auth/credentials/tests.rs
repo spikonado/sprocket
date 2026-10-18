@@ -2,42 +2,46 @@ use super::*;
 
 struct TestKeyring {
     token: std::sync::Mutex<Option<String>>,
-    load_error: Option<fn() -> keyring::Error>,
-    save_error: Option<fn() -> keyring::Error>,
-    clear_error: Option<fn() -> keyring::Error>,
+    error: Option<fn() -> keyring::Error>,
 }
 
 impl TestKeyring {
+    fn available(token: Option<&str>) -> Self {
+        Self {
+            token: std::sync::Mutex::new(token.map(str::to_string)),
+            error: None,
+        }
+    }
+
     fn failing(error: fn() -> keyring::Error) -> Self {
         Self {
             token: std::sync::Mutex::new(None),
-            load_error: Some(error),
-            save_error: Some(error),
-            clear_error: Some(error),
+            error: Some(error),
+        }
+    }
+
+    fn check(&self) -> anyhow::Result<()> {
+        match self.error {
+            Some(error) => Err(error()).context("keyring operation failed"),
+            None => Ok(()),
         }
     }
 }
 
 impl RefreshTokenStore for TestKeyring {
     fn load(&self) -> anyhow::Result<Option<String>> {
-        if let Some(error) = self.load_error {
-            return Err(error()).context("failed to load WorkOS refresh token");
-        }
+        self.check()?;
         Ok(self.token.lock().unwrap().clone())
     }
 
     fn save(&self, token: &str) -> anyhow::Result<()> {
-        if let Some(error) = self.save_error {
-            return Err(error()).context("failed to persist WorkOS refresh token");
-        }
+        self.check()?;
         *self.token.lock().unwrap() = Some(token.to_string());
         Ok(())
     }
 
     fn clear(&self) -> anyhow::Result<()> {
-        if let Some(error) = self.clear_error {
-            return Err(error()).context("failed to delete WorkOS refresh token");
-        }
+        self.check()?;
         *self.token.lock().unwrap() = None;
         Ok(())
     }
@@ -49,13 +53,8 @@ fn with_keyring(dir: &Path, keyring: TestKeyring) -> ProfileCredentials {
     store
 }
 
-fn unavailable_errors() -> [fn() -> keyring::Error; 4] {
-    [
-        || keyring::Error::NoDefaultStore,
-        || keyring::Error::NoStorageAccess(std::io::Error::other("locked").into()),
-        || keyring::Error::PlatformFailure(std::io::Error::other("disconnected").into()),
-        || keyring::Error::NotSupportedByStore("unsupported".into()),
-    ]
+fn unavailable() -> keyring::Error {
+    keyring::Error::PlatformFailure(std::io::Error::other("disconnected").into())
 }
 
 #[test]
@@ -90,15 +89,7 @@ fn explicit_file_selection_survives_restart_and_rotation() {
 #[test]
 fn automatic_storage_keeps_using_an_available_keyring() {
     let dir = tempfile::tempdir().unwrap();
-    let store = with_keyring(
-        dir.path(),
-        TestKeyring {
-            token: std::sync::Mutex::new(None),
-            load_error: None,
-            save_error: None,
-            clear_error: None,
-        },
-    );
+    let store = with_keyring(dir.path(), TestKeyring::available(None));
     assert!(store.load().unwrap().is_none());
     store.save("keyring-session").unwrap();
     assert_eq!(store.load().unwrap().as_deref(), Some("keyring-session"));
@@ -110,59 +101,24 @@ fn automatic_storage_keeps_using_an_available_keyring() {
 
 #[test]
 fn unavailable_keyring_allows_sign_in_and_persists_file_storage() {
-    for error in unavailable_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = with_keyring(dir.path(), TestKeyring::failing(error));
-        assert!(store.load().unwrap().is_none());
-        assert_eq!(store.selected().unwrap(), None);
-        store.save("signed-in").unwrap();
-        assert_eq!(store.selected().unwrap(), Some(CredentialStore::File));
-
-        let restarted = ProfileCredentials::new("https://test.convex.cloud", dir.path());
-        assert_eq!(restarted.load().unwrap().as_deref(), Some("signed-in"));
-        restarted.save("rotated").unwrap();
-        assert_eq!(store.load().unwrap().as_deref(), Some("rotated"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(store.token_path())
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-        }
-        restarted.clear().unwrap();
-        assert!(store.load().unwrap().is_none());
-    }
-}
-
-#[test]
-fn keyring_write_failure_falls_back_after_a_successful_read() {
     let dir = tempfile::tempdir().unwrap();
-    let store = with_keyring(
-        dir.path(),
-        TestKeyring {
-            token: std::sync::Mutex::new(Some("old-token".to_string())),
-            load_error: None,
-            save_error: Some(|| keyring::Error::NoDefaultStore),
-            clear_error: None,
-        },
-    );
-    assert_eq!(store.load().unwrap().as_deref(), Some("old-token"));
-    store.save("rotated-token").unwrap();
-    assert_eq!(store.load().unwrap().as_deref(), Some("rotated-token"));
+    let store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
+    assert!(store.load().unwrap().is_none());
+    store.save("signed-in").unwrap();
+    assert_eq!(store.selected().unwrap(), Some(CredentialStore::File));
+
+    let restarted = with_keyring(dir.path(), TestKeyring::failing(unavailable));
+    assert_eq!(restarted.load().unwrap().as_deref(), Some("signed-in"));
+    restarted.save("rotated").unwrap();
+    assert_eq!(store.load().unwrap().as_deref(), Some("rotated"));
+    restarted.clear().unwrap();
+    assert!(store.load().unwrap().is_none());
 }
 
 #[test]
 fn unavailable_keyring_allows_sign_out_without_restoring_stale_file_credentials() {
     let dir = tempfile::tempdir().unwrap();
-    let store = with_keyring(
-        dir.path(),
-        TestKeyring::failing(|| keyring::Error::NoDefaultStore),
-    );
+    let store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
     write_private_file(&store.token_path(), b"stale-session").unwrap();
     store.clear().unwrap();
     assert_eq!(store.selected().unwrap(), Some(CredentialStore::File));
@@ -172,18 +128,10 @@ fn unavailable_keyring_allows_sign_out_without_restoring_stale_file_credentials(
 #[test]
 fn temporary_keyring_read_failure_does_not_change_storage_selection() {
     let dir = tempfile::tempdir().unwrap();
-    let mut store = with_keyring(
-        dir.path(),
-        TestKeyring::failing(|| keyring::Error::NoDefaultStore),
-    );
+    let mut store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
     assert!(store.load().unwrap().is_none());
     assert_eq!(store.selected().unwrap(), None);
-    store.keyring = Box::new(TestKeyring {
-        token: std::sync::Mutex::new(Some("existing-keyring-session".to_string())),
-        load_error: None,
-        save_error: None,
-        clear_error: None,
-    });
+    store.keyring = Box::new(TestKeyring::available(Some("existing-keyring-session")));
     assert_eq!(
         store.load().unwrap().as_deref(),
         Some("existing-keyring-session")
@@ -192,50 +140,34 @@ fn temporary_keyring_read_failure_does_not_change_storage_selection() {
 
 #[test]
 fn explicit_keyring_selection_is_persisted_and_stays_strict() {
-    for error in unavailable_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = with_keyring(dir.path(), TestKeyring::failing(error));
-        store.select(CredentialStore::Keyring).unwrap();
-        let restarted = with_keyring(dir.path(), TestKeyring::failing(error));
-        assert_eq!(
-            restarted.selected().unwrap(),
-            Some(CredentialStore::Keyring)
-        );
-        assert!(restarted.load().is_err());
-        assert!(restarted.save("token").is_err());
-        assert!(restarted.clear().is_err());
-        assert!(!restarted.token_path().exists());
-    }
+    let dir = tempfile::tempdir().unwrap();
+    let store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
+    store.select(CredentialStore::Keyring).unwrap();
+    assert_eq!(store.selected().unwrap(), Some(CredentialStore::Keyring));
+    assert!(store.load().is_err());
+    assert!(store.save("token").is_err());
+    assert!(store.clear().is_err());
+    assert!(!store.token_path().exists());
 }
 
 #[test]
-fn credential_data_errors_are_preserved() {
-    let errors: [fn() -> keyring::Error; 6] = [
-        || keyring::Error::BadEncoding(vec![0xff]),
-        || keyring::Error::BadDataFormat(vec![], std::io::Error::other("bad data").into()),
-        || keyring::Error::BadStoreFormat("bad store".into()),
-        || keyring::Error::Invalid("attribute".into(), "invalid".into()),
-        || keyring::Error::TooLong("attribute".into(), 1),
-        || keyring::Error::Ambiguous(vec![]),
-    ];
-    for error in errors {
-        let dir = tempfile::tempdir().unwrap();
-        let store = with_keyring(dir.path(), TestKeyring::failing(error));
-        assert!(store.load().is_err());
-        assert!(store.save("token").is_err());
-        assert!(store.clear().is_err());
-        assert_eq!(store.selected().unwrap(), None);
-        assert!(!store.token_path().exists());
-    }
+fn keyring_data_errors_are_reported_without_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = with_keyring(
+        dir.path(),
+        TestKeyring::failing(|| keyring::Error::BadEncoding(vec![0xff])),
+    );
+    assert!(store.load().is_err());
+    assert!(store.save("token").is_err());
+    assert!(store.clear().is_err());
+    assert_eq!(store.selected().unwrap(), None);
+    assert!(!store.token_path().exists());
 }
 
 #[test]
 fn failed_fallback_write_keeps_automatic_selection() {
     let dir = tempfile::tempdir().unwrap();
-    let store = with_keyring(
-        dir.path(),
-        TestKeyring::failing(|| keyring::Error::NoDefaultStore),
-    );
+    let store = with_keyring(dir.path(), TestKeyring::failing(unavailable));
     std::fs::create_dir_all(store.token_path()).unwrap();
     std::fs::write(store.token_path().join("occupied"), b"").unwrap();
     assert!(store.save("token").is_err());

@@ -128,15 +128,13 @@ system prompt.
 
 ### Native credential store selection
 
-An absent `credentials/<account>/store.json` now means automatic keyring storage
-with file fallback when the keyring is unavailable. Existing `"keyring"` and
-`"file"` selections remain explicit overrides. Automatic fallback writes the
-existing `"file"` selection and private refresh-token file so released clients
-can restore it. No tokens or selections are migrated. Keep these selection
-values while profiles written by released clients are supported; remove them
-only with a migration to a replacement format. Older clients did not persist
-an explicit keyring choice when it matched the default, so those profiles now
-use automatic selection too.
+An absent `credentials/<account>/store.json` now means automatic: keyring
+storage with file fallback when the keyring is unavailable. Fallback writes the
+existing `"file"` selection and refresh-token file, so released clients can
+still read the profile. Released clients never wrote `"keyring"` when it was
+their default, so those profiles become automatic. Nothing is migrated. Keep
+reading `"keyring"` and `"file"` while profiles from released clients are
+supported.
 
 ### Thread-relative model images
 

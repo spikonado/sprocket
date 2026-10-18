@@ -52,10 +52,9 @@ pub trait BrowserSessions: Send + Sync {
     ) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "camelCase")]
 pub enum CredentialStore {
-    #[default]
     Keyring,
     File,
 }
