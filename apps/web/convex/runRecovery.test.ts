@@ -140,6 +140,16 @@ describe('automatic run recovery', () => {
 		expect(run?.restartingUntil).toBeUndefined();
 	});
 
+	it('does not show a run stopped before the restart as restarting', async () => {
+		const { asUser, runId, restartMachine, statuses } = await setup();
+		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId })).toBe(true);
+		await restartMachine();
+		const { run, thread } = await statuses();
+		expect(run).toMatchObject({ status: 'cancelled' });
+		expect(run?.restartingUntil).toBeUndefined();
+		expect(thread?.restartingUntil).toBeUndefined();
+	});
+
 	it('stops a restarting run without continuing it', async () => {
 		const {
 			t,

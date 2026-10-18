@@ -13,6 +13,7 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
 	automaticAgentContinuationEnabled,
+	isAutomaticallyRecoverableRun,
 	markRunRestarting,
 	RESTART_RECOVERY_WINDOW_MS
 } from '@convex/lib/runRecovery';
@@ -77,8 +78,11 @@ async function failMachineRuns(
 			lastError
 		});
 
-		if (restartingUntil !== undefined) {
-			await markRunRestarting(ctx, run, restartingUntil);
+		if (restartingUntil === undefined) continue;
+		const finalized = await ctx.db.get('runs', runId);
+
+		if (finalized && isAutomaticallyRecoverableRun(finalized, machine.machineId)) {
+			await markRunRestarting(ctx, finalized, restartingUntil);
 		}
 	}
 

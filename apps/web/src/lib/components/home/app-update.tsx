@@ -90,7 +90,11 @@ export default function AppUpdate() {
 		if (restartReady && !confirmed) {
 			if (preferences.status !== 'success') return;
 
-			if (preferences.data?.automaticAgentContinuation === false) {
+			// Desktop updates stop the server without restart intent, so agents can't resume.
+			if (
+				updateState.method === 'desktop' ||
+				preferences.data?.automaticAgentContinuation === false
+			) {
 				setConfirmRestart(true);
 
 				return;
@@ -156,6 +160,11 @@ export default function AppUpdate() {
 			</button>
 			{confirmRestart && (
 				<RestartConfirmation
+					description={
+						updateState.method === 'desktop'
+							? "Installing this update stops the local server and interrupts active agents. They won't resume automatically."
+							: "Automatic continuation is off. Restarting will interrupt active agents, and they won't resume automatically."
+					}
 					onCancel={() => setConfirmRestart(false)}
 					onConfirm={() => void update(true)}
 				/>

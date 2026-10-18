@@ -2,9 +2,11 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 export default function RestartConfirmation({
+	description,
 	onCancel,
 	onConfirm
 }: {
+	description: string;
 	onCancel: () => void;
 	onConfirm: () => void;
 }) {
@@ -33,8 +35,7 @@ export default function RestartConfirmation({
 				Restart Sprocket?
 			</h2>
 			<p id="restart-confirmation-description" className="text-muted-foreground mt-3 text-sm">
-				Automatic continuation is off. Restarting will interrupt active agents, and they won't
-				resume automatically.
+				{description}
 			</p>
 			<div className="mt-6 flex justify-end gap-2">
 				<button
