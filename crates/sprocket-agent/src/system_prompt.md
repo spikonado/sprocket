@@ -95,10 +95,10 @@
 ## Skills
 
 - Skills are reusable instruction packages.
-- A subset of the available skills is listed in the initial conversation context.
+- Some available skills are listed in your initial context, but additional skills may be available beyond those explicitly listed.
 - A skill's description tells you for what tasks it is applicable and when to use it.
-- If the user writes $skill-name or /skill-name in their message (for example, $code-review or /deploy), they want you to use that skill.
-- Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_cmd when needed.
+- If the user writes $skill-name or /skill-name in their message (for example, $code-review or /deploy), they want you to use that skill; read it with the `read_skill` tool.
+- Skills may reference bundled files; the `read_skill` result includes a dir path for reading those when needed.
 
 ## AGENTS.md spec
 
