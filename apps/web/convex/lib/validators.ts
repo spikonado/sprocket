@@ -127,7 +127,7 @@ export const vSetCwdPayload = v.object({
 });
 
 export const vLinkPrsPayload = v.object({
-	pull_requests: v.array(v.object({ repository: v.string(), number: v.number() }))
+	pullRequests: v.array(v.object({ repository: v.string(), number: v.number() }))
 });
 
 export const vPullRequestState = v.union(
@@ -510,10 +510,6 @@ export const vSetCwdResult = v.object({
 	cwd: v.string()
 });
 
-export const vLinkPrsResult = v.object({
-	pullRequests: v.array(vLinkedPullRequest)
-});
-
 export const vAskQuestionAnswer = v.object({
 	optionId: v.optional(v.string()),
 	optionLabel: v.optional(v.string()),
@@ -707,7 +703,6 @@ export const vExecutorJobResult = v.union(
 	vLegacyCommandResult,
 	vReadSkillResult,
 	vSetCwdResult,
-	vLinkPrsResult,
 	vScrapeUrlResult,
 	vWebImageResult,
 	vWebSearchResult,
