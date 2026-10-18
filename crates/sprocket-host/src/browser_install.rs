@@ -80,12 +80,12 @@ impl BrowserInstaller {
         } else {
             "agent-browser"
         });
-        if !verified_file(&cli, asset).await? {
+        if !verified_file(&cli, &asset.checksum).await? {
             let url = format!(
                 "https://github.com/{}/releases/download/{}/{}",
                 release.repository, release.tag, asset.asset
             );
-            download_atomic(&self.client, &url, asset, &cli).await?;
+            download_atomic(&self.client, &url, &asset.checksum, &cli).await?;
         }
         self.ensure_skills().await?;
         self.lease_version().await;
@@ -108,11 +108,11 @@ impl BrowserInstaller {
         }
         let archive = self.version_dir().join("source.tar.gz");
         let release = &self.releases.skill_data;
-        download_atomic(&self.client, &release.url, &release.asset, &archive).await?;
+        download_atomic(&self.client, &release.url, &release.checksum, &archive).await?;
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let temporary =
                 tempfile::tempdir_in(destination.parent().context("skills directory")?)?;
-            let reader = flate2::read::GzDecoder::new(File::open(archive)?);
+            let reader = flate2::read::GzDecoder::new(File::open(&archive)?);
             let mut archive = tar::Archive::new(std::io::Read::take(reader, 64 * 1024 * 1024));
             for entry in archive.entries()? {
                 let mut entry = entry?;
@@ -143,6 +143,7 @@ impl BrowserInstaller {
                 "Upstream core browser skill is missing"
             );
             std::fs::rename(temporary.path(), destination)?;
+            std::fs::remove_file(archive)?;
             Ok(())
         })
         .await??;
@@ -236,7 +237,7 @@ struct Releases {
 struct SkillRelease {
     url: String,
     #[serde(flatten)]
-    asset: ReleaseAsset,
+    checksum: Checksum,
 }
 
 #[derive(Deserialize)]
@@ -250,6 +251,12 @@ struct Release {
 #[derive(Deserialize)]
 struct ReleaseAsset {
     asset: String,
+    #[serde(flatten)]
+    checksum: Checksum,
+}
+
+#[derive(Deserialize)]
+struct Checksum {
     bytes: u64,
     sha256: String,
 }
@@ -356,13 +363,13 @@ fn is_version(name: &str) -> bool {
         })
 }
 
-async fn verified_file(path: &Path, asset: &ReleaseAsset) -> anyhow::Result<bool> {
+async fn verified_file(path: &Path, checksum: &Checksum) -> anyhow::Result<bool> {
     let mut file = match tokio::fs::File::open(path).await {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    if file.metadata().await?.len() != asset.bytes || !executable_file(path).await {
+    if file.metadata().await?.len() != checksum.bytes || !executable_file(path).await {
         return Ok(false);
     }
     let mut hash = Sha256::new();
@@ -374,13 +381,13 @@ async fn verified_file(path: &Path, asset: &ReleaseAsset) -> anyhow::Result<bool
         }
         hash.update(&buffer[..read]);
     }
-    Ok(hex::encode(hash.finalize()) == asset.sha256)
+    Ok(hex::encode(hash.finalize()) == checksum.sha256)
 }
 
 async fn download_atomic(
     client: &reqwest::Client,
     url: &str,
-    asset: &ReleaseAsset,
+    checksum: &Checksum,
     destination: &Path,
 ) -> anyhow::Result<()> {
     let parent = destination.parent().context("install path has no parent")?;
@@ -392,7 +399,7 @@ async fn download_atomic(
     let mut response = client.get(url).send().await?.error_for_status()?;
     if let Some(length) = response.content_length() {
         ensure!(
-            length == asset.bytes,
+            length == checksum.bytes,
             "Pinned release size mismatch for {url}"
         );
     }
@@ -401,18 +408,18 @@ async fn download_atomic(
     while let Some(chunk) = response.chunk().await? {
         downloaded += chunk.len() as u64;
         ensure!(
-            downloaded <= asset.bytes,
+            downloaded <= checksum.bytes,
             "Pinned release exceeds expected size for {url}"
         );
         hash.update(&chunk);
         file.write_all(&chunk).await?;
     }
     ensure!(
-        downloaded == asset.bytes,
+        downloaded == checksum.bytes,
         "Incomplete pinned release download for {url}"
     );
     ensure!(
-        hex::encode(hash.finalize()) == asset.sha256,
+        hex::encode(hash.finalize()) == checksum.sha256,
         "Pinned release SHA256 mismatch for {url}"
     );
     file.flush().await?;

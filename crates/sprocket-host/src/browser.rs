@@ -24,13 +24,6 @@ struct Dashboard {
     port: u16,
 }
 
-impl Dashboard {
-    async fn stop(mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
-    }
-}
-
 enum DashboardState {
     Stopped,
     Installing,
@@ -65,6 +58,7 @@ impl DashboardState {
 pub struct BrowserManager {
     installer: BrowserInstaller,
     dashboard: Mutex<DashboardState>,
+    dashboard_client: reqwest::Client,
     shutdown: WorkspaceCancellation,
 }
 
@@ -73,8 +67,18 @@ impl BrowserManager {
         Ok(Arc::new(Self {
             installer: BrowserInstaller::new(&data_dir)?,
             dashboard: Mutex::new(DashboardState::Stopped),
+            dashboard_client: reqwest::Client::builder()
+                .no_proxy()
+                .retry(reqwest::retry::never())
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(5))
+                .build()?,
             shutdown: WorkspaceCancellation::new(),
         }))
+    }
+
+    pub fn dashboard_client(&self) -> &reqwest::Client {
+        &self.dashboard_client
     }
 
     pub fn prepare_tools(self: &Arc<Self>) {
@@ -158,10 +162,6 @@ impl BrowserManager {
                 errors.extend_from_slice(&chunk[..retained]);
             }
         });
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_secs(1))
-            .build()?;
         for _ in 0..50 {
             if let Some(status) = child.try_wait()? {
                 let _ = tokio::time::timeout(Duration::from_secs(1), drain).await;
@@ -170,8 +170,10 @@ impl BrowserManager {
                     String::from_utf8_lossy(&errors.lock().await[..])
                 );
             }
-            if client
+            if self
+                .dashboard_client
                 .get(format!("http://127.0.0.1:{port}/"))
+                .timeout(Duration::from_secs(1))
                 .send()
                 .await
                 .is_ok_and(|response| response.status().is_success())
@@ -212,8 +214,8 @@ impl BrowserManager {
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
         let state = std::mem::replace(&mut *self.dashboard.lock().await, DashboardState::Stopped);
-        if let DashboardState::Ready(dashboard) = state {
-            dashboard.stop().await;
+        if let DashboardState::Ready(mut dashboard) = state {
+            let _ = dashboard.child.kill().await;
         }
     }
 

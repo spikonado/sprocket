@@ -1,7 +1,6 @@
 {
 	"skillData": {
 		"url": "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/refs/tags/v0.38.2",
-		"asset": "source.tar.gz",
 		"bytes": 2168456,
 		"sha256": "a3a347ed468fcc2e593e3ae95a6a08df1efeb94d57b33fbc48627b889ea0ec48"
 	},

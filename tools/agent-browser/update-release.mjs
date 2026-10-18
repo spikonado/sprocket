@@ -112,7 +112,6 @@ const skillUrl = `https://codeload.github.com/${pinned.repository}/tar.gz/refs/t
 
 releases.skillData = {
 	url: skillUrl,
-	asset: releases.skillData.asset,
 	...(await download(skillUrl)).measured
 };
 

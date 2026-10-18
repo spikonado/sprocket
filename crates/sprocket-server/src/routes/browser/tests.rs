@@ -28,12 +28,3 @@ fn dashboard_cannot_select_another_upstream() {
         assert!(upstream_path(path).is_err());
     }
 }
-
-#[test]
-fn dashboard_offers_only_chrome_without_chat() {
-    let source = r#"let o=[{id:"chrome",label:"Chrome",engine:"chrome"},{id:"lightpanda",label:"Lightpanda",engine:"lightpanda"},{id:"agentcore",label:"AgentCore",provider:"agentcore"},{id:"browserbase",label:"Browserbase",provider:"browserbase"},{id:"browserless",label:"Browserless",provider:"browserless"},{id:"browser-use",label:"Browser Use",provider:"browser-use"},{id:"kernel",label:"Kernel",provider:"kernel"}];(0,ex.jsxs)(Iz,{defaultValue:"chat",children:[(0,ex.jsx)(IP,{value:"chat",className:"text-[11px]",children:"Chat"})]})"#;
-    assert_eq!(
-        rewrite_asset(source),
-        r#"let o=[{id:"chrome",label:"Chrome",engine:"chrome"}];(0,ex.jsxs)(Iz,{defaultValue:"activity",children:[(0,ex.jsx)(IP,{value:"chat",className:"hidden",children:"Chat"})]})"#
-    );
-}

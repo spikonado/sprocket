@@ -143,14 +143,6 @@ async fn proxy(
             .into_response());
     }
 
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|error| ApiError::internal(error.into()))?;
     let mut bytes = axum::body::to_bytes(body, MAX_REQUEST_BYTES)
         .await
         .map_err(|error| ApiError::bad_request(error.into()))?;
@@ -169,8 +161,12 @@ async fn proxy(
         .into();
         path = "/api/exec".into();
     }
-    let mut request = client
+    let mut request = state
+        .host
+        .browsers
+        .dashboard_client()
         .request(method, format!("http://127.0.0.1:{port}{path}"))
+        .timeout(Duration::from_secs(30))
         .header(header::ORIGIN, format!("http://127.0.0.1:{port}"))
         .body(bytes);
     if let Some(content_type) = headers.get(header::CONTENT_TYPE) {

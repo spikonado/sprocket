@@ -16,20 +16,25 @@ async fn publishes_verified_download_and_preserves_it_on_failed_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("agent-browser");
     let payload = b"verified browser executable";
-    let asset = ReleaseAsset {
-        asset: "fixture".into(),
+    let checksum = Checksum {
         bytes: payload.len() as u64,
         sha256: hex::encode(Sha256::digest(payload)),
     };
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let (url, server) = fixture_server(payload).await;
-    download_atomic(&client, &url, &asset, &path).await.unwrap();
-    assert!(verified_file(&path, &asset).await.unwrap());
+    download_atomic(&client, &url, &checksum, &path)
+        .await
+        .unwrap();
+    assert!(verified_file(&path, &checksum).await.unwrap());
     assert_eq!(tokio::fs::read(&path).await.unwrap(), payload);
     server.abort();
     let (url, server) = fixture_server(b"corrupt browser executable!").await;
-    assert!(download_atomic(&client, &url, &asset, &path).await.is_err());
-    assert!(verified_file(&path, &asset).await.unwrap());
+    assert!(
+        download_atomic(&client, &url, &checksum, &path)
+            .await
+            .is_err()
+    );
+    assert!(verified_file(&path, &checksum).await.unwrap());
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     server.abort();
 }
@@ -38,8 +43,7 @@ async fn publishes_verified_download_and_preserves_it_on_failed_replacement() {
 async fn rejects_partial_download_before_publication() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("agent-browser");
-    let asset = ReleaseAsset {
-        asset: "fixture".into(),
+    let checksum = Checksum {
         bytes: 100,
         sha256: "unused".into(),
     };
@@ -48,7 +52,7 @@ async fn rejects_partial_download_before_publication() {
         download_atomic(
             &reqwest::Client::builder().no_proxy().build().unwrap(),
             &url,
-            &asset,
+            &checksum,
             &path
         )
         .await
