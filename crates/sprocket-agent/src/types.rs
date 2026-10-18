@@ -21,6 +21,11 @@ pub enum CompletionProvider {
 }
 
 impl CompletionProvider {
+    /// BYOK/BYOS providers only serve models whose catalog vendor is OpenAI.
+    pub fn serves_vendor(self, vendor: &str) -> bool {
+        self == Self::Spikonado || vendor == "openai"
+    }
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Spikonado => "spikonado",
@@ -127,9 +132,28 @@ pub struct RunContextResponse {
     pub context_tokens: u64,
     #[serde(default)]
     pub provider_handoff: Option<ProviderHandoff>,
+    #[serde(default)]
+    pub provider_preferences: ProviderPreferences,
     /// Absent until the thread first calls set_cwd.
     #[serde(default)]
     pub cwd: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderPreferences {
+    /// The user's enabled providers, in fallback order.
+    pub enabled_providers: Vec<CompletionProvider>,
+    pub restrict_subagents_to_provider: bool,
+}
+
+impl Default for ProviderPreferences {
+    fn default() -> Self {
+        Self {
+            enabled_providers: vec![CompletionProvider::Spikonado],
+            restrict_subagents_to_provider: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

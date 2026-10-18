@@ -21,7 +21,7 @@ it('keeps settings navigation and theme controls without an inbox close button',
 		within(screen.getByRole('navigation', { name: 'Settings' }))
 			.getAllByRole('button')
 			.map((button) => button.textContent)
-	).toEqual(['General', 'Account', 'Usage', 'BYOK/BYOS', 'Version Control', 'Payments']);
+	).toEqual(['General', 'Account', 'Providers', 'BYOK/BYOS', 'Version Control', 'Payments']);
 	fireEvent.click(screen.getByRole('button', { name: 'Switch to light mode' }));
 	expect(onThemeChange).toHaveBeenCalledWith('light');
 	fireEvent.click(screen.getByRole('button', { name: 'General', current: 'page' }));

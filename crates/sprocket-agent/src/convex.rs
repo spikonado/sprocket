@@ -12,8 +12,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse, RunAgentRequest,
-    RunContextResponse, StartRunResponse,
+    CompletionProvider, CreateRunResponse, GatewayCredential, OpenAiCredential, RenewClaimResponse,
+    RunAgentRequest, RunContextResponse, StartRunResponse,
 };
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
@@ -501,11 +501,31 @@ impl RuntimeClient {
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
+        self.claim_mutation_with_retries("agentRuntime:omitReasoningReplay", args)
+            .await
+    }
+
+    /// Returns false when the run no longer owns this claim.
+    pub(crate) async fn fall_back_to_provider(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        provider: CompletionProvider,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("completionProvider".to_string(), provider.as_str().into());
+        self.claim_mutation_with_retries("agentRuntime:fallBackToProvider", args)
+            .await
+    }
+
+    /// Retries transport failures of a mutation that reports whether the claim is still active.
+    async fn claim_mutation_with_retries(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<bool> {
         for attempt in 0..CREATE_RUN_MAX_ATTEMPTS {
-            match self
-                .mutation_checked("agentRuntime:omitReasoningReplay", args.clone())
-                .await
-            {
+            match self.mutation_checked(function, args.clone()).await {
                 Ok(active) => return Ok(active),
                 Err(MutationFailure::Transport(_)) if attempt + 1 < CREATE_RUN_MAX_ATTEMPTS => {
                     sleep(CREATE_RUN_INITIAL_RETRY_DELAY * (1 << attempt)).await;
@@ -515,7 +535,7 @@ impl RuntimeClient {
                 }
             }
         }
-        unreachable!("reasoning replay save attempts exhausted")
+        unreachable!("{function} attempts exhausted")
     }
 
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {

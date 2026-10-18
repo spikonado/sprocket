@@ -66,9 +66,8 @@ struct GatewayCatalogModel {
     auto_handoff_token_limit: u64,
 }
 
-/// The live gateway catalog entries for one completion provider, matching the
-/// UI's provider filter (`spikonado` sees every model; `openai`/`chatgpt` see
-/// only models whose catalog vendor is `openai`).
+/// The live gateway catalog entries served by at least one of a set of
+/// completion providers.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCatalog {
@@ -82,6 +81,7 @@ pub struct ProviderCatalog {
 pub struct ProviderCatalogModel {
     pub id: String,
     pub label: String,
+    pub vendor: String,
     pub supports_images: bool,
     pub reasoning_efforts: Vec<String>,
     pub default_reasoning_effort: String,
@@ -118,21 +118,26 @@ async fn fetch_catalog(gateway_url: &str) -> anyhow::Result<GatewaySprocketCatal
     Ok(payload.sprocket)
 }
 
-/// Fetch the full provider-compatible catalog with defaults. The default
-/// model follows the UI fallback: the catalog default when compatible,
-/// otherwise the first compatible model.
-pub async fn catalog_for_provider(
+/// Fetch the catalog of models any of `providers` serves, with defaults. The
+/// default model is the catalog default when served, otherwise the first
+/// served model.
+pub async fn catalog_for_providers(
     gateway_url: &str,
-    provider: CompletionProvider,
+    providers: &[CompletionProvider],
 ) -> anyhow::Result<ProviderCatalog> {
     let catalog = fetch_catalog(gateway_url).await?;
     let models: Vec<ProviderCatalogModel> = catalog
         .models
         .into_iter()
-        .filter(|model| provider == CompletionProvider::Spikonado || model.provider == "openai")
+        .filter(|model| {
+            providers
+                .iter()
+                .any(|provider| provider.serves_vendor(&model.provider))
+        })
         .map(|model| ProviderCatalogModel {
             id: model.id,
             label: model.label,
+            vendor: model.provider,
             supports_images: model.supports_images,
             reasoning_efforts: model.reasoning_efforts,
             default_reasoning_effort: model.default_reasoning_effort,
@@ -148,7 +153,7 @@ pub async fn catalog_for_provider(
         models
             .first()
             .map(|model| model.id.clone())
-            .ok_or_else(|| anyhow!("no models are available for the current completion provider"))?
+            .ok_or_else(|| anyhow!("no models are available from the enabled providers"))?
     };
     Ok(ProviderCatalog {
         default_model_id,
@@ -209,8 +214,7 @@ fn select_handoff_model(
         .any(|model| model.id == handoff.selected_model);
     if removed {
         let eligible = |model: &&GatewayCatalogModel| {
-            handoff.completion_provider == CompletionProvider::Spikonado
-                || model.provider == "openai"
+            handoff.completion_provider.serves_vendor(&model.provider)
         };
         let model = catalog
             .models
