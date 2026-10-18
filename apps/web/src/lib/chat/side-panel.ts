@@ -1,5 +1,3 @@
-import type { Id } from '@convex/_generated/dataModel';
-
 /** The right sidebar shows the agent's browser live view alongside project artifacts. */
 export type SidePanelTab = 'live' | 'artifacts';
 
@@ -18,27 +16,4 @@ export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 	expanded: false,
 	tab: 'artifacts',
 	selectedKey: null
-};
-
-/** Live-view state for the thread's shared browser session. */
-export type BrowserLiveViewState = {
-	id: string;
-	providerSessionId: string | null;
-	/** Embeddable watch-only live view URL; null while it is being set up. */
-	url: string | null;
-	/** Interactive variant. Load it only after humanControl is true. */
-	interactiveUrl: string | null;
-	/** Whether this session persists cookies and login state. */
-	saving: boolean;
-	/** Hard deadline for the browser session. */
-	expiresAt: number;
-	/** Backend expiry, reset, or quarantine has made the session unavailable. */
-	ended: boolean;
-	/** True after the user takes control; agent browser calls are blocked. */
-	humanControl: boolean;
-	threadId: Id<'threadRecords'> | string;
-	/** Run that most recently drove the browser, matched against the active run for liveness. */
-	lastUsedRunId: Id<'runs'> | string | null;
-	/** Session (re)start time. */
-	startedAt: number;
 };

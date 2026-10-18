@@ -16,7 +16,9 @@ base64 = "0.23.0"
 clap = { version = "4.5.60", features = ["derive"] }
 convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
 fff-search = "0.11.0"
+flate2 = "1.1.10"
 futures = "0.3.32"
+hex = "0.4.3"
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
 keyring = "4.2.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["form", "rustls", "stream"] }
@@ -27,6 +29,7 @@ sprocket-agent = { path = "../sprocket-agent" }
 sprocket-convex = { path = "../sprocket-convex" }
 sprocket-transcript = { path = "../sprocket-transcript" }
 sprocket-workspace = { path = "../sprocket-workspace" }
+tar = "0.4"
 tempfile = "3.27.0"
 tokio = { version = "1.52.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
