@@ -467,8 +467,6 @@ test('install reports an error when the updated launcher cannot start', async ()
 		payload.error,
 		/0\.3\.5 was installed but cannot start: sprocket: The native package/
 	);
-	assert.equal(payload.restartLauncher, undefined);
-
 	assert.deepEqual(commands.at(-1).args, [
 		path.resolve(NPM_PACKAGE, 'bin/sprocket.js'),
 		'--version'

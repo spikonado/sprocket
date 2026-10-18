@@ -49,13 +49,9 @@ export function updateLabel(state: UpdateState): string | null {
 	}
 }
 
-export async function requestPackageUpdate(install: boolean): Promise<UpdateState | null> {
-	const baseUrl = resolveLocalApiBaseUrl();
-
-	if (!baseUrl) return null;
-
-	const response = await fetch(`${baseUrl}/api/update${install ? '/install' : ''}`, {
-		method: install ? 'POST' : 'GET',
+async function updateApiRequest(baseUrl: string, path: string, method: 'GET' | 'POST') {
+	const response = await fetch(`${baseUrl}/api/update${path}`, {
+		method,
 		credentials: 'include',
 		headers: { 'content-type': 'application/json' },
 		signal: AbortSignal.timeout(30_000)
@@ -71,6 +67,20 @@ export async function requestPackageUpdate(install: boolean): Promise<UpdateStat
 		);
 	}
 
+	return response;
+}
+
+export async function requestPackageUpdate(install: boolean): Promise<UpdateState | null> {
+	const baseUrl = resolveLocalApiBaseUrl();
+
+	if (!baseUrl) return null;
+
+	const response = await updateApiRequest(
+		baseUrl,
+		install ? '/install' : '',
+		install ? 'POST' : 'GET'
+	);
+
 	return updateStateSchema.parse(await response.json());
 }
 
@@ -79,22 +89,7 @@ export async function restartPackageUpdate(version: string): Promise<void> {
 
 	if (!baseUrl) throw new Error('The Sprocket server is unavailable.');
 
-	const response = await fetch(`${baseUrl}/api/update/restart`, {
-		method: 'POST',
-		credentials: 'include',
-		headers: { 'content-type': 'application/json' },
-		signal: AbortSignal.timeout(30_000)
-	});
-
-	if (!response.ok) {
-		const error = z
-			.object({ error: z.string() })
-			.safeParse(await response.json().catch(() => null));
-
-		throw new Error(
-			error.success ? error.data.error : `Restart request failed (${response.status}).`
-		);
-	}
+	await updateApiRequest(baseUrl, '/restart', 'POST');
 
 	const deadline = Date.now() + 90_000;
 	const healthSchema = z.object({ version: z.string() });

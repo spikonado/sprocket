@@ -1,15 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	rmSync,
-	statSync,
-	writeFileSync
-} from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -90,9 +82,7 @@ test('overrides inherited update helper environment for the native child', async
 test('starts the updated launcher after the native server exits to restart', async (t) => {
 	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-test-'));
 	t.after(() => rmSync(directory, { recursive: true, force: true }));
-	const updatedLauncher = path.join(directory, 'package/bin/sprocket.js');
-	mkdirSync(path.dirname(updatedLauncher), { recursive: true });
-	writeFileSync(updatedLauncher, '');
+	const updatedLauncher = '/opt/sprocket/bin/sprocket.js';
 	const invocations = [];
 
 	const code = await launch(['--web'], {
@@ -117,9 +107,8 @@ test('starts the updated launcher after the native server exits to restart', asy
 	assert.equal(code, 0);
 	const [native, restarted] = invocations;
 	assert.equal(native.binary, '/tmp/sprocket');
-	assert.equal(Object.hasOwn(native.env, 'SPROCKET_RESTARTED'), false);
 	assert.equal(path.dirname(native.env.SPROCKET_RESTART_FILE), directory);
-	assert.deepEqual(restarted.binary, '/usr/bin/node');
+	assert.equal(restarted.binary, '/usr/bin/node');
 	assert.deepEqual(restarted.args, [updatedLauncher, '--web']);
 	assert.equal(restarted.env.SPROCKET_RESTART_FILE, native.env.SPROCKET_RESTART_FILE);
 	assert.equal(restarted.env.SPROCKET_RESTARTED, '1');

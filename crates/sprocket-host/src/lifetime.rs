@@ -43,15 +43,13 @@ impl HostLifetime {
     /// Stops accepting work and signals a shutdown that the launcher follows with a restart.
     pub fn request_restart(&self) -> anyhow::Result<()> {
         let mut state = self.state.lock().unwrap();
-        if !state.restart_requested {
-            anyhow::ensure!(
-                state.accepting && !self.shutdown.is_cancelled(),
-                "Sprocket is already shutting down."
-            );
-            state.restart_requested = true;
-            state.accepting = false;
-            self.shutdown.cancel();
-        }
+        anyhow::ensure!(
+            state.accepting && !self.shutdown.is_cancelled(),
+            "Sprocket is already shutting down."
+        );
+        state.restart_requested = true;
+        state.accepting = false;
+        self.shutdown.cancel();
         Ok(())
     }
 

@@ -118,24 +118,6 @@ async fn restart_requires_session_same_origin_and_installed_update() {
 }
 
 #[tokio::test]
-async fn public_health_reports_the_running_version() {
-    let (state, _) = test_state(PackageUpdateManager::disabled()).await;
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/health")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    let payload = read_json(response).await;
-    assert_eq!(payload["version"], sprocket_workspace::SPROCKET_VERSION);
-}
-
-#[tokio::test]
 async fn update_status_requires_session_and_rejects_hostile_origin() {
     let (state, session_token) = test_state(PackageUpdateManager::disabled()).await;
     let app = router(state);

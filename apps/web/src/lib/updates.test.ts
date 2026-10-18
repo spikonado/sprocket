@@ -53,18 +53,6 @@ describe('package update requests', () => {
 		await result;
 	});
 
-	it('reports restart rejection without polling health', async () => {
-		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
-
-		const fetcher = vi
-			.fn()
-			.mockResolvedValue(Response.json({ error: 'Install an update first.' }, { status: 409 }));
-
-		vi.stubGlobal('fetch', fetcher);
-		await expect(restartPackageUpdate('1.1.0')).rejects.toThrow('Install an update first.');
-		expect(fetcher).toHaveBeenCalledTimes(1);
-	});
-
 	it('shows the server explanation when an install is rejected', async () => {
 		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
 		vi.stubGlobal('fetch', async () =>

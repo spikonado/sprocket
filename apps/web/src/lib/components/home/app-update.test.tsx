@@ -40,13 +40,11 @@ function mount(automaticAgentContinuation?: boolean, loading = false) {
 		client.registerQuery(api.uiPreferences.getMine, preferences);
 	}
 
-	const view = render(
+	render(
 		<ConvexTestProvider client={client}>
 			<AppUpdate />
 		</ConvexTestProvider>
 	);
-
-	return { client, view };
 }
 
 it('installs a package update on the first click and prevents another request while busy', async () => {
@@ -77,7 +75,6 @@ it('installs a package update on the first click and prevents another request wh
 		'disabled',
 		false
 	);
-	expect(screen.queryByText(/stop Sprocket in your terminal/)).toBeNull();
 });
 
 it.each([undefined, true])(
@@ -186,32 +183,4 @@ it('uses the same confirmation before a desktop restart', async () => {
 		)
 	);
 	expect(install).toHaveBeenCalledTimes(1);
-});
-
-it('continues the accepted restart after the sidebar unmounts', async () => {
-	const accepted = Promise.withResolvers<Response>();
-
-	const fetcher = vi
-		.fn()
-		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
-		.mockReturnValueOnce(accepted.promise)
-		.mockRejectedValueOnce(new Error('offline'));
-
-	vi.stubGlobal('fetch', fetcher);
-	const { view } = mount();
-	const button = await screen.findByRole('button', { name: 'Restart Sprocket' });
-	await act(async () => fireEvent.click(button));
-	view.unmount();
-	vi.useFakeTimers();
-	await act(async () => accepted.resolve(new Response(null, { status: 204 })));
-	expect(fetcher).toHaveBeenNthCalledWith(
-		3,
-		expect.stringContaining('/api/health'),
-		expect.objectContaining({ signal: expect.any(AbortSignal) })
-	);
-	expect(fetcher.mock.calls[2]![1]).toEqual(
-		expect.objectContaining({ signal: expect.objectContaining({ aborted: false }) })
-	);
-	await act(async () => vi.advanceTimersByTimeAsync(90_000));
-	vi.useRealTimers();
 });

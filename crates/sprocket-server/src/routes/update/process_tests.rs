@@ -188,17 +188,13 @@ async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_run
     let (state, session_token, _dir) = test_state(manager).await;
     let lifetime = Arc::clone(&state.host.lifetime);
     let app = router(state);
-    for _ in 0..2 {
-        let mut request =
-            install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}");
-        *request.uri_mut() = "/api/update/restart".parse().unwrap();
-        let response = app
-            .clone()
-            .oneshot(with_peer(request, loopback_peer()))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    }
+    let mut request = install_request(Some(&session_token), Some("http://127.0.0.1:7731"), "{}");
+    *request.uri_mut() = "/api/update/restart".parse().unwrap();
+    let response = app
+        .oneshot(with_peer(request, loopback_peer()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(lifetime.shutdown.is_cancelled());
     assert!(lifetime.run_guard().is_err());
     assert!(lifetime.restart_requested());

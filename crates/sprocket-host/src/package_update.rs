@@ -625,9 +625,7 @@ impl HelperJson {
             error,
             method: UpdateMethod::Package,
             message: self.message.filter(|value| !value.is_empty()),
-            restart_launcher: (status == UpdateStatus::Installed)
-                .then_some(self.restart_launcher)
-                .flatten(),
+            restart_launcher: self.restart_launcher,
         }
     }
 }
