@@ -12,7 +12,11 @@ import {
 	type ArtifactWatchState
 } from '$lib/chat/artifacts';
 import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
-import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
+import {
+	DEFAULT_SIDE_PANEL_SNAPSHOT,
+	type SidePanelSnapshot,
+	type SidePanelTab
+} from '$lib/chat/side-panel';
 import { useStore, type Store } from '$lib/store';
 import type { ArtifactsWatchRequest, DesktopApi } from '$lib/types/sprocket';
 
@@ -44,6 +48,7 @@ export class ArtifactPanel implements Store<number> {
 	#watchScope: string | null = null;
 	#snapshots = new Map<string, SidePanelSnapshot>();
 	#panelScopeKey: string | null = null;
+	#nextTabId = 1;
 	#version = 0;
 	readonly #listeners = new Set<() => void>();
 
@@ -63,6 +68,10 @@ export class ArtifactPanel implements Store<number> {
 
 	get fullscreenArtifact() {
 		return this.artifacts.find((artifact) => artifact.key === this.fullscreenKey) ?? null;
+	}
+
+	get activeTab() {
+		return this.panel.tabs.find((tab) => tab.id === this.panel.activeTabId) ?? this.panel.tabs[0]!;
 	}
 
 	selectScope(scope: ArtifactsWatchRequest | null) {
@@ -144,8 +153,76 @@ export class ArtifactPanel implements Store<number> {
 		this.#emit();
 	}
 
-	update(patch: Partial<SidePanelSnapshot>) {
+	update(patch: Partial<Pick<SidePanelSnapshot, 'open' | 'expanded'>>) {
 		this.panel = { ...this.panel, ...patch };
+		this.#emit();
+	}
+
+	newTab() {
+		const tab = this.#createTab();
+		this.panel = { ...this.panel, tabs: [...this.panel.tabs, tab], activeTabId: tab.id };
+		this.#emit();
+	}
+
+	activateTab(id: string) {
+		if (this.panel.activeTabId === id) return;
+		this.panel = { ...this.panel, activeTabId: id };
+		this.#emit();
+	}
+
+	updateTab(id: string, patch: Partial<Omit<SidePanelTab, 'id'>>) {
+		this.panel = {
+			...this.panel,
+			tabs: this.panel.tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab))
+		};
+		this.#emit();
+	}
+
+	closeTab(id: string) {
+		const index = this.panel.tabs.findIndex((tab) => tab.id === id);
+
+		if (index === -1) return;
+
+		const tabs = this.panel.tabs.filter((tab) => tab.id !== id);
+
+		if (tabs.length === 0) {
+			this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
+		} else {
+			const activeTabId =
+				this.panel.activeTabId === id
+					? tabs[Math.min(index, tabs.length - 1)]!.id
+					: this.panel.activeTabId;
+
+			this.panel = { ...this.panel, tabs, activeTabId };
+		}
+
+		this.#emit();
+	}
+
+	/** Focuses a tab already showing the artifact, reuses an empty tab, or opens a new one. */
+	openArtifact(key: string) {
+		const existing = this.panel.tabs.find(
+			(tab) => tab.view === 'artifacts' && tab.selectedKey === key
+		);
+
+		const active = this.activeTab;
+		let tabs = this.panel.tabs;
+		let activeTabId: string;
+
+		if (existing) {
+			activeTabId = existing.id;
+		} else if (active.view === null) {
+			activeTabId = active.id;
+			tabs = tabs.map((tab) =>
+				tab.id === active.id ? { ...tab, view: 'artifacts', selectedKey: key } : tab
+			);
+		} else {
+			const tab = { ...this.#createTab(), view: 'artifacts' as const, selectedKey: key };
+			activeTabId = tab.id;
+			tabs = [...tabs, tab];
+		}
+
+		this.panel = { ...this.panel, open: true, tabs, activeTabId };
 		this.#emit();
 	}
 
@@ -153,6 +230,10 @@ export class ArtifactPanel implements Store<number> {
 		if (this.fullscreenKey === key) return;
 		this.fullscreenKey = key;
 		this.#emit();
+	}
+
+	#createTab(): SidePanelTab {
+		return { id: `tab-${this.#nextTabId++}`, view: null, selectedKey: null };
 	}
 
 	#emit() {

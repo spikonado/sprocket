@@ -16,13 +16,14 @@ const artifact: ArtifactEntry = {
 function sidePanelProps(overrides: Partial<ComponentProps<typeof SidePanel>> = {}) {
 	return {
 		artifacts: [artifact],
-		selectedKey: null,
-		view: 'artifacts' as const,
+		tabs: [{ id: 'tab', view: 'artifacts' as const, selectedKey: null }],
+		activeTabId: 'tab',
 		browserApi: null,
 		expanded: false,
-		onSelect: vi.fn(),
-		onBack: vi.fn(),
-		onViewChange: vi.fn(),
+		onNewTab: vi.fn(),
+		onActivateTab: vi.fn(),
+		onCloseTab: vi.fn(),
+		onUpdateTab: vi.fn(),
 		onOpenFullscreen: vi.fn(),
 		onToggleExpanded: vi.fn(),
 		onClose: vi.fn(),
@@ -96,7 +97,9 @@ it('deletes from both the sidebar list and selected preview', async () => {
 	const view = render(<SidePanel {...props} />);
 	fireEvent.contextMenu(screen.getByText('Notes'));
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
-	view.rerender(<SidePanel {...props} selectedKey={artifact.key} />);
+	view.rerender(
+		<SidePanel {...props} tabs={[{ id: 'tab', view: 'artifacts', selectedKey: artifact.key }]} />
+	);
 	fireEvent.click(screen.getByRole('button', { name: 'Notes actions' }));
 	await act(async () => fireEvent.click(screen.getByRole('menuitem')));
 	expect(onDeleteArtifact).toHaveBeenCalledTimes(2);

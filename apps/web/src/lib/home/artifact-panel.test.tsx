@@ -105,10 +105,10 @@ it('notifies subscribers on panel changes and keeps one instance per mount', () 
 	expect(result.current).toBe(instance);
 
 	act(() => {
-		instance.update({ open: true, view: 'artifacts' });
+		instance.update({ open: true });
 	});
 	expect(listener).toHaveBeenCalledTimes(1);
-	expect(result.current.panel).toMatchObject({ open: true, view: 'artifacts' });
+	expect(result.current.panel).toMatchObject({ open: true });
 	expect(instance.getSnapshot()).not.toBe(before);
 
 	unsubscribe();
@@ -120,14 +120,16 @@ it('keeps a side panel snapshot per scope and restores it on return', () => {
 	panel.subscribe(listener);
 
 	panel.selectScope(scope('robot'));
-	panel.update({ open: true, expanded: true, selectedKey: 'artifact-1' });
+	panel.update({ expanded: true });
+	panel.openArtifact('artifact-1');
 
 	panel.selectScope(scope('other'));
 	expect(panel.panel.open).toBe(false);
 	expect(panel.fullscreenKey).toBeNull();
 
 	panel.selectScope(scope('robot'));
-	expect(panel.panel).toMatchObject({ open: true, expanded: true, selectedKey: 'artifact-1' });
+	expect(panel.panel).toMatchObject({ open: true, expanded: true });
+	expect(panel.activeTab).toMatchObject({ view: 'artifacts', selectedKey: 'artifact-1' });
 	expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
 
 	panel.reset();
@@ -148,4 +150,21 @@ it('clears the fullscreen artifact when switching scope or resetting', () => {
 	panel.setFullscreenKey('artifact-2');
 	panel.reset();
 	expect(panel.fullscreenKey).toBeNull();
+});
+
+it('opens artifacts in the empty tab, then new tabs, and refocuses tabs already showing them', () => {
+	const panel = new ArtifactPanel();
+	panel.openArtifact('a');
+	panel.openArtifact('b');
+	expect(panel.panel.tabs.map((tab) => tab.selectedKey)).toEqual(['a', 'b']);
+
+	panel.openArtifact('a');
+	expect(panel.panel.tabs).toHaveLength(2);
+	expect(panel.activeTab.selectedKey).toBe('a');
+
+	panel.closeTab(panel.activeTab.id);
+	expect(panel.activeTab.selectedKey).toBe('b');
+	panel.closeTab(panel.activeTab.id);
+	expect(panel.panel.open).toBe(false);
+	expect(panel.activeTab.view).toBeNull();
 });

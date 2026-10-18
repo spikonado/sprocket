@@ -2804,13 +2804,7 @@ export default function App({
 									activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 									project={currentProject}
 									artifacts={artifactPanel.artifacts}
-									onOpenArtifact={(artifactId) => {
-										artifactPanel.update({
-											open: true,
-											view: 'artifacts',
-											selectedKey: artifactId
-										});
-									}}
+									onOpenArtifact={(artifactId) => artifactPanel.openArtifact(artifactId)}
 									loadingOlder={transcript.loadingOlder}
 									nextBefore={transcript.nextBefore ?? undefined}
 									emptyStateMessage={
@@ -2952,15 +2946,16 @@ export default function App({
 						workspacePath={desktopApi ? currentProject?.workspacePath : undefined}
 						artifacts={artifactPanel.artifacts}
 						onDeleteArtifact={deleteArtifact}
-						selectedKey={artifactPanel.panel.selectedKey}
-						view={artifactPanel.panel.view}
+						tabs={artifactPanel.panel.tabs}
+						activeTabId={artifactPanel.activeTab.id}
 						browserApi={desktopApi}
 						expanded={artifactPanel.panel.expanded}
 						stale={artifactPanel.watchState.stale}
 						error={artifactPanel.watchState.error}
-						onSelect={(key) => artifactPanel.update({ selectedKey: key })}
-						onBack={() => artifactPanel.update({ selectedKey: null })}
-						onViewChange={(view) => artifactPanel.update({ view })}
+						onNewTab={() => artifactPanel.newTab()}
+						onActivateTab={(id) => artifactPanel.activateTab(id)}
+						onCloseTab={(id) => artifactPanel.closeTab(id)}
+						onUpdateTab={(id, patch) => artifactPanel.updateTab(id, patch)}
 						onOpenFullscreen={(key) => {
 							artifactPanel.setFullscreenKey(key);
 
