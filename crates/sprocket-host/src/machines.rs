@@ -149,7 +149,7 @@ impl MachineManager {
         self.shutdown.cancel();
     }
 
-    /// A restarting machine keeps its runs continuable for the next process.
+    /// Both paths leave runs recoverable; restarting also shows them as restarting for a while.
     pub async fn shutdown(&self, restarting: bool) {
         self.stop_registration();
         let mutation = if restarting {

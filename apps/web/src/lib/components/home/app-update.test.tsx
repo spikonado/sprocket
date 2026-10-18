@@ -165,7 +165,7 @@ it('waits for the restart preference to load', async () => {
 	expect(button).toHaveProperty('disabled', false);
 });
 
-it('always confirms a desktop restart because it interrupts agents', async () => {
+it('uses the same confirmation before a desktop restart', async () => {
 	const install = vi
 		.fn()
 		.mockResolvedValue({ ...available, method: 'desktop', status: 'installing' });
@@ -182,15 +182,10 @@ it('always confirms a desktop restart because it interrupts agents', async () =>
 			onState: () => () => {}
 		}
 	};
-	mount(true);
+	mount(false);
 	const button = await screen.findByRole('button', { name: 'Restart to update' });
 	await act(async () => fireEvent.click(button));
 	expect(install).not.toHaveBeenCalled();
-
-	expect(screen.getByRole('dialog').textContent).toContain(
-		"interrupts active agents. They won't resume automatically."
-	);
-
 	await act(async () =>
 		fireEvent.click(
 			within(screen.getByRole('dialog')).getByRole('button', { name: 'Restart Sprocket' })

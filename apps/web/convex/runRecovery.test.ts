@@ -128,16 +128,34 @@ describe('automatic run recovery', () => {
 		expect((await statuses()).thread?.restartingUntil).toBeUndefined();
 	});
 
-	it('ends runs on restart when automatic continuation is disabled', async () => {
+	it('does not show restarting when automatic continuation is disabled', async () => {
 		const { asUser, restartMachine, statuses } = await setup();
 		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
 		await restartMachine();
 		const { run } = await statuses();
-		expect(run).toMatchObject({
-			status: 'failed',
-			lastError: 'The machine stopped before this run finished.'
-		});
+		expect(run).toMatchObject({ status: 'failed', lastError: RUN_ABANDONED_BY_AGENT });
 		expect(run?.restartingUntil).toBeUndefined();
+	});
+
+	it('recovers runs after a normal shutdown without showing restarting', async () => {
+		const { t, asUser, threadId, runId, queryArgs, recoveryArgs, registerNewProcess, statuses } =
+			await setup();
+
+		await asUser.mutation(api.machines.end, {
+			userId: 'user_alice',
+			machineId: queryArgs.machineId,
+			credential: 'machine-secret'
+		});
+		const { run } = await statuses();
+		expect(run).toMatchObject({ status: 'failed', lastError: RUN_ABANDONED_BY_AGENT });
+		expect(run?.restartingUntil).toBeUndefined();
+		await registerNewProcess();
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+		expect((await insertQueuedRun(t, asUser, recoveryArgs)).created).toBe(true);
 	});
 
 	it('does not show a run stopped before the restart as restarting', async () => {
