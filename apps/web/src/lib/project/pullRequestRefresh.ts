@@ -22,6 +22,8 @@ const MAX_PULL_REQUESTS_PER_REFRESH = 500;
 
 const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
 
+const closedKey = (thread: Thread, pr: PullRequestRef) => `${thread._id} ${refKey(pr)}`;
+
 /**
  * Keeps linked PR states and titles of the threads on screen fresh. Each list of shown rows
  * registers itself; a thread is read when it first appears, and every shown
@@ -64,12 +66,12 @@ export class PullRequestRefresher {
 		return [...byId.values()];
 	}
 
-	#isDue(pr: LinkedPullRequest, now: number) {
+	#isDue(thread: Thread, pr: LinkedPullRequest, now: number) {
 		if (pr.state === 'open') return true;
 
 		if (pr.state === 'merged') return false;
 
-		const readAt = this.#closedReadAt.get(refKey(pr));
+		const readAt = this.#closedReadAt.get(closedKey(thread, pr));
 
 		return readAt === undefined || now - readAt >= CLOSED_REFRESH_INTERVAL_MS;
 	}
@@ -78,12 +80,10 @@ export class PullRequestRefresher {
 		const now = Date.now();
 
 		const linked = threads.flatMap((thread) =>
-			(thread.pullRequests ?? []).flatMap((pr) => (this.#isDue(pr, now) ? [{ thread, pr }] : []))
+			(thread.pullRequests ?? []).flatMap((pr) =>
+				this.#isDue(thread, pr, now) ? [{ thread, pr }] : []
+			)
 		);
-
-		for (const { pr } of linked) {
-			if (pr.state === 'closed') this.#closedReadAt.set(refKey(pr), now);
-		}
 
 		for (let start = 0; start < linked.length; start += MAX_PULL_REQUESTS_PER_REFRESH) {
 			const batch = linked.slice(start, start + MAX_PULL_REQUESTS_PER_REFRESH);
@@ -117,6 +117,13 @@ export class PullRequestRefresher {
 				});
 
 				if (updates.length > 0) await this.#sync.updateStates(updates);
+
+				// The cooldown starts only once GitHub answered for this PR and its change was saved.
+				for (const { thread, pr } of batch) {
+					if (fetched.get(refKey(pr))?.state === 'closed') {
+						this.#closedReadAt.set(closedKey(thread, pr), now);
+					}
+				}
 			} catch {
 				// Stale badges are harmless; the next refresh tries again.
 			}
