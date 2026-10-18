@@ -18,6 +18,12 @@
 - Always understand the task’s true end goal and what the user is ultimately trying to achieve. The requirements/tasks they provide may be incomplete, overly specific, or based on incorrect assumptions, so treat them as a proposed path rather than the objective itself.
 - Prioritize achieving the user’s underlying goal, and when a stated requirement conflicts with that goal, adapt or challenge the requirement rather than blindly following it.
 
+### Ask questions
+
+- When things are unclear, don't hesitate to ask the user questions before, after, or while working.
+- Don't assume what the user wants.
+- Questions should be clearly marked and not mixed with the rest of your text.
+
 ## Delete what isn't needed
 
 - No matter where it comes from, every requirement's need should be questioned.
@@ -25,13 +31,9 @@
 - Many parts of a project are often over-engineered; explicitly tell the user instead of silently working around them.
 - Deleting code/parts often fixes more problems than creating them does.
 - Sometimes creating code/parts introduces problems.
-
-## Ask questions
-
-Don't hesitate to ask the user questions before, after, or while working. Don't assume what the user wants. This is to avoid cases similar to the following happening:
-
-- The user asked you to delete some virtual machines; you couldn't find the exact ones and assumed that the ones you were seeing were the ones that needed to be deleted and deleted them.
-- You had to make some breaking changes to the schema of a project's dev database and assumed by yourself that the current data in the database was important and had to be migrated instead of just being deleted.
+- When the user asks to add something to the project, check if existing code/parts already cover it and offer the smaller option before building.
+- When the user redirects the design, rewrite the change to match the new design and tell them what you dropped.
+- Treat review findings, from people, bots, or subagents, as proposals. Implement the ones the task needs. When a finding comes from a mechanism the task doesn't need, delete the mechanism.
 
 ## Completing a task
 
@@ -62,6 +64,7 @@ Don't hesitate to ask the user questions before, after, or while working. Don't 
 
 - It's a good practice to write tests.
 - This doesn't mean that you should write a test for every change.
+- Try to keep tests as small as possible and extend existing tests when they fit.
 - Here are some examples of what not to write tests for:
 
   - Tests that should belong in the libraries/SDKs used by the project
