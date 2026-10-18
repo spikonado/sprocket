@@ -19,14 +19,14 @@ use tokio::time::sleep;
 
 use crate::chatgpt::ChatGptClient;
 use crate::context_handoff::{
-    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_SUBMITTED, context_summary_text,
+    ContextHandoffHook, HANDOFF_SUBMITTED, context_summary_text, handoff_prompt,
 };
 use crate::convex::RuntimeClient;
 use crate::gateway::GatewayClient;
 use crate::history::without_reasoning_traces;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::now_ms;
-use crate::openai::{developer_message, stateless_responses_model};
+use crate::openai::stateless_responses_model;
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::stream_recovery::StreamRecovery;
 use crate::tools::{agent_tools, working_directory_message};
@@ -560,7 +560,7 @@ async fn run_with_completion_model(
         } else {
             history.push(prompt);
         }
-        prompt = developer_message(HANDOFF_PROMPT);
+        prompt = handoff_prompt();
         context_handoff_hook.start_handoff();
     }
 
@@ -865,7 +865,7 @@ async fn run_with_completion_model(
                                 if let Some(handoff) = context_handoff_hook.take_request() {
                                     handoff_processed_tokens = 0;
                                     history = handoff.history;
-                                    prompt = developer_message(HANDOFF_PROMPT);
+                                    prompt = handoff_prompt();
                                     deferred_prompt = handoff.deferred_prompt;
                                     before_prompt = handoff.before_prompt;
                                     context_handoff_hook.start_handoff();

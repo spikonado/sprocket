@@ -16,6 +16,13 @@ pub(crate) const HANDOFF_SUBMITTED: &str = "SPROCKET_CONTEXT_HANDOFF_SUBMITTED";
 const HANDOFF_REQUESTED: &str = "SPROCKET_CONTEXT_HANDOFF_REQUESTED";
 const MAX_COMPLETION_CALLS: usize = 1_000;
 
+/// User role because the handoff can follow an assistant reply, and Anthropic
+/// models reject requests that end on an assistant turn once developer
+/// messages are folded into the system prompt.
+pub(crate) fn handoff_prompt() -> Message {
+    Message::user(HANDOFF_PROMPT)
+}
+
 pub(crate) fn context_summary_text(summary: &str) -> String {
     format!(
         "A handoff document was created automatically from the conversation context.\n\n<handoff_document>\n{summary}\n</handoff_document>"

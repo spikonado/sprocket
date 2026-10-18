@@ -14,7 +14,7 @@ use super::*;
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn request() -> CompletionRequest {
-    CompletionRequest::new(crate::openai::developer_message("Continue the task."))
+    CompletionRequest::new(rig::completion::Message::system("Continue the task."))
         .messages([rig::completion::Message::user("hello")])
 }
 

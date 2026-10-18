@@ -19,7 +19,6 @@ use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::history::{
     agent_history_from_parts, current_run_has_finished_turns, pending_prompt_part,
 };
-use crate::openai::developer_message;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::submission::{SUBMISSION_ATTEMPT_TIMEOUT, submission_is_waiting, wait_until_ready};
 use crate::types::{
@@ -1059,7 +1058,7 @@ pub async fn run_agent(
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     let prompt = if continue_without_prompt {
-        developer_message(CONTINUE_PROMPT)
+        Message::user(CONTINUE_PROMPT)
     } else {
         prompt
     };
