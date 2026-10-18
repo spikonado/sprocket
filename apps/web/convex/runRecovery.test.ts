@@ -55,12 +55,15 @@ async function setup() {
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
 
-	const restartMachine = () =>
-		asUser.mutation(api.machines.restarting, {
+	const shutDownMachine = (restarting: boolean) =>
+		asUser.mutation(api.machines.shutdown, {
 			userId: 'user_alice',
 			machineId,
-			credential: 'machine-secret'
+			credential: 'machine-secret',
+			restarting
 		});
+
+	const restartMachine = () => shutDownMachine(true);
 
 	const registerNewProcess = async () =>
 		asUser.mutation(api.machines.tryRegister, {
@@ -89,6 +92,7 @@ async function setup() {
 		recoveryArgs,
 		abandon,
 		restartMachine,
+		shutDownMachine,
 		registerNewProcess,
 		statuses
 	};
@@ -138,14 +142,19 @@ describe('automatic run recovery', () => {
 	});
 
 	it('recovers runs after a normal shutdown without showing restarting', async () => {
-		const { t, asUser, threadId, runId, queryArgs, recoveryArgs, registerNewProcess, statuses } =
-			await setup();
+		const {
+			t,
+			asUser,
+			threadId,
+			runId,
+			queryArgs,
+			recoveryArgs,
+			shutDownMachine,
+			registerNewProcess,
+			statuses
+		} = await setup();
 
-		await asUser.mutation(api.machines.end, {
-			userId: 'user_alice',
-			machineId: queryArgs.machineId,
-			credential: 'machine-secret'
-		});
+		await shutDownMachine(false);
 		const { run } = await statuses();
 		expect(run).toMatchObject({ status: 'failed', lastError: RUN_ABANDONED_BY_AGENT });
 		expect(run?.restartingUntil).toBeUndefined();
@@ -166,6 +175,20 @@ describe('automatic run recovery', () => {
 		expect(run).toMatchObject({ status: 'cancelled' });
 		expect(run?.restartingUntil).toBeUndefined();
 		expect(thread?.restartingUntil).toBeUndefined();
+	});
+
+	it('does not recover runs after the user signs out', async () => {
+		const { asUser, queryArgs, statuses } = await setup();
+		await asUser.mutation(api.machines.end, {
+			userId: 'user_alice',
+			machineId: queryArgs.machineId,
+			credential: 'machine-secret'
+		});
+		expect((await statuses()).run).toMatchObject({
+			status: 'failed',
+			lastError: 'The machine stopped before this run finished.'
+		});
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
 	});
 
 	it('stops a restarting run without continuing it', async () => {
