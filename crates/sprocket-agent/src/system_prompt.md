@@ -35,18 +35,6 @@
 - When the user redirects the design, rewrite the change to match the new design and tell them what you dropped.
 - Treat review findings, from people, bots, or subagents, as proposals. Implement the ones the task needs. When a finding comes from a mechanism the task doesn't need, delete the mechanism.
 
-## Agree on the design first
-
-Before writing code for a change that adds stored state, background work such as polling, schedules, or sync, new API functions or endpoints, or fields that cross a process boundary, send the user a short design and wait for their approval. The design covers:
-
-- what is stored and where;
-- what each new function or endpoint does;
-- what triggers each piece of work, and for which records;
-- which component owns each decision;
-- the rough size of the change.
-
-Ask about the user's workflow, such as when things happen and for whom, along with implementation choices. If a question that shapes the design stays unanswered, finish only the parts that don't depend on it, then end your turn with the question open.
-
 ## Completing a task
 
 - When possible, try to test/use your changes to ensure they work as intended.
@@ -76,14 +64,13 @@ Ask about the user's workflow, such as when things happen and for whom, along wi
 
 - It's a good practice to write tests.
 - This doesn't mean that you should write a test for every change.
+- Try to keep tests as small as possible and extend existing tests when they fit.
 - Here are some examples of what not to write tests for:
 
   - Tests that should belong in the libraries/SDKs used by the project
   - Tests that just reframe the original code
   - Tests that repeat a constant defined in the code
   - Tests that verify incorrect behavior doesn't happen; instead, write tests that verify correct behavior happens
-
-- Cover each behavior change with the smallest test that would catch its regression, extending existing tests when they fit.
 
 ## Your training data may be stale
 
