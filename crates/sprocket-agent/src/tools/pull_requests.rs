@@ -82,33 +82,33 @@ async fn link(
             number: pr.number,
         })
         .collect();
-    let mut fetched = fetch_states(&context.user_id, &refs).await;
+    let fetched = fetch_states(&context.user_id, &refs).await;
     if let Some((host, error)) = fetched.failures.into_iter().next() {
         anyhow::bail!("Reading pull requests from {host} failed: {error}");
     }
-    if let Some(missing) = refs.iter().find(|pr| {
-        !fetched
-            .states
-            .iter()
-            .any(|status| status.repository == pr.repository && status.number == pr.number)
-    }) {
-        anyhow::bail!(
-            "{}#{} was not found on GitHub. Repositories look like `github.com/owner/name`.",
-            missing.repository,
-            missing.number
-        );
-    }
-    fetched.states.sort_by_key(|status| {
-        refs.iter()
-            .position(|pr| pr.repository == status.repository && pr.number == status.number)
-    });
+    let states = refs
+        .iter()
+        .map(|pr| {
+            fetched
+                .states
+                .iter()
+                .find(|status| status.repository == pr.repository && status.number == pr.number)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}#{} was not found on GitHub. Repositories look like `github.com/owner/name`.",
+                        pr.repository,
+                        pr.number
+                    )
+                })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let args = BTreeMap::from([
         ("runId".to_string(), Value::from(context.run_id.clone())),
         ("claimId".to_string(), Value::from(context.claim_id.clone())),
         (
             "pullRequests".to_string(),
-            Value::try_from(serde_json::to_value(&fetched.states)?)?,
+            Value::try_from(serde_json::to_value(&states)?)?,
         ),
     ]);
     context

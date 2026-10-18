@@ -770,7 +770,17 @@ function ThreadTreeRow({
 							{thread.title ?? 'New thread'}
 						</button>
 					)}
-					<ThreadModelRow model={model} pullRequests={thread.pullRequests} />
+					<span className="inbox-row-model">
+						{model ? (
+							<>
+								<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+								<span className="truncate">{model.label}</span>
+							</>
+						) : (
+							<span className="truncate">Unknown model</span>
+						)}
+						<LinkedPullRequests pullRequests={thread.pullRequests ?? []} />
+					</span>
 				</div>
 				{!renaming && isRoot && (
 					<div className="inbox-row-actions">
@@ -833,28 +843,6 @@ function ThreadTreeRow({
 				</div>
 			)}
 		</div>
-	);
-}
-
-function ThreadModelRow({
-	model,
-	pullRequests = []
-}: {
-	model: ThreadTreeRowProps['model'];
-	pullRequests: Thread['pullRequests'];
-}) {
-	return (
-		<span className="inbox-row-model">
-			{model ? (
-				<>
-					<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
-					<span className="truncate">{model.label}</span>
-				</>
-			) : (
-				<span className="truncate">Unknown model</span>
-			)}
-			<LinkedPullRequests pullRequests={pullRequests} />
-		</span>
 	);
 }
 

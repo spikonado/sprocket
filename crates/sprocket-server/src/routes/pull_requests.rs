@@ -6,10 +6,7 @@ use sprocket_workspace::github::pull_requests::{
 };
 
 use crate::AppState;
-use crate::routes::api_error::ApiError;
 use crate::routes::session::{AuthorizedJson, UserScoped};
-
-const MAX_PULL_REQUESTS: usize = 500;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -32,15 +29,10 @@ pub fn routes() -> axum::Router<AppState> {
 /// PRs GitHub can't answer for are left out, so the caller keeps its last state.
 async fn states_handler(
     AuthorizedJson(payload): AuthorizedJson<StatesRequest>,
-) -> Result<Json<Vec<PullRequestStatus>>, ApiError> {
-    if payload.pull_requests.len() > MAX_PULL_REQUESTS {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "Read at most {MAX_PULL_REQUESTS} pull requests at once."
-        )));
-    }
+) -> Json<Vec<PullRequestStatus>> {
     let fetched = refresh_states(&payload.user_id, &payload.pull_requests).await;
     for (host, error) in &fetched.failures {
         tracing::debug!("skipping linked PRs on {host}: {error}");
     }
-    Ok(Json(fetched.states))
+    Json(fetched.states)
 }

@@ -63,30 +63,25 @@ fn failing_hosts_pause_longer_each_time_until_they_answer() {
     let pauses = HostPauses::default();
     let start = Instant::now();
     let limited = GitHubError::RateLimited { retry_after: None };
-    let paused_at = |minutes: u64| {
-        pauses.is_paused(
-            "user",
-            "github.com",
-            start + Duration::from_secs(minutes * 60),
-        )
-    };
+    let paused_at =
+        |minutes: u64| pauses.is_paused("github.com", start + Duration::from_secs(minutes * 60));
 
-    pauses.record("user", "github.com", Some(&limited), start);
+    pauses.record("github.com", Some(&limited), start);
     assert!(paused_at(1));
     assert!(!paused_at(2));
-    assert!(!pauses.is_paused("other-user", "github.com", start));
+    assert!(!pauses.is_paused("ghe.example.com", start));
 
-    pauses.record("user", "github.com", Some(&limited), start);
+    pauses.record("github.com", Some(&limited), start);
     assert!(paused_at(3));
     assert!(!paused_at(4));
 
     for _ in 0..10 {
-        pauses.record("user", "github.com", Some(&limited), start);
+        pauses.record("github.com", Some(&limited), start);
     }
     assert!(paused_at(29));
     assert!(!paused_at(30));
 
-    pauses.record("user", "github.com", None, start);
+    pauses.record("github.com", None, start);
     assert!(!paused_at(0));
 }
 
@@ -94,23 +89,18 @@ fn failing_hosts_pause_longer_each_time_until_they_answer() {
 fn rate_limits_pause_until_github_says_to_retry() {
     let pauses = HostPauses::default();
     let start = Instant::now();
-    let paused_at = |minutes: u64| {
-        pauses.is_paused(
-            "user",
-            "github.com",
-            start + Duration::from_secs(minutes * 60),
-        )
-    };
+    let paused_at =
+        |minutes: u64| pauses.is_paused("github.com", start + Duration::from_secs(minutes * 60));
     let limited_for = |minutes: u64| GitHubError::RateLimited {
         retry_after: Some(Duration::from_secs(minutes * 60)),
     };
 
-    pauses.record("user", "github.com", Some(&limited_for(45)), start);
+    pauses.record("github.com", Some(&limited_for(45)), start);
     assert!(paused_at(44));
     assert!(!paused_at(45));
 
-    pauses.record("user", "github.com", None, start);
-    pauses.record("user", "github.com", Some(&limited_for(600)), start);
+    pauses.record("github.com", None, start);
+    pauses.record("github.com", Some(&limited_for(600)), start);
     assert!(paused_at(59));
     assert!(!paused_at(60));
 }
@@ -124,8 +114,8 @@ fn missing_or_rejected_credentials_do_not_pause_a_host() {
         GitHubError::NoCredential("github.com".into()),
         GitHubError::Status(reqwest::StatusCode::UNAUTHORIZED),
     ] {
-        pauses.record("user", "github.com", Some(&error), now);
+        pauses.record("github.com", Some(&error), now);
 
-        assert!(!pauses.is_paused("user", "github.com", now));
+        assert!(!pauses.is_paused("github.com", now));
     }
 }

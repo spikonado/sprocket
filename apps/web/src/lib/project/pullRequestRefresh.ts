@@ -17,8 +17,6 @@ const REFRESH_INTERVAL_MS = 60_000;
 
 const CLOSED_REFRESH_INTERVAL_MS = 15 * 60_000;
 
-const MAX_PULL_REQUESTS_PER_REFRESH = 500;
-
 const refKey = ({ repository, number }: PullRequestRef) => `${repository}#${number}`;
 
 /**
@@ -77,30 +75,28 @@ export class PullRequestRefresher {
 			)
 		);
 
-		for (let start = 0; start < linked.length; start += MAX_PULL_REQUESTS_PER_REFRESH) {
-			const batch = linked.slice(start, start + MAX_PULL_REQUESTS_PER_REFRESH);
+		if (linked.length === 0) return;
 
-			const refs = new Map(
-				batch.map(({ pr }) => [refKey(pr), { repository: pr.repository, number: pr.number }])
+		const refs = new Map(
+			linked.map(({ pr }) => [refKey(pr), { repository: pr.repository, number: pr.number }])
+		);
+
+		try {
+			const fetched = new Map(
+				(await this.#sync.fetchStates([...refs.values()])).map((pr) => [refKey(pr), pr])
 			);
 
-			try {
-				const fetched = new Map(
-					(await this.#sync.fetchStates([...refs.values()])).map((pr) => [refKey(pr), pr])
-				);
+			const updates = linked.flatMap(({ thread, pr }) => {
+				const latest = fetched.get(refKey(pr));
 
-				const updates = batch.flatMap(({ thread, pr }) => {
-					const latest = fetched.get(refKey(pr));
+				return latest && (latest.state !== pr.state || latest.title !== pr.title)
+					? [{ threadId: thread._id, ...latest }]
+					: [];
+			});
 
-					return latest && (latest.state !== pr.state || latest.title !== pr.title)
-						? [{ threadId: thread._id, ...latest }]
-						: [];
-				});
-
-				if (updates.length > 0) await this.#sync.updateStates(updates);
-			} catch {
-				// Stale badges are harmless; the next refresh tries again.
-			}
+			if (updates.length > 0) await this.#sync.updateStates(updates);
+		} catch {
+			// Stale badges are harmless; the next refresh tries again.
 		}
 	}
 }

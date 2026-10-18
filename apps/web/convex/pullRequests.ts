@@ -9,8 +9,6 @@ import { vLinkedPullRequest, type LinkedPullRequest } from '@convex/lib/validato
 
 const MAX_LINKED_PRS = 20;
 
-const MAX_STATE_UPDATES = 500;
-
 const pullRequestKey = (pr: { repository: string; number: number }) =>
 	`${pr.repository}#${pr.number}`;
 
@@ -63,10 +61,6 @@ export const updateStates = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		if (args.updates.length > MAX_STATE_UPDATES) {
-			throw new Error(`Update at most ${MAX_STATE_UPDATES} PR states at once.`);
-		}
-
 		const userId = await getUserId(ctx);
 		const byThread = new Map<Id<'threadRecords'>, Map<string, LinkedPullRequest>>();
 

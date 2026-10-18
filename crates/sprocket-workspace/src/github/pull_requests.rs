@@ -16,8 +16,8 @@ const LONGEST_RATE_LIMIT_WAIT: Duration = Duration::from_secs(60 * 60);
 
 static REFRESH_PAUSES: LazyLock<HostPauses> = LazyLock::new(HostPauses::default);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "lowercase", deserialize = "UPPERCASE"))]
 pub enum PullRequestState {
     Open,
     Closed,
@@ -76,7 +76,7 @@ fn parse_repository(repository: &str) -> Option<Repository<'_>> {
 /// in Settings applies on the next refresh.
 #[derive(Default)]
 struct HostPauses {
-    hosts: Mutex<HashMap<(String, String), Pause>>,
+    hosts: Mutex<HashMap<String, Pause>>,
 }
 
 struct Pause {
@@ -85,14 +85,11 @@ struct Pause {
 }
 
 impl HostPauses {
-    fn is_paused(&self, user_id: &str, host: &str, now: Instant) -> bool {
-        self.lock()
-            .get(&(user_id.to_string(), host.to_string()))
-            .is_some_and(|pause| now < pause.until)
+    fn is_paused(&self, host: &str, now: Instant) -> bool {
+        self.lock().get(host).is_some_and(|pause| now < pause.until)
     }
 
-    fn record(&self, user_id: &str, host: &str, error: Option<&GitHubError>, now: Instant) {
-        let key = (user_id.to_string(), host.to_string());
+    fn record(&self, host: &str, error: Option<&GitHubError>, now: Instant) {
         let mut hosts = self.lock();
         let Some(error) = error.filter(|error| {
             !matches!(
@@ -102,10 +99,10 @@ impl HostPauses {
                     | GitHubError::Status(reqwest::StatusCode::UNAUTHORIZED)
             )
         }) else {
-            hosts.remove(&key);
+            hosts.remove(host);
             return;
         };
-        let failures = hosts.get(&key).map_or(0, |pause| pause.failures) + 1;
+        let failures = hosts.get(host).map_or(0, |pause| pause.failures) + 1;
         let backoff = FIRST_PAUSE
             .saturating_mul(2u32.saturating_pow(failures - 1))
             .min(LONGEST_PAUSE);
@@ -116,7 +113,7 @@ impl HostPauses {
             _ => backoff,
         };
         hosts.insert(
-            key,
+            host.to_string(),
             Pause {
                 failures,
                 until: now + pause,
@@ -124,7 +121,7 @@ impl HostPauses {
         );
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), Pause>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Pause>> {
         self.hosts.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -156,14 +153,14 @@ async fn fetch_by_host(
 
     let mut fetched = FetchedStates::default();
     for (host, lookups) in by_host {
-        if pauses.is_some_and(|pauses| pauses.is_paused(user_id, host, Instant::now())) {
+        if pauses.is_some_and(|pauses| pauses.is_paused(host, Instant::now())) {
             continue;
         }
         let error = fetch_host(user_id, host, &lookups, &mut fetched.states)
             .await
             .err();
         if let Some(pauses) = pauses {
-            pauses.record(user_id, host, error.as_ref(), Instant::now());
+            pauses.record(host, error.as_ref(), Instant::now());
         }
         if let Some(error) = error {
             fetched.failures.push((host.to_string(), error));
@@ -198,16 +195,8 @@ async fn fetch_batch(
 
     #[derive(Deserialize)]
     struct PullRequestNode {
-        state: GraphQlState,
+        state: PullRequestState,
         title: String,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "UPPERCASE")]
-    enum GraphQlState {
-        Open,
-        Closed,
-        Merged,
     }
 
     let (query, variables) = batch_query(batch);
@@ -235,11 +224,7 @@ async fn fetch_batch(
             Some(PullRequestStatus {
                 repository: pull_request.repository.clone(),
                 number: pull_request.number,
-                state: match node.state {
-                    GraphQlState::Open => PullRequestState::Open,
-                    GraphQlState::Closed => PullRequestState::Closed,
-                    GraphQlState::Merged => PullRequestState::Merged,
-                },
+                state: node.state,
                 title: node.title,
             })
         })
