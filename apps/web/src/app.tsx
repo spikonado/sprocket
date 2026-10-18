@@ -1549,6 +1549,7 @@ export default function App({
 
 		const submittedModel = selectedModel;
 		const submittedCompletionProvider = currentProvider;
+		const submittedProvidersReady = providersReady;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
@@ -1606,6 +1607,13 @@ export default function App({
 		if (continuationPrompt !== null) {
 			setComposerContinuationOfRunId(continuationOfRunId ?? null);
 			setPrompt(continuationPrompt);
+
+			if (!submittedProvidersReady) {
+				setAutoSubmitComposerContinuation(true);
+
+				return;
+			}
+
 			await submitPrompt(
 				{ answeredQuestionId: question.questionId, continuationOfRunId },
 				continuationPrompt
