@@ -125,6 +125,7 @@ import type {
 	ProjectAttachment
 } from '$lib/types/sprocket';
 import { cn } from '$lib/utils';
+import { useIsRestarting } from '$lib/restarting';
 
 type ConvexQuery = FunctionReference<'query'>;
 
@@ -979,10 +980,13 @@ export default function App({
 	const isRetryableQueuedRun =
 		currentLifecycle?.phase === 'queued' && currentRecoveredSubmission != null;
 
+	const isRestarting = useIsRestarting(runState?.restartingUntil);
+
 	const isRunInProgress =
-		currentLifecycle != null &&
-		isLifecycleInProgress(currentLifecycle.phase) &&
-		!isRetryableQueuedRun;
+		isRestarting ||
+		(currentLifecycle != null &&
+			isLifecycleInProgress(currentLifecycle.phase) &&
+			!isRetryableQueuedRun);
 
 	const isStopAvailable =
 		runState != null &&

@@ -10,7 +10,6 @@ export const selectedThreadLifecyclePhases = [
 	'running',
 	'waiting_for_input',
 	'cancellation_requested',
-	'restarting',
 	'completed',
 	'failed',
 	'cancelled'
@@ -22,7 +21,6 @@ export const vSelectedThreadLifecyclePhase = v.union(
 	v.literal('running'),
 	v.literal('waiting_for_input'),
 	v.literal('cancellation_requested'),
-	v.literal('restarting'),
 	v.literal('completed'),
 	v.literal('failed'),
 	v.literal('cancelled')
@@ -35,7 +33,8 @@ export const vSelectedThreadLifecycleRun = v.object({
 	startedAt: v.number(),
 	completedAt: v.optional(v.number()),
 	lastError: v.optional(v.string()),
-	executorFriendlyName: v.optional(v.string())
+	executorFriendlyName: v.optional(v.string()),
+	restartingUntil: v.optional(v.number())
 });
 
 export const vSelectedThreadLifecycle = v.object({
@@ -50,8 +49,7 @@ const inProgressPhases: ReadonlySet<SelectedThreadLifecyclePhase> = new Set([
 	'queued',
 	'running',
 	'waiting_for_input',
-	'cancellation_requested',
-	'restarting'
+	'cancellation_requested'
 ]);
 
 export function isLifecycleInProgress(phase: SelectedThreadLifecyclePhase): boolean {
@@ -108,10 +106,6 @@ export function selectedThreadLifecyclePhase(args: {
 		return 'queued';
 	}
 
-	if (run.status === 'restarting') {
-		return 'restarting';
-	}
-
 	if (args.waitingForInput && run.status !== 'cancelled') {
 		return 'waiting_for_input';
 	}
@@ -132,6 +126,7 @@ export function projectSelectedThreadLifecycle(args: {
 		completedAt?: number;
 		lastError?: string;
 		cancellationRequestedAt?: number;
+		restartingUntil?: number;
 	} | null;
 	waitingForInput: boolean;
 	executorFriendlyName?: string;
@@ -160,6 +155,10 @@ export function projectSelectedThreadLifecycle(args: {
 
 	if (args.executorFriendlyName) {
 		projected.executorFriendlyName = args.executorFriendlyName;
+	}
+
+	if (args.run.restartingUntil !== undefined) {
+		projected.restartingUntil = args.run.restartingUntil;
 	}
 
 	return { threadId: args.threadId, phase, run: projected };

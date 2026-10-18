@@ -1,11 +1,27 @@
 import type { Doc } from '@convex/_generated/dataModel';
-import type { DatabaseReader } from '@convex/_generated/server';
+import type { DatabaseReader, MutationCtx } from '@convex/_generated/server';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
+import { latestRunForThread } from '@convex/lib/runExecution';
 import { getUiPreferences } from '@convex/lib/uiPreferences';
 
 export const AUTOMATIC_RECOVERY_SUBMISSION_PREFIX = 'automatic-recovery:';
 
-export const RESTARTING_RUN_TIMEOUT_MS = 5 * 60_000;
+// How long the UI shows an update-interrupted run as restarting instead of failed.
+export const RESTART_RECOVERY_WINDOW_MS = 5 * 60_000;
+
+type RestartableRun = Pick<Doc<'runs'>, '_id' | 'threadId'>;
+
+export async function markRunRestarting(
+	ctx: MutationCtx,
+	run: RestartableRun,
+	restartingUntil: number | undefined
+): Promise<void> {
+	await ctx.db.patch('runs', run._id, { restartingUntil });
+
+	if ((await latestRunForThread(ctx.db, run.threadId))?._id === run._id) {
+		await ctx.db.patch('threadRecords', run.threadId, { restartingUntil });
+	}
+}
 
 export async function automaticAgentContinuationEnabled(
 	db: DatabaseReader,
@@ -19,8 +35,8 @@ export function isAutomaticallyRecoverableRun(
 	machineId: string
 ): boolean {
 	return (
-		(run.status === 'restarting' ||
-			(run.status === 'failed' && run.lastError === RUN_ABANDONED_BY_AGENT)) &&
+		run.status === 'failed' &&
+		run.lastError === RUN_ABANDONED_BY_AGENT &&
 		run.cancellationRequestedAt === undefined &&
 		run.machineId === machineId
 	);

@@ -9,12 +9,12 @@ import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
-import { isAutomaticallyRecoverableRun } from '@convex/lib/runRecovery';
+import { isAutomaticallyRecoverableRun, markRunRestarting } from '@convex/lib/runRecovery';
+import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 import { cancelPendingQuestionsForThread } from '@convex/agentQuestions';
-import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	captureThreadActivityBeforeChange,
 	updateThreadHierarchyAfterChange
@@ -86,9 +86,10 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			: false;
 
 	if (isRunFinalStatus(current.status)) {
-		if (current.status === 'restarting') {
+		if ((current.restartingUntil ?? 0) > Date.now()) {
 			await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
-			await setRunAndThreadStatus(ctx, current, 'cancelled');
+			await markRunRestarting(ctx, current, undefined);
+			await setRunAndThreadStatus(ctx, current, 'cancelled', { lastError: undefined });
 
 			return true;
 		}
@@ -253,21 +254,5 @@ export const forceCancelRun = internalMutation({
 			text: '',
 			status: 'cancelled'
 		});
-	}
-});
-
-export const expireRestartingRun = internalMutation({
-	args: { runId: v.id('runs') },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const run = await ctx.db.get('runs', args.runId);
-
-		if (run?.status !== 'restarting') return null;
-
-		if ((await latestRunForThread(ctx.db, run.threadId))?._id !== run._id) return null;
-		// Failing it as abandoned keeps it recoverable if this machine returns later.
-		await setRunAndThreadStatus(ctx, run, 'failed', { lastError: RUN_ABANDONED_BY_AGENT });
-
-		return null;
 	}
 });

@@ -5,7 +5,7 @@ import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import {
 	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
-	RESTARTING_RUN_TIMEOUT_MS
+	RESTART_RECOVERY_WINDOW_MS
 } from '@convex/lib/runRecovery';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
@@ -77,7 +77,7 @@ async function setup() {
 	const statuses = () =>
 		t.run(async (ctx) => ({
 			run: await ctx.db.get('runs', runId),
-			thread: (await ctx.db.get('threadRecords', threadId))?.status
+			thread: await ctx.db.get('threadRecords', threadId)
 		}));
 
 	return {
@@ -96,6 +96,8 @@ async function setup() {
 
 describe('automatic run recovery', () => {
 	it('continues runs on the restarted machine process', async () => {
+		vi.useFakeTimers({ now: 1_000_000 });
+
 		const {
 			t,
 			asUser,
@@ -109,42 +111,33 @@ describe('automatic run recovery', () => {
 		} = await setup();
 
 		await restartMachine();
-		expect(await statuses()).toMatchObject({ run: { status: 'restarting' }, thread: 'restarting' });
+		const restartingUntil = 1_000_000 + RESTART_RECOVERY_WINDOW_MS;
 
+		expect(await statuses()).toMatchObject({
+			run: { status: 'failed', lastError: RUN_ABANDONED_BY_AGENT, restartingUntil },
+			thread: { status: 'failed', restartingUntil }
+		});
 		expect(await registerNewProcess()).toMatchObject({ status: 'registered' });
-		expect((await statuses()).run?.status).toBe('restarting');
 		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
 			state: 'recover',
 			runId,
 			threadId
 		});
 		expect((await insertQueuedRun(t, asUser, recoveryArgs)).created).toBe(true);
-	});
-
-	it('fails an unrecovered restarting run as abandoned', async () => {
-		vi.useFakeTimers();
-		const { t, asUser, runId, threadId, queryArgs, restartMachine, statuses } = await setup();
-		await restartMachine();
-		await vi.advanceTimersByTimeAsync(RESTARTING_RUN_TIMEOUT_MS);
-		await t.finishInProgressScheduledFunctions();
-		expect(await statuses()).toMatchObject({
-			run: { status: 'failed', lastError: RUN_ABANDONED_BY_AGENT },
-			thread: 'failed'
-		});
-		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
-			state: 'recover',
-			runId,
-			threadId
-		});
+		expect((await statuses()).thread).toMatchObject({ status: 'queued' });
+		expect((await statuses()).thread?.restartingUntil).toBeUndefined();
 	});
 
 	it('ends runs on restart when automatic continuation is disabled', async () => {
 		const { asUser, restartMachine, statuses } = await setup();
 		await asUser.mutation(api.uiPreferences.setAutomaticAgentContinuation, { enabled: false });
 		await restartMachine();
-		expect(await statuses()).toMatchObject({
-			run: { status: 'failed', lastError: 'The machine stopped before this run finished.' }
+		const { run } = await statuses();
+		expect(run).toMatchObject({
+			status: 'failed',
+			lastError: 'The machine stopped before this run finished.'
 		});
+		expect(run?.restartingUntil).toBeUndefined();
 	});
 
 	it('stops a restarting run without continuing it', async () => {
@@ -161,7 +154,13 @@ describe('automatic run recovery', () => {
 
 		await restartMachine();
 		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId })).toBe(true);
-		expect(await statuses()).toMatchObject({ run: { status: 'cancelled' }, thread: 'cancelled' });
+		const stopped = await statuses();
+		expect(stopped).toMatchObject({
+			run: { status: 'cancelled' },
+			thread: { status: 'cancelled' }
+		});
+		expect(stopped.run?.lastError).toBeUndefined();
+		expect(stopped.thread?.restartingUntil).toBeUndefined();
 		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
 		await registerNewProcess();
 		await expect(insertQueuedRun(t, asUser, recoveryArgs)).rejects.toThrow(

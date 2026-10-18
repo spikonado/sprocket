@@ -340,7 +340,9 @@ export default defineSchema({
 		// Absolute local path from the latest set_cwd call; subagents inherit it.
 		cwd: v.optional(v.string()),
 		lastMessageAt: v.number(),
-		archivedAt: v.optional(v.number())
+		archivedAt: v.optional(v.number()),
+		// Mirrors the latest run's restartingUntil so the inbox can show it.
+		restartingUntil: v.optional(v.number())
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
@@ -397,7 +399,9 @@ export default defineSchema({
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
-		cancellationDeadlineAt: v.optional(v.number())
+		cancellationDeadlineAt: v.optional(v.number()),
+		// Set when an update restart interrupted this run and the next server is expected to continue it.
+		restartingUntil: v.optional(v.number())
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])

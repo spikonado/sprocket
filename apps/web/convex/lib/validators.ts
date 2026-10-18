@@ -513,8 +513,7 @@ export const vRunStatus = v.union(
 	v.literal('running'),
 	v.literal('completed'),
 	v.literal('failed'),
-	v.literal('cancelled'),
-	v.literal('restarting')
+	v.literal('cancelled')
 );
 
 export const vDescendantStatusCounts = v.object({
@@ -700,12 +699,7 @@ export const vExecutorJobResult = v.union(
 	vMandateReportResult
 );
 
-export const executorRunFinalStatus = ['cancelled', 'completed', 'failed'] as const;
-
-export const vExecutorRunFinalStatus = v.union(...literals(executorRunFinalStatus));
-
-// A restarting run stopped with its machine and waits for the next local server to continue it.
-export const runFinalStatus = [...executorRunFinalStatus, 'restarting'] as const;
+export const runFinalStatus = ['cancelled', 'completed', 'failed'] as const;
 
 export const vRunFinalStatus = v.union(...literals(runFinalStatus));
 

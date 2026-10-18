@@ -8,13 +8,8 @@ export const ONLY_LATEST_RUN_CAN_CONTINUE = 'Only the latest run can continue.';
 export function isContinuableRunStatus(
 	status: Doc<'runs'>['status'],
 	recordsPrompt: boolean
-): status is 'completed' | 'failed' | 'cancelled' | 'restarting' {
-	return (
-		status === 'failed' ||
-		status === 'cancelled' ||
-		status === 'restarting' ||
-		(status === 'completed' && recordsPrompt)
-	);
+): status is 'completed' | 'failed' | 'cancelled' {
+	return status === 'failed' || status === 'cancelled' || (status === 'completed' && recordsPrompt);
 }
 
 export function assertContinuableParent<

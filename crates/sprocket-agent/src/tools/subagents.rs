@@ -1190,10 +1190,7 @@ where
     loop {
         let info =
             cancelled_read(cancellation, async { fetch().await.map_err(tool_error) }).await?;
-        if matches!(
-            info.status.as_str(),
-            "completed" | "failed" | "cancelled" | "restarting"
-        ) {
+        if matches!(info.status.as_str(), "completed" | "failed" | "cancelled") {
             return Ok(info);
         }
         cancelled_read(cancellation, async {
