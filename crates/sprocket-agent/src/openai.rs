@@ -14,6 +14,7 @@ pub(crate) fn stateless_responses_model(
     Model::new(StatelessResponses(model.wire), model.transport).erase()
 }
 
+// Remove once Rig exposes an equivalent stateless Responses configuration.
 #[derive(Clone)]
 pub(crate) struct StatelessResponses(pub(crate) Responses);
 
@@ -44,6 +45,7 @@ impl Wire for StatelessResponses {
     }
 }
 
+// Rig has no developer role; remove once a released Rig version supports it.
 #[derive(Clone)]
 pub(crate) struct DeveloperResponses(pub(crate) Responses);
 
