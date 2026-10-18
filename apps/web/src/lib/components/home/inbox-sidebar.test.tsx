@@ -328,20 +328,6 @@ it.each([
 	}
 );
 
-it('shows Restarting until the restart window ends', async () => {
-	vi.useFakeTimers({ now: 1_000, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-
-	try {
-		await render([{ ...thread(false, 'failed'), restartingUntil: 61_000 }]);
-		const badge = () => document.querySelector('.inbox-row-meta .inbox-status')?.textContent;
-		expect(badge()).toBe('Restarting');
-		await act(async () => vi.advanceTimersByTime(60_000));
-		expect(badge()).toBe('Failed');
-	} finally {
-		vi.useRealTimers();
-	}
-});
-
 it('keeps the selected project filter styled for all projects and a single project', async () => {
 	const input = props([thread()]);
 	const view = renderView(<Harness {...input} />);

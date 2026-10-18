@@ -23,7 +23,6 @@ export default function AppUpdate() {
 
 	const [updateState, setUpdateState] = useState<UpdateState | null>(null);
 	const [confirmRestart, setConfirmRestart] = useState(false);
-	const [restarting, setRestarting] = useState(false);
 	const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null);
 	const [busy, setBusyState] = useState(false);
 	const busyRef = useRef(false);
@@ -37,6 +36,9 @@ export default function AppUpdate() {
 		busy || updateState?.status === 'downloading' || updateState?.status === 'installing';
 
 	const restartReady = updateState?.status === 'installed' || updateState?.status === 'downloaded';
+
+	const continuesAgents =
+		preferences.status === 'success' && preferences.data?.automaticAgentContinuation !== false;
 
 	const setBusy = (next: boolean) => {
 		busyRef.current = next;
@@ -87,14 +89,10 @@ export default function AppUpdate() {
 	async function update(confirmed = false) {
 		if (!updateState || working) return;
 
-		if (restartReady && !confirmed) {
-			if (preferences.status !== 'success') return;
+		if (restartReady && !confirmed && !continuesAgents) {
+			setConfirmRestart(true);
 
-			if (preferences.data?.automaticAgentContinuation === false) {
-				setConfirmRestart(true);
-
-				return;
-			}
+			return;
 		}
 
 		setConfirmRestart(false);
@@ -114,7 +112,6 @@ export default function AppUpdate() {
 				if (revisionRef.current === startedRevision) setUpdateState(next);
 			} else if (updateState.method === 'package') {
 				if (updateState.status === 'installed' && updateState.version) {
-					setRestarting(true);
 					await restartPackageUpdate(updateState.version);
 				} else {
 					setUpdateState(await requestPackageUpdate(true));
@@ -126,7 +123,6 @@ export default function AppUpdate() {
 				status: updateState.status
 			});
 		} finally {
-			setRestarting(false);
 			setBusy(false);
 		}
 	}
@@ -140,7 +136,7 @@ export default function AppUpdate() {
 			<button
 				type="button"
 				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
-				disabled={working || (restartReady && preferences.status !== 'success')}
+				disabled={working}
 				onClick={() => void update()}
 				title={updateState.version ? `Sprocket ${updateState.version}` : undefined}
 				aria-busy={working}
@@ -152,18 +148,13 @@ export default function AppUpdate() {
 				) : (
 					<Download className="size-4 shrink-0" aria-hidden="true" />
 				)}
-				<span>{restarting ? 'Restarting Sprocket...' : label}</span>
+				<span>{busy && restartReady ? 'Restarting Sprocket...' : label}</span>
 			</button>
 			{confirmRestart && (
 				<RestartConfirmation
 					onCancel={() => setConfirmRestart(false)}
 					onConfirm={() => void update(true)}
 				/>
-			)}
-			{restartReady && preferences.status === 'error' && (
-				<p className="text-destructive px-2 pb-2 text-xs" role="alert">
-					Couldn't load your restart preference. Reconnect and try again.
-				</p>
 			)}
 			{(requestError || updateState.error) && (
 				<p className="text-destructive px-2 pb-2 text-xs break-words" role="alert">

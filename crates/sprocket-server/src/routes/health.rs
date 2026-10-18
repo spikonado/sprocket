@@ -11,7 +11,6 @@ use crate::AppState;
 struct HealthResponse {
     status: &'static str,
     http_base_url: String,
-    instance_id: String,
     version: &'static str,
 }
 
@@ -23,7 +22,6 @@ async fn health(State(state): State<AppState>) -> Response {
     crate::routes::api_error::no_store(Json(HealthResponse {
         status: "ok",
         http_base_url: state.http_base_url.clone(),
-        instance_id: state.auth.instance_id.clone(),
         version: sprocket_workspace::SPROCKET_VERSION,
     }))
 }

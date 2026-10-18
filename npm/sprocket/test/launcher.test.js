@@ -96,9 +96,8 @@ test('starts the updated launcher after the native server exits to restart', asy
 	const invocations = [];
 
 	const code = await launch(['--web'], {
-		env: { SPROCKET_RESTARTED: '1' },
+		env: {},
 		execPath: '/usr/bin/node',
-		pid: 4321,
 		tmpdir: directory,
 		resolveBinary: () => '/tmp/sprocket',
 		ensureExecutable: () => {},
@@ -123,7 +122,6 @@ test('starts the updated launcher after the native server exits to restart', asy
 	assert.deepEqual(restarted.binary, '/usr/bin/node');
 	assert.deepEqual(restarted.args, [updatedLauncher, '--web']);
 	assert.equal(restarted.env.SPROCKET_RESTART_FILE, native.env.SPROCKET_RESTART_FILE);
-	assert.equal(restarted.env.SPROCKET_RESTART_PARENT, '4321');
 	assert.equal(restarted.env.SPROCKET_RESTARTED, '1');
 	assert.equal(existsSync(native.env.SPROCKET_RESTART_FILE), false);
 });
@@ -134,10 +132,8 @@ test('a restarted launcher passes the next restart up to its parent', async () =
 	const code = await launch(['--web'], {
 		env: {
 			SPROCKET_RESTART_FILE: '/tmp/sprocket-restart-parent',
-			SPROCKET_RESTART_PARENT: '4321',
 			SPROCKET_RESTARTED: '1'
 		},
-		ppid: 4321,
 		resolveBinary: () => '/tmp/sprocket',
 		ensureExecutable: () => {},
 		spawn(binary, args, options) {
@@ -151,7 +147,6 @@ test('a restarted launcher passes the next restart up to its parent', async () =
 	assert.equal(invocations.length, 1);
 	assert.equal(invocations[0].SPROCKET_RESTART_FILE, '/tmp/sprocket-restart-parent');
 	assert.equal(invocations[0].SPROCKET_RESTARTED, '1');
-	assert.equal(Object.hasOwn(invocations[0], 'SPROCKET_RESTART_PARENT'), false);
 });
 
 test('update and upgrade help is delegated to the native CLI', async () => {

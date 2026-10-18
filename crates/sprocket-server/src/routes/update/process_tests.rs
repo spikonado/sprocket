@@ -186,7 +186,6 @@ async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_run
     .await
     .unwrap();
     let (state, session_token, _dir) = test_state(manager).await;
-    let instance_id = state.auth.instance_id.clone();
     let lifetime = Arc::clone(&state.host.lifetime);
     let app = router(state);
     for _ in 0..2 {
@@ -198,8 +197,7 @@ async fn installed_update_restart_hands_off_the_launcher_and_stops_accepting_run
             .oneshot(with_peer(request, loopback_peer()))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(read_json(response).await["instanceId"], instance_id);
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
     assert!(lifetime.shutdown.is_cancelled());
     assert!(lifetime.run_guard().is_err());

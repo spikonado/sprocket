@@ -33,8 +33,8 @@ export default function RestartConfirmation({
 				Restart Sprocket?
 			</h2>
 			<p id="restart-confirmation-description" className="text-muted-foreground mt-3 text-sm">
-				Automatic continuation is off. Restarting will interrupt active agents, and they won't
-				resume automatically.
+				Restarting interrupts active agents. They resume afterward only when automatic continuation
+				is on in Settings.
 			</p>
 			<div className="mt-6 flex justify-end gap-2">
 				<button

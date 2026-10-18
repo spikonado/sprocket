@@ -11,18 +11,17 @@ function state(status: UpdateState['status'], version: string | null = '1.1.0'):
 }
 
 describe('package update requests', () => {
-	it('waits through the old boot and a connection outage before accepting the updated server', async () => {
+	it('waits through the old server and a connection outage before accepting the updated server', async () => {
 		vi.useFakeTimers();
 		const reload = vi.fn();
 		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234', reload } });
 
 		const fetcher = vi
 			.fn()
-			.mockResolvedValueOnce(Response.json({ instanceId: 'old' }))
-			.mockResolvedValueOnce(Response.json({ instanceId: 'old', version: '1.1.0' }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }))
+			.mockResolvedValueOnce(Response.json({ version: '1.0.0' }))
 			.mockRejectedValueOnce(new TypeError('Connection refused'))
-			.mockResolvedValueOnce(Response.json({ instanceId: 'new', version: '1.0.0' }))
-			.mockResolvedValueOnce(Response.json({ instanceId: 'new', version: '1.1.0' }));
+			.mockResolvedValueOnce(Response.json({ version: '1.1.0' }));
 
 		vi.stubGlobal('fetch', fetcher);
 		const restart = restartPackageUpdate('1.1.0');
@@ -33,7 +32,7 @@ describe('package update requests', () => {
 			'http://127.0.0.1:1234/api/update/restart',
 			expect.objectContaining({ method: 'POST', credentials: 'include' })
 		);
-		expect(fetcher).toHaveBeenCalledTimes(5);
+		expect(fetcher).toHaveBeenCalledTimes(4);
 		expect(reload).toHaveBeenCalledTimes(1);
 	});
 
@@ -44,8 +43,8 @@ describe('package update requests', () => {
 			'fetch',
 			vi
 				.fn()
-				.mockResolvedValueOnce(Response.json({ instanceId: 'old' }))
-				.mockImplementation(async () => Response.json({ instanceId: 'old', version: '1.0.0' }))
+				.mockResolvedValueOnce(new Response(null, { status: 204 }))
+				.mockImplementation(async () => Response.json({ version: '1.0.0' }))
 		);
 
 		const result = expect(restartPackageUpdate('1.1.0')).rejects.toThrow('Launch Sprocket again');

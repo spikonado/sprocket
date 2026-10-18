@@ -33,8 +33,7 @@ export const vSelectedThreadLifecycleRun = v.object({
 	startedAt: v.number(),
 	completedAt: v.optional(v.number()),
 	lastError: v.optional(v.string()),
-	executorFriendlyName: v.optional(v.string()),
-	restartingUntil: v.optional(v.number())
+	executorFriendlyName: v.optional(v.string())
 });
 
 export const vSelectedThreadLifecycle = v.object({
@@ -126,7 +125,6 @@ export function projectSelectedThreadLifecycle(args: {
 		completedAt?: number;
 		lastError?: string;
 		cancellationRequestedAt?: number;
-		restartingUntil?: number;
 	} | null;
 	waitingForInput: boolean;
 	executorFriendlyName?: string;
@@ -155,10 +153,6 @@ export function projectSelectedThreadLifecycle(args: {
 
 	if (args.executorFriendlyName) {
 		projected.executorFriendlyName = args.executorFriendlyName;
-	}
-
-	if (args.run.restartingUntil !== undefined) {
-		projected.restartingUntil = args.run.restartingUntil;
 	}
 
 	return { threadId: args.threadId, phase, run: projected };

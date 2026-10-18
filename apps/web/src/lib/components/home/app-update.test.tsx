@@ -128,42 +128,36 @@ it('drops an install error once a later check shows the update installed', async
 	expect(screen.queryByText('Connection lost')).toBeNull();
 });
 
-it('confirms restart when automatic continuation is off and lets the user cancel', async () => {
-	const fetcher = vi
-		.fn()
-		.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
-		.mockRejectedValueOnce(new Error('Restart failed'));
+it.each([
+	['off', false, false],
+	['loading', undefined, true]
+])(
+	'confirms restart while automatic continuation is %s and lets the user cancel',
+	async (_, enabled, loading) => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(Response.json({ ...available, status: 'installed' }))
+			.mockRejectedValueOnce(new Error('Restart failed'));
 
-	vi.stubGlobal('fetch', fetcher);
-	mount(false);
-	const button = await screen.findByRole('button', { name: 'Restart Sprocket' });
-	await act(async () => fireEvent.click(button));
-	const dialog = screen.getByRole('dialog', { name: 'Restart Sprocket?' });
-	expect(dialog.textContent).toContain("they won't resume automatically");
-	expect(fetcher).toHaveBeenCalledTimes(1);
-	fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-	expect(screen.queryByRole('dialog')).toBeNull();
-	expect(fetcher).toHaveBeenCalledTimes(1);
-	await act(async () => fireEvent.click(button));
-	await act(async () =>
-		fireEvent.click(
-			within(screen.getByRole('dialog')).getByRole('button', { name: 'Restart Sprocket' })
-		)
-	);
-	expect(fetcher).toHaveBeenCalledTimes(2);
-});
-
-it('waits for the restart preference to load', async () => {
-	vi.stubGlobal(
-		'fetch',
-		vi.fn().mockResolvedValue(Response.json({ ...available, status: 'installed' }))
-	);
-	const { client } = mount(undefined, true);
-	const button = await screen.findByRole('button', { name: 'Restart Sprocket' });
-	expect(button).toHaveProperty('disabled', true);
-	await act(async () => client.registerQuery(api.uiPreferences.getMine, null));
-	expect(button).toHaveProperty('disabled', false);
-});
+		vi.stubGlobal('fetch', fetcher);
+		mount(enabled, loading);
+		const button = await screen.findByRole('button', { name: 'Restart Sprocket' });
+		await act(async () => fireEvent.click(button));
+		const dialog = screen.getByRole('dialog', { name: 'Restart Sprocket?' });
+		expect(dialog.textContent).toContain('Restarting interrupts active agents');
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+		expect(screen.queryByRole('dialog')).toBeNull();
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		await act(async () => fireEvent.click(button));
+		await act(async () =>
+			fireEvent.click(
+				within(screen.getByRole('dialog')).getByRole('button', { name: 'Restart Sprocket' })
+			)
+		);
+		expect(fetcher).toHaveBeenCalledTimes(2);
+	}
+);
 
 it('uses the same confirmation before a desktop restart', async () => {
 	const install = vi
@@ -209,7 +203,7 @@ it('continues the accepted restart after the sidebar unmounts', async () => {
 	await act(async () => fireEvent.click(button));
 	view.unmount();
 	vi.useFakeTimers();
-	await act(async () => accepted.resolve(Response.json({ instanceId: 'old' })));
+	await act(async () => accepted.resolve(new Response(null, { status: 204 })));
 	expect(fetcher).toHaveBeenNthCalledWith(
 		3,
 		expect.stringContaining('/api/health'),

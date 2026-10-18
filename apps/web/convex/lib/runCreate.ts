@@ -332,8 +332,7 @@ export async function createQueuedRunRecord(
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
 		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt,
-		archivedAt: undefined,
-		restartingUntil: undefined
+		archivedAt: undefined
 	};
 
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);

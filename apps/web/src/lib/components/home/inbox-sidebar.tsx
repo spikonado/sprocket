@@ -28,7 +28,6 @@ import { isRootThread, subagentSummaryLabel } from '$lib/project/subagents';
 import type { UseExpandedThreads, ThreadTreeSummaryRead } from '$lib/project/useThreadTree';
 import { useThreadTreeSummary } from '$lib/project/useThreadTree';
 import { cn } from '$lib/utils';
-import { useIsRestarting } from '$lib/restarting';
 import BrandMark from '$lib/components/brand-mark';
 import ProviderLogo from '$lib/components/provider-logo';
 import AppUpdate from './app-update';
@@ -698,12 +697,7 @@ function ThreadTreeRow({
 }: ThreadTreeRowProps) {
 	const summary = readTreeSummary({ threadId: thread._id, enabled: mutationsEnabled });
 
-	const restarting = useIsRestarting(thread.restartingUntil);
-
-	const status = restarting
-		? { label: 'Restarting', className: 'inbox-working' }
-		: inboxRunStatus(thread);
-
+	const status = inboxRunStatus(thread);
 	const descendantCount = summary?.descendantCount ?? 0;
 	const workingCount = summary?.workingDescendantCount ?? 0;
 

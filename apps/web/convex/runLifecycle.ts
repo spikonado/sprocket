@@ -11,10 +11,8 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
 	AUTOMATIC_RECOVERY_SUBMISSION_PREFIX,
-	isAutomaticallyRecoverableRun,
-	markRunRestarting
+	isAutomaticallyRecoverableRun
 } from '@convex/lib/runRecovery';
-import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
@@ -98,14 +96,6 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 			: false;
 
 	if (isRunFinalStatus(current.status)) {
-		if ((current.restartingUntil ?? 0) > Date.now()) {
-			await ctx.db.patch('runs', current._id, { cancellationRequestedAt: Date.now() });
-			await markRunRestarting(ctx, current, undefined);
-			await setRunAndThreadStatus(ctx, current, 'cancelled', { lastError: undefined });
-
-			return true;
-		}
-
 		if (
 			current.machineId !== undefined &&
 			isAutomaticallyRecoverableRun(current, current.machineId)

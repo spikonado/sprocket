@@ -112,7 +112,7 @@ fn manager_for_test() -> (std::path::PathBuf, Arc<MachineManager>) {
 async fn shutdown_rejects_late_registration_before_network_io() {
     let (dir, manager) = manager_for_test();
 
-    manager.shutdown(false).await;
+    manager.shutdown().await;
     let error = manager
         .register("user-a")
         .await

@@ -118,9 +118,8 @@ async fn restart_requires_session_same_origin_and_installed_update() {
 }
 
 #[tokio::test]
-async fn public_health_identifies_the_running_boot_and_version() {
+async fn public_health_reports_the_running_version() {
     let (state, _) = test_state(PackageUpdateManager::disabled()).await;
-    let instance_id = state.auth.instance_id.clone();
     let response = router(state)
         .oneshot(
             Request::builder()
@@ -133,9 +132,7 @@ async fn public_health_identifies_the_running_boot_and_version() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     let payload = read_json(response).await;
-    assert_eq!(payload["instanceId"], instance_id);
     assert_eq!(payload["version"], sprocket_workspace::SPROCKET_VERSION);
-    assert_eq!(payload["status"], "ok");
 }
 
 #[tokio::test]

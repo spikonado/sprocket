@@ -36,7 +36,7 @@ struct UpdateSession;
 async fn restart(
     State(state): State<AppState>,
     UpdateSession: UpdateSession,
-) -> Result<Response, ApiError> {
+) -> Result<StatusCode, ApiError> {
     state
         .host
         .package_updates
@@ -48,9 +48,7 @@ async fn restart(
         .lifetime
         .request_restart()
         .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
-    Ok(no_store(Json(
-        serde_json::json!({ "instanceId": state.auth.instance_id }),
-    )))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 impl FromRequestParts<AppState> for UpdateSession {

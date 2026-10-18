@@ -132,28 +132,20 @@ impl MachineManager {
     }
 
     pub async fn end(&self, user_id: &str) -> anyhow::Result<()> {
-        self.end_presence(user_id, self.machine_args(user_id)).await
-    }
-
-    async fn end_presence(
-        &self,
-        user_id: &str,
-        args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<()> {
         let account = self.account_lock(user_id, true).await?;
         let _account = account.lock().await;
         let Some(presence) = self.accounts.lock().await.remove(user_id) else {
             return Ok(());
         };
         presence.heartbeat.abort();
-        self.end_remote(args).await
+        self.end_remote(user_id).await
     }
 
     pub fn stop_registration(&self) {
         self.shutdown.cancel();
     }
 
-    pub async fn shutdown(&self, restarting: bool) {
+    pub async fn shutdown(&self) {
         self.stop_registration();
         let users = self
             .account_locks
@@ -163,9 +155,7 @@ impl MachineManager {
             .cloned()
             .collect::<Vec<_>>();
         for user_id in users {
-            let mut args = self.machine_args(&user_id);
-            args.insert("restarting".into(), Value::Boolean(restarting));
-            if let Err(error) = self.end_presence(&user_id, args).await {
+            if let Err(error) = self.end(&user_id).await {
                 tracing::warn!("failed to end machine presence during shutdown: {error:#}");
             }
         }
@@ -242,10 +232,12 @@ impl MachineManager {
         .await
     }
 
-    async fn end_remote(&self, args: BTreeMap<String, Value>) -> anyhow::Result<()> {
+    async fn end_remote(&self, user_id: &str) -> anyhow::Result<()> {
         timeout(RPC_TIMEOUT, async {
             let client = UserConvexClient::connect_anonymous(&self.deployment_url).await?;
-            let _: serde_json::Value = client.mutate("machines:end", args).await?;
+            let _: serde_json::Value = client
+                .mutate("machines:end", self.machine_args(user_id))
+                .await?;
             anyhow::Ok(())
         })
         .await

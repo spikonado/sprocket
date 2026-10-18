@@ -96,9 +96,8 @@ export async function restartPackageUpdate(version: string): Promise<void> {
 		);
 	}
 
-	const previous = z.object({ instanceId: z.string() }).parse(await response.json());
 	const deadline = Date.now() + 90_000;
-	const healthSchema = z.object({ instanceId: z.string(), version: z.string() });
+	const healthSchema = z.object({ version: z.string() });
 
 	while (Date.now() < deadline) {
 		try {
@@ -110,11 +109,7 @@ export async function restartPackageUpdate(version: string): Promise<void> {
 			if (health.ok) {
 				const next = healthSchema.safeParse(await health.json());
 
-				if (
-					next.success &&
-					next.data.instanceId !== previous.instanceId &&
-					next.data.version === version
-				) {
+				if (next.success && next.data.version === version) {
 					window.location.reload();
 
 					return;

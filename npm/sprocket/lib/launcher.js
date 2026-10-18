@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, readFileSync, rmSync } from 'node:fs';
+import { accessSync, chmodSync, constants, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -127,26 +127,18 @@ export function nativeChildEnvironment(env, staticDir, updateNode, updateScript)
 	};
 
 	delete next.SPROCKET_UPDATE_MANAGED;
-	delete next.SPROCKET_RESTART_PARENT;
 
 	return next;
 }
 
 function readRestartLauncher(restartFile) {
-	let launcher;
-
 	try {
-		launcher = readFileSync(restartFile, 'utf8');
-		rmSync(restartFile, { force: true });
+		return readFileSync(restartFile, 'utf8');
 	} catch {
 		return null;
+	} finally {
+		rmSync(restartFile, { force: true });
 	}
-
-	return path.isAbsolute(launcher) &&
-		launcher.endsWith(path.join('bin', 'sprocket.js')) &&
-		existsSync(launcher)
-		? launcher
-		: null;
 }
 
 export async function launch(args, options = {}) {
@@ -167,11 +159,11 @@ export async function launch(args, options = {}) {
 		const binary = (options.resolveBinary ?? resolveNativeBinary)();
 		(options.ensureExecutable ?? ensureExecutable)(binary);
 		const execPath = options.execPath ?? process.execPath;
-		// A launcher started by a restarting parent leaves the next restart to that parent.
-		const ownsRestart = env.SPROCKET_RESTART_PARENT !== String(options.ppid ?? process.ppid);
+		// The native server clears SPROCKET_RESTARTED, so only a launcher started by a restarting
+		// launcher sees it and leaves the next restart to that parent.
+		const ownsRestart = !env.SPROCKET_RESTARTED;
 
 		if (ownsRestart) {
-			delete env.SPROCKET_RESTARTED;
 			env.SPROCKET_RESTART_FILE = path.join(
 				options.tmpdir ?? tmpdir(),
 				`sprocket-restart-${randomUUID()}`
@@ -194,11 +186,7 @@ export async function launch(args, options = {}) {
 
 				if (!launcher) break;
 				code = await run(execPath, [launcher, ...args], {
-					env: {
-						...env,
-						SPROCKET_RESTART_PARENT: String(options.pid ?? process.pid),
-						SPROCKET_RESTARTED: '1'
-					},
+					env: { ...env, SPROCKET_RESTARTED: '1' },
 					spawn: options.spawn
 				});
 			}

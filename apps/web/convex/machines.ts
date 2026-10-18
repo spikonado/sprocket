@@ -11,12 +11,6 @@ import {
 } from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
-import {
-	automaticAgentContinuationEnabled,
-	isAutomaticallyRecoverableRun,
-	markRunRestarting,
-	RESTART_RECOVERY_WINDOW_MS
-} from '@convex/lib/runRecovery';
 
 const vMachinePresence = v.object({
 	machineId: v.string(),
@@ -56,11 +50,7 @@ export const listMine = query({
 	}
 });
 
-async function failMachineRuns(
-	ctx: MutationCtx,
-	machine: Doc<'machines'>,
-	restartingUntil?: number
-): Promise<void> {
+async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Promise<void> {
 	if (machine.runIds.length > MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs to stop safely.');
 	}
@@ -68,18 +58,12 @@ async function failMachineRuns(
 	for (const runId of machine.runIds) {
 		const run = await getRunWithExecution(ctx.db, runId);
 
-		if (!run) continue;
-		await finalizeRunRecord(ctx, run, {
-			text: RUN_ABANDONED_BY_AGENT,
-			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
-		});
-
-		if (restartingUntil === undefined) continue;
-		const finalized = await ctx.db.get('runs', runId);
-
-		if (finalized && isAutomaticallyRecoverableRun(finalized, machine.machineId)) {
-			await markRunRestarting(ctx, finalized, restartingUntil);
+		if (run) {
+			await finalizeRunRecord(ctx, run, {
+				text: RUN_ABANDONED_BY_AGENT,
+				status: 'failed',
+				lastError: RUN_ABANDONED_BY_AGENT
+			});
 		}
 	}
 
@@ -203,24 +187,11 @@ export const heartbeat = mutation({
 });
 
 export const end = mutation({
-	args: {
-		userId: v.string(),
-		machineId: v.string(),
-		credential: v.string(),
-		restarting: v.optional(v.boolean())
-	},
+	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
-
-		const showRestarting =
-			args.restarting === true && (await automaticAgentContinuationEnabled(ctx.db, machine.userId));
-
-		await failMachineRuns(
-			ctx,
-			machine,
-			showRestarting ? Date.now() + RESTART_RECOVERY_WINDOW_MS : undefined
-		);
+		await failMachineRuns(ctx, machine);
 		await ctx.db.patch('machines', machine._id, {
 			lastSeenAt: undefined,
 			updatedAt: Date.now()

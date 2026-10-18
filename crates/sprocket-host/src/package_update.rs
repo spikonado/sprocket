@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,8 +13,6 @@ const FAILED_CHECK_TTL: Duration = Duration::from_secs(5 * 60);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(60);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_HELPER_STREAM_BYTES: usize = 64 * 1024;
-const UNSUPPORTED_RESTART: &str =
-    "This copy of Sprocket cannot restart itself. Stop Sprocket and launch it again.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +41,7 @@ pub struct PackageUpdateSnapshot {
     pub method: UpdateMethod,
     pub message: Option<String>,
     #[serde(skip)]
-    pub(crate) restart_launcher: Option<PathBuf>,
+    pub(crate) restart_launcher: Option<String>,
 }
 
 impl PackageUpdateSnapshot {
@@ -127,9 +125,7 @@ impl PackageUpdateManager {
             CHECK_TIMEOUT,
             INSTALL_TIMEOUT,
         );
-        manager.restart_file = std::env::var_os("SPROCKET_RESTART_FILE")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute());
+        manager.restart_file = std::env::var_os("SPROCKET_RESTART_FILE").map(PathBuf::from);
         Arc::new(manager)
     }
 
@@ -235,9 +231,13 @@ impl PackageUpdateManager {
         let (Some(launcher), Some(restart_file)) =
             (&inner.snapshot.restart_launcher, &self.restart_file)
         else {
-            anyhow::bail!(UNSUPPORTED_RESTART);
+            anyhow::bail!(
+                "This copy of Sprocket cannot restart itself. Stop Sprocket and launch it again."
+            );
         };
-        write_restart_target(restart_file, launcher).await
+        tokio::fs::write(restart_file, launcher)
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to prepare the restart: {error}"))
     }
 
     fn start_locked(
@@ -402,16 +402,6 @@ fn mark_installing(snapshot: &mut PackageUpdateSnapshot) {
     snapshot.message = None;
 }
 
-async fn write_restart_target(restart_file: &Path, launcher: &Path) -> anyhow::Result<()> {
-    let launcher = launcher
-        .to_str()
-        .filter(|_| launcher.is_absolute())
-        .ok_or_else(|| anyhow::anyhow!(UNSUPPORTED_RESTART))?;
-    tokio::fs::write(restart_file, launcher)
-        .await
-        .map_err(|error| anyhow::anyhow!("Failed to prepare the restart: {error}"))
-}
-
 enum HelperCollectError {
     TimedOut,
     Wait(std::io::Error),
@@ -543,7 +533,7 @@ struct HelperJson {
     #[serde(default)]
     message: Option<String>,
     #[serde(default)]
-    restart_launcher: Option<PathBuf>,
+    restart_launcher: Option<String>,
 }
 
 fn parse_helper_output(
