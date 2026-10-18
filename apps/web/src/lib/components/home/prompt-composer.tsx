@@ -715,7 +715,7 @@ export function PromptComposerView({
 								type="button"
 								className="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
 								onClick={onContinueWorking}
-								disabled={isSubmitting}
+								disabled={isSubmitting || !providersReady}
 							>
 								Continue working
 							</button>

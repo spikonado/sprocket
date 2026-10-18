@@ -2058,6 +2058,7 @@ export default function App({
 			!currentProjectPath ||
 			!selectedModel ||
 			!selectedReasoningEffort ||
+			!providersReady ||
 			hasPendingAgentLaunch ||
 			isSubmittingPrompt
 		) {
