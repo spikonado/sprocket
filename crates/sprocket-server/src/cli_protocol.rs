@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 pub use sprocket_host::native_auth::{
     CredentialStore, DeviceLoginResponse, NativeLoginStatus as LoginStatus, NativeUser,
+    UNENCRYPTED_CREDENTIALS_NOTICE,
 };
 
 #[derive(Deserialize, Serialize)]

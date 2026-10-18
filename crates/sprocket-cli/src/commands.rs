@@ -59,7 +59,7 @@ pub(crate) struct RunArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct LoginArgs {
-    /// Credential storage for this local profile. File storage is not encrypted.
+    /// Override automatic keyring/file storage for this local profile. File storage is not encrypted.
     #[arg(long, value_enum)]
     credential_store: Option<CredentialStore>,
 }
@@ -298,18 +298,13 @@ pub(crate) fn login(args: LoginArgs) -> anyhow::Result<u8> {
 
 async fn login_connected(connection: &Connection, args: LoginArgs) -> anyhow::Result<u8> {
     if args.credential_store.is_none() {
-        if let LoginStatus::Authenticated { user } = connection
+        if let LoginStatus::Authenticated { user, .. } = connection
             .call("auth", &connection.client_request())
             .await?
         {
             eprintln!("Signed in as {}", user.email);
             return Ok(0);
         }
-    }
-    if args.credential_store == Some(CredentialStore::File) {
-        eprintln!(
-            "The refresh token will be stored unencrypted in a private file for this Sprocket profile."
-        );
     }
     let authorization: DeviceLoginResponse = connection
         .call(
@@ -329,8 +324,11 @@ async fn login_connected(connection: &Connection, args: LoginArgs) -> anyhow::Re
         result = tokio::time::timeout(Duration::from_secs(authorization.expires_in + 5), async {
             loop {
                 match connection.retry("auth", &connection.client_request()).await? {
-                    LoginStatus::Authenticated { user } => {
+                    LoginStatus::Authenticated { user, credential_store } => {
                         eprintln!("Signed in as {}", user.email);
+                        if credential_store == Some(CredentialStore::File) {
+                            eprintln!("{UNENCRYPTED_CREDENTIALS_NOTICE}");
+                        }
                         return Ok(0);
                     }
                     LoginStatus::Failed { error } | LoginStatus::Unavailable { error } => anyhow::bail!("{error}"),
@@ -363,7 +361,7 @@ async fn require_login(connection: &Connection) -> anyhow::Result<()> {
     {
         LoginStatus::Authenticated { .. } => Ok(()),
         LoginStatus::Unavailable { error } | LoginStatus::Failed { error } => anyhow::bail!(
-            "{error}. Run sprocket login, or use --credential-store file on a headless machine."
+            "{error}. Run sprocket login. If you chose --credential-store keyring, unlock your operating system keyring or use --credential-store file."
         ),
         _ => anyhow::bail!("not signed in; run sprocket login"),
     }

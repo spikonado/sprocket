@@ -14,7 +14,8 @@ pub(super) trait RefreshTokenStore: Send + Sync {
         anyhow::bail!("credential-store selection is unavailable")
     }
     fn load(&self) -> anyhow::Result<Option<String>>;
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()>;
+    /// Returns the store that now holds the token.
+    fn save(&self, refresh_token: &str) -> anyhow::Result<CredentialStore>;
     fn clear(&self) -> anyhow::Result<()>;
 }
 
@@ -56,13 +57,14 @@ impl RefreshTokenStore for KeyringRefreshTokenStore {
         }
     }
 
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()> {
+    fn save(&self, refresh_token: &str) -> anyhow::Result<CredentialStore> {
         if refresh_token.trim().is_empty() {
             anyhow::bail!("refusing to persist an empty WorkOS refresh token");
         }
         self.entry()?
             .set_password(refresh_token)
-            .context("failed to persist WorkOS refresh token")
+            .context("failed to persist WorkOS refresh token")?;
+        Ok(CredentialStore::Keyring)
     }
 
     fn clear(&self) -> anyhow::Result<()> {
@@ -74,7 +76,7 @@ impl RefreshTokenStore for KeyringRefreshTokenStore {
 }
 
 pub(super) struct ProfileCredentials {
-    keyring: KeyringRefreshTokenStore,
+    keyring: Box<dyn RefreshTokenStore>,
     directory: PathBuf,
 }
 
@@ -82,92 +84,132 @@ impl ProfileCredentials {
     pub fn new(deployment: &str, data_dir: &Path) -> Self {
         let keyring = KeyringRefreshTokenStore::new(deployment, data_dir);
         let directory = data_dir.join("credentials").join(&keyring.account);
-        Self { keyring, directory }
+        Self {
+            keyring: Box::new(keyring),
+            directory,
+        }
     }
 
-    fn selected(&self) -> anyhow::Result<CredentialStore> {
+    fn selected(&self) -> anyhow::Result<Option<CredentialStore>> {
         match std::fs::read(self.directory.join("store.json")) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).context("invalid credential-store selection")
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(CredentialStore::Keyring)
-            }
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .context("invalid credential-store selection"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn write_selection(&self, store: CredentialStore) -> anyhow::Result<()> {
+        write_private_file(
+            &self.directory.join("store.json"),
+            &serde_json::to_vec(&store)?,
+        )
     }
 
     fn token_path(&self) -> PathBuf {
         self.directory.join("refresh-token")
     }
+
+    fn save_file(&self, token: &str) -> anyhow::Result<CredentialStore> {
+        write_private_file(&self.token_path(), token.as_bytes())?;
+        Ok(CredentialStore::File)
+    }
+
+    fn load_file(&self) -> anyhow::Result<Option<String>> {
+        let path = self.token_path();
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        anyhow::ensure!(metadata.is_file(), "credential file must be a regular file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            anyhow::ensure!(
+                metadata.permissions().mode() & 0o077 == 0,
+                "credential file must have owner-only permissions"
+            );
+        }
+        let token = std::fs::read_to_string(path)?;
+        anyhow::ensure!(!token.trim().is_empty(), "stored refresh token is empty");
+        Ok(Some(token))
+    }
+
+    fn clear_file(&self) -> anyhow::Result<()> {
+        match std::fs::remove_file(self.token_path()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 impl RefreshTokenStore for ProfileCredentials {
     fn select(&self, store: CredentialStore) -> anyhow::Result<()> {
-        if self.selected()? != store {
+        if self.selected()?.unwrap_or(CredentialStore::Keyring) != store {
             match store {
                 CredentialStore::Keyring => self.keyring.clear()?,
-                CredentialStore::File => match std::fs::remove_file(self.token_path()) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.into()),
-                },
+                CredentialStore::File => self.clear_file()?,
             }
-            write_private_file(
-                &self.directory.join("store.json"),
-                &serde_json::to_vec(&store)?,
-            )?;
         }
-        Ok(())
+        self.write_selection(store)
     }
 
     fn load(&self) -> anyhow::Result<Option<String>> {
         match self.selected()? {
-            CredentialStore::Keyring => self.keyring.load(),
-            CredentialStore::File => {
-                let path = self.token_path();
-                let metadata = match std::fs::symlink_metadata(&path) {
-                    Ok(metadata) => metadata,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                    Err(error) => return Err(error.into()),
-                };
-                anyhow::ensure!(metadata.is_file(), "credential file must be a regular file");
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    anyhow::ensure!(
-                        metadata.permissions().mode() & 0o077 == 0,
-                        "credential file must have owner-only permissions"
-                    );
-                }
-                let token = std::fs::read_to_string(path)?;
-                anyhow::ensure!(!token.trim().is_empty(), "stored refresh token is empty");
-                Ok(Some(token))
-            }
+            Some(CredentialStore::File) => self.load_file(),
+            Some(CredentialStore::Keyring) => self.keyring.load(),
+            None => match self.keyring.load() {
+                // A failed status read must not abandon a session in a temporarily unavailable keyring.
+                Err(error) if keyring_unavailable(&error) => Ok(None),
+                result => result,
+            },
         }
     }
 
-    fn save(&self, token: &str) -> anyhow::Result<()> {
+    fn save(&self, token: &str) -> anyhow::Result<CredentialStore> {
         anyhow::ensure!(
             !token.trim().is_empty(),
             "refusing to store an empty refresh token"
         );
         match self.selected()? {
-            CredentialStore::Keyring => self.keyring.save(token),
-            CredentialStore::File => write_private_file(&self.token_path(), token.as_bytes()),
-        }
-    }
-
-    fn clear(&self) -> anyhow::Result<()> {
-        match self.selected()? {
-            CredentialStore::Keyring => self.keyring.clear(),
-            CredentialStore::File => match std::fs::remove_file(self.token_path()) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error.into()),
+            Some(CredentialStore::File) => self.save_file(token),
+            Some(CredentialStore::Keyring) => self.keyring.save(token),
+            None => match self.keyring.save(token) {
+                Err(error) if keyring_unavailable(&error) => {
+                    self.save_file(token)?;
+                    self.write_selection(CredentialStore::File)?;
+                    tracing::warn!(
+                        "Operating system credential store is unavailable; using an unencrypted private file for this Sprocket profile"
+                    );
+                    Ok(CredentialStore::File)
+                }
+                result => result,
             },
         }
     }
+
+    // Sign-out fails instead of falling back: an unreachable keyring may still hold the token.
+    fn clear(&self) -> anyhow::Result<()> {
+        match self.selected()? {
+            Some(CredentialStore::File) => self.clear_file(),
+            Some(CredentialStore::Keyring) | None => self.keyring.clear(),
+        }
+    }
+}
+
+fn keyring_unavailable(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<keyring::Error>(),
+        Some(
+            keyring::Error::NoDefaultStore
+                | keyring::Error::NoStorageAccess(_)
+                | keyring::Error::PlatformFailure(_)
+                | keyring::Error::NotSupportedByStore(_)
+        )
+    )
 }
 
 #[cfg(test)]

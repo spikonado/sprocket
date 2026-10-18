@@ -211,7 +211,7 @@ async fn auth_status(
         .native_auth
         .device_status(&client.session_token)
         .await;
-    if let LoginStatus::Authenticated { user } = &status {
+    if let LoginStatus::Authenticated { user, .. } = &status {
         state
             .auth
             .bind_session_user(&client.session_token, &user.id)

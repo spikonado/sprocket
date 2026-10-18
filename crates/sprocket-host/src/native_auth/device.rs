@@ -118,7 +118,7 @@ impl NativeAuthManager {
                 Ok(Ok(response)) => manager
                     .accept_login(response)
                     .await
-                    .map_err(|error| error.to_string()),
+                    .map_err(|error| format!("{error:#}")),
                 Ok(Err(_)) => {
                     Err("Device login failed or was denied. Run sprocket login again.".to_string())
                 }
@@ -345,7 +345,10 @@ impl NativeAuthManager {
         if let Some(attempt) = session.remote_devices.remove(session_token) {
             attempt.cancel.cancel();
         }
-        Ok(NativeLoginStatus::Authenticated { user })
+        Ok(NativeLoginStatus::Authenticated {
+            user,
+            credential_store: session.credential_store,
+        })
     }
 
     pub async fn cancel_remote_device_login(&self, session_token: &str, login_id: Option<&str>) {

@@ -7,8 +7,8 @@ impl RefreshTokenStore for EmptyRefreshTokenStore {
         Ok(None)
     }
 
-    fn save(&self, _refresh_token: &str) -> anyhow::Result<()> {
-        Ok(())
+    fn save(&self, _refresh_token: &str) -> anyhow::Result<CredentialStore> {
+        Ok(CredentialStore::Keyring)
     }
 
     fn clear(&self) -> anyhow::Result<()> {

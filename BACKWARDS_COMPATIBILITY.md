@@ -126,6 +126,16 @@ system prompt.
 
 ## Local data directory backwards compatibility
 
+### Native credential store selection
+
+An absent `credentials/<account>/store.json` now means automatic: keyring
+storage with file fallback when the keyring is unavailable. Fallback writes the
+existing `"file"` selection and refresh-token file, so released clients can
+still read the profile. Released clients never wrote `"keyring"` when it was
+their default, so those profiles become automatic. Nothing is migrated. Keep
+reading `"keyring"` and `"file"` while profiles from released clients are
+supported.
+
 ### Thread-relative model images
 
 Stored model messages can reference `parse_file/…`, `screenshot_url/…`, or
