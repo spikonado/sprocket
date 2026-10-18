@@ -56,7 +56,7 @@ async function setup() {
 		});
 
 	const shutDownMachine = (restarting: boolean) =>
-		asUser.mutation(api.machines.shutdown, {
+		asUser.mutation(api.machines.end, {
 			userId: 'user_alice',
 			machineId,
 			credential: 'machine-secret',
@@ -175,20 +175,6 @@ describe('automatic run recovery', () => {
 		expect(run).toMatchObject({ status: 'cancelled' });
 		expect(run?.restartingUntil).toBeUndefined();
 		expect(thread?.restartingUntil).toBeUndefined();
-	});
-
-	it('does not recover runs after the user signs out', async () => {
-		const { asUser, queryArgs, statuses } = await setup();
-		await asUser.mutation(api.machines.end, {
-			userId: 'user_alice',
-			machineId: queryArgs.machineId,
-			credential: 'machine-secret'
-		});
-		expect((await statuses()).run).toMatchObject({
-			status: 'failed',
-			lastError: 'The machine stopped before this run finished.'
-		});
-		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({ state: 'discard' });
 	});
 
 	it('stops a restarting run without continuing it', async () => {

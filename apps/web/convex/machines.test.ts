@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
+import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { executionSecretHash } from '@convex/lib/auth';
 import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -190,7 +191,7 @@ describe('machines', () => {
 		).resolves.toBeNull();
 	});
 
-	it('ends a machine by failing its runs and clearing lastSeenAt', async () => {
+	it('ends a machine by failing its runs as recoverable and clearing lastSeenAt', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		await asUser.mutation(api.machines.tryRegister, {
@@ -212,7 +213,8 @@ describe('machines', () => {
 			credential: 'credential-a'
 		});
 		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
-			status: 'failed'
+			status: 'failed',
+			lastError: RUN_ABANDONED_BY_AGENT
 		});
 		expect((await asUser.query(api.machines.listMine, {}))[0]).toMatchObject({
 			machineId: machine.machineId,

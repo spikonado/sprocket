@@ -132,14 +132,12 @@ impl MachineManager {
     }
 
     pub async fn end(&self, user_id: &str) -> anyhow::Result<()> {
-        self.end_presence(user_id, "machines:end", self.machine_args(user_id))
-            .await
+        self.end_presence(user_id, self.machine_args(user_id)).await
     }
 
     async fn end_presence(
         &self,
         user_id: &str,
-        mutation: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<()> {
         let account = self.account_lock(user_id, true).await?;
@@ -148,14 +146,13 @@ impl MachineManager {
             return Ok(());
         };
         presence.heartbeat.abort();
-        self.end_remote(mutation, args).await
+        self.end_remote(args).await
     }
 
     pub fn stop_registration(&self) {
         self.shutdown.cancel();
     }
 
-    /// Unlike sign-out, shutdown leaves runs for automatic recovery on the next start.
     pub async fn shutdown(&self, restarting: bool) {
         self.stop_registration();
         let users = self
@@ -168,7 +165,7 @@ impl MachineManager {
         for user_id in users {
             let mut args = self.machine_args(&user_id);
             args.insert("restarting".into(), Value::Boolean(restarting));
-            if let Err(error) = self.end_presence(&user_id, "machines:shutdown", args).await {
+            if let Err(error) = self.end_presence(&user_id, args).await {
                 tracing::warn!("failed to end machine presence during shutdown: {error:#}");
             }
         }
@@ -245,14 +242,10 @@ impl MachineManager {
         .await
     }
 
-    async fn end_remote(
-        &self,
-        mutation: &str,
-        args: BTreeMap<String, Value>,
-    ) -> anyhow::Result<()> {
+    async fn end_remote(&self, args: BTreeMap<String, Value>) -> anyhow::Result<()> {
         timeout(RPC_TIMEOUT, async {
             let client = UserConvexClient::connect_anonymous(&self.deployment_url).await?;
-            let _: serde_json::Value = client.mutate(mutation, args).await?;
+            let _: serde_json::Value = client.mutate("machines:end", args).await?;
             anyhow::Ok(())
         })
         .await

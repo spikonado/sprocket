@@ -18,8 +18,6 @@ import {
 	RESTART_RECOVERY_WINDOW_MS
 } from '@convex/lib/runRecovery';
 
-const MACHINE_ENDED = 'The machine stopped before this run finished.';
-
 const vMachinePresence = v.object({
 	machineId: v.string(),
 	friendlyName: v.string(),
@@ -61,7 +59,6 @@ export const listMine = query({
 async function failMachineRuns(
 	ctx: MutationCtx,
 	machine: Doc<'machines'>,
-	lastError: string,
 	restartingUntil?: number
 ): Promise<void> {
 	if (machine.runIds.length > MAX_ACTIVE_MACHINE_RUNS) {
@@ -73,9 +70,9 @@ async function failMachineRuns(
 
 		if (!run) continue;
 		await finalizeRunRecord(ctx, run, {
-			text: lastError,
+			text: RUN_ABANDONED_BY_AGENT,
 			status: 'failed',
-			lastError
+			lastError: RUN_ABANDONED_BY_AGENT
 		});
 
 		if (restartingUntil === undefined) continue;
@@ -171,7 +168,7 @@ async function registerMachine(
 		}
 
 		if (!sameProcess) {
-			await failMachineRuns(ctx, existing, RUN_ABANDONED_BY_AGENT);
+			await failMachineRuns(ctx, existing);
 		}
 
 		await ctx.db.patch('machines', existing._id, metadata);
@@ -205,52 +202,29 @@ export const heartbeat = mutation({
 	}
 });
 
-async function endMachine(
-	ctx: MutationCtx,
-	machine: Doc<'machines'>,
-	lastError: string,
-	restartingUntil?: number
-): Promise<void> {
-	await failMachineRuns(ctx, machine, lastError, restartingUntil);
-	await ctx.db.patch('machines', machine._id, {
-		lastSeenAt: undefined,
-		updatedAt: Date.now()
-	});
-}
-
-// Signing out ends this machine's work for the user, so its runs must not resume.
 export const end = mutation({
-	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
-		await endMachine(ctx, machine, MACHINE_ENDED);
-
-		return null;
-	}
-});
-
-// The server is stopping, so its runs stay recoverable for its next start.
-export const shutdown = mutation({
 	args: {
 		userId: v.string(),
 		machineId: v.string(),
 		credential: v.string(),
-		restarting: v.boolean()
+		restarting: v.optional(v.boolean())
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
 
 		const showRestarting =
-			args.restarting && (await automaticAgentContinuationEnabled(ctx.db, machine.userId));
+			args.restarting === true && (await automaticAgentContinuationEnabled(ctx.db, machine.userId));
 
-		await endMachine(
+		await failMachineRuns(
 			ctx,
 			machine,
-			RUN_ABANDONED_BY_AGENT,
 			showRestarting ? Date.now() + RESTART_RECOVERY_WINDOW_MS : undefined
 		);
+		await ctx.db.patch('machines', machine._id, {
+			lastSeenAt: undefined,
+			updatedAt: Date.now()
+		});
 
 		return null;
 	}
