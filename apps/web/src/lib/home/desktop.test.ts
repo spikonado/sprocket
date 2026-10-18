@@ -71,7 +71,9 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		fetchChatGptBrowserLoginResult: unusedDesktopCall,
 		cancelChatGptBrowserLogin: unusedDesktopCall,
 		selectChatGptAccount: unusedDesktopCall,
-		disconnectChatGptAccount: unusedDesktopCall
+		disconnectChatGptAccount: unusedDesktopCall,
+		fetchGitHubStatus: unusedDesktopCall,
+		updateGitHubSettings: unusedDesktopCall
 	};
 }
 

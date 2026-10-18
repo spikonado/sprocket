@@ -10,6 +10,7 @@ mod command_output;
 mod command_shell;
 mod commands;
 mod git_repository;
+pub mod github;
 mod patch;
 mod paths;
 mod project_root;

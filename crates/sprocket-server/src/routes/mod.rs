@@ -7,6 +7,7 @@ pub(crate) mod browser;
 pub(crate) mod chatgpt;
 pub(crate) mod cli;
 pub mod config;
+pub(crate) mod github;
 pub mod health;
 pub(crate) mod session;
 pub mod threads;
