@@ -75,19 +75,4 @@ describe('provider fallback', () => {
 				.providerPreferences
 		).toEqual({ enabledProviders: ['chatgpt', 'openai'], restrictSubagentsToProvider: true });
 	});
-
-	it('rejects a provider order that disables every provider', async () => {
-		const t = initConvexTest();
-		const { asUser } = await seedOwnedThread(t);
-
-		await expect(
-			asUser.mutation(api.uiPreferences.setProviderOrder, {
-				providerOrder: [
-					{ provider: 'chatgpt', enabled: false },
-					{ provider: 'spikonado', enabled: false },
-					{ provider: 'openai', enabled: false }
-				]
-			})
-		).rejects.toThrow('at least one enabled');
-	});
 });

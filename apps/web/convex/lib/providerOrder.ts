@@ -20,10 +20,7 @@ export const defaultProviderOrder: readonly ProviderOrderEntry[] = completionPro
 export function resolveProviderOrder(
 	saved: readonly ProviderOrderEntry[] | undefined
 ): ProviderOrderEntry[] {
-	const order = (saved ?? []).filter(
-		(entry, index, entries) =>
-			entries.findIndex((other) => other.provider === entry.provider) === index
-	);
+	const order = [...(saved ?? [])];
 
 	for (const entry of defaultProviderOrder) {
 		if (!order.some((other) => other.provider === entry.provider)) order.push({ ...entry });
