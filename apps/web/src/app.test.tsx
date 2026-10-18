@@ -349,6 +349,7 @@ it('deletes an attached project artifact through the local server and keeps fail
 	);
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
+	fireEvent.click(await screen.findByRole('button', { name: 'Artifacts' }));
 	fireEvent.contextMenu(await screen.findByText('Artifact notes'));
 	fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete artifact' }));
 	expect((await screen.findByRole('alert')).textContent).toContain('artifact deletion timed out');
@@ -378,7 +379,7 @@ it('opens the managed browser dashboard without a thread and keeps it mounted wh
 	await projectTrigger('Alpha');
 	fireEvent.click(await screen.findByRole('button', { name: 'Open side panel' }));
 	expect(startBrowser).not.toHaveBeenCalled();
-	fireEvent.click(screen.getByRole('tab', { name: 'Live view' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
 	const iframe = await screen.findByTitle('Agent browser dashboard');
 	expect(iframe.getAttribute('src')).toBe(desktopApi.browserDashboardUrl);
 	expect(startBrowser).toHaveBeenCalledOnce();

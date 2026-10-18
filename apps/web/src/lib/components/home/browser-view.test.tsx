@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import BrowserLiveView, { type BrowserApi } from './browser-live-view';
+import BrowserView, { type BrowserApi } from './browser-view';
 import type { BrowserStatus } from '$lib/types/sprocket';
 
 function createBrowserApi() {
@@ -27,7 +27,7 @@ afterEach(() => {
 it('starts setup on mount, polls installing status, and embeds the ready dashboard', async () => {
 	const api = createBrowserApi();
 	api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'installing', error: null });
-	render(<BrowserLiveView browserApi={api} />);
+	render(<BrowserView browserApi={api} />);
 	await act(async () => {});
 	expect(api.startBrowser).toHaveBeenCalledOnce();
 	expect(screen.getByRole('status').textContent).toBe('Setting up the browser…');
@@ -60,7 +60,7 @@ it.each<BrowserStatus['state']>(['error', 'installing', 'ready'])(
 			api.fetchBrowserStatus.mockResolvedValueOnce({ state: 'error', error });
 		}
 
-		render(<BrowserLiveView browserApi={api} />);
+		render(<BrowserView browserApi={api} />);
 		await act(async () => {});
 
 		if (state !== 'error') {
@@ -82,7 +82,7 @@ it.each(['startBrowser', 'fetchBrowserStatus'] as const)(
 	async (method) => {
 		const api = createBrowserApi();
 		api[method].mockRejectedValueOnce(new Error('The Sprocket server disconnected.'));
-		render(<BrowserLiveView browserApi={api} />);
+		render(<BrowserView browserApi={api} />);
 		await act(async () => {});
 		await act(() => vi.advanceTimersByTimeAsync(1000));
 		expect(screen.getByRole('alert').textContent).toBe('The Sprocket server disconnected.');
@@ -94,7 +94,7 @@ it('waits for each poll to finish and cancels in-flight work on unmount', async 
 	const api = createBrowserApi();
 	const pending = Promise.withResolvers<BrowserStatus>();
 	api.fetchBrowserStatus.mockReturnValueOnce(pending.promise);
-	const view = render(<BrowserLiveView browserApi={api} />);
+	const view = render(<BrowserView browserApi={api} />);
 	await act(async () => {});
 	await act(() => vi.advanceTimersByTimeAsync(5000));
 	expect(api.fetchBrowserStatus).toHaveBeenCalledOnce();
@@ -107,7 +107,7 @@ it('waits for each poll to finish and cancels in-flight work on unmount', async 
 });
 
 it('explains the local server requirement without a connected API', () => {
-	render(<BrowserLiveView browserApi={null} />);
+	render(<BrowserView browserApi={null} />);
 	expect(screen.getByRole('status').textContent).toBe(
 		'Connect to the local Sprocket server to use the browser.'
 	);

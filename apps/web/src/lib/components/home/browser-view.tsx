@@ -11,7 +11,7 @@ type Props = {
 	browserApi: BrowserApi | null;
 };
 
-export default function BrowserLiveView({ browserApi }: Props) {
+export default function BrowserView({ browserApi }: Props) {
 	const [status, setStatus] = useState<BrowserStatus>({ state: 'installing', error: null });
 	const [attempt, setAttempt] = useState(0);
 
