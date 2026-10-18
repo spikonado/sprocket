@@ -1,11 +1,16 @@
 import { spawn } from 'node:child_process';
-import { accessSync, chmodSync, constants, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { accessSync, chmodSync, constants, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { createHost, parseUpdateArgs, runUpdateCli, UPDATE_API_FILENAME } from './update.js';
 
 const require = createRequire(import.meta.url);
+
+// Must match crates/sprocket-cli/src/main.rs.
+export const RESTART_EXIT_CODE = 75;
 
 const TARGETS = JSON.parse(readFileSync(path.join(import.meta.dirname, '../targets.json'), 'utf8'));
 
@@ -126,6 +131,16 @@ export function nativeChildEnvironment(env, staticDir, updateNode, updateScript)
 	return next;
 }
 
+function readRestartLauncher(restartFile) {
+	try {
+		return readFileSync(restartFile, 'utf8');
+	} catch {
+		return null;
+	} finally {
+		rmSync(restartFile, { force: true });
+	}
+}
+
 export async function launch(args, options = {}) {
 	const env = { ...(options.env ?? process.env) };
 	delete env.SPROCKET_UPDATE_MANAGED;
@@ -143,15 +158,41 @@ export async function launch(args, options = {}) {
 		const staticDir = path.resolve(libDir, '../web');
 		const binary = (options.resolveBinary ?? resolveNativeBinary)();
 		(options.ensureExecutable ?? ensureExecutable)(binary);
-		process.exitCode = await run(binary, args, {
+		const execPath = options.execPath ?? process.execPath;
+		// The native server clears SPROCKET_RESTARTED, so only a launcher started by a restarting
+		// launcher sees it and leaves the next restart to that parent.
+		const ownsRestart = !env.SPROCKET_RESTARTED;
+
+		if (ownsRestart) {
+			env.SPROCKET_RESTART_FILE = path.join(
+				options.tmpdir ?? tmpdir(),
+				`sprocket-restart-${randomUUID()}`
+			);
+		}
+
+		let code = await run(binary, args, {
 			env: nativeChildEnvironment(
 				env,
 				staticDir,
-				options.execPath ?? process.execPath,
+				execPath,
 				path.resolve(libDir, UPDATE_API_FILENAME)
 			),
 			spawn: options.spawn
 		});
+
+		if (ownsRestart) {
+			while (code === RESTART_EXIT_CODE) {
+				const launcher = readRestartLauncher(env.SPROCKET_RESTART_FILE);
+
+				if (!launcher) break;
+				code = await run(execPath, [launcher, ...args], {
+					env: { ...env, SPROCKET_RESTARTED: '1' },
+					spawn: options.spawn
+				});
+			}
+		}
+
+		process.exitCode = code;
 
 		return process.exitCode;
 	} catch (error) {

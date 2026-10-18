@@ -40,6 +40,8 @@ pub struct PackageUpdateSnapshot {
     pub error: Option<String>,
     pub method: UpdateMethod,
     pub message: Option<String>,
+    #[serde(skip)]
+    pub(crate) restart_launcher: Option<String>,
 }
 
 impl PackageUpdateSnapshot {
@@ -51,6 +53,7 @@ impl PackageUpdateSnapshot {
             error: None,
             method: UpdateMethod::Package,
             message: None,
+            restart_launcher: None,
         }
     }
 
@@ -63,6 +66,7 @@ impl PackageUpdateSnapshot {
             error: Some(error.clone()),
             method: UpdateMethod::Package,
             message: Some(error),
+            restart_launcher: None,
         }
     }
 }
@@ -104,6 +108,7 @@ struct Inner {
 
 pub struct PackageUpdateManager {
     command: Option<UpdateCommand>,
+    restart_file: Option<PathBuf>,
     success_ttl: Duration,
     failure_ttl: Duration,
     check_timeout: Duration,
@@ -113,13 +118,15 @@ pub struct PackageUpdateManager {
 
 impl PackageUpdateManager {
     pub fn from_env() -> Arc<Self> {
-        Arc::new(Self::new(
+        let mut manager = Self::new(
             parse_update_command_from_env(),
             SUCCESS_CHECK_TTL,
             FAILED_CHECK_TTL,
             CHECK_TIMEOUT,
             INSTALL_TIMEOUT,
-        ))
+        );
+        manager.restart_file = std::env::var_os("SPROCKET_RESTART_FILE").map(PathBuf::from);
+        Arc::new(manager)
     }
 
     pub fn disabled() -> Arc<Self> {
@@ -147,12 +154,14 @@ impl PackageUpdateManager {
                 error: None,
                 method: UpdateMethod::Package,
                 message: None,
+                restart_launcher: None,
             }
         } else {
             PackageUpdateSnapshot::unavailable()
         };
         Self {
             command,
+            restart_file: None,
             success_ttl,
             failure_ttl,
             check_timeout,
@@ -210,6 +219,25 @@ impl PackageUpdateManager {
         }
         self.start_locked(&mut inner, HelperAction::Install);
         inner.snapshot.clone()
+    }
+
+    /// Tells the npm launcher which updated launcher to start once this process exits.
+    pub async fn prepare_restart(&self) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        anyhow::ensure!(
+            inner.installed,
+            "Install a package update before restarting Sprocket."
+        );
+        let (Some(launcher), Some(restart_file)) =
+            (&inner.snapshot.restart_launcher, &self.restart_file)
+        else {
+            anyhow::bail!(
+                "This copy of Sprocket cannot restart itself. Stop Sprocket and launch it again."
+            );
+        };
+        tokio::fs::write(restart_file, launcher)
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to prepare the restart: {error}"))
     }
 
     fn start_locked(
@@ -504,6 +532,8 @@ struct HelperJson {
     error: Option<String>,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    restart_launcher: Option<String>,
 }
 
 fn parse_helper_output(
@@ -595,6 +625,7 @@ impl HelperJson {
             error,
             method: UpdateMethod::Package,
             message: self.message.filter(|value| !value.is_empty()),
+            restart_launcher: self.restart_launcher,
         }
     }
 }

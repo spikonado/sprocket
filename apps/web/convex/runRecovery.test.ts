@@ -52,10 +52,72 @@ async function setup() {
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
 
-	return { t, asUser, threadId, runId, queryArgs, recoveryArgs, abandon };
+	const shutDownMachine = () =>
+		asUser.mutation(api.machines.end, {
+			userId: 'user_alice',
+			machineId,
+			credential: 'machine-secret'
+		});
+
+	const registerNewProcess = async () =>
+		asUser.mutation(api.machines.tryRegister, {
+			machineId,
+			credentialHash: await executionSecretHash('new-process'),
+			friendlyName: 'Workstation',
+			platform: 'linux',
+			platformVersion: 'test',
+			architecture: 'x86_64',
+			hostname: 'workstation',
+			appVersion: 'test'
+		});
+
+	return {
+		t,
+		asUser,
+		threadId,
+		runId,
+		queryArgs,
+		recoveryArgs,
+		abandon,
+		shutDownMachine,
+		registerNewProcess
+	};
 }
 
 describe('automatic run recovery', () => {
+	it('continues runs on the next machine process after a shutdown', async () => {
+		const {
+			t,
+			asUser,
+			threadId,
+			runId,
+			queryArgs,
+			recoveryArgs,
+			shutDownMachine,
+			registerNewProcess
+		} = await setup();
+
+		await shutDownMachine();
+		await registerNewProcess();
+		expect(await asUser.query(api.runRecovery.state, queryArgs)).toEqual({
+			state: 'recover',
+			runId,
+			threadId
+		});
+		expect((await insertQueuedRun(t, asUser, recoveryArgs)).created).toBe(true);
+	});
+
+	it('stops the resumed run when stopping the interrupted run', async () => {
+		const { t, asUser, runId, recoveryArgs, shutDownMachine, registerNewProcess } = await setup();
+
+		await shutDownMachine();
+		await registerNewProcess();
+		const { runId: continuationId } = await insertQueuedRun(t, asUser, recoveryArgs);
+		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId })).toBe(true);
+		const continuation = await t.run((ctx) => ctx.db.get('runs', continuationId));
+		expect(continuation?.cancellationRequestedAt).toBeDefined();
+	});
+
 	it('discards automatic recovery when disabled but allows manual continuation', async () => {
 		const { t, asUser, runId, queryArgs, recoveryArgs, abandon } = await setup();
 		await abandon();

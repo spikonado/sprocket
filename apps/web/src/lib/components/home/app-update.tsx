@@ -1,37 +1,49 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, LoaderCircle, RefreshCw } from 'lucide-react';
-import { requestPackageUpdate, updateLabel, type UpdateState } from '$lib/updates';
+import { useConvexAuth, useQuery_experimental as useConvexQueryResult } from 'convex/react';
+import { api } from '@convex/_generated/api';
+import {
+	requestPackageUpdate,
+	restartPackageUpdate,
+	updateLabel,
+	type UpdateState
+} from '$lib/updates';
+import RestartConfirmation from './restart-confirmation';
 
-const UPDATED_STATUSES: ReadonlyArray<UpdateState['status']> = [
-	'downloading',
-	'downloaded',
-	'installing',
-	'installed'
-];
+// An error belongs to the update status it was raised from and hides once that status moves on.
+type FailedRequest = { error: string; status: UpdateState['status'] };
 
 export default function AppUpdate() {
+	const auth = useConvexAuth();
+
+	const preferences = useConvexQueryResult({
+		query: api.uiPreferences.getMine,
+		args: auth.isAuthenticated && !auth.isLoading ? {} : 'skip'
+	});
+
 	const [updateState, setUpdateState] = useState<UpdateState | null>(null);
-	const [requestError, setRequestError] = useState<string | null>(null);
+	const [confirmRestart, setConfirmRestart] = useState(false);
+	const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null);
 	const [busy, setBusyState] = useState(false);
 	const busyRef = useRef(false);
 	const revisionRef = useRef(0);
 	const label = updateState ? updateLabel(updateState) : null;
 
+	const requestError =
+		failedRequest && failedRequest.status === updateState?.status ? failedRequest.error : null;
+
 	const working =
 		busy || updateState?.status === 'downloading' || updateState?.status === 'installing';
+
+	const restartReady = updateState?.status === 'installed' || updateState?.status === 'downloaded';
+
+	const continuesAgents =
+		preferences.status === 'success' && preferences.data?.automaticAgentContinuation !== false;
 
 	const setBusy = (next: boolean) => {
 		busyRef.current = next;
 		setBusyState(next);
 	};
-
-	const acceptUpdate = useCallback((next: UpdateState | null) => {
-		setUpdateState(next);
-
-		if (next && UPDATED_STATUSES.includes(next.status)) {
-			setRequestError(null);
-		}
-	}, []);
 
 	useEffect(() => {
 		let disposed = false;
@@ -42,7 +54,7 @@ export default function AppUpdate() {
 
 		const unsubscribe = updates?.onState((next) => {
 			revisionRef.current += 1;
-			acceptUpdate(next);
+			setUpdateState(next);
 		});
 
 		async function refresh() {
@@ -54,7 +66,7 @@ export default function AppUpdate() {
 				const next = updates ? await updates.getState() : await requestPackageUpdate(false);
 
 				if (!disposed && revisionRef.current === startedRevision) {
-					acceptUpdate(next);
+					setUpdateState(next);
 					unsupported = next === null || next.status === 'unavailable';
 				}
 			} catch {
@@ -72,14 +84,22 @@ export default function AppUpdate() {
 			clearInterval(timer);
 			unsubscribe?.();
 		};
-	}, [acceptUpdate]);
+	}, []);
 
-	async function update() {
+	async function update(confirmed = false) {
 		if (!updateState || working) return;
+
+		if (restartReady && !confirmed && !continuesAgents) {
+			setConfirmRestart(true);
+
+			return;
+		}
+
+		setConfirmRestart(false);
 
 		const startedRevision = ++revisionRef.current;
 		setBusy(true);
-		setRequestError(null);
+		setFailedRequest(null);
 
 		try {
 			const updates = window.sprocketDesktopBridge?.updates;
@@ -89,12 +109,19 @@ export default function AppUpdate() {
 					? updates.install()
 					: updates.download());
 
-				if (revisionRef.current === startedRevision) acceptUpdate(next);
+				if (revisionRef.current === startedRevision) setUpdateState(next);
 			} else if (updateState.method === 'package') {
-				acceptUpdate(await requestPackageUpdate(true));
+				if (updateState.status === 'installed' && updateState.version) {
+					await restartPackageUpdate(updateState.version);
+				} else {
+					setUpdateState(await requestPackageUpdate(true));
+				}
 			}
 		} catch (error) {
-			setRequestError(error instanceof Error ? error.message : String(error));
+			setFailedRequest({
+				error: error instanceof Error ? error.message : String(error),
+				status: updateState.status
+			});
 		} finally {
 			setBusy(false);
 		}
@@ -109,24 +136,25 @@ export default function AppUpdate() {
 			<button
 				type="button"
 				className="text-foreground hover:bg-hover-fill flex min-h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium tracking-[-0.02em] transition disabled:cursor-default disabled:opacity-70"
-				disabled={working || updateState.status === 'installed'}
+				disabled={working}
 				onClick={() => void update()}
 				title={updateState.version ? `Sprocket ${updateState.version}` : undefined}
 				aria-busy={working}
 			>
 				{working ? (
 					<LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-				) : updateState.status === 'downloaded' ? (
+				) : restartReady ? (
 					<RefreshCw className="size-4 shrink-0" aria-hidden="true" />
 				) : (
 					<Download className="size-4 shrink-0" aria-hidden="true" />
 				)}
-				<span>{label}</span>
+				<span>{busy && restartReady ? 'Restarting Sprocket...' : label}</span>
 			</button>
-			{updateState.status === 'installed' && (
-				<p className="text-muted-foreground px-2 pb-2 text-xs">
-					Wait for active agents to finish, then stop Sprocket in your terminal and launch it again.
-				</p>
+			{confirmRestart && (
+				<RestartConfirmation
+					onCancel={() => setConfirmRestart(false)}
+					onConfirm={() => void update(true)}
+				/>
 			)}
 			{(requestError || updateState.error) && (
 				<p className="text-destructive px-2 pb-2 text-xs break-words" role="alert">

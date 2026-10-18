@@ -6,11 +6,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureExecutable, launch, nativePackage, run } from '../lib/launcher.js';
+import {
+	ensureExecutable,
+	launch,
+	nativePackage,
+	RESTART_EXIT_CODE,
+	run
+} from '../lib/launcher.js';
 
-function successfulChild() {
+function successfulChild(code = 0) {
 	const child = new EventEmitter();
-	queueMicrotask(() => child.emit('close', 0, null));
+	queueMicrotask(() => child.emit('close', code, null));
 
 	return child;
 }
@@ -71,6 +77,65 @@ test('overrides inherited update helper environment for the native child', async
 	);
 	assert.equal(invocation.options.env.SPROCKET_STATIC_DIR, '/tmp/web');
 	assert.equal(Object.hasOwn(invocation.options.env, 'SPROCKET_UPDATE_MANAGED'), false);
+});
+
+test('starts the updated launcher after the native server exits to restart', async (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-test-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const updatedLauncher = '/opt/sprocket/bin/sprocket.js';
+	const invocations = [];
+
+	const code = await launch(['--web'], {
+		env: {},
+		execPath: '/usr/bin/node',
+		tmpdir: directory,
+		resolveBinary: () => '/tmp/sprocket',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocations.push({ binary, args, env: options.env });
+
+			if (invocations.length === 1) {
+				writeFileSync(options.env.SPROCKET_RESTART_FILE, updatedLauncher);
+
+				return successfulChild(RESTART_EXIT_CODE);
+			}
+
+			return successfulChild();
+		}
+	});
+
+	assert.equal(code, 0);
+	const [native, restarted] = invocations;
+	assert.equal(native.binary, '/tmp/sprocket');
+	assert.equal(path.dirname(native.env.SPROCKET_RESTART_FILE), directory);
+	assert.equal(restarted.binary, '/usr/bin/node');
+	assert.deepEqual(restarted.args, [updatedLauncher, '--web']);
+	assert.equal(restarted.env.SPROCKET_RESTART_FILE, native.env.SPROCKET_RESTART_FILE);
+	assert.equal(restarted.env.SPROCKET_RESTARTED, '1');
+	assert.equal(existsSync(native.env.SPROCKET_RESTART_FILE), false);
+});
+
+test('a restarted launcher passes the next restart up to its parent', async () => {
+	const invocations = [];
+
+	const code = await launch(['--web'], {
+		env: {
+			SPROCKET_RESTART_FILE: '/tmp/sprocket-restart-parent',
+			SPROCKET_RESTARTED: '1'
+		},
+		resolveBinary: () => '/tmp/sprocket',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocations.push(options.env);
+
+			return successfulChild(RESTART_EXIT_CODE);
+		}
+	});
+
+	assert.equal(code, RESTART_EXIT_CODE);
+	assert.equal(invocations.length, 1);
+	assert.equal(invocations[0].SPROCKET_RESTART_FILE, '/tmp/sprocket-restart-parent');
+	assert.equal(invocations[0].SPROCKET_RESTARTED, '1');
 });
 
 test('update and upgrade help is delegated to the native CLI', async () => {

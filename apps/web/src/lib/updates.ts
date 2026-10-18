@@ -41,7 +41,7 @@ export function updateLabel(state: UpdateState): string | null {
 		case 'installing':
 			return 'Installing update…';
 		case 'installed':
-			return 'Update installed';
+			return 'Restart Sprocket';
 		case 'error':
 			return state.version ? 'Retry update' : null;
 		default:
@@ -49,13 +49,9 @@ export function updateLabel(state: UpdateState): string | null {
 	}
 }
 
-export async function requestPackageUpdate(install: boolean): Promise<UpdateState | null> {
-	const baseUrl = resolveLocalApiBaseUrl();
-
-	if (!baseUrl) return null;
-
-	const response = await fetch(`${baseUrl}/api/update${install ? '/install' : ''}`, {
-		method: install ? 'POST' : 'GET',
+async function updateApiRequest(baseUrl: string, path: string, method: 'GET' | 'POST') {
+	const response = await fetch(`${baseUrl}/api/update${path}`, {
+		method,
 		credentials: 'include',
 		headers: { 'content-type': 'application/json' },
 		signal: AbortSignal.timeout(30_000)
@@ -71,5 +67,57 @@ export async function requestPackageUpdate(install: boolean): Promise<UpdateStat
 		);
 	}
 
+	return response;
+}
+
+export async function requestPackageUpdate(install: boolean): Promise<UpdateState | null> {
+	const baseUrl = resolveLocalApiBaseUrl();
+
+	if (!baseUrl) return null;
+
+	const response = await updateApiRequest(
+		baseUrl,
+		install ? '/install' : '',
+		install ? 'POST' : 'GET'
+	);
+
 	return updateStateSchema.parse(await response.json());
+}
+
+export async function restartPackageUpdate(version: string): Promise<void> {
+	const baseUrl = resolveLocalApiBaseUrl();
+
+	if (!baseUrl) throw new Error('The Sprocket server is unavailable.');
+
+	await updateApiRequest(baseUrl, '/restart', 'POST');
+
+	const deadline = Date.now() + 90_000;
+	const healthSchema = z.object({ version: z.string() });
+
+	while (Date.now() < deadline) {
+		try {
+			const health = await fetch(`${baseUrl}/api/health`, {
+				cache: 'no-store',
+				signal: AbortSignal.timeout(2_000)
+			});
+
+			if (health.ok) {
+				const next = healthSchema.safeParse(await health.json());
+
+				if (next.success && next.data.version === version) {
+					window.location.reload();
+
+					return;
+				}
+			}
+		} catch {
+			// Connection failures are expected while the server restarts.
+		}
+
+		await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+	}
+
+	throw new Error(
+		'Sprocket did not restart in time. Launch Sprocket again, then reload this page.'
+	);
 }

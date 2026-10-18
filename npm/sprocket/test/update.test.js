@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, promises as fsPromises, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, promises as fsPromises, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -194,6 +194,10 @@ function testHost(options = {}) {
 				}
 
 				return options.install ?? { status: 0, stdout: '', stderr: '' };
+			}
+
+			if (args.at(-1) === '--version') {
+				return options.launcherCheck ?? { status: 0, stdout: '0.3.5', stderr: '' };
 			}
 
 			return { status: 1, stdout: '', stderr: 'unexpected command' };
@@ -449,6 +453,74 @@ test('install returns installed with a relaunch message and keeps the running ve
 	assert.equal(payload.method, 'package');
 	assert.equal(payload.message, RELAUNCH_MESSAGE);
 	assert.equal(payload.error, null);
+	assert.equal(payload.restartLauncher, path.resolve(NPM_PACKAGE, 'bin/sprocket.js'));
+});
+
+test('install reports an error when the updated launcher cannot start', async () => {
+	const { host, commands } = testHost({
+		launcherCheck: { status: 1, stdout: '', stderr: 'sprocket: The native package is missing.' }
+	});
+
+	const payload = await installUpdate(host);
+	assert.equal(payload.status, 'error');
+	assert.match(
+		payload.error,
+		/0\.3\.5 was installed but cannot start: sprocket: The native package/
+	);
+	assert.deepEqual(commands.at(-1).args, [
+		path.resolve(NPM_PACKAGE, 'bin/sprocket.js'),
+		'--version'
+	]);
+});
+
+test('install API retains the stable pnpm launcher across package symlink replacement', async (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-restart-'));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const globalRoot = path.join(directory, 'node_modules');
+	const logical = globalPackageDir(globalRoot);
+
+	const oldPackage = path.join(
+		globalRoot,
+		'.pnpm/@spikonado+sprocket@0.3.4/node_modules/@spikonado/sprocket'
+	);
+
+	const newPackage = oldPackage.replace('@0.3.4', '@0.3.5');
+	await fsPromises.mkdir(path.dirname(logical), { recursive: true });
+	await fsPromises.mkdir(oldPackage, { recursive: true });
+	await fsPromises.mkdir(newPackage, { recursive: true });
+	await fsPromises.symlink(oldPackage, logical, 'junction');
+	let replaced = false;
+
+	const { host } = testHost({
+		packageRoot: oldPackage,
+		executables: { pnpm: '/usr/bin/pnpm' },
+		isFile: () => false,
+		realpath(file) {
+			assert.equal(replaced, false, 'do not resolve the old package after replacement');
+
+			return realpathSync(file);
+		},
+		async runCommand(command, args) {
+			if (isInstallArgs(args)) {
+				await fsPromises.unlink(logical);
+				await fsPromises.symlink(newPackage, logical, 'junction');
+				replaced = true;
+
+				return { status: 0 };
+			}
+
+			return { status: 0, stdout: globalRoot };
+		}
+	});
+
+	const result = await runUpdateApi('install', host);
+	assert.equal(result.exitCode, 0);
+	assert.equal(result.payload.status, 'installed');
+	assert.equal(replaced, true);
+	const payload = JSON.parse(JSON.stringify(result.payload));
+	assert.equal(payload.restartLauncher, path.join(logical, 'bin/sprocket.js'));
+	assert.equal(path.isAbsolute(payload.restartLauncher), true);
+	assert.equal(realpathSync(logical), newPackage);
 });
 
 test('follows canary and dev dist-tags for those installs', async () => {

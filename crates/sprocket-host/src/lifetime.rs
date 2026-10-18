@@ -5,6 +5,7 @@ use sprocket_workspace::WorkspaceCancellation;
 struct LifetimeState {
     active_runs: usize,
     accepting: bool,
+    restart_requested: bool,
 }
 
 /// Tracks the work that keeps the host process alive and its shutdown signal.
@@ -20,6 +21,7 @@ impl HostLifetime {
             state: Mutex::new(LifetimeState {
                 active_runs: 0,
                 accepting: true,
+                restart_requested: false,
             }),
         })
     }
@@ -36,6 +38,23 @@ impl HostLifetime {
 
     pub fn is_stopping(&self) -> bool {
         !self.state.lock().unwrap().accepting
+    }
+
+    /// Stops accepting work and signals a shutdown that the launcher follows with a restart.
+    pub fn request_restart(&self) -> anyhow::Result<()> {
+        let mut state = self.state.lock().unwrap();
+        anyhow::ensure!(
+            state.accepting && !self.shutdown.is_cancelled(),
+            "Sprocket is already shutting down."
+        );
+        state.restart_requested = true;
+        state.accepting = false;
+        self.shutdown.cancel();
+        Ok(())
+    }
+
+    pub fn restart_requested(&self) -> bool {
+        self.state.lock().unwrap().restart_requested
     }
 
     /// Stops accepting work and signals shutdown when no run holds a guard.

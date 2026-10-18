@@ -78,6 +78,45 @@ fn install_request(
     request.body(Body::from(body)).unwrap()
 }
 
+fn restart_request(session_token: Option<&str>, origin: Option<&str>) -> Request<Body> {
+    let mut request = install_request(session_token, origin, "{}");
+    *request.uri_mut() = "/api/update/restart".parse().unwrap();
+    request
+}
+
+#[tokio::test]
+async fn restart_requires_session_same_origin_and_installed_update() {
+    let (state, session_token) = test_state(PackageUpdateManager::disabled()).await;
+    let lifetime = Arc::clone(&state.host.lifetime);
+    let app = router(state);
+    for (token, origin, expected) in [
+        (
+            None,
+            Some("http://127.0.0.1:7731"),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (Some(session_token.as_str()), None, StatusCode::FORBIDDEN),
+        (
+            Some(session_token.as_str()),
+            Some("https://attacker.example"),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Some(session_token.as_str()),
+            Some("http://127.0.0.1:7731"),
+            StatusCode::CONFLICT,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(restart_request(token, origin))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+    assert!(!lifetime.shutdown.is_cancelled());
+}
+
 #[tokio::test]
 async fn update_status_requires_session_and_rejects_hostile_origin() {
     let (state, session_token) = test_state(PackageUpdateManager::disabled()).await;

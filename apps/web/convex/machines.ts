@@ -13,8 +13,6 @@ import {
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 
-const MACHINE_ENDED = 'The machine stopped before this run finished.';
-
 const vMachinePresence = v.object({
 	machineId: v.string(),
 	friendlyName: v.string(),
@@ -53,11 +51,7 @@ export const listMine = query({
 	}
 });
 
-async function failMachineRuns(
-	ctx: MutationCtx,
-	machine: Doc<'machines'>,
-	lastError = MACHINE_ENDED
-): Promise<void> {
+async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Promise<void> {
 	if (machine.runIds.length > MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs to stop safely.');
 	}
@@ -67,9 +61,9 @@ async function failMachineRuns(
 
 		if (run) {
 			await finalizeRunRecord(ctx, run, {
-				text: lastError,
+				text: RUN_ABANDONED_BY_AGENT,
 				status: 'failed',
-				lastError
+				lastError: RUN_ABANDONED_BY_AGENT
 			});
 		}
 	}
@@ -139,7 +133,7 @@ async function registerMachine(
 		}
 
 		if (!sameProcess) {
-			await failMachineRuns(ctx, existing, RUN_ABANDONED_BY_AGENT);
+			await failMachineRuns(ctx, existing);
 		}
 
 		await ctx.db.patch('machines', existing._id, metadata);

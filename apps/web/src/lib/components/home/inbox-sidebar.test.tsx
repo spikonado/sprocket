@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { INBOX_STATES } from '@convex/lib/inboxState';
+import { ConvexTestClient, ConvexTestProvider } from '$lib/convex-test-client';
 import type { LinkedPullRequest } from '@convex/lib/validators';
 import InboxSidebar, { type SidebarChildrenResolver } from './inbox-sidebar';
 import type {
@@ -117,7 +118,13 @@ function props(records: Thread[]) {
 function Harness(input: SidebarProps) {
 	const [settledOpen, setSettledOpen] = useState(false);
 
-	return <InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />;
+	const [client] = useState(() => new ConvexTestClient());
+
+	return (
+		<ConvexTestProvider client={client}>
+			<InboxSidebar {...input} settledOpen={settledOpen} onSettledOpenChange={setSettledOpen} />
+		</ConvexTestProvider>
+	);
 }
 
 function NavigationHarness(input: SidebarProps) {

@@ -10,6 +10,7 @@ use crate::AppState;
 struct HealthResponse {
     status: &'static str,
     http_base_url: String,
+    version: &'static str,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -20,5 +21,6 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         http_base_url: state.http_base_url.clone(),
+        version: sprocket_workspace::SPROCKET_VERSION,
     })
 }

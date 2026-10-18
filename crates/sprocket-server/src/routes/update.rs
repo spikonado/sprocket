@@ -14,6 +14,7 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/update", get(status))
         .route("/update/install", post(install))
+        .route("/update/restart", post(restart))
 }
 
 async fn status(
@@ -31,6 +32,24 @@ async fn install(
 }
 
 struct UpdateSession;
+
+async fn restart(
+    State(state): State<AppState>,
+    UpdateSession: UpdateSession,
+) -> Result<StatusCode, ApiError> {
+    state
+        .host
+        .package_updates
+        .prepare_restart()
+        .await
+        .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
+    state
+        .host
+        .lifetime
+        .request_restart()
+        .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 impl FromRequestParts<AppState> for UpdateSession {
     type Rejection = ApiError;
