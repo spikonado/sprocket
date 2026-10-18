@@ -2754,7 +2754,7 @@ export default function App({
 					{!settingsOpen && !artifactPanel.panel.open && (
 						<button
 							type="button"
-							className="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
+							className="text-muted-foreground hover:text-foreground hover:bg-hover-fill focus-visible:ring-ring absolute top-1.5 right-2 z-100 rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:outline-none"
 							onClick={() => artifactPanel.update({ open: true })}
 							aria-label="Open side panel"
 						>
