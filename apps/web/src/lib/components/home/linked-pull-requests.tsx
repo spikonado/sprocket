@@ -8,10 +8,8 @@ import {
 	GitPullRequestClosed,
 	type LucideIcon
 } from 'lucide-react';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { LinkedPullRequest as PullRequest } from '@convex/lib/validators';
 import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss';
-
-type PullRequest = NonNullable<Doc<'threadRecords'>['pullRequests']>[number];
 
 type PullRequestState = PullRequest['state'];
 

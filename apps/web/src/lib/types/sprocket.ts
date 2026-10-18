@@ -9,6 +9,7 @@ import {
 	type ArtifactType,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
+	type LinkedPullRequest,
 	type WorkspaceInstruction
 } from '@convex/lib/validators';
 
@@ -386,9 +387,7 @@ export type DesktopApi = {
 		request: LocalUserRequest & {
 			pullRequests: { repository: string; number: number }[];
 		}
-	) => Promise<
-		{ repository: string; number: number; state: 'open' | 'closed' | 'merged'; title: string }[]
-	>;
+	) => Promise<LinkedPullRequest[]>;
 	startAccountSession: (request: LocalUserRequest) => Promise<void>;
 	endAccountSession: (request: LocalUserRequest) => Promise<void>;
 	fetchChatGptStatus: (request: LocalUserRequest) => Promise<ChatGptStatus>;

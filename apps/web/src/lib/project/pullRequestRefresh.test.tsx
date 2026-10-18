@@ -1,6 +1,7 @@
 import { renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { LinkedPullRequest } from '@convex/lib/validators';
 import {
 	PullRequestRefresher,
 	type PullRequestStateSync,
@@ -12,16 +13,14 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-type PullRequests = NonNullable<Doc<'threadRecords'>['pullRequests']>;
-
 const pr = (
 	number: number,
-	state: PullRequests[number]['state'],
+	state: LinkedPullRequest['state'],
 	repository = 'github.com/acme/widgets',
 	title = `PR ${number}`
 ) => ({ repository, number, state, title });
 
-function thread(id: string, pullRequests: PullRequests): Doc<'threadRecords'> {
+function thread(id: string, pullRequests: LinkedPullRequest[]): Doc<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return {
 		_id: id as Id<'threadRecords'>,

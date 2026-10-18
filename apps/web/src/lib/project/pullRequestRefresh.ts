@@ -1,9 +1,8 @@
 import { useEffect, useId, useMemo } from 'react';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { LinkedPullRequest } from '@convex/lib/validators';
 
 type Thread = Doc<'threadRecords'>;
-
-type LinkedPullRequest = NonNullable<Thread['pullRequests']>[number];
 
 export type PullRequestRef = { repository: string; number: number };
 
@@ -82,10 +81,7 @@ export class PullRequestRefresher {
 			const batch = linked.slice(start, start + MAX_PULL_REQUESTS_PER_REFRESH);
 
 			const refs = new Map(
-				batch.map(({ pr: { repository, number } }) => [
-					refKey({ repository, number }),
-					{ repository, number }
-				])
+				batch.map(({ pr }) => [refKey(pr), { repository: pr.repository, number: pr.number }])
 			);
 
 			try {
@@ -97,15 +93,7 @@ export class PullRequestRefresher {
 					const latest = fetched.get(refKey(pr));
 
 					return latest && (latest.state !== pr.state || latest.title !== pr.title)
-						? [
-								{
-									threadId: thread._id,
-									repository: pr.repository,
-									number: pr.number,
-									state: latest.state,
-									title: latest.title
-								}
-							]
+						? [{ threadId: thread._id, ...latest }]
 						: [];
 				});
 
@@ -173,18 +161,4 @@ export function useShownPullRequests(
 	useEffect(() => {
 		refresher?.show(listKey, rows);
 	}, [refresher, listKey, rows]);
-}
-
-/** Re-reads every shown thread before loading more rows. */
-export function refreshOnLoadMore<Section extends { loadMore: () => void }>(
-	refresher: PullRequestRefresher | null,
-	section: Section
-): Section {
-	return {
-		...section,
-		loadMore: () => {
-			refresher?.refreshShown();
-			section.loadMore();
-		}
-	};
 }

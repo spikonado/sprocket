@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { INBOX_STATES } from '@convex/lib/inboxState';
+import type { LinkedPullRequest } from '@convex/lib/validators';
 import InboxSidebar, { type SidebarChildrenResolver } from './inbox-sidebar';
 import type {
 	ThreadTreeSummary,
@@ -266,8 +267,6 @@ it('shows project, title, provider, and model name without a model slug', async 
 	expect(row.textContent).not.toContain('submission');
 	expect(row.querySelector('.inbox-row-open')?.getAttribute('title')).not.toContain('model');
 });
-
-type LinkedPullRequest = NonNullable<Thread['pullRequests']>[number];
 
 const linkedPr = (
 	number: number,

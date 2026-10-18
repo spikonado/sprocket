@@ -143,6 +143,8 @@ export const vLinkedPullRequest = v.object({
 	title: v.string()
 });
 
+export type LinkedPullRequest = Infer<typeof vLinkedPullRequest>;
+
 const vHistoricalBrowserActPayload = v.object({
 	instruction: v.optional(v.string()),
 	action: v.optional(

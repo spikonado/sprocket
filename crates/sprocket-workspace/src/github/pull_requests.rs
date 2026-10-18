@@ -94,27 +94,25 @@ impl HostPauses {
     fn record(&self, user_id: &str, host: &str, error: Option<&GitHubError>, now: Instant) {
         let key = (user_id.to_string(), host.to_string());
         let mut hosts = self.lock();
-        let backs_off = matches!(
-            error,
-            Some(error) if !matches!(
+        let Some(error) = error.filter(|error| {
+            !matches!(
                 error,
                 GitHubError::NoCredential(_)
                     | GitHubError::Disabled(_)
                     | GitHubError::Status(reqwest::StatusCode::UNAUTHORIZED)
             )
-        );
-        if !backs_off {
+        }) else {
             hosts.remove(&key);
             return;
-        }
+        };
         let failures = hosts.get(&key).map_or(0, |pause| pause.failures) + 1;
         let backoff = FIRST_PAUSE
             .saturating_mul(2u32.saturating_pow(failures - 1))
             .min(LONGEST_PAUSE);
         let pause = match error {
-            Some(GitHubError::RateLimited {
+            GitHubError::RateLimited {
                 retry_after: Some(wait),
-            }) => backoff.max((*wait).min(LONGEST_RATE_LIMIT_WAIT)),
+            } => backoff.max((*wait).min(LONGEST_RATE_LIMIT_WAIT)),
             _ => backoff,
         };
         hosts.insert(

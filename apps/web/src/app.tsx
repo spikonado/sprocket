@@ -106,7 +106,6 @@ import {
 } from '$lib/project/threads';
 import { useRevealInboxThread, useThreadInbox } from '$lib/project/inbox';
 import {
-	refreshOnLoadMore,
 	usePullRequestRefresher,
 	useShownPullRequests,
 	type PullRequestRefresher,
@@ -219,14 +218,7 @@ function InboxSidebarContainer(
 		[expansion, selectedPath, pullRequestRefresher]
 	);
 
-	return (
-		<InboxSidebar
-			{...sidebarProps}
-			sections={props.sections.map((section) => refreshOnLoadMore(pullRequestRefresher, section))}
-			expansion={expansion}
-			resolveChildren={resolveChildren}
-		/>
-	);
+	return <InboxSidebar {...sidebarProps} expansion={expansion} resolveChildren={resolveChildren} />;
 }
 
 function ExpandedThreadChildren({
@@ -257,7 +249,7 @@ function ExpandedThreadChildren({
 	return (
 		<>
 			{renderRows(children.rows)}
-			<InboxLoadMore section={refreshOnLoadMore(pullRequestRefresher, children)} />
+			<InboxLoadMore section={children} />
 		</>
 	);
 }

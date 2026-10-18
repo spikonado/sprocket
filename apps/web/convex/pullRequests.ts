@@ -1,13 +1,11 @@
-import { v, type Infer } from 'convex/values';
+import { v } from 'convex/values';
 import { mutation } from '@convex/_generated/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { vLinkedPullRequest } from '@convex/lib/validators';
-
-type LinkedPullRequest = Infer<typeof vLinkedPullRequest>;
+import { vLinkedPullRequest, type LinkedPullRequest } from '@convex/lib/validators';
 
 const MAX_LINKED_PRS = 20;
 
